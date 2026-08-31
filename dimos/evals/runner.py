@@ -14,63 +14,40 @@
 
 """EvalRunner — the one engine behind CLI, MCP skill, and pytest.
 
-Implements the :class:`~dimos.evals.types.EvalRig` protocol structurally.
-Cases own their evaluation flow (``case.evaluate(rig)``); the runner owns
-resources (model client, MCP adapter, sim process, live store) plus run
-lifecycle: preflight, timing, error isolation, artifacts.
+Per case: preflight both sides, start the environment, run the agent under
+the case's timeout, stop the environment, check the declared artifacts exist,
+grade once. The runner never branches on the agent type.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
 import subprocess
+import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from dimos.constants import STATE_DIR
-from dimos.core.resource import CompositeResource
-from dimos.evals.types import EvalCase, EvalResult, InteractiveEval, ResponseT, Suite
+from dimos.evals.types import (
+    Agent,
+    EvalCase,
+    EvalResult,
+    Outcome,
+    RunningEnvironment,
+    Suite,
+    Trajectory,
+)
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.logging_config import setup_logger
 
-if TYPE_CHECKING:
-    from langchain_core.language_models.chat_models import BaseChatModel
-
-    from dimos.e2e_tests.dim_sim_client import DimSimClient
-    from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-    from dimos.memory.store.base import Store
-    from dimos.memory.stream import Stream
-
 logger = setup_logger()
-
-EVAL_SYSTEM_PROMPT = (
-    "You are evaluating a robot's perception and memory. Answer the question "
-    "using only the provided observations. Reply with the answer value only — "
-    "a bare number or a short phrase. No explanation, no units unless asked."
-)
-
-BLIND_BLOCK: dict[str, str] = {
-    "type": "text",
-    "text": "[observations withheld — answer anyway]",
-}
 
 
 class EvalRunnerConfig(BaseConfig):
-    model: str = "gpt-5.6-luna"  # mirrors McpClientConfig.model
-    # House convention (StoreConfig): pass an instance to inject, e.g. a fake
-    # chat model in tests. None -> built from `model` like McpClient does.
-    chat_model: Any | None = None
-    mcp_url: str | None = None  # None -> localhost:{global_config.mcp_port}/mcp
-    live_db: str = "recording.db"  # store the Recorder writes (interactive)
-    blind: bool = False  # ablation: context withheld (SPACE guessing check)
     threshold: float = 1.0  # passed = score >= threshold
     strict: bool = False  # preflight failure aborts the whole run
-    context_budget: int = 8  # max observations encoded per context Select
-    attach: bool = False  # True: drive an already-running dimos
-    launch_timeout_s: float = 1200.0  # blueprint + MCP readiness (e2e parity)
     out_dir: Path = STATE_DIR / "evals"
 
 
@@ -83,7 +60,7 @@ class RunSummary:
     duration_s: float
 
 
-def summarize(results: Sequence[EvalResult]) -> RunSummary:
+def summarize(results: list[EvalResult]) -> RunSummary:
     scored = [r for r in results if not r.error]
     return RunSummary(
         n=len(results),
@@ -94,22 +71,24 @@ def summarize(results: Sequence[EvalResult]) -> RunSummary:
     )
 
 
-class EvalRunner(Configurable, CompositeResource):
+def agent_record(agent: Agent) -> dict[str, Any]:
+    """The agent as it goes into ``summary.json``: its class and every
+    constructor argument, so runs are comparable later."""
+    cls = type(agent)
+    return {"class": f"{cls.__module__}.{cls.__qualname__}", **vars(agent)}
+
+
+class EvalRunner(Configurable):
     config: EvalRunnerConfig
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)
-        CompositeResource.__init__(self)
-        self._model: BaseChatModel | None = None
-        self._proc: DimosCliCall | None = None
-        self._sim: DimSimClient | None = None
         self._run_dir: Path | None = None
-
-    # -- run lifecycle -----------------------------------------------------------
 
     def run(
         self,
         cases: Suite,
+        agent: Agent,
         *,
         tags: frozenset[str] = frozenset(),
         limit: int = 0,
@@ -122,44 +101,121 @@ class EvalRunner(Configurable, CompositeResource):
         results: list[EvalResult] = []
         runnable: list[EvalCase] = []
         for case in selected:
-            try:
-                case.preflight(self)
+            error = self._preflight(case, agent)
+            if error:
+                results.append(EvalResult(case_id=case.id, error=error))
+            else:
                 runnable.append(case)
-            except Exception as e:
-                if self.config.strict:
-                    raise
-                logger.warning("preflight failed", case=case.id, error=str(e))
-                results.append(EvalResult(case_id=case.id, error=f"preflight: {e}"))
 
         for case in runnable:
-            result = self._guarded(case)
+            result = self.run_case(case, agent)
             logger.info(
                 "eval case done",
                 case=case.id,
                 score=round(result.score, 3),
+                ended_by=result.ended_by or None,
                 error=result.error or None,
             )
             results.append(result)
 
-        self._write_artifacts(results)
-        self.stop()
+        self._write_artifacts(results, agent)
         return results
 
-    def _guarded(self, case: EvalCase) -> EvalResult:
-        t0 = time.monotonic()
+    def _preflight(self, case: EvalCase, agent: Agent) -> str:
+        """Both sides checked before anything starts: the failure text, or ``""``."""
         try:
-            result = case.evaluate(self)
-            transcript = self.run_dir / f"{case.id}.jsonl"
-            return replace(
-                result,
-                duration_s=time.monotonic() - t0,
-                passed=result.score >= self.config.threshold and not result.error,
-                transcript=str(transcript) if transcript.exists() else result.transcript,
-            )
+            case.environment.preflight(agent)
+            agent.preflight(case.environment)
         except Exception as e:
-            return EvalResult(case_id=case.id, error=repr(e), duration_s=time.monotonic() - t0)
+            if self.config.strict:
+                raise
+            logger.warning("preflight failed", case=case.id, error=str(e))
+            return f"preflight: {e}"
+        return ""
+
+    def run_case(self, case: EvalCase, agent: Agent) -> EvalResult:
+        t0 = time.monotonic()
+        case_dir = self.run_dir / case.id
+        case_dir.mkdir(parents=True, exist_ok=True)
+        trajectory: Trajectory | None = None
+        try:
+            env = case.environment.start(agent.modules)
+            tools = list(dict.fromkeys(agent.available_tools(tuple(_tools_exposed(env.mcp_url)))))
+            trajectory = self._run_agent(case, agent, env, case_dir)
+            # The agent phase is over before grading: for a live environment
+            # that closes the recording, and a timed-out agent thread can no
+            # longer act on what the grader reads.
+            case.environment.stop()
+            _write_trajectory(case_dir, trajectory, tools)
+            missing = [n for n in case.environment.artifacts if not env.artifacts[n].exists()]
+            if missing:
+                return self._result(case, t0, trajectory, error=f"missing artifacts: {missing}")
+            score = case.grade(Outcome(trajectory=trajectory, artifacts=env.artifacts))
+            return self._result(case, t0, trajectory, score=score)
+        except Exception as e:
+            return self._result(case, t0, trajectory, error=repr(e))
         finally:
-            self.teardown_env()
+            case.environment.stop()
+
+    def _run_agent(
+        self, case: EvalCase, agent: Agent, env: RunningEnvironment, case_dir: Path
+    ) -> Trajectory:
+        """``agent.run`` under the case's wall-clock limit. A timed-out agent
+        yields an empty trajectory marked ``timeout``; the world is still graded."""
+        box: dict[str, Any] = {}
+
+        def target() -> None:
+            try:
+                box["trajectory"] = agent.run(case.inputs, env, case_dir)
+            except BaseException as e:
+                box["error"] = e
+
+        t0 = time.monotonic()
+        thread = threading.Thread(target=target, name=f"eval-{case.id}", daemon=True)
+        thread.start()
+        thread.join(case.timeout_s)
+        if thread.is_alive():
+            logger.warning("agent timed out", case=case.id, timeout_s=case.timeout_s)
+            return Trajectory(
+                final_answer="",
+                steps=(),
+                model="",
+                duration_s=time.monotonic() - t0,
+                ended_by="timeout",
+                raw_dir=case_dir / "raw",
+            )
+        if "error" in box:
+            raise box["error"]
+        trajectory: Trajectory = box["trajectory"]
+        return trajectory
+
+    def _result(
+        self,
+        case: EvalCase,
+        t0: float,
+        trajectory: Trajectory | None,
+        *,
+        score: float = 0.0,
+        error: str = "",
+    ) -> EvalResult:
+        result = EvalResult(
+            case_id=case.id,
+            score=score,
+            passed=score >= self.config.threshold and not error,
+            duration_s=time.monotonic() - t0,
+            error=error,
+        )
+        if trajectory is None:
+            return result
+        return replace(
+            result,
+            final_answer=trajectory.final_answer,
+            steps=len(trajectory.steps),
+            input_tokens=trajectory.input_tokens,
+            output_tokens=trajectory.output_tokens,
+            ended_by=trajectory.ended_by,
+            trajectory=str(self.run_dir / case.id / "trajectory.json"),
+        )
 
     @property
     def run_dir(self) -> Path:
@@ -171,259 +227,26 @@ class EvalRunner(Configurable, CompositeResource):
         run_dir.mkdir(parents=True, exist_ok=True)
         return run_dir
 
-    def _write_artifacts(self, results: list[EvalResult]) -> None:
+    def _write_artifacts(self, results: list[EvalResult], agent: Agent) -> None:
         lines = [json.dumps(asdict(r)) for r in results]
         (self.run_dir / "results.jsonl").write_text("\n".join(lines) + "\n")
         summary: dict[str, Any] = asdict(summarize(results))
-        summary |= {"model": self.config.model, "blind": self.config.blind, "git": _git_sha()}
-        (self.run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+        summary |= {"agent": agent_record(agent), "git": _git_sha()}
+        (self.run_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=repr))
 
-    def stop(self) -> None:
-        self.teardown_env()
-        super().stop()
 
-    # -- EvalRig: shared ------------------------------------------------------------
+def _tools_exposed(mcp_url: str) -> list[str]:
+    """What the MCP server exposed at start — the tool set is the blueprint."""
+    if not mcp_url:
+        return []
+    from dimos.agents.mcp.mcp_adapter import McpAdapter
 
-    @property
-    def blind(self) -> bool:
-        return self.config.blind
+    return [str(t["name"]) for t in McpAdapter(mcp_url).list_tools()]
 
-    @property
-    def mcp_url(self) -> str:
-        if self.config.mcp_url is not None:
-            return self.config.mcp_url
-        from dimos.core.global_config import global_config
 
-        return f"http://localhost:{global_config.mcp_port}/mcp"
-
-    def open_dataset(self, name: str) -> Store:
-        from dimos.memory.cli.dataset import open_dataset
-
-        return open_dataset(name)
-
-    def live_store(self) -> Store:
-        from dimos.memory.store.sqlite import SqliteStore
-
-        return SqliteStore(path=self.config.live_db, must_exist=True)
-
-    def encode(self, stream: Stream[Any, Any]) -> list[dict[str, Any]]:
-        """mem2 Stream -> model-legible content blocks (the surface under test).
-
-        Metadata iterates lazily; blobs load only for the <= context_budget
-        observations actually encoded. ``agent_encode()`` is used where a type
-        provides it; ``str(data)`` otherwise (an encoding gap the eval will
-        surface, by design).
-        """
-        observations = list(stream)
-        if not observations:
-            return [{"type": "text", "text": f"stream {stream.name!r}: no observations"}]
-
-        budget = self.config.context_budget
-        if len(observations) > budget:
-            step = (len(observations) - 1) / (budget - 1)
-            observations = [observations[round(i * step)] for i in range(budget)]
-
-        t0 = observations[0].ts
-        blocks: list[dict[str, Any]] = [
-            {
-                "type": "text",
-                "text": f"observations from stream {stream.name!r} "
-                f"(t is seconds from the first shown):",
-            }
-        ]
-        for obs in observations:
-            data = obs.data
-            encoded = data.agent_encode() if hasattr(data, "agent_encode") else None
-            stamp = f"[t={obs.ts - t0:.1f}s]"
-            if isinstance(encoded, list):  # e.g. Image -> image_url blocks
-                blocks.append({"type": "text", "text": stamp})
-                blocks.extend(encoded)
-            elif encoded is not None:
-                blocks.append(
-                    {"type": "text", "text": f"{stamp} {json.dumps(encoded, default=str)}"}
-                )
-            else:
-                blocks.append({"type": "text", "text": f"{stamp} {data}"})
-        return blocks
-
-    def ask(self, context: Sequence[dict[str, Any]], question: str) -> str:
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        blocks = list(context) if context else [BLIND_BLOCK]
-        message = HumanMessage(content=[*blocks, {"type": "text", "text": question}])
-        response = self.model.invoke([SystemMessage(EVAL_SYSTEM_PROMPT), message])
-        return str(response.text)
-
-    def ask_structured(
-        self,
-        context: Sequence[dict[str, Any]],
-        question: str,
-        schema: type[ResponseT],
-    ) -> ResponseT:
-        """Ask for a provider-native response validated against a Pydantic schema."""
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        blocks = list(context) if context else [BLIND_BLOCK]
-        message = HumanMessage(content=[*blocks, {"type": "text", "text": question}])
-        try:
-            structured_model = self.model.with_structured_output(schema)
-        except NotImplementedError as exc:
-            raise RuntimeError(
-                f"model {self.config.model!r} does not support structured output"
-            ) from exc
-        response = structured_model.invoke([SystemMessage(EVAL_SYSTEM_PROMPT), message])
-        if not isinstance(response, schema):
-            raise TypeError(
-                f"model {self.config.model!r} returned {type(response).__name__}, "
-                f"expected {schema.__name__}"
-            )
-        return response
-
-    @property
-    def model(self) -> BaseChatModel:
-        if self.config.chat_model is not None:
-            return self.config.chat_model  # type: ignore[no-any-return]
-        if self._model is None:
-            # Same construction as the production agent (Responses-API branch
-            # for gpt-5.x) so evals measure the deployed model config.
-            from dimos.agents.mcp.mcp_client import _init_model
-
-            self._model = _init_model(self.config.model)
-        return self._model
-
-    def call_skill(self, name: str, args: Mapping[str, object]) -> str:
-        from dimos.agents.mcp.mcp_adapter import McpAdapter
-
-        return McpAdapter(self.mcp_url).call_tool_text(name, dict(args))
-
-    def mcp_ready(self) -> bool:
-        from dimos.agents.mcp.mcp_adapter import McpAdapter
-
-        return McpAdapter(self.mcp_url).wait_for_ready(timeout=2.0)
-
-    def agent_loop(self, case: EvalCase) -> str:
-        """Fresh create_agent per case over the MCP toolset — the McpClient loop
-        minus its queue/thread shell. Transcript -> <run_dir>/<case_id>.jsonl."""
-        from langchain.agents import create_agent
-        from langchain_core.messages import HumanMessage, SystemMessage
-        from langchain_core.tools import StructuredTool
-
-        from dimos.agents.mcp.mcp_adapter import McpAdapter
-
-        adapter = McpAdapter(self.mcp_url)
-        tools = [
-            StructuredTool(
-                name=t["name"],
-                description=t.get("description", ""),
-                args_schema=t.get("inputSchema", {}),
-                func=lambda _name=t["name"], **kwargs: adapter.call_tool_text(_name, kwargs),
-            )
-            for t in adapter.list_tools()
-        ]
-        graph: Any = create_agent(self.model, tools)
-        messages: list[Any] = [SystemMessage(EVAL_SYSTEM_PROMPT), HumanMessage(case.inputs)]
-        transcript = self.run_dir / f"{case.id}.jsonl"
-        final_text = ""
-        with transcript.open("w") as fh:
-            for update in graph.stream({"messages": messages}, stream_mode="updates"):
-                for _node, payload in update.items():
-                    for msg in payload.get("messages", []):
-                        fh.write(
-                            json.dumps({"type": type(msg).__name__, "content": str(msg.content)})
-                            + "\n"
-                        )
-                        final_text = str(msg.content)
-        return final_text
-
-    # -- EvalRig: interactive ----------------------------------------------------------
-
-    def setup_env(self, case: InteractiveEval) -> None:
-        from dimos.evals.types import _no_setup
-
-        if case.simulator and not self.config.attach:
-            from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-
-            proc = DimosCliCall()
-            proc.simulator = case.simulator
-            proc.global_args = ["--dimsim-scene", case.scene]
-            proc.demo_args = ["run", *case.blueprint.split()]
-            proc.start()
-            self._proc = proc
-        if not self._wait_mcp(self.config.launch_timeout_s):
-            raise RuntimeError(f"MCP at {self.mcp_url} not ready — is dimos up?")
-        if case.setup is not _no_setup:
-            from dimos.e2e_tests.dim_sim_client import DimSimClient
-
-            sim = DimSimClient()
-            sim.start()
-            self._sim = sim
-            case.setup(sim)
-
-    def teardown_env(self) -> None:
-        """Per-case cleanup — the runner owns env lifecycle, cases just declare it."""
-        if self._sim is not None:
-            self._sim.stop()
-            self._sim = None
-        if self._proc is not None:
-            self._proc.stop()
-            self._proc = None
-
-    def check_env(self, case: InteractiveEval) -> None:
-        if self.config.attach or not case.simulator:
-            if not self.mcp_ready():
-                raise RuntimeError(
-                    f"{case.id}: attach mode needs a running dimos at {self.mcp_url}"
-                )
-            return
-        import shutil
-
-        if case.simulator == "dimsim" and shutil.which("deno") is None:
-            raise RuntimeError(f"{case.id}: dimsim requires deno on PATH")
-
-    def _wait_mcp(self, timeout: float) -> bool:
-        from dimos.agents.mcp.mcp_adapter import McpAdapter
-
-        return McpAdapter(self.mcp_url).wait_for_ready(timeout=timeout, interval=2.0)
-
-    def instruct(self, text: str) -> None:
-        from dimos.core.transport_factory import make_transport
-
-        transport = make_transport("/human_input")
-        transport.start()
-        try:
-            transport.publish(text)
-        finally:
-            transport.stop()
-
-    def sample(
-        self, score: Callable[[Store], float], interval_s: float, timeout_s: float
-    ) -> list[tuple[float, float]]:
-        """Score the live Recorder store on an interval — the mem2 analogue of
-        lcm_spy.wait_until_odom_position, but it returns a graded series."""
-        deadline = time.monotonic() + timeout_s
-        t0 = time.monotonic()
-        series: list[tuple[float, float]] = []
-        store = self._wait_live_store(deadline)
-        try:
-            while time.monotonic() < deadline:
-                try:
-                    value = score(store)
-                except LookupError:
-                    value = None  # stream not written yet — keep waiting
-                if value is not None:
-                    series.append((time.monotonic() - t0, value))
-                    if value >= 0.999:  # ponytail: early exit on success; drop if
-                        break  # aggregates ever need the full window
-                time.sleep(interval_s)
-        finally:
-            store.stop()
-        return series
-
-    def _wait_live_store(self, deadline: float) -> Store:
-        path = Path(self.config.live_db)
-        while not path.exists() and time.monotonic() < deadline:
-            time.sleep(1.0)
-        return self.live_store()
+def _write_trajectory(case_dir: Path, trajectory: Trajectory, tools: list[str]) -> None:
+    record = {"tools": tools, **asdict(trajectory)}
+    (case_dir / "trajectory.json").write_text(json.dumps(record, indent=2, default=str))
 
 
 def _git_sha() -> str:

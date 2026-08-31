@@ -15,11 +15,14 @@
 """Interactive suite — dimsim apartment, parity with test_dimsim_spatial_memory.
 
 The e2e test asserts ``wait_until_odom_position(-3.567, -1.332, threshold=2)``
-after "go to the bed"; here the same success condition is a graded ramp scored
-against the live mem2 store written by the ``go2-memory`` Recorder.
+after "go to the bed"; here the same success condition is a graded ramp over
+the last odom pose in the recording the environment produced.
 
-Exploration (the e2e ``explore_house`` fixture) is the case's ``setup`` — the
-agent needs spatial memory of the apartment before it can navigate it.
+Exploration (the e2e ``explore_house`` fixture) is the environment's
+``setup`` — the agent needs spatial memory of the apartment before it can
+navigate it. Run it under the shipped agent::
+
+    dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.mcp_client --set modules=unitree-go2-agentic
 """
 
 from __future__ import annotations
@@ -27,13 +30,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from dimos.evals.scorers import final, ramp
-from dimos.evals.types import InteractiveEval, Suite
+from dimos.evals.environments.sim import Sim
+from dimos.evals.scorers import ramp
+from dimos.evals.types import EvalCase, Outcome, Suite, recording
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dim_sim_client import DimSimClient
-    from dimos.memory.store.base import Store
 
 BED = Vector3(-3.567, -1.332, 0.0)
 
@@ -89,26 +92,32 @@ def _explore_house(sim: DimSimClient) -> None:
         explorer.stop()
 
 
-def _xy_distance_to(target: Vector3) -> Callable[[Store], float]:
-    def distance(store: Store) -> float:
-        p = store.streams.odom.last().data.position
+def _ended_near(target: Vector3) -> Callable[[Outcome], float]:
+    """Where the robot ended up: the last odom pose in the recording."""
+
+    def grade(o: Outcome) -> float:
+        store = recording(o)
+        try:
+            p = store.streams.odom.last().data.position
+        finally:
+            store.stop()
         d = Vector3(p.x - target.x, p.y - target.y, 0.0).length()
         return ramp(d, band=2.0)  # e2e parity: threshold=2 -> full credit inside 2m
 
-    return distance
+    return grade
 
 
-go_to_bed = InteractiveEval(
+go_to_bed = EvalCase(
     id="dimsim_go_to_bed",
     inputs="go to the bed",
-    score=_xy_distance_to(BED),
-    aggregate=final,
-    interval_s=2.0,
+    environment=Sim(
+        blueprint="unitree-go2 mcp-server unitree-skill-container",
+        simulator="dimsim",
+        scene="apartment",
+        setup=_explore_house,
+    ),
+    grade=_ended_near(BED),
     timeout_s=180.0,  # e2e parity
-    blueprint="unitree-go2-agentic go2-memory",
-    simulator="dimsim",
-    scene="apartment",
-    setup=_explore_house,
     tags=frozenset({"nav", "system"}),
 )
 

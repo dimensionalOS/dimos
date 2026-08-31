@@ -33,24 +33,41 @@ def list_suites() -> list[str]:
     ]
 
 
+def list_agents() -> list[str]:
+    """Dotted module paths of the agents under dimos.evals.agents."""
+    from dimos.evals import agents
+
+    return [
+        name
+        for _, name, ispkg in pkgutil.iter_modules(agents.__path__, prefix=f"{agents.__name__}.")
+        if not ispkg  # agents/lib is shared plumbing
+    ]
+
+
 class EvalModule(Module):
     """Expose eval runs as skills so agents can iterate: run, read the summary,
-    grep transcripts in the returned run_dir, edit code/prompts, run again."""
+    grep trajectories in the returned run_dir, edit code/prompts, run again."""
 
     @skill
-    def run_evals(self, suite: str, tags: str = "") -> SkillResult:
+    def run_evals(
+        self, suite: str, agent: str = "dimos.evals.agents.question_answer", tags: str = ""
+    ) -> SkillResult:
         """Run an eval suite by dotted module path (see list_eval_suites).
 
         Args:
             suite: e.g. "dimos.evals.suites.go2_smoke" (must export SUITE).
+            agent: agent module (see list_eval_agents), run with its defaults.
             tags: optional comma-separated tag filter.
         """
+        from dimos.evals.cli import load_agent
         from dimos.evals.runner import EvalRunner, summarize
 
         cases = importlib.import_module(suite).SUITE
-        runner = EvalRunner(attach=True)
+        runner = EvalRunner()
         results = runner.run(
-            cases, tags=frozenset(t for t in tags.split(",") if t) if tags else frozenset()
+            cases,
+            load_agent(agent),
+            tags=frozenset(t for t in tags.split(",") if t) if tags else frozenset(),
         )
         s = summarize(results)
         return SkillResult.ok(
@@ -62,3 +79,8 @@ class EvalModule(Module):
     def list_eval_suites(self) -> SkillResult:
         """List available eval suite module paths."""
         return SkillResult.ok(", ".join(list_suites()))
+
+    @skill
+    def list_eval_agents(self) -> SkillResult:
+        """List available agent module paths."""
+        return SkillResult.ok(", ".join(list_agents()))

@@ -62,24 +62,25 @@ def generate(
 @app.command("run")
 def run(
     dataset: Path = typer.Argument(help="Generated standalone VQA dataset"),
-    model: str = typer.Option("", help="Override chat model"),
+    agent: str = typer.Option("dimos.evals.agents.question_answer", help="Dotted agent module"),
+    model: str = typer.Option("", help="Override the agent's model"),
 ) -> None:
     """Evaluate a generated standalone VQA dataset."""
     # Keep evaluation implementation imports out of global CLI startup.
+    from dimos.evals.cli import load_agent
     from dimos.evals.runner import EvalRunner, summarize
     from dimos.evals.vqa.suite import load_suite
 
-    overrides: dict[str, object] = {}
-    if model:
-        overrides["model"] = model
-    runner = EvalRunner(**overrides)
+    runner = EvalRunner()
     try:
-        results = runner.run(load_suite(dataset))
+        results = runner.run(
+            load_suite(dataset), load_agent(agent, [f"model={model}"] if model else [])
+        )
     except (ValueError, OSError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     for result in results:
         status = "ERROR" if result.error else ("PASS" if result.passed else "fail")
-        detail = result.error or f"answer={result.outputs[:60]!r}"
+        detail = result.error or f"answer={result.final_answer[:60]!r}"
         typer.echo(f"{status:5} {result.case_id:30} {detail}")
     summary = summarize(results)
     typer.echo(

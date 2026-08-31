@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
+from typing import Any
 
 from click import unstyle
 import pytest
@@ -190,12 +191,14 @@ def test_vqa_run_cli_formats_dataset_errors(
 def test_vqa_run_cli_runs_shared_evaluator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     class FakeRunner:
         def __init__(self, **kwargs: object) -> None:
-            assert kwargs == {"model": "test-model"}
+            assert kwargs == {}
             self.run_dir = tmp_path / "results"
 
-        def run(self, cases: object) -> list[EvalResult]:
+        def run(self, cases: object, agent: Any) -> list[EvalResult]:
             assert cases == ("case",)
-            return [EvalResult(case_id="q", outputs="yes", score=1.0, passed=True)]
+            assert agent.model == "test-model"
+            assert type(agent).__name__ == "QuestionAnswer"
+            return [EvalResult(case_id="q", final_answer="yes", score=1.0, passed=True)]
 
     monkeypatch.setattr(suite_module, "load_suite", lambda dataset: ("case",))
     monkeypatch.setattr(runner_module, "EvalRunner", FakeRunner)

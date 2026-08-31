@@ -12,55 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Standalone VQA dataset adapter for the shared evaluation runner."""
+"""Standalone VQA dataset adapter for the shared evaluation runner.
+
+A new kind of input is a new environment (:class:`ImageFile`), not a new case
+class: each row becomes a plain :class:`EvalCase` graded on the choice the
+model names."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Sequence
 import json
 from pathlib import Path, PurePosixPath
-from typing import Any, cast
+from typing import Any
 
 import jsonlines
-from pydantic import BaseModel, ConfigDict, Field
 
-from dimos.evals.scorers import exact
-from dimos.evals.types import EvalCase, EvalResult, EvalRig, Suite
+from dimos.evals.environments.image_file import ImageFile
+from dimos.evals.scorers import choice, exact
+from dimos.evals.types import EvalCase, Outcome, Suite
 from dimos.evals.vqa.generate import PrivateLabel, PublicCase
-from dimos.msgs.sensor_msgs.Image import Image
 
 
-class VqaResponse(BaseModel):
-    """Structured answer returned by the model under evaluation."""
+def grade_choice(choices: Sequence[str], answer: str) -> Callable[[Outcome], float]:
+    """Exact match on the last choice the reply names; naming none scores 0."""
+    parse = choice(choices)
 
-    model_config = ConfigDict(extra="forbid")
+    def grade(o: Outcome) -> float:
+        try:
+            got = parse(o.trajectory.final_answer)
+        except ValueError:
+            return 0.0
+        return exact(answer.lower(), got)
 
-    answer: str = Field(description="Exactly one of the choices provided in the question.")
-
-
-@dataclass(frozen=True, kw_only=True)
-class VqaEvalCase(EvalCase):
-    """One standalone image question evaluated by the shared runner."""
-
-    image_path: Path
-    choices: tuple[str, ...]
-    expected: str
-
-    def evaluate(self, rig: EvalRig) -> EvalResult:
-        image = Image.from_file(self.image_path)
-        context = [] if rig.blind else cast("list[dict[str, Any]]", image.agent_encode())
-        prompt = (
-            f"{self.inputs}\nChoices: {json.dumps(self.choices)}\nAnswer with exactly one choice."
-        )
-        response = rig.ask_structured(context, prompt, VqaResponse)
-        outputs = response.model_dump_json()
-        score = exact(self.expected, response.answer) if response.answer in self.choices else 0.0
-        return EvalResult(case_id=self.id, outputs=outputs, score=score)
-
-    def preflight(self, rig: EvalRig) -> None:
-        if not self.image_path.is_file():
-            raise FileNotFoundError(f"VQA image does not exist: {self.image_path}")
+    return grade
 
 
 def load_suite(dataset: Path) -> Suite:
@@ -95,19 +79,19 @@ def load_suite(dataset: Path) -> Suite:
         )
 
     case_ids.clear()
-    suite: list[VqaEvalCase] = []
+    suite: list[EvalCase] = []
     for row in _read_jsonl(root / "cases.jsonl"):
         case = PublicCase.model_validate(row)
         label = label_by_id.pop(case.id)
         if label.answer not in case.choices:
             raise ValueError(f"VQA label for {case.id!r} is not one of its choices")
         suite.append(
-            VqaEvalCase(
+            EvalCase(
                 id=case.id,
-                inputs=case.question,
-                image_path=_resolve_image(root, case.image),
-                choices=case.choices,
-                expected=label.answer,
+                inputs=f"{case.question}\nChoices: {json.dumps(case.choices)}\n"
+                "Answer with exactly one choice.",
+                environment=ImageFile(_resolve_image(root, case.image)),
+                grade=grade_choice(case.choices, label.answer),
                 tags=frozenset({"vqa"}),
             )
         )

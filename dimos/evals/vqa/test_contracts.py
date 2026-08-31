@@ -23,6 +23,8 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.constants import STATE_DIR
+from dimos.evals.environments.image_file import ImageFile
+from dimos.evals.types import Outcome, Step, Trajectory
 from dimos.evals.vqa.author import OpenAIQuestionAuthor
 from dimos.evals.vqa.contracts import (
     FamilyAnswer,
@@ -372,21 +374,19 @@ class _ReorderedClosestRangeEstimator(_ClosestRangeEstimator):
         return tuple(reversed(super().estimate_many(frame, object_names)))
 
 
-class _Rig:
-    blind = False
-
-    def __init__(self, answer: str = "yes") -> None:
-        self.answer = answer
-
-    def ask(self, context: object, question: str) -> str:
-        assert context
-        assert 'Choices: ["yes", "no"]' in question
-        return self.answer
-
-    def ask_structured(self, context: object, question: str, schema: type[object]) -> object:
-        assert context
-        assert 'Choices: ["yes", "no"]' in question
-        return schema(answer=self.answer)  # type: ignore[call-arg, return-value]
+def _outcome(answer: str) -> Outcome:
+    """What the runner hands a grader after an agent replied *answer*."""
+    raw = Path("/nonexistent/raw")
+    step = Step(index=0, t=0.0, message=answer, request=raw / "r", response=raw / "s")
+    trajectory = Trajectory(
+        final_answer=answer,
+        steps=(step,),
+        model="fake",
+        duration_s=0.0,
+        ended_by="answer",
+        raw_dir=raw,
+    )
+    return Outcome(trajectory=trajectory, artifacts={})
 
 
 def test_presence_proposal_matches_available_family() -> None:
@@ -966,14 +966,16 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     assert (output / "audit" / "frame-000004" / "ground_truth.json").is_file()
 
     suite = load_suite(output)
-    evaluation = suite[0].evaluate(_Rig())
+    case = suite[0]
 
-    assert evaluation.case_id == "frame-000004-chair-presence"
-    assert json.loads(evaluation.outputs) == {"answer": "yes"}
-    assert evaluation.score == 1.0
-
-    invalid = suite[0].evaluate(_Rig(answer="maybe"))
-    assert invalid.score == 0.0
+    assert case.id == "frame-000004-chair-presence"
+    assert 'Choices: ["yes", "no"]' in case.inputs
+    assert isinstance(case.environment, ImageFile)
+    assert case.environment.path == image_path
+    assert case.grade(_outcome("yes")) == 1.0
+    assert case.grade(_outcome("Yes, there is.")) == 1.0
+    assert case.grade(_outcome("no")) == 0.0
+    assert case.grade(_outcome("maybe")) == 0.0
 
 
 def test_generation_rejects_nonempty_output_without_modifying_it(tmp_path: Path) -> None:
