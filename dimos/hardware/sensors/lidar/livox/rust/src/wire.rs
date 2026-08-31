@@ -296,6 +296,39 @@ pub fn parse_kv_list(mut data: &[u8]) -> Result<Vec<KeyValue<'_>>, WireError> {
     Ok(out)
 }
 
+/// Param-set (0x0100) request body: key_num u16, rsvd u16, key-value list
+/// (SDK2 `BuildRequest` / `CommandImpl`).
+pub fn build_param_set_body(params: &[KeyValue<'_>]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(4);
+    body.extend_from_slice(&(params.len() as u16).to_le_bytes());
+    body.extend_from_slice(&0u16.to_le_bytes());
+    body.extend_from_slice(&build_kv_list(params));
+    body
+}
+
+/// Parse a param-set (0x0100) request body.
+pub fn parse_param_set_body(data: &[u8]) -> Result<Vec<KeyValue<'_>>, WireError> {
+    if data.len() < 4 {
+        return Err(WireError::BadPayload);
+    }
+    let key_num = u16::from_le_bytes([data[0], data[1]]) as usize;
+    let params = parse_kv_list(&data[4..])?;
+    if params.len() != key_num {
+        return Err(WireError::BadPayload);
+    }
+    Ok(params)
+}
+
+/// Value for the host IP config keys (0x0005-0x0007): `HostIpInfoValue`,
+/// ip[4] then host port and lidar port.
+pub fn host_ip_config_value(ip: Ipv4Addr, host_port: u16, lidar_port: u16) -> [u8; 8] {
+    let mut value = [0u8; 8];
+    value[..4].copy_from_slice(&ip.octets());
+    value[4..6].copy_from_slice(&host_port.to_le_bytes());
+    value[6..8].copy_from_slice(&lidar_port.to_le_bytes());
+    value
+}
+
 /// GetInternalInfo (0x0101) ACK body: `LivoxLidarDiagInternalInfoResponse`
 /// (ret_code u8, param_num u16, key-value list).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -336,7 +369,7 @@ pub const DATA_HEADER_LEN: usize = 36;
 /// Byte offset of the u64 nanosecond timestamp within the packet.
 pub const DATA_TIMESTAMP_OFFSET: usize = 28;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DataType {
     Imu,
     CartesianHigh,
@@ -655,6 +688,30 @@ mod tests {
         let bytes = ack.build();
         let parsed = InternalInfoAck::parse(&bytes).unwrap();
         assert_eq!(parsed, ack);
+    }
+
+    #[test]
+    fn param_set_body_round_trip() {
+        let value = host_ip_config_value(Ipv4Addr::new(192, 168, 1, 5), HOST_POINT_PORT, 56300);
+        let params = [
+            KeyValue {
+                key: param_key::POINT_DATA_HOST_IP_CFG,
+                value: &value,
+            },
+            KeyValue {
+                key: param_key::WORK_MODE,
+                value: &[WORK_MODE_NORMAL],
+            },
+        ];
+        let body = build_param_set_body(&params);
+        assert_eq!(&body[..4], &[2, 0, 0, 0]); // key_num = 2, rsvd = 0
+        let parsed = parse_param_set_body(&body).unwrap();
+        assert_eq!(parsed, params);
+        assert_eq!(parsed[0].value[..4], [192, 168, 1, 5]);
+        assert_eq!(
+            parse_param_set_body(&body[..body.len() - 1]),
+            Err(WireError::BadPayload)
+        );
     }
 
     #[test]
