@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+import os
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
@@ -30,6 +31,7 @@ warnings.filterwarnings("ignore", category=LangChainPendingDeprecationWarning)
 
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
+from langchain.chat_models.base import _attempt_infer_model_provider
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
@@ -47,7 +49,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
-from dimos.utils.logging_config import setup_logger
+from dimos.utils.logging_config import get_run_log_dir, setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
@@ -64,10 +66,12 @@ def _init_model(model_name: str, trace_dir: Path | None = None) -> Any:
     """
     client = None if trace_dir is None else tracing_http_client(trace_dir)
     if ":" in model_name or not model_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES):
-        model = init_chat_model(model=model_name)
-        if client is not None and isinstance(model, ChatOpenAI):
+        provider = _attempt_infer_model_provider(model_name.split(":", 1)[-1])
+        if ":" in model_name:
+            provider = model_name.split(":", 1)[0]
+        if client is not None and provider == "openai":
             return init_chat_model(model=model_name, http_client=client)
-        return model
+        return init_chat_model(model=model_name)
 
     return ChatOpenAI(
         model=model_name,
@@ -77,11 +81,18 @@ def _init_model(model_name: str, trace_dir: Path | None = None) -> Any:
     )
 
 
+def _default_trace_dir() -> Path | None:
+    """``<run log dir>/llm`` inside a ``dimos run``; nowhere outside one."""
+    log_dir = get_run_log_dir() or os.environ.get("DIMOS_RUN_LOG_DIR")
+    return Path(log_dir) / "llm" if log_dir else None
+
+
 class McpClientConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-5.6-luna"
     model_fixture: str | None = None
     mcp_server_url: str = "http://localhost:9990/mcp"
+    # Where raw LLM request/response bodies go. None -> <run log dir>/llm.
     trace_dir: Path | None = None
 
 
@@ -280,8 +291,8 @@ class McpClient(Module):
 
     @rpc
     def trace_dir(self) -> Path | None:
-        """Where raw LLM request/response bodies go; ``None`` when tracing is off."""
-        return self.config.trace_dir
+        """Where this agent's raw LLM request/response bodies are written."""
+        return self.config.trace_dir or _default_trace_dir()
 
     @rpc
     def add_message(self, message: BaseMessage) -> None:
