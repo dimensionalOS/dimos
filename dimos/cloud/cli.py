@@ -85,25 +85,39 @@ def upload(
 
 @handle_fail
 def ls() -> None:
+    from rich import box
     from rich.console import Console
     from rich.filesize import decimal
     from rich.table import Table
 
-    table = Table("id", "file", "kind", "robot", "size", "state")
+    table = Table(box=box.SIMPLE_HEAVY, header_style="bold")
+    table.add_column("id", style="cyan", no_wrap=True)
+    table.add_column("file", style="bold")
+    table.add_column("uploaded", style="dim", no_wrap=True)
+    table.add_column("kind")
+    table.add_column("robot", style="magenta")
+    table.add_column("topics", style="dim", max_width=48)
+    table.add_column("size", justify="right")
+    table.add_column("state")
     for u in CloudData().ls():
+        streams = (u.get("manifest") or {}).get("streams") or []
+        state = u["state"]
         table.add_row(
             u["id"][:12],
             u["filename"],
+            str(u.get("created_at") or "")[:16].replace("T", " ") or "—",
             u.get("kind", ""),
             u.get("robot_id") or "—",
+            ", ".join(s.get("name", "?") for s in streams) or "—",
             decimal(u["size"]),
-            u["state"],
+            f"[green]{state}[/]" if state == "complete" else f"[yellow]{state}[/]",
         )
     Console().print(table)
 
 
 @handle_fail
 def pull(upload_id: str | None, dest: Path | None) -> None:
+    upload_id = None if upload_id == "latest" else upload_id
     typer.echo(f"pulled to {CloudData().pull(upload_id, dest)}")
 
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import contextlib
+from datetime import datetime
 import functools
 import hashlib
 import json
@@ -36,7 +37,7 @@ from typing import Any, Protocol
 from dimos.cli.cloud import api_key
 from dimos.cloud import codecs
 from dimos.cloud.cloud_transport import CloudTransport, HttpCloudTransport
-from dimos.constants import RECORDINGS_DIR
+from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
 from dimos.core.global_config import global_config
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
@@ -52,7 +53,7 @@ class DatasetBackend(Protocol):
         part_size: int | None,
         progress: Progress | None,
     ) -> dict[str, Any]: ...
-    def pull(self, upload_id: str, dest: Path | None) -> Path: ...
+    def pull(self, upload_id: str, dest: Path | None, tag: str = "") -> Path: ...
     def ls(self) -> list[dict[str, Any]]: ...
     def status(self, upload_id: str) -> dict[str, Any]: ...
     def quota(self) -> dict[str, Any]: ...
@@ -174,14 +175,14 @@ class MultipartBackend:
             done = self.api.complete(uid, parts)
             return {**done, "upload_id": uid, "skipped": False}
 
-    def pull(self, upload_id: str, dest: Path | None) -> Path:
+    def pull(self, upload_id: str, dest: Path | None, tag: str = "") -> Path:
         d = self.api.download(upload_id)
         wire = d.get("content_encoding") or ""
         name = Path(d["filename"]).name
         plain = name.removesuffix(codecs.suffix(wire)) if wire else name
         if not plain or plain in (".", ".."):
             raise RuntimeError(f"server returned an invalid filename: {d['filename']!r}")
-        out = dest or RECORDINGS_DIR / plain
+        out = dest or DOWNLOADS_DIR / f"{tag}{plain}"
         out.parent.mkdir(parents=True, exist_ok=True)
         with self._staging(out) as tmp:
             raw = Path(tmp) / name
@@ -253,18 +254,19 @@ class CloudData:
             progress=progress,
         )
 
-    def resolve(self, prefix: str | None) -> str:
-        """Full upload id from a prefix (as printed by `ls`); None -> newest complete."""
+    def resolve(self, prefix: str | None) -> dict[str, Any]:
+        """Upload row from an id prefix (as printed by `ls`); None -> newest complete."""
         rows = [u for u in self.ls() if u["state"] == "complete"]
         hits = [u for u in rows if not prefix or u["id"].startswith(prefix)]
         if not hits:
             raise RuntimeError(f"no upload matching {prefix!r}" if prefix else "no uploads")
         if prefix and len(hits) > 1 and hits[0]["id"] != prefix:
             raise RuntimeError(f"ambiguous id prefix {prefix!r}")
-        return str(hits[0]["id"])
+        return hits[0]
 
     def pull(self, upload_id: str | None, dest: Path | None = None) -> Path:
-        return self.backend.pull(self.resolve(upload_id), dest)
+        row = self.resolve(upload_id)
+        return self.backend.pull(str(row["id"]), dest, tag=_tag(row))
 
     def ls(self) -> list[dict[str, Any]]:
         return self.backend.ls()
@@ -356,6 +358,16 @@ def _manifest(db: Path) -> dict[str, Any] | None:
         return {"streams": [{"name": n, **json.loads(c)} for n, c in rows]}
     except sqlite3.Error:
         return None
+
+
+def _tag(row: dict[str, Any]) -> str:
+    """Filename prefix that keeps pulls distinguishable: upload time + id."""
+    uid = str(row["id"])[:8]
+    try:
+        stamp = datetime.fromisoformat(str(row["created_at"]))
+    except (KeyError, ValueError):
+        return f"{uid}-"
+    return f"{stamp:%Y%m%d-%H%M%S}-{uid}-"
 
 
 def _sha256(path: Path) -> str:

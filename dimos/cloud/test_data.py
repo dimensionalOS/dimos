@@ -48,7 +48,10 @@ class FakeTransport:
                         else self._pending(uid)
                     )
             uid = f"u{len(self.uploads)}"
-            self.uploads[uid], self.parts[uid] = dict(body, state="pending"), {}
+            self.uploads[uid], self.parts[uid] = (
+                dict(body, state="pending", created_at="2026-08-30T12:00:00+00:00"),
+                {},
+            )
             return self._pending(uid)
         if path.endswith("/quota"):
             return {"state": "ok"}
@@ -111,6 +114,7 @@ def recording(dir_: Path, age_s: float = 3600) -> Path:
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CloudData, FakeTransport, Path]:
     t = FakeTransport()
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
+    monkeypatch.setattr(cd, "DOWNLOADS_DIR", tmp_path)
     monkeypatch.setattr(global_config, "dimos_upload_retries", 1)
     cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=1))
     return cloud, t, recording(tmp_path)
@@ -281,10 +285,13 @@ def test_progress_prefix_and_default_pull(env: tuple[CloudData, FakeTransport, P
         and ticks[-1][1] == ticks[-1][2] > 0
     )
     uid = r["upload_id"]
-    assert cloud.resolve(uid[:6]) == uid and cloud.resolve(None) == uid
+    assert cloud.resolve(uid[:6])["id"] == uid == cloud.resolve(None)["id"]
     with pytest.raises(RuntimeError, match="no upload matching"):
         cloud.resolve("zz")
     assert cloud.pull(uid[:6], dest=db.parent / "p.db").read_bytes() == db.read_bytes()
+    out = cloud.pull(None)
+    assert out.name == f"20260830-120000-{uid}-{db.name}"
+    assert out.read_bytes() == db.read_bytes()
 
 
 def test_upload_refuses_when_staging_partition_is_full(
