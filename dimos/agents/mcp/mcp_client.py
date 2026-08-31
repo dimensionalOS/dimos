@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections.abc import Callable
-import os
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
@@ -49,7 +48,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out
-from dimos.utils.logging_config import get_run_log_dir, setup_logger
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
@@ -81,18 +80,11 @@ def _init_model(model_name: str, trace_dir: Path | None = None) -> Any:
     )
 
 
-def _default_trace_dir() -> Path | None:
-    """``<run log dir>/llm`` inside a ``dimos run``; nowhere outside one."""
-    log_dir = get_run_log_dir() or os.environ.get("DIMOS_RUN_LOG_DIR")
-    return Path(log_dir) / "llm" if log_dir else None
-
-
 class McpClientConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-5.6-luna"
     model_fixture: str | None = None
     mcp_server_url: str = "http://localhost:9990/mcp"
-    # Where raw LLM request/response bodies go. None -> <run log dir>/llm.
     trace_dir: Path | None = None
 
 
@@ -291,8 +283,8 @@ class McpClient(Module):
 
     @rpc
     def trace_dir(self) -> Path | None:
-        """Where this agent's raw LLM request/response bodies are written."""
-        return self.config.trace_dir or _default_trace_dir()
+        """Where raw LLM request/response bodies go; ``None`` when tracing is off."""
+        return self.config.trace_dir
 
     @rpc
     def add_message(self, message: BaseMessage) -> None:
