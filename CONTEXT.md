@@ -26,6 +26,18 @@ _Avoid_: Partial engagement, independent hand engagement
 
 ## Joint-limit safety
 
+**Hardware-declared joint limits**:
+Optional typed metadata on a hardware component, ordered exactly like that component's joints. When present, these are the authoritative limits exposed to coordinator tasks.
+_Avoid_: Adapter kwargs, gripper range
+
+**Adapter-reported joint limits**:
+Limits discovered or defined by a concrete adapter. Connected hardware exposes these only when the hardware component does not declare limits.
+_Avoid_: Hardware-declared joint limits, adapter constructor options
+
+**Effective joint limits**:
+The limits exposed by connected hardware: hardware-declared limits when present, otherwise adapter-reported limits.
+_Avoid_: Adapter limits
+
 **Feedback limit tolerance**:
 The bounded discrepancy beyond a nominal joint limit that is accepted only when interpreting measured hardware state.
 _Avoid_: Command tolerance, expanded joint limit

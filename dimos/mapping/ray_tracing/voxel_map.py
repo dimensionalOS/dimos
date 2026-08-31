@@ -21,5 +21,5 @@ try:
 except ImportError as e:
     raise ImportError(
         "dimos_voxel_ray_tracing is not built. Run: "
-        "uv run maturin develop --uv -m dimos/mapping/ray_tracing/rust/Cargo.toml"
+        "uv run maturin develop --uv -m dimos/mapping/ray_tracing/rust/py/Cargo.toml"
     ) from e

@@ -20,6 +20,7 @@ from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
+from dimos.manipulation.planning.spec.validation import validate_robot_model_config
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
     openyam_planner_coordinator,
@@ -49,15 +50,23 @@ def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
     return _module_kwargs(blueprint, ControlCoordinator)
 
 
-def test_make_openyam_model_config_maps_only_arm_joints() -> None:
-    config = make_openyam_model_config(name="arm")
+def test_make_openyam_model_config_uses_canonical_arm_joints() -> None:
+    config = make_openyam_model_config()
 
-    assert len(config.joint_names) == OPENYAM_DOF
-    assert set(config.joint_name_mapping) == set(OPENYAM_ARM_JOINTS)
-    assert OPENYAM_GRIPPER_JOINT not in config.joint_name_mapping
-    assert config.base_link == "base"
-    assert config.end_effector_link == "gripper_tip"
-    assert config.gripper_hardware_id == OPENYAM_HARDWARE_ID
+    assert config.joint_names == OPENYAM_ARM_JOINTS
+    assert config.base_link == "yam_base_link"
+    assert config.planning_groups[0].tip_link == "yam_hand_tcp"
+    assert config.gripper_hardware_id == "arm"
+
+
+@pytest.mark.self_hosted
+def test_openyam_model_contains_canonical_arm_joints() -> None:
+    config = make_openyam_model_config()
+    model = validate_robot_model_config(config)
+
+    assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
+        OPENYAM_ARM_JOINTS
+    )
 
 
 def test_openyam_hardware_physical_mode_returns_one_whole_body(
@@ -84,7 +93,8 @@ def test_openyam_hardware_simulation_mode_returns_generic_whole_body_mock(
     hardware = openyam_hardware()
 
     assert hardware.adapter_type == "mock_whole_body"
-    limits = hardware.adapter_kwargs["limits"]
+    limits = hardware.limits
+    assert limits is not None
     assert limits.position_lower == [*([None] * OPENYAM_DOF), 0.0]
     assert limits.position_upper == [*([None] * OPENYAM_DOF), 1.0]
 

@@ -78,6 +78,7 @@ def loopback_session(port: int) -> dict[str, object]:
         "connect": [],
         "listen": [f"tcp/127.0.0.1:{port}"],
         "multicast": False,
+        "scout_addr": "",
         "gossip": False,
         "interface": "lo",
         "connect_timeout_ms": 0,
@@ -98,7 +99,9 @@ def await_listener(proc: subprocess.Popen[bytes], port: int, timeout: float = 20
     """Block until the host's zenoh endpoint accepts, so our dial cannot race it."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        assert proc.poll() is None, "the host exited before it started listening"
+        if proc.poll() is not None:
+            stderr = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
+            raise AssertionError(f"the host exited before it started listening:\n{stderr}")
         try:
             with socket.create_connection(("127.0.0.1", port), timeout=0.2):
                 return
