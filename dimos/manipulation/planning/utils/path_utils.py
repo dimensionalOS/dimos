@@ -52,7 +52,7 @@ def interpolate_path(
 
     Args:
         path: Original path (list of JointState waypoints)
-        resolution: Maximum distance between waypoints (radians)
+        resolution: Maximum distance between waypoints in native joint coordinates
 
     Returns:
         Interpolated path with more waypoints
@@ -100,7 +100,7 @@ def interpolate_segment(
     Args:
         start: Start joint configuration
         end: End joint configuration
-        step_size: Maximum step size (radians)
+        step_size: Maximum step size in native joint coordinates
 
     Returns:
         List of interpolated JointState waypoints [start, ..., end]
@@ -188,7 +188,7 @@ def compute_path_length(path: JointPath) -> float:
         path: Path to measure (list of JointState waypoints)
 
     Returns:
-        Total length in radians
+        Total Euclidean length in native joint coordinates
 
     Example:
         length = compute_path_length(path)
@@ -215,8 +215,8 @@ def is_path_within_limits(
 
     Args:
         path: Path to check (list of JointState waypoints)
-        lower_limits: Lower joint limits (radians)
-        upper_limits: Upper joint limits (radians)
+        lower_limits: Lower limits in native joint coordinates
+        upper_limits: Upper limits in native joint coordinates
 
     Returns:
         True if all waypoints are within limits
@@ -237,8 +237,8 @@ def clip_path_to_limits(
 
     Args:
         path: Path to clip (list of JointState waypoints)
-        lower_limits: Lower joint limits (radians)
-        upper_limits: Upper joint limits (radians)
+        lower_limits: Lower limits in native joint coordinates
+        upper_limits: Upper limits in native joint coordinates
 
     Returns:
         Path with all waypoints clipped to limits

@@ -24,6 +24,15 @@ import dimos.robot.assets.model as robot_model
 from dimos.utils.data import LfsPath
 
 
+def _planar_base() -> robot_model.PlanarBaseConfig:
+    return robot_model.PlanarBaseConfig(
+        position_lower=(-2.0, -3.0, -3.14),
+        position_upper=(2.0, 3.0, 3.14),
+        velocity_limits=(0.5, 0.6, 1.0),
+        acceleration_limits=(1.0, 1.2, 2.0),
+    )
+
+
 def test_model_load_is_lazy_and_memoized(
     tmp_path: Path,
     mocker: MockerFixture,
@@ -171,6 +180,132 @@ def test_with_fixed_frame_builds_ordered_model_chain_and_preserves_extensions(
         "transmission",
         "ros2_control",
     ]
+
+
+def test_with_planar_base_prepends_three_one_dof_joints(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'/><link name='tool'/>"
+        "<joint name='arm' type='revolute'><parent link='base'/><child link='tool'/>"
+        "<limit lower='-1' upper='1' effort='1' velocity='1'/></joint></robot>"
+    )
+    planar = _planar_base()
+
+    model = robot_model.RobotModel.from_file(urdf).with_planar_base(planar)
+    loaded = model.load()
+    root = ET.fromstring(loaded.xml)
+
+    assert model.planar_base is planar
+    assert loaded.root_link == "planar_base_root"
+    assert [loaded.get_joint(name).type for name in planar.joint_names] == [
+        "prismatic",
+        "prismatic",
+        "revolute",
+    ]
+    assert [
+        (
+            loaded.get_joint(name).parent_link,
+            loaded.get_joint(name).child_link,
+        )
+        for name in planar.joint_names
+    ] == [
+        ("planar_base_root", "planar_base_root_x"),
+        ("planar_base_root_x", "planar_base_root_xy"),
+        ("planar_base_root_xy", "base"),
+    ]
+    assert [root.find(f"joint[@name='{name}']/axis").get("xyz") for name in planar.joint_names] == [
+        "1 0 0",
+        "0 1 0",
+        "0 0 1",
+    ]
+    assert root.find("joint[@name='base/x']/limit").attrib == {
+        "lower": "-2.0",
+        "upper": "2.0",
+        "effort": "1",
+        "velocity": "0.5",
+        "acceleration": "1.0",
+    }
+    assert "planar_base_root" not in urdf.read_text()
+
+
+def test_planar_base_can_be_extended_by_other_model_transforms(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text("<robot name='r'><link name='base'/></robot>")
+
+    loaded = (
+        robot_model.RobotModel.from_file(urdf)
+        .with_planar_base(_planar_base())
+        .with_fixed_frame("map_origin", "planar_base_root")
+        .with_joint_position_limits("base/x", lower=-1.0, upper=1.0)
+        .load()
+    )
+    root = ET.fromstring(loaded.xml)
+
+    assert root.find("joint[@name='map_origin_joint']/parent").get("link") == "planar_base_root"
+    assert root.find("joint[@name='base/x']/limit").get("lower") == "-1.0"
+
+
+@pytest.mark.parametrize(
+    ("update", "message"),
+    [
+        ({"position_lower": (-1.0, -1.0)}, "x, y, and yaw"),
+        ({"position_upper": (-3.0, 3.0, 3.14)}, "strictly increasing"),
+        ({"velocity_limits": (0.5, 0.0, 1.0)}, "positive"),
+        ({"acceleration_limits": (1.0, float("nan"), 2.0)}, "finite"),
+        ({"joint_names": ("base/x", "base/x", "base/yaw")}, "unique"),
+    ],
+)
+def test_planar_base_rejects_invalid_configuration(
+    update: dict[str, object],
+    message: str,
+) -> None:
+    values: dict[str, object] = {
+        "position_lower": (-2.0, -3.0, -3.14),
+        "position_upper": (2.0, 3.0, 3.14),
+        "velocity_limits": (0.5, 0.6, 1.0),
+        "acceleration_limits": (1.0, 1.2, 2.0),
+    }
+    values.update(update)
+
+    with pytest.raises(ValueError, match=message):
+        robot_model.PlanarBaseConfig(**values)
+
+
+@pytest.mark.parametrize(
+    ("urdf_xml", "message"),
+    [
+        ("<robot name='r'><link name='one'/><link name='two'/></robot>", "one URDF root"),
+        (
+            "<robot name='r'><link name='base'/><link name='planar_base_root'/></robot>",
+            "one URDF root",
+        ),
+        (
+            "<robot name='r'><link name='base'/><joint name='base/x' type='fixed'>"
+            "<parent link='base'/><child link='tool'/></joint><link name='tool'/></robot>",
+            "joint names already exist",
+        ),
+    ],
+)
+def test_with_planar_base_rejects_incompatible_model(
+    tmp_path: Path,
+    urdf_xml: str,
+    message: str,
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(urdf_xml)
+    model = robot_model.RobotModel.from_file(urdf).with_planar_base(_planar_base())
+
+    with pytest.raises(ValueError, match=message):
+        model.load()
+
+
+def test_with_planar_base_rejects_duplicate_application(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text("<robot name='r'><link name='base'/></robot>")
+    model = robot_model.RobotModel.from_file(urdf).with_planar_base(_planar_base())
+
+    with pytest.raises(ValueError, match="already has"):
+        model.with_planar_base(_planar_base())
 
 
 def test_with_joint_position_limits_preserves_model_content(tmp_path: Path) -> None:

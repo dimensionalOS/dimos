@@ -1211,9 +1211,19 @@ class ManipulationModule(Module):
         """Dispatch the one pending plan, optionally waiting for completion."""
         with self._lock:
             target_plan = self._last_plan
-            self._last_plan = None
             if target_plan is None:
                 return ExecutionResult(ExecutionStatus.NO_PLAN, "No pending plan")
+            planar_base = self.config.model.model.planar_base
+            if planar_base is not None and set(planar_base.joint_names) & set(
+                target_plan.trajectory.joint_names
+            ):
+                message = (
+                    "Planar-base trajectories support planning and preview only; "
+                    "a feedback base controller is required for execution"
+                )
+                self._error_message = message
+                return ExecutionResult(ExecutionStatus.REJECTED, message)
+            self._last_plan = None
             self._state = ManipulationState.EXECUTING
         try:
             result = self._execution_manager.execute(

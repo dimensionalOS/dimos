@@ -30,10 +30,11 @@ from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.robot.assets.model import PlanarBaseConfig
 
 
-def _plan(final_position: float = 1.0) -> GeneratedPlan:
-    names = ["arm/j0"]
+def _plan(final_position: float = 1.0, joint_name: str = "arm/j0") -> GeneratedPlan:
+    names = [joint_name]
     trajectory = JointTrajectory(
         joint_names=names,
         points=[
@@ -105,6 +106,50 @@ def test_known_coordinator_rejection_restores_previous_state(
 
     assert module._state is ManipulationState.IDLE
     assert module._last_plan is None
+
+
+def test_execute_rejects_planar_base_plan_but_keeps_it_for_preview(
+    module_factory,
+) -> None:
+    coordinator = _coordinator()
+    module = _module_with_coordinator(coordinator, module_factory)
+    planar_base = PlanarBaseConfig(
+        position_lower=(-2.0, -2.0, -3.14),
+        position_upper=(2.0, 2.0, 3.14),
+        velocity_limits=(1.0, 1.0, 2.0),
+        acceleration_limits=(2.0, 2.0, 4.0),
+    )
+    module.config.model.model = module.config.model.model.with_planar_base(planar_base)
+    plan = _plan(joint_name=planar_base.joint_names[0])
+    module._last_plan = plan
+    module._state = ManipulationState.COMPLETED
+
+    result = module.execute(blocking=False)
+
+    assert result.status is ExecutionStatus.REJECTED
+    assert "planning and preview only" in result.message
+    assert module._last_plan is plan
+    assert module._state is ManipulationState.COMPLETED
+    coordinator.execute_trajectory.assert_not_called()
+
+
+def test_execute_allows_arm_only_plan_from_planar_model(module_factory) -> None:
+    coordinator = _coordinator()
+    module = _module_with_coordinator(coordinator, module_factory)
+    planar_base = PlanarBaseConfig(
+        position_lower=(-2.0, -2.0, -3.14),
+        position_upper=(2.0, 2.0, 3.14),
+        velocity_limits=(1.0, 1.0, 2.0),
+        acceleration_limits=(2.0, 2.0, 4.0),
+    )
+    module.config.model.model = module.config.model.model.with_planar_base(planar_base)
+    plan = _plan()
+    module._last_plan = plan
+
+    result = module.execute(blocking=False)
+
+    assert result.status is ExecutionStatus.ACCEPTED
+    coordinator.execute_trajectory.assert_called_once_with(plan.trajectory)
 
 
 def test_uncertain_execute_projects_to_fault(module_factory) -> None:

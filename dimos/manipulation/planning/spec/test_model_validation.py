@@ -20,6 +20,7 @@ Pink/Pinocchio, Drake, and RoboPlan loaders; no private name encoding is needed.
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -28,7 +29,16 @@ from yourdfpy import URDF  # type: ignore[import-untyped]
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.validation import validate_robot_model_config
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import PlanarBaseConfig, RobotModel
+
+
+def _planar_base() -> PlanarBaseConfig:
+    return PlanarBaseConfig(
+        position_lower=(-2.0, -2.0, -3.14),
+        position_upper=(2.0, 2.0, 3.14),
+        velocity_limits=(1.0, 1.0, 2.0),
+        acceleration_limits=(2.0, 2.0, 4.0),
+    )
 
 
 def _write_slash_model(path: Path) -> None:
@@ -108,6 +118,32 @@ def test_canonical_slash_names_load_natively_in_pinocchio(tmp_path: Path) -> Non
     ]
 
 
+def test_planar_base_joints_are_one_coordinate_in_pinocchio(tmp_path: Path) -> None:
+    pinocchio = pytest.importorskip("pinocchio")
+    urdf = tmp_path / "canonical.urdf"
+    _write_slash_model(urdf)
+    planar_base = _planar_base()
+    loaded = RobotModel.from_file(urdf).with_planar_base(planar_base).load()
+
+    model = pinocchio.buildModelFromXML(loaded.xml)
+
+    for joint_name in planar_base.joint_names:
+        joint = model.joints[model.getJointId(joint_name)]
+        assert joint.nq == 1
+        assert joint.nv == 1
+
+
+def test_planar_base_loads_natively_in_visualization_parser(tmp_path: Path) -> None:
+    urdf = tmp_path / "canonical.urdf"
+    _write_slash_model(urdf)
+    planar_base = _planar_base()
+    loaded = RobotModel.from_file(urdf).with_planar_base(planar_base).load()
+
+    visual = URDF.load(BytesIO(loaded.xml.encode()), build_scene_graph=True)
+
+    assert set(planar_base.joint_names) <= set(visual.actuated_joint_names)
+
+
 def test_prepared_model_validation_accepts_canonical_bimanual_model(tmp_path: Path) -> None:
     urdf = tmp_path / "canonical.urdf"
     _write_slash_model(urdf)
@@ -119,6 +155,58 @@ def test_prepared_model_validation_accepts_canonical_bimanual_model(tmp_path: Pa
         "left/j1",
         "right/j1",
     ]
+
+
+def test_prepared_model_validation_accepts_prismatic_joint(tmp_path: Path) -> None:
+    urdf = tmp_path / "canonical.urdf"
+    _write_slash_model(urdf)
+    urdf.write_text(
+        urdf.read_text().replace(
+            'name="left/j1" type="revolute"', 'name="left/j1" type="prismatic"'
+        )
+    )
+
+    validate_robot_model_config(_config(urdf))
+
+
+@pytest.mark.parametrize("joint_type", ["fixed", "floating", "planar"])
+def test_prepared_model_validation_rejects_non_one_dof_controlled_joint(
+    tmp_path: Path,
+    joint_type: str,
+) -> None:
+    urdf = tmp_path / "canonical.urdf"
+    _write_slash_model(urdf)
+    urdf.write_text(
+        urdf.read_text().replace(
+            'name="left/j1" type="revolute"',
+            f'name="left/j1" type="{joint_type}"',
+        )
+    )
+
+    with pytest.raises(ValueError, match="one-DoF revolute, continuous, or prismatic"):
+        validate_robot_model_config(_config(urdf))
+
+
+def test_planar_base_requires_synthetic_root_and_all_base_joints(tmp_path: Path) -> None:
+    urdf = tmp_path / "canonical.urdf"
+    _write_slash_model(urdf)
+    base = _planar_base()
+    model = RobotModel.from_file(urdf).with_planar_base(base)
+    values = _config(urdf).model_dump()
+    values.update(
+        model=model,
+        joint_names=[*base.joint_names, "left/j1", "right/j1"],
+        base_link=base.root_link,
+    )
+    valid = RobotModelConfig.model_validate(values)
+
+    validate_robot_model_config(valid)
+    with pytest.raises(ValueError, match="Planar robot base_link"):
+        validate_robot_model_config(valid.model_copy(update={"base_link": "world"}))
+    with pytest.raises(ValueError, match="Planar robot controllable joints are missing"):
+        validate_robot_model_config(
+            valid.model_copy(update={"joint_names": [base.joint_names[0], "left/j1"]})
+        )
 
 
 @pytest.mark.parametrize(

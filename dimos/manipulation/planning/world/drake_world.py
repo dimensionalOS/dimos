@@ -395,7 +395,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         return pose_groups[0].name
 
     def get_joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Get joint limits (lower, upper) in radians."""
+        """Get lower and upper limits in each joint's native coordinate."""
         robot_data = self._require_model()
         config = robot_data.config
 

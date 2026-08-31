@@ -159,7 +159,7 @@ class PlanningResult:
         path: List of joint states forming the path (empty if failed).
             Each JointState contains names, positions, and optionally velocities.
         planning_time: Time taken to plan (seconds)
-        path_length: Total path length in joint space (radians)
+        path_length: Total Euclidean path length in native joint coordinates
         iterations: Number of iterations/nodes expanded
         message: Human-readable status message
         timestamps: Optional timestamps for each waypoint (seconds from start).
