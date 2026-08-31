@@ -97,3 +97,7 @@ yolo11n*.pt
 *.ignore
 *.ignore.*
 site/
+
+# Fetched third-party meshes for the PX4 HIL simulator (tools/fetch_x500_meshes.py)
+dimos/simulation/px4_hil/assets/x500/*.stl
+dimos/simulation/px4_hil/assets/x500/*.obj
