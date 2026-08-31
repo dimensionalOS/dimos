@@ -37,6 +37,11 @@ from dimos.core.coordination.worker_messages import (
 )
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import shutdown_all_providers
+from dimos.protocol.service.zenohservice import (
+    ZenohConfig,
+    configure_zenoh_mesh,
+    default_session_pool,
+)
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
@@ -169,6 +174,9 @@ class PythonWorker:
         self._conn: Connection | None = None
         self._worker_id: int = _worker_ids.next()
         self.dedicated: bool = False
+        # Loopback locator the worker's zenoh sessions listen on (zenoh
+        # transport only); the coordinator and later-spawned workers dial it.
+        self.listen_endpoint: str | None = None
 
     @property
     def module_count(self) -> int:
@@ -201,14 +209,20 @@ class PythonWorker:
         """Reserve a slot so _select_worker() sees the pending load."""
         self._reserved += 1
 
-    def start_process(self) -> None:
+    def start_process(
+        self,
+        zenoh_mesh: tuple[str, tuple[str, ...]] | None = None,
+        host_config: GlobalConfig | None = None,
+    ) -> None:
         ctx = get_forkserver_context()
         parent_conn, child_conn = ctx.Pipe()
         self._conn = parent_conn
+        if zenoh_mesh is not None:
+            self.listen_endpoint = zenoh_mesh[0]
 
         self._process = ctx.Process(
             target=_worker_entrypoint,
-            args=(child_conn, self._worker_id),
+            args=(child_conn, self._worker_id, zenoh_mesh, host_config),
             daemon=True,
         )
         self._process.start()
@@ -327,8 +341,27 @@ class _WorkerState:
     should_stop: bool = False
 
 
-def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
+def _worker_entrypoint(
+    conn: Connection,
+    worker_id: int,
+    zenoh_mesh: tuple[str, tuple[str, ...]] | None = None,
+    host_config: GlobalConfig | None = None,
+) -> None:
     signal.signal(signal.SIGINT, signal.SIG_IGN)  # coordinator handles shutdown
+    # Before any module can open a session: the worker's zenoh endpoints are
+    # fixed at spawn (its own listen port, the endpoints of older siblings).
+    # The session opens eagerly so the listener is up for siblings and the
+    # coordinator well before the first deploy; modules reuse it via the pool.
+    # The coordinator's config is applied first: the eager session must carry
+    # the same settings the deploy-time sync re-applies (scout group, gossip,
+    # timeouts), or that sync would change the session key and fork a second
+    # session that re-binds this worker's mesh listen port.
+    if zenoh_mesh is not None:
+        if host_config is not None:
+            global_config.update(**host_config.model_dump())
+        configure_zenoh_mesh(*zenoh_mesh)
+        global_config.update(transport="zenoh")
+        default_session_pool.acquire(ZenohConfig())
     state = _WorkerState(instances={}, worker_id=worker_id)
 
     try:

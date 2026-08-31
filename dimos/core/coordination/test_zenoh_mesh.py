@@ -1,0 +1,120 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Coordinator/worker connectivity over explicit loopback zenoh endpoints.
+
+With ``zenoh_scouting`` off, multicast scouting is pinned to the loopback
+interface, which macOS never delivers on. The coordinator therefore meshes
+itself and its workers over explicit TCP endpoints; these tests must pass
+with multicast scouting fully dead.
+"""
+
+from collections.abc import Iterator
+import time
+
+import pytest
+from reactivex.disposable import Disposable
+
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.core import rpc
+from dimos.core.global_config import global_config
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
+from dimos.core.transport import pZenohTransport
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.service import zenohservice
+
+
+def test_mesh_endpoints_feed_zenoh_config_defaults() -> None:
+    endpoint = zenohservice.allocate_mesh_endpoint()
+    assert endpoint.startswith("tcp/127.0.0.1:")
+
+    sibling = "tcp/127.0.0.1:1"
+    zenohservice.configure_zenoh_mesh(endpoint, (sibling,))
+    try:
+        config = zenohservice.ZenohConfig()
+        assert config.listen == [endpoint]
+        assert sibling in config.connect
+    finally:
+        zenohservice.configure_zenoh_mesh(None, ())
+
+    config = zenohservice.ZenohConfig()
+    assert config.listen == []
+    assert sibling not in config.connect
+
+
+class MeshSource(Module):
+    mesh_data: Out[Vector3]
+
+    @rpc
+    def emit(self, x: float) -> bool:
+        self.mesh_data.publish(Vector3(x, 0.0, 0.0))
+        return True
+
+
+class MeshSink(Module):
+    mesh_data: In[Vector3]
+
+    received = 0
+
+    @rpc
+    def start(self) -> None:
+        def _on_data(msg: Vector3) -> None:
+            self.received += 1
+
+        unsub = self.mesh_data.subscribe(_on_data)
+        self.register_disposable(Disposable(unsub))
+
+
+@pytest.fixture
+def zenoh_transport(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    # Pin the parent's scouting to a nonexistent interface: zenoh logs an
+    # error and scouts nothing, so the coordinator can only reach its workers
+    # through the explicit mesh endpoints — on every platform, like on macOS
+    # where loopback multicast is never delivered. (Workers are spawned via
+    # forkserver and don't see this monkeypatch, which is fine: the mesh, not
+    # scouting, is what this test must exercise.)
+    monkeypatch.setattr(zenohservice, "LOOPBACK_INTERFACE", "dimosnoif0")
+    previous = global_config.transport
+    global_config.update(transport="zenoh")
+    try:
+        yield
+    finally:
+        global_config.update(transport=previous)
+
+
+@pytest.mark.timeout(90)
+def test_rpc_and_streams_over_explicit_mesh(zenoh_transport: None) -> None:
+    coordinator = ModuleCoordinator()
+    coordinator.start()
+    try:
+        source = coordinator.deploy(MeshSource)
+        sink = coordinator.deploy(MeshSink)
+
+        source.mesh_data.transport = pZenohTransport("dimos/test/mesh_data")
+        sink.mesh_data.connect(source.mesh_data)
+
+        # RPC round-trips prove coordinator->worker links; the counter rising
+        # in the sink proves the worker->worker link carries pub/sub data.
+        sink.start()
+        deadline = time.monotonic() + 30.0
+        sent = 0
+        while time.monotonic() < deadline and sink.received < 3:
+            assert source.emit(float(sent)) is True
+            sent += 1
+            time.sleep(0.1)
+
+        assert sink.received >= 3
+    finally:
+        coordinator.stop()

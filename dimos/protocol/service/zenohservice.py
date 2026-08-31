@@ -20,10 +20,13 @@ import platform
 import socket
 import threading
 import time
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field, model_validator
 import zenoh
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 from dimos.core.global_config import TransportBackend, ZenohMode, global_config
 from dimos.protocol.service.spec import Service, SessionConfig
@@ -56,17 +59,60 @@ def _locators(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+# Explicit loopback endpoints wiring the coordinator and its workers together.
+# Sibling discovery cannot rely on multicast scouting: macOS never delivers
+# multicast pinned to lo0, so with scouting off the processes would never find
+# each other. Instead each worker listens on a coordinator-allocated port and
+# dials the workers spawned before it, and coordinator-side sessions dial every
+# live worker. Process-wide; consumed by the ZenohConfig default factories.
+_mesh_listen: str | None = None
+_mesh_connect: tuple[str, ...] = ()
+
+
+def allocate_mesh_endpoint() -> str:
+    """Reserve a free loopback port and return it as a ``tcp/`` locator.
+
+    The probe socket closes before zenoh binds the port at session open; a
+    collision in that window fails the session open loudly rather than
+    silently dropping traffic.
+    """
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port: int = sock.getsockname()[1]
+    return f"tcp/127.0.0.1:{port}"
+
+
+def configure_zenoh_mesh(listen: str | None, connect: Sequence[str]) -> None:
+    """Set the loopback endpoints this process's future zenoh sessions mesh over.
+
+    Workers pass their own ``listen`` endpoint plus the endpoints of the
+    workers spawned before them; the coordinator passes ``None`` and dials all
+    live workers. Already-open sessions are not reconfigured: the mesh stays
+    complete because every session dials whatever existed when it opened and
+    is dialled by everything newer.
+    """
+    global _mesh_listen, _mesh_connect
+    _mesh_listen = listen
+    _mesh_connect = tuple(connect)
+
+
 def _default_connect_endpoints() -> list[str]:
-    """Dial known robots directly instead of trusting multicast scouting.
+    """Dial known robots and mesh siblings instead of trusting multicast scouting.
 
     Many APs filter multicast between WiFi clients, so a robot reachable over
     TCP never answers a scout. An IP carrying its own port is used as given.
     """
-    if global_config.transport != "zenoh":
-        return []
-    ips = _locators(f"{global_config.robot_ip or ''},{global_config.robot_ips or ''}")
-    robots = [f"tcp/{ip}" if ":" in ip else f"tcp/{ip}:{ROBOT_ZENOH_PORT}" for ip in ips]
-    return list(dict.fromkeys(robots + _locators(global_config.zenoh_connect)))
+    out: list[str] = []
+    if global_config.transport == "zenoh":
+        ips = _locators(f"{global_config.robot_ip or ''},{global_config.robot_ips or ''}")
+        robots = [f"tcp/{ip}" if ":" in ip else f"tcp/{ip}:{ROBOT_ZENOH_PORT}" for ip in ips]
+        out = list(dict.fromkeys(robots + _locators(global_config.zenoh_connect)))
+    out.extend(endpoint for endpoint in _mesh_connect if endpoint not in out)
+    return out
+
+
+def _default_listen_endpoints() -> list[str]:
+    return [_mesh_listen] if _mesh_listen else []
 
 
 def _default_scouting() -> bool:
@@ -120,8 +166,9 @@ class ZenohConfig(SessionConfig):
 
     mode: ZenohMode = Field(default_factory=_default_mode)
     connect: list[str] = Field(default_factory=_default_connect_endpoints)
-    # Pinned per session, never global. Only one process can hold a listen port.
-    listen: list[str] = []
+    # Pinned per session or per process (a worker's mesh port), never network
+    # global. Only one process can hold a listen port.
+    listen: list[str] = Field(default_factory=_default_listen_endpoints)
     # Discover peers across the network. Off keeps discovery on loopback.
     scouting: bool = Field(default_factory=_default_scouting)
     # Named interface to scout on, overriding scouting. Empty derives it.
@@ -238,6 +285,15 @@ def _zenoh_config(config: ZenohConfig) -> zenoh.Config:
         if not value and name in _ZENOH_DEFAULTED_WHEN_EMPTY:
             continue
         zconfig.insert_json5(_ZENOH_KEYS[name], json.dumps(value))
+    if config.connect:
+        # A dial can race a mesh sibling's listener still coming up; zenoh's
+        # default 1s initial retry would hold back the first messages. Retry
+        # fast, keep the default backoff cap. (Whole object: zenoh rejects
+        # inserts at the leaf keys.)
+        zconfig.insert_json5(
+            "connect/retry",
+            json.dumps({"period_init_ms": 100, "period_max_ms": 4000, "period_increase_factor": 2}),
+        )
     return zconfig
 
 
@@ -351,7 +407,13 @@ class ZenohService(Service):
         A session opens before its endpoints are dialed, so without this the
         first published messages have nowhere to go.
         """
-        pending = {ep: endpoint_addresses(ep) for ep in self.config.connect}
+        # Mesh endpoints are excluded: a sibling's listener only comes up once
+        # its own first module deploys, zenoh keeps dialling in the background,
+        # and the RPC retry loop rides out the gap. Blocking every session
+        # start on them would stall deploys instead.
+        pending = {
+            ep: endpoint_addresses(ep) for ep in self.config.connect if ep not in _mesh_connect
+        }
         if not pending or self.config.connect_timeout <= 0:
             return
         # A client session holds one link. Zenoh dials the endpoints as
