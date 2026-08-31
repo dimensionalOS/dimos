@@ -28,6 +28,7 @@ TASK_EXPOSES: dict[str, list[str]] = {
     "gripper": [
         "set_position",
         "set_normalized",
+        "cancel",
         "get_position",
         "get_normalized",
     ],
