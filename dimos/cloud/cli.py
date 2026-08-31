@@ -56,6 +56,7 @@ def _bar(name: str) -> Iterator[Callable[[str, int, int], None]]:
 def upload(
     path: Path | None, robot: str | None, kind: str | None, since_s: float | None, chunk: int | None
 ) -> None:
+    path = None if str(path) == "latest" else path
     cloud = CloudData()
     targets = recordings(since_s) if since_s else [path] if path else recordings()[-1:]
     if not targets:
