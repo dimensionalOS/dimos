@@ -6,21 +6,21 @@ This guide helps you set up a camera-based navigation system.
 
 # ⚠️ What Works and What Does Not
 
-Let me be up front about what works and what does not. All camera-based systems are worse than a good lidar. You can build production-quality navigation with cameras alone, but only if you do it carefully.
+Let me be up front about what works and what does not. All camera-based systems are worse than a good 360 lidar, like the mid360. You can build production-quality navigation with cameras alone, but only if we do it carefully.
 
-A regular phone camera facing forward on a humanoid, with no data from the motors, is basically impossible as of 2026. A wheeled robot with motor encoders and a downward-facing RealSense depth camera can do some pretty cool stuff.
+A regular mono raspberry pi camera facing forward on a humanoid, with no data from the motors, is basically impossible to get to get a real time production-grade map out of as of 2026. A wheeled robot with motor encoders and a downward-facing RealSense depth camera can do some pretty cool stuff.
 
 Use these rules of thumb:
 
-- We need good odometry first. A map built on drifting poses will also drift.
-- We need a depth camera and good odometry to make a half-decent map.
-- Calibration is the difference between incredible and useless. Some cameras, including RealSense cameras, arrive pre-calibrated.
+- We need good odometry first.
+- To make a good map, we need a depth camera and good odometry.
+- Calibration is the difference between incredible and useless. Some cameras, including RealSense cameras, arrive with intrinsics pre-calibrated. Look online for how to calibrate the intrinsics for you camera. 
 - Make sure everything on your robot is stiff. Flexing and wobble between sensors can ruin performance.
 - Stereo cameras are significantly better than mono cameras because they observe metric depth.
-- Turn the IR blaster off for better odometry. Its projected pattern moves across the scene as the robot moves.
+- An IR flood light is great, but an IR dot emitter is not. Both are often built into IR cameras. Turn off the IR dot emitter to get better odometry at the cost of some depth quality.
 - Global-shutter cameras, such as the RealSense D455, are much better than rolling-shutter cameras, such as the ZED Mini.
-- Motor encoder data is a game changer. It significantly improves the motion estimate.
-- An IMU plus a camera does not do much, but an IMU plus motor encoders improves accuracy significantly.
+- Motor encoder data is a game changer. It significantly improves the final odometry.
+- An IMU + camera does not do much, but an IMU + motor encoders improves accuracy significantly.
 - Multiple cameras are a game changer. They significantly improve coverage and robustness.
 
 ---
