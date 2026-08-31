@@ -42,5 +42,5 @@ serde = { version = "1", features = ["derive"] }
 ahash = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-validator = { version = "0.20", features = ["derive"] }
+validator = { version = "0.21", features = ["derive"] }
 rayon = "1"
