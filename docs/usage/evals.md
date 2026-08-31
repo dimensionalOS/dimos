@@ -126,9 +126,9 @@ grade -> run dir.
 An agent is a module defining one dataclass: everything it decides is a
 constructor argument (`model`, `system_prompt`, `max_steps`, `frames_per_stream`,
 `modules`), and `summary.json` records all of them. `--agent` names the
-module; `--set field=value` sets a field (values are JSON where they parse —
-`10`, `null`, `true` — else text). The same two flags reach an agent from
-another package.
+module; `--set field=value` sets a field. Values that parse as JSON (`10`,
+`null`, `true`) are decoded; everything else remains text. The same two flags
+reach an agent from another package.
 
 ```python session=evals ansi=false
 from dimos.evals.cli import load_agent

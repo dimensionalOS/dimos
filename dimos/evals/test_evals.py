@@ -240,7 +240,7 @@ def test_dataset_start_copies_the_selection(dataset: str) -> None:
         assert running.mcp_url == "" and not env.has_robot
         assert running.artifacts["recording"] == Path(dataset)
         with pytest.raises(AttributeError, match="No stream 'lidar'"):
-            _ = running.recording.streams.lidar
+            list(running.recording.streams.lidar)
     finally:
         env.stop()
 
