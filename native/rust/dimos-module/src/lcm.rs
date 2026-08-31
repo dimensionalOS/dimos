@@ -65,10 +65,13 @@ fn options_from_url(url: &str) -> LcmOptions {
             options.multicast_group = group;
             options.port = port;
         }
-        _ => tracing::warn!(
-            url,
-            "LCM_DEFAULT_URL has no parsable group:port; using the defaults"
-        ),
+        _ => {
+            tracing::warn!(
+                url,
+                "LCM_DEFAULT_URL has no parsable group:port; using the defaults"
+            );
+            return options;
+        }
     }
     for (key, value) in parsed.query_pairs() {
         if key == "ttl" {
@@ -189,13 +192,14 @@ mod tests {
         let defaults = dimos_lcm::LcmOptions::default();
         for url in [
             "tcp://127.0.0.1:7667",
-            "udpm://not-an-ip:7667",
-            "udpm://239.255.76.67",
+            "udpm://not-an-ip:7667?ttl=42",
+            "udpm://239.255.76.67?ttl=42",
             "239.255.76.67:7667",
         ] {
             let options = options_from_url(url);
             assert_eq!(options.multicast_group, defaults.multicast_group, "{url}");
             assert_eq!(options.port, defaults.port, "{url}");
+            assert_eq!(options.ttl, defaults.ttl, "{url}");
         }
     }
 }
