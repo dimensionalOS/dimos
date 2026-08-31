@@ -14,7 +14,7 @@ Use these rules of thumb:
 
 - We need good odometry first.
 - To make a good map, we need a depth camera and good odometry.
-- Calibration is the difference between incredible and useless. Some cameras, including RealSense cameras, arrive with intrinsics pre-calibrated. Look online for how to calibrate the intrinsics for you camera. 
+- Calibration is the difference between incredible and useless. Some cameras, including RealSense cameras, arrive with intrinsics pre-calibrated. Look online for how to calibrate the intrinsics for you camera.
 - Make sure everything on your robot is stiff. Flexing and wobble between sensors can ruin performance.
 - Stereo cameras are significantly better than mono cameras because they observe metric depth.
 - An IR flood light is great, but an IR dot emitter is not. Both are often built into IR cameras. Turn off the IR dot emitter to get better odometry at the cost of some depth quality.
@@ -31,8 +31,8 @@ So you've got your robot with a calibrated camera. What next?
 
 1. Either use a dimos camera module, or write your own. Use the dimos Realsense module as an example of how to publish the camera frames, local transform frames, and camera intrinsics.
 2. If you have an IMU or the camera has an IMU, make sure those are published as well, again use the Realsense as an example for the IMU message types.
-3. You'll need to `tf.publish` a transform between your `base_link` (main point on your robot) and the camera (often called `camera_link`). To do that create a URDF for your robot, then create a `YourRobotStaticTf` module that inherits from `dimos.protocol.tf.static_tf_publisher.StaticTfPublisher`. Use the `SpotHighLevel` module as an example for how to load and publish everything from a URDF. 
-4. Create a blueprint with the DimSlam module similar to the one below: 
+3. You'll need to `tf.publish` a transform between your `base_link` (main point on your robot) and the camera (often called `camera_link`). To do that create a URDF for your robot, then create a `YourRobotStaticTf` module that inherits from `dimos.protocol.tf.static_tf_publisher.StaticTfPublisher`. Use the `SpotHighLevel` module as an example for how to load and publish everything from a URDF.
+4. Create a blueprint with the DimSlam module similar to the one below:
 
 ```python skip
 from dimos.core.coordination.blueprints import autoconnect
@@ -55,7 +55,7 @@ blueprint = autoconnect(
     DimSlam.blueprint(
         camera_mode="stereo", # pick one of "mono", "stereo", "rgbd", or "multisensor".
         imus=[
-            # NOTE: keep the robot still for a moment when powering it on to calibrate IMU gravity 
+            # NOTE: keep the robot still for a moment when powering it on to calibrate IMU gravity
             ImuConfig(
                 frame_id="camera_accel_optical_frame", # needs to match the frame name from RealSenseCamera (or your camera module)
                 gyro_noise_density=2e-4,
