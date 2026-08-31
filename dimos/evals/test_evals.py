@@ -451,13 +451,55 @@ def test_recording_helper_opens_the_artifact(dataset: str) -> None:
         store.stop()
 
 
+def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
+    """Half credit for the exact room count, half for the fraction of room
+    points the recorded odometry approached; an unparseable reply loses the
+    count half but the world still scores."""
+    from dimos.evals.suites.dimsim_pointcloud_mapping import (
+        N_ROOMS,
+        ROOMS,
+        VISIT_RADIUS_M,
+        grade_rooms,
+    )
+
+    def written(db: Path, points: list[tuple[float, float]]) -> Path:
+        store = _open_store(db)
+        stream = store.stream("odom", PoseStamped)
+        for i, (x, y) in enumerate(points):
+            stream.append(_pose(x, y), ts=1000.0 + i)
+        store.stop()
+        return db
+
+    def score(db: Path, answer: str) -> float:
+        outcome = Outcome(trajectory=_trajectory(answer, tmp_path), artifacts={"recording": db})
+        return grade_rooms(outcome)
+
+    rooms = list(ROOMS.values())
+    two = written(tmp_path / "two.db", [(x + VISIT_RADIUS_M / 2, y) for x, y in rooms[:2]])
+    coverage = 0.5 * 2 / N_ROOMS
+    assert score(two, str(N_ROOMS)) == pytest.approx(0.5 + coverage)
+    assert score(two, f"{N_ROOMS} rooms, I think") == pytest.approx(0.5 + coverage)
+    assert score(two, str(N_ROOMS + 1)) == pytest.approx(coverage), "wrong count"
+    assert score(two, "no idea") == pytest.approx(coverage), "unparseable reply"
+
+    every = written(tmp_path / "every.db", rooms)
+    assert score(every, str(N_ROOMS)) == 1.0
+    assert score(written(tmp_path / "still.db", [(50.0, 50.0)]), str(N_ROOMS)) == 0.5
+
+
 def test_suites_and_agents_importable() -> None:
     """Modules construct without data or network (lambdas stay lazy)."""
     from dimos.evals.cli import load_agent
     from dimos.evals.module import list_agents
-    from dimos.evals.suites import dimsim_house, examples, go2_smoke, go2_vqa
+    from dimos.evals.suites import (
+        dimsim_house,
+        dimsim_pointcloud_mapping,
+        examples,
+        go2_smoke,
+        go2_vqa,
+    )
 
-    for module in (examples, go2_smoke, go2_vqa, dimsim_house):
+    for module in (examples, go2_smoke, go2_vqa, dimsim_house, dimsim_pointcloud_mapping):
         assert module.SUITE, module.__name__
     agents = list_agents()
     assert {m.rsplit(".", 1)[1] for m in agents} == {"question_answer", "blind", "mcp_client", "pi"}
@@ -711,6 +753,40 @@ def test_pi_preflight_and_tool_rendering(tmp_path: Path, monkeypatch: pytest.Mon
         }
     ]
     assert render_tools(tools) == "- move_to(x, y): Go to a pose."
+
+
+def test_pi_skills_become_native_flags_and_preflight_checks_paths(
+    dataset: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Explicit skill paths become repeated ``--skill`` flags, absolute (Pi's
+    cwd is the run dir) with ambient discovery still off; a missing path or a
+    bare string fails preflight before a simulator or model starts."""
+    skill = tmp_path / "spatial" / "SKILL.md"
+    skill.parent.mkdir()
+    skill.write_text("# spatial skill")
+    monkeypatch.chdir(tmp_path)
+
+    env = Dataset(dataset)
+    running = env.start("")
+    for d in ("with-skills", "bare"):
+        (tmp_path / d).mkdir()
+    try:
+        agent = Pi(skills=(str(skill), "spatial/SKILL.md"))  # absolute and relative
+        command = agent._command("go", running, tmp_path / "with-skills")
+        bare = Pi()._command("go", running, tmp_path / "bare")
+    finally:
+        env.stop()
+    assert [command[i + 1] for i, a in enumerate(command) if a == "--skill"] == [
+        str(skill),
+        str(skill),
+    ]
+    assert "--no-skills" in command, "ambient discovery stays off alongside explicit skills"
+    assert "--skill" not in bare
+
+    with pytest.raises(RuntimeError, match="do not exist"):
+        Pi(skills=(str(tmp_path / "missing.md"),)).preflight(env)
+    with pytest.raises(RuntimeError, match="list of paths"):
+        Pi(skills="spatial/SKILL.md").preflight(env)
 
 
 def test_agents_report_every_available_tool() -> None:

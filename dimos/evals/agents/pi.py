@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 import json
 import os
@@ -160,6 +161,10 @@ class Pi:
 
     ``max_steps`` is enforced from outside: Pi is killed when it has made that
     many model calls and still wants to act. ``cli`` is the ``pi`` executable.
+    ``skills`` are explicit skill files or directories for Pi's repeatable
+    native ``--skill`` flag, resolved to absolute paths (Pi runs in the case
+    dir); ambient skill discovery stays off — ``--no-skills`` disables
+    discovery only, explicit paths still load.
     """
 
     model: str = DEFAULT_MODEL
@@ -168,12 +173,18 @@ class Pi:
     max_steps: int | None = 40
     cli: str = "pi"
     modules: str = ""
+    skills: Sequence[str] = ()
 
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
         """Pi's fixed built-ins plus robot tools exposed through its bash tool."""
         return (*PI_TOOLS, *environment_tools)
 
     def preflight(self, environment: Environment) -> None:
+        if isinstance(self.skills, str):
+            raise RuntimeError("Pi.skills is a string; pass a list of paths (--set skills='[...]')")
+        missing = [p for p in self.skills if not Path(p).expanduser().resolve().exists()]
+        if missing:
+            raise RuntimeError(f"Pi skill paths do not exist: {missing}")
         if shutil.which(self.cli) is None:
             raise RuntimeError(
                 f"{self.cli!r} is not on PATH (npm install -g @earendil-works/pi-coding-agent)"
@@ -219,12 +230,15 @@ class Pi:
             parts.append(ROBOT_HELP + tool_listing(env.mcp_url))
         prompt = "\n\n".join(parts)
         (run_dir / "system-prompt.txt").write_text(prompt)
+        # Absolute before Pi changes to the run dir; --no-skills disables only
+        # ambient discovery, explicit --skill paths still load.
+        skills = [f for p in self.skills for f in ("--skill", str(Path(p).expanduser().resolve()))]
         return [
             self.cli, "--mode", "json", "--model", f"dimos/{self.model}", "--thinking", self.thinking,
             "--session-dir", str(run_dir / "pi-session"),
             "--tools", ",".join(PI_TOOLS),
             "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
-            "--no-context-files", "--no-approve",
+            "--no-context-files", "--no-approve", *skills,
             "--system-prompt", prompt, inputs,
         ]  # fmt: skip
 
