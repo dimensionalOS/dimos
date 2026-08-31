@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from dimos.models.embedding.siglip import SigLIPModel
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
     from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
-    from dimos.perception.memory.types import Instance, Localization
+    from dimos.perception.memory.types import Instance, Localization, LocalizePolicy
 
 
 class DanDetector(Resource):
@@ -140,9 +140,14 @@ class DanDetector(Resource):
         query: str | list[str],
         *,
         index: Stream[Any, Any],
+        policy: LocalizePolicy | None = None,
         **kwargs: Any,
     ) -> list[Localization] | list[list[Localization]]:
-        """:func:`localize` on this resource's models."""
+        """:func:`localize` on this resource's models.
+
+        ``policy`` is the localize thresholds. ``None`` uses the rig's scale
+        defaults.
+        """
         return localize(
             store,
             query,
@@ -150,6 +155,7 @@ class DanDetector(Resource):
             siglip=self.siglip,
             detector=self.detector,
             segmenter=self.segmenter,
+            policy=policy,
             **kwargs,
         )
 
