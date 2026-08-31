@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 import hashlib
 import json
 import os
@@ -311,3 +312,51 @@ def test_recordings_discovery_recurses_run_dirs(
     stale.mkdir()
     (stale / "memory.db.lz4").write_bytes(b"x")  # staging leftovers, skipped
     assert cd.recordings() == [db]
+
+
+def test_transport_maps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Aug 2026 outage surfaced as `POST /v1/data/uploads: 500` — pin that a 5xx
+    names the endpoint and status, and a 401 says how to fix it."""
+    from email.message import Message
+    import io
+    import urllib.error
+    import urllib.request
+
+    from dimos.cloud.cloud_transport import HttpCloudTransport
+
+    t = HttpCloudTransport("https://api.test", "dimos_sk_x", timeout=1)
+
+    def raise_http(code: int) -> Callable[..., Any]:
+        def opener(req: Any, timeout: float) -> Any:
+            raise urllib.error.HTTPError(req.full_url, code, "err", Message(), io.BytesIO(b"boom"))
+
+        return opener
+
+    monkeypatch.setattr(urllib.request, "urlopen", raise_http(500))
+    with pytest.raises(RuntimeError, match=r"POST /v1/data/uploads: 500 boom"):
+        t.request("POST", "/v1/data/uploads", {})
+    monkeypatch.setattr(urllib.request, "urlopen", raise_http(401))
+    with pytest.raises(RuntimeError, match="dimos login"):
+        t.request("POST", "/v1/data/uploads", {})
+
+
+def test_upload_cli_exits_nonzero_on_server_error(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`dimos data upload` must fail loudly (exit 1), not swallow a server fault."""
+    import typer
+
+    from dimos.cloud import cli
+
+    cloud, t, db = env
+
+    def failing_request(
+        method: str, path: str, body: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        raise RuntimeError("POST /v1/data/uploads: 503 storage unavailable")
+
+    monkeypatch.setattr(t, "request", failing_request)
+    monkeypatch.setattr(cli, "CloudData", lambda: cloud)
+    with pytest.raises(typer.Exit) as e:
+        cli.upload(db, None, None, None, None)
+    assert e.value.exit_code == 1
