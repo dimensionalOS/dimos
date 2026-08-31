@@ -597,7 +597,12 @@ name = "dimos-livox"
 version = "0.1.0"
 dependencies = [
  "crc",
+ "dimos-module",
+ "lcm-msgs",
+ "serde",
+ "tokio",
  "tracing",
+ "validator",
 ]
 
 [[package]]

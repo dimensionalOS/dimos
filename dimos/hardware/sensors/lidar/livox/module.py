@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Python NativeModule wrapper for the C++ Livox Mid-360 driver.
+"""Python NativeModule wrapper for the Rust Livox Mid-360 driver.
 
 Usage::
     from dimos.hardware.sensors.lidar.livox.module import Mid360
@@ -28,10 +28,12 @@ Usage::
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Literal
+import sys
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
@@ -54,9 +56,10 @@ from dimos.spec import perception
 
 
 class Mid360Config(NativeModuleConfig):
-    cwd: str | None = "cpp"
-    executable: str = "result/bin/mid360_native"
-    build_command: str | None = "nix build -L .#mid360_native"
+    cwd: str | None = "rust"
+    # The crate is a workspace member, so cargo builds into the repo-root target dir.
+    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mid360_native")
+    build_command: str | None = "cargo build --release"
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
     host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_MID360_HOST_IP"))
@@ -65,6 +68,15 @@ class Mid360Config(NativeModuleConfig):
     )
     frequency: float = 10.0
     enable_imu: bool = True
+    # Replay this capture instead of a live sensor. host_ip/lidar_ip are unused.
+    pcap: str | None = None
+    # Replay speed relative to capture time. None runs flat-out.
+    replay_rate: float | None = 1.0
+    # Multicast group the device streams to. None receives unicast only, which
+    # loopback replay needs and macOS requires (see virtual_mid360).
+    multicast_ip: str | None = Field(
+        default_factory=lambda: None if sys.platform == "darwin" else "224.1.1.5"
+    )
     # Wire layout per point:
     #   "minimal" x,y,z,offset_time                    — 16 B (default)
     #   "full"    x,y,z,intensity,offset_time,tag,line — 22 B
@@ -87,6 +99,13 @@ class Mid360Config(NativeModuleConfig):
     host_imu_data_port: int = SDK_HOST_IMU_DATA_PORT
     host_log_data_port: int = SDK_HOST_LOG_DATA_PORT
 
+    def to_config_dict(self) -> dict[str, Any]:
+        config = super().to_config_dict()
+        # The rust struct has every key; None crosses as an explicit null.
+        for key in ("host_ip", "pcap", "replay_rate", "multicast_ip"):
+            config[key] = getattr(self, key)
+        return config
+
 
 class Mid360(NativeModule, perception.Lidar, perception.IMU):
     config: Mid360Config
@@ -98,9 +117,10 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
     def start(self) -> None:
         # Auto-derive host_ip from a local NIC on the lidar's subnet (shared with
         # Point-LIO) when the configured value isn't one of our IPs.
-        self.config.host_ip = resolve_host_ip(
-            self.config.lidar_ip, self.config.host_ip, label="Mid360"
-        )
+        if self.config.pcap is None:
+            self.config.host_ip = resolve_host_ip(
+                self.config.lidar_ip, self.config.host_ip, label="Mid360"
+            )
         super().start()
 
     @rpc

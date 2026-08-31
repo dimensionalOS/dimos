@@ -7,6 +7,24 @@ license = "Apache-2.0"
 
 [lib]
 
+[[bin]]
+name = "mid360_native"
+path = "src/main.rs"
+
+# Bake registry entry, cross-checked at compile time by the module macro.
+[package.metadata.dimos.module.mid360]
+path = "dimos_livox::module::Mid360"
+python = "dimos.hardware.sensors.lidar.livox.module:Mid360"
+
+[package.metadata.dimos.module.mid360.outputs]
+lidar = "sensor_msgs.PointCloud2"
+imu = "sensor_msgs.Imu"
+
 [dependencies]
 crc = "3"
+dimos-module = { path = "../../../../../../native/rust/dimos-module" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
+validator = { version = "0.20", features = ["derive"] }

@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod live;
-pub mod module;
-pub mod pcap;
-pub mod pipeline;
-pub mod wire;
+use dimos_livox::module::Mid360;
+use dimos_module::run_with_transport;
+
+#[tokio::main]
+async fn main() {
+    run_with_transport::<Mid360>().await;
+}
