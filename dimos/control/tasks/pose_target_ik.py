@@ -798,11 +798,15 @@ def _bounded_controlled_joint_limits(
         raise ValueError("Pink model position limits do not match its configuration dimension")
 
     bounded: list[tuple[str, int, float, float]] = []
-    for joint_name, q_index in zip(
-        context.mapping.dimos_joint_names,
-        context.mapping.idx_q,
-        strict=True,
+    for local_index, (joint_name, q_index) in enumerate(
+        zip(
+            context.mapping.dimos_joint_names,
+            context.mapping.idx_q,
+            strict=True,
+        )
     ):
+        if local_index in context.mapping.periodic_indices:
+            continue
         lower = float(lower_limits[q_index])
         upper = float(upper_limits[q_index])
         if (

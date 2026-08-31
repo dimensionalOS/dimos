@@ -33,11 +33,12 @@ except ImportError as exc:
         "Install the manipulation extra before selecting the roboplan backend."
     ) from exc
 
-from dimos.manipulation.planning.groups.models import PlanningGroupSelection
+from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
 from dimos.manipulation.planning.planners.roboplan_config import (
     RoboPlanCartesianPathConfig,
     RoboPlanPlannerConfig,
 )
+from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.planners.selected_joint_space import normalize_selection_target
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import (
@@ -78,6 +79,7 @@ class RoboPlanPlanner:
             raise TypeError("RoboPlanPlanner requires a RoboPlanWorld")
         self._world = world
         self._config = config.model_copy(deep=True)
+        self._shared_rrt = RRTConnectPlanner()
 
     def plan_joint_path(
         self,
@@ -91,6 +93,26 @@ class RoboPlanPlanner:
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
                 message="RoboPlan-native planner requires its RoboPlanWorld instance",
+            )
+        if not self._world.is_ready():
+            return PlanningResult(
+                status=PlanningStatus.INVALID_START,
+                message="RoboPlan planning scene is not ready: authoritative state is incomplete",
+            )
+        model_config = self._world.get_model_config()
+        if model_config.model.planar_base is not None:
+            all_joints = PlanningGroup(
+                id="all",
+                joint_names=tuple(model_config.joint_names),
+                base_link=model_config.base_link,
+            )
+            return self._shared_rrt.plan_selected_joint_path(
+                world,
+                PlanningGroupSelection.from_groups((all_joints,)),
+                start,
+                goal,
+                timeout,
+                5000,
             )
         try:
             q_start = self._world.ordered_joint_positions(start)
@@ -141,6 +163,20 @@ class RoboPlanPlanner:
                 status=PlanningStatus.INVALID_GOAL,
                 message="No planning groups selected",
             )
+        if not self._world.is_ready():
+            return PlanningResult(
+                status=PlanningStatus.INVALID_START,
+                message="RoboPlan planning scene is not ready: authoritative state is incomplete",
+            )
+        if self._selection_has_planar_base(selection):
+            return self._shared_rrt.plan_selected_joint_path(
+                world,
+                selection,
+                start,
+                goal,
+                timeout,
+                max_iterations,
+            )
         group = self._world.planning_group(selection.group_ids)
         if group is None:
             return PlanningResult(
@@ -185,6 +221,11 @@ class RoboPlanPlanner:
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
                 message="RoboPlan-native planner requires its RoboPlanWorld instance",
+            )
+        if self._selection_has_planar_base(selection):
+            return PlanningResult(
+                status=PlanningStatus.UNSUPPORTED,
+                message="Cartesian waypoint planning does not support a moving planar base",
             )
         validation_error = self._validate_cartesian_request(selection, targets, auxiliary_groups)
         if validation_error is not None:
@@ -252,6 +293,10 @@ class RoboPlanPlanner:
     def get_name(self) -> str:
         """Get planner name."""
         return "RoboPlan"
+
+    def _selection_has_planar_base(self, selection: PlanningGroupSelection) -> bool:
+        planar = self._world.get_model_config().model.planar_base
+        return planar is not None and bool(set(selection.joint_names) & set(planar.joint_names))
 
     def _normalize_selection_start(
         self,

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from pydantic import Field
@@ -81,3 +82,43 @@ class RobotModelConfig(ModuleConfig):
             raise ValueError("RobotModelConfig.joint_names must contain non-empty names")
         if len(self.joint_names) != len(set(self.joint_names)):
             raise ValueError("RobotModelConfig contains duplicate canonical joint names")
+
+    def canonical_velocity_limits(self) -> list[float]:
+        """Return positive velocity limits in canonical joint order."""
+        if self.velocity_limits is None:
+            limits = [float(self.max_velocity)] * len(self.joint_names)
+        else:
+            limits = [float(value) for value in self.velocity_limits]
+            if len(limits) != len(self.joint_names):
+                raise ValueError("velocity_limits must match joint_names")
+
+        planar_base = self.model.planar_base
+        if planar_base is not None:
+            by_name = dict(zip(planar_base.joint_names, planar_base.velocity_limits, strict=True))
+            limits = [
+                float(by_name.get(name, limit))
+                for name, limit in zip(self.joint_names, limits, strict=True)
+            ]
+        if any(not math.isfinite(value) or value <= 0.0 for value in limits):
+            raise ValueError("Velocity limits must be positive and finite")
+        return limits
+
+    def canonical_acceleration_limits(self) -> list[float]:
+        """Return positive acceleration limits in canonical joint order."""
+        limits = [float(self.max_acceleration)] * len(self.joint_names)
+        planar_base = self.model.planar_base
+        if planar_base is not None:
+            by_name = dict(
+                zip(
+                    planar_base.joint_names,
+                    planar_base.acceleration_limits,
+                    strict=True,
+                )
+            )
+            limits = [
+                float(by_name.get(name, limit))
+                for name, limit in zip(self.joint_names, limits, strict=True)
+            ]
+        if any(not math.isfinite(value) or value <= 0.0 for value in limits):
+            raise ValueError("Acceleration limits must be positive and finite")
+        return limits

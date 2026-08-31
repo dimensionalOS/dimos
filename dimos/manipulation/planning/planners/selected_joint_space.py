@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import pairwise
+import math
 
 import numpy as np
 from numpy.typing import NDArray
@@ -36,6 +38,9 @@ class SelectedJointSpace:
     base_positions: NDArray[np.float64]
     lower_limits: NDArray[np.float64]
     upper_limits: NDArray[np.float64]
+    velocity_limits: NDArray[np.float64]
+    periodic_indices: tuple[int, ...] = ()
+    translation_indices: tuple[int, ...] = ()
 
     @classmethod
     def from_world(cls, world: WorldSpec, selection: PlanningGroupSelection) -> SelectedJointSpace:
@@ -44,17 +49,88 @@ class SelectedJointSpace:
             current = world.get_joint_state(ctx)
         base = _ordered_positions(current, config.joint_names, "Current state")
         lower, upper = world.get_joint_limits()
+        velocity = world.get_joint_velocity_limits()
         indices = [config.joint_names.index(name) for name in selection.joint_names]
+        planar = config.model.planar_base
+        periodic_names = {planar.joint_names[2]} if planar is not None else set()
+        translation_names = set(planar.joint_names[:2]) if planar is not None else set()
         return cls(
             model_joint_names=tuple(config.joint_names),
             selected_joint_names=selection.joint_names,
             base_positions=base,
             lower_limits=np.asarray(lower, dtype=np.float64)[indices],
             upper_limits=np.asarray(upper, dtype=np.float64)[indices],
+            velocity_limits=np.asarray(velocity, dtype=np.float64)[indices],
+            periodic_indices=tuple(
+                index for index, name in enumerate(selection.joint_names) if name in periodic_names
+            ),
+            translation_indices=tuple(
+                index
+                for index, name in enumerate(selection.joint_names)
+                if name in translation_names
+            ),
         )
 
     def joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         return self.lower_limits.copy(), self.upper_limits.copy()
+
+    def planning_domain(
+        self,
+        start: NDArray[np.float64],
+        goal: NDArray[np.float64],
+        margin: float,
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Return finite request-local sampling bounds."""
+        if not math.isfinite(margin) or margin <= 0.0:
+            raise ValueError("Planning-domain margin must be positive and finite")
+        lower, upper = self.joint_limits()
+        for index in self.translation_indices:
+            lower[index] = min(start[index], goal[index]) - margin
+            upper[index] = max(start[index], goal[index]) + margin
+        for index in self.periodic_indices:
+            lower[index], upper[index] = -math.pi, math.pi
+        if np.any(~np.isfinite(lower)) or np.any(~np.isfinite(upper)):
+            raise ValueError("Selected planning domain is not finite")
+        return lower, upper
+
+    def delta(self, start: NDArray[np.float64], end: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Return canonical deltas, wrapping periodic coordinates."""
+        delta = np.asarray(end - start, dtype=np.float64)
+        for index in self.periodic_indices:
+            delta[index] = (delta[index] + math.pi) % (2.0 * math.pi) - math.pi
+        return delta
+
+    def distance(self, start: NDArray[np.float64], end: NDArray[np.float64]) -> float:
+        """Return velocity-normalized L2 distance."""
+        return float(np.linalg.norm(self.delta(start, end) / self.velocity_limits))
+
+    def interpolate(
+        self,
+        start: NDArray[np.float64],
+        end: NDArray[np.float64],
+        fraction: float,
+    ) -> NDArray[np.float64]:
+        """Interpolate using shortest periodic displacement."""
+        return start + fraction * self.delta(start, end)
+
+    def lift_path(self, path: JointPath) -> JointPath:
+        """Return a path whose periodic coordinates are continuous scalars."""
+        if not path:
+            return []
+        lifted = [JointState(name=path[0].name, position=list(path[0].position))]
+        previous = np.asarray(lifted[0].position, dtype=np.float64)
+        for state in path[1:]:
+            current = self.interpolate(previous, np.asarray(state.position), 1.0)
+            lifted.append(JointState(name=state.name, position=current.tolist()))
+            previous = current
+        return lifted
+
+    def path_length(self, path: JointPath) -> float:
+        """Return velocity-normalized path length."""
+        return sum(
+            self.distance(np.asarray(start.position), np.asarray(end.position))
+            for start, end in pairwise(path)
+        )
 
     def project_config(self, selected_positions: NDArray[np.float64]) -> JointState:
         if len(selected_positions) != len(self.selected_joint_names):
@@ -77,10 +153,10 @@ class SelectedJointSpace:
         end: NDArray[np.float64],
         step_size: float,
     ) -> bool:
-        distance = float(np.linalg.norm(end - start))
+        distance = self.distance(start, end)
         steps = max(1, int(np.ceil(distance / step_size)))
         return all(
-            self.config_collision_free(world, start + (step / steps) * (end - start))
+            self.config_collision_free(world, self.interpolate(start, end, step / steps))
             for step in range(steps + 1)
         )
 
