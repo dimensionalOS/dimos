@@ -200,9 +200,10 @@ def test_dim_odom_stereo_replay():
 
     assert len(first) == SNIPPET_STEREO_PAIRS
     displacement = math.dist(first[0][1], first[-1][1])
-    # The replay is deterministic, so the drive's net displacement is a constant; approx
-    # only absorbs libm differences between platforms.
-    assert displacement == pytest.approx(1.774337937477785)
+    # Determinism is the assert below; this one only pins the scale. The tracker is
+    # deterministic per machine but not across them (1.7743 on darwin/arm64, 1.7808 on the
+    # CUDA x86 runner), so the tolerance has to be wide enough to hold both.
+    assert displacement == pytest.approx(1.777, rel=1e-2)
     assert first == second, "replaying the same data twice diverged"
 
 
