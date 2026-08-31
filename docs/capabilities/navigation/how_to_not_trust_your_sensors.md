@@ -23,7 +23,7 @@ If your robot drives indoors, it normally:
 
 Tell the system this. It prevents sensor errors from making the robot slowly sink through the floor or appear to tilt.
 
-```python
+```python skip
 per_dimension_error_variance=Covariance(
     z=1e-6,
     roll=1e-6,
@@ -43,7 +43,7 @@ If the robot drives on ramps, make these constraints less strict.
 
 Cameras can be good at tracking some movements and bad at others. Tell the system which parts of the camera's estimate to trust.
 
-```python
+```python skip
 visual_odom_pose_variances=Covariance(
     x=0.01,
     y=0.01,
@@ -74,7 +74,7 @@ Wheel encoders are good at telling you:
 
 Use them for **movement**, not long-term position. Small errors accumulate over time.
 
-```python
+```python skip
 twist_variances=Covariance(
     x=0.01,
     yaw=0.02,
@@ -93,7 +93,7 @@ IMUs work a little differently. Instead of directly saying how much you trust th
 
 These can come from the datasheet.
 
-```python
+```python skip
 imus=[ImuConfig(
     gyro_noise_density=...,
     gyro_random_walk=...,

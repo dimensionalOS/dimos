@@ -45,23 +45,25 @@ Rule of thumb: **rolling shutter color cameras are for humans and VLMs; global s
 `DimSlam` is a module like any other: put it in your robot's blueprint, wire its streams, and start the blueprint with [`dimos run`](/docs/usage/cli.md). A minimal stereo + IMU setup:
 
 ```python
-from dimos.mapping.dim_slam.dim_slam import Covariance, DimSlam, DimSlamConfig, ImuConfig, SourceConfig
+from dimos.mapping.dim_slam.dim_slam import Covariance, DimSlam, ImuConfig, SourceConfig
 
 DimSlam(
-    config=DimSlamConfig(
-        camera_mode="stereo",
-        # The RealSense D455's datasheet noise figures.
-        imus=[
-            ImuConfig(
-                frame_id="camera_accel_optical_frame",
-                gyro_noise_density=2e-4,
-                gyro_random_walk=1e-5,
-                accel_noise_density=1.8e-3,
-                accel_random_walk=1e-4,
-            )
-        ],
-    )
+    camera_mode="stereo",
+    # The RealSense D455's datasheet noise figures.
+    imus=[
+        ImuConfig(
+            frame_id="camera_accel_optical_frame",
+            gyro_noise_density=2e-4,
+            gyro_random_walk=1e-5,
+            accel_noise_density=1.8e-3,
+            accel_random_walk=1e-4,
+        )
+    ],
 )
+```
+
+```results
+00:03:53.633 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=True listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo0
 ```
 
 Connect the camera driver's `image` and `camera_info` outputs (both infrared streams publish onto the same input; they're told apart by `frame_id`), the IMU stream, and tf. The module publishes fused `odometry` and the `odom -> base_link` transform.
@@ -94,7 +96,7 @@ A few millimeters of extrinsic error shows up as a small constant drift. A wrong
 
 Skip this if all you have is the camera. But if the robot publishes wheel or leg odometry, each estimator becomes an `odom_sources` entry, and the fused estimate gets more robust: when the cameras face a blank wall, the wheels carry the estimate through.
 
-```python
+```python skip
 odom_sources=[
     SourceConfig(
         parent_frame_id="wheel_odom",   # matches the messages' header.frame_id
@@ -110,7 +112,7 @@ odom_sources=[
 
 This is where the fused estimate goes from "works" to "good": tell the filter which parts of each sensor to believe, and tell it what your robot physically cannot do. The one-liner that helps almost every ground robot, "I do not fly, roll, or pitch":
 
-```python
+```python skip
 per_dimension_error_variance=Covariance(z=1e-6, roll=1e-6, pitch=1e-6)
 ```
 
