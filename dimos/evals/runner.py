@@ -58,6 +58,7 @@ class RunSummary:
     pass_rate: float
     errors: int
     duration_s: float
+    cost: float
 
 
 def summarize(results: list[EvalResult]) -> RunSummary:
@@ -68,6 +69,7 @@ def summarize(results: list[EvalResult]) -> RunSummary:
         pass_rate=sum(r.passed for r in scored) / len(scored) if scored else 0.0,
         errors=sum(1 for r in results if r.error),
         duration_s=sum(r.duration_s for r in results),
+        cost=sum(r.cost for r in results),
     )
 
 
@@ -213,6 +215,9 @@ class EvalRunner(Configurable):
             steps=len(trajectory.steps),
             input_tokens=trajectory.input_tokens,
             output_tokens=trajectory.output_tokens,
+            cached_tokens=trajectory.cached_tokens,
+            reasoning_tokens=trajectory.reasoning_tokens,
+            cost=trajectory.cost,
             ended_by=trajectory.ended_by,
             trajectory=str(self.run_dir / case.id / "trajectory.json"),
         )

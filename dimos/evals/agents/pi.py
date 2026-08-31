@@ -88,6 +88,21 @@ def recording_file(store: Store, path: Path) -> Path:
     return path
 
 
+def _registry_cost(cli: str, model: str) -> dict[str, Any] | None:
+    """*model*'s pricing from the installed Pi's model registry, so Pi can
+    price its own calls; None when the model is not in the registry."""
+    exe = shutil.which(cli)
+    for parent in Path(exe).resolve().parents if exe else ():
+        data = parent / "node_modules" / "@earendil-works" / "pi-ai" / "dist" / "providers" / "data"
+        if data.is_dir():
+            for f in sorted(data.glob("*.json")):
+                for models in json.loads(f.read_text()).values():
+                    entry = models.get(model) if isinstance(models, dict) else None
+                    if isinstance(entry, dict) and entry.get("provider") == "openai":
+                        return dict(entry["cost"]) if entry.get("cost") else None
+    return None
+
+
 def _result_text(result: Any) -> str:
     content = result.get("content") if isinstance(result, dict) else None
     if isinstance(content, list):
@@ -106,6 +121,7 @@ class _Events:
         self.drafts: list[StepDraft] = []
         self.model = ""
         self.cached_tokens = 0
+        self.cost = 0.0
         self.error = ""
         self._next_seq = 0
 
@@ -128,6 +144,7 @@ class _Events:
         content = message.get("content") or []
         self.model = str(message.get("responseModel") or message.get("model") or self.model)
         self.cached_tokens += int(usage.get("cacheRead", 0))
+        self.cost += float((usage.get("cost") or {}).get("total") or 0.0)
         if message.get("stopReason") in ("error", "aborted"):
             self.error = str(message.get("errorMessage") or message["stopReason"])
         self.drafts.append(
@@ -135,13 +152,17 @@ class _Events:
                 index=len(self.drafts),
                 t=time.monotonic() - self.t0,
                 message="".join(str(c.get("text", "")) for c in content if c.get("type") == "text"),
+                reasoning="\n\n".join(
+                    str(c.get("thinking", "")) for c in content if c.get("type") == "thinking"
+                ),
                 tool_calls=[
                     ToolCall(name=str(c["name"]), args=dict(c.get("arguments") or {}))
                     for c in content
                     if c.get("type") == "toolCall"
                 ],
-                input_tokens=int(usage.get("input", 0)),
+                input_tokens=int(usage.get("input", 0)) + int(usage.get("cacheWrite", 0)),
                 output_tokens=int(usage.get("output", 0)),
+                reasoning_tokens=int(usage.get("reasoning", 0)),
                 latency_s=float(json.loads(pair[2].read_text()).get("latency_s") or 0.0),
                 request=pair[1],
                 response=pair[2],
@@ -211,6 +232,8 @@ class Pi:
             input_tokens=sum(s.input_tokens for s in steps),
             output_tokens=sum(s.output_tokens for s in steps),
             cached_tokens=events.cached_tokens,
+            reasoning_tokens=sum(s.reasoning_tokens for s in steps),
+            cost=events.cost,
             duration_s=time.monotonic() - t0,
             ended_by=ended_by,
             raw_dir=raw_dir,
@@ -246,11 +269,14 @@ class Pi:
         """A private Pi config dir: one provider, ``dimos``, which is the proxy."""
         agent_dir = run_dir / ".pi-agent"
         agent_dir.mkdir(parents=True, exist_ok=True)
+        model: dict[str, Any] = {"id": self.model, "reasoning": True}
+        if cost := _registry_cost(self.cli, self.model):
+            model["cost"] = cost
         provider = {
             "baseUrl": proxy_url,
             "api": "openai-responses",
             "apiKey": "$OPENAI_API_KEY",
-            "models": [{"id": self.model, "reasoning": True}],
+            "models": [model],
         }
         (agent_dir / "models.json").write_text(
             json.dumps({"providers": {"dimos": provider}}, indent=2)

@@ -25,6 +25,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
+from dimos.evals.agents.lib.recorder import reasoning_text
 from dimos.evals.types import Environment, RunningEnvironment, Step, ToolCall, Trajectory
 
 
@@ -137,6 +138,7 @@ class McpClientAgent:
         pairs = _copy_trace(trace_dir, before, run_dir / "raw")
         steps: list[Step] = []
         final = ""
+        cached = 0
         for msg in received:
             if isinstance(msg, AIMessage):
                 if len(steps) >= len(pairs):
@@ -145,17 +147,23 @@ class McpClientAgent:
                         "every call must be captured whole"
                     )
                 usage: dict[str, Any] = dict(msg.usage_metadata or {})
+                cache_read = int((usage.get("input_token_details") or {}).get("cache_read", 0))
+                cached += cache_read
                 steps.append(
                     Step(
                         index=len(steps),
                         t=time.monotonic() - t0,
                         message=str(msg.text),
+                        reasoning=reasoning_text(msg.content),
                         tool_calls=tuple(
                             ToolCall(name=str(tc["name"]), args=dict(tc.get("args") or {}))
                             for tc in msg.tool_calls
                         ),
-                        input_tokens=int(usage.get("input_tokens", 0)),
+                        input_tokens=int(usage.get("input_tokens", 0)) - cache_read,
                         output_tokens=int(usage.get("output_tokens", 0)),
+                        reasoning_tokens=int(
+                            (usage.get("output_token_details") or {}).get("reasoning", 0)
+                        ),
                         request=pairs[len(steps)][0],
                         response=pairs[len(steps)][1],
                     )
@@ -181,6 +189,8 @@ class McpClientAgent:
             model=model,
             input_tokens=sum(s.input_tokens for s in steps),
             output_tokens=sum(s.output_tokens for s in steps),
+            cached_tokens=cached,
+            reasoning_tokens=sum(s.reasoning_tokens for s in steps),
             duration_s=time.monotonic() - t0,
             ended_by="answer",
             raw_dir=run_dir / "raw",

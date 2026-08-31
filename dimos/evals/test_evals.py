@@ -622,13 +622,15 @@ def emit(event):
 
 def assistant(content, stop):
     return {"role": "assistant", "model": "gpt-fake", "stopReason": stop, "content": content,
-            "usage": {"input": 10, "output": 2, "cacheRead": 5, "cacheWrite": 0}}
+            "usage": {"input": 10, "output": 2, "cacheRead": 5, "cacheWrite": 1, "reasoning": 1,
+                      "cost": {"total": 0.005}}}
 
 
 emit({"type": "session", "version": 3})
 for i in range(tool_steps):
     call(i)
     emit({"type": "message_end", "message": assistant([
+        {"type": "thinking", "thinking": "measuring"},
         {"type": "text", "text": "looking"},
         {"type": "toolCall", "id": f"c{i}", "name": "bash", "arguments": {"command": "python probe.py"}},
     ], "toolUse")})
@@ -698,11 +700,14 @@ def test_pi_runs_headless_over_the_recording_and_records_every_call(
         (),
     ]
     assert trajectory.steps[0].observations == ("x=4.0",)
+    assert trajectory.steps[0].reasoning == "measuring"
     assert (trajectory.input_tokens, trajectory.output_tokens, trajectory.cached_tokens) == (
-        20,
+        22,  # (input 10 + cacheWrite 1) per step; cacheRead lands in cached_tokens
         4,
         10,
     )
+    assert trajectory.reasoning_tokens == 2
+    assert trajectory.cost == pytest.approx(0.01)
     for i, step in enumerate(trajectory.steps):  # every call captured whole, auth dropped
         request = json.loads(step.request.read_text())
         assert request["body"] == {"model": "gpt-fake", "n": i}

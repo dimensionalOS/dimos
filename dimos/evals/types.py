@@ -69,10 +69,12 @@ class Step:
     index: int
     t: float  # seconds since run start
     message: str  # assistant text for this step
+    reasoning: str = ""  # readable reasoning text, "" when the provider returns none
     tool_calls: tuple[ToolCall, ...] = ()
     observations: tuple[str, ...] = ()  # tool results the model saw before the next step
-    input_tokens: int = 0
+    input_tokens: int = 0  # non-cached input only; cache reads are excluded
     output_tokens: int = 0
+    reasoning_tokens: int = 0  # the part of output_tokens spent reasoning
     latency_s: float = 0.0
     request: Path  # the exact payload sent to the provider for this call
     response: Path  # the exact payload received
@@ -91,9 +93,11 @@ class Trajectory:
     final_answer: str  # last non-tool assistant message, "" if none
     steps: tuple[Step, ...]
     model: str  # what actually ran, as reported by the provider
-    input_tokens: int = 0
+    input_tokens: int = 0  # non-cached input; total sent = input_tokens + cached_tokens
     output_tokens: int = 0
-    cached_tokens: int = 0
+    cached_tokens: int = 0  # input read from the provider's prompt cache
+    reasoning_tokens: int = 0  # the part of output_tokens spent reasoning
+    cost: float = 0.0  # USD
     duration_s: float
     ended_by: EndedBy
     raw_dir: Path
@@ -206,7 +210,10 @@ class EvalResult:
     error: str = ""
     final_answer: str = ""
     steps: int = 0
-    input_tokens: int = 0
+    input_tokens: int = 0  # non-cached input; total sent = input_tokens + cached_tokens
     output_tokens: int = 0
+    cached_tokens: int = 0
+    reasoning_tokens: int = 0
+    cost: float = 0.0  # USD
     ended_by: str = ""
     trajectory: str = ""  # path of <case_id>/trajectory.json, when an agent ran

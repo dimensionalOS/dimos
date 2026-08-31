@@ -30,6 +30,22 @@ from dimos.agents.llm_trace import latest_pair, write_normalized
 from dimos.evals.types import EndedBy, Step, ToolCall, Trajectory
 
 
+def reasoning_text(content: Any) -> str:
+    """Readable reasoning from provider content blocks — Anthropic ``thinking``
+    text or OpenAI ``reasoning`` summaries — "" when there is none."""
+    parts: list[str] = []
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "thinking":
+            parts.append(str(block.get("thinking", "")))
+        elif block.get("type") == "reasoning":
+            summary = block.get("summary")
+            if isinstance(summary, list):
+                parts.append("".join(str(s.get("text", "")) for s in summary if isinstance(s, dict)))
+    return "\n\n".join(p for p in parts if p)
+
+
 @dataclass
 class StepDraft:
     """A :class:`Step` still collecting tool results."""
@@ -43,6 +59,8 @@ class StepDraft:
     latency_s: float
     request: Path
     response: Path
+    reasoning: str = ""
+    reasoning_tokens: int = 0
     observations: list[str] = field(default_factory=list)
 
     def freeze(self) -> Step:
@@ -50,10 +68,12 @@ class StepDraft:
             index=self.index,
             t=self.t,
             message=self.message,
+            reasoning=self.reasoning,
             tool_calls=tuple(self.tool_calls),
             observations=tuple(self.observations),
             input_tokens=self.input_tokens,
             output_tokens=self.output_tokens,
+            reasoning_tokens=self.reasoning_tokens,
             latency_s=self.latency_s,
             request=self.request,
             response=self.response,
@@ -99,7 +119,8 @@ class StepRecorder(BaseCallbackHandler):
         usage = getattr(message, "usage_metadata", None) or {}
         meta = getattr(message, "response_metadata", None) or {}
         self.model_name = str(meta.get("model_name") or self.model_name)
-        self.cached_tokens += int((usage.get("input_token_details") or {}).get("cache_read", 0))
+        cache_read = int((usage.get("input_token_details") or {}).get("cache_read", 0))
+        self.cached_tokens += cache_read
         pair = latest_pair(self.raw_dir, self._next_seq)
         if pair is None:
             pair = write_normalized(self.raw_dir, sent, response)
@@ -113,9 +134,11 @@ class StepRecorder(BaseCallbackHandler):
                 index=len(self._drafts),
                 t=started - self.t0,
                 message=str(message.text),
+                reasoning=reasoning_text(message.content),
                 tool_calls=tool_calls,
-                input_tokens=int(usage.get("input_tokens", 0)),
+                input_tokens=int(usage.get("input_tokens", 0)) - cache_read,
                 output_tokens=int(usage.get("output_tokens", 0)),
+                reasoning_tokens=int((usage.get("output_token_details") or {}).get("reasoning", 0)),
                 latency_s=time.monotonic() - started,
                 request=pair[1],
                 response=pair[2],
@@ -131,6 +154,7 @@ class StepRecorder(BaseCallbackHandler):
             input_tokens=sum(s.input_tokens for s in steps),
             output_tokens=sum(s.output_tokens for s in steps),
             cached_tokens=self.cached_tokens,
+            reasoning_tokens=sum(s.reasoning_tokens for s in steps),
             duration_s=time.monotonic() - self.t0,
             ended_by=ended_by,
             raw_dir=self.raw_dir,
