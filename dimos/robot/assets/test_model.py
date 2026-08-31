@@ -24,10 +24,10 @@ import dimos.robot.assets.model as robot_model
 from dimos.utils.data import LfsPath
 
 
-def _planar_base() -> robot_model.PlanarBaseConfig:
-    return robot_model.PlanarBaseConfig(
-        position_lower=(-2.0, -3.0, -3.14),
-        position_upper=(2.0, 3.0, 3.14),
+def _planar_base() -> robot_model.PlanarBaseDefinition:
+    return robot_model.PlanarBaseDefinition(
+        workspace_lower=(-2.0, -3.0, -3.14),
+        workspace_upper=(2.0, 3.0, 3.14),
         velocity_limits=(0.5, 0.6, 1.0),
         acceleration_limits=(1.0, 1.2, 2.0),
     )
@@ -248,10 +248,13 @@ def test_planar_base_can_be_extended_by_other_model_transforms(tmp_path: Path) -
 @pytest.mark.parametrize(
     ("update", "message"),
     [
-        ({"position_lower": (-1.0, -1.0)}, "x, y, and yaw"),
-        ({"position_upper": (-3.0, 3.0, 3.14)}, "strictly increasing"),
-        ({"velocity_limits": (0.5, 0.0, 1.0)}, "positive"),
-        ({"acceleration_limits": (1.0, float("nan"), 2.0)}, "finite"),
+        ({"workspace_lower": (-1.0, -1.0)}, "Field required"),
+        ({"workspace_upper": (-3.0, 3.0, 3.14)}, "strictly increasing"),
+        ({"velocity_limits": (0.5, 0.0, 1.0)}, "greater than 0"),
+        ({"acceleration_limits": (1.0, float("nan"), 2.0)}, "finite number"),
+        ({"acceleration_limits": (1.0, float("inf"), 2.0)}, "finite number"),
+        ({"root_link": ""}, "at least 1 character"),
+        ({"joint_names": ("base/x", "", "base/yaw")}, "at least 1 character"),
         ({"joint_names": ("base/x", "base/x", "base/yaw")}, "unique"),
     ],
 )
@@ -260,15 +263,31 @@ def test_planar_base_rejects_invalid_configuration(
     message: str,
 ) -> None:
     values: dict[str, object] = {
-        "position_lower": (-2.0, -3.0, -3.14),
-        "position_upper": (2.0, 3.0, 3.14),
+        "workspace_lower": (-2.0, -3.0, -3.14),
+        "workspace_upper": (2.0, 3.0, 3.14),
         "velocity_limits": (0.5, 0.6, 1.0),
         "acceleration_limits": (1.0, 1.2, 2.0),
     }
     values.update(update)
 
     with pytest.raises(ValueError, match=message):
-        robot_model.PlanarBaseConfig(**values)
+        robot_model.PlanarBaseDefinition(**values)
+
+
+def test_planar_base_definition_coerces_config_values() -> None:
+    definition = robot_model.PlanarBaseDefinition(
+        **{
+            "workspace_lower": [-2, -3, -3.14],
+            "workspace_upper": [2, 3, 3.14],
+            "velocity_limits": [1, 1, 2],
+            "acceleration_limits": [2, 2, 4],
+        }
+    )
+
+    assert definition.workspace_lower == (-2.0, -3.0, -3.14)
+    assert definition.workspace_upper == (2.0, 3.0, 3.14)
+    assert definition.velocity_limits == (1.0, 1.0, 2.0)
+    assert definition.acceleration_limits == (2.0, 2.0, 4.0)
 
 
 @pytest.mark.parametrize(

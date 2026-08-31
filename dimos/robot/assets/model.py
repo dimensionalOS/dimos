@@ -23,7 +23,12 @@ import math
 import os
 from pathlib import Path
 import re
+from typing import Annotated
 import xml.etree.ElementTree as ET
+
+from pydantic import ConfigDict, Field, FiniteFloat, model_validator
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+from typing_extensions import Self
 
 from dimos.robot.assets.xacro import expand_xacro
 from dimos.utils.logging_config import setup_logger
@@ -89,47 +94,44 @@ class _JointPositionLimits:
     upper: float
 
 
-@dataclass(frozen=True)
-class PlanarBaseConfig:
-    """Synthetic floor-constrained base coordinates for a robot model.
+_PLANAR_BASE_CONFIG = ConfigDict(extra="forbid", validate_default=True)
+_NonEmptyString = Annotated[str, Field(min_length=1)]
+_PositiveFiniteFloat = Annotated[float, Field(gt=0.0, allow_inf_nan=False)]
+_FiniteVector3 = tuple[FiniteFloat, FiniteFloat, FiniteFloat]
+_PositiveVector3 = tuple[_PositiveFiniteFloat, _PositiveFiniteFloat, _PositiveFiniteFloat]
+
+
+@pydantic_dataclass(frozen=True, config=_PLANAR_BASE_CONFIG)
+class PlanarBaseDefinition:
+    """Synthetic floor-constrained base coordinates and planning workspace.
 
     The three coordinates are ordered ``x``, ``y``, then ``yaw``. Linear
     coordinates use meters and angular coordinates use radians.
     """
 
-    position_lower: tuple[float, float, float]
-    position_upper: tuple[float, float, float]
-    velocity_limits: tuple[float, float, float]
-    acceleration_limits: tuple[float, float, float]
-    root_link: str = "planar_base_root"
-    joint_names: tuple[str, str, str] = ("base/x", "base/y", "base/yaw")
+    # TODO(manipulation): Remove fixed workspace bounds when the query-local
+    # unbounded design in docs/capabilities/manipulation/unbounded-planar-base.md lands.
+    workspace_lower: _FiniteVector3
+    workspace_upper: _FiniteVector3
+    velocity_limits: _PositiveVector3
+    acceleration_limits: _PositiveVector3
+    root_link: _NonEmptyString = "planar_base_root"
+    joint_names: tuple[_NonEmptyString, _NonEmptyString, _NonEmptyString] = (
+        "base/x",
+        "base/y",
+        "base/yaw",
+    )
 
-    def __post_init__(self) -> None:
-        if not self.root_link:
-            raise ValueError("Planar base root link must be non-empty")
-        if any(not name for name in self.joint_names):
-            raise ValueError("Planar base joint names must be non-empty")
+    @model_validator(mode="after")
+    def _validate_cross_field_invariants(self) -> Self:
         if len(set(self.joint_names)) != 3:
             raise ValueError("Planar base joint names must be unique")
-        for label, values in (
-            ("position_lower", self.position_lower),
-            ("position_upper", self.position_upper),
-            ("velocity_limits", self.velocity_limits),
-            ("acceleration_limits", self.acceleration_limits),
-        ):
-            if len(values) != 3:
-                raise ValueError(f"Planar base {label} must contain x, y, and yaw values")
-            if not all(math.isfinite(value) for value in values):
-                raise ValueError(f"Planar base {label} must contain only finite values")
         if any(
             lower >= upper
-            for lower, upper in zip(self.position_lower, self.position_upper, strict=True)
+            for lower, upper in zip(self.workspace_lower, self.workspace_upper, strict=True)
         ):
-            raise ValueError("Planar base position limits must be strictly increasing")
-        if any(value <= 0.0 for value in self.velocity_limits):
-            raise ValueError("Planar base velocity limits must be positive")
-        if any(value <= 0.0 for value in self.acceleration_limits):
-            raise ValueError("Planar base acceleration limits must be positive")
+            raise ValueError("Planar base workspace bounds must be strictly increasing")
+        return self
 
 
 @dataclass(frozen=True)
@@ -145,7 +147,7 @@ class RobotModel:
     _joint_position_limits: tuple[_JointPositionLimits, ...] = ()
     _subtree_root_link: str | None = None
     _removed_joint_subtrees: tuple[str, ...] = ()
-    _planar_base: PlanarBaseConfig | None = None
+    _planar_base: PlanarBaseDefinition | None = None
 
     @classmethod
     def from_file(
@@ -168,15 +170,15 @@ class RobotModel:
         return self._source_path
 
     @property
-    def planar_base(self) -> PlanarBaseConfig | None:
+    def planar_base(self) -> PlanarBaseDefinition | None:
         """Return the configured synthetic planar base, if any."""
         return self._planar_base
 
-    def with_planar_base(self, config: PlanarBaseConfig) -> RobotModel:
+    def with_planar_base(self, definition: PlanarBaseDefinition) -> RobotModel:
         """Return a model whose original root moves through ``x``, ``y``, and ``yaw``."""
         if self._planar_base is not None:
             raise ValueError("Robot model already has a planar base")
-        return replace(self, _planar_base=config)
+        return replace(self, _planar_base=definition)
 
     def with_fixed_frame(
         self,
@@ -309,7 +311,7 @@ class RobotModel:
             object.__setattr__(self, name, value)
 
 
-def _add_planar_base(xml: str, config: PlanarBaseConfig) -> str:
+def _add_planar_base(xml: str, definition: PlanarBaseDefinition) -> str:
     root = ET.fromstring(xml)
     link_names = {link.get("name") for link in root.findall("link")}
     joint_names = {joint.get("name") for joint in root.findall("joint")}
@@ -322,23 +324,23 @@ def _add_planar_base(xml: str, config: PlanarBaseConfig) -> str:
     if len(root_links) != 1:
         raise ValueError(f"Planar base requires one URDF root link, found {root_links}")
 
-    x_link = f"{config.root_link}_x"
-    xy_link = f"{config.root_link}_xy"
-    generated_links = {config.root_link, x_link, xy_link}
+    x_link = f"{definition.root_link}_x"
+    xy_link = f"{definition.root_link}_xy"
+    generated_links = {definition.root_link, x_link, xy_link}
     duplicate_links = sorted(generated_links & link_names)
     if duplicate_links:
         raise ValueError(f"Planar base link names already exist: {duplicate_links}")
-    duplicate_joints = sorted(set(config.joint_names) & joint_names)
+    duplicate_joints = sorted(set(definition.joint_names) & joint_names)
     if duplicate_joints:
         raise ValueError(f"Planar base joint names already exist: {duplicate_joints}")
 
-    for name in (config.root_link, x_link, xy_link):
+    for name in (definition.root_link, x_link, xy_link):
         ET.SubElement(root, "link", {"name": name})
-    links = (config.root_link, x_link, xy_link, root_links[0])
+    links = (definition.root_link, x_link, xy_link, root_links[0])
     axes = ("1 0 0", "0 1 0", "0 0 1")
     types = ("prismatic", "prismatic", "revolute")
     for index, (name, axis, joint_type) in enumerate(
-        zip(config.joint_names, axes, types, strict=True)
+        zip(definition.joint_names, axes, types, strict=True)
     ):
         joint = ET.SubElement(root, "joint", {"name": name, "type": joint_type})
         ET.SubElement(joint, "origin", {"xyz": "0 0 0", "rpy": "0 0 0"})
@@ -349,11 +351,11 @@ def _add_planar_base(xml: str, config: PlanarBaseConfig) -> str:
             joint,
             "limit",
             {
-                "lower": str(config.position_lower[index]),
-                "upper": str(config.position_upper[index]),
+                "lower": str(definition.workspace_lower[index]),
+                "upper": str(definition.workspace_upper[index]),
                 "effort": "1",
-                "velocity": str(config.velocity_limits[index]),
-                "acceleration": str(config.acceleration_limits[index]),
+                "velocity": str(definition.velocity_limits[index]),
+                "acceleration": str(definition.acceleration_limits[index]),
             },
         )
     return ET.tostring(root, encoding="unicode")

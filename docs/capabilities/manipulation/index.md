@@ -26,6 +26,11 @@ dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
 ```
 
+R1 Pro currently uses finite planar planning-workspace bounds. The stacked
+[unbounded planar-base planning handoff](unbounded-planar-base.md) defines how
+to remove those fixed bounds without making individual planning queries
+unbounded.
+
 OpenYAM is exposed as one whole-body device with six angular arm joints and a
 normalized gripper joint. `arm/gripper` uses `0.0` for fully closed and `1.0`
 for fully open; it does not use meters. Hardware activation calibrates both

@@ -29,7 +29,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.assets.model import PlanarBaseConfig, RobotModel
+from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 requires_drake = pytest.mark.skipif(
     not DRAKE_AVAILABLE,
@@ -329,9 +329,9 @@ def test_drake_applies_config_base_pose_when_urdf_has_world_base_joint(
 def test_drake_planar_base_coordinates_move_original_robot_root(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
-    planar_base = PlanarBaseConfig(
-        position_lower=(-2.0, -2.0, -3.14),
-        position_upper=(2.0, 2.0, 3.14),
+    planar_base = PlanarBaseDefinition(
+        workspace_lower=(-2.0, -2.0, -3.14),
+        workspace_upper=(2.0, 2.0, 3.14),
         velocity_limits=(1.0, 1.0, 2.0),
         acceleration_limits=(2.0, 2.0, 4.0),
     )

@@ -29,13 +29,13 @@ from yourdfpy import URDF  # type: ignore[import-untyped]
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.validation import validate_robot_model_config
-from dimos.robot.assets.model import PlanarBaseConfig, RobotModel
+from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 
-def _planar_base() -> PlanarBaseConfig:
-    return PlanarBaseConfig(
-        position_lower=(-2.0, -2.0, -3.14),
-        position_upper=(2.0, 2.0, 3.14),
+def _planar_base() -> PlanarBaseDefinition:
+    return PlanarBaseDefinition(
+        workspace_lower=(-2.0, -2.0, -3.14),
+        workspace_upper=(2.0, 2.0, 3.14),
         velocity_limits=(1.0, 1.0, 2.0),
         acceleration_limits=(2.0, 2.0, 4.0),
     )
