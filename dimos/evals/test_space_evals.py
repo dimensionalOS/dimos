@@ -347,6 +347,11 @@ def test_ego_bridge_end_to_end(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -
         "import numpy as np\n"
         "class NavEgoEnv:\n"
         "    def __init__(self, scene, habitat_kwargs, image_downscaling):\n"
+        # 256 KiB of stderr chatter before the first reply: habitat is loud on
+        # stderr, and an undrained 64 KiB pipe deadlocks the episode.
+        "        import sys\n"
+        "        sys.stderr.write('h' * 262144)\n"
+        "        sys.stderr.flush()\n"
         "        self.sim = object()\n"
         "    def get_task_info(self):\n"
         "        return {'goal_desc': 'the bed', 'goal_position': [0, 0, 0],\n"

@@ -173,10 +173,18 @@ class EvalRunner(Configurable, CompositeResource):
 
     def _new_run_dir(self) -> Path:
         # The pid keeps runners launched in the same second — parallel suite
-        # sweeps — from silently sharing one directory.
-        run_dir = self.config.out_dir / f"{time.strftime('run-%Y%m%d-%H%M%S')}-{os.getpid()}"
-        run_dir.mkdir(parents=True, exist_ok=True)
-        return run_dir
+        # sweeps — from silently sharing one directory; exclusive creation with
+        # a collision suffix covers runners in the same process too.
+        stamp = f"{time.strftime('run-%Y%m%d-%H%M%S')}-{os.getpid()}"
+        self.config.out_dir.mkdir(parents=True, exist_ok=True)
+        for n in range(100):
+            run_dir = self.config.out_dir / (stamp if n == 0 else f"{stamp}-{n}")
+            try:
+                run_dir.mkdir(exist_ok=False)
+            except FileExistsError:
+                continue
+            return run_dir
+        raise RuntimeError(f"could not allocate a run directory under {stamp}")
 
     def _write_artifacts(self, results: list[EvalResult]) -> None:
         lines = [json.dumps(asdict(r)) for r in results]

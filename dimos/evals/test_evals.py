@@ -383,6 +383,16 @@ class _SpyChat(BaseChatModel):
         return self._seen  # type: ignore[attr-defined,no-any-return]
 
 
+def test_same_second_runners_get_distinct_run_dirs(tmp_path: Path) -> None:
+    """Same process, same second, same pid — directories must still not collide."""
+    from dimos.evals.runner import EvalRunner
+
+    runner = EvalRunner(chat_model=None, out_dir=tmp_path)  # type: ignore[arg-type]
+    dirs = {runner._new_run_dir() for _ in range(3)}
+    assert len(dirs) == 3
+    assert all(d.is_dir() for d in dirs)
+
+
 def test_system_prompt_override(tmp_path: Path) -> None:
     from dimos.evals.runner import EVAL_SYSTEM_PROMPT, EvalRunner
 

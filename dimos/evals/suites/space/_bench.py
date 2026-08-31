@@ -522,8 +522,10 @@ class SpaceNav(EvalCase):
         Python; prompts, the model loop and action parsing stay here.
         """
         import base64
+        import collections
         import io
         import subprocess
+        import threading
 
         import numpy as np
 
@@ -542,15 +544,27 @@ class SpaceNav(EvalCase):
             text=True,
         )
 
+        # habitat is chatty on stderr (and the sidecar redirects its stdout
+        # there); left unread, a full 64 KiB pipe deadlocks both processes.
+        # Drain it continuously, keeping a bounded tail for error reports.
+        stderr_tail: collections.deque[str] = collections.deque(maxlen=50)
+
+        def _drain() -> None:
+            assert server.stderr is not None
+            for text_line in server.stderr:
+                stderr_tail.append(text_line)
+
+        threading.Thread(target=_drain, daemon=True).start()
+
         def call(**request: Any) -> dict[str, Any]:
             assert server.stdin is not None and server.stdout is not None
             server.stdin.write(json.dumps(request) + "\n")
             server.stdin.flush()
             line = server.stdout.readline()
             if not line:
-                stderr = server.stderr.read() if server.stderr is not None else ""
                 raise RuntimeError(
-                    f"{self.id}: habitat env server died on {request['cmd']}: {stderr[-800:]}"
+                    f"{self.id}: habitat env server died on {request['cmd']}: "
+                    f"{''.join(stderr_tail)[-800:]}"
                 )
             return cast("dict[str, Any]", json.loads(line))
 
