@@ -22,9 +22,14 @@ import pytest
 
 from dimos.web.cockpit import ChannelRequest, Col, Map2D, Panel, Row, Teleop, Video, cockpit
 from dimos.web.relay_bridge.manifest import parse_manifest
-from dimos.web.relay_bridge.protocol import PROTOCOL_VERSION, Hello, RobotInfo, encode_datagram
+from dimos.web.relay_bridge.protocol import (
+    MAX_CONTROL_PAYLOAD_BYTES,
+    PROTOCOL_VERSION,
+    Hello,
+    RobotInfo,
+    encode_datagram,
+)
 from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
-from dimos.web.relay_bridge.wt_client import _HELLO_DATAGRAM_MAX_BYTES
 
 # The frozen-contract example (see the plan/spec): what the go2 cockpit
 # blueprint authors. Golden below is exact; edits here are manifest changes
@@ -219,13 +224,11 @@ def test_pages_reject_non_panels() -> None:
         cockpit(layout=Video(), pages=[Row(Map2D())])
 
 
-def test_go2_hello_fits_the_datagram_budget() -> None:
-    # The whole manifest rides one hello datagram (wt_client caps it at
-    # _HELLO_DATAGRAM_MAX_BYTES and raises loudly beyond). Pin the go2
-    # example under 1000 B so >= 100 B of headroom remains for longer
-    # hostnames before authors ever see that error. The teleop channel
-    # brought this to 999 B: the next channel (chat, T8) cannot fit and
-    # must rethink the budget (trim params, or move hello off datagrams).
+def test_go2_hello_fits_the_control_payload_cap() -> None:
+    # The whole manifest rides one @control hello frame (wt_client caps its
+    # payload at MAX_CONTROL_PAYLOAD_BYTES and raises loudly beyond). The v5
+    # cap is generous - the v4 datagram budget was ~1 KB and the go2 hello
+    # sat at 999 B - so this is a sanity pin, not a tight budget.
     hello = Hello(
         v=PROTOCOL_VERSION,
         role="robot",
@@ -237,7 +240,7 @@ def test_go2_hello_fits_the_datagram_budget() -> None:
         manifest=manifest_of(cockpit(layout=GO2_LAYOUT)),
     )
     size = len(encode_datagram(hello))
-    assert size <= 1000, f"go2 hello grew to {size} B (cap {_HELLO_DATAGRAM_MAX_BYTES})"
+    assert size <= MAX_CONTROL_PAYLOAD_BYTES, f"go2 hello grew to {size} B"
 
 
 def test_import_stays_light() -> None:

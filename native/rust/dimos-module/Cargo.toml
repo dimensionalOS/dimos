@@ -25,9 +25,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
-validator = { version = "0.20", features = ["derive"] }
+validator = { version = "0.21", features = ["derive"] }
 # Default features pull in ring via QUIC/TLS, which breaks static musl cross-linking.
-zenoh = { version = "=1.9.0", default-features = false, features = ["transport_tcp", "transport_udp", "unstable", "shared-memory"] }
+zenoh = { version = "=1.10.0", default-features = false, features = ["transport_tcp", "transport_udp", "unstable", "shared-memory"] }
 
 [dev-dependencies]
 tracing-test = "0.2"

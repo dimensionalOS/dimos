@@ -13,8 +13,10 @@ import {
   type ChannelSpec,
   type Delivery,
   encodeDatagram,
+  type FrameHeader,
   type Msg,
   PROTOCOL_VERSION,
+  RESERVED_CHANNEL_PREFIX,
   type RobotInfo,
   type RobotManifest,
 } from "@dimos/shared";
@@ -29,8 +31,7 @@ import {
 } from "./forward.ts";
 
 // Subs snapshots ride a single QUIC datagram (~1200 B budget before QUIC
-// overhead); the Python bridge guards its hello the same way
-// (_HELLO_DATAGRAM_MAX_BYTES in wt_client.py).
+// overhead) until the reliable robot carrier lands (W4).
 const DATAGRAM_BUDGET_BYTES = 1200;
 
 /** What the registry needs from a robot session. */
@@ -233,6 +234,16 @@ export class Registry {
           break;
         }
         if (msg.t === "sub") {
+          // Reserved ids never enter subs (or snapshots), even on a
+          // manifest-less robot: @-frames are control, not data.
+          if (msg.ch.startsWith(RESERVED_CHANNEL_PREFIX)) {
+            reply({
+              t: "error",
+              code: "unknown_channel",
+              message: `channel ids beginning with ${RESERVED_CHANNEL_PREFIX} are reserved`,
+            });
+            break;
+          }
           // Manifest-validated: unbounded ch strings would grow the subs
           // snapshot past the datagram budget and silently freeze the
           // robot's whole subscription control plane. A robot that declared
@@ -334,9 +345,15 @@ export class Registry {
 
   /**
    * Route one robot data frame (raw bytes, already length-complete) to the
-   * viewers watching this robot and subscribed to its channel.
+   * viewers watching this robot and subscribed to its channel. The session
+   * passes its already-parsed header (null = parsed and invalid); omitting
+   * it parses here.
    */
-  onRobotFrame(peer: RobotPeer, bytes: Uint8Array): void {
+  onRobotFrame(
+    peer: RobotPeer,
+    bytes: Uint8Array,
+    header: FrameHeader | null = parseRobotFrameHeader(bytes),
+  ): void {
     const id = peer.info?.id;
     const entry = id === undefined ? undefined : this.#robots.get(id);
     if (entry === undefined || entry.peer !== peer) {
@@ -344,7 +361,6 @@ export class Registry {
       this.#framesFromUnregistered++;
       return;
     }
-    const header = parseRobotFrameHeader(bytes);
     if (header === null) {
       this.#framesDropped++;
       console.log("[relay] dropping robot frame with invalid header");
@@ -496,9 +512,10 @@ export class Registry {
     const msg: Msg = { t: "subs", chs, n: ++entry.n };
     const size = encodeDatagram(msg).byteLength;
     if (size > DATAGRAM_BUDGET_BYTES) {
-      // Unreachable while subs are manifest-validated (a manifest that fit
-      // its hello datagram implies a fitting snapshot). Loud if it ever
-      // happens: an oversized snapshot silently never reaches the robot.
+      // Reachable since v5: a stream hello can declare a channel set whose
+      // full snapshot no longer fits one datagram (W4 moves snapshots to the
+      // reliable carrier). Loud because an oversized snapshot silently never
+      // reaches the robot.
       console.error(`[relay] subs snapshot for ${robotId} is ${size} B (over datagram budget)`);
     }
     entry.peer.sendMsg(msg);

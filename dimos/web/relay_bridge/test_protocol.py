@@ -22,9 +22,12 @@ import pytest
 
 from dimos.web.relay_bridge.locate import find_web_dir
 from dimos.web.relay_bridge.protocol import (
+    CONTROL_CHANNEL,
+    MAX_CONTROL_PAYLOAD_BYTES,
     MAX_DATA_FRAME_BYTES,
     MAX_HEADER_LEN,
     PROTOCOL_VERSION,
+    RESERVED_CHANNEL_PREFIX,
     ControlFrameReader,
     DataFrameStreamError,
     DataFrameStreamReader,
@@ -65,10 +68,24 @@ def _header(d):
 
 
 def test_protocol_version():
-    # v4: the twist datagram gains vy, the teleop lease messages enter the
-    # control plane, and robot-bound teleop messages carry the relay-stamped
-    # lease generation; a v3 peer must fail the handshake.
-    assert PROTOCOL_VERSION == 4
+    # v5: the robot hello rides an @control data frame on a one-shot bidi
+    # stream instead of a datagram, and @-prefixed channel ids are reserved;
+    # a v4 peer must fail the handshake.
+    assert PROTOCOL_VERSION == 5
+
+
+def test_control_hello_payload_is_the_datagram_encoding():
+    # @control payloads reuse the datagram encoding: the control_hello data
+    # frame's payload must decode to the hello_robot datagram vector's
+    # message. Also pins the reserved-channel constants against the mirror.
+    assert CONTROL_CHANNEL.startswith(RESERVED_CHANNEL_PREFIX)
+    assert MAX_CONTROL_PAYLOAD_BYTES == 64 * 1024
+    control = next(v for v in DATA if v["name"] == "control_hello")
+    assert control["header"]["ch"] == CONTROL_CHANNEL
+    hello = next(v for v in DATAGRAMS if v["name"] == "hello_robot")
+    payload = base64.b64decode(control["payload_b64"])
+    assert len(payload) <= MAX_CONTROL_PAYLOAD_BYTES
+    assert decode_datagram(payload) == msg_from_dict(hello["message"])
 
 
 @pytest.mark.parametrize("vector", CONTROL, ids=[v["name"] for v in CONTROL])

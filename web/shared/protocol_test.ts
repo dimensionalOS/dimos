@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
+  CONTROL_CHANNEL,
   ControlFrameReader,
   type DataFrame,
   DataFrameStreamError,
@@ -17,6 +18,7 @@ import {
   msgFromUnknown,
   peekDataFrameLengths,
   PROTOCOL_VERSION,
+  RESERVED_CHANNEL_PREFIX,
 } from "./protocol.ts";
 import controlFixture from "./fixtures/control_frames.json" with { type: "json" };
 import datagramFixture from "./fixtures/datagrams.json" with { type: "json" };
@@ -72,6 +74,16 @@ Deno.test("datagram decode returns null for junk", () => {
   assertEquals(decodeDatagram(new Uint8Array([0xff, 0x00, 0x80])), null);
   assertEquals(decodeDatagram(new TextEncoder().encode("[1,2]")), null);
   assertEquals(decodeDatagram(new TextEncoder().encode('{"x":1}')), null);
+});
+
+Deno.test("the control_hello vector's payload is the hello datagram encoding", () => {
+  // @control payloads reuse the datagram encoding: the vector's payload must
+  // decode to the same message the hello_robot datagram vector pins.
+  assert(CONTROL_CHANNEL.startsWith(RESERVED_CHANNEL_PREFIX));
+  const control = dataFixture.vectors.find((v) => v.name === "control_hello")!;
+  assertEquals(control.header.ch, CONTROL_CHANNEL);
+  const hello = datagramFixture.vectors.find((v) => v.name === "hello_robot")!;
+  assertEquals(decodeDatagram(fromB64(control.payload_b64)), hello.message as Msg);
 });
 
 Deno.test("data frames match golden vectors byte-exactly", () => {
