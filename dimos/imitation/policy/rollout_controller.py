@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Protocol
+from typing import Any, Protocol
 
 from reactivex.disposable import Disposable
 
@@ -33,6 +33,8 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 POLICY_ROLLOUT_TASK_NAME = "policy_rollout"
+POLICY_GRIPPER_TASK_NAME = "policy_gripper"
+POLICY_TASK_NAMES = (POLICY_ROLLOUT_TASK_NAME, POLICY_GRIPPER_TASK_NAME)
 
 
 class PolicyRolloutSpec(Spec, Protocol):
@@ -43,10 +45,20 @@ class PolicyRolloutSpec(Spec, Protocol):
     def rollout_status(self) -> RolloutStatus: ...
 
 
+class PolicyControlSpec(Spec, Protocol):
+    def task_invoke(
+        self,
+        task_name: str,
+        method: str,
+        kwargs: dict[str, Any] | None = None,
+    ) -> Any: ...
+
+
 class QuestRolloutControllerModule(Module):
     """Toggle rollout with Quest A and cancel it on coordinator preemption."""
 
     _policy: PolicyRolloutSpec
+    _control: PolicyControlSpec
 
     teleop_buttons: In[Buttons]
     task_preempted: In[TaskPreemption]
@@ -74,20 +86,26 @@ class QuestRolloutControllerModule(Module):
                 return
 
             if self._policy.rollout_status()["active"]:
-                status = self._policy.stop_rollout()
+                status = self._stop_and_release_policy()
                 logger.info("Policy rollout stopped from Quest A", status=status)
             else:
                 status = self._policy.start_rollout()
                 logger.info("Policy rollout requested from Quest A", status=status)
 
     def _on_task_preempted(self, event: TaskPreemption) -> None:
-        if event.preempted_task != POLICY_ROLLOUT_TASK_NAME:
+        if event.preempted_task not in POLICY_TASK_NAMES:
             return
         with self._lock:
-            status = self._policy.stop_rollout()
+            status = self._stop_and_release_policy()
             logger.info(
                 "Policy rollout cancelled by control preemption",
                 preempting_task=event.preempting_task,
                 joints=event.joints,
                 status=status,
             )
+
+    def _stop_and_release_policy(self) -> RolloutStatus:
+        status = self._policy.stop_rollout()
+        for task_name in POLICY_TASK_NAMES:
+            self._control.task_invoke(task_name, "cancel")
+        return status
