@@ -202,7 +202,7 @@
 
   <!-- RealSense D455 on the mast, centered left-right, facing forward, pitched
        down. Frame prefix d455 so it can coexist with the rear D435i (camera_*);
-       run the driver with camera_name="d455". Child offsets are nominal D455
+       run the driver with frame_id="d455_link". Child offsets are nominal D455
        values (95 mm IR baseline). -->
   <link name="d455_link">
     <!-- The link sits at the left IR imager (RealSense convention), ~15 mm from
