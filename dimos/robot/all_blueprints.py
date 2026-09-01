@@ -256,6 +256,7 @@ all_modules = {
     "observe-skill": "dimos.agents.skills.observe_skill.ObserveSkill",
     "odometry-hist": "dimos.mapping.odometry_hist.OdometryHist",
     "open-arm-collection-recorder": "dimos.imitation.collection.blueprint.OpenArmCollectionRecorder",
+    "open-arm-homing-module": "dimos.robot.manipulators.openarm.homing_module.OpenArmHomingModule",
     "open-arm-teleop-coordinator": "dimos.robot.manipulators.openarm.blueprints.teleop.OpenArmTeleopCoordinator",
     "osm-skill": "dimos.agents.skills.osm.OsmSkill",
     "path-following-coordinator": "dimos.control.path_following_coordinator.PathFollowingCoordinator",

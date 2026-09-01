@@ -38,6 +38,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openarm.blueprints.teleop import teleop_quest_openarm_blueprint
+from dimos.robot.manipulators.openarm.homing_module import OpenArmHomingModule
 from dimos.teleop.quest.blueprints import (
     teleop_quest_piper,
     teleop_quest_xarm7,
@@ -187,6 +188,7 @@ learning_collect_quest_openarm = autoconnect(
         record_tf=False,
     ),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
+    OpenArmHomingModule.blueprint(),  # right thumbstick click, deadman released
     teleop_quest_openarm_blueprint(publish_joint_targets=True),
     *_openarm_cameras_if_real(),
 )
