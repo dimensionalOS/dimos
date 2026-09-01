@@ -27,7 +27,6 @@ from dimos.core.transport import (
     pLCMTransport,
     pZenohTransport,
 )
-from dimos.protocol.pubsub.impl.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.impl.zenohpubsub import (
     QOS_LATEST_WINS,
     QOS_NEVER_DROP,
@@ -111,22 +110,6 @@ def make_transport(
         return pLCMTransport(topic)
     assert msg_type is not None  # not use_pickled implies a typed msg_type
     return LCMTransport(topic, msg_type)
-
-
-def channel_for(name: str, msg_type: type | None = None, *, g: GlobalConfig = global_config) -> str:
-    """The wire channel `make_transport` would land on, without building one.
-
-    Lets a caller name a channel it never subscribes to itself, such as the extra
-    topics a native module fans into one handler.
-    """
-    use_pickled = msg_type is None or getattr(msg_type, "lcm_encode", None) is None
-    topic = transport_topic(name, g)
-    if g.transport == "zenoh":
-        return str(ZenohTopic(topic, None if use_pickled else msg_type).key_expr)
-    if use_pickled:
-        return topic
-    assert msg_type is not None
-    return str(LCMTopic(topic, msg_type))
 
 
 def _transport_arg_error(argv: list[str], message: str) -> NoReturn:

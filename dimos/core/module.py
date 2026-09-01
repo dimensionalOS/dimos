@@ -155,6 +155,24 @@ def _handler_wants_metadata(handler: Callable[..., Any], label: str) -> bool:
     return count == 2
 
 
+def _dispatch_to(
+    handler: Callable[..., Any], metas: "list[TopicMetadata] | None"
+) -> Callable[[int, Any], Any]:
+    """Adapt a handler to the `(index, msg)` the dispatcher calls with.
+
+    `metas` is None when the handler takes just the message; otherwise it holds
+    one `TopicMetadata` per stream feeding the port, indexed the same way.
+    """
+
+    async def invoke(index: int, msg: Any) -> None:
+        if metas is None:
+            await handler(msg)
+        else:
+            await handler(msg, metas[index])
+
+    return invoke
+
+
 class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = Field(default_factory=rpc_backend)
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
@@ -247,7 +265,6 @@ class ModuleBase(Configurable, CompositeResource):
     def start(self) -> None:
         self._start_main()
         self._auto_bind_handlers()
-        self._bind_topic_funnels()
 
     @rpc
     def stop(self) -> None:
@@ -696,46 +713,52 @@ class ModuleBase(Configurable, CompositeResource):
     def _auto_bind_handlers(self) -> None:
         """
         For each declared `x: In[T]` or `x: IO[T]`, if `async def handle_x` exists,
-        subscribe it via process_observable so it runs on self._loop.
+        subscribe it to that port's stream so it runs on self._loop. A port that
+        `.remappings()` fanned in is subscribed to every stream of its funnel
+        instead, all reaching the one handler.
+
+        A native module defines no such method — its subprocess subscribes
+        instead — so this is a no-op there.
         """
         # Validate every handler before subscribing any of them.
-        bindings: list[tuple[Any, Callable[[Any], Any]]] = []
-        for input_name, in_stream in {**self.inputs, **self.ios}.items():
-            declared_handler = getattr(self, f"handle_{input_name}", None)
-            # A funnelled port's handler is bound to the funnel's streams instead.
-            if declared_handler is None or input_name in self.config.topic_funnels:
+        bindings: list[tuple[list[In[Any] | IO[Any]], Callable[[int, Any], Any]]] = []
+        ports: dict[str, In[Any] | IO[Any]] = {**self.inputs, **self.ios}
+        for port, declared in ports.items():
+            handler = getattr(self, f"handle_{port}", None)
+            if handler is None:
                 continue
             # Async @rpc wraps the coroutine fn in a sync dispatcher. Unwrap it
             # so we subscribe the raw coroutine fn instead of the wrapper (which
             # would block on run_coroutine_threadsafe from the rx thread).
-            if hasattr(declared_handler, "aio"):
-                declared_handler = declared_handler.aio.__get__(self, type(self))
-            if not inspect.iscoroutinefunction(declared_handler):
+            if hasattr(handler, "aio"):
+                handler = handler.aio.__get__(self, type(self))
+            if not inspect.iscoroutinefunction(handler):
                 raise TypeError(
-                    f"{type(self).__name__}.handle_{input_name} must be `async def` "
+                    f"{type(self).__name__}.handle_{port} must be `async def` "
                     "(use a manual self.<input>.subscribe(...) for sync handlers)"
                 )
-            handler: Callable[..., Any] = declared_handler
-            if _handler_wants_metadata(handler, f"{type(self).__name__}.handle_{input_name}"):
-                metadata = TopicMetadata(index=0, name=input_name)
+            funnel = self.config.topic_funnels.get(port)
+            names = funnel.names if funnel else [port]
+            streams: list[In[Any] | IO[Any]] = (
+                [self._funnel_streams[name] for name in names] if funnel else [declared]
+            )
+            metas = None
+            if _handler_wants_metadata(handler, f"{type(self).__name__}.handle_{port}"):
+                metas = [
+                    TopicMetadata(
+                        index=index, name=name, info=funnel.info.get(name, {}) if funnel else {}
+                    )
+                    for index, name in enumerate(names)
+                ]
+            bindings.append((streams, _dispatch_to(handler, metas)))
 
-                async def with_meta(
-                    msg: Any,
-                    _handler: Callable[[Any, TopicMetadata], Any] = handler,
-                    _metadata: TopicMetadata = metadata,
-                ) -> None:
-                    await _handler(msg, _metadata)
-
-                handler = with_meta
-            bindings.append((in_stream, handler))
-
-        for in_stream, handler in bindings:
-            # process_observable runs each handler through a per-subscription
-            # dispatcher task on self._loop that serializes invocations and
-            # keeps only the latest unprocessed message. We subscribe to
-            # pure_observable() because the dispatcher already provides
-            # backpressure.
-            self.process_observable(in_stream.pure_observable(), handler)
+        for streams, invoke in bindings:
+            # One dispatcher task per port, on self._loop: it serializes the
+            # handler and holds only the latest unprocessed message per stream.
+            on_msg, dispatcher = self._make_keyed_dispatch(invoke)
+            self.register_disposable(dispatcher)
+            for index, stream in enumerate(streams):
+                self.register_disposable(Disposable(stream.subscribe(partial(on_msg, index))))
 
     def _make_funnel_streams(self) -> "dict[str, In[Any]]":
         """One `In` per topic-funnel entry, keyed by stream name.
@@ -744,6 +767,9 @@ class ModuleBase(Configurable, CompositeResource):
         blueprint machinery remaps/namespaces/pins them), but they are not
         attributes, so `inputs` and the native launch line never see them as
         ports of their own — the funnel's port stands in for all of them.
+
+        Each starts on the transport its name alone implies, which a coordinator
+        overwrites when it wires the blueprint and standalone use keeps.
         """
         streams: dict[str, In[Any]] = {}
         for port, funnel in self.config.topic_funnels.items():
@@ -762,58 +788,10 @@ class ModuleBase(Configurable, CompositeResource):
                     raise ValueError(
                         f"topic funnel {port!r} entry {name!r} appears in more than one funnel"
                     )
-                streams[name] = In(declared.type, name, self)
+                stream: In[Any] = In(declared.type, name, self)
+                stream.transport = make_transport(name, declared.type)
+                streams[name] = stream
         return streams
-
-    def _bind_topic_funnels(self) -> None:
-        """For each `topic_funnels` port with an `async def handle_<port>`, subscribe
-        every stream in the group into that one handler.
-
-        A native module defines no such method — its subprocess subscribes instead —
-        so this is a no-op there.
-        """
-        for port, group in self.config.topic_funnels.items():
-            declared_handler = getattr(self, f"handle_{port}", None)
-            if declared_handler is None:
-                continue
-            if hasattr(declared_handler, "aio"):
-                declared_handler = declared_handler.aio.__get__(self, type(self))
-            if not inspect.iscoroutinefunction(declared_handler):
-                raise TypeError(
-                    f"{type(self).__name__}.handle_{port} must be `async def` "
-                    "(topic funnels have no sync path)"
-                )
-            handler: Callable[..., Any] = declared_handler
-            if _handler_wants_metadata(handler, f"{type(self).__name__}.handle_{port}"):
-                metas = tuple(
-                    TopicMetadata(index=index, name=name, info=group.info.get(name, {}))
-                    for index, name in enumerate(group.names)
-                )
-
-                async def invoke(
-                    index: int,
-                    msg: Any,
-                    _handler: Callable[[Any, TopicMetadata], Any] = handler,
-                    _metas: tuple[TopicMetadata, ...] = metas,
-                ) -> None:
-                    await _handler(msg, _metas[index])
-            else:
-
-                async def invoke(  # type: ignore[misc]
-                    index: int,
-                    msg: Any,
-                    _handler: Callable[[Any], Any] = handler,
-                ) -> None:
-                    await _handler(msg)
-
-            on_msg, dispatcher_disp = self._make_keyed_dispatch(invoke)
-            self.register_disposable(dispatcher_disp)
-            for index, name in enumerate(group.names):
-                stream = self._funnel_streams[name]
-                if getattr(stream, "_transport", None) is None:
-                    # Not wired by a coordinator (standalone use): default transport.
-                    stream.transport = make_transport(name, stream.type)
-                self.register_disposable(Disposable(stream.subscribe(partial(on_msg, index))))
 
     def _make_async_dispatch(
         self, async_handler: Callable[[Any], Any]
@@ -830,10 +808,7 @@ class ModuleBase(Configurable, CompositeResource):
           - The returned Disposable cancels the dispatcher task.
         """
 
-        async def single(_: int, msg: Any) -> None:
-            await async_handler(msg)
-
-        on_msg, disposable = self._make_keyed_dispatch(single)
+        on_msg, disposable = self._make_keyed_dispatch(_dispatch_to(async_handler, None))
         return partial(on_msg, 0), disposable
 
     def _make_keyed_dispatch(

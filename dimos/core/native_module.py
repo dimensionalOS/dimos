@@ -52,7 +52,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import IO, Any, TypedDict
+from typing import IO, Any, TypedDict, cast
 
 from pydantic import Field, model_validator
 
@@ -60,7 +60,8 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.transport_factory import channel_for, session_config
+from dimos.core.transport import PubSubTransport
+from dimos.core.transport_factory import session_config
 from dimos.protocol.service.spec import SessionConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -550,12 +551,7 @@ class NativeModule(Module):
         for port, funnel in self.config.topic_funnels.items():
             entries: list[str | TopicEntry] = []
             for name in funnel.names:
-                stream = self._funnel_streams[name]
-                transport = getattr(stream, "_transport", None)
-                channel = getattr(transport, "channel", None)
-                if channel is None:
-                    # Unwired (standalone use): the channel the default transport lands on.
-                    channel = channel_for(name, stream.type)
+                channel = cast("PubSubTransport[Any]", self._funnel_streams[name].transport).channel
                 info = funnel.info.get(name)
                 entries.append(channel if info is None else TopicEntry(topic=channel, info=info))
             topics[port] = entries
