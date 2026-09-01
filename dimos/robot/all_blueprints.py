@@ -228,8 +228,6 @@ all_modules = {
     "keyboard-teleop": "dimos.robot.unitree.keyboard_teleop.KeyboardTeleop",
     "keyboard-teleop-module": "dimos.teleop.keyboard.keyboard_teleop_module.KeyboardTeleopModule",
     "m20-connection": "dimos.robot.deeprobotics.m20.connection.M20Connection",
-    "m20-point-lio": "dimos.robot.deeprobotics.m20.pointlio.module.M20PointLio",
-    "m20-ros-bridge": "dimos.robot.deeprobotics.m20.bridge.module.M20ROSBridge",
     "manipulation-module": "dimos.manipulation.manipulation_module.ManipulationModule",
     "manipulation-skills": "dimos.manipulation.manipulation_skills.ManipulationSkills",
     "map": "dimos.robot.unitree.type.map.Map",

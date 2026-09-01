@@ -29,7 +29,9 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.std_msgs.UInt32 import UInt32
@@ -94,9 +96,11 @@ class M20Connection(Module):
     command_ready: In[Bool]
     motion_state: In[Int32]
     gait_state: In[UInt32]
+    odometry: In[Odometry]
     safe_cmd_vel: Out[Twist]
     motion_state_cmd: Out[Int32]
     gait_cmd: Out[UInt32]
+    odom: Out[PoseStamped]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -116,6 +120,7 @@ class M20Connection(Module):
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
         self.register_disposable(Disposable(self.motion_state.subscribe(self._on_motion_state)))
         self.register_disposable(Disposable(self.gait_state.subscribe(self._on_gait_state)))
+        self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
         self.safe_cmd_vel.publish(Twist.zero())
 
     @rpc
@@ -228,6 +233,9 @@ class M20Connection(Module):
         with self._state_condition:
             self._gait_state = int(msg.data)
             self._state_condition.notify_all()
+
+    def _on_odometry(self, odometry: Odometry) -> None:
+        self.odom.publish(odometry.to_pose_stamped())
 
     def _ensure_rl_control(self) -> bool:
         with self._lock:

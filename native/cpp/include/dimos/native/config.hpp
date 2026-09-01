@@ -103,28 +103,6 @@ public:
         }
     }
 
-    /// Read and consume one required field without aggregate field-name reflection.
-    ///
-    /// Use this on deployment targets whose compiler supports the SDK runtime
-    /// but not the C++20 non-type template arguments required by
-    /// `pfr::names_as_array`. Call `enforce_all_consumed()` after the final
-    /// field to retain the same strict one-to-one config contract as parse().
-    template <class T>
-    T take(const std::string& key) {
-        auto it = obj_.find(key);
-        if (it == obj_.end()) {
-            throw std::runtime_error("config: missing required field '" + key + "'");
-        }
-        config_detail::check_json_type<T>(*it, key);
-        try {
-            T value = it->template get<T>();
-            consumed_.insert(key);
-            return value;
-        } catch (const std::exception& e) {
-            throw std::runtime_error("config: field '" + key + "': " + e.what());
-        }
-    }
-
     /// Deserialize into a plain aggregate struct, enforcing the one-to-one key
     /// check (every field present, no unknowns) and the optional validate().
     template <class T>
@@ -136,7 +114,17 @@ public:
         constexpr auto names = pfr::names_as_array<T>();
         pfr::for_each_field(out, [&](auto& field, std::size_t i) {
             const std::string key(names[i]);
-            field = take<std::decay_t<decltype(field)>>(key);
+            auto it = obj_.find(key);
+            if (it == obj_.end()) {
+                throw std::runtime_error("config: missing required field '" + key + "'");
+            }
+            config_detail::check_json_type<std::decay_t<decltype(field)>>(*it, key);
+            try {
+                field = it->template get<std::decay_t<decltype(field)>>();
+            } catch (const std::exception& e) {
+                throw std::runtime_error("config: field '" + key + "': " + e.what());
+            }
+            consumed_.insert(key);
         });
         enforce_all_consumed();
         config_detail::validate_if_present(out);
