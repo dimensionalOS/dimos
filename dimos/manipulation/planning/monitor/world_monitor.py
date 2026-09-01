@@ -34,6 +34,7 @@ from dimos.manipulation.planning.spec.models import (
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
@@ -175,6 +176,21 @@ class WorldMonitor:
                     self._visualization.clear_vis_obstacles()
                 except Exception:
                     logger.exception("Obstacle visualization clear failed")
+
+    def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None:
+        """Forward display-only grasp proposals to the visualization backend.
+
+        Proposals are not planning geometry, so nothing reaches the world; the
+        lock is still taken because the backend is shared with obstacle and
+        preview rendering.
+        """
+        with self._lock:
+            if self._visualization is None:
+                return
+            try:
+                self._visualization.show_grasp_proposals(candidates)
+            except Exception:
+                logger.exception("Grasp proposal visualization failed")
 
     # Monitor Control
 

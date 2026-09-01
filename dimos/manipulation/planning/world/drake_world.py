@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
@@ -1135,6 +1136,10 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     def clear_vis_obstacles(self) -> None:
         """Embedded Meshcat observes native WorldSpec obstacle mutations."""
+        return None
+
+    def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None:
+        """Meshcat draws the planning world only; grasp proposals are viser's."""
         return None
 
     def get_visualization_url(self) -> str | None:

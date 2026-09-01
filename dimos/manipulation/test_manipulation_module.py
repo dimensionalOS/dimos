@@ -133,6 +133,7 @@ def module(xarm7_config):
     mod.coordinator_joint_state = None
     mod.voxel_map = None
     mod.objects = None
+    mod.grasp_candidates = None
     mod.start()
     yield mod
     mod.stop()
