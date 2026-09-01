@@ -14,11 +14,7 @@
 
 """Fake-hardware R1 Pro whole-upper-body teleoperation coordinator."""
 
-from dataclasses import replace
-from typing import Literal
-
 from dimos.control.components import HardwareComponent, HardwareType
-from dimos.control.coordinator import ControlCoordinatorConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
@@ -32,36 +28,6 @@ from dimos.robot.manipulators.common.blueprints import teleop_ik_task
 
 R1PRO_QUEST_TASK_NAME = "teleop_r1pro"
 
-
-class R1ProTeleopCoordinatorConfig(ControlCoordinatorConfig):
-    """Select which Quest poses constrain R1 Pro whole-body IK."""
-
-    teleop_mode: Literal["headset", "hands"] = "headset"
-
-
-class R1ProTeleopCoordinator(TeleopControlCoordinator):
-    """Configure R1 Pro Quest targets from the selected teleoperation mode."""
-
-    config: R1ProTeleopCoordinatorConfig
-
-    def _setup_from_config(self) -> None:
-        if self.config.teleop_mode == "hands":
-            self.config.tasks = [
-                replace(
-                    task,
-                    params={
-                        key: value
-                        for key, value in task.params.items()
-                        if key != "head_target_frame"
-                    },
-                )
-                if task.name == R1PRO_QUEST_TASK_NAME
-                else task
-                for task in self.config.tasks
-            ]
-        super()._setup_from_config()
-
-
 _r1pro_model = make_r1pro_model_config()
 _r1pro_hardware = HardwareComponent(
     hardware_id="r1pro",
@@ -71,7 +37,7 @@ _r1pro_hardware = HardwareComponent(
 )
 
 coordinator_teleop_r1pro = autoconnect(
-    R1ProTeleopCoordinator.blueprint(
+    TeleopControlCoordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=[_r1pro_hardware],
         tasks=[
