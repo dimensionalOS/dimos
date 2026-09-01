@@ -35,7 +35,7 @@ def list_blueprints() -> None:
         list_external_blueprint_names,
     )
 
-    blueprints = [name for name in all_blueprints.keys() if not name.startswith("demo-")]
+    blueprints = [name for name in all_blueprints if not name.startswith("demo-")]
     typer.echo("Built-in blueprints:")
     for blueprint_name in sorted(blueprints):
         typer.echo(f"  {blueprint_name}")

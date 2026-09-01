@@ -23,6 +23,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from typing_extensions import Self
+
 from dimos.imitation.dataprep.core import summarize_lengths
 
 
@@ -47,7 +49,7 @@ class _Hdf5Reader:
         self._episodes_g = self._h5["episodes"]
         self._ep_names = sorted(self._episodes_g.keys())
 
-    def __enter__(self) -> _Hdf5Reader:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:

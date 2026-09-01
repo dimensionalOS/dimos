@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 T = TypeVar("T", bound=Timestamped)
 
 
-class SensorMoment(Generic[T], Resource):
+class SensorMoment(Resource, Generic[T]):
     value: T | None = None
 
     def __init__(self, name: str, transport: Transport[T]) -> None:
@@ -48,7 +48,7 @@ class SensorMoment(Generic[T], Resource):
         self.transport.stop()
 
 
-class OutputMoment(Generic[T], Resource):
+class OutputMoment(Resource, Generic[T]):
     value: T | None = None
     transport: Transport[T]
 
@@ -72,7 +72,7 @@ class OutputMoment(Generic[T], Resource):
 
 class Moment(Resource):
     def moments(
-        self, *classes: type[SensorMoment[Any]] | type[OutputMoment[Any]]
+        self, *classes: type[SensorMoment[Any] | OutputMoment[Any]]
     ) -> list[SensorMoment[Any] | OutputMoment[Any]]:
         moments: list[SensorMoment[Any] | OutputMoment[Any]] = []
         for attr_name in dir(self):

@@ -9,7 +9,7 @@ class _Camera:
     azimuth: float
     elevation: float
 
-class Handle(AbstractContextManager["Handle"]):
+class Handle(AbstractContextManager[Handle]):
     cam: _Camera
     def is_running(self) -> bool: ...
     def sync(self) -> None: ...

@@ -77,9 +77,8 @@ def _store(key: str) -> str:
 
 
 def _load() -> str | None:
-    if kr := _keyring():
-        if key := kr.get_password(_KEYRING_SERVICE, _KEYRING_USER):
-            return cast("str", key)
+    if (kr := _keyring()) and (key := kr.get_password(_KEYRING_SERVICE, _KEYRING_USER)):
+        return cast("str", key)
     try:
         return CREDENTIALS_PATH.read_text().strip() or None
     except OSError:
@@ -88,10 +87,9 @@ def _load() -> str | None:
 
 def _forget() -> bool:
     found = False
-    if kr := _keyring():
-        if kr.get_password(_KEYRING_SERVICE, _KEYRING_USER):
-            kr.delete_password(_KEYRING_SERVICE, _KEYRING_USER)
-            found = True
+    if (kr := _keyring()) and kr.get_password(_KEYRING_SERVICE, _KEYRING_USER):
+        kr.delete_password(_KEYRING_SERVICE, _KEYRING_USER)
+        found = True
     if CREDENTIALS_PATH.exists():
         CREDENTIALS_PATH.unlink()
         found = True

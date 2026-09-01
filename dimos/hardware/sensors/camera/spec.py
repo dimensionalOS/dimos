@@ -60,17 +60,14 @@ class DepthCameraHardware(ABC):
     @abstractmethod
     def get_color_camera_info(self) -> CameraInfo | None:
         """Get color camera intrinsics."""
-        pass
 
     @abstractmethod
     def get_depth_camera_info(self) -> CameraInfo | None:
         """Get depth camera intrinsics."""
-        pass
 
     @abstractmethod
     def get_depth_scale(self) -> float:
         """Get the depth scale factor (meters per unit)."""
-        pass
 
     @property
     @abstractmethod

@@ -19,11 +19,11 @@ python -i -m dimos.manipulation.planning.examples.manipulation_client  # termina
 
 In the interactive client:
 ```python skip
-commands()              # List available commands
-joints()                # Get current joint positions
-plan([0.1] * 7)         # Plan to target
-preview()               # Preview in Meshcat (url() for link)
-execute()               # Execute via coordinator
+commands()  # List available commands
+joints()  # Get current joint positions
+plan([0.1] * 7)  # Plan to target
+preview()  # Preview in Meshcat (url() for link)
+execute()  # Execute via coordinator
 ```
 
 ## Architecture
@@ -83,10 +83,10 @@ module = ManipulationModule(
     model=config,
     planning_timeout=10.0,
     enable_viz=True,
-    world_backend="drake",                # RoboPlan is the default
-    planner={"backend": "rrt_connect"},    # RoboPlan is the default
+    world_backend="drake",  # RoboPlan is the default
+    planner={"backend": "rrt_connect"},  # RoboPlan is the default
     trajectory_parametrization={"backend": "simple_trapezoid"},
-    kinematics={"backend": "drake_optimization"}, # Or "jacobian" / "pink"
+    kinematics={"backend": "drake_optimization"},  # Or "jacobian" / "pink"
 )
 module.start()
 module.plan_to_joints([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])

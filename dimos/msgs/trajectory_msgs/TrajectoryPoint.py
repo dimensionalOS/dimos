@@ -76,11 +76,9 @@ class TrajectoryPoint:
         # num_joints (int32)
         buf.write(struct.pack(">i", self.num_joints))
         # positions (double[num_joints])
-        for p in self.positions:
-            buf.write(struct.pack(">d", p))
+        buf.writelines(struct.pack(">d", p) for p in self.positions)
         # velocities (double[num_joints])
-        for v in self.velocities:
-            buf.write(struct.pack(">d", v))
+        buf.writelines(struct.pack(">d", v) for v in self.velocities)
 
     @classmethod
     def lcm_decode(cls, data: bytes) -> "TrajectoryPoint":

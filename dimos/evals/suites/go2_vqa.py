@@ -37,8 +37,9 @@ _generated: list[PassiveEval[float]] = [
         parse=first_number,
         score=within(float(row["band"])),  # type: ignore[arg-type]
         context=(
-            lambda s, name=str(row["stream"]), w=tuple(row["window"]):  # type: ignore[misc]
-            s.streams[name].range_time(*w),
+            lambda s, name=str(row["stream"]), w=tuple(row["window"]): (  # type: ignore[misc]
+                s.streams[name].range_time(*w)
+            ),
         ),
         dataset=str(row["dataset"]),
         tags=frozenset({"generated", "odom", "numeric"}),

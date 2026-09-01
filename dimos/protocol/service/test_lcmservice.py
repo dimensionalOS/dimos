@@ -40,56 +40,64 @@ from dimos.protocol.service.system_configurator.libpython import LibPythonConfig
 
 class TestConfigureSystemForLcm:
     def test_creates_linux_checks_on_linux(self) -> None:
-        with patch(
-            "dimos.protocol.service.system_configurator.lcm_config.platform.system",
-            return_value="Linux",
+        with (
+            patch(
+                "dimos.protocol.service.system_configurator.lcm_config.platform.system",
+                return_value="Linux",
+            ),
+            patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure,
         ):
-            with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
-                autoconf()
-                mock_configure.assert_called_once()
-                checks = mock_configure.call_args[0][0]
-                assert len(checks) == 2
-                assert isinstance(checks[0], MulticastConfiguratorLinux)
-                assert isinstance(checks[1], BufferConfiguratorLinux)
-                assert checks[0].loopback_interface == "lo"
+            autoconf()
+            mock_configure.assert_called_once()
+            checks = mock_configure.call_args[0][0]
+            assert len(checks) == 2
+            assert isinstance(checks[0], MulticastConfiguratorLinux)
+            assert isinstance(checks[1], BufferConfiguratorLinux)
+            assert checks[0].loopback_interface == "lo"
 
     def test_creates_macos_checks_on_darwin(self) -> None:
-        with patch(
-            "dimos.protocol.service.system_configurator.lcm_config.platform.system",
-            return_value="Darwin",
+        with (
+            patch(
+                "dimos.protocol.service.system_configurator.lcm_config.platform.system",
+                return_value="Darwin",
+            ),
+            patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure,
         ):
-            with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
-                autoconf()
-                mock_configure.assert_called_once()
-                checks = mock_configure.call_args[0][0]
-                assert len(checks) == 4
-                assert isinstance(checks[0], MulticastConfiguratorMacOS)
-                assert isinstance(checks[1], BufferConfiguratorMacOS)
-                assert isinstance(checks[2], MaxFileConfiguratorMacOS)
-                assert isinstance(checks[3], LibPythonConfiguratorMacOS)
-                assert checks[0].loopback_interface == "lo0"
+            autoconf()
+            mock_configure.assert_called_once()
+            checks = mock_configure.call_args[0][0]
+            assert len(checks) == 4
+            assert isinstance(checks[0], MulticastConfiguratorMacOS)
+            assert isinstance(checks[1], BufferConfiguratorMacOS)
+            assert isinstance(checks[2], MaxFileConfiguratorMacOS)
+            assert isinstance(checks[3], LibPythonConfiguratorMacOS)
+            assert checks[0].loopback_interface == "lo0"
 
     def test_passes_check_only_flag(self) -> None:
-        with patch(
-            "dimos.protocol.service.system_configurator.lcm_config.platform.system",
-            return_value="Linux",
+        with (
+            patch(
+                "dimos.protocol.service.system_configurator.lcm_config.platform.system",
+                return_value="Linux",
+            ),
+            patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure,
         ):
-            with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
-                autoconf(check_only=True)
-                mock_configure.assert_called_once()
-                assert mock_configure.call_args[1]["check_only"] is True
+            autoconf(check_only=True)
+            mock_configure.assert_called_once()
+            assert mock_configure.call_args[1]["check_only"] is True
 
     def test_logs_error_on_unsupported_system(self) -> None:
-        with patch(
-            "dimos.protocol.service.system_configurator.lcm_config.platform.system",
-            return_value="Windows",
+        with (
+            patch(
+                "dimos.protocol.service.system_configurator.lcm_config.platform.system",
+                return_value="Windows",
+            ),
+            patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure,
         ):
-            with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
-                with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
-                    autoconf()
-                    mock_configure.assert_not_called()
-                    mock_logger.error.assert_called_once()
-                    assert "Windows" in mock_logger.error.call_args[0][0]
+            with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
+                autoconf()
+                mock_configure.assert_not_called()
+                mock_logger.error.assert_called_once()
+                assert "Windows" in mock_logger.error.call_args[0][0]
 
 
 # LCMConfig tests

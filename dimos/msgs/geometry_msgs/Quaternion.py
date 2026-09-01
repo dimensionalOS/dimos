@@ -67,10 +67,10 @@ class Quaternion(LCMQuaternion):  # type: ignore[misc]
     @overload
     def __init__(
         self,
-        x: int | float = ...,
-        y: int | float = ...,
-        z: int | float = ...,
-        w: int | float = ...,
+        x: float = ...,
+        y: float = ...,
+        z: float = ...,
+        w: float = ...,
     ) -> None: ...
 
     @overload
@@ -97,9 +97,7 @@ class Quaternion(LCMQuaternion):  # type: ignore[misc]
             value = args[0]
             # Quaternion before LCMQuaternion (it is a subclass) and before the
             # generic sequence branch (a Quaternion is indexable).
-            if isinstance(value, Quaternion):
-                self.x, self.y, self.z, self.w = value.x, value.y, value.z, value.w
-            elif isinstance(value, LCMQuaternion):
+            if isinstance(value, (Quaternion, LCMQuaternion)):
                 self.x, self.y, self.z, self.w = value.x, value.y, value.z, value.w
             else:
                 self.x, self.y, self.z, self.w = _four_components(value)

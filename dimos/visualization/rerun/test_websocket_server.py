@@ -23,6 +23,7 @@ import time
 from typing import Any
 
 import pytest
+from typing_extensions import Self
 import websockets.asyncio.client as ws_client
 
 from dimos.core.global_config import global_config
@@ -37,12 +38,12 @@ class MockViewerPublisher:
         self._ws: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    def __enter__(self) -> MockViewerPublisher:
+    def __enter__(self) -> Self:
         self._loop = asyncio.new_event_loop()
         self._ws = self._loop.run_until_complete(self._connect())
         return self
 
-    def __exit__(self, *_: Any) -> None:
+    def __exit__(self, *_: object) -> None:
         if self._ws is not None and self._loop is not None:
             self._loop.run_until_complete(self._ws.close())
         if self._loop is not None:
