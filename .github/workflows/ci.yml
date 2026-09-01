@@ -247,10 +247,10 @@ jobs:
             dimos/navigation/nav_3d/mls_planner/test_transformer.py
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
-      - name: Pointlio e2e tests
+      - name: Native module e2e tests
         run: |
-          cargo build --release --locked -p dimos-livox -p virtual-mid360
-          uv run pytest -m pointlio_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
+          cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
+          uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
 
   cpp:
     timeout-minutes: 30
@@ -732,6 +732,14 @@ jobs:
       - name: Fetch native modules from Cachix
         if: contains(matrix.markers, 'skipif_no_ros')
         run: python3 bin/build-native-modules
+      - name: Point cargo at a persistent cache on the workspace mount
+        run: |
+          echo "RUSTUP_HOME=$(dirname "$RUNNER_WORKSPACE")/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$(dirname "$RUNNER_WORKSPACE")/cargo" >> "$GITHUB_ENV"
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build rust native modules
+        run: cargo build --release -p dimos-livox -p dimos-virtual-mid360
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity

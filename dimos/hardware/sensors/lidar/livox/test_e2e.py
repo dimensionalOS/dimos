@@ -12,19 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""End-to-end tests for the Mid-360 rust driver on a synthesized capture.
+"""End-to-end tests for the Mid-360 rust driver.
 
-Both tests run the real release binaries. The pcap test exercises the
-pipeline through the module boundary; the loopback test additionally
-exercises the live path (handshake, sockets) against virtual_mid360.
+The self_hosted test replays a real recording. The native_e2e test runs
+a synthesized capture through the live path against virtual_mid360.
 
-The capture is synthesized per session: one second of SDK2 point and IMU
-packets wrapped in a classic pcap. The layouts mirror rust/src/wire.rs;
-if they drift, the driver fails to parse and the test fails with it.
-
-Run locally with::
-    cargo build --release -p dimos-livox -p virtual-mid360
-    pytest -m pointlio_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py
+Run with::
+    cargo build --release -p dimos-livox -p dimos-virtual-mid360
+    pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py
+    pytest -m self_hosted dimos/hardware/sensors/lidar/livox/test_e2e.py
 """
 
 from __future__ import annotations
@@ -45,8 +41,6 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.hardware.sensors.lidar.livox.module import Mid360Config
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-pytestmark = pytest.mark.pointlio_e2e
 
 _RELEASE = DIMOS_PROJECT_ROOT / "target" / "release"
 
@@ -120,7 +114,7 @@ def _require_binary(name: str) -> Path:
     binary = _RELEASE / name
     if not binary.exists():
         pytest.skip(
-            f"{binary} missing; run: cargo build --release -p dimos-livox -p virtual-mid360"
+            f"{binary} missing; run: cargo build --release -p dimos-livox -p dimos-virtual-mid360"
         )
     return binary
 
@@ -144,8 +138,7 @@ def _collect(topics: dict[str, type], seconds: float) -> dict[str, list]:
     raw: dict[str, list[bytes]] = {topic: [] for topic in topics}
     lc = lcm_module.LCM()
     for topic in topics:
-        # The handler only buffers bytes: decoding a 400 KB cloud inline is
-        # slow enough to overflow the receive buffer and drop packets.
+        # Buffer bytes only. Decoding inline drops packets.
         def on_msg(_ch: str, data: bytes, topic=topic) -> None:
             raw[topic].append(data)
 
@@ -169,10 +162,8 @@ def _terminate(*processes: subprocess.Popen[bytes]) -> None:
 
 
 def _assert_stream_contents(clouds: list, imus: list) -> None:
-    # One second of capture: ~10 frames at 10 Hz, ~200 IMU samples at 200 Hz.
-    # Fragmented ~400 KB clouds drop readily under the kernel's default
-    # receive buffer, so the cloud threshold only proves the stream flows;
-    # the small IMU packets carry the rate assertion.
+    # Large clouds drop under the default receive buffer, so the IMU packets
+    # carry the rate assertion.
     assert len(clouds) >= 3, f"expected >=3 clouds, got {len(clouds)}"
     assert len(imus) >= 120, f"expected >=120 imu samples, got {len(imus)}"
 
@@ -194,30 +185,61 @@ def _assert_stream_contents(clouds: list, imus: list) -> None:
     assert sample.frame_id == "imu_link"
 
 
-def test_pcap_replay_publishes_streams(synth_pcap: Path) -> None:
+@pytest.mark.self_hosted
+def test_real_capture_replay_publishes_streams() -> None:
+    """Replay a real Mid-360 recording: the non-circular wire-format check."""
+    from dimos.utils.data import get_data
+
     binary = _require_binary("mid360_native")
+    pcap = get_data("mid360_shake_stairs/mid360_shake_stairs.pcap")
     config = Mid360Config(
-        pcap=str(synth_pcap),
-        replay_rate=0.5,
+        pcap=str(pcap),
+        replay_rate=1.0,
         multicast_ip=None,
         point_format="full",
     )
     blob = {
         "topics": {
-            "lidar": "/e2e_pcap_lidar#sensor_msgs.PointCloud2",
-            "imu": "/e2e_pcap_imu#sensor_msgs.Imu",
+            "lidar": "/e2e_real_lidar#sensor_msgs.PointCloud2",
+            "imu": "/e2e_real_imu#sensor_msgs.Imu",
         },
         "config": config.to_config_dict(),
         "session": {"id": "pointlio-e2e", "links": []},
     }
     process = _spawn(binary, blob)
     try:
-        received = _collect({"/e2e_pcap_lidar": PointCloud2, "/e2e_pcap_imu": Imu}, seconds=4.0)
+        received = _collect({"/e2e_real_lidar": PointCloud2, "/e2e_real_imu": Imu}, seconds=10.0)
     finally:
         _terminate(process)
-    _assert_stream_contents(received["/e2e_pcap_lidar"], received["/e2e_pcap_imu"])
+
+    clouds = received["/e2e_real_lidar"]
+    imus = received["/e2e_real_imu"]
+    # Thresholds leave headroom for receive-buffer drops on the big clouds.
+    assert len(clouds) >= 20, f"expected >=20 clouds, got {len(clouds)}"
+    assert len(imus) >= 800, f"expected >=800 imu samples, got {len(imus)}"
+
+    cloud = clouds[len(clouds) // 2]
+    assert cloud.frame_id == "lidar_link"
+    points, _ = cloud.as_numpy()
+    assert len(points) > 5000
+    offsets = cloud.offset_times_u32()
+    assert offsets is not None
+    assert offsets.max() < 150_000_000, "offsets exceed one frame interval"
+
+    # The rig shakes, so single samples spike. The median stays near 1 g.
+    magnitudes = sorted(
+        math.sqrt(
+            s.linear_acceleration.x**2 + s.linear_acceleration.y**2 + s.linear_acceleration.z**2
+        )
+        for s in imus
+    )
+    median = magnitudes[len(magnitudes) // 2]
+    assert 5.0 < median < 15.0, f"median accel magnitude {median}"
+    assert imus[0].orientation_covariance[0] == -1.0
+    assert imus[0].frame_id == "imu_link"
 
 
+@pytest.mark.native_e2e
 def test_live_loopback_handshake_and_stream(synth_pcap: Path) -> None:
     driver_binary = _require_binary("mid360_native")
     virtual_binary = _require_binary("virtual_mid360")
