@@ -60,7 +60,9 @@ class QuestionAnswer(ChatAgent):
     def preflight(self, environment: Environment) -> None:
         """Any environment with a recording."""
 
-    def run(self, inputs: str, env: RunningEnvironment, run_dir: Path) -> Trajectory:
+    def run(
+        self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
+    ) -> Trajectory:
         blocks = self._encode(env.recording)
         if not blocks:
             raise RuntimeError("nothing in the recording to encode; the run would be blind")

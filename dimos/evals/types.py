@@ -240,10 +240,14 @@ class Agent(Protocol):
         """Every tool this agent can call. *environment_tools* are the MCP
         tools exposed by the running environment."""
 
-    def run(self, inputs: str, env: RunningEnvironment, run_dir: Path) -> Trajectory:
-        """Deliver *inputs* and let the agent act until it stops or hits its
-        own step limit. Write raw provider request/response bodies under
-        ``run_dir``. Return the trajectory. Synchronous. Never grades."""
+    def run(
+        self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
+    ) -> Trajectory:
+        """Deliver *inputs* and let the agent act until it stops, hits its own
+        step limit, or *timeout_s* passes (return what it has, marked
+        ``timeout``). Write raw provider request/response bodies under
+        ``run_dir``. Return the trajectory. Synchronous: nothing of the
+        agent's outlives the call. Never grades."""
 
 
 # -- case ------------------------------------------------------------------------------

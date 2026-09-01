@@ -109,7 +109,9 @@ class McpClientAgent:
                 "McpClientAgent adds no McpClient and no dimos is running to attach to"
             )
 
-    def run(self, inputs: str, env: RunningEnvironment, run_dir: Path) -> Trajectory:
+    def run(
+        self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
+    ) -> Trajectory:
         from dimos.agents.mcp.mcp_client import McpClientConfig
         from dimos.core.transport_factory import make_transport
         from dimos.porcelain.dimos import Dimos
@@ -136,7 +138,7 @@ class McpClientAgent:
             agent_t.subscribe(turn.on_agent)
             idle_t.subscribe(turn.on_idle)
             human_t.publish(inputs)
-            turn.done.wait()  # the runner's timeout is the only limit
+            finished = turn.done.wait(timeout_s)
         finally:
             for t in (agent_t, idle_t, human_t):
                 t.stop()
@@ -153,4 +155,4 @@ class McpClientAgent:
                 calls += 1
             elif isinstance(msg, ToolMessage):
                 recorder.observe(str(msg.tool_call_id), str(msg.content))
-        return recorder.build("answer")
+        return recorder.build("answer" if finished else "timeout")

@@ -27,18 +27,15 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
-import threading
 import time
 from typing import Any
 
 from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
-from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.types import (
     Agent,
     EvalCase,
     EvalResult,
     Outcome,
-    RunningEnvironment,
     Suite,
     Trajectory,
 )
@@ -159,11 +156,11 @@ class EvalRunner(Configurable):
         try:
             env = case.environment.start(agent.modules)
             tools = list(dict.fromkeys(agent.available_tools(tuple(_tools_exposed(env.mcp_url)))))
-            trajectory, agent_s = self._run_agent(case, agent, env, case_dir)
-            case.environment.settle(max(0.0, case.timeout_s - agent_s))
-            # The agent phase is over before grading: for a live environment
-            # that closes the recording, and a timed-out agent thread can no
-            # longer act on what the grader reads.
+            started = time.monotonic()
+            trajectory = agent.run(case.inputs, env, case_dir, timeout_s=case.timeout_s)
+            case.environment.settle(max(0.0, case.timeout_s - (time.monotonic() - started)))
+            # The agent phase is over before grading; for a live environment
+            # that closes the recording.
             case.environment.stop()
             _write_trajectory(case_dir, trajectory, tools)
             missing = [n for n in case.environment.artifacts if not env.artifacts[n].exists()]
@@ -175,33 +172,6 @@ class EvalRunner(Configurable):
             return self._result(case, t0, trajectory, error=repr(e))
         finally:
             case.environment.stop()
-
-    def _run_agent(
-        self, case: EvalCase, agent: Agent, env: RunningEnvironment, case_dir: Path
-    ) -> tuple[Trajectory, float]:
-        """``agent.run`` under the case's wall-clock limit, and the seconds it
-        took. A timed-out agent yields a trajectory of the instruction alone,
-        marked ``timeout``; the world is still graded."""
-        box: dict[str, Any] = {}
-
-        def target() -> None:
-            try:
-                box["trajectory"] = agent.run(case.inputs, env, case_dir)
-            except BaseException as e:
-                box["error"] = e
-
-        t0 = time.monotonic()
-        thread = threading.Thread(target=target, name=f"eval-{case.id}", daemon=True)
-        thread.start()
-        thread.join(case.timeout_s)
-        if thread.is_alive():
-            logger.warning("agent timed out", case=case.id, timeout_s=case.timeout_s)
-            empty = TrajectoryBuilder(case.inputs, name=type(agent).__name__)
-            return empty.build("timeout"), time.monotonic() - t0
-        if "error" in box:
-            raise box["error"]
-        trajectory: Trajectory = box["trajectory"]
-        return trajectory, time.monotonic() - t0
 
     def _result(
         self,

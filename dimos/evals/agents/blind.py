@@ -35,5 +35,7 @@ class Blind(ChatAgent):
     def preflight(self, environment: Environment) -> None:
         """Any environment."""
 
-    def run(self, inputs: str, env: RunningEnvironment, run_dir: Path) -> Trajectory:
+    def run(
+        self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
+    ) -> Trajectory:
         return single_call(self, [BLIND_BLOCK], inputs, run_dir)

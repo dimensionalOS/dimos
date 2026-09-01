@@ -126,10 +126,10 @@ def _sim(**kwargs: Any) -> Sim:
     return Sim(blueprint=GO2_STACK, **kwargs)
 
 
-def _trajectory(answer: str, raw: Path) -> Trajectory:
+def _trajectory(answer: str, raw: Path, timed_out: bool = False) -> Trajectory:
     trajectory = TrajectoryBuilder("?", name="fake", model="fake")
     trajectory.step(message=answer, request=raw / "r", response=raw / "s")
-    return trajectory.build("answer")
+    return trajectory.build("timeout" if timed_out else "answer")
 
 
 def _assert_atif(doc: dict[str, Any]) -> None:
@@ -191,11 +191,13 @@ class FakeAgent:
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
         return ("fake_tool",)
 
-    def run(self, inputs: str, env: RunningEnvironment, run_dir: Path) -> Trajectory:
-        time.sleep(self.delay_s)
+    def run(
+        self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
+    ) -> Trajectory:
+        time.sleep(min(self.delay_s, timeout_s))
         if self.fail:
             raise RuntimeError("boom")
-        return _trajectory(self.answer, run_dir / "raw")
+        return _trajectory(self.answer, run_dir / "raw", timed_out=self.delay_s > timeout_s)
 
 
 def _text(messages: list[BaseMessage]) -> str:
@@ -417,7 +419,9 @@ def test_question_answer_encodes_the_recording_into_one_call(dataset: str, tmp_p
     env = Dataset(dataset)
     running = env.start("")
     try:
-        trajectory = QuestionAnswer(chat_model=spy).run("how far?", running, tmp_path / "case")
+        trajectory = QuestionAnswer(chat_model=spy).run(
+            "how far?", running, tmp_path / "case", timeout_s=60.0
+        )
     finally:
         env.stop()
 
@@ -441,7 +445,7 @@ def test_question_answer_refuses_an_empty_recording(tmp_path: Path) -> None:
 
     running = RunningEnvironment(mcp_url="", recording=MemoryStore(), artifacts={})
     with pytest.raises(RuntimeError, match="would be blind"):
-        QuestionAnswer(chat_model=SpyChat()).run("?", running, tmp_path)
+        QuestionAnswer(chat_model=SpyChat()).run("?", running, tmp_path, timeout_s=60.0)
 
 
 def test_blind_never_reads_the_recording(dataset: str, tmp_path: Path) -> None:
@@ -450,7 +454,7 @@ def test_blind_never_reads_the_recording(dataset: str, tmp_path: Path) -> None:
     env = Dataset(dataset)
     running = env.start("")
     try:
-        trajectory = Blind(chat_model=spy).run("how far?", running, tmp_path)
+        trajectory = Blind(chat_model=spy).run("how far?", running, tmp_path, timeout_s=60.0)
     finally:
         env.stop()
     text = _text(spy.seen[0])
@@ -655,7 +659,6 @@ def test_runner_timeout_marks_the_trajectory(dataset: str, tmp_path: Path) -> No
     result = EvalRunner(out_dir=tmp_path).run([case], FakeAgent(delay_s=5.0))[0]
     assert result.ended_by == "timeout" and not result.error
     assert result.score == 0.5 and not result.passed  # the world is still graded
-    assert result.steps == 1  # the instruction alone
 
 
 def test_runner_missing_artifact_is_an_error(tmp_path: Path) -> None:
@@ -712,14 +715,15 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
         load_agent("dimos.evals.agents.lib.chat")
 
 
+@pytest.mark.parametrize("goes_idle", [True, False])
 def test_mcp_client_agent_drives_a_turn_over_real_transports(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goes_idle: bool
 ) -> None:
     """The production agent points the McpClient's raw capture at run_dir/raw,
     publishes on /human_input, reads the turn back on /agent until
-    /agent_idle, and links every model call to the McpClient's trace files
-    (the message must arrive with no flush sleep: LCM publish is a
-    synchronous send)."""
+    /agent_idle or its budget runs out, and links every model call to the
+    McpClient's trace files (the message must arrive with no flush sleep: LCM
+    publish is a synchronous send)."""
     from dimos.core.transport_factory import make_transport
 
     trace_dir = tmp_path / "case" / "raw"
@@ -754,31 +758,26 @@ def test_mcp_client_agent_drives_a_turn_over_real_transports(
         )
         agent_t.publish(ToolMessage(content="arrived", tool_call_id="c1"))
         agent_t.publish(AIMessage(content="I am at the bed"))
-        idle.publish(True)
+        if goes_idle:
+            idle.publish(True)
 
     unsubscribe = human.subscribe(
         lambda msg: threading.Thread(target=fake_mcp_client, args=(msg,)).start()
     )
     try:
         env = RunningEnvironment(mcp_url="http://localhost:1/mcp", recording=None, artifacts={})  # type: ignore[arg-type]
-        box: dict[str, Trajectory] = {}
-        worker = threading.Thread(
-            target=lambda: box.__setitem__(
-                "t",
-                McpClientAgent().run("go to the bed", env, tmp_path / "case"),
-            )
+        agent = McpClientAgent()
+        trajectory = agent.run(
+            "go to the bed", env, tmp_path / "case", timeout_s=10.0 if goes_idle else 0.5
         )
-        worker.start()
-        worker.join(timeout=10.0)
-        assert not worker.is_alive(), "turn never went idle"
     finally:
         unsubscribe()
         for t in (human, agent_t, idle):
             t.stop()
 
-    trajectory = box["t"]
     assert repointed == [str(trace_dir)]
-    assert trajectory.final_answer == "I am at the bed" and trajectory.extra.ended_by == "answer"
+    assert trajectory.extra.ended_by == ("answer" if goes_idle else "timeout")
+    assert trajectory.final_answer == "I am at the bed"
     assert len(trajectory.steps) == 3 and trajectory.final_metrics.total_prompt_tokens == 10
     user, first, last = trajectory.steps
     assert user.source == "user" and user.message == "go to the bed"

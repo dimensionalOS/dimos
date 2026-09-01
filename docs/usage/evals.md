@@ -125,8 +125,9 @@ compare two tool sets on one task, run the suite twice with different
 `--set modules=...`; each `trajectory.json` records the tools exposed.
 
 **Limits.** `max_steps` caps model calls on agents that support it. The
-case's `timeout_s` caps wall-clock time. Tokens and cost have no cap; both
-are recorded on the trajectory and ranked.
+case's `timeout_s` caps wall-clock time; the agent returns what it has by
+then, marked `timeout`. Tokens and cost have no cap; both are recorded on
+the trajectory and ranked.
 
 **Observation encoding.** Each agent class hard-codes how the recording
 reaches the model. `QuestionAnswer` calls `agent_encode()`; no other agent

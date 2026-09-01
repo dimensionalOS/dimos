@@ -146,7 +146,7 @@ def test_frames_per_stream_downsamples_not_truncates(tmp_path: Path) -> None:
     env = Dataset(str(tmp_path / "rec.db"))
     running = env.start("")
     try:
-        _qa(spy, frames_per_stream=5).run("?", running, tmp_path)
+        _qa(spy, frames_per_stream=5).run("?", running, tmp_path, timeout_s=60.0)
     finally:
         env.stop()
     texts = [b["text"] for b in spy.seen[0][-1].content if b.get("type") == "text"]  # type: ignore[union-attr]
@@ -210,8 +210,10 @@ def test_grader_reads_the_history_the_environment_recorded(tmp_path: Path) -> No
         def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
             return ()
 
-        def run(self, inputs: str, env: RunningEnvironment, run_dir: Path) -> Trajectory:
-            time.sleep(1.0)
+        def run(
+            self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
+        ) -> Trajectory:
+            time.sleep(min(1.0, timeout_s))
             return TrajectoryBuilder(inputs, name="none").build("answer")
 
     def grade(o: Any) -> float:
