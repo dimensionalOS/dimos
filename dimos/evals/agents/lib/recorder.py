@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 import time
 from typing import Any
@@ -63,7 +63,6 @@ class StepDraft:
     response: Path
     reasoning: str = ""
     reasoning_tokens: int = 0
-    observations: list[str] = field(default_factory=list)
 
     def freeze(self) -> Step:
         return Step(
@@ -72,7 +71,6 @@ class StepDraft:
             message=self.message,
             reasoning=self.reasoning,
             tool_calls=tuple(self.tool_calls),
-            observations=tuple(self.observations),
             input_tokens=self.input_tokens,
             output_tokens=self.output_tokens,
             reasoning_tokens=self.reasoning_tokens,
@@ -128,7 +126,7 @@ class StepRecorder(BaseCallbackHandler):
             pair = write_normalized(self.raw_dir, sent, response)
         self._next_seq = pair[0] + 1
         tool_calls = [
-            ToolCall(name=str(tc["name"]), args=dict(tc.get("args") or {}))
+            ToolCall(id=str(tc["id"]), name=str(tc["name"]), args=dict(tc.get("args") or {}))
             for tc in getattr(message, "tool_calls", None) or []
         ]
         self._drafts.append(

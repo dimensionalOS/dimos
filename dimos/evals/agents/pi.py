@@ -113,7 +113,7 @@ def _result_text(result: Any) -> str:
 class _Events:
     """Pi's ``--mode json`` stream folded into steps: one per assistant
     ``message_end``, each paired with the request/response the proxy recorded
-    for it; tool results are observations of the step that called them."""
+    for it; each tool result is attached to the call that produced it."""
 
     def __init__(self, raw_dir: Path, t0: float) -> None:
         self.raw_dir = raw_dir
@@ -128,7 +128,9 @@ class _Events:
     def feed(self, line: str) -> None:
         event = json.loads(line)
         if event.get("type") == "tool_execution_end" and self.drafts:
-            self.drafts[-1].observations.append(_result_text(event.get("result")))
+            call_id = str(event["toolCallId"])
+            call = next(call for call in self.drafts[-1].tool_calls if call.id == call_id)
+            call.result = _result_text(event.get("result"))
         elif event.get("type") == "message_end" and event["message"].get("role") == "assistant":
             self._step(event["message"])
 
@@ -156,7 +158,7 @@ class _Events:
                     str(c.get("thinking", "")) for c in content if c.get("type") == "thinking"
                 ),
                 tool_calls=[
-                    ToolCall(name=str(c["name"]), args=dict(c.get("arguments") or {}))
+                    ToolCall(id=str(c["id"]), name=str(c["name"]), args=dict(c.get("arguments") or {}))
                     for c in content
                     if c.get("type") == "toolCall"
                 ],

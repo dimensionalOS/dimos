@@ -31,7 +31,7 @@ from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 import numpy as np
 import pytest
@@ -549,8 +549,6 @@ def test_mcp_client_agent_drives_a_turn_over_real_transports(
     /agent until /agent_idle, and links every model call to the McpClient's
     trace files (the message must arrive with no flush sleep: LCM publish is
     a synchronous send)."""
-    from langchain_core.messages import HumanMessage, ToolMessage
-
     from dimos.core.transport_factory import make_transport
 
     trace_dir = tmp_path / "llm"
@@ -605,8 +603,9 @@ def test_mcp_client_agent_drives_a_turn_over_real_transports(
     trajectory = box["t"]
     assert trajectory.final_answer == "I am at the bed" and trajectory.ended_by == "answer"
     assert len(trajectory.steps) == 2 and trajectory.input_tokens == 10
-    assert trajectory.steps[0].tool_calls[0].name == "move_to"
-    assert trajectory.steps[0].observations == ("arrived",)
+    call = trajectory.steps[0].tool_calls[0]
+    assert call.id == "c1" and call.name == "move_to"
+    assert call.args == {"x": 1.0} and call.result == "arrived"
     assert trajectory.steps[1].request == tmp_path / "case" / "raw" / "001-request.json"
     assert trajectory.steps[1].request.exists()
 
@@ -695,8 +694,6 @@ def fake_pi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 def test_pi_runs_headless_over_the_recording_and_records_every_call(
     dataset: str, fake_pi: Path, tmp_path: Path
 ) -> None:
-    from dimos.evals.types import ToolCall
-
     env = Dataset(dataset, select=(lambda s: s.streams.odom.limit(2),))
     running = env.start("")
     run_dir = tmp_path / "run"
@@ -712,11 +709,9 @@ def test_pi_runs_headless_over_the_recording_and_records_every_call(
         "answer",
         "gpt-fake",
     )
-    assert [s.tool_calls for s in trajectory.steps] == [
-        (ToolCall(name="bash", args={"command": "python probe.py"}),),
-        (),
-    ]
-    assert trajectory.steps[0].observations == ("x=4.0",)
+    call = trajectory.steps[0].tool_calls[0]
+    assert (call.id, call.name, call.result) == ("c0", "bash", "x=4.0")
+    assert call.args == {"command": "python probe.py"} and not trajectory.steps[1].tool_calls
     assert trajectory.steps[0].reasoning == "measuring"
     assert (trajectory.input_tokens, trajectory.output_tokens, trajectory.cached_tokens) == (
         22,  # (input 10 + cacheWrite 1) per step; cacheRead lands in cached_tokens

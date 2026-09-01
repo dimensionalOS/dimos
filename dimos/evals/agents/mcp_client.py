@@ -156,7 +156,7 @@ class McpClientAgent:
                         message=str(msg.text),
                         reasoning=reasoning_text(msg.content),
                         tool_calls=tuple(
-                            ToolCall(name=str(tc["name"]), args=dict(tc.get("args") or {}))
+                            ToolCall(id=str(tc["id"]), name=str(tc["name"]), args=dict(tc.get("args") or {}))
                             for tc in msg.tool_calls
                         ),
                         input_tokens=int(usage.get("input_tokens", 0)) - cache_read,
@@ -171,10 +171,8 @@ class McpClientAgent:
                 if not msg.tool_calls:
                     final = str(msg.text)
             elif isinstance(msg, ToolMessage) and steps:
-                last = steps[-1]
-                steps[-1] = Step(
-                    **{**last.__dict__, "observations": (*last.observations, str(msg.content))}
-                )
+                call = next(call for call in steps[-1].tool_calls if call.id == msg.tool_call_id)
+                call.result = str(msg.content)
         model = next(
             (
                 str(m.response_metadata.get("model_name"))

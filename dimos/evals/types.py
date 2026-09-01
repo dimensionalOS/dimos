@@ -55,23 +55,23 @@ Select = Callable[["Store"], "Stream[Any, Any]"]
 # -- trajectory ------------------------------------------------------------------------
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class ToolCall:
+    id: str
     name: str
     args: dict[str, Any]
+    result: str | None = None  # None when the call never completed
 
 
 @dataclass(frozen=True, kw_only=True)
 class Step:
-    """One model call. Mirrors ATIF (message, tool_calls, observation, metrics)
-    plus the exact provider payloads for this call."""
+    """One model call, its completed tool executions, and exact provider payloads."""
 
     index: int
     t: float  # seconds since run start
     message: str  # assistant text for this step
     reasoning: str = ""  # readable reasoning text, "" when the provider returns none
     tool_calls: tuple[ToolCall, ...] = ()
-    observations: tuple[str, ...] = ()  # tool results the model saw before the next step
     input_tokens: int = 0  # non-cached input only; cache reads are excluded
     output_tokens: int = 0
     reasoning_tokens: int = 0  # the part of output_tokens spent reasoning

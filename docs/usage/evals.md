@@ -42,7 +42,7 @@ Every run writes to `~/.local/state/dimos/evals/run-*/`:
 |---|---|
 | `results.jsonl` | one row per case: score, steps, tokens, seconds, `ended_by`, trajectory path |
 | `summary.json` | mean/pass rate/errors plus the **agent that ran** (its class and every constructor argument: model, prompt, `max_steps`, `modules`, ...) and the git sha |
-| `<case_id>/trajectory.json` | every tool available to the agent and one `Step` per model call (message, tool calls, observations, tokens, latency) |
+| `<case_id>/trajectory.json` | every tool available to the agent and one `Step` per model call (message, tool calls with results, tokens, latency) |
 | `<case_id>/raw/NNN-request.json`, `NNN-response.json` | the exact payload sent to and received from the provider for every call |
 
 To generate deterministic image questions from recordings, see
