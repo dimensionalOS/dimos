@@ -342,6 +342,39 @@ def test_checkpoint_loads_on_demand_and_is_cached(make_runtime: RuntimeFactory) 
     assert policy.reset_count >= 4
 
 
+def test_policy_accepts_config_without_action_chunk_metadata(
+    make_runtime: RuntimeFactory,
+) -> None:
+    policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
+    del policy.upstream_config.chunk_size
+    del policy.upstream_config.n_action_steps
+    module, output = make_runtime(policy)
+    _provide_observation(module)
+
+    result = module.start_rollout(duration=1.0)
+
+    assert result["active"] is True
+    assert output.published.wait(1.0), "policy did not publish a command"
+    assert module.rollout_status()["last_error"] is None
+
+
+@pytest.mark.parametrize("attribute", ["chunk_size", "n_action_steps"])
+def test_policy_rejects_non_integer_action_chunk_metadata(
+    make_runtime: RuntimeFactory,
+    attribute: str,
+) -> None:
+    policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
+    setattr(policy.upstream_config, attribute, "invalid")
+    module, output = make_runtime(policy)
+    _provide_observation(module)
+
+    module.start_rollout(duration=1.0)
+
+    wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
+    assert module.rollout_status()["last_error"] == f"{attribute} must be an int, got str"
+    assert output.messages == []
+
+
 def test_policy_rejects_incompatible_checkpoint_features(make_runtime: RuntimeFactory) -> None:
     policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
     del policy.upstream_config.input_features["observation.images.wrist"]
