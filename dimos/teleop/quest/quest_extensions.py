@@ -262,6 +262,61 @@ class VideoArmTeleopModule(ArmTeleopModule):
         _push_jpeg(self, msg, self.config.video_jpeg_quality)
 
 
+class ArmBaseTeleopConfig(QuestTeleopConfig):
+    """Configuration for ArmBaseTeleopModule."""
+
+    base_linear_speed: float = 0.3  # m/s at full stick deflection
+    base_angular_speed: float = 0.4  # rad/s at full stick deflection
+    base_deadzone: float = 0.15
+
+
+class ArmBaseTeleopModule(ArmTeleopModule):
+    """Arm teleop that also drives a holonomic base from the thumbsticks.
+
+    The right thumbstick translates the base (forward/backward and strafe),
+    the left thumbstick yaws it around z. Velocity is derived per Joy
+    message like Go2TeleopModule; a deadzone suppresses stick drift and any
+    invalid input publishes a zero twist.
+
+    Outputs:
+        - everything from ArmTeleopModule
+        - twist_command: Twist (base velocity command)
+    """
+
+    config: ArmBaseTeleopConfig
+
+    twist_command: Out[Twist]
+
+    def _base_deadzone(self, v: float) -> float:
+        return 0.0 if abs(v) < self.config.base_deadzone else v
+
+    def _publish_safe_base_command(self) -> None:
+        self.twist_command.publish(Twist.zero())
+
+    def _on_joy_bytes(self, data: bytes) -> bool:
+        try:
+            valid = super()._on_joy_bytes(data)
+        except ValueError:
+            self._publish_safe_base_command()
+            raise
+        if not valid:
+            self._publish_safe_base_command()
+            return False
+        with self._lock:
+            left = self._controllers.get(Hand.LEFT)
+            right = self._controllers.get(Hand.RIGHT)
+        twist = Twist()
+        twist.linear = Vector3(0.0, 0.0, 0.0)
+        twist.angular = Vector3(0.0, 0.0, 0.0)
+        if right is not None:
+            twist.linear.x = -self._base_deadzone(right.thumbstick.y) * self.config.base_linear_speed
+            twist.linear.y = -self._base_deadzone(right.thumbstick.x) * self.config.base_linear_speed
+        if left is not None:
+            twist.angular.z = -self._base_deadzone(left.thumbstick.x) * self.config.base_angular_speed
+        self.twist_command.publish(twist)
+        return True
+
+
 class Go2TeleopConfig(QuestTeleopConfig):
     """Configuration for Go2TeleopModule."""
 

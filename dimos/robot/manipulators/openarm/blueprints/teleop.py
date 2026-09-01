@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinatorConfig, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
@@ -32,7 +33,7 @@ from dimos.robot.manipulators.openarm.config import (
     openarm_hardware,
 )
 from dimos.robot.manipulators.openarm.teleop_ik import OpenArmPinkPoseTargetSolver
-from dimos.teleop.quest.quest_extensions import ArmTeleopModule
+from dimos.teleop.quest.quest_extensions import ArmBaseTeleopModule, ArmTeleopModule
 
 OPENARM_QUEST_TASK_NAME = "teleop_openarm"
 
@@ -62,6 +63,9 @@ class OpenArmTeleopCoordinatorConfig(ControlCoordinatorConfig):
 
     left_can_port: str | None = None
     right_can_port: str | None = None
+    enable_base: bool = False
+    # Portal RPC "host:port"; None takes the flowbase adapter default.
+    base_address: str | None = None
 
 
 class OpenArmTeleopCoordinator(TeleopControlCoordinator):
@@ -88,6 +92,16 @@ class OpenArmTeleopCoordinator(TeleopControlCoordinator):
                 right_can_port=self.config.right_can_port,
             )
         ]
+        if self.config.enable_base:
+            self.config.hardware.append(
+                HardwareComponent(
+                    hardware_id="base",
+                    hardware_type=HardwareType.BASE,
+                    joints=make_twist_base_joints("base"),
+                    adapter_type="flowbase",
+                    address=self.config.base_address,
+                )
+            )
         super()._setup_from_config()
 
 
@@ -134,17 +148,35 @@ _openarm_quest_task = TaskConfig(
 )
 
 
-def teleop_quest_openarm_blueprint(*, publish_joint_targets: bool = False) -> Blueprint:
+def teleop_quest_openarm_blueprint(
+    *, publish_joint_targets: bool = False, enable_base: bool = False
+) -> Blueprint:
     """The OpenArm Quest teleop stack, with optional coordinator extras.
 
     Safe default: both controllers feed one bimanual task backed by in-memory
-    hardware. Supplying both CAN ports selects the physical adapter.
+    hardware. Supplying both CAN ports selects the physical adapter. With
+    enable_base the flowbase joins the coordinator and the thumbsticks drive
+    it: right stick translates, left stick yaws.
     """
+    teleop_module_cls = ArmBaseTeleopModule if enable_base else ArmTeleopModule
+    base_tasks = (
+        [
+            TaskConfig(
+                name="vel_base",
+                type="velocity",
+                joint_names=make_twist_base_joints("base"),
+                priority=10,
+            )
+        ]
+        if enable_base
+        else []
+    )
     return autoconnect(
-        ArmTeleopModule.blueprint(),
+        teleop_module_cls.blueprint(),
         OpenArmTeleopCoordinator.blueprint(
             instance_name="ControlCoordinator",
             publish_joint_targets=publish_joint_targets,
+            enable_base=enable_base,
             tasks=[
                 _openarm_quest_task,
                 TaskConfig(
@@ -162,7 +194,8 @@ def teleop_quest_openarm_blueprint(*, publish_joint_targets: bool = False) -> Bl
                     stream_bind={"gripper_command": "right_gripper_command"},
                 ),
                 _trajectory_task(priority=20),
-            ],
+            ]
+            + base_tasks,
         ),
         _OpenArmManipulationModule.blueprint(
             model=openarm_bimanual_model_config(),
@@ -171,10 +204,10 @@ def teleop_quest_openarm_blueprint(*, publish_joint_targets: bool = False) -> Bl
         ),
     ).remappings(
         [
-            (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-            (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
-            (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-            (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+            (teleop_module_cls, "left_controller_output", "left_cartesian_command"),
+            (teleop_module_cls, "left_gripper_command", "left_gripper_command"),
+            (teleop_module_cls, "right_controller_output", "right_cartesian_command"),
+            (teleop_module_cls, "right_gripper_command", "right_gripper_command"),
         ]
     )
 

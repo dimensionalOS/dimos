@@ -189,6 +189,6 @@ learning_collect_quest_openarm = autoconnect(
     ),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     OpenArmHomingModule.blueprint(),  # right thumbstick click, deadman released
-    teleop_quest_openarm_blueprint(publish_joint_targets=True),
+    teleop_quest_openarm_blueprint(publish_joint_targets=True, enable_base=True),
     *_openarm_cameras_if_real(),
 )

@@ -27,7 +27,7 @@ from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openarm.blueprints.teleop import OpenArmTeleopCoordinator
-from dimos.teleop.quest.quest_extensions import ArmTeleopModule
+from dimos.teleop.quest.quest_extensions import ArmBaseTeleopModule, ArmTeleopModule
 
 AGGREGATE = "coordinator_joint_state"
 
@@ -143,9 +143,22 @@ def test_openarm_recorder_reads_state_and_targets() -> None:
 
 def test_openarm_collection_status_is_wired_to_quest_hud() -> None:
     hud = next(
-        atom for atom in learning_collect_quest_openarm.blueprints if atom.module is ArmTeleopModule
+        atom
+        for atom in learning_collect_quest_openarm.blueprints
+        if atom.module is ArmBaseTeleopModule
     )
     status = next(stream for stream in hud.streams if stream.name == "status")
 
     assert status.direction == "in"
     assert status.type.__name__ == "EpisodeStatus"
+
+
+def test_openarm_collection_base_is_enabled() -> None:
+    coordinator = next(
+        atom
+        for atom in learning_collect_quest_openarm.blueprints
+        if atom.module is OpenArmTeleopCoordinator
+    )
+
+    assert coordinator.kwargs["enable_base"] is True
+    assert any(task.name == "vel_base" for task in coordinator.kwargs["tasks"])
