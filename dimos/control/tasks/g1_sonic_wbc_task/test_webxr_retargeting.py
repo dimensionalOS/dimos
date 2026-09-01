@@ -24,6 +24,7 @@ from dimos.control.tasks.g1_sonic_wbc_task.webxr_retargeting import (
     SMPL_WEBXR_JOINTS,
     IncompleteBodyPoseError,
     PoseStreamError,
+    PoseStreamGapError,
     WebXRSonicPoseStream,
     WebXRSonicRetargeter,
     _interpolate_quaternion_wxyz,
@@ -274,6 +275,23 @@ def test_pose_stream_rejects_non_monotonic_capture_time_and_resets() -> None:
 
     assert stream.ready is False
     assert stream.buffered_frames == 0
+
+
+def test_pose_stream_capture_gap_reprimes_a_fresh_window() -> None:
+    stream = WebXRSonicPoseStream()
+    stream.push(_snapshot(capture_time_s=10.0))
+
+    with pytest.raises(PoseStreamGapError, match="gap exceeded 150 ms"):
+        stream.push(_snapshot(capture_time_s=10.2))
+
+    assert stream.ready is False
+    assert stream.buffered_frames == 0
+
+    for index in range(1, 10):
+        stream.push(_snapshot(capture_time_s=10.2 + 0.02 * index))
+
+    assert stream.ready is True
+    assert stream.fields()["frame_index"].tolist() == list(range(10))
 
 
 def test_retarget_rejects_incomplete_body_frame() -> None:

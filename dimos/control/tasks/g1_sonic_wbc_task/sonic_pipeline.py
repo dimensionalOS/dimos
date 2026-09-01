@@ -627,6 +627,7 @@ class SonicPipeline:
         self._encoder_durations_ms: deque[float] = deque(maxlen=250)
         self._decoder_durations_ms: deque[float] = deque(maxlen=250)
         self._planner_durations_ms: deque[float] = deque(maxlen=50)
+        self._planner_cold_start_ms = 0.0
 
         self._trajectory: _Trajectory | None = None
         self._traj_frame = 0
@@ -682,6 +683,7 @@ class SonicPipeline:
         self._vr_pos: NDArray[Any] | None = None
         self._vr_orn: NDArray[Any] | None = None
         self._vr_time = 0.0
+        self._warm_planner()
 
     # -- commands ---------------------------------------------------------
 
@@ -1250,6 +1252,16 @@ class SonicPipeline:
             "height": np.array([height], dtype=np.float32),
         }
 
+    def _warm_planner(self) -> None:
+        logger.info("SonicPipeline warming planner")
+        started = time.perf_counter()
+        self._planner.run(None, self._build_planner_inputs())
+        self._planner_cold_start_ms = (time.perf_counter() - started) * 1000.0
+        logger.info(
+            "SonicPipeline planner warm",
+            cold_start_ms=round(self._planner_cold_start_ms, 3),
+        )
+
     def _submit_planner(self) -> None:
         if self._planner_future is not None and not self._planner_future.done():
             return
@@ -1602,6 +1614,7 @@ class SonicPipeline:
             ),
             "encoder_timing_ms": _timing_summary(self._encoder_durations_ms),
             "decoder_timing_ms": _timing_summary(self._decoder_durations_ms),
+            "planner_cold_start_ms": round(self._planner_cold_start_ms, 3),
             "planner_timing_ms": _timing_summary(self._planner_durations_ms),
         }
 

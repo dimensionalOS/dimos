@@ -568,6 +568,53 @@ def test_stale_tracking_in_pose_returns_to_planner(
     pipeline.prepare_planner_transition.assert_called_once_with()
 
 
+def test_capture_gap_holds_pose_until_window_refills(
+    task_and_pipeline: tuple[Any, Any],
+) -> None:
+    task, pipeline = task_and_pipeline
+    _enter_pose(task)
+    applied_before_gap = pipeline.set_pose_window.call_count
+
+    task.on_body_tracking(_body_snapshot(capture_time_s=1.40), t_now=1.40)
+
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "pose"
+    assert task.state_snapshot()["webxr_teleop"]["last_transition_reason"] == (
+        "body_tracking_refilling"
+    )
+    pipeline.prepare_planner_transition.assert_not_called()
+
+    for index in range(1, 10):
+        capture_time = 1.40 + 0.02 * index
+        task.on_body_tracking(_body_snapshot(capture_time_s=capture_time), t_now=capture_time)
+    task.compute(_state(1.58))
+
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "pose"
+    assert pipeline.set_pose_window.call_count == applied_before_gap + 1
+    pipeline.prepare_planner_transition.assert_not_called()
+
+
+def test_capture_gap_returns_to_planner_if_window_does_not_refill(
+    task_and_pipeline: tuple[Any, Any],
+) -> None:
+    task, pipeline = task_and_pipeline
+    _enter_pose(task)
+
+    task.on_body_tracking(_body_snapshot(capture_time_s=1.40), t_now=1.40)
+    task.on_body_tracking(_body_snapshot(capture_time_s=1.70), t_now=1.70)
+    task.compute(_state(2.39))
+
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "pose"
+    pipeline.prepare_planner_transition.assert_not_called()
+
+    task.compute(_state(2.41))
+
+    assert task.state_snapshot()["webxr_teleop"]["mode"] == "planner_prepare"
+    assert task.state_snapshot()["webxr_teleop"]["last_transition_reason"] == (
+        "body_tracking_refill_timeout"
+    )
+    pipeline.prepare_planner_transition.assert_called_once_with()
+
+
 def test_pose_twist_ignores_translation_and_applies_yaw(
     task_and_pipeline: tuple[Any, Any],
 ) -> None:

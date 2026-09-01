@@ -77,6 +77,10 @@ class PoseStreamError(ValueError):
     """Tracked pose timing cannot extend the current SONIC stream."""
 
 
+class PoseStreamGapError(PoseStreamError):
+    """A capture gap started a fresh pose window."""
+
+
 @dataclass(frozen=True)
 class RetargetedSonicFrame:
     """One or more packed-message-equivalent SONIC protocol-v3 frames."""
@@ -220,7 +224,7 @@ class WebXRSonicPoseStream:
         if delta > POSE_MAX_GAP_SECONDS:
             self.reset()
             self._prime(capture_time, current)
-            raise PoseStreamError("body capture time gap exceeded 150 ms")
+            raise PoseStreamGapError("body capture time gap exceeded 150 ms")
 
         assert self._next_target_time is not None
         emitted = 0

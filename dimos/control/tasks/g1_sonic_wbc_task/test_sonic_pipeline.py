@@ -185,6 +185,14 @@ def test_pipeline_does_not_retry_planner_on_cpu(mocker: Any) -> None:
     assert inference_session.call_count == 3
 
 
+def test_planner_cold_start_is_warmed_before_runtime_timing(pipeline: SonicPipeline) -> None:
+    snapshot = pipeline.snapshot()
+
+    assert pipeline._planner.run.call_count == 1
+    assert snapshot["planner_cold_start_ms"] >= 0.0
+    assert snapshot["planner_timing_ms"]["samples"] == 0
+
+
 def test_smpl_pose_chunk_populates_all_ten_encoder_frames(pipeline: SonicPipeline) -> None:
     smpl_joints = np.zeros((10, 24, 3), dtype=np.float32)
     smpl_joints[:, :, 0] = np.arange(10, dtype=np.float32)[:, np.newaxis]
