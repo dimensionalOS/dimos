@@ -16,7 +16,7 @@
 
 Faithful port of StreamedMotionMerger (gear_sonic_deploy
 .../input_interface/streamed_motion_merger.hpp) and the protocol-version
-handling of ZMQEndpointInterface: incoming pose-topic chunks (protocol v1
+handling of the C++ endpoint: incoming pose-message chunks (protocol v1
 joint-based, v2 SMPL, v3 both) merge into a sliding-window motion the
 policy encoder consumes. Semantics preserved exactly:
 
@@ -76,7 +76,7 @@ class MergeResult:
 
 
 def infer_protocol_version(fields: dict[str, NDArray]) -> int:
-    """v3: SMPL + joints; v2: SMPL only; v1: joints only (zmq.md rules)."""
+    """v3: SMPL + joints; v2: SMPL only; v1: joints only (upstream protocol rules)."""
     has_smpl = "smpl_joints" in fields and "smpl_pose" in fields
     has_joints = "joint_pos" in fields and "joint_vel" in fields
     if has_smpl and has_joints:

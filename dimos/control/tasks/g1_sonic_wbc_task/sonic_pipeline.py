@@ -588,12 +588,12 @@ class SonicPipeline:
         self._nan_reported = 0
         self._last_targets_dds = DEFAULT_ANGLES_DDS.copy()
 
-        # Streamed reference motion (ZMQ pose topic)
+        # Streamed reference motion (pose messages via apply_pose_message)
         self._merger = StreamedMotionMerger()
         self._streamed: StreamedMotion | None = None
         self._streamed_frame = 0
         self._use_stream = False
-        # Direct planner command (ZMQ planner topic); None -> twist-derived
+        # Direct planner command (set_planner_command); None -> twist-derived
         self._planner_cmd: dict | None = None
         self._upper_vel_dds: NDArray | None = None
         # Wire-order (17: waist + arms) upper-body buffers; take precedence
@@ -661,7 +661,7 @@ class SonicPipeline:
     def set_upper_body_wire17(
         self, positions_17: NDArray | None, velocities_17: NDArray | None
     ) -> None:
-        """Upper-body targets in ZMQ wire order (17: waist + arms). None clears."""
+        """Upper-body targets in SONIC wire order (17: waist + arms). None clears."""
         self._ub17_pos = (
             None if positions_17 is None else np.asarray(positions_17, dtype=np.float32).reshape(17)
         )
@@ -732,7 +732,7 @@ class SonicPipeline:
         speed: float = -1.0,
         height: float = -1.0,
     ) -> None:
-        """Direct planner command (ZMQ planner topic); overrides twist mapping."""
+        """Direct planner command (C++ planner-topic semantics); overrides twist mapping."""
         self._planner_cmd = {
             "mode": int(mode),
             "movement": np.asarray(movement, dtype=np.float32).reshape(3),
@@ -951,7 +951,7 @@ class SonicPipeline:
 
     def _build_planner_inputs(self) -> dict:
         if self._planner_cmd is not None:
-            # ZMQ planner topic: mode/movement/facing given directly
+            # Direct planner command: mode/movement/facing given directly
             c = self._planner_cmd
             return self._planner_inputs_dict(
                 c["mode"], c["movement"], c["facing"], c["speed"], c["height"]

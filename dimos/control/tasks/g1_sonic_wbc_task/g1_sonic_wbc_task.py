@@ -53,11 +53,6 @@ from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import (
     NUM_JOINTS,
     SonicPipeline,
 )
-from dimos.control.tasks.g1_sonic_wbc_task.zmq_wire import (
-    CommandUpdate,
-    PlannerUpdate,
-    decode,
-)
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -83,9 +78,6 @@ class G1SonicWBCTaskConfig:
     priority: int = 50
     decimation: int = 1
     timeout: float = 1.0
-    zmq_enabled: bool = True
-    zmq_sub_endpoint: str = "tcp://127.0.0.1:5556"
-    zmq_pub_endpoint: str = "tcp://*:5557"
     auto_arm: bool = False
     auto_dry_run: bool = False
     default_ramp_seconds: float = 10.0
@@ -152,19 +144,6 @@ class G1SonicWBCTask(BaseControlTask):
         self._cmd = np.zeros(3, dtype=np.float32)
         self._last_cmd_time = 0.0
 
-        # ZMQ wire compatibility (D2): SONIC's native command/planner/pose
-        # protocol. Sockets are created lazily on start() and polled
-        # non-blocking from compute() - the task stays passive (no threads).
-        self._zmq_sub = None
-        self._zmq_pub = None
-        self._zmq_started = False
-        self._zmq_failed = False
-        self._left_hand: NDArray | None = None
-        self._right_hand: NDArray | None = None
-        self._last_pose_msg_t = 0.0
-        self._last_planner_msg_t = 0.0
-        self._zmq_stats = {"command": 0, "planner": 0, "pose": 0, "errors": 0}
-
     # -- ControlTask protocol ----------------------------------------------
 
     def claim(self) -> ResourceClaim:
@@ -201,9 +180,6 @@ class G1SonicWBCTask(BaseControlTask):
         fresh = self._refresh_state_caches(state)
         if not self._state_seen and not fresh:
             return None
-
-        self._zmq_start()
-        self._zmq_poll(state.t_now)
 
         current_29 = self._cached_q_29.copy()
 
@@ -297,7 +273,6 @@ class G1SonicWBCTask(BaseControlTask):
             gravity_body=gravity,
         )
         self._last_targets = targets_29.tolist()
-        self._zmq_publish_state(state.t_now, q_29, dq_29, quat, gyro, targets_29)
 
         if (state.t_now - self._last_diag_log_t) >= 5.0:
             logger.info("G1SonicWBCTask", task=self._name, **self._pipeline.snapshot())
@@ -451,158 +426,6 @@ class G1SonicWBCTask(BaseControlTask):
     def clear_upper_body(self) -> None:
         self._pipeline.set_upper_body(DEFAULT_ANGLES_DDS[15:].copy())
 
-    # -- ZMQ wire endpoint (D2) ------------------------------------------------
-
-    def _zmq_start(self) -> None:
-        if self._zmq_started or self._zmq_failed or not self._config.zmq_enabled:
-            return
-        try:
-            import zmq
-
-            ctx = zmq.Context.instance()
-            sub = ctx.socket(zmq.SUB)
-            sub.connect(self._config.zmq_sub_endpoint)
-            for topic in (b"command", b"planner", b"pose"):
-                sub.setsockopt(zmq.SUBSCRIBE, topic)
-            pub = ctx.socket(zmq.PUB)
-            pub.bind(self._config.zmq_pub_endpoint)
-            self._zmq_sub = sub
-            self._zmq_pub = pub
-            self._zmq_started = True
-            logger.info(
-                "G1SonicWBCTask ZMQ endpoint up",
-                task=self._name,
-                sub=self._config.zmq_sub_endpoint,
-                pub=self._config.zmq_pub_endpoint,
-            )
-        except Exception as exc:
-            # Give up permanently: retrying (and logging) from the 50 Hz
-            # compute tick starves the control loop badly enough to drop the
-            # robot. One warning, then the wire stays off for this run.
-            logger.warning(
-                "G1SonicWBCTask ZMQ unavailable, wire disabled for this run",
-                task=self._name,
-                error=repr(exc),
-            )
-            self._zmq_failed = True
-            self._zmq_started = False
-
-    def _zmq_poll(self, t_now: float) -> None:
-        """Drain pending wire messages; called once per compute() tick."""
-        if not self._zmq_started or self._zmq_sub is None:
-            return
-        import zmq
-
-        cmd = CommandUpdate()
-        got_cmd = False
-        for _ in range(64):  # bounded drain per tick
-            try:
-                raw = self._zmq_sub.recv(flags=zmq.NOBLOCK)
-            except zmq.Again:
-                break
-            except Exception as exc:
-                self._zmq_stats["errors"] += 1
-                logger.warning("ZMQ recv failed", task=self._name, error=repr(exc))
-                break
-            try:
-                msg = decode(raw)
-            except Exception as exc:
-                self._zmq_stats["errors"] += 1
-                logger.warning("ZMQ decode failed", task=self._name, error=repr(exc))
-                continue
-            if msg.topic == "command":
-                cmd.merge(msg)
-                got_cmd = True
-                self._zmq_stats["command"] += 1
-            elif msg.topic == "planner":
-                self._on_wire_planner(PlannerUpdate.from_message(msg), t_now)
-                self._zmq_stats["planner"] += 1
-            elif msg.topic == "pose":
-                summary = self._pipeline.apply_pose_message(msg.fields)
-                self._last_pose_msg_t = t_now
-                self._zmq_stats["pose"] += 1
-                if "error" in summary:
-                    self._zmq_stats["errors"] += 1
-                # Pico pose messages also carry VR 3-point targets and the
-                # operator's joystick yaw (heading_increment) - C++ consumes
-                # both from this topic as well as the planner topic.
-                vr_p = msg.get("vr_position")
-                vr_o = msg.get("vr_orientation")
-                if vr_p is not None and vr_o is not None:
-                    self._pipeline.set_vr_3point(
-                        vr_p.astype("float64").ravel(),
-                        vr_o.astype("float64").ravel(),
-                        t_now=t_now,
-                    )
-                hi = msg.get("heading_increment")
-                if hi is not None:
-                    self._pipeline.apply_heading_increment(float(hi.flat[0]))
-        if got_cmd:
-            self._on_wire_command(cmd)
-
-    def _on_wire_command(self, cmd: CommandUpdate) -> None:
-        # C++ semantics: start/stop pulses OR-accumulated; planner flag
-        # selects planner vs streamed-motion source.
-        self._pipeline.set_source_stream(not cmd.planner)
-        if cmd.stop:
-            self.disarm()
-        elif cmd.start:
-            self.arm(0.0)
-        if cmd.delta_heading is not None:
-            # C++ command-topic semantics: incremental yaw pulses folded into
-            # HeadingState.delta_heading (gamepad delta_left/right are +/-0.1).
-            self._pipeline.apply_heading_increment(float(cmd.delta_heading))
-
-    def _on_wire_planner(self, upd: PlannerUpdate, t_now: float) -> None:
-        self._pipeline.set_planner_command(
-            mode=upd.mode,
-            movement=upd.movement,
-            facing=upd.facing,
-            speed=upd.speed,
-            height=upd.height,
-        )
-        self._last_planner_msg_t = t_now
-        self._pipeline.set_upper_body_wire17(upd.upper_body_position, upd.upper_body_velocity)
-        if upd.left_hand_joints is not None:
-            self._left_hand = upd.left_hand_joints
-        if upd.right_hand_joints is not None:
-            self._right_hand = upd.right_hand_joints
-        if upd.vr_position is not None and upd.vr_orientation is not None:
-            self._pipeline.set_vr_3point(upd.vr_position, upd.vr_orientation, t_now=t_now)
-
-    def _zmq_publish_state(
-        self,
-        t_now: float,
-        q: NDArray,
-        dq: NDArray,
-        quat: NDArray,
-        gyro: NDArray,
-        targets: NDArray,
-    ) -> None:
-        if not self._zmq_started or self._zmq_pub is None:
-            return
-        try:
-            import msgpack
-
-            payload = msgpack.packb(
-                {
-                    "timestamp": t_now,
-                    "joint_pos": q.tolist(),
-                    "joint_vel": dq.tolist(),
-                    "base_quat": quat.tolist(),
-                    "base_ang_vel": gyro.tolist(),
-                    "position_targets": targets.tolist(),
-                    **{
-                        k: v
-                        for k, v in self._pipeline.snapshot().items()
-                        if not k.startswith("debug_")
-                    },
-                }
-            )
-            self._zmq_pub.send(b"g1_debug" + payload)
-        except Exception:
-            pass
-
     # -- lifecycle -----------------------------------------------------------
 
     def start(self) -> None:
@@ -707,7 +530,6 @@ class G1SonicWBCTask(BaseControlTask):
             "arming_duration": self._arming_duration,
         }
         snap.update(self._pipeline.snapshot())
-        snap["zmq"] = dict(self._zmq_stats)
         snap["debug_q_leg"] = [round(float(v), 4) for v in self._cached_q_29[:6]]
         snap["debug_dq_leg"] = [round(float(v), 4) for v in self._cached_dq_29[:6]]
         try:
