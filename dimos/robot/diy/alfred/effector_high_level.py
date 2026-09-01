@@ -57,10 +57,6 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# these combined need to be less than DEFAULT_THREAD_JOIN_TIMEOUT so the teardown join outlasts them.
-STOP_COMMAND_TIMEOUT_SECONDS = DEFAULT_THREAD_JOIN_TIMEOUT / 2
-CONNECTION_CLOSE_TIMEOUT_SECONDS = DEFAULT_THREAD_JOIN_TIMEOUT / 4
-
 
 class AlfredHighLevelConfig(ModuleConfig):
     address: str = DEFAULT_ADDRESS
@@ -271,16 +267,19 @@ async def _rpc_result(future: portal.Future) -> Any:
 def _stop_and_close(client: portal.Client) -> None:
     """Portal answers on a worker thread, so a close chained to the stop through the
     event loop is skipped outright once the loop shuts down, leaving the client open.
+
+    The two timeouts combined stay under DEFAULT_THREAD_JOIN_TIMEOUT so the teardown join
+    outlasts them.
     """
     try:
         client.set_target_velocity({"target_velocity": np.zeros(3), "frame": "local"}).result(
-            timeout=STOP_COMMAND_TIMEOUT_SECONDS
+            timeout=DEFAULT_THREAD_JOIN_TIMEOUT / 2
         )
     except Exception as e:
         logger.error(f"Error stopping Alfred: {e!r}")
     # Closing fails every request the connection still owes, so it goes after the stop.
     try:
         # Left unbounded, portal waits out a send queue that a dead peer never drains.
-        client.close(timeout=CONNECTION_CLOSE_TIMEOUT_SECONDS)
+        client.close(timeout=DEFAULT_THREAD_JOIN_TIMEOUT / 4)
     except Exception as e:
         logger.error(f"Error closing the Alfred connection: {e!r}")

@@ -12,17 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Alfred running MLS planning off the D455 alone, with no Mid-360.
-
-dimos run alfred-mls-nav
-"""
-
-from __future__ import annotations
-
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.diy.alfred.blueprints.alfred_hardware import _alfred_hardware
-from dimos.robot.diy.alfred.blueprints.vis_nav import vis_nav
-
-alfred_mls_nav = autoconnect(_alfred_hardware, vis_nav()).global_config(
-    n_workers=11, robot_model="alfred"
+IMU_BMI055 = dict(
+    gyro_noise_density=0.0018,
+    gyro_random_walk=2e-5,
+    accel_noise_density=0.02,
+    accel_random_walk=3e-3,
 )

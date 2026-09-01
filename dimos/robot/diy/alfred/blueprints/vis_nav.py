@@ -39,7 +39,7 @@ from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
-from dimos.robot.diy.alfred.config import ALFRED_URDF
+from dimos.robot.diy.alfred.config import ALFRED, ALFRED_URDF
 from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
 from dimos.visualization.vis_module import vis_module
 
@@ -53,10 +53,8 @@ IR_ENTITY_BY_FRAME = {
 """The IR pair, left first. Both imagers arrive on one topic, so the entity has to come
 from the message, and cuVSLAM's rig has to be told the order."""
 
-DEPTH_FRAME = "d455_color_optical_frame"
-"""The camera aligns depth to colour, so the depth image arrives in the colour frame."""
-
-IMU_FRAME = "d455_accel_optical_frame"
+DEPTH_FRAME = "d455_depth_optical_frame"
+"""Colour is off, so depth is unaligned and arrives in its own frame."""
 
 
 def _image_at(msg: Any, entity_path: str) -> list[tuple[str, Any]]:
@@ -77,10 +75,6 @@ def _ir_pinhole(msg: Any) -> Any:
     return _pinhole_at(msg, entity_path) if entity_path else None
 
 
-GLOBAL_PATH_PURPLE = (170, 60, 220)
-"""The MLS planner path; the local planner's path keeps the stock green."""
-
-
 def _path_colored(msg: Any, color: tuple[int, int, int]) -> Any:
     return msg.to_rerun(color=color)
 
@@ -98,7 +92,6 @@ def _rerun_blueprint() -> Any:
                 line_grid=rrb.LineGrid3D(plane=rr.components.Plane3D.XY.with_distance(0.5)),
             ),
             rrb.Vertical(
-                rrb.Spatial2DView(origin=f"{CAMERA_RERUN_ROOT}/color", name="color"),
                 rrb.Spatial2DView(origin=f"{CAMERA_RERUN_ROOT}/depth", name="depth"),
                 rrb.Spatial2DView(origin=f"{CAMERA_RERUN_ROOT}/infra1", name="infra1"),
                 rrb.Spatial2DView(origin=f"{CAMERA_RERUN_ROOT}/infra2", name="infra2"),
@@ -122,21 +115,6 @@ DEPTH_MAX_RANGE_METERS = 4.0
 """4 m won the mapping grid against 6 m (top-down F1 .570 vs .506 against a
 lidar-raycast reference on drive_2026-08-18_23-05-04.db)."""
 
-ALFRED_BODY_HEIGHT_METERS = 0.5
-
-D455_IMU = ImuConfig(
-    frame_id=IMU_FRAME,
-    gyro_noise_density=0.0018,
-    gyro_random_walk=2e-5,
-    accel_noise_density=0.02,
-    accel_random_walk=3e-3,
-)
-"""The D455's BMI055, left out of the default nav. Gyro yaw halved final drift on
-drive_2026-08-18_23-05-04.db (wheel alone 2.66 m out, wheel + gyro 1.33 m, against a 0.59 m
-floor on the lidar reference's own heading), and the mast mount is now the solved d455_joint
-origin rather than the photo estimate — but an uncalibrated mount once misaligned gravity by
-~2.4 m/s^2 and diverged the fusion, so it waits on a replay that clears the new one."""
-
 
 def vis_nav(
     *,
@@ -149,10 +127,6 @@ def vis_nav(
     return autoconnect(
         DimSlam.blueprint(
             camera_mode="stereo",
-            # Alfred's computer has no GPU, so libcuvslam is built -DENFORCE_GPU=OFF.
-            use_gpu=False,
-            # Both imagers share one camera_info topic. Left undeclared, cuVSLAM orders its rig
-            # by sorting the frame names it saw, which is left-then-right only by luck of naming.
             cameras=[
                 *(CameraConfig(frame_id=frame) for frame in IR_ENTITY_BY_FRAME),
                 CameraConfig(
@@ -189,14 +163,14 @@ def vis_nav(
             # Every IMU publishes on the one imu topic; the filter sorts them by frame_id and
             # keeps a bias pair per entry, so an unlisted frame is dropped rather than fused.
             imus=list(imus),
-        ).remappings([(DimSlam, "odom_sources", "source_odometry")]),
+        ),
         RayTracingVoxelMap.blueprint(
             voxel_size=VOXEL_SIZE_METERS,
             max_range=map_max_range,
         ).remappings([(RayTracingVoxelMap, "lidar", map_cloud_topic)]),
         MLSPlannerNative.blueprint(
             voxel_size=VOXEL_SIZE_METERS,
-            robot_height=ALFRED_BODY_HEIGHT_METERS,
+            robot_height=ALFRED.body_height,
             wall_clearance_m=0.2,
             step_penalty_weight=1.0,
         ).remappings([(MLSPlannerNative, "path", "planner_path")]),
@@ -218,7 +192,6 @@ def vis_nav(
                 # whole scene ticks once a second rather than re-posing per odom update.
                 "max_hz": {
                     "world/tf": 1.0,
-                    "world/color_image": 1.0,
                     "world/depth_image": 1.0,
                     "world/image": 1.0,
                     "world/depth_cloud": 1.0,
@@ -231,13 +204,8 @@ def vis_nav(
                 },
                 # An image only renders if it shares an entity with its Pinhole.
                 "visual_override": {
-                    "world/planner_path": partial(_path_colored, color=GLOBAL_PATH_PURPLE),
-                    "world/color_image": partial(
-                        _image_at, entity_path=f"{CAMERA_RERUN_ROOT}/color"
-                    ),
-                    "world/color_camera_info": partial(
-                        _pinhole_at, entity_path=f"{CAMERA_RERUN_ROOT}/color"
-                    ),
+                    # The MLS planner path; the local planner's path keeps the stock green.
+                    "world/planner_path": partial(_path_colored, color=(170, 60, 220)),
                     "world/depth_image": partial(
                         _image_at, entity_path=f"{CAMERA_RERUN_ROOT}/depth"
                     ),
