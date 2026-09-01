@@ -21,10 +21,8 @@ Environment protocol structurally.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 import json
 from pathlib import Path
-import sys
 import threading
 import time
 from typing import Any
@@ -38,7 +36,6 @@ import pytest
 
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.mcp_client import McpClientAgent
-from dimos.evals.agents.pi import Pi
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.image_file import ImageFile
@@ -257,8 +254,9 @@ def test_dataset_preflight_reports_missing_stream(dataset: str) -> None:
 
 
 def test_dataset_preflight_rejects_added_modules(dataset: str) -> None:
-    with pytest.raises(RuntimeError, match="launches nothing; Pi adds modules 'unitree-go2'"):
-        Dataset(dataset).preflight(Pi(modules="unitree-go2"))
+    match = "launches nothing; McpClientAgent adds modules 'unitree-go2'"
+    with pytest.raises(RuntimeError, match=match):
+        Dataset(dataset).preflight(McpClientAgent(modules="unitree-go2"))
 
 
 def test_image_file_environment(tmp_path: Path) -> None:
@@ -628,58 +626,16 @@ def test_recording_helper_opens_the_artifact(dataset: str) -> None:
         store.stop()
 
 
-def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
-    """Half credit for the exact room count, half for the fraction of room
-    points the recorded odometry approached; an unparseable reply loses the
-    count half but the world still scores."""
-    from dimos.evals.suites.dimsim_pointcloud_mapping import (
-        N_ROOMS,
-        ROOMS,
-        VISIT_RADIUS_M,
-        grade_rooms,
-    )
-
-    def written(db: Path, points: list[tuple[float, float]]) -> Path:
-        store = _open_store(db)
-        stream = store.stream("odom", PoseStamped)
-        for i, (x, y) in enumerate(points):
-            stream.append(_pose(x, y), ts=1000.0 + i)
-        store.stop()
-        return db
-
-    def score(db: Path, answer: str) -> float:
-        outcome = Outcome(trajectory=_trajectory(answer, tmp_path), artifacts={"recording": db})
-        return grade_rooms(outcome)
-
-    rooms = list(ROOMS.values())
-    two = written(tmp_path / "two.db", [(x + VISIT_RADIUS_M / 2, y) for x, y in rooms[:2]])
-    coverage = 0.5 * 2 / N_ROOMS
-    assert score(two, str(N_ROOMS)) == pytest.approx(0.5 + coverage)
-    assert score(two, f"{N_ROOMS} rooms, I think") == pytest.approx(0.5 + coverage)
-    assert score(two, str(N_ROOMS + 1)) == pytest.approx(coverage), "wrong count"
-    assert score(two, "no idea") == pytest.approx(coverage), "unparseable reply"
-
-    every = written(tmp_path / "every.db", rooms)
-    assert score(every, str(N_ROOMS)) == 1.0
-    assert score(written(tmp_path / "still.db", [(50.0, 50.0)]), str(N_ROOMS)) == 0.5
-
-
 def test_suites_and_agents_importable() -> None:
     """Modules construct without data or network (lambdas stay lazy)."""
     from dimos.evals.cli import load_agent
     from dimos.evals.module import list_agents
-    from dimos.evals.suites import (
-        dimsim_house,
-        dimsim_pointcloud_mapping,
-        examples,
-        go2_smoke,
-        go2_vqa,
-    )
+    from dimos.evals.suites import dimsim_house, examples, go2_smoke, go2_vqa
 
-    for module in (examples, go2_smoke, go2_vqa, dimsim_house, dimsim_pointcloud_mapping):
+    for module in (examples, go2_smoke, go2_vqa, dimsim_house):
         assert module.SUITE, module.__name__
     agents = list_agents()
-    assert {m.rsplit(".", 1)[1] for m in agents} == {"question_answer", "blind", "mcp_client", "pi"}
+    assert {m.rsplit(".", 1)[1] for m in agents} == {"question_answer", "blind", "mcp_client"}
     for module in agents:
         assert callable(load_agent(module).run), module
 
@@ -690,14 +646,16 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
     from dimos.evals.cli import load_agent
 
     agent = load_agent(
-        "dimos.evals.agents.pi", ["max_steps=null", "modules=rangefinder-skill", "model=x"]
+        "dimos.evals.agents.question_answer",
+        ["chat_model=null", "modules=rangefinder-skill", "model=x"],
     )
-    assert (type(agent).__name__, agent.max_steps, agent.modules, agent.model) == (
-        "Pi", None, "rangefinder-skill", "x"
+    assert (type(agent).__name__, agent.chat_model, agent.modules, agent.model) == (
+        "QuestionAnswer", None, "rangefinder-skill", "x"
     )  # fmt: skip
-    assert load_agent("dimos.evals.agents.pi", ["max_steps=3"]).max_steps == 3
-    with pytest.raises(TypeError, match="max_steps"):
-        load_agent("dimos.evals.agents.blind", ["max_steps=3"])
+    loaded = load_agent("dimos.evals.agents.question_answer", ["frames_per_stream=3"])
+    assert loaded.frames_per_stream == 3
+    with pytest.raises(TypeError, match="frames_per_stream"):
+        load_agent("dimos.evals.agents.blind", ["frames_per_stream=3"])
     with pytest.raises(TypeError, match="0 agents"):
         load_agent("dimos.evals.agents.lib.chat")
 
@@ -767,212 +725,9 @@ def test_mcp_client_agent_drives_a_turn_over_real_transports(tmp_path: Path) -> 
     assert trajectory.steps[1].request.exists()
 
 
-# -- Pi -------------------------------------------------------------------------------
-
-FAKE_PI = """\
-import json, os, sys, urllib.request
-from pathlib import Path
-
-args = sys.argv[1:]
-agent_dir = Path(os.environ["PI_CODING_AGENT_DIR"])
-base = json.loads((agent_dir / "models.json").read_text())["providers"]["dimos"]["baseUrl"]
-model = args[args.index("--model") + 1].split("/", 1)[1]  # pi strips the provider prefix
-tool_steps = int(Path(__file__).with_name("tool_steps").read_text())
-
-
-def call(n):
-    req = urllib.request.Request(
-        base + "/responses",
-        data=json.dumps({"model": model, "n": n}).encode(),
-        headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["OPENAI_API_KEY"]},
-    )
-    urllib.request.urlopen(req).read()
-
-
-def emit(event):
-    print(json.dumps(event), flush=True)
-
-
-def assistant(content, stop):
-    return {"role": "assistant", "model": "gpt-fake", "stopReason": stop, "content": content,
-            "usage": {"input": 10, "output": 2, "cacheRead": 5, "cacheWrite": 1, "reasoning": 1,
-                      "cost": {"total": 0.005}}}
-
-
-emit({"type": "session", "version": 3})
-for i in range(tool_steps):
-    call(i)
-    emit({"type": "message_end", "message": assistant([
-        {"type": "thinking", "thinking": "measuring"},
-        {"type": "text", "text": "looking"},
-        {"type": "toolCall", "id": f"c{i}", "name": "bash", "arguments": {"command": "python probe.py"}},
-    ], "toolUse")})
-    emit({"type": "tool_execution_start", "toolCallId": f"c{i}", "toolName": "bash", "args": {}})
-    emit({"type": "tool_execution_end", "toolCallId": f"c{i}", "toolName": "bash", "isError": False,
-          "result": {"content": [{"type": "text", "text": "x=4.0"}]}})
-call(tool_steps)
-emit({"type": "message_end", "message": assistant([{"type": "text", "text": "4.0"}], "stop")})
-emit({"type": "agent_end"})
-"""
-
-
-@pytest.fixture
-def fake_pi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """A ``pi`` that calls the provider it was configured with and emits Pi's
-    JSON events, plus an upstream that echoes each request. ``tool_steps``
-    next to the script is how many tool rounds it plays before answering."""
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-    class Upstream(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:
-            body = self.rfile.read(int(self.headers["Content-Length"]))
-            reply = json.dumps({"echo": json.loads(body)}).encode()
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(reply)))
-            self.end_headers()
-            self.wfile.write(reply)
-
-        def log_message(self, format: str, *args: Any) -> None:
-            return None
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    monkeypatch.setenv("OPENAI_BASE_URL", f"http://127.0.0.1:{server.server_port}/v1")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    script = tmp_path / "bin" / "pi"
-    script.parent.mkdir()
-    script.write_text(f"#!{sys.executable}\n{FAKE_PI}")
-    script.chmod(0o755)
-    script.with_name("tool_steps").write_text("1")
-    yield script
-    server.shutdown()
-
-
-def test_pi_runs_headless_over_the_recording_and_records_every_call(
-    dataset: str, fake_pi: Path, tmp_path: Path
-) -> None:
-    env = Dataset(dataset, select=(lambda s: s.streams.odom.limit(2),))
-    running = env.start("")
-    run_dir = tmp_path / "run"
-    run_dir.mkdir()
-    try:
-        agent = Pi(cli=str(fake_pi), model="gpt-fake")
-        agent.preflight(env)
-        trajectory = agent.run("how far?", running, run_dir)
-    finally:
-        env.stop()
-    assert (trajectory.final_answer, trajectory.ended_by, trajectory.model) == (
-        "4.0",
-        "answer",
-        "gpt-fake",
-    )
-    call = trajectory.steps[0].tool_calls[0]
-    assert (call.id, call.name, call.result) == ("c0", "bash", "x=4.0")
-    assert call.args == {"command": "python probe.py"} and not trajectory.steps[1].tool_calls
-    assert trajectory.steps[0].reasoning == "measuring"
-    assert (trajectory.input_tokens, trajectory.output_tokens, trajectory.cached_tokens) == (
-        22,  # (input 10 + cacheWrite 1) per step; cacheRead lands in cached_tokens
-        4,
-        10,
-    )
-    assert trajectory.reasoning_tokens == 2
-    assert trajectory.cost == pytest.approx(0.01)
-    for i, step in enumerate(trajectory.steps):  # every call captured whole, auth dropped
-        request = json.loads(step.request.read_text())
-        assert request["body"] == {"model": "gpt-fake", "n": i}
-        assert "authorization" not in {k.lower() for k in request["headers"]}
-        assert json.loads(step.response.read_text())["body"] == {"echo": request["body"]}
-    prompt = (run_dir / "system-prompt.txt").read_text()
-    assert f"- recording: {run_dir / 'recording.db'}" in prompt and "dimos mcp call" not in prompt
-    copy = _open_store(run_dir / "recording.db")  # the selection, not the source dataset
-    try:
-        assert [o.ts for o in copy.streams.odom] == [1000.0, 1001.0]
-    finally:
-        copy.stop()
-
-
-def test_pi_is_told_the_robots_tools_and_stopped_at_max_steps(
-    dataset: str, fake_pi: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import dimos.evals.agents.pi as pi_mod
-
-    monkeypatch.setattr(pi_mod, "tool_listing", lambda mcp_url: "- move_to(x, y): Go there.")
-    fake_pi.with_name("tool_steps").write_text("5")
-    env = Dataset(dataset, mcp_url="http://localhost:1/mcp")
-    running = env.start("")
-    try:
-        trajectory = Pi(cli=str(fake_pi), max_steps=2).run("go", running, tmp_path)
-    finally:
-        env.stop()
-    assert (trajectory.ended_by, len(trajectory.steps), trajectory.final_answer) == (
-        "max_steps",
-        2,
-        "",
-    )
-    prompt = (tmp_path / "system-prompt.txt").read_text()
-    assert "dimos mcp call <tool> --json-args" in prompt and "- move_to(x, y): Go there." in prompt
-
-
-def test_pi_preflight_and_tool_rendering(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from dimos.evals.agents.pi import render_tools
-
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-    with pytest.raises(RuntimeError, match="not on PATH"):
-        Pi(cli=str(tmp_path / "missing")).preflight(ImageFile(tmp_path / "x.png"))
-    tools = [
-        {
-            "name": "move_to",
-            "description": "Go to a pose.\n\nArgs: x, y",
-            "inputSchema": {"properties": {"x": {}, "y": {}}},
-        }
-    ]
-    assert render_tools(tools) == "- move_to(x, y): Go to a pose."
-
-
-def test_pi_skills_become_native_flags_and_preflight_checks_paths(
-    dataset: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Explicit skill paths become repeated ``--skill`` flags, absolute (Pi's
-    cwd is the run dir) with ambient discovery still off; a missing path or a
-    bare string fails preflight before a simulator or model starts."""
-    skill = tmp_path / "spatial" / "SKILL.md"
-    skill.parent.mkdir()
-    skill.write_text("# spatial skill")
-    monkeypatch.chdir(tmp_path)
-
-    env = Dataset(dataset)
-    running = env.start("")
-    for d in ("with-skills", "bare"):
-        (tmp_path / d).mkdir()
-    try:
-        agent = Pi(skills=(str(skill), "spatial/SKILL.md"))  # absolute and relative
-        command = agent._command("go", running, tmp_path / "with-skills")
-        bare = Pi()._command("go", running, tmp_path / "bare")
-    finally:
-        env.stop()
-    assert [command[i + 1] for i, a in enumerate(command) if a == "--skill"] == [
-        str(skill),
-        str(skill),
-    ]
-    assert "--no-skills" in command, "ambient discovery stays off alongside explicit skills"
-    assert "--skill" not in bare
-
-    with pytest.raises(RuntimeError, match="do not exist"):
-        Pi(skills=(str(tmp_path / "missing.md"),)).preflight(env)
-    with pytest.raises(RuntimeError, match="list of paths"):
-        Pi(skills="spatial/SKILL.md").preflight(env)
-
-
 def test_agents_report_every_available_tool() -> None:
     environment_tools = ("move_to", "speak")
 
     assert QuestionAnswer().available_tools(environment_tools) == ()
     assert Blind().available_tools(environment_tools) == ()
     assert McpClientAgent().available_tools(environment_tools) == environment_tools
-    assert Pi().available_tools(environment_tools) == (
-        "read",
-        "bash",
-        "edit",
-        "write",
-        *environment_tools,
-    )

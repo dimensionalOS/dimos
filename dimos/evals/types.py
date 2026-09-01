@@ -165,8 +165,8 @@ class Agent(Protocol):
     """How the instruction reaches a model and how the model acts.
 
     How the recording reaches the model is what an agent *is*: ``QuestionAnswer``
-    encodes the whole recording into one prompt, ``Blind`` never looks, ``Pi``
-    and ``McpClientAgent`` act through tools. No agent knows anything about
+    encodes the whole recording into one prompt, ``Blind`` never looks,
+    ``McpClientAgent`` acts through tools. No agent knows anything about
     any particular case.
     """
 
