@@ -32,6 +32,7 @@ import time
 from typing import Any
 
 from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
+from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.types import (
     Agent,
     EvalCase,
@@ -60,7 +61,7 @@ class RunSummary:
     pass_rate: float
     errors: int
     duration_s: float
-    cost: float
+    cost_usd: float
 
 
 def summarize(results: list[EvalResult]) -> RunSummary:
@@ -71,7 +72,7 @@ def summarize(results: list[EvalResult]) -> RunSummary:
         pass_rate=sum(r.passed for r in scored) / len(scored) if scored else 0.0,
         errors=sum(1 for r in results if r.error),
         duration_s=sum(r.duration_s for r in results),
-        cost=sum(r.cost for r in results),
+        cost_usd=sum(r.cost_usd for r in results),
     )
 
 
@@ -158,8 +159,8 @@ class EvalRunner(Configurable):
         try:
             env = case.environment.start(agent.modules, trace_dir=case_dir / "raw")
             tools = list(dict.fromkeys(agent.available_tools(tuple(_tools_exposed(env.mcp_url)))))
-            trajectory = self._run_agent(case, agent, env, case_dir)
-            case.environment.settle(max(0.0, case.timeout_s - trajectory.duration_s))
+            trajectory, agent_s = self._run_agent(case, agent, env, case_dir)
+            case.environment.settle(max(0.0, case.timeout_s - agent_s))
             # The agent phase is over before grading: for a live environment
             # that closes the recording, and a timed-out agent thread can no
             # longer act on what the grader reads.
@@ -177,9 +178,10 @@ class EvalRunner(Configurable):
 
     def _run_agent(
         self, case: EvalCase, agent: Agent, env: RunningEnvironment, case_dir: Path
-    ) -> Trajectory:
-        """``agent.run`` under the case's wall-clock limit. A timed-out agent
-        yields an empty trajectory marked ``timeout``; the world is still graded."""
+    ) -> tuple[Trajectory, float]:
+        """``agent.run`` under the case's wall-clock limit, and the seconds it
+        took. A timed-out agent yields a trajectory of the instruction alone,
+        marked ``timeout``; the world is still graded."""
         box: dict[str, Any] = {}
 
         def target() -> None:
@@ -194,18 +196,12 @@ class EvalRunner(Configurable):
         thread.join(case.timeout_s)
         if thread.is_alive():
             logger.warning("agent timed out", case=case.id, timeout_s=case.timeout_s)
-            return Trajectory(
-                final_answer="",
-                steps=(),
-                model="",
-                duration_s=time.monotonic() - t0,
-                ended_by="timeout",
-                raw_dir=case_dir / "raw",
-            )
+            empty = TrajectoryBuilder(case.inputs, name=type(agent).__name__)
+            return empty.build("timeout"), time.monotonic() - t0
         if "error" in box:
             raise box["error"]
         trajectory: Trajectory = box["trajectory"]
-        return trajectory
+        return trajectory, time.monotonic() - t0
 
     def _result(
         self,
@@ -225,16 +221,17 @@ class EvalRunner(Configurable):
         )
         if trajectory is None:
             return result
+        totals = trajectory.final_metrics
         return replace(
             result,
             final_answer=trajectory.final_answer,
-            steps=len(trajectory.steps),
-            input_tokens=trajectory.input_tokens,
-            output_tokens=trajectory.output_tokens,
-            cached_tokens=trajectory.cached_tokens,
-            reasoning_tokens=trajectory.reasoning_tokens,
-            cost=trajectory.cost,
-            ended_by=trajectory.ended_by,
+            steps=totals.total_steps,
+            prompt_tokens=totals.total_prompt_tokens,
+            completion_tokens=totals.total_completion_tokens,
+            cached_tokens=totals.total_cached_tokens,
+            reasoning_tokens=sum(s.extra.reasoning_tokens for s in trajectory.steps if s.extra),
+            cost_usd=totals.total_cost_usd,
+            ended_by=trajectory.extra.ended_by,
             trajectory=str(self.run_dir / case.id / "trajectory.json"),
         )
 
@@ -266,8 +263,18 @@ def _tools_exposed(mcp_url: str) -> list[str]:
 
 
 def _write_trajectory(case_dir: Path, trajectory: Trajectory, tools: list[str]) -> None:
-    record = {"tools": tools, **asdict(trajectory)}
+    """The ATIF document, with the tools the agent could call and no nulls."""
+    agent = replace(trajectory.agent, tool_definitions=tuple({"name": n} for n in tools))
+    record = _without_none(asdict(replace(trajectory, agent=agent)))
     (case_dir / "trajectory.json").write_text(json.dumps(record, indent=2, default=str))
+
+
+def _without_none(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _without_none(v) for k, v in value.items() if v is not None}
+    if isinstance(value, (list, tuple)):
+        return [_without_none(v) for v in value]
+    return value
 
 
 def _git(*args: str) -> str:

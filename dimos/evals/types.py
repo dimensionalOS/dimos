@@ -24,7 +24,8 @@ changing, so scores stay comparable across years.
   yields a :class:`RunningEnvironment` (an MCP url when there is a robot, the
   memory recording, and artifact paths), and stops.
 - :class:`Agent` delivers the instruction, acts, and returns a
-  :class:`Trajectory` with every provider request/response saved whole.
+  :class:`Trajectory` (Harbor's ATIF document) with every provider
+  request/response saved whole.
 - ``grade(Outcome) -> float`` runs once, after the agent finishes, over the
   trajectory and the artifacts.
 
@@ -52,55 +53,110 @@ Select = Callable[["Store"], "Stream[Any, Any]"]
 """
 
 
-# -- trajectory ------------------------------------------------------------------------
+# -- trajectory (Harbor ATIF) ----------------------------------------------------------
+# https://www.harborframework.com/docs/agents/trajectory-format
 
 
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
 class ToolCall:
-    id: str
-    name: str
-    args: dict[str, Any]
-    result: str | None = None  # None when the call never completed
+    tool_call_id: str
+    function_name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True, kw_only=True)
+class ObservationResult:
+    source_call_id: str  # the ToolCall this answers
+    content: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class Observation:
+    results: tuple[ObservationResult, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class Metrics:
+    prompt_tokens: int  # everything sent, cache reads included
+    completion_tokens: int
+    cached_tokens: int = 0  # the part of prompt_tokens read from the provider's cache
+    cost_usd: float | None = None  # when the provider reports it
+
+
+@dataclass(frozen=True, kw_only=True)
+class StepExtra:
+    request: Path  # the exact payload sent to the provider for this call
+    response: Path  # the exact payload received
+    latency_s: float = 0.0
+    reasoning_tokens: int = 0  # the part of completion_tokens spent reasoning
 
 
 @dataclass(frozen=True, kw_only=True)
 class Step:
-    """One model call, its completed tool executions, and exact provider payloads."""
+    """One turn: the instruction (``user``) or one model call (``agent``) with
+    the tool executions it caused."""
 
-    index: int
-    t: float  # seconds since run start
-    message: str  # assistant text for this step
-    reasoning: str = ""  # readable reasoning text, "" when the provider returns none
-    tool_calls: tuple[ToolCall, ...] = ()
-    input_tokens: int = 0  # non-cached input only; cache reads are excluded
-    output_tokens: int = 0
-    reasoning_tokens: int = 0  # the part of output_tokens spent reasoning
-    latency_s: float = 0.0
-    request: Path  # the exact payload sent to the provider for this call
-    response: Path  # the exact payload received
+    step_id: int  # 1-based, sequential
+    timestamp: str  # ISO 8601
+    source: Literal["user", "agent", "system"]
+    message: str
+    # agent steps only
+    model_name: str | None = None
+    reasoning_content: str | None = None
+    tool_calls: tuple[ToolCall, ...] | None = None
+    observation: Observation | None = None
+    metrics: Metrics | None = None
+    extra: StepExtra | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentInfo:
+    name: str  # the Agent class
+    version: str
+    model_name: str  # what actually ran, as reported by the provider
+    tool_definitions: tuple[dict[str, Any], ...] | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class FinalMetrics:
+    total_prompt_tokens: int
+    total_completion_tokens: int
+    total_cached_tokens: int
+    total_cost_usd: float
+    total_steps: int
 
 
 EndedBy = Literal["answer", "max_steps", "timeout", "error"]
 
 
 @dataclass(frozen=True, kw_only=True)
-class Trajectory:
-    """Append-only: one :class:`Step` per model call, in order. The messages
-    array actually sent per call is *not* the previous call plus one message
-    (harnesses compact and re-inject), so each call's request is a whole
-    record under ``raw_dir``, never reconstructed from the steps."""
-
-    final_answer: str  # last non-tool assistant message, "" if none
-    steps: tuple[Step, ...]
-    model: str  # what actually ran, as reported by the provider
-    input_tokens: int = 0  # non-cached input; total sent = input_tokens + cached_tokens
-    output_tokens: int = 0
-    cached_tokens: int = 0  # input read from the provider's prompt cache
-    reasoning_tokens: int = 0  # the part of output_tokens spent reasoning
-    cost: float = 0.0  # USD
-    duration_s: float
+class RunExtra:
     ended_by: EndedBy
-    raw_dir: Path
+
+
+@dataclass(frozen=True, kw_only=True)
+class Trajectory:
+    """The ATIF document for one run: the instruction, then one agent step per
+    model call, in order. The messages array actually sent per call is *not*
+    the previous call plus one message (harnesses compact and re-inject), so
+    each call's request is a whole record named in its step, never
+    reconstructed from the steps."""
+
+    schema_version: str = (
+        "ATIF-v1.7"  # v1.8 only adds audio parts; Harbor's validator stops at v1.7
+    )
+    agent: AgentInfo
+    steps: tuple[Step, ...]
+    final_metrics: FinalMetrics
+    extra: RunExtra
+
+    @property
+    def final_answer(self) -> str:
+        """The last agent message that called no tool, "" if none."""
+        return next(
+            (s.message for s in reversed(self.steps) if s.source == "agent" and not s.tool_calls),
+            "",
+        )
 
 
 # -- environment -----------------------------------------------------------------------
@@ -214,11 +270,11 @@ class EvalResult:
     duration_s: float = 0.0
     error: str = ""
     final_answer: str = ""
-    steps: int = 0
-    input_tokens: int = 0  # non-cached input; total sent = input_tokens + cached_tokens
-    output_tokens: int = 0
+    steps: int = 0  # every step, the instruction included
+    prompt_tokens: int = 0  # everything sent, cache reads included
+    completion_tokens: int = 0
     cached_tokens: int = 0
     reasoning_tokens: int = 0
-    cost: float = 0.0  # USD
+    cost_usd: float = 0.0
     ended_by: str = ""
     trajectory: str = ""  # path of <case_id>/trajectory.json, when an agent ran

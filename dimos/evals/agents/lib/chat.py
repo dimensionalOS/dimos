@@ -23,7 +23,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from dimos.evals.agents.lib.recorder import StepRecorder
+from dimos.evals.agents.lib.langchain_recorder import LangChainRecorder
 from dimos.evals.types import Trajectory
 
 DEFAULT_MODEL = "gpt-5.6-luna"
@@ -64,13 +64,15 @@ class ChatAgent:
 
 def single_call(agent: ChatAgent, blocks: Blocks, inputs: str, run_dir: Path) -> Trajectory:
     """One model call: *blocks* then the instruction."""
-    recorder = StepRecorder(run_dir / "raw")
     chat, model = agent.chat(run_dir)
-    reply = chat.invoke(
+    recorder = LangChainRecorder(
+        inputs, name=type(agent).__name__, model=model, raw_dir=run_dir / "raw"
+    )
+    chat.invoke(
         [
             SystemMessage(agent.system_prompt),
             HumanMessage(content=[*blocks, {"type": "text", "text": inputs}]),
         ],
         config={"callbacks": [recorder]},
     )
-    return recorder.trajectory(final_answer=str(reply.text), model=model, ended_by="answer")
+    return recorder.build("answer")

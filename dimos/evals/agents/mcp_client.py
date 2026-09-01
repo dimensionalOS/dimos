@@ -24,8 +24,8 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
-from dimos.evals.agents.lib.recorder import reasoning_text
-from dimos.evals.types import Environment, RunningEnvironment, Step, ToolCall, Trajectory
+from dimos.evals.agents.lib.langchain_recorder import LangChainRecorder
+from dimos.evals.types import Environment, RunningEnvironment, Trajectory
 
 
 class _Turn:
@@ -36,7 +36,7 @@ class _Turn:
     the raw trace, which is complete before the idle flip is published."""
 
     def __init__(self, raw_dir: Path) -> None:
-        self.received: list[BaseMessage] = []
+        self.received: list[tuple[BaseMessage, float]] = []  # message, epoch it arrived
         self.done = threading.Event()
         self._started = threading.Event()
         self._lock = threading.Lock()
@@ -46,7 +46,7 @@ class _Turn:
     def on_agent(self, msg: Any) -> None:
         if isinstance(msg, BaseMessage):
             with self._lock:
-                self.received.append(msg)
+                self.received.append((msg, time.time()))
                 self._maybe_done()
 
     def on_idle(self, flag: Any) -> None:
@@ -59,7 +59,7 @@ class _Turn:
 
     def _maybe_done(self) -> None:
         if self._expected is not None and (
-            sum(isinstance(m, AIMessage) for m in self.received) >= self._expected
+            sum(isinstance(m, AIMessage) for m, _ in self.received) >= self._expected
         ):
             self.done.set()
 
@@ -107,8 +107,12 @@ class McpClientAgent:
             )
 
     def run(self, inputs: str, env: RunningEnvironment, run_dir: Path) -> Trajectory:
+        from dimos.agents.mcp.mcp_client import McpClientConfig
         from dimos.core.transport_factory import make_transport
 
+        recorder = LangChainRecorder(
+            inputs, name=type(self).__name__, model=McpClientConfig().model, raw_dir=run_dir / "raw"
+        )
         turn = _Turn(run_dir / "raw")
         agent_t, idle_t, human_t = (
             make_transport("/agent"),
@@ -117,7 +121,6 @@ class McpClientAgent:
         )
         for t in (agent_t, idle_t, human_t):
             t.start()
-        t0 = time.monotonic()
         try:
             agent_t.subscribe(turn.on_agent)
             idle_t.subscribe(turn.on_idle)
@@ -126,76 +129,17 @@ class McpClientAgent:
         finally:
             for t in (agent_t, idle_t, human_t):
                 t.stop()
-        return self._trajectory(turn.received, run_dir, t0)
-
-    def _trajectory(
-        self,
-        received: list[BaseMessage],
-        run_dir: Path,
-        t0: float,
-    ) -> Trajectory:
-        from dimos.agents.mcp.mcp_client import McpClientConfig
-
-        raw_dir = run_dir / "raw"
-        pairs = _pairs(raw_dir)
-        steps: list[Step] = []
-        final = ""
-        cached = 0
-        for msg in received:
+        pairs = _pairs(run_dir / "raw")
+        calls = 0
+        for msg, at in turn.received:
             if isinstance(msg, AIMessage):
-                if len(steps) >= len(pairs):
+                if calls >= len(pairs):
                     raise RuntimeError(
-                        f"McpClient wrote no LLM trace for call {len(steps)} under {raw_dir}; "
+                        f"McpClient wrote no LLM trace for call {calls} under {run_dir / 'raw'}; "
                         "every call must be captured whole"
                     )
-                usage: dict[str, Any] = dict(msg.usage_metadata or {})
-                cache_read = int((usage.get("input_token_details") or {}).get("cache_read", 0))
-                cached += cache_read
-                steps.append(
-                    Step(
-                        index=len(steps),
-                        t=time.monotonic() - t0,
-                        message=str(msg.text),
-                        reasoning=reasoning_text(msg.content),
-                        tool_calls=tuple(
-                            ToolCall(
-                                id=str(tc["id"]),
-                                name=str(tc["name"]),
-                                args=dict(tc.get("args") or {}),
-                            )
-                            for tc in msg.tool_calls
-                        ),
-                        input_tokens=int(usage.get("input_tokens", 0)) - cache_read,
-                        output_tokens=int(usage.get("output_tokens", 0)),
-                        reasoning_tokens=int(
-                            (usage.get("output_token_details") or {}).get("reasoning", 0)
-                        ),
-                        request=pairs[len(steps)][0],
-                        response=pairs[len(steps)][1],
-                    )
-                )
-                if not msg.tool_calls:
-                    final = str(msg.text)
-            elif isinstance(msg, ToolMessage) and steps:
-                call = next(call for call in steps[-1].tool_calls if call.id == msg.tool_call_id)
-                call.result = str(msg.content)
-        model = next(
-            (
-                str(m.response_metadata.get("model_name"))
-                for m in received
-                if isinstance(m, AIMessage) and m.response_metadata.get("model_name")
-            ),
-            McpClientConfig().model,
-        )
-        return Trajectory(
-            final_answer=final,
-            steps=tuple(steps),
-            model=model,
-            input_tokens=sum(s.input_tokens for s in steps),
-            output_tokens=sum(s.output_tokens for s in steps),
-            cached_tokens=cached,
-            reasoning_tokens=sum(s.reasoning_tokens for s in steps),
-            duration_s=time.monotonic() - t0,
-            ended_by="answer",
-            raw_dir=run_dir / "raw",
-        )
+                recorder.record(msg, request=pairs[calls][0], response=pairs[calls][1], at=at)
+                calls += 1
+            elif isinstance(msg, ToolMessage):
+                recorder.observe(str(msg.tool_call_id), str(msg.content))
+        return recorder.build("answer")

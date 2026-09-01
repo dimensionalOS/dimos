@@ -23,8 +23,9 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.constants import STATE_DIR
+from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.environments.image_file import ImageFile
-from dimos.evals.types import Outcome, Step, Trajectory
+from dimos.evals.types import Outcome
 from dimos.evals.vqa.author import OpenAIQuestionAuthor
 from dimos.evals.vqa.contracts import (
     FamilyAnswer,
@@ -377,16 +378,9 @@ class _ReorderedClosestRangeEstimator(_ClosestRangeEstimator):
 def _outcome(answer: str) -> Outcome:
     """What the runner hands a grader after an agent replied *answer*."""
     raw = Path("/nonexistent/raw")
-    step = Step(index=0, t=0.0, message=answer, request=raw / "r", response=raw / "s")
-    trajectory = Trajectory(
-        final_answer=answer,
-        steps=(step,),
-        model="fake",
-        duration_s=0.0,
-        ended_by="answer",
-        raw_dir=raw,
-    )
-    return Outcome(trajectory=trajectory, artifacts={})
+    trajectory = TrajectoryBuilder("?", name="fake", model="fake")
+    trajectory.step(message=answer, request=raw / "r", response=raw / "s")
+    return Outcome(trajectory=trajectory.build("answer"), artifacts={})
 
 
 def test_presence_proposal_matches_available_family() -> None:

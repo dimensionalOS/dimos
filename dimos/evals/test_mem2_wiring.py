@@ -36,6 +36,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 import numpy as np
 import pytest
 
+from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.runner import EvalRunner
@@ -211,14 +212,7 @@ def test_grader_reads_the_history_the_environment_recorded(tmp_path: Path) -> No
 
         def run(self, inputs: str, env: RunningEnvironment, run_dir: Path) -> Trajectory:
             time.sleep(1.0)
-            return Trajectory(
-                final_answer="",
-                steps=(),
-                model="none",
-                duration_s=1.0,
-                ended_by="answer",
-                raw_dir=run_dir,
-            )
+            return TrajectoryBuilder(inputs, name="none").build("answer")
 
     def grade(o: Any) -> float:
         rec = recording(o)

@@ -27,7 +27,7 @@ Every runner invocation writes one `~/.local/state/dimos/evals/run-*/` directory
 | `manifest.json` | immutable, versioned run inputs: source, ordered selected case IDs, explicit agent arguments, runner settings, and Git state |
 | `results.jsonl` | one row per case: score, steps, tokens, seconds, `ended_by`, trajectory path |
 | `summary.json` | aggregate outcomes |
-| `<case_id>/trajectory.json` | every tool available to the agent and one `Step` per model call (message, tool calls with results, tokens, latency) |
+| `<case_id>/trajectory.json` | the run in Harbor's [ATIF](https://www.harborframework.com/docs/agents/trajectory-format) format
 | `<case_id>/raw/NNN-request.json`, `NNN-response.json` | the exact payload sent to and received from the provider for every call |
 
 To generate deterministic image questions from recordings, see
@@ -153,7 +153,7 @@ print(first_number("around 12.5 m"), yes_no("Yes, clearly."), choice(["chairs", 
   so physical graders stay one-liners.
 - `judge(rubric)`: LLM-as-judge with partial credit, wrapping the
   langchain/openevals standard.
-- `o.trajectory` carries `steps`, `input_tokens`, `output_tokens`, `ended_by`:
+- `o.trajectory` carries `steps`, `final_metrics`, `extra.ended_by`:
   "under N tokens" or "did not hit `max_steps`" as a pass criterion is the
   grader reading it.
 

@@ -35,6 +35,7 @@ import numpy as np
 import pytest
 
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
+from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client import McpClientAgent
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.environments.dataset import Dataset
@@ -54,9 +55,11 @@ from dimos.evals.scorers import (
 )
 from dimos.evals.types import (
     EvalCase,
+    Observation,
+    ObservationResult,
     Outcome,
     RunningEnvironment,
-    Step,
+    ToolCall,
     Trajectory,
     recording,
 )
@@ -123,15 +126,24 @@ def _sim(**kwargs: Any) -> Sim:
 
 
 def _trajectory(answer: str, raw: Path) -> Trajectory:
-    step = Step(index=0, t=0.0, message=answer, request=raw / "r", response=raw / "s")
-    return Trajectory(
-        final_answer=answer,
-        steps=(step,),
-        model="fake",
-        duration_s=0.0,
-        ended_by="answer",
-        raw_dir=raw,
-    )
+    trajectory = TrajectoryBuilder("?", name="fake", model="fake")
+    trajectory.step(message=answer, request=raw / "r", response=raw / "s")
+    return trajectory.build("answer")
+
+
+def _assert_atif(doc: dict[str, Any]) -> None:
+    """What Harbor's validator checks: required fields, 1-based sequential
+    step ids, observations answering calls the step made, no nulls."""
+    assert doc["schema_version"] == "ATIF-v1.7"
+    assert {"name", "version", "model_name"} <= doc["agent"].keys()
+    assert [s["step_id"] for s in doc["steps"]] == list(range(1, len(doc["steps"]) + 1))
+    for step in doc["steps"]:
+        assert {"timestamp", "source", "message"} <= step.keys()
+        called = {c["tool_call_id"] for c in step.get("tool_calls", [])}
+        assert all(
+            r["source_call_id"] in called for r in step.get("observation", {}).get("results", [])
+        )
+    assert "final_metrics" in doc and "null" not in json.dumps(doc)
 
 
 class FakeEnvironment:
@@ -365,16 +377,19 @@ def test_question_answer_encodes_the_recording_into_one_call(dataset: str, tmp_p
     finally:
         env.stop()
 
-    assert trajectory.final_answer == "4" and trajectory.ended_by == "answer"
-    assert trajectory.model == "SpyChat", "an injected model is recorded, not the default"
-    assert len(trajectory.steps) == 1 and len(spy.seen) == 1
+    assert trajectory.final_answer == "4" and trajectory.extra.ended_by == "answer"
+    assert trajectory.agent.model_name == "SpyChat", (
+        "an injected model is recorded, not the default"
+    )
+    assert [s.source for s in trajectory.steps] == ["user", "agent"] and len(spy.seen) == 1
+    assert trajectory.steps[0].message == "how far?"
     text = _text(spy.seen[0])
     assert "stream 'odom'" in text and "4.000" in text and "how far?" in text
     # every call is recorded whole; a fake model has no wire, so normalized
-    step = trajectory.steps[0]
-    assert step.request.exists() and step.response.exists()
-    assert json.loads(step.request.read_text())["normalized"] is True
-    assert trajectory.raw_dir == tmp_path / "case" / "raw"
+    extra = trajectory.steps[1].extra
+    assert extra and extra.request.exists() and extra.response.exists()
+    assert json.loads(extra.request.read_text())["normalized"] is True
+    assert extra.request.parent == tmp_path / "case" / "raw"
 
 
 def test_question_answer_refuses_an_empty_recording(tmp_path: Path) -> None:
@@ -448,7 +463,7 @@ def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:
 
     by_id = {r.case_id: r for r in results}
     assert by_id["disp"].passed and by_id["disp"].score == 1.0
-    assert by_id["disp"].final_answer == "4.0" and by_id["disp"].steps == 1
+    assert by_id["disp"].final_answer == "4.0" and by_id["disp"].steps == 2  # instruction + call
     assert by_id["disp"].ended_by == "answer"
     assert "ValueError" in by_id["unparseable"].error
     assert by_id["missing_stream"].error.startswith("preflight:")
@@ -472,8 +487,11 @@ def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:
     assert manifest["runner"] == {"threshold": 1.0, "strict": False}
     assert manifest["source"] == {"kind": "unavailable"}
     trajectory = json.loads(Path(by_id["disp"].trajectory).read_text())
-    assert trajectory["tools"] == ["fake_tool"] and trajectory["final_answer"] == "4.0"
-    assert trajectory["steps"][0]["message"] == "4.0"
+    _assert_atif(trajectory)
+    assert trajectory["agent"]["tool_definitions"] == [{"name": "fake_tool"}]
+    assert (
+        trajectory["steps"][1]["message"] == "4.0" and trajectory["extra"]["ended_by"] == "answer"
+    )
 
 
 def test_manifest_exists_when_strict_preflight_fails(dataset: str, tmp_path: Path) -> None:
@@ -582,7 +600,7 @@ def test_runner_gives_the_world_the_budget_the_agent_did_not_use(
     EvalRunner(out_dir=tmp_path).run([case], FakeAgent(answer="ok"))
 
     assert calls.index("start") < calls.index("settle") < calls.index("stop")
-    assert env.settled_budget == 30.0  # FakeAgent's trajectory reports zero duration
+    assert env.settled_budget == pytest.approx(30.0, abs=1.0)  # FakeAgent answers at once
 
 
 def test_runner_timeout_marks_the_trajectory(dataset: str, tmp_path: Path) -> None:
@@ -593,7 +611,7 @@ def test_runner_timeout_marks_the_trajectory(dataset: str, tmp_path: Path) -> No
     result = EvalRunner(out_dir=tmp_path).run([case], FakeAgent(delay_s=5.0))[0]
     assert result.ended_by == "timeout" and not result.error
     assert result.score == 0.5 and not result.passed  # the world is still graded
-    assert result.steps == 0
+    assert result.steps == 1  # the instruction alone
 
 
 def test_runner_missing_artifact_is_an_error(tmp_path: Path) -> None:
@@ -706,13 +724,18 @@ def test_mcp_client_agent_drives_a_turn_over_real_transports(tmp_path: Path) -> 
             t.stop()
 
     trajectory = box["t"]
-    assert trajectory.final_answer == "I am at the bed" and trajectory.ended_by == "answer"
-    assert len(trajectory.steps) == 2 and trajectory.input_tokens == 10
-    call = trajectory.steps[0].tool_calls[0]
-    assert call.id == "c1" and call.name == "move_to"
-    assert call.args == {"x": 1.0} and call.result == "arrived"
-    assert trajectory.steps[1].request == tmp_path / "case" / "raw" / "001-request.json"
-    assert trajectory.steps[1].request.exists()
+    assert trajectory.final_answer == "I am at the bed" and trajectory.extra.ended_by == "answer"
+    assert len(trajectory.steps) == 3 and trajectory.final_metrics.total_prompt_tokens == 10
+    user, first, last = trajectory.steps
+    assert user.source == "user" and user.message == "go to the bed"
+    assert first.tool_calls == (
+        ToolCall(tool_call_id="c1", function_name="move_to", arguments={"x": 1.0}),
+    )
+    assert first.observation == Observation(
+        results=(ObservationResult(source_call_id="c1", content="arrived"),)
+    )
+    assert last.extra and last.extra.request == tmp_path / "case" / "raw" / "001-request.json"
+    assert last.extra.request.exists()
 
 
 def test_agents_report_every_available_tool() -> None:
