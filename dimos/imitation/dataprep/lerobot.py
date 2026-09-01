@@ -16,24 +16,18 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-import subprocess
 import tempfile
 
-from dimos.core.python_native_environment import (
-    project_environment_vars,
-    require_locked_project,
-    uv_run_command,
-)
+from dimos.core.python_native_environment import PythonNativeProject
 from dimos.imitation.dataprep.core import DataPrepConfig
-from dimos.imitation.policy.lerobot import module as lerobot_module
+from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
 from dimos.utils.cache import cache_usage_guard
 
 
-def lerobot_project() -> Path:
+def lerobot_project() -> PythonNativeProject:
     """Locate the packaged LeRobot project beside its host contract."""
-    return require_locked_project(Path(lerobot_module.__file__).resolve().parent / "python")
+    return PythonNativeProject.sibling(LeRobotPolicyModule)
 
 
 def run_lerobot_dataprep(config: DataPrepConfig) -> Path:
@@ -43,23 +37,18 @@ def run_lerobot_dataprep(config: DataPrepConfig) -> Path:
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as config_file:
         config_file.write(config.model_dump_json())
         config_file.flush()
-        command = uv_run_command(
-            project,
-            "python",
-            "-m",
-            "dimos_lerobot.dataprep",
-            config_file.name,
+        command = project.callable_command(
+            "dimos_lerobot.dataprep:convert",
+            [config_file.name],
         )
-        env = dict(os.environ)
-        env.pop("VIRTUAL_ENV", None)
-        env.update(project_environment_vars(project))
         try:
             with cache_usage_guard():
-                result = subprocess.run(command, env=env, check=False)
+                result = project.run(command)
         except FileNotFoundError as error:
             raise RuntimeError(
                 "uv is required for LeRobot conversion; install uv and ensure it is on PATH"
             ) from error
     if result.returncode:
-        raise RuntimeError(f"LeRobot conversion exited with status {result.returncode}")
+        output = (result.stdout + "\n" + result.stderr).strip()
+        raise RuntimeError(f"LeRobot conversion exited with status {result.returncode}: {output}")
     return config.output.path

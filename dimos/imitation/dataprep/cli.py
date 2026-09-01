@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 
 def _load_config(
     config_path: Path | None,
+    profile: Literal["openyam"] | None,
     source: Path | None,
     output: Path | None,
     output_format: Literal["lerobot", "hdf5"] | None,
@@ -44,7 +45,16 @@ def _load_config(
     """Build a DataPrepConfig from an optional JSON file + flag overrides."""
     from dimos.imitation.dataprep.core import DataPrepConfig, OutputConfig
 
-    if config_path is not None:
+    if config_path is not None and profile is not None:
+        raise ValueError("--config and --profile are mutually exclusive")
+    if profile == "openyam":
+        from dimos.robot.manipulators.openyam.learning import OPENYAM_LEARNING_PROFILE
+
+        cfg = OPENYAM_LEARNING_PROFILE.dataprep_config(
+            source=source or "",
+            output=output or DataPrepConfig().output.path,
+        )
+    elif config_path is not None:
         cfg = DataPrepConfig.model_validate_json(Path(config_path).read_text())
     else:
         cfg = DataPrepConfig()
@@ -63,12 +73,17 @@ def _load_config(
 
 def build(
     config_path: Path | None,
+    profile: Literal["openyam"] | None,
     source: Path | None,
     output: Path | None,
     output_format: Literal["lerobot", "hdf5"] | None,
     quality_mode: Literal["strict", "fill"] | None = None,
 ) -> None:
-    cfg = _load_config(config_path, source, output, output_format)
+    try:
+        cfg = _load_config(config_path, profile, source, output, output_format)
+    except ValueError as error:
+        typer.echo(f"error: {error}", err=True)
+        raise typer.Exit(2) from error
     if quality_mode is not None:
         cfg = cfg.model_copy(
             update={"quality": cfg.quality.model_copy(update={"mode": quality_mode})}
@@ -78,7 +93,7 @@ def build(
         raise typer.Exit(2)
     if not cfg.observation and not cfg.action:
         typer.echo(
-            "error: no observation/action streams configured; pass --config with the "
+            "error: no observation/action streams configured; pass --config or --profile with "
             "stream maps (see dimos/imitation/dataprep/example_config.json)",
             err=True,
         )
@@ -105,6 +120,7 @@ def inspect(
     dataset: Path | None,
     output_format: Literal["lerobot", "hdf5"] | None,
     config_path: Path | None = None,
+    profile: Literal["openyam"] | None = None,
     quality_mode: Literal["strict", "fill"] | None = None,
 ) -> None:
     from dimos.imitation.dataprep.build import inspect_dataset, inspect_recording
@@ -117,8 +133,8 @@ def inspect(
         raise typer.Exit(2)
 
     try:
-        if config_path is not None:
-            cfg = _load_config(config_path, dataset, None, None)
+        if config_path is not None or profile is not None:
+            cfg = _load_config(config_path, profile, dataset, None, None)
             if quality_mode is not None:
                 cfg = cfg.model_copy(
                     update={"quality": cfg.quality.model_copy(update={"mode": quality_mode})}

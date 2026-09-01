@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import argparse
 from collections.abc import Iterator
 from contextlib import suppress
 from pathlib import Path
@@ -88,6 +87,14 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
         dtype = raw.get("dtype")
         shape = raw.get("shape")
         names = raw.get("names")
+        if not isinstance(dtype, str):
+            raise ValueError(f"feature {key!r} requires a dtype string")
+        if not isinstance(shape, (list, tuple)) or not all(
+            isinstance(value, int) and value > 0 for value in shape
+        ):
+            raise ValueError(f"feature {key!r} requires a positive integer shape")
+        if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+            raise ValueError(f"feature {key!r} requires string axis names")
         features[key] = {"dtype": dtype, "shape": tuple(shape), "names": names}
 
     first_values = _sample_features(first)
@@ -149,14 +156,8 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
     return Path(dataset.root)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Convert a DimOS recording to LeRobot")
-    parser.add_argument("config", type=Path)
-    args = parser.parse_args()
-    config = DataPrepConfig.model_validate_json(args.config.read_text())
+def convert(config_path: str) -> None:
+    """Convert one serialized ``DataPrepConfig`` through the native writer."""
+    config = DataPrepConfig.model_validate_json(Path(config_path).read_text())
     path = run_dataprep(config, writer=write)
     print(path)
-
-
-if __name__ == "__main__":
-    main()

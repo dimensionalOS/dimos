@@ -36,6 +36,9 @@ def dataprep_build(
     config_path: Path | None = typer.Option(
         None, "--config", "-c", help="JSON DataPrepConfig (needed for obs/action stream maps)"
     ),
+    profile: Literal["openyam"] | None = typer.Option(
+        None, "--profile", help="Built-in learning profile: openyam"
+    ),
     quality_mode: Literal["strict", "fill"] | None = typer.Option(
         None, "--quality-mode", help="Override episode validation: strict | fill"
     ),
@@ -43,6 +46,7 @@ def dataprep_build(
     """Build a dataset from a recording (lerobot/hdf5 + dimos_meta.json)."""
     build(
         config_path,
+        profile,
         source,
         output,
         cast("Literal['lerobot', 'hdf5'] | None", output_format),
@@ -61,6 +65,9 @@ def dataprep_inspect(
     config_path: Path | None = typer.Option(
         None, "--config", "-c", help="Validate recording episodes with this DataPrepConfig"
     ),
+    profile: Literal["openyam"] | None = typer.Option(
+        None, "--profile", help="Validate with a built-in learning profile: openyam"
+    ),
     quality_mode: Literal["strict", "fill"] | None = typer.Option(
         None, "--quality-mode", help="Override episode validation: strict | fill"
     ),
@@ -70,5 +77,6 @@ def dataprep_inspect(
         dataset,
         cast("Literal['lerobot', 'hdf5'] | None", output_format),
         config_path,
+        profile,
         quality_mode,
     )
