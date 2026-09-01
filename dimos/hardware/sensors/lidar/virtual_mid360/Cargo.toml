@@ -12,6 +12,6 @@ dimos-livox = { path = "../livox/rust" }
 dimos-module = { path = "../../../../../native/rust/dimos-module" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "sync"] }
 serde = { version = "1", features = ["derive"] }
-socket2 = "0.5"
+socket2 = "0.6"
 tracing = "0.1"
-validator = { version = "0.20", features = ["derive"] }
+validator = { version = "0.21", features = ["derive"] }

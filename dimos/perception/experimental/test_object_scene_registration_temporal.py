@@ -195,6 +195,27 @@ def test_owlv2_queries_configured_prompts(monkeypatch: Any) -> None:
     module.stop()
 
 
+def test_owlv2_yolo_constructs_box_prompt_segmenter(mocker: Any) -> None:
+    module = ObjectSceneRegistrationModule(
+        detector_backend="owlv2",
+        segmentation_backend="yolo",
+        segmentation_confidence=0.04,
+    )
+    segmenter = MagicMock()
+    segmenter_factory = mocker.patch(
+        "dimos.perception.experimental.object_scene_registration.YoloeBoxSegmenter",
+        return_value=segmenter,
+    )
+
+    try:
+        created = module._create_segmenter()
+    finally:
+        module.stop()
+
+    assert created is segmenter
+    segmenter_factory.assert_called_once_with(confidence=0.04)
+
+
 def test_moondream_queries_each_configured_prompt(monkeypatch: Any) -> None:
     module = ObjectSceneRegistrationModule(target_frame="camera", detector_backend="moondream")
     module._camera_info = MagicMock()
