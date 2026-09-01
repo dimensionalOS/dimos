@@ -414,6 +414,21 @@ List deployed modules and their skills.
 dimos mcp modules
 ```
 
+### `dimos login`
+
+Device-code sign-in for the hosted platform; `dimos logout` and `dimos whoami` manage the stored key.
+
+### `dimos data`
+
+Upload recordings (or any file) to hosted storage and pull them back. See [Cloud data](/docs/usage/cloud_data.md).
+
+| Subcommand | Description |
+|------------|-------------|
+| `upload [PATH\|latest] [--since 1h] [--robot ID] [--kind KIND] [--chunk MB]` | Upload; no argument means the newest recording |
+| `ls` | List uploads: id, date, kind, blueprint, topics, size, state |
+| `pull [ID-PREFIX\|latest] [--dest PATH]` | Download to `downloads/`, sha256-verified |
+| `status ID` / `quota` | Upload state and parts on server / storage quota |
+
 ## Standalone Tools
 
 These are installed as separate entry points and can be run directly without the `dimos` prefix.
