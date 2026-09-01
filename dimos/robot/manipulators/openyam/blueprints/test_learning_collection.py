@@ -17,26 +17,20 @@ from pytest import MonkeyPatch
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
-from dimos.experimental.imitation.collection.blueprint import (
-    _require_zenoh,
-    learning_collect_quest_openyam_native,
-)
-from dimos.experimental.imitation.collection.recorder import NativeCollectionRecorder
-from dimos.imitation.collection.blueprint import learning_collect_quest_openyam
-from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.imitation.collection.native_recorder import NativeCollectionRecorder
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP
+from dimos.robot.manipulators.openyam.blueprints.learning_collection import (
+    _require_zenoh,
+    learning_collect_quest_openyam,
+)
 
 
-def test_native_openyam_is_an_opt_in_experimental_blueprint() -> None:
-    assert learning_collect_quest_openyam.active_blueprints[-1].module is CollectionRecorder
-    assert (
-        learning_collect_quest_openyam_native.active_blueprints[0].module
-        is NativeCollectionRecorder
-    )
-    assert learning_collect_quest_openyam_native.global_config_overrides["transport"] == "zenoh"
+def test_openyam_collection_uses_the_native_recorder_and_zenoh() -> None:
+    assert learning_collect_quest_openyam.active_blueprints[0].module is NativeCollectionRecorder
+    assert learning_collect_quest_openyam.global_config_overrides["transport"] == "zenoh"
 
 
 def test_native_openyam_recorded_streams_never_drop() -> None:
@@ -47,17 +41,17 @@ def test_native_openyam_recorded_streams_never_drop() -> None:
         "status": EpisodeStatus,
     }
     for stream, payload_type in payload_types.items():
-        transport = learning_collect_quest_openyam_native.transport_map[(stream, payload_type)]
+        transport = learning_collect_quest_openyam.transport_map[(stream, payload_type)]
 
         assert isinstance(transport, ZenohTransport)
         assert transport.topic.qos == QOS_NEVER_DROP
 
 
 def test_native_openyam_paths_are_configurable_from_cli() -> None:
-    parsed = BlueprintConfigParser(learning_collect_quest_openyam_native).parse(
+    parsed = BlueprintConfigParser(learning_collect_quest_openyam).parse(
         [
             "--nativecollectionrecorder.store.path",
-            "/tmp/native-openyam.db",
+            "/tmp/native-openyam.mcap",
             "--WristCamera.webcam.camera-index",
             "/dev/v4l/by-id/usb-wrist-camera",
             "--task",
@@ -67,7 +61,7 @@ def test_native_openyam_paths_are_configurable_from_cli() -> None:
     )
 
     assert parsed.module_kwargs("nativecollectionrecorder")["store"]["path"] == (
-        "/tmp/native-openyam.db"
+        "/tmp/native-openyam.mcap"
     )
     assert parsed.module_kwargs("WristCamera")["webcam"]["camera_index"] == (
         "/dev/v4l/by-id/usb-wrist-camera"
@@ -78,4 +72,4 @@ def test_native_openyam_paths_are_configurable_from_cli() -> None:
 def test_native_openyam_rejects_an_lcm_override(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(global_config, "transport", "lcm")
 
-    assert _require_zenoh() == ("learning-collect-quest-openyam-native requires --transport zenoh")
+    assert _require_zenoh() == ("learning-collect-quest-openyam requires --transport zenoh")

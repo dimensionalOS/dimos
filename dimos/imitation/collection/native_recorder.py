@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Experimental native recording profile for imitation data collection."""
+"""Native recording streams for imitation data collection."""
 
 from __future__ import annotations
 
