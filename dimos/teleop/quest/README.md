@@ -70,15 +70,6 @@ pitch/yaw. The planar base and grippers remain unclaimed and cannot move.
 Releasing either button stops the whole task. A stale pose, E-stop, or
 preemption requires releasing both buttons before teleoperation can rearm.
 
-Use hands-only mode to let the same 18-joint IK task choose waist motion from
-the two controller targets without constraining it to the headset pose:
-
-```bash
-dimos run teleop-quest-r1pro --teleop-mode hands
-```
-
-The default is `--teleop-mode headset`.
-
 ## Arm task bindings
 
 Arm teleoperation uses one `TeleopIKTask` configured with one or two hand

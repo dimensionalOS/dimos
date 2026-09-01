@@ -33,9 +33,7 @@ class R1ProPinkPoseTargetSolver(PinkPoseTargetSolver):
         target_frames: tuple[str, ...],
     ) -> dict[str, pink.Task]:
         tasks = super()._create_tasks(configuration, target_frames)
-        head_task = tasks.get(f"frame/{self.HEAD_FRAME}")
-        if head_task is None:
-            return tasks
+        head_task = tasks[f"frame/{self.HEAD_FRAME}"]
         head_task.set_position_cost(
             self.config.position_cost * np.array([1.0, 0.0, 1.0], dtype=np.float64)
         )

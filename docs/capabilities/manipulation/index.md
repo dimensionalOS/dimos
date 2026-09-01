@@ -31,8 +31,7 @@ The R1 Pro Quest blueprint controls its 14 arm and four torso joints as one
 Pink IK task. The Quest controllers target both gripper links while relative
 headset motion targets forward/vertical torso motion and pitch/yaw. It uses
 mock hardware and Viser; the planar base and grippers are excluded
-from the task so they remain stationary. Pass `--teleop-mode hands` to omit
-the headset target while keeping all 18 upper-body joints available to IK.
+from the task so they remain stationary.
 
 OpenYAM is exposed as one whole-body device with six angular arm joints and a
 normalized gripper joint. `arm/gripper` uses `0.0` for fully closed and `1.0`
