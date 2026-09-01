@@ -52,7 +52,6 @@ if TYPE_CHECKING:
         PlanningGroupID,
     )
     from dimos.msgs.vision_msgs.Detection3D import Detection3D
-    from dimos.perception.experimental.object import Object
 
 logger = setup_logger()
 
@@ -250,53 +249,6 @@ class WorldMonitor:
         """Handle perception detections (Detection3D from dimos.msgs.vision_msgs)."""
         if self._obstacle_monitor is not None:
             self._obstacle_monitor.on_detections(detections)
-
-    def on_objects(self, objects: object) -> None:
-        """Handle Object detections from ObjectDB (preserves object_id)."""
-        if self._obstacle_monitor is not None and isinstance(objects, list):
-            self._obstacle_monitor.on_objects(objects)
-
-    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, Any]]:
-        """Refresh perception obstacles from cache. Returns list of added obstacles."""
-        if self._obstacle_monitor is not None:
-            return self._obstacle_monitor.refresh_obstacles(min_duration)
-        return []
-
-    def remove_object_obstacle(self, object_id: str) -> bool:
-        """Remove a single object's obstacle from the planning world."""
-        if self._obstacle_monitor is not None:
-            return self._obstacle_monitor.remove_object_obstacle(object_id)
-        return False
-
-    def clear_perception_obstacles(self) -> int:
-        """Remove all perception obstacles. Returns count removed."""
-        if self._obstacle_monitor is not None:
-            return self._obstacle_monitor.clear_perception_obstacles()
-        return 0
-
-    def get_perception_status(self) -> dict[str, int]:
-        """Get perception obstacle status."""
-        if self._obstacle_monitor is not None:
-            return self._obstacle_monitor.get_perception_status()
-        return {"cached": 0, "added": 0}
-
-    def get_cached_objects(self) -> list[Object]:
-        """Get cached Object instances from perception."""
-        if self._obstacle_monitor is not None:
-            return self._obstacle_monitor.get_cached_objects()
-        return []
-
-    def list_cached_detections(self) -> list[dict[str, Any]]:
-        """List cached detections from perception."""
-        if self._obstacle_monitor is not None:
-            return self._obstacle_monitor.list_cached_detections()
-        return []
-
-    def list_added_obstacles(self) -> list[dict[str, Any]]:
-        """List perception obstacles currently in the planning world."""
-        if self._obstacle_monitor is not None:
-            return self._obstacle_monitor.list_added_obstacles()
-        return []
 
     # State Access
 

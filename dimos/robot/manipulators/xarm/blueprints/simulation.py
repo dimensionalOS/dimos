@@ -67,9 +67,7 @@ xarm_perception_sim = autoconnect(
     MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
-        detector_backend="moondream",
-        segmentation_backend="edgetam",
-        detect_on_request=True,
+        optical_frame="wrist_camera_color_optical_frame",
     ),
     coordinator(
         hardware=[_xarm7_sim_hw],
@@ -108,18 +106,12 @@ xarm_room_sim = autoconnect(
     ),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
-        detector_backend="owlv2",
-        # OWLv2 is box-only; YOLO-E visual prompts refine its boxes into masks.
-        segmentation_backend="yolo",
         # Synthetic MuJoCo renders score far below natural images.
-        detector_confidence=0.07,
-        segmentation_confidence=0.05,
-        # Keep adjacent tabletop targets distinct instead of merging by label.
-        distance_threshold=0.05,
-        detect_on_request=True,
-        # The obstacle stream contains permanent objects only; one explicit
-        # room scan must therefore promote its first sightings immediately.
-        min_detections_for_permanent=1,
+        candidate_floor=0.07,
+        accept_score=0.07,
+        # This deterministic room scan intentionally uses one fixed overview.
+        min_views=1,
+        optical_frame="wrist_camera_color_optical_frame",
     ),
     coordinator(
         hardware=[_xarm_room_sim_hw],
