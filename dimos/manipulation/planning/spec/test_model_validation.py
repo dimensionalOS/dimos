@@ -194,9 +194,7 @@ def test_planar_base_requires_synthetic_root_and_all_base_joints(tmp_path: Path)
     _write_slash_model(urdf)
     base = _planar_base()
     model = (
-        RobotModel.from_file(urdf)
-        .with_default_joint_acceleration_limit(2.0)
-        .with_planar_base(base)
+        RobotModel.from_file(urdf).with_default_joint_acceleration_limit(2.0).with_planar_base(base)
     )
     values = _config(urdf).model_dump()
     values.update(
