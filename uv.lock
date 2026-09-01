@@ -29,7 +29,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-08-17T12:38:46.552447751Z"
+exclude-newer = "2026-08-25T20:26:14.9623318Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1707,7 +1707,6 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
     { name = "pyturbojpeg" },
-    { name = "pyzmq" },
     { name = "qpsolvers", extra = ["proxqp"] },
     { name = "reactivex" },
     { name = "rerun-sdk" },
@@ -2310,7 +2309,6 @@ requires-dist = [
     { name = "python-multipart", marker = "extra == 'misc'", specifier = ">=0.0.27" },
     { name = "pyturbojpeg", specifier = "==1.8.2" },
     { name = "pyyaml", marker = "extra == 'manipulation'", specifier = ">=6.0" },
-    { name = "pyzmq", specifier = ">=27.1.0" },
     { name = "qpsolvers", extras = ["proxqp"], specifier = ">=4.12.0" },
     { name = "reactivex" },
     { name = "reportlab", marker = "extra == 'apriltag'", specifier = ">=4.5.0" },
