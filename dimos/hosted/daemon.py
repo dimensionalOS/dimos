@@ -17,33 +17,31 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import multiprocessing
 from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
 import os
 from pathlib import Path
-import pickle
 import signal
 import socket
 import threading
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 import uuid
 
 from dimos.constants import STATE_DIR
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV, kill_run_processes
 from dimos.core.core import rpc
+from dimos.hosted.fragment import (
+    FRAGMENT_FORMAT,
+    FRAGMENT_SCHEMA_VERSION,
+    HostFragment,
+)
 from dimos.utils.logging_config import set_run_log_dir
-
-if TYPE_CHECKING:
-    from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
 
 HostState = Literal["available", "starting", "running", "stopping", "failed"]
 
 HOST_PROTOCOL_VERSION = 2
-FRAGMENT_SCHEMA_VERSION = 1
-FRAGMENT_FORMAT = "python-blueprint"
 HOST_LIVELINESS_KEY = "dimos/hosts/{host_id}/live"
 HOST_CONTROL_RPC_NAME = "hosts/{host_id}"
 DEFAULT_STARTUP_TIMEOUT = 60.0
@@ -60,18 +58,6 @@ class HostDescriptor:
     versions: dict[str, str | int]
     state: HostState
     active_run_ids: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class HostFragment:
-    run_id: str
-    generation: int
-    host_id: str
-    payload_digest: str
-    blueprint_payload: bytes
-    config: ParsedBlueprintConfig | None = None
-    schema_version: int = FRAGMENT_SCHEMA_VERSION
-    format: str = FRAGMENT_FORMAT
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,8 +234,18 @@ class HostDaemon:
             raise ValueError(f"Unsupported fragment schema: {fragment.schema_version}")
         if fragment.format != FRAGMENT_FORMAT:
             raise ValueError(f"Unsupported fragment format: {fragment.format}")
-        if hashlib.sha256(fragment.blueprint_payload).hexdigest() != fragment.payload_digest:
-            raise ValueError("Fragment payload digest does not match its payload")
+        required_revision = self._versions.get(
+            "application_revision",
+            self._versions.get("dimos"),
+        )
+        if required_revision is not None and fragment.application_revision != str(
+            required_revision
+        ):
+            raise ValueError(
+                f"Fragment requires application revision {fragment.application_revision}, "
+                f"Host has {required_revision}"
+            )
+        fragment.validate_digest()
 
     def _wait_for_start(self, ready: Connection) -> str | None:
         try:
@@ -316,8 +312,8 @@ def _run_fragment(fragment: HostFragment, log_dir: Path, ready: Connection) -> N
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     try:
-        blueprint = pickle.loads(fragment.blueprint_payload)
-        coordinator = ModuleCoordinator.build(blueprint, fragment.config)
+        payload = fragment.load_payload()
+        coordinator = ModuleCoordinator.build(payload.blueprint, payload.config)
         coordinator.start_rpc_service()
         if not coordinator.health_check():
             raise RuntimeError("Deployment failed its initial health check")
