@@ -220,6 +220,12 @@ class ViserManipulationScene:
                             self._obstacles_visible,
                         )
                     )
+                elif obstacle.obstacle_type == ObstacleType.OCTREE:
+                    handles.append(
+                        self._add_octree(
+                            scene, path, obstacle, color, position, wxyz, self._obstacles_visible
+                        )
+                    )
                 else:
                     raise ValueError(f"unsupported obstacle type: {obstacle.obstacle_type}")
             except Exception as error:
@@ -334,6 +340,37 @@ class ViserManipulationScene:
             round(float(color[1]) * 255),
             round(float(color[2]) * 255),
         ), float(color[3])
+
+    @staticmethod
+    def _add_octree(
+        scene: Any,
+        path: str,
+        obstacle: Obstacle,
+        color: tuple[int, int, int],
+        position: Any,
+        wxyz: Any,
+        visible: bool,
+    ) -> Any:
+        """Draw the occupied cells as a point cloud sized to the cell edge.
+
+        A mapped workspace is tens of thousands of cells, so one box per cell
+        would stall the browser. Square points at the cell edge read as the same
+        grid and cost one scene node.
+        """
+        points = np.asarray(obstacle.points, dtype=np.float32).reshape(-1, 3)
+        if not len(points):
+            raise ValueError("octree obstacle carries no occupied cells")
+        colors = np.tile(np.asarray(color, dtype=np.uint8), (len(points), 1))
+        return scene.add_point_cloud(
+            path,
+            points=points,
+            colors=colors,
+            point_size=float(obstacle.octree_resolution or 0.05),
+            point_shape="square",
+            position=position,
+            wxyz=wxyz,
+            visible=visible,
+        )
 
     @staticmethod
     def _add_mesh(
