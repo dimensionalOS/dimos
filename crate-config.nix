@@ -1,10 +1,16 @@
-# crate2nix's per-crate override hook, read by Cargo.nix. Empty because no
-# crate needs an override yet.
+# Placeholder. Cargo.nix takes a `crateConfig` argument that defaults to
+# importing this path, but never reads it -- the argument is unused in the
+# generated file. So do not add crate overrides here expecting them to apply;
+# the working hook is the `defaultCrateOverrides` argument to Cargo.nix, set
+# where flake.nix imports it.
 #
-# It exists as a real file rather than being left absent -- Cargo.nix guards it
-# with `builtins.pathExists` -- so that `bin/build-native-modules --inputs-hash`
-# has something to hash. That gate scans path literals textually and cannot
-# evaluate the guard, so an absent-but-referenced file would either break it or
-# have to be exempted, and an override added here later would then not rekey the
-# Cachix marker.
+# The file exists only so that the path Cargo.nix names actually resolves.
+# `bin/build-native-modules --inputs-hash` walks nix path literals textually
+# and cannot evaluate the `builtins.pathExists` guard around this one, so it
+# fails outright when the file is absent:
+#
+#   Cargo.nix: reference './crate-config.nix' does not exist
+#
+# An empty file is a cheaper fix than teaching that parser about conditional
+# paths, which would risk it silently skipping a path that does matter.
 _: { }
