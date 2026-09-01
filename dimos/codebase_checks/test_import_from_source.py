@@ -18,6 +18,7 @@ import ast
 from pathlib import Path
 import re
 
+from dimos.codebase_checks.source_files import python_source_files
 from dimos.constants import DIMOS_PROJECT_ROOT
 
 DIMOS_DIR = DIMOS_PROJECT_ROOT / "dimos"
@@ -69,7 +70,7 @@ def _is_reexport(alias: ast.alias, stmt: ast.ImportFrom, lines: list[str]) -> bo
 
 def _build_index() -> dict[str, _Module]:
     modules: dict[str, _Module] = {}
-    for path in sorted(DIMOS_DIR.rglob("*.py")):
+    for path in sorted(python_source_files(DIMOS_DIR)):
         modules[_module_name(path)] = _Module(_module_name(path), path, path.name == "__init__.py")
     for mod in modules.values():
         lines = mod.path.read_text(encoding="utf-8").splitlines()
