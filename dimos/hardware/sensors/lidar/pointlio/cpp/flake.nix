@@ -7,7 +7,6 @@
     livox-sdk.url = "path:../../livox/cpp";
     livox-sdk.inputs.nixpkgs.follows = "nixpkgs";
     livox-sdk.inputs.flake-utils.follows = "flake-utils";
-    livox-sdk.inputs.lcm-extended.follows = "lcm-extended";
     dimos-lcm = {
       url = "github:dimensionalOS/dimos-lcm/main";
       flake = false;
