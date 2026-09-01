@@ -91,6 +91,19 @@ TEST_CASE("a session block with an unknown field is rejected and names it") {
     }
 }
 
+TEST_CASE("a negative connect timeout is rejected rather than wrapped") {
+    // Cast instead of rejected it becomes a wait of a few hundred million
+    // years, so opening the session would look like a hang.
+    nlohmann::json launch = nlohmann::json::parse(kClientLaunch);
+    launch["session"]["connect_timeout_ms"] = -1;
+    try {
+        settings_from_launch(launch);
+        FAIL("expected a negative connect timeout to throw");
+    } catch (const std::runtime_error& e) {
+        CHECK(std::string(e.what()).find("connect_timeout_ms") != std::string::npos);
+    }
+}
+
 TEST_CASE("an unknown session mode is rejected") {
     nlohmann::json launch = nlohmann::json::parse(kClientLaunch);
     launch["session"]["mode"] = "gateway";

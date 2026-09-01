@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -71,6 +72,14 @@ T require_field(const nlohmann::json& object, const std::string& key) {
     auto it = object.find(key);
     if (it == object.end()) {
         throw std::runtime_error("zenoh session settings: missing field '" + key + "'");
+    }
+    // Without this a negative number is cast rather than rejected, turning a
+    // bad timeout into a wait of a few hundred million years.
+    if constexpr (std::is_unsigned_v<T> && !std::is_same_v<T, bool>) {
+        if (!it->is_number_unsigned()) {
+            throw std::runtime_error("zenoh session settings: field '" + key +
+                                     "' must be a non-negative whole number");
+        }
     }
     try {
         return it->get<T>();
