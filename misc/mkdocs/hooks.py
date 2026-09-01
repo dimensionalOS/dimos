@@ -33,7 +33,7 @@ from mkdocs.utils import write_file
 
 THEME_CSS = Path(__file__).with_name("theme.css")
 REPO_ROOT = Path(__file__).resolve().parents[2]
-README = REPO_ROOT / "README.md"
+# The home page's demo gifs, shared with the readme rather than copied.
 README_ASSETS = REPO_ROOT / "assets" / "readme"
 
 GITHUB_BLOB = "https://github.com/dimensionalOS/dimos/blob/main"
@@ -143,75 +143,14 @@ def _rewrite_link(match: re.Match[str], src_uri: str) -> str:
     return match.group(0)
 
 
-def _page_url(path: str) -> str:
-    """docs/usage/modules.md -> usage/modules/, the url mkdocs actually builds.
-
-    Only needed for raw html attributes: mkdocs rewrites markdown links itself,
-    but never looks inside an <a href> or an <img src>.
-    """
-    page = re.sub(r"^docs/", "", path).removesuffix(".md")
-    page = re.sub(r"(^|/)index$", r"\1", page)
-    return page.rstrip("/") + "/" if page else "."
-
-
-def _readme_as_home() -> str:
-    """The repo README, with its links pointed at the site instead of github."""
-    text = README.read_text(encoding="utf-8")
-
-    # Badges, star counts and the trendshift ribbon are furniture for a repo
-    # landing page. Here they are a wall of images above the first sentence.
-    text = re.sub(r"^\[!\[.*img\.shields\.io.*$", "", text, flags=re.M)
-    text = re.sub(r"^!\[.*img\.shields\.io.*$", "", text, flags=re.M)
-    text = re.sub(r"^<a href=\"https://trendshift\.io.*$", "", text, flags=re.M)
-
-    # A 1px transparent gif forcing a minimum column width is a github table
-    # hack. Here the cells already carry width="20%", and the spacer only adds
-    # a line box, plus a lightbox anchor around a blank image.
-    text = re.sub(r"\s*<img[^>]*spacer\.png[^>]*>", "", text)
-
-    # <big> is deprecated, and being an inline tag it re-blocks markdown even
-    # inside a div that asked for it. Material sizes the banner text anyway.
-    text = text.replace("<big>", "").replace("</big>", "")
-
-    # Github renders markdown inside a raw html block; python-markdown only
-    # does so when the tag asks for it, which is what md_in_html reads.
-    # Only on <div>: md_in_html does not treat a <td> as a markdown block, so
-    # the attribute would survive into the output as a stray one.
-    text = re.sub(r"<div\b(?![^>]*\bmarkdown=)([^>]*)>", r'<div\1 markdown="1">', text)
-
-    # Raw html links into the docs tree, which mkdocs leaves alone.
-    text = re.sub(
-        r'(href=")docs/([^"]+\.md)"', lambda m: f'{m.group(1)}{_page_url(m.group(2))}"', text
-    )
-    # Raw html links to source, which have no page on the site at all.
-    text = re.sub(
-        r'(href=")((?:' + "|".join(SOURCE_ROOTS) + r')/[^"]*)"',
-        lambda m: f'{m.group(1)}{GITHUB_BLOB}/{m.group(2)}"',
-        text,
-    )
-
-    # docs/usage/modules.md -> usage/modules.md, since the site root is docs/.
-    text = re.sub(r"\]\(docs/", "](", text)
-    # Anything else in the repo is source, and lives on github.
-    text = re.sub(
-        r"\]\((AGENTS\.md|CONTRIBUTING\.md|LICENSE|(?:dimos|examples|bin|native|misc|scripts)/[^)#]*)",
-        lambda m: f"]({GITHUB_BLOB}/{m.group(1)}",
-        text,
-    )
-    # The readme opens with a centred banner rather than a heading, so give the
-    # page a title for the nav and the browser tab.
-    return f'---\ntitle: "Welcome to dimOS"\n---\n\n{text}'
-
-
 def on_files(files, config):
-    """Ship the theme and the readme-as-home without adding files to docs/."""
+    """Ship the theme and the shared demo assets without adding files to docs/."""
     from mkdocs.structure.files import File
 
     files.append(File.generated(config, "assets/mkdocs-theme.css", content=THEME_CSS.read_text()))
-    files.append(File.generated(config, "index.md", content=_readme_as_home()))
 
-    # The readme's screenshots live outside docs/, so pull them in by path
-    # rather than copying 43MB into the docs tree.
+    # The home page's screenshots live outside docs/, beside the readme's, so
+    # pull them in by path rather than copying 43MB into the docs tree.
     for asset in sorted(README_ASSETS.glob("*")):
         if asset.is_file():
             files.append(
