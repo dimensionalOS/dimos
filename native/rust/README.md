@@ -152,7 +152,7 @@ class MultiCam(Module):
 
 The same applies to any `handle_<input>` for a plain `In` port, where the metadata is always `index=0, name=<input>`.
 
-The whole funnel shares one dispatcher, so the handler is never re-entered, and its mailbox holds the latest unprocessed message per stream rather than one slot for the funnel — a chatty camera cannot starve the others.
+Either way the whole funnel shares one dispatcher, so the handler is never re-entered. What they do under load differs: python's mailbox holds the latest unprocessed message per stream and drains them oldest-waiting first, so a chatty camera cannot starve the others, while rust feeds every topic of a funnel into one bounded channel that drops the arriving message once it is full.
 
 ## Transforms
 
