@@ -45,7 +45,7 @@ inline constexpr const char* kSessionKey = "session";
 
 /// Zenoh keys can't start with '/'.
 inline std::string zenoh_key(const std::string& channel) {
-    return channel.rfind('/', 0) == 0 ? channel.substr(1) : channel;
+    return channel.starts_with('/') ? channel.substr(1) : channel;
 }
 
 namespace zenoh_detail {
