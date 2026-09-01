@@ -26,10 +26,10 @@ dimos --simulation run learning-collect-quest-xarm7 --task "pick up the red bloc
 # Piper on real hardware
 dimos run learning-collect-quest-piper --task "pick up the red block"
 
-# OpenYAM + Quest + wrist camera; native MCAP over Zenoh
+# OpenYAM + Quest + wrist camera; native MCAP
 dimos --can-port follower_l run learning-collect-quest-openyam \
   --task "pick up the red block" \
-  --WristCamera.webcam.camera-index 0 \
+  --WristCamera.hardware.camera-index 0 \
   --nativecollectionrecorder.store.path data/recordings/session_openyam.mcap
 ```
 
@@ -74,37 +74,27 @@ The exact path is printed when the recorder starts — note it for the next step
 
 ## 2. Build a dataset
 
-DataPrep is an offline batch step that reads a session `.db` or `.mcap` and writes a dataset.
-The obs/action stream mapping is nested, so it comes from a JSON config — start
-from [`dataprep/example_config.json`](dataprep/example_config.json) and edit the
-`source`/`output` to taste.
+DataPrep is an offline batch step that reads a session `.db` or `.mcap` and
+writes a dataset. A typed Python profile owns the observation/action schema and
+output format; each invocation supplies only its source and optional output.
 
 ```bash
-# LeRobot v3.0 (default)
-dimos dataprep build \
-  --source ~/.local/state/dimos/recordings/session_xarm7_20260622_120000.db \
-  --config dimos/imitation/dataprep/example_config.json
-
-# HDF5 instead
-dimos dataprep build -s <session.db> -c <config.json> -f hdf5
-
-# OpenYAM uses its typed 30 Hz wrist/joint/action profile
+# OpenYAM's typed profile selects LeRobot and its 30 Hz wrist/joint/action schema
 dimos dataprep build \
   --source data/recordings/session_openyam.mcap \
-  --profile openyam \
+  --profile dimos.robot.manipulators.openyam.learning:OPENYAM_LEARNING_PROFILE \
   --output data/datasets/openyam-mcap
 ```
 
-The OpenYAM graph uses reliable Zenoh for every recorded stream and MCAP by
-default. Override the path with
+The OpenYAM graph uses the globally selected transport (Zenoh by default) and
+MCAP. Override the path with
 `--nativecollectionrecorder.store.path /path/to/session_openyam.mcap`. Stop
 collection gracefully so MCAP can finalize its summary and indexes; MCAP
 append mode is unsupported.
 
-`--source` / `--output` / `--format` override whatever the config specifies, so
-you can reuse one config across runs and just swap `--source`. The dataset is
-written to the config's `output.path` (the example uses `data/datasets/session`)
-unless you pass `--output`.
+Reuse the profile across runs and swap `--source`. `--output` overrides the
+profile's output path, and `--quality-mode strict|fill` overrides its validation
+mode. A profile can select HDF5 instead of LeRobot in its `DataPrepConfig`.
 
 Inspect the result (features, shapes, dtypes, episode/frame counts):
 
@@ -114,7 +104,7 @@ dimos dataprep inspect data/datasets/session.hdf5  # HDF5 file
 
 # Validate saved recording episodes before conversion
 dimos dataprep inspect session_openyam.mcap \
-  --profile openyam
+  --profile dimos.robot.manipulators.openyam.learning:OPENYAM_LEARNING_PROFILE
 ```
 
 Each dataset gets a `dimos_meta.json` sidecar recording exactly how it was built
@@ -123,10 +113,11 @@ fill reports).
 
 ---
 
-## 3. Config reference
+## 3. Profile reference
 
-See [`dataprep/example_config.json`](dataprep/example_config.json) for a full,
-working example. The fields that matter:
+A profile is a Python object with `dataprep_config() -> DataPrepConfig`. Pass it
+as `module:attribute`; profiles are imported and executed, so use trusted local
+code. The returned config is a reusable template whose fields mean:
 
 - **`source`** — the session `.db` or `.mcap`.
 - **`observation` / `action`** — map each final dataset feature name to an
@@ -138,7 +129,7 @@ working example. The fields that matter:
 - **`quality`** — `strict` excludes only invalid episodes; `fill` preserves the
   fixed-rate grid with causal holds and marks filled frames in
   `complementary_info.is_filled`. The build fails when no valid episode remains.
-- **`output`** — `format` (`lerobot` | `hdf5`), `path`, and `metadata`
+- **`output`** — `format` (`lerobot` | `hdf5`), default `path`, and `metadata`
   (`repo_id`, `robot_type`, …).
 
 ---

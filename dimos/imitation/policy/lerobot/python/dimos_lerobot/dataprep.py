@@ -17,17 +17,25 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import suppress
+from contextlib import redirect_stdout, suppress
 from pathlib import Path
 import sys
 from typing import Any, Protocol, cast
 
+from lerobot.datasets import LeRobotDatasetMetadata
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.imitation.dataprep._lerobot_protocol import (
+    REQUEST_ADAPTER,
+    BuildRequest,
+    BuildResult,
+    InspectRequest,
+    InspectResult,
+)
 from dimos.imitation.dataprep.build import run_dataprep
-from dimos.imitation.dataprep.core import DataPrepConfig, OutputConfig, Sample
+from dimos.imitation.dataprep.core import OutputConfig, Sample, summarize_lengths
 
 
 class _WritableDataset(Protocol):
@@ -157,19 +165,53 @@ def write(samples: Iterator[Sample], output: OutputConfig) -> Path:
     return Path(dataset.root)
 
 
-def convert(config_path: str) -> None:
-    """Convert one serialized ``DataPrepConfig`` through the native writer."""
-    config = DataPrepConfig.model_validate_json(Path(config_path).read_text())
-    path = run_dataprep(config, writer=write)
-    print(path)
+def inspect_dataset(path: Path) -> dict[str, Any]:
+    """Summarize a local dataset through LeRobot's public metadata interface."""
+    metadata = LeRobotDatasetMetadata(repo_id="local/dataset", root=path)
+    observation: dict[str, Any] = {}
+    action: dict[str, Any] = {}
+    metadata_columns = {"timestamp", "frame_index", "episode_index", "index", "task_index"}
+    for name, feature in metadata.features.items():
+        if name in metadata_columns:
+            continue
+        entry = {"shape": feature.get("shape"), "dtype": feature.get("dtype")}
+        if name.startswith("observation"):
+            observation[name] = entry
+        elif name.startswith("action"):
+            action[name] = entry
+    lengths = list(metadata.episodes["length"]) if metadata.episodes is not None else []
+    return {
+        "format": "lerobot",
+        "version": metadata.info.codebase_version,
+        "path": str(metadata.root),
+        "episodes": metadata.total_episodes,
+        "frames": metadata.total_frames,
+        "fps": metadata.fps,
+        "robot": metadata.robot_type,
+        "observation": observation,
+        "action": action,
+        "episode_lengths": summarize_lengths(lengths),
+        "shapes_uniform": True,
+        "has_stats": metadata.stats is not None,
+    }
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Convert the config supplied to the module entry point."""
+    """Execute one typed build or inspect request from stdin."""
     args = list(sys.argv[1:] if argv is None else argv)
-    if len(args) != 1:
-        raise SystemExit("usage: python -m dimos_lerobot.dataprep CONFIG_JSON")
-    convert(args[0])
+    if args:
+        raise SystemExit("usage: python -m dimos_lerobot.dataprep")
+    request = REQUEST_ADAPTER.validate_json(sys.stdin.read())
+    protocol_stdout = sys.stdout
+    result: BuildResult | InspectResult
+    with redirect_stdout(sys.stderr):
+        if isinstance(request, BuildRequest):
+            result = BuildResult(path=run_dataprep(request.config, writer=write))
+        elif isinstance(request, InspectRequest):
+            result = InspectResult(info=inspect_dataset(request.path))
+        else:
+            raise TypeError(f"unsupported request {type(request).__name__}")
+    protocol_stdout.write(result.model_dump_json())
 
 
 if __name__ == "__main__":

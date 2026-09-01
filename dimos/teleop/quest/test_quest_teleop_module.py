@@ -21,8 +21,8 @@ from typing import Any
 import pytest
 import pytest_mock
 
-from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.teleop.quest.quest_extensions import (
     ArmTeleopModule,
     Go2TeleopModule,

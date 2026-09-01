@@ -168,6 +168,41 @@ def test_resolve_field_orders_joint_state_by_feature_names() -> None:
     np.testing.assert_array_equal(arr, np.array([1.0, 2.0]))
 
 
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [("velocity", [1.0, 2.0]), ("effort", [3.0, 4.0])],
+)
+def test_resolve_field_orders_all_joint_state_vectors(field: str, expected: list[float]) -> None:
+    state = JointState(
+        name=["joint_b", "joint_a"],
+        velocity=[2.0, 1.0],
+        effort=[4.0, 3.0],
+    )
+    spec = FeatureSpec(
+        stream="state",
+        field=field,
+        dtype="float32",
+        shape=(2,),
+        names=["joint_a", "joint_b"],
+    )
+
+    np.testing.assert_array_equal(resolve_field(state, spec), expected)
+
+
+def test_resolve_field_rejects_duplicate_joint_names() -> None:
+    with pytest.raises(ValueError, match="duplicate joint names"):
+        resolve_field(
+            JointState(name=["joint_a", "joint_a"], position=[1.0, 2.0]),
+            FeatureSpec(
+                stream="state",
+                field="position",
+                dtype="float32",
+                shape=(1,),
+                names=["joint_a"],
+            ),
+        )
+
+
 def test_resolve_field_rejects_missing_configured_joint() -> None:
     with pytest.raises(ValueError, match="missing configured joints.*joint_b"):
         resolve_field(
@@ -382,8 +417,19 @@ def test_strict_quality_rejects_missing_fixed_rate_slot() -> None:
 
     assert report.valid is False
     assert report.expected_frames == 3
-    assert report.emitted_frames == 1
+    assert report.emitted_frames == 2
     assert "no complete aligned sample" in report.rejection_reasons[-1]
+
+    samples = list(
+        iter_episode_samples(
+            store,
+            episode,
+            streams,
+            SyncConfig(anchor="anchor", rate_hz=1.0, tolerance_ms=20.0),
+            QualityConfig(mode="strict"),
+        )
+    )
+    assert len(samples) == report.emitted_frames
 
 
 def test_fill_quality_accepts_gap_and_reports_filled_slot() -> None:
@@ -408,6 +454,20 @@ def test_fill_quality_accepts_gap_and_reports_filled_slot() -> None:
     assert report.expected_frames == 3
     assert report.emitted_frames == 3
     assert report.filled_frames == 1
+
+    samples = list(
+        iter_episode_samples(
+            store,
+            episode,
+            streams,
+            SyncConfig(anchor="anchor", rate_hz=1.0, tolerance_ms=20.0),
+            QualityConfig(mode="fill"),
+        )
+    )
+    assert len(samples) == report.emitted_frames
+    assert sum(bool(sample.complementary_info["is_filled"][0]) for sample in samples) == (
+        report.filled_frames
+    )
 
 
 def test_sync_missing_anchor_raises() -> None:
