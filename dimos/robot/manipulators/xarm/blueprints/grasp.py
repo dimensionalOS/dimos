@@ -241,7 +241,6 @@ _XARM_GRASP_MODULES = (
         visualization={"backend": "viser"},
         world_frame="world",
         voxel_map_resolution=XARM_GRASP_VOXEL_SIZE,
-        **({} if SIMULATED else {"floor_z": -0.02}),
     ),
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
