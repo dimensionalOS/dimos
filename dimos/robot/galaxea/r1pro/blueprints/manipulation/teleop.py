@@ -19,6 +19,7 @@ from typing import Literal
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinatorConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -85,7 +86,8 @@ coordinator_teleop_r1pro = autoconnect(
                 ],
                 head_target_frame=R1ProPinkPoseTargetSolver.HEAD_FRAME,
                 solver_type=R1ProPinkPoseTargetSolver,
-            )
+            ),
+            joint_trajectory_task(list(R1PRO_UPPER_BODY_PLANNING_JOINTS), priority=20),
         ],
     ),
     ManipulationModule.blueprint(

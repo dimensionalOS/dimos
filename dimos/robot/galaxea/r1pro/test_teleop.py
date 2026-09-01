@@ -21,6 +21,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver, PoseTargetIKTaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -51,7 +52,7 @@ def test_r1pro_quest_blueprint_controls_only_arms_and_torso() -> None:
     manipulation = _module_kwargs(coordinator_teleop_r1pro, ManipulationModule)
     task = coordinator["tasks"][0]
 
-    assert len(coordinator["tasks"]) == 1
+    assert len(coordinator["tasks"]) == 2
     assert coordinator["hardware"][0].adapter_type == "mock_whole_body"
     assert coordinator["hardware"][0].joints == list(R1PRO_UPPER_BODY_PLANNING_JOINTS)
     assert task.name == R1PRO_QUEST_TASK_NAME
@@ -70,6 +71,20 @@ def test_r1pro_quest_blueprint_controls_only_arms_and_torso() -> None:
         (HeadsetArmTeleopModule.name, "right_controller_output"): "right_cartesian_command",
         (HeadsetArmTeleopModule.name, "headset_output"): "head_cartesian_command",
     }
+
+
+def test_r1pro_quest_blueprint_wires_upper_body_plan_execution() -> None:
+    coordinator = _module_kwargs(coordinator_teleop_r1pro, R1ProTeleopCoordinator)
+    teleop_task = next(task for task in coordinator["tasks"] if task.type == "teleop_ik")
+    trajectory_task = next(
+        (task for task in coordinator["tasks"] if task.type == "trajectory"),
+        None,
+    )
+
+    assert trajectory_task is not None
+    assert trajectory_task.name == JOINT_TRAJECTORY_TASK_NAME
+    assert trajectory_task.joint_names == R1PRO_UPPER_BODY_JOINTS
+    assert trajectory_task.priority > teleop_task.priority
 
 
 def test_r1pro_quest_exposes_module_cli_teleop_mode() -> None:
