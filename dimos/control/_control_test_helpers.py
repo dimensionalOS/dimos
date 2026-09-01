@@ -42,6 +42,7 @@ class RecordingTask(BaseControlTask):
         self.cartesian_calls: list[tuple[Any, float]] = []
         self.left_cartesian_calls: list[tuple[Pose | PoseStamped, float]] = []
         self.right_cartesian_calls: list[tuple[Pose | PoseStamped, float]] = []
+        self.head_cartesian_calls: list[tuple[Pose | PoseStamped, float]] = []
         self.ee_twist_calls: list[tuple[Any, float]] = []
         self.joint_command_calls: list[tuple[Any, float]] = []
         self.buttons_calls: list[Any] = []
@@ -69,6 +70,10 @@ class RecordingTask(BaseControlTask):
 
     def on_right_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
         self.right_cartesian_calls.append((pose, t_now))
+        return True
+
+    def on_head_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
+        self.head_cartesian_calls.append((pose, t_now))
         return True
 
     def on_ee_twist_command(self, twist: Any, t_now: float) -> bool:

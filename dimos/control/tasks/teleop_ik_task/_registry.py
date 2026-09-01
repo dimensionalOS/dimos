@@ -20,6 +20,7 @@ TASK_CONSUMES = {
     "teleop_ik": {
         "left_cartesian_command": ("on_left_cartesian_command", "direct"),
         "right_cartesian_command": ("on_right_cartesian_command", "direct"),
+        "head_cartesian_command": ("on_head_cartesian_command", "direct"),
         "teleop_buttons": ("on_teleop_buttons", "broadcast"),
     },
 }

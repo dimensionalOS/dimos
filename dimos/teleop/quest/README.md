@@ -7,7 +7,7 @@ Teleoperation via Meta Quest 3 VR controllers. Dual-hand tracking with WebXR.
 ```
 Quest Browser  ──WebSocket──→  Embedded HTTPS Server  ──→  ArmTeleopModule
 (WebXR poses + Joy)             (port 8443)                  (absolute PoseStamped)
-                                                                  │ left/right
+                                                                  │ hands/head
                                                                   ▼
                                                      TeleopControlCoordinator
                                                                   │ by task name
@@ -26,6 +26,7 @@ dimos run teleop-quest-piper   # Piper
 dimos run teleop-quest-a1z     # A1Z with mock hardware
 dimos run teleop-quest-dual    # Mixed XArm6 + Piper, one task per arm
 dimos run teleop-quest-openarm # OpenArm, bimanual IK + planner/Viser + mock hardware
+dimos run teleop-quest-r1pro   # R1 Pro arms + waist + Viser panel, mock hardware
 ```
 
 Select a CAN interface explicitly to control real A1Z hardware:
@@ -62,6 +63,13 @@ and Viser visualization. Its coordinator has a joint-trajectory task over both
 arms at priority 20; planned execution therefore preempts the priority-10 Quest
 task through normal arbitration and clears the teleoperation engagement state.
 
+`teleop-quest-r1pro` is also mock-only. Hold X and A together to move both
+arms and the four waist joints as one IK task. Controller motion drives the
+two gripper-link targets; headset motion drives forward/vertical position and
+pitch/yaw. The planar base and grippers remain unclaimed and cannot move.
+Releasing either button stops the whole task. A stale pose, E-stop, or
+preemption requires releasing both buttons before teleoperation can rearm.
+
 ## Arm task bindings
 
 Arm teleoperation uses one `TeleopIKTask` configured with one or two hand
@@ -72,7 +80,8 @@ to dedicated gripper tasks; gripper joints are not owned by the IK task.
 
 Single-arm and mixed-arm setups use one binding per task. A bimanual robot such
 as OpenArm uses one task, two bindings, and one bimanual model, so Pink solves
-both frame targets in one control tick.
+both frame targets in one control tick. R1 Pro adds an optional headset target
+to that same atomic solve.
 
 For a two-binding task, both primary buttons must be held. Engagement captures
 both controller and robot references together. Releasing either button,

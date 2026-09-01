@@ -73,6 +73,7 @@ class TeleopIKTaskConfig:
     joint_names: tuple[str, ...] = attrs.field(converter=string_tuple_converter)
     robot_model: RobotModelConfig
     bindings: tuple[TeleopHandBinding, ...] = attrs.field(converter=_binding_tuple_converter)
+    head_target_frame: str | None = None
     pink: PinkKinematicsConfig = attrs.field(factory=PinkKinematicsConfig)
     priority: int = 10
     timeout: float = 0.5
@@ -92,6 +93,8 @@ class TeleopIKTaskConfig:
             raise ValueError("TeleopIKTask requires unique operator hands")
         if any(not frame for frame in frames) or len(set(frames)) != len(frames):
             raise ValueError("TeleopIKTask requires unique target frames")
+        if self.head_target_frame == "" or self.head_target_frame in frames:
+            raise ValueError("TeleopIKTask requires a distinct non-empty head target frame")
 
 
 @dataclass
@@ -123,15 +126,21 @@ class TeleopIKTask(PoseTargetIKTask):
         self._bindings = {binding.hand: binding for binding in config.bindings}
         self._lock = threading.Lock()
         self._hands = {binding.hand: _HandState() for binding in config.bindings}
+        self._head = _HandState() if config.head_target_frame is not None else None
         self._session_state = _SessionState.DISENGAGED
         self._session_epoch = 0
         self._last_button_update_time = 0.0
+        self._deadman_satisfied = False
+        self._rearm_requires_release = False
+        target_frames = [binding.target_frame for binding in config.bindings]
+        if config.head_target_frame is not None:
+            target_frames.append(config.head_target_frame)
         super().__init__(
             name,
             PoseTargetIKTaskConfig(
                 joint_names=config.joint_names,
                 robot_model=config.robot_model,
-                target_frames=tuple(binding.target_frame for binding in config.bindings),
+                target_frames=tuple(target_frames),
                 pink=config.pink,
                 priority=config.priority,
                 timeout=config.timeout,
@@ -148,15 +157,17 @@ class TeleopIKTask(PoseTargetIKTask):
 
     def is_active(self) -> bool:
         with self._lock:
-            return self._session_state is _SessionState.ENGAGED and all(
-                state.latest_pose is not None for state in self._hands.values()
+            return (
+                self._session_state is _SessionState.ENGAGED
+                and all(state.latest_pose is not None for state in self._hands.values())
+                and (self._head is None or self._head.latest_pose is not None)
             )
 
     def set_estop(self, estopped: bool) -> None:
         """Latch or clear E-STOP; latching clears the complete session."""
         with self._lock:
             if estopped:
-                self._end_session_locked(_SessionState.ESTOPPED)
+                self._end_session_locked(_SessionState.ESTOPPED, require_release=True)
             elif self._session_state is _SessionState.ESTOPPED:
                 self._session_state = _SessionState.DISENGAGED
 
@@ -168,17 +179,33 @@ class TeleopIKTask(PoseTargetIKTask):
         """Store the latest absolute right-controller pose."""
         return self._on_controller_pose(OperatorHand.RIGHT, pose, t_now)
 
-    def _on_controller_pose(
-        self, hand: OperatorHand, pose: Pose | PoseStamped, t_now: float
-    ) -> bool:
-        if hand not in self._bindings:
+    def on_head_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
+        """Store the latest absolute headset pose when the task binds one."""
+        if self._head is None:
             return False
-        sample = PoseStamped(
+        sample = self._pose_sample(pose)
+        with self._lock:
+            if self._session_state is _SessionState.ESTOPPED:
+                return False
+            self._head.latest_pose = sample
+            self._head.last_update_time = t_now
+        return True
+
+    @staticmethod
+    def _pose_sample(pose: Pose | PoseStamped) -> PoseStamped:
+        return PoseStamped(
             ts=pose.ts if isinstance(pose, PoseStamped) else 0.0,
             frame_id=pose.frame_id if isinstance(pose, PoseStamped) else "",
             position=pose.position,
             orientation=pose.orientation,
         )
+
+    def _on_controller_pose(
+        self, hand: OperatorHand, pose: Pose | PoseStamped, t_now: float
+    ) -> bool:
+        if hand not in self._bindings:
+            return False
+        sample = self._pose_sample(pose)
         with self._lock:
             if self._session_state is _SessionState.ESTOPPED:
                 return False
@@ -196,9 +223,18 @@ class TeleopIKTask(PoseTargetIKTask):
         with self._lock:
             self._last_button_update_time = t_now
             condition = all(primary_by_hand[hand] for hand in self._bindings)
+            was_satisfied = self._deadman_satisfied
+            self._deadman_satisfied = condition
+            if not condition:
+                self._rearm_requires_release = False
             if self._session_state is _SessionState.ESTOPPED:
                 return True
-            if condition and self._session_state is _SessionState.DISENGAGED:
+            if (
+                condition
+                and not was_satisfied
+                and not self._rearm_requires_release
+                and self._session_state is _SessionState.DISENGAGED
+            ):
                 self._engage_locked()
             elif not condition and self._session_state is _SessionState.ENGAGED:
                 self._end_session_locked(_SessionState.DISENGAGED)
@@ -207,26 +243,37 @@ class TeleopIKTask(PoseTargetIKTask):
     def _engage_locked(self) -> None:
         self._session_state = _SessionState.ENGAGED
         self._session_epoch += 1
-        self._clear_hand_session_locked()
+        self._clear_target_session_locked()
 
-    def _end_session_locked(self, state: _SessionState) -> None:
+    def _end_session_locked(
+        self,
+        state: _SessionState,
+        *,
+        require_release: bool = False,
+    ) -> None:
         self._reset_command_state()
         self._session_state = state
         self._session_epoch += 1
         self._last_button_update_time = 0.0
-        self._clear_hand_session_locked()
+        self._rearm_requires_release |= require_release and self._deadman_satisfied
+        self._clear_target_session_locked()
 
-    def _clear_hand_session_locked(self) -> None:
-        for hand_state in self._hands.values():
-            hand_state.latest_pose = None
-            hand_state.last_update_time = 0.0
-            hand_state.controller_reference = None
-            hand_state.robot_reference = None
+    def _clear_target_session_locked(self) -> None:
+        states = list(self._hands.values())
+        if self._head is not None:
+            states.append(self._head)
+        for target_state in states:
+            target_state.latest_pose = None
+            target_state.last_update_time = 0.0
+            target_state.controller_reference = None
+            target_state.robot_reference = None
 
     def _frame_target_snapshot(self, state: CoordinatorState) -> FrameTargetSnapshot | None:
         with self._lock:
-            if self._session_state is not _SessionState.ENGAGED or any(
-                hand.latest_pose is None for hand in self._hands.values()
+            if (
+                self._session_state is not _SessionState.ENGAGED
+                or any(hand.latest_pose is None for hand in self._hands.values())
+                or (self._head is not None and self._head.latest_pose is None)
             ):
                 return None
             session_epoch = self._session_epoch
@@ -234,9 +281,14 @@ class TeleopIKTask(PoseTargetIKTask):
                 hand.controller_reference is None or hand.robot_reference is None
                 for hand in self._hands.values()
             )
+            needs_capture |= self._head is not None and (
+                self._head.controller_reference is None or self._head.robot_reference is None
+            )
 
         if needs_capture:
             frame_names = [binding.target_frame for binding in self._teleop_config.bindings]
+            if self._teleop_config.head_target_frame is not None:
+                frame_names.append(self._teleop_config.head_target_frame)
             robot_poses = self.current_frame_poses(state, frame_names)
             if robot_poses is None:
                 return None
@@ -245,12 +297,16 @@ class TeleopIKTask(PoseTargetIKTask):
                     self._session_state is not _SessionState.ENGAGED
                     or session_epoch != self._session_epoch
                     or any(hand.latest_pose is None for hand in self._hands.values())
+                    or (self._head is not None and self._head.latest_pose is None)
                 ):
                     return None
                 for hand, binding in self._bindings.items():
                     hand_state = self._hands[hand]
                     hand_state.controller_reference = hand_state.latest_pose
                     hand_state.robot_reference = robot_poses[binding.target_frame]
+                if self._head is not None and self._teleop_config.head_target_frame is not None:
+                    self._head.controller_reference = self._head.latest_pose
+                    self._head.robot_reference = robot_poses[self._teleop_config.head_target_frame]
 
         with self._lock:
             if (
@@ -274,6 +330,19 @@ class TeleopIKTask(PoseTargetIKTask):
                     orientation=delta.orientation * robot_reference.orientation,
                 )
                 update_times.append(hand_state.last_update_time)
+            if self._head is not None and self._teleop_config.head_target_frame is not None:
+                current = self._head.latest_pose
+                controller_reference = self._head.controller_reference
+                robot_reference = self._head.robot_reference
+                if current is None or controller_reference is None or robot_reference is None:
+                    return None
+                delta = current - controller_reference
+                targets[self._teleop_config.head_target_frame] = PoseStamped(
+                    frame_id=self._teleop_config.robot_model.base_pose.frame_id,
+                    position=robot_reference.position + delta.position,
+                    orientation=delta.orientation * robot_reference.orientation,
+                )
+                update_times.append(self._head.last_update_time)
             return FrameTargetSnapshot(
                 targets=targets,
                 last_update_time=min(update_times),
@@ -281,11 +350,11 @@ class TeleopIKTask(PoseTargetIKTask):
 
     def _on_target_timeout(self) -> None:
         with self._lock:
-            self._end_session_locked(_SessionState.DISENGAGED)
+            self._end_session_locked(_SessionState.DISENGAGED, require_release=True)
 
     def _on_pose_target_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         with self._lock:
-            self._end_session_locked(_SessionState.DISENGAGED)
+            self._end_session_locked(_SessionState.DISENGAGED, require_release=True)
 
     def start(self) -> None:
         """Teleop tasks remain inert until their deadman condition is met."""
@@ -306,6 +375,7 @@ class TeleopIKTaskParams(PoseTargetIKTaskParams):
     """Task-owned parameters carried inside the generic task envelope."""
 
     bindings: list[TeleopHandBindingParams]
+    head_target_frame: str | None = None
     solver_type: type[PinkPoseTargetSolver] = PinkPoseTargetSolver
 
 
@@ -327,6 +397,7 @@ def create_task(
         joint_names=tuple(cfg.joint_names),
         robot_model=params.robot_model,
         bindings=bindings,
+        head_target_frame=params.head_target_frame,
         pink=params.pink,
         priority=cfg.priority,
         timeout=params.timeout,
