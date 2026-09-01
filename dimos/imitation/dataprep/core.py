@@ -38,6 +38,7 @@ from numpy.typing import NDArray
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dimos.constants import STATE_DIR
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
@@ -194,8 +195,19 @@ def resolve_field(msg: Any, ref: FeatureSpec) -> NDArray[Any]:
       - `ref.field` set: `getattr(msg, ref.field)` (or `msg[ref.field]`
         for dict payloads) then coerce.
     """
-    if ref.field is None:
-        value: Any = msg
+    value: Any
+    if isinstance(msg, JointState) and ref.field == "position":
+        if len(msg.name) != len(msg.position):
+            raise ValueError(
+                f"JointState has {len(msg.name)} names but {len(msg.position)} positions"
+            )
+        positions = dict(zip(msg.name, msg.position, strict=True))
+        missing = [name for name in ref.names if name not in positions]
+        if missing:
+            raise ValueError(f"JointState is missing configured joints: {missing}")
+        value = [positions[name] for name in ref.names]
+    elif ref.field is None:
+        value = msg
     elif isinstance(msg, dict):
         value = msg[ref.field]
     else:

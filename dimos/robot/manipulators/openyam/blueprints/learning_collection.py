@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Experimental native OpenYAM data-collection blueprint."""
+"""Native OpenYAM data collection."""
 
 from __future__ import annotations
 
@@ -23,33 +23,34 @@ from dimos.constants import STATE_DIR
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
-from dimos.experimental.imitation.collection.recorder import NativeCollectionRecorder
-from dimos.experimental.memory.rust_recorder import RustSqliteStoreConfig
+from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.imitation.collection.native_recorder import NativeCollectionRecorder
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.protocol import DimosMsg
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic as ZenohTopic
 from dimos.robot.manipulators.openyam.blueprints.teleop import teleop_quest_openyam
+from dimos.robot.manipulators.openyam.learning import OPENYAM_LEARNING_PROFILE
 
 
-def _session_db() -> str:
-    return str(STATE_DIR / "recordings" / f"session_openyam_{datetime.now():%Y%m%d_%H%M%S}.db")
+def _session_mcap() -> str:
+    return str(STATE_DIR / "recordings" / f"session_openyam_{datetime.now():%Y%m%d_%H%M%S}.mcap")
 
 
 def _require_zenoh() -> str | None:
     if global_config.transport != "zenoh":
-        return "learning-collect-quest-openyam-native requires --transport zenoh"
+        return "learning-collect-quest-openyam requires --transport zenoh"
     return None
 
 
-learning_collect_quest_openyam_native = (
+learning_collect_quest_openyam = (
     autoconnect(
         NativeCollectionRecorder.blueprint(
-            store=RustSqliteStoreConfig(path=_session_db()),
+            store=RustMcapStoreConfig(path=_session_mcap()),
         ),
         EpisodeMonitorModule.blueprint(),
         teleop_quest_openyam,
@@ -57,12 +58,12 @@ learning_collect_quest_openyam_native = (
             instance_name="WristCamera",
             webcam=WebcamConfig(
                 camera_index=0,
-                width=640,
-                height=480,
-                fps=30.0,
-                frame_id_prefix="wrist",
+                width=OPENYAM_LEARNING_PROFILE.camera_width,
+                height=OPENYAM_LEARNING_PROFILE.camera_height,
+                fps=OPENYAM_LEARNING_PROFILE.fps,
+                frame_id_prefix=OPENYAM_LEARNING_PROFILE.camera_frame_prefix,
             ),
-            frame_id="wrist_camera_link",
+            frame_id=OPENYAM_LEARNING_PROFILE.camera_frame_id,
         ),
     )
     .transports(

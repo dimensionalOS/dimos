@@ -18,8 +18,8 @@ from pathlib import Path
 import pytest
 import pytest_mock
 
-from dimos.experimental.imitation.collection.recorder import NativeCollectionRecorder
 from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
+from dimos.imitation.collection.native_recorder import NativeCollectionRecorder
 
 
 @pytest.fixture

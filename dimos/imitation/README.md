@@ -5,7 +5,7 @@ DimOS. Teleoperation records episodes to a SQLite or MCAP artifact, and DataPrep
 converts that recording into a LeRobot or HDF5 dataset for imitation learning.
 
 ```
-teleop (Quest) ─▶ CollectionRecorder ─▶ session_<robot>_<ts>.db/.mcap ─▶ dimos dataprep ─▶ dataset
+teleop (Quest) ─▶ recorder ─▶ session_<robot>_<ts>.db/.mcap ─▶ dimos dataprep ─▶ dataset
 ```
 
 After training, use the production
@@ -21,10 +21,16 @@ hardware (a RealSense + the arm).
 
 ```bash
 # XArm7 in sim
-dimos --simulation run learning-collect-quest-xarm7
+dimos --simulation run learning-collect-quest-xarm7 --task "pick up the red block"
 
 # Piper on real hardware
-dimos run learning-collect-quest-piper
+dimos run learning-collect-quest-piper --task "pick up the red block"
+
+# OpenYAM + Quest + wrist camera; native MCAP over Zenoh
+dimos --can-port follower_l run learning-collect-quest-openyam \
+  --task "pick up the red block" \
+  --WristCamera.webcam.camera-index 0 \
+  --nativecollectionrecorder.store.path data/recordings/session_openyam.mcap
 ```
 
 This brings up teleop, a RealSense (real only), the episode monitor, and the
@@ -56,9 +62,9 @@ prints one line per transition:
 ~/.local/state/dimos/recordings/session_<robot>_<YYYYMMDD_HHMMSS>.db
 ```
 
-A new timestamped SQLite file per run (nothing is overwritten). The native
-OpenYAM profile can instead write MCAP when selected through its module config.
-Both formats record `color_image`, `coordinator_joint_state`,
+A new timestamped SQLite file per XArm/Piper run, or a timestamped MCAP file
+for OpenYAM (nothing is overwritten). Both formats record `color_image`,
+`coordinator_joint_state`,
 `applied_joint_position_command`, and `status` (the episode
 start/save/discard markers).
 
@@ -82,38 +88,18 @@ dimos dataprep build \
 # HDF5 instead
 dimos dataprep build -s <session.db> -c <config.json> -f hdf5
 
-# Physical OpenYam + Quest + /dev/video0 wrist camera
-dimos run learning-collect-quest-openyam --can-port can0
-# Experimental native recorder over reliable Zenoh
-dimos --transport zenoh --can-port can0 \
-  run learning-collect-quest-openyam-native \
-  --task "pick up the red block" \
-  --WristCamera.webcam.camera-index /dev/video0
-dimos dataprep build \
-  --source <session_openyam.db> \
-  --config dimos/imitation/dataprep/openyam_lerobot.json
-
-# Select MCAP for one native collection run
-dimos --transport zenoh --can-port can0 \
-  run learning-collect-quest-openyam-native \
-  --task "pick up the red block" \
-  --WristCamera.webcam.camera-index /dev/video0 \
-  --nativecollectionrecorder.store.kind mcap \
-  --nativecollectionrecorder.store.path data/recordings/session_openyam.mcap
+# OpenYAM uses its typed 30 Hz wrist/joint/action profile
 dimos dataprep build \
   --source data/recordings/session_openyam.mcap \
-  --config dimos/imitation/dataprep/openyam_lerobot.json \
+  --profile openyam \
   --output data/datasets/openyam-mcap
 ```
 
-The native OpenYAM blueprint is an explicit experiment; the command without
-`-native` keeps using the Python recorder and shared-memory camera transport.
-The native graph uses reliable Zenoh for all recorded streams. Override its
-session backend and path with both
-`--nativecollectionrecorder.store.kind mcap` and
-`--nativecollectionrecorder.store.path /path/to/session_openyam.mcap`.
-SQLite remains the default. Stop collection gracefully so MCAP can finalize its
-summary and indexes; MCAP append mode is unsupported.
+The OpenYAM graph uses reliable Zenoh for every recorded stream and MCAP by
+default. Override the path with
+`--nativecollectionrecorder.store.path /path/to/session_openyam.mcap`. Stop
+collection gracefully so MCAP can finalize its summary and indexes; MCAP
+append mode is unsupported.
 
 `--source` / `--output` / `--format` override whatever the config specifies, so
 you can reuse one config across runs and just swap `--source`. The dataset is
@@ -127,10 +113,8 @@ dimos dataprep inspect data/datasets/session       # LeRobot dir
 dimos dataprep inspect data/datasets/session.hdf5  # HDF5 file
 
 # Validate saved recording episodes before conversion
-dimos dataprep inspect session_openyam.db \
-  --config dimos/imitation/dataprep/openyam_lerobot.json
 dimos dataprep inspect session_openyam.mcap \
-  --config dimos/imitation/dataprep/openyam_lerobot.json
+  --profile openyam
 ```
 
 Each dataset gets a `dimos_meta.json` sidecar recording exactly how it was built

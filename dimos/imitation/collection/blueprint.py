@@ -23,17 +23,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, STATE_DIR
+from dimos.constants import STATE_DIR
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.transport import pSHMTransport
-from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.robot.manipulators.openyam.blueprints.teleop import teleop_quest_openyam
 from dimos.teleop.quest.blueprints import (
     teleop_quest_piper,
     teleop_quest_xarm7,
@@ -78,28 +73,4 @@ learning_collect_quest_piper = autoconnect(
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     teleop_quest_piper,
     *_camera_if_real(),
-)
-
-
-learning_collect_quest_openyam = autoconnect(
-    teleop_quest_openyam,
-    CameraModule.blueprint(
-        instance_name="WristCamera",
-        webcam=WebcamConfig(
-            camera_index=0,
-            width=640,
-            height=480,
-            fps=30.0,
-            frame_id_prefix="wrist",
-        ),
-        frame_id="wrist_camera_link",
-    ),
-    EpisodeMonitorModule.blueprint(),
-    CollectionRecorder.blueprint(db_path=_session_db("openyam")),
-).transports(
-    {
-        ("color_image", Image): pSHMTransport(
-            "/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-        )
-    }
 )
