@@ -446,6 +446,26 @@ class ManipulationModule(Module):
         return result
 
     @rpc
+    def reset(self) -> CommandResult:
+        """Stop any motion and return to IDLE so new commands are accepted.
+
+        Execution can leave the module in FAULT, and planning only runs from
+        IDLE or COMPLETED, so without this a faulted module accepts nothing
+        further. cancel() does the work of stopping -- the trajectory, the
+        planning epoch, the pending plan and its preview; reset adds only the
+        unconditional return to IDLE with the error cleared, from whatever state
+        the failure left behind.
+        """
+        cancelled = self.cancel().status is not ExecutionStatus.NO_EXECUTION
+        with self._lock:
+            self._state = ManipulationState.IDLE
+            self._error_message = ""
+        return CommandResult(
+            CommandStatus.SUCCEEDED,
+            "Cancelled the active motion and reset to IDLE" if cancelled else "Reset to IDLE",
+        )
+
+    @rpc
     def get_current_joints(self) -> list[float] | None:
         """Get the complete canonical model joint positions."""
         if self._world_monitor:
