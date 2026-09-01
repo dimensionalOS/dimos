@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import pickle
+import time
 from unittest.mock import ANY, MagicMock, call
 
 import numpy as np
@@ -59,6 +60,7 @@ from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -916,6 +918,38 @@ class TestPlanningGroupApis:
             call("right_arm"),
         ]
         publish.assert_called_once()
+
+    def test_tf_loop_publishes_mount_edges_alongside_the_robot(
+        self, module_factory, mocker: MockerFixture
+    ) -> None:
+        """One publisher for the chain, so the mount is never stamped a period stale."""
+        model = _bimanual_config()
+        module = module_factory()
+        module.config.model = model
+        module.config.static_transforms = [
+            Transform(frame_id="left/tool", child_frame_id="camera_link")
+        ]
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
+        module._world_monitor.get_group_ee_pose.return_value = PoseStamped(
+            position=Vector3(0.4, 0.2, 0.3)
+        )
+        publish = mocker.patch.object(module.tf, "publish")
+
+        def stop_after_first_iteration(_period: float) -> bool:
+            module._tf_stop_event.set()
+            return True
+
+        mocker.patch.object(module._tf_stop_event, "wait", side_effect=stop_after_first_iteration)
+        module._tf_stop_event.clear()
+        before = time.time()
+
+        module._tf_publish_loop()
+
+        published = list(publish.call_args.args[0])
+        mount = next(t for t in published if t.child_frame_id == "camera_link")
+        assert mount.frame_id == "left/tool"
+        assert mount.ts >= before
 
     def test_get_ee_pose_fails_safely_without_pose_group(self, robot_config, module_factory):
         no_pose_config = RobotModelConfig(

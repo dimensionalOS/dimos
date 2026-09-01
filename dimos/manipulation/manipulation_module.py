@@ -152,6 +152,11 @@ class ManipulationModuleConfig(ModuleConfig):
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
     floor_z: float | None = None
+    # Fixed mount edges published alongside the robot's own TF, for rigs bolted
+    # to a link the model already publishes -- an eye-in-hand camera, say. One
+    # publisher for the whole chain: a second module publishing the mount at its
+    # own rate leaves the two edges of one chain stamped up to a period apart.
+    static_transforms: list[Transform] = Field(default_factory=list)
     # Frame the voxel_map port's clouds must already be expressed in.
     world_frame: str = "world"
     # Edge length of a voxel_map cell (meters). Must match the mapper's
@@ -347,6 +352,11 @@ class ManipulationModule(Module):
                         link_tf = Transform.from_pose(link_name, link_pose)
                         link_tf.frame_id = "world"
                         transforms.append(link_tf)
+
+                now = time.time()
+                for static in self.config.static_transforms:
+                    static.ts = now
+                    transforms.append(static)
 
                 if transforms:
                     self.tf.publish(TFMessage(*transforms))
