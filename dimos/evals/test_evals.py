@@ -25,6 +25,7 @@ import json
 from pathlib import Path
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
@@ -160,7 +161,7 @@ class FakeEnvironment:
     def preflight(self, agent: Any) -> None:
         self.calls.append("preflight")
 
-    def start(self, modules: str, trace_dir: Path | None = None) -> RunningEnvironment:
+    def start(self, modules: str) -> RunningEnvironment:
         from dimos.memory.store.memory import MemoryStore
 
         self.calls.append("start")
@@ -265,10 +266,52 @@ def test_dataset_preflight_reports_missing_stream(dataset: str) -> None:
         env.preflight(QuestionAnswer())
 
 
-def test_dataset_preflight_rejects_added_modules(dataset: str) -> None:
-    match = "launches nothing; McpClientAgent adds modules 'unitree-go2'"
+def test_dataset_preflight_checks_added_modules(dataset: str) -> None:
+    """A tool-using agent's modules become the launched stack, so preflight
+    validates the names; adding modules to an attached dimos is a conflict."""
+    with pytest.raises(ValueError, match="Unknown blueprint or module: 'no-such-module'"):
+        Dataset(dataset).preflight(McpClientAgent(modules="no-such-module"))
+    match = "already attaches to http://x/mcp; McpClientAgent also adds modules"
     with pytest.raises(RuntimeError, match=match):
-        Dataset(dataset).preflight(McpClientAgent(modules="unitree-go2"))
+        Dataset(dataset, mcp_url="http://x/mcp").preflight(McpClientAgent(modules="unitree-go2"))
+
+
+def test_dataset_launches_the_agents_modules(dataset: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A frozen recording has no dimos, so a non-empty ``modules`` becomes its
+    own launched stack — ``dimos run <modules>``, no simulator — waited on at
+    the MCP url and torn down with the case."""
+    from dimos.evals.environments.lib.launch import default_mcp_url
+
+    calls: list[str] = []
+
+    class FakeProc:
+        simulator: str | None = "mujoco"
+        demo_args: list[str] | None = None
+
+        def start(self) -> None:
+            calls.append(f"start [{' '.join(self.demo_args or [])}] simulator={self.simulator}")
+
+        def stop(self) -> None:
+            calls.append("stop")
+
+    class FakeAdapter:
+        def __init__(self, url: str) -> None:
+            calls.append(f"wait {url}")
+
+        def wait_for_ready(self, timeout: float, interval: float = 1.0) -> bool:
+            return True
+
+    monkeypatch.setattr("dimos.e2e_tests.dimos_cli_call.DimosCliCall", FakeProc)
+    monkeypatch.setattr("dimos.agents.mcp.mcp_adapter.McpAdapter", FakeAdapter)
+    env = Dataset(dataset)
+    running = env.start("mcp-server mcp-client")
+    env.stop()
+    assert running.mcp_url == default_mcp_url()
+    assert calls == [
+        "start [run mcp-server mcp-client] simulator=None",
+        f"wait {running.mcp_url}",
+        "stop",
+    ]
 
 
 def test_image_file_environment(tmp_path: Path) -> None:
@@ -351,6 +394,7 @@ def test_agent_preflight_mismatches(dataset: str, monkeypatch: pytest.MonkeyPatc
     frozen = Dataset(dataset)
     with pytest.raises(RuntimeError, match="McpClientAgent needs a running McpClient"):
         McpClientAgent().preflight(frozen)
+    McpClientAgent(modules="mcp-server mcp-client").preflight(frozen)  # brings its own
     # attach mode (nothing added) needs a dimos to attach to, else the turn never ends
     monkeypatch.setattr("dimos.core.run_registry.list_runs", lambda alive_only=True: [])
     with pytest.raises(RuntimeError, match="no dimos is running to attach to"):
@@ -668,15 +712,24 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
         load_agent("dimos.evals.agents.lib.chat")
 
 
-def test_mcp_client_agent_drives_a_turn_over_real_transports(tmp_path: Path) -> None:
-    """The production agent publishes on /human_input, reads the turn back on
-    /agent until /agent_idle, and links every model call to the McpClient's
-    trace files (the message must arrive with no flush sleep: LCM publish is
-    a synchronous send)."""
+def test_mcp_client_agent_drives_a_turn_over_real_transports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The production agent points the McpClient's raw capture at run_dir/raw,
+    publishes on /human_input, reads the turn back on /agent until
+    /agent_idle, and links every model call to the McpClient's trace files
+    (the message must arrive with no flush sleep: LCM publish is a
+    synchronous send)."""
     from dimos.core.transport_factory import make_transport
 
     trace_dir = tmp_path / "case" / "raw"
     trace_dir.mkdir(parents=True)
+
+    repointed: list[str] = []
+    app = SimpleNamespace(
+        McpClient=SimpleNamespace(set_trace_dir=repointed.append), stop=lambda: None
+    )
+    monkeypatch.setattr("dimos.porcelain.dimos.Dimos.connect", lambda: app)
 
     human, agent_t, idle = (
         make_transport("/human_input"),
@@ -724,6 +777,7 @@ def test_mcp_client_agent_drives_a_turn_over_real_transports(tmp_path: Path) -> 
             t.stop()
 
     trajectory = box["t"]
+    assert repointed == [str(trace_dir)]
     assert trajectory.final_answer == "I am at the bed" and trajectory.extra.ended_by == "answer"
     assert len(trajectory.steps) == 3 and trajectory.final_metrics.total_prompt_tokens == 10
     user, first, last = trajectory.steps

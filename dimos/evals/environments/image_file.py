@@ -46,7 +46,7 @@ class ImageFile:
         if not self.path.is_file():
             raise FileNotFoundError(f"image does not exist: {self.path}")
 
-    def start(self, modules: str, trace_dir: Path | None = None) -> RunningEnvironment:
+    def start(self, modules: str) -> RunningEnvironment:
         from dimos.memory.store.memory import MemoryStore
         from dimos.msgs.sensor_msgs.Image import Image
 

@@ -178,18 +178,17 @@ class Environment(Protocol):
 
     @property
     def has_robot(self) -> bool:
-        """True: ``start()`` launches a blueprint and returns an MCP url."""
+        """True: ``start()`` returns an MCP url on its own, with no modules
+        from the agent (``Sim``; ``Dataset`` only with ``mcp_url``)."""
 
     def preflight(self, agent: Agent) -> None:
-        """Raise if this environment can't run *agent* (it adds modules and
-        nothing is launched here; a stream a case selected is missing).
+        """Raise if this environment can't run *agent* (it adds modules this
+        environment can't launch; a stream a case selected is missing).
         Cheap: no data read, no process started."""
 
-    def start(self, modules: str, trace_dir: Path | None = None) -> RunningEnvironment:
+    def start(self, modules: str) -> RunningEnvironment:
         """Start, with *modules* (what the agent adds) on top of this
-        environment's own stack where it launches one. *trace_dir* is where
-        a launched ``McpClient`` writes its raw LLM request/response bodies;
-        an environment that launches nothing ignores it."""
+        environment's own stack where it launches one."""
 
     def settle(self, budget_s: float) -> None:
         """Block until the world has finished reacting to the agent's actions,
@@ -227,9 +226,10 @@ class Agent(Protocol):
     """
 
     modules: str
-    """Blueprint atoms this agent adds to a ``Sim`` case's stack (``dimos run
-    <case stack> <modules>``); ``""`` for none. An environment that launches
-    nothing rejects a non-empty value in ``preflight``."""
+    """Blueprint atoms this agent brings; ``""`` for none. ``Sim`` appends
+    them to its launch (``dimos run <case stack> <modules>``), ``Dataset``
+    launches exactly them (a frozen recording has no stack to add to), and
+    ``ImageFile`` rejects a non-empty value in ``preflight``."""
 
     def preflight(self, environment: Environment) -> None:
         """Raise if this agent can't run in *environment* (needs a robot and

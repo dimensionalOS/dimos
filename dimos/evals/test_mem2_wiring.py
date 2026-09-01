@@ -184,7 +184,7 @@ def test_grader_reads_the_history_the_environment_recorded(tmp_path: Path) -> No
         def preflight(self, agent: Any) -> None:
             pass
 
-        def start(self, modules: str, trace_dir: Path | None = None) -> RunningEnvironment:
+        def start(self, modules: str) -> RunningEnvironment:
             from dimos.memory.store.sqlite import SqliteStore
 
             thread.start()

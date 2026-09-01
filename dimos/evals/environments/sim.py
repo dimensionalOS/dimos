@@ -24,28 +24,13 @@ import shutil
 import time
 from typing import TYPE_CHECKING, ClassVar
 
+from dimos.evals.environments.lib.launch import blueprint_modules, default_mcp_url
 from dimos.evals.types import Agent, RunningEnvironment
 
 if TYPE_CHECKING:
     from dimos.e2e_tests.dim_sim_client import DimSimClient
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
     from dimos.memory.store.base import Store
-
-
-def default_mcp_url() -> str:
-    from dimos.core.global_config import global_config
-
-    return f"http://localhost:{global_config.mcp_port}/mcp"
-
-
-def blueprint_modules(blueprint: str) -> tuple[type, ...]:
-    """Module classes a ``dimos run <blueprint>`` composition would deploy.
-    Raises on an unknown name."""
-    from dimos.core.coordination.blueprints import autoconnect
-    from dimos.robot.get_all_blueprints import get_by_name
-
-    composed = autoconnect(*(get_by_name(name) for name in blueprint.split()))
-    return tuple(atom.module for atom in composed.blueprints)
 
 
 def _no_setup(sim: DimSimClient) -> None:
@@ -89,7 +74,7 @@ class Sim:
             raise RuntimeError("dimsim requires deno on PATH")
         blueprint_modules(f"{self.blueprint} {agent.modules}")  # raises: unknown name
 
-    def start(self, modules: str, trace_dir: Path | None = None) -> RunningEnvironment:
+    def start(self, modules: str) -> RunningEnvironment:
         from dimos.agents.mcp.mcp_adapter import McpAdapter
         from dimos.memory.store.sqlite import SqliteStore
 
@@ -101,8 +86,6 @@ class Sim:
             proc.simulator = self.simulator
             proc.global_args = ["--dimsim-scene", self.scene, "--record"]
             proc.demo_args = ["run", *self.blueprint.split(), *modules.split()]
-            if trace_dir is not None:
-                proc.extra_env["MCPCLIENT__TRACE_DIR"] = str(trace_dir)
             proc.start()
             self._proc = proc
         mcp_url = default_mcp_url()

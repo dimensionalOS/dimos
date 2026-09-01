@@ -40,8 +40,8 @@ class ChatAgent:
     ``chat_model`` injects a model instance (house convention: a fake in
     tests) and is recorded under its class name; None builds ``model`` as
     production does, with the wire trace on. ``modules`` are blueprint atoms
-    added to a ``Sim`` case's stack; an environment that launches nothing
-    rejects them.
+    the agent brings to the case's stack; an environment that can't launch
+    them rejects them.
     """
 
     model: str = DEFAULT_MODEL

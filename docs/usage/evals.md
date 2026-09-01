@@ -117,9 +117,12 @@ is the robot stack plus `McpServer`, and its skill containers are the tools.
 There is no tool filter. The agent's `modules` string is appended to the
 launch command (`dimos run <blueprint> <modules>`), and `autoconnect` dedups
 anything shared with the case, so `--set modules=unitree-go2-agentic` adds
-the whole shipped agentic stack. To compare two tool sets on one task, run
-the suite twice with different `--set modules=...`; each `trajectory.json`
-records the tools exposed.
+the whole shipped agentic stack. On a `Dataset` case the agent's `modules`
+are the whole launched stack (`dimos run <modules>`, no simulator or robot
+underneath): a tool surface over the frozen recording, torn down with the
+case. `Dataset(mcp_url=...)` attaches an already-running dimos instead. To
+compare two tool sets on one task, run the suite twice with different
+`--set modules=...`; each `trajectory.json` records the tools exposed.
 
 **Limits.** `max_steps` caps model calls on agents that support it. The
 case's `timeout_s` caps wall-clock time. Tokens and cost have no cap; both

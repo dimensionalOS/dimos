@@ -79,13 +79,15 @@ class McpClientAgent:
     """The production agent: ``inputs`` on ``/human_input``, the turn read
     back from ``/agent`` until ``/agent_idle``. Its model and prompt are the
     ``McpClient`` module's own — configure the module, not this agent. Raw
-    capture is the McpClient's trace dir, which the runner points at
-    ``run_dir/raw``.
+    capture is the McpClient's trace dir, which this agent points at
+    ``run_dir/raw`` (the ``set_trace_dir`` RPC) as the turn starts —
+    launched and attached McpClients alike.
 
     ``modules`` is the agentic composite appended to the case's stack, e.g.
     ``"unitree-go2-agentic"`` (the whole shipped stack; ``autoconnect``
-    dedups the base it shares with the case). ``""`` attaches to a dimos that
-    is already running.
+    dedups the base it shares with the case); on a frozen ``Dataset`` it is
+    the whole launched stack. ``""`` attaches to a dimos that is already
+    running.
     """
 
     modules: str = ""
@@ -97,9 +99,10 @@ class McpClientAgent:
     def preflight(self, environment: Environment) -> None:
         from dimos.core.run_registry import list_runs
 
-        if not environment.has_robot:
+        if not environment.has_robot and not self.modules:
             raise RuntimeError(
-                f"McpClientAgent needs a running McpClient; {type(environment).__name__} has no robot"
+                f"McpClientAgent needs a running McpClient; {type(environment).__name__} "
+                "has no robot and this agent adds no modules"
             )
         if not self.modules and not list_runs(alive_only=True):
             raise RuntimeError(
@@ -109,6 +112,14 @@ class McpClientAgent:
     def run(self, inputs: str, env: RunningEnvironment, run_dir: Path) -> Trajectory:
         from dimos.agents.mcp.mcp_client import McpClientConfig
         from dimos.core.transport_factory import make_transport
+        from dimos.porcelain.dimos import Dimos
+
+        app = Dimos.connect()
+        try:
+            mcp_client: Any = app.McpClient  # handle type depends on what's importable
+            mcp_client.set_trace_dir(str(run_dir / "raw"))
+        finally:
+            app.stop()
 
         recorder = LangChainRecorder(
             inputs, name=type(self).__name__, model=McpClientConfig().model, raw_dir=run_dir / "raw"

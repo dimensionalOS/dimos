@@ -39,7 +39,7 @@ class FailingEnvironment:
     def preflight(self, agent: Any) -> None:
         raise RuntimeError("offline preflight")
 
-    def start(self, modules: str, trace_dir: Path | None = None) -> Any:
+    def start(self, modules: str) -> Any:
         raise AssertionError("invalid test setup: execution reached")
 
     def settle(self, budget_s: float) -> None:

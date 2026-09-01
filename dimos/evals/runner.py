@@ -157,7 +157,7 @@ class EvalRunner(Configurable):
         case_dir.mkdir(parents=True, exist_ok=True)
         trajectory: Trajectory | None = None
         try:
-            env = case.environment.start(agent.modules, trace_dir=case_dir / "raw")
+            env = case.environment.start(agent.modules)
             tools = list(dict.fromkeys(agent.available_tools(tuple(_tools_exposed(env.mcp_url)))))
             trajectory, agent_s = self._run_agent(case, agent, env, case_dir)
             case.environment.settle(max(0.0, case.timeout_s - agent_s))

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from queue import Empty
 from threading import RLock
 from unittest.mock import MagicMock, create_autospec, patch
@@ -265,3 +266,27 @@ def test_on_system_modules_resolves_non_reasoning_models(
         configured_mcp_client.on_system_modules([])
 
     init.assert_called_once_with(model=model_name)
+
+
+def test_set_trace_dir_rebuilds_the_model_with_capture(
+    configured_mcp_client: McpClient,
+) -> None:
+    """Evals repoint raw LLM capture per case; the model must be rebuilt so
+    the HTTP hook writes under the new directory. Before the agent exists
+    the path is only stored for the first build."""
+    configured_mcp_client.config.model = "gpt-4o"
+    resolved = MagicMock()
+
+    with (
+        patch("dimos.agents.mcp.mcp_client.create_agent") as create_agent,
+        patch("dimos.agents.mcp.mcp_client._init_model", return_value=resolved) as init,
+    ):
+        configured_mcp_client.set_trace_dir("/eval/case/raw")  # no agent yet: stored only
+        assert init.call_count == 0
+
+        configured_mcp_client.on_system_modules([])
+        assert init.call_args.kwargs["trace_dir"] == Path("/eval/case/raw")
+
+        configured_mcp_client.set_trace_dir(None)
+        assert init.call_args.kwargs["trace_dir"] is None
+        assert create_agent.call_count == 2
