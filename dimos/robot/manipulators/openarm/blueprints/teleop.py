@@ -194,8 +194,8 @@ def teleop_quest_openarm_blueprint(
                     stream_bind={"gripper_command": "right_gripper_command"},
                 ),
                 _trajectory_task(priority=20),
-            ]
-            + base_tasks,
+                *base_tasks,
+            ],
         ),
         _OpenArmManipulationModule.blueprint(
             model=openarm_bimanual_model_config(),

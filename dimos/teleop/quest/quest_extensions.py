@@ -309,10 +309,16 @@ class ArmBaseTeleopModule(ArmTeleopModule):
         twist.linear = Vector3(0.0, 0.0, 0.0)
         twist.angular = Vector3(0.0, 0.0, 0.0)
         if right is not None:
-            twist.linear.x = -self._base_deadzone(right.thumbstick.y) * self.config.base_linear_speed
-            twist.linear.y = -self._base_deadzone(right.thumbstick.x) * self.config.base_linear_speed
+            twist.linear.x = (
+                -self._base_deadzone(right.thumbstick.y) * self.config.base_linear_speed
+            )
+            twist.linear.y = (
+                -self._base_deadzone(right.thumbstick.x) * self.config.base_linear_speed
+            )
         if left is not None:
-            twist.angular.z = -self._base_deadzone(left.thumbstick.x) * self.config.base_angular_speed
+            twist.angular.z = (
+                -self._base_deadzone(left.thumbstick.x) * self.config.base_angular_speed
+            )
         self.twist_command.publish(twist)
         return True
 
