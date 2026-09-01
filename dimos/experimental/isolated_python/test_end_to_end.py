@@ -21,10 +21,10 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.experimental.isolated_python.example.contract import ExampleExternal
+from dimos.experimental.isolated_python.example.support import Offset
 from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.utils.testing.waiting import wait_until
-from examples.external_python_module.contract import ExampleExternal
-from examples.external_python_module.support import Offset
 
 
 class Producer(Module):
@@ -85,10 +85,10 @@ def test_isolated_python_rpc_refs_and_restart() -> None:
 
 
 def test_example_script_exits_after_printing_results() -> None:
-    repository = Path(__file__).parents[2]
+    repository = Path(__file__).parents[3]
 
     result = subprocess.run(
-        [sys.executable, "examples/external_python_module/run.py"],
+        [sys.executable, "-m", "dimos.experimental.isolated_python.example.run"],
         cwd=repository,
         capture_output=True,
         text=True,
