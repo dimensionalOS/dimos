@@ -31,7 +31,7 @@ class MLSPlannerNativeConfig(NativeModuleConfig):
     cwd: str | None = "rust"
     # The crate is a workspace member, so cargo builds into the repo-root target dir.
     executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mls_planner")
-    build_command: str | None = "nix develop path:../../../../.. -c cargo build --release"
+    build_command: str | None = "cargo build --release"
     stdin_config: bool = True
 
     world_frame: str = "odom"
