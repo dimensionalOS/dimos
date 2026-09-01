@@ -214,9 +214,7 @@ def planning_group(name: str, joints: tuple[str, ...]) -> PlanningGroup:
 
 def make_gui(module: FakeOperatorBackend | None = None) -> ViserPanelGui:
     module = module or FakeOperatorBackend()
-    config = RobotModelConfig(
-        model=RobotModel.from_file(Path("/tmp/model.urdf")), joint_names=[]
-    )
+    config = RobotModelConfig(model=RobotModel.from_file(Path("/tmp/model.urdf")), joint_names=[])
     return ViserPanelGui(
         EmptyServer(),
         PlanningSceneInfo(
@@ -253,13 +251,31 @@ def test_planar_joint_controls_use_unbounded_translation_inputs_and_wrapped_yaw(
                 joint_space=JointSpace(
                     (
                         JointCoordinate(
-                            planar.joint_names[0], "prismatic", CoordinateTopology.LINE, None, None, 1.0, 2.0
+                            planar.joint_names[0],
+                            "prismatic",
+                            CoordinateTopology.LINE,
+                            None,
+                            None,
+                            1.0,
+                            2.0,
                         ),
                         JointCoordinate(
-                            planar.joint_names[1], "prismatic", CoordinateTopology.LINE, None, None, 1.0, 2.0
+                            planar.joint_names[1],
+                            "prismatic",
+                            CoordinateTopology.LINE,
+                            None,
+                            None,
+                            1.0,
+                            2.0,
                         ),
                         JointCoordinate(
-                            planar.joint_names[2], "continuous", CoordinateTopology.CIRCLE, None, None, 2.0, 4.0
+                            planar.joint_names[2],
+                            "continuous",
+                            CoordinateTopology.CIRCLE,
+                            None,
+                            None,
+                            2.0,
+                            4.0,
                         ),
                     )
                 ),

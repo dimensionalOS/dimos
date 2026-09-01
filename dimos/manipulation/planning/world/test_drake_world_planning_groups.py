@@ -321,7 +321,7 @@ def test_drake_applies_config_base_pose_when_urdf_has_world_base_joint(
             joint_names=["joint1", "joint2"],
             base_link="base_link",
             planning_groups=[_arm_group("joint1", "joint2")],
-        )
+        ),
     )
     world.finalize()
     ctx = world.get_live_context()
@@ -360,7 +360,7 @@ def test_drake_planar_base_coordinates_move_original_robot_root(tmp_path: Path) 
                     tip_link="tool0",
                 )
             ],
-        )
+        ),
     )
     world.finalize()
     context = world.get_live_context()
@@ -391,7 +391,7 @@ def test_drake_group_jacobian_shape_and_group_local_order(tmp_path: Path) -> Non
                 _arm_group("joint1", "joint2", name="wrist_forward"),
                 _arm_group("joint2", "joint1", name="wrist_reverse"),
             ],
-        )
+        ),
     )
     world.finalize()
     ctx = world.get_live_context()
@@ -424,7 +424,7 @@ def test_drake_default_pose_methods_fail_for_no_or_ambiguous_pose(tmp_path: Path
                 _arm_group("joint1", tip_link="link1", name="a"),
                 _arm_group("joint2", tip_link="tool0", name="b"),
             ],
-        )
+        ),
     )
     ambiguous.finalize()
     with pytest.raises(ValueError, match="multiple pose"):

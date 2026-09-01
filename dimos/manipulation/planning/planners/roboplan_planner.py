@@ -296,9 +296,11 @@ class RoboPlanPlanner:
         return "RoboPlan"
 
     def _selection_requires_shared_planner(self, selection: PlanningGroupSelection) -> bool:
-        return not self._world.get_prepared_model().joint_space.select(
-            selection.joint_names
-        ).is_interval_only
+        return (
+            not self._world.get_prepared_model()
+            .joint_space.select(selection.joint_names)
+            .is_interval_only
+        )
 
     def _normalize_selection_start(
         self,

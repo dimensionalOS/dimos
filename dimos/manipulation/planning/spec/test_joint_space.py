@@ -111,9 +111,7 @@ def test_acceleration_default_is_an_explicit_model_transformation(tmp_path: Path
         prepare_robot_model(config)
 
     prepared = prepare_robot_model(
-        config.model_copy(
-            update={"model": config.model.with_default_joint_acceleration_limit(4.0)}
-        )
+        config.model_copy(update={"model": config.model.with_default_joint_acceleration_limit(4.0)})
     )
     assert prepared.joint_space.acceleration_limits == (4.0,)
     assert prepared.description.get_joint("joint").acceleration == 4.0  # type: ignore[union-attr]
@@ -144,6 +142,4 @@ def test_joint_space_wraps_interpolates_lifts_and_builds_finite_domains(
     lower, upper = space.finite_sampling_domain(start, goal, margin=2.0)
     assert lower == pytest.approx([-6.0, -math.pi])
     assert upper == pytest.approx([12.0, math.pi])
-    assert space.lifted_positions([start, goal])[-1] == pytest.approx(
-        (-4.0, math.pi + 0.1)
-    )
+    assert space.lifted_positions([start, goal])[-1] == pytest.approx((-4.0, math.pi + 0.1))
