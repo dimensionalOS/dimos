@@ -129,9 +129,18 @@ class Environment(Protocol):
         nothing is launched here; a stream a case selected is missing).
         Cheap: no data read, no process started."""
 
-    def start(self, modules: str) -> RunningEnvironment:
+    def start(self, modules: str, trace_dir: Path | None = None) -> RunningEnvironment:
         """Start, with *modules* (what the agent adds) on top of this
-        environment's own stack where it launches one."""
+        environment's own stack where it launches one. *trace_dir* is where
+        a launched ``McpClient`` writes its raw LLM request/response bodies;
+        an environment that launches nothing ignores it."""
+
+    def settle(self, budget_s: float) -> None:
+        """Block until the world has finished reacting to the agent's actions,
+        at most *budget_s* seconds. Skills can return before the motion they
+        started completes; the case is over when the world is at rest, not
+        when the agent stops talking. An environment where nothing keeps
+        happening returns immediately."""
 
     def stop(self) -> None: ...
 

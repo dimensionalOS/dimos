@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import math
 from pathlib import Path
 import shutil
 import time
@@ -49,6 +50,11 @@ def blueprint_modules(blueprint: str) -> tuple[type, ...]:
 
 def _no_setup(sim: DimSimClient) -> None:
     return None
+
+
+AT_REST_M = 0.05
+AT_REST_S = 2.0
+SETTLE_POLL_S = 0.5
 
 
 @dataclass(kw_only=True)
@@ -85,7 +91,7 @@ class Sim:
             raise RuntimeError("dimsim requires deno on PATH")
         blueprint_modules(f"{self.blueprint} {agent.modules}")  # raises: unknown name
 
-    def start(self, modules: str) -> RunningEnvironment:
+    def start(self, modules: str, trace_dir: Path | None = None) -> RunningEnvironment:
         from dimos.agents.mcp.mcp_adapter import McpAdapter
         from dimos.memory.store.sqlite import SqliteStore
 
@@ -97,6 +103,8 @@ class Sim:
             proc.simulator = self.simulator
             proc.global_args = ["--dimsim-scene", self.scene, "--record"]
             proc.demo_args = ["run", *self.blueprint.split(), *modules.split()]
+            if trace_dir is not None:
+                proc.extra_env["MCPCLIENT__TRACE_DIR"] = str(trace_dir)
             proc.start()
             self._proc = proc
         mcp_url = default_mcp_url()
@@ -134,6 +142,25 @@ class Sim:
                     "an attached dimos must be started with --record"
                 )
             time.sleep(1.0)
+
+    def settle(self, budget_s: float) -> None:
+        """Wait until the robot is at rest — a navigation skill returns once
+        the goal is set, while the robot keeps driving."""
+        if self._recording is None:
+            return
+        anchor = None
+        anchor_t = 0.0
+        deadline = time.monotonic() + budget_s
+        while time.monotonic() < deadline:
+            try:
+                p = self._recording.streams.odom.last().data.position
+            except (AttributeError, LookupError):
+                return
+            if anchor is None or math.hypot(p.x - anchor.x, p.y - anchor.y) > AT_REST_M:
+                anchor, anchor_t = p, time.monotonic()
+            elif time.monotonic() - anchor_t >= AT_REST_S:
+                return
+            time.sleep(SETTLE_POLL_S)
 
     def stop(self) -> None:
         if self._recording is not None:

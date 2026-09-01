@@ -15,8 +15,9 @@
 """EvalRunner — the one engine behind CLI, MCP skill, and pytest.
 
 Per case: preflight both sides, start the environment, run the agent under
-the case's timeout, stop the environment, check the declared artifacts exist,
-grade once. The runner never branches on the agent type.
+the case's timeout, let the world settle on the budget the agent didn't use,
+stop the environment, check the declared artifacts exist, grade once. The
+runner never branches on the agent type.
 """
 
 from __future__ import annotations
@@ -142,9 +143,10 @@ class EvalRunner(Configurable):
         case_dir.mkdir(parents=True, exist_ok=True)
         trajectory: Trajectory | None = None
         try:
-            env = case.environment.start(agent.modules)
+            env = case.environment.start(agent.modules, trace_dir=case_dir / "raw")
             tools = list(dict.fromkeys(agent.available_tools(tuple(_tools_exposed(env.mcp_url)))))
             trajectory = self._run_agent(case, agent, env, case_dir)
+            case.environment.settle(max(0.0, case.timeout_s - trajectory.duration_s))
             # The agent phase is over before grading: for a live environment
             # that closes the recording, and a timed-out agent thread can no
             # longer act on what the grader reads.

@@ -146,17 +146,22 @@ class FakeEnvironment:
     def __init__(self, path: Path, calls: list[str]) -> None:
         self.path = path
         self.calls = calls
+        self.settled_budget: float | None = None
 
     def preflight(self, agent: Any) -> None:
         self.calls.append("preflight")
 
-    def start(self, modules: str) -> RunningEnvironment:
+    def start(self, modules: str, trace_dir: Path | None = None) -> RunningEnvironment:
         from dimos.memory.store.memory import MemoryStore
 
         self.calls.append("start")
         return RunningEnvironment(
             mcp_url="", recording=MemoryStore(), artifacts={"recording": self.path}
         )
+
+    def settle(self, budget_s: float) -> None:
+        self.calls.append("settle")
+        self.settled_budget = budget_s
 
     def stop(self) -> None:
         self.calls.append("stop")
@@ -279,6 +284,66 @@ def test_sim_is_not_a_case_without_its_stack() -> None:
         Sim()  # type: ignore[call-arg]
 
 
+def _driving_sim(poses: int) -> tuple[Sim, threading.Thread]:
+    """A Sim over a live store whose robot drives for *poses* samples, then rests."""
+    from dimos.memory.store.memory import MemoryStore
+
+    store = MemoryStore()
+    odom = store.stream("odom", PoseStamped)
+    odom.append(_pose(0.0, 0.0), ts=time.time())
+
+    def drive() -> None:
+        for i in range(poses):
+            odom.append(_pose(0.2 * (i + 1), 0.0), ts=time.time())
+            time.sleep(0.02)
+
+    env = _sim()
+    env._recording = store
+    return env, threading.Thread(target=drive)
+
+
+def test_sim_settle_waits_until_the_robot_is_at_rest(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dimos.evals.environments import sim as sim_env
+
+    monkeypatch.setattr(sim_env, "AT_REST_S", 0.1)
+    monkeypatch.setattr(sim_env, "SETTLE_POLL_S", 0.02)
+
+    env, drive = _driving_sim(poses=15)  # ~0.3s of motion, then at rest
+    drive.start()
+    time.sleep(0.05)  # motion underway before settle first samples
+    t0 = time.monotonic()
+    env.settle(10.0)
+    elapsed = time.monotonic() - t0
+    drive.join(timeout=2.0)
+    assert 0.3 <= elapsed < 5.0, "returns once motion ends, not at the budget"
+
+
+def test_sim_settle_gives_up_at_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dimos.evals.environments import sim as sim_env
+
+    monkeypatch.setattr(sim_env, "AT_REST_S", 5.0)  # never satisfiable here
+    monkeypatch.setattr(sim_env, "SETTLE_POLL_S", 0.02)
+
+    env, drive = _driving_sim(poses=1)
+    drive.start()
+    t0 = time.monotonic()
+    env.settle(0.3)
+    elapsed = time.monotonic() - t0
+    drive.join(timeout=2.0)
+    assert 0.3 <= elapsed < 2.0, "a world that never settles is bounded by the budget"
+
+
+def test_sim_settle_without_motion_data_returns_immediately() -> None:
+    from dimos.memory.store.memory import MemoryStore
+
+    env = _sim()
+    t0 = time.monotonic()
+    env.settle(10.0)  # not started: no recording
+    env._recording = MemoryStore()
+    env.settle(10.0)  # recording without an odom stream
+    assert time.monotonic() - t0 < 1.0
+
+
 # -- agent / environment mismatches fail in preflight, naming both sides --------------
 
 
@@ -287,7 +352,7 @@ def test_agent_preflight_mismatches(dataset: str, monkeypatch: pytest.MonkeyPatc
     with pytest.raises(RuntimeError, match="McpClientAgent needs a running McpClient"):
         McpClientAgent().preflight(frozen)
     # attach mode (nothing added) needs a dimos to attach to, else the turn never ends
-    monkeypatch.setattr(McpClientAgent, "_trace_dir", lambda self: None)
+    monkeypatch.setattr("dimos.core.run_registry.list_runs", lambda alive_only=True: [])
     with pytest.raises(RuntimeError, match="no dimos is running to attach to"):
         McpClientAgent().preflight(_sim(attach=True))
 
@@ -437,6 +502,20 @@ def test_runner_stops_the_environment_before_grading_and_on_failure(
     assert calls == ["preflight", "start", "stop"]
 
 
+def test_runner_gives_the_world_the_budget_the_agent_did_not_use(
+    dataset: str, tmp_path: Path
+) -> None:
+    from dimos.evals.runner import EvalRunner
+
+    calls: list[str] = []
+    env = FakeEnvironment(Path(dataset), calls)
+    case = EvalCase(id="c", inputs="x", environment=env, grade=lambda o: 1.0, timeout_s=30.0)
+    EvalRunner(out_dir=tmp_path).run([case], FakeAgent(answer="ok"))
+
+    assert calls.index("start") < calls.index("settle") < calls.index("stop")
+    assert env.settled_budget == 30.0  # FakeAgent's trajectory reports zero duration
+
+
 def test_runner_timeout_marks_the_trajectory(dataset: str, tmp_path: Path) -> None:
     from dimos.evals.runner import EvalRunner
 
@@ -542,18 +621,15 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
         load_agent("dimos.evals.agents.lib.chat")
 
 
-def test_mcp_client_agent_drives_a_turn_over_real_transports(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_mcp_client_agent_drives_a_turn_over_real_transports(tmp_path: Path) -> None:
     """The production agent publishes on /human_input, reads the turn back on
     /agent until /agent_idle, and links every model call to the McpClient's
     trace files (the message must arrive with no flush sleep: LCM publish is
     a synchronous send)."""
     from dimos.core.transport_factory import make_transport
 
-    trace_dir = tmp_path / "llm"
-    trace_dir.mkdir()
-    monkeypatch.setattr(McpClientAgent, "_trace_dir", lambda self: trace_dir)
+    trace_dir = tmp_path / "case" / "raw"
+    trace_dir.mkdir(parents=True)
 
     human, agent_t, idle = (
         make_transport("/human_input"),

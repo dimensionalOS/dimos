@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
 from dimos.evals.types import Agent, RunningEnvironment, Select
@@ -63,7 +64,7 @@ class Dataset:
         finally:
             store.stop()
 
-    def start(self, modules: str) -> RunningEnvironment:
+    def start(self, modules: str, trace_dir: Path | None = None) -> RunningEnvironment:
         from dimos.memory.cli.dataset import open_dataset, resolve_dataset
         from dimos.memory.store.base import copy_streams
         from dimos.memory.store.memory import MemoryStore
@@ -83,6 +84,9 @@ class Dataset:
             recording=self._recording,
             artifacts={"recording": resolve_dataset(self.name)},
         )
+
+    def settle(self, budget_s: float) -> None:
+        return None
 
     def stop(self) -> None:
         if self._recording is not None:

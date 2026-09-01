@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import shutil
 import threading
 import time
 from typing import Any
@@ -49,19 +48,13 @@ class _Turn:
             self.idle.set()
 
 
-def _copy_trace(
-    trace_dir: Path | None, before: set[Path], raw_dir: Path
-) -> list[tuple[Path, Path]]:
-    """The McpClient's request/response pairs written since *before*, copied
-    under *raw_dir* in order."""
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    if trace_dir is None:
-        return []
+def _pairs(raw_dir: Path) -> list[tuple[Path, Path]]:
+    """The McpClient's request/response pairs under *raw_dir*, in order."""
     pairs: list[tuple[Path, Path]] = []
-    for req in sorted(set(trace_dir.glob("*-request.json")) - before):
+    for req in sorted(raw_dir.glob("*-request.json")):
         resp = req.with_name(req.name.replace("-request.json", "-response.json"))
         if resp.exists():
-            pairs.append((Path(shutil.copy2(req, raw_dir)), Path(shutil.copy2(resp, raw_dir))))
+            pairs.append((req, resp))
     return pairs
 
 
@@ -70,7 +63,8 @@ class McpClientAgent:
     """The production agent: ``inputs`` on ``/human_input``, the turn read
     back from ``/agent`` until ``/agent_idle``. Its model and prompt are the
     ``McpClient`` module's own — configure the module, not this agent. Raw
-    capture is the McpClient's trace dir, copied under ``run_dir/raw``.
+    capture is the McpClient's trace dir, which the runner points at
+    ``run_dir/raw``.
 
     ``modules`` is the agentic composite appended to the case's stack, e.g.
     ``"unitree-go2-agentic"`` (the whole shipped stack; ``autoconnect``
@@ -85,11 +79,13 @@ class McpClientAgent:
         return environment_tools
 
     def preflight(self, environment: Environment) -> None:
+        from dimos.core.run_registry import list_runs
+
         if not environment.has_robot:
             raise RuntimeError(
                 f"McpClientAgent needs a running McpClient; {type(environment).__name__} has no robot"
             )
-        if not self.modules and self._trace_dir() is None:
+        if not self.modules and not list_runs(alive_only=True):
             raise RuntimeError(
                 "McpClientAgent adds no McpClient and no dimos is running to attach to"
             )
@@ -97,8 +93,6 @@ class McpClientAgent:
     def run(self, inputs: str, env: RunningEnvironment, run_dir: Path) -> Trajectory:
         from dimos.core.transport_factory import make_transport
 
-        trace_dir = self._trace_dir()
-        before = set(trace_dir.glob("*-request.json")) if trace_dir else set()
         turn = _Turn()
         agent_t, idle_t, human_t = (
             make_transport("/agent"),
@@ -116,26 +110,18 @@ class McpClientAgent:
         finally:
             for t in (agent_t, idle_t, human_t):
                 t.stop()
-        return self._trajectory(turn.received, run_dir, trace_dir, before, t0)
-
-    def _trace_dir(self) -> Path | None:
-        """``<run log dir>/llm`` of the running dimos — where its McpClient writes."""
-        from dimos.core.run_registry import list_runs
-
-        runs = list_runs(alive_only=True)
-        return Path(runs[-1].log_dir) / "llm" if runs else None
+        return self._trajectory(turn.received, run_dir, t0)
 
     def _trajectory(
         self,
         received: list[BaseMessage],
         run_dir: Path,
-        trace_dir: Path | None,
-        before: set[Path],
         t0: float,
     ) -> Trajectory:
         from dimos.agents.mcp.mcp_client import McpClientConfig
 
-        pairs = _copy_trace(trace_dir, before, run_dir / "raw")
+        raw_dir = run_dir / "raw"
+        pairs = _pairs(raw_dir)
         steps: list[Step] = []
         final = ""
         cached = 0
@@ -143,7 +129,7 @@ class McpClientAgent:
             if isinstance(msg, AIMessage):
                 if len(steps) >= len(pairs):
                     raise RuntimeError(
-                        f"McpClient wrote no LLM trace for call {len(steps)} under {trace_dir}; "
+                        f"McpClient wrote no LLM trace for call {len(steps)} under {raw_dir}; "
                         "every call must be captured whole"
                     )
                 usage: dict[str, Any] = dict(msg.usage_metadata or {})

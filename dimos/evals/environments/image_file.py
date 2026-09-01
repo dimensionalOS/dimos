@@ -46,7 +46,7 @@ class ImageFile:
         if not self.path.is_file():
             raise FileNotFoundError(f"image does not exist: {self.path}")
 
-    def start(self, modules: str) -> RunningEnvironment:
+    def start(self, modules: str, trace_dir: Path | None = None) -> RunningEnvironment:
         from dimos.memory.store.memory import MemoryStore
         from dimos.msgs.sensor_msgs.Image import Image
 
@@ -56,6 +56,9 @@ class ImageFile:
         return RunningEnvironment(
             mcp_url="", recording=self._recording, artifacts={"image": self.path}
         )
+
+    def settle(self, budget_s: float) -> None:
+        return None
 
     def stop(self) -> None:
         if self._recording is not None:
