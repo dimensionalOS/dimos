@@ -72,7 +72,7 @@ def _data_packet(data_type: int, time_interval: int, ts_ns: int, payload: bytes)
 
 def _udp_record(ts: float, src_port: int, payload: bytes) -> bytes:
     udp = struct.pack(">HHHH", src_port, SDK_HOST_POINT_DATA_PORT, 8 + len(payload), 0) + payload
-    ip = bytes([0x45]) + bytes(8) + bytes([17]) + bytes(10)
+    ip = struct.pack(">BBHHHBBH", 0x45, 0, 20 + len(udp), 0, 0, 64, 17, 0) + bytes(8)
     frame = bytes(12) + b"\x08\x00" + ip + udp
     return struct.pack("<IIII", int(ts), int((ts % 1) * 1e6), len(frame), len(frame)) + frame
 

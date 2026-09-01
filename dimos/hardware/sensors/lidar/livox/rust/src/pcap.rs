@@ -19,11 +19,15 @@
 //! deterministic and identical at any replay rate.
 
 use crate::pipeline::PacketSource;
+use etherparse::{SlicedPacket, TransportSlice};
+use pcap_parser::traits::PcapReaderIterator;
+use pcap_parser::{LegacyPcapReader, Linktype, PcapBlockOwned, PcapError};
 use std::fs::File;
-use std::io::{self, BufReader, Read};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::time::{Duration, Instant};
 
-const LINKTYPE_ETHERNET: u32 = 1;
+/// Comfortably above any Ethernet frame a capture can hold.
+const BUFFER_CAPACITY: usize = 65536;
 
 /// One data-plane UDP payload from a capture.
 #[derive(Debug, Clone, PartialEq)]
@@ -34,69 +38,109 @@ pub struct PcapPacket {
     pub payload: Vec<u8>,
 }
 
-/// Streams UDP packets out of a classic little-endian Ethernet pcap.
-struct PcapReader<R> {
-    reader: R,
+/// Decoding state that survives across blocks.
+#[derive(Default)]
+struct ReaderState {
+    nanos: bool,
+    failure: Option<String>,
+    stalled_at: usize,
 }
 
-impl<R: Read> PcapReader<R> {
-    fn new(mut reader: R) -> io::Result<Self> {
-        let mut header = [0u8; 24];
-        reader
-            .read_exact(&mut header)
-            .map_err(|_| invalid("shorter than a pcap file header"))?;
-        if header[0..4] != [0xd4, 0xc3, 0xb2, 0xa1] {
+impl ReaderState {
+    fn handle(&mut self, block: PcapBlockOwned<'_>) -> Option<PcapPacket> {
+        match block {
+            PcapBlockOwned::LegacyHeader(header) => {
+                if header.network != Linktype::ETHERNET {
+                    self.failure = Some(format!(
+                        "unsupported pcap link-type {}, need 1 (Ethernet); \
+                         capture with tcpdump -i <nic>, not -i any",
+                        header.network.0
+                    ));
+                }
+                self.nanos = header.is_nanosecond_precision();
+                None
+            }
+            PcapBlockOwned::Legacy(record) => {
+                let frac = if self.nanos { 1e-9 } else { 1e-6 };
+                decode_udp(
+                    record.ts_sec as f64 + record.ts_usec as f64 * frac,
+                    record.data,
+                )
+            }
+            PcapBlockOwned::NG(_) => None,
+        }
+    }
+}
+
+fn decode_udp(ts: f64, frame: &[u8]) -> Option<PcapPacket> {
+    let sliced = SlicedPacket::from_ethernet(frame).ok()?;
+    match sliced.transport {
+        Some(TransportSlice::Udp(udp)) => Some(PcapPacket {
+            ts,
+            src_port: udp.source_port(),
+            payload: udp.payload().to_vec(),
+        }),
+        _ => None,
+    }
+}
+
+/// Streams UDP packets out of a classic pcap capture.
+struct PcapReader {
+    reader: LegacyPcapReader<File>,
+    state: ReaderState,
+}
+
+impl PcapReader {
+    fn new(mut file: File) -> io::Result<Self> {
+        let mut magic = [0u8; 4];
+        let peeked = file.read(&mut magic)?;
+        file.seek(SeekFrom::Start(0))?;
+        if peeked == 4 && magic == [0x0A, 0x0D, 0x0D, 0x0A] {
             return Err(invalid(
-                "unsupported pcap (need classic little-endian, magic d4c3b2a1)",
+                "pcapng capture, need classic pcap; convert with editcap -F pcap",
             ));
         }
-        let link_type = u32::from_le_bytes(header[20..24].try_into().unwrap());
-        if link_type != LINKTYPE_ETHERNET {
-            return Err(invalid(&format!(
-                "unsupported pcap link-type {link_type}, need {LINKTYPE_ETHERNET} (Ethernet); \
-                 capture with tcpdump -i <nic>, not -i any"
-            )));
-        }
-        Ok(PcapReader { reader })
+        let reader = LegacyPcapReader::new(BUFFER_CAPACITY, file)
+            .map_err(|_| invalid("not a pcap capture"))?;
+        Ok(PcapReader {
+            reader,
+            state: ReaderState::default(),
+        })
     }
 
     /// Next UDP packet. A truncated record ends the stream like a clean EOF.
+    /// Anything else that ends it early is recorded in `state.failure`.
     fn next_packet(&mut self) -> Option<PcapPacket> {
         loop {
-            let mut record = [0u8; 16];
-            self.reader.read_exact(&mut record).ok()?;
-            let ts_sec = u32::from_le_bytes(record[0..4].try_into().unwrap());
-            let ts_usec = u32::from_le_bytes(record[4..8].try_into().unwrap());
-            let captured_len = u32::from_le_bytes(record[8..12].try_into().unwrap()) as usize;
-            let mut frame = vec![0u8; captured_len];
-            self.reader.read_exact(&mut frame).ok()?;
-            // Ethernet(14) -> IPv4 -> UDP
-            if frame.len() < 14 + 20 + 8 || frame[12] != 0x08 || frame[13] != 0x00 {
-                continue;
+            match self.reader.next() {
+                Ok((offset, block)) => {
+                    let packet = self.state.handle(block);
+                    self.reader.consume(offset);
+                    if let Some(packet) = packet {
+                        return Some(packet);
+                    }
+                    if self.state.failure.is_some() {
+                        return None;
+                    }
+                }
+                // A truncated final record reads as UnexpectedEof.
+                Err(PcapError::Eof) | Err(PcapError::UnexpectedEof) => return None,
+                Err(PcapError::Incomplete(_)) => {
+                    if self.reader.consumed() == self.state.stalled_at {
+                        self.state.failure = Some("capture record larger than buffer".to_string());
+                        return None;
+                    }
+                    self.state.stalled_at = self.reader.consumed();
+                    if self.reader.refill().is_err() {
+                        self.state.failure = Some("read failed mid-capture".to_string());
+                        return None;
+                    }
+                }
+                Err(err) => {
+                    self.state.failure = Some(format!("bad capture record: {err:?}"));
+                    return None;
+                }
             }
-            let ip_header_len = ((frame[14] & 0x0f) as usize) * 4;
-            if frame[14 + 9] != 17 {
-                continue; // not UDP
-            }
-            let udp_offset = 14 + ip_header_len;
-            if frame.len() < udp_offset + 8 {
-                continue;
-            }
-            let src_port = u16::from_be_bytes([frame[udp_offset], frame[udp_offset + 1]]);
-            let udp_len =
-                u16::from_be_bytes([frame[udp_offset + 4], frame[udp_offset + 5]]) as usize;
-            let payload_start = udp_offset + 8;
-            let payload_end = (udp_offset + udp_len).min(frame.len());
-            if payload_end <= payload_start {
-                continue;
-            }
-            frame.copy_within(payload_start..payload_end, 0);
-            frame.truncate(payload_end - payload_start);
-            return Some(PcapPacket {
-                ts: ts_sec as f64 + ts_usec as f64 / 1e6,
-                src_port,
-                payload: frame,
-            });
         }
     }
 }
@@ -105,22 +149,25 @@ fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
-/// Parse a classic little-endian pcap (magic d4c3b2a1) into its UDP packets.
+/// Parse a classic pcap capture into its UDP packets.
 pub fn parse_pcap(path: &str) -> io::Result<Vec<PcapPacket>> {
-    let mut reader = PcapReader::new(BufReader::new(File::open(path)?))
-        .map_err(|err| invalid(&format!("{err} at {path}")))?;
+    let mut reader =
+        PcapReader::new(File::open(path)?).map_err(|err| invalid(&format!("{err} at {path}")))?;
     let mut out = Vec::new();
     while let Some(packet) = reader.next_packet() {
         out.push(packet);
     }
-    Ok(out)
+    match reader.state.failure {
+        Some(failure) => Err(invalid(&format!("{failure} at {path}"))),
+        None => Ok(out),
+    }
 }
 
 /// Replays a capture's point/IMU packets through the `PacketSource` seam.
 ///
 /// Streams record by record, so memory stays flat regardless of capture size.
 pub struct PcapSource {
-    reader: PcapReader<BufReader<File>>,
+    reader: PcapReader,
     point_port: u16,
     imu_port: u16,
     /// Replay speed relative to capture time. `None` runs flat-out.
@@ -137,7 +184,7 @@ impl PcapSource {
         imu_port: u16,
         rate: Option<f64>,
     ) -> io::Result<Self> {
-        let mut scan = PcapReader::new(BufReader::new(File::open(path)?))
+        let mut scan = PcapReader::new(File::open(path)?)
             .map_err(|err| invalid(&format!("{err} at {path}")))?;
         loop {
             match scan.next_packet() {
@@ -146,14 +193,17 @@ impl PcapSource {
                 }
                 Some(_) => continue,
                 None => {
-                    return Err(invalid(&format!(
-                        "no Livox data packets on ports {point_port}/{imu_port} in {path}"
-                    )));
+                    return Err(match scan.state.failure {
+                        Some(failure) => invalid(&format!("{failure} at {path}")),
+                        None => invalid(&format!(
+                            "no Livox data packets on ports {point_port}/{imu_port} in {path}"
+                        )),
+                    });
                 }
             }
         }
         Ok(PcapSource {
-            reader: PcapReader::new(BufReader::new(File::open(path)?))?,
+            reader: PcapReader::new(File::open(path)?)?,
             point_port,
             imu_port,
             rate,
@@ -187,6 +237,10 @@ impl PacketSource for PcapSource {
             return Some(len);
         }
     }
+
+    fn failure(&self) -> Option<String> {
+        self.reader.state.failure.clone()
+    }
 }
 
 #[cfg(test)]
@@ -195,6 +249,27 @@ mod tests {
     use crate::pipeline::FrameAssembler;
     use crate::wire::{self, build_points_high, DataPacket, DataType, PointHigh};
     use std::io::Write;
+
+    const LINKTYPE_ETHERNET: u32 = 1;
+
+    fn eth_frame(src_port: u16, payload: &[u8]) -> Vec<u8> {
+        let udp_len = 8 + payload.len();
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&[0u8; 12]); // eth dst+src
+        frame.extend_from_slice(&[0x08, 0x00]); // ipv4
+        let mut ip = [0u8; 20];
+        ip[0] = 0x45; // version 4, ihl 5
+        ip[2..4].copy_from_slice(&((20 + udp_len) as u16).to_be_bytes());
+        ip[8] = 64; // ttl
+        ip[9] = 17; // udp
+        frame.extend_from_slice(&ip);
+        frame.extend_from_slice(&src_port.to_be_bytes());
+        frame.extend_from_slice(&wire::HOST_POINT_PORT.to_be_bytes());
+        frame.extend_from_slice(&(udp_len as u16).to_be_bytes());
+        frame.extend_from_slice(&[0, 0]); // checksum
+        frame.extend_from_slice(payload);
+        frame
+    }
 
     /// Wrap UDP payloads into a classic little-endian pcap byte stream.
     fn synth_pcap(packets: &[(f64, u16, Vec<u8>)]) -> Vec<u8> {
@@ -205,24 +280,12 @@ mod tests {
         out.extend_from_slice(&LINKTYPE_ETHERNET.to_le_bytes());
 
         for (ts, src_port, payload) in packets {
-            let udp_len = 8 + payload.len();
-            let frame_len = 14 + 20 + udp_len;
+            let frame = eth_frame(*src_port, payload);
             out.extend_from_slice(&(*ts as u32).to_le_bytes());
             out.extend_from_slice(&(((ts.fract()) * 1e6) as u32).to_le_bytes());
-            out.extend_from_slice(&(frame_len as u32).to_le_bytes()); // captured
-            out.extend_from_slice(&(frame_len as u32).to_le_bytes()); // original
-
-            out.extend_from_slice(&[0u8; 12]); // eth dst+src
-            out.extend_from_slice(&[0x08, 0x00]); // ipv4
-            let mut ip = [0u8; 20];
-            ip[0] = 0x45; // version 4, ihl 5
-            ip[9] = 17; // udp
-            out.extend_from_slice(&ip);
-            out.extend_from_slice(&src_port.to_be_bytes());
-            out.extend_from_slice(&wire::HOST_POINT_PORT.to_be_bytes());
-            out.extend_from_slice(&(udp_len as u16).to_be_bytes());
-            out.extend_from_slice(&[0, 0]); // checksum
-            out.extend_from_slice(payload);
+            out.extend_from_slice(&(frame.len() as u32).to_le_bytes()); // captured
+            out.extend_from_slice(&(frame.len() as u32).to_le_bytes()); // original
+            out.extend_from_slice(&frame);
         }
         out
     }
@@ -283,6 +346,15 @@ mod tests {
             seen.push(DataPacket::parse(&buf[..len]).unwrap().timestamp_ns);
         }
         assert_eq!(seen, vec![1_000, 2_000]);
+        assert_eq!(source.failure(), None);
+    }
+
+    #[test]
+    fn rejects_pcapng_with_conversion_hint() {
+        let err = parse_pcap(path_of(&write_temp_pcap(&[0x0A, 0x0D, 0x0D, 0x0A])))
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("editcap"), "{err}");
     }
 
     #[test]
@@ -360,6 +432,26 @@ mod tests {
         .err()
         .unwrap();
         assert!(err.to_string().contains("no Livox data packets"), "{err}");
+    }
+
+    #[test]
+    fn truncated_tail_ends_stream_cleanly() {
+        let pcap = synth_pcap(&[
+            (1.0, wire::LIDAR_POINT_PORT, point_packet(1_000, 100)),
+            (1.1, wire::LIDAR_POINT_PORT, point_packet(2_000, 200)),
+        ]);
+        let file = write_temp_pcap(&pcap[..pcap.len() - 20]);
+        let mut source = PcapSource::from_file(
+            path_of(&file),
+            wire::LIDAR_POINT_PORT,
+            wire::LIDAR_IMU_PORT,
+            None,
+        )
+        .unwrap();
+        let mut buf = [0u8; 4096];
+        assert!(source.recv(&mut buf).is_some());
+        assert!(source.recv(&mut buf).is_none());
+        assert_eq!(source.failure(), None);
     }
 
     #[test]
