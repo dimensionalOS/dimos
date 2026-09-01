@@ -317,40 +317,54 @@
         # cargo workspace: splitting them per module would vendor the deps and
         # rebuild the shared crates once each.
         #
-        # `src` is filtered down to the crates rather than being `./.`, so a
-        # doc or python edit leaves the derivation unchanged and the Cachix
-        # closure is substituted instead of rebuilt. It also keeps the build
-        # independent of whether a given clone has pulled the git-lfs datasets.
+        # Each module owns a `deps.nix` naming the crate directories it
+        # contributes to the workspace, the cargo packages that are module
+        # executables, and any system libraries it links. This file only
+        # composes them, so adding a module is a new deps.nix plus a line here.
+        moduleDeps = map (file: import file pkgs) [
+          ./native/rust/deps.nix
+          ./dimos/mapping/ray_tracing/deps.nix
+          ./dimos/navigation/nav_3d/mls_planner/deps.nix
+          ./dimos/hardware/sensors/lidar/virtual_mid360/deps.nix
+          ./examples/native-modules/deps.nix
+        ];
+        depsField = field: builtins.concatLists (map (dep: dep.${field} or [ ]) moduleDeps);
+
         rustNativeModules = pkgs.rustPlatform.buildRustPackage {
           pname = "dimos-rust-native-modules";
           version = "0.1.0";
-          # Assembled from path literals rather than filtered out of `./.`, so
-          # the only repo content reaching the derivation is the workspace
-          # itself. `bin/build-native-modules --inputs-hash` reads these same
-          # literals to key the Cachix publish marker, so a doc or python edit
-          # neither rebuilds this nor re-runs the publish job.
-          src = pkgs.runCommand "dimos-rust-workspace" { } ''
-            mkdir -p $out/native $out/dimos/mapping/ray_tracing \
-                     $out/dimos/navigation/nav_3d/mls_planner \
-                     $out/dimos/hardware/sensors/lidar $out/examples/native-modules
-            cp ${./Cargo.toml} $out/Cargo.toml
-            cp ${./Cargo.lock} $out/Cargo.lock
-            cp -r ${./native/rust} $out/native/rust
-            cp -r ${./dimos/mapping/ray_tracing/rust} $out/dimos/mapping/ray_tracing/rust
-            cp -r ${./dimos/navigation/nav_3d/mls_planner/rust} $out/dimos/navigation/nav_3d/mls_planner/rust
-            cp -r ${./dimos/hardware/sensors/lidar/virtual_mid360} $out/dimos/hardware/sensors/lidar/virtual_mid360
-            cp -r ${./examples/native-modules/rust} $out/examples/native-modules/rust
-            chmod -R u+w $out
-          '';
-          # Vendored by cargo rather than by `cargoLock.lockFile`: nix's own
-          # fetcher sends a `curl/*` user agent, which crates.io answers with a
-          # 403, so every crate not already in cache.nixos.org fails to fetch.
-          # Cargo sends its own user agent and is served normally.
-          # Rotates whenever Cargo.lock does.
+          # Assembled from the declared crate directories rather than filtered
+          # out of `./.`, so the only repo content reaching the derivation is
+          # the workspace itself: a doc or python edit leaves this unchanged
+          # and Cachix substitutes it. It also makes the build independent of
+          # whether a clone has pulled the git-lfs datasets.
+          # `bin/build-native-modules --inputs-hash` follows the same imports
+          # to key the Cachix publish marker.
+          src = pkgs.runCommand "dimos-rust-workspace" { } (
+            ''
+              mkdir -p $out
+              cp ${./Cargo.toml} $out/Cargo.toml
+              cp ${./Cargo.lock} $out/Cargo.lock
+            ''
+            + pkgs.lib.concatMapStrings
+              (dep: pkgs.lib.concatStrings (pkgs.lib.mapAttrsToList (dest: tree: ''
+                mkdir -p $out/${builtins.dirOf dest}
+                cp -r ${tree} $out/${dest}
+              '') (dep.sources or { })))
+              moduleDeps
+            + "chmod -R u+w $out\n"
+          );
+          buildInputs = depsField "buildInputs";
+          nativeBuildInputs = depsField "nativeBuildInputs";
+          # Vendored by cargo rather than by `cargoLock.lockFile`, which would
+          # need no hash at all: nixpkgs downloads crates from crates.io's API,
+          # which 403s its `curl/*` user agent. Its CDN serves them fine, but
+          # the `extraRegistries` override for that also emits a second
+          # `[source]` block for crates-io, and cargo refuses the duplicate.
+          # So this hash has to be re-pasted whenever Cargo.lock moves; the CI
+          # failure prints the new value.
           cargoHash = "sha256-PRncaRtNrPM55JS7QPvwvRUm2bkcMwZOdeZGjVsWwpM=";
-          # The `py` members are pyo3 cdylibs for the python side, not module
-          # executables, so only the binary crates are built here.
-          cargoBuildFlags = [ "-p" "dimos-voxel-ray-tracing" "-p" "dimos-mls-planner" ];
+          cargoBuildFlags = builtins.concatMap (name: [ "-p" name ]) (depsField "binaries");
           doCheck = false;
         };
 

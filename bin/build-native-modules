@@ -340,6 +340,13 @@ def _collect_input_paths(module: DiscoveredModule) -> set[str]:
         seen.add(flake)
         literals, path_inputs = _flake_refs(flake)
         paths |= literals
+        for rel in literals:
+            # A literal naming a .nix file is imported, and whatever paths it
+            # names in turn reach the derivation too. Missing those would key
+            # the marker on the importing file alone, so an edit to a crate
+            # listed only there would be served from the cache as published.
+            if rel.endswith(".nix"):
+                queue.append(REPO_ROOT / rel)
         for rel in path_inputs:
             paths.add(rel)
             sub = REPO_ROOT / rel / "flake.nix"
