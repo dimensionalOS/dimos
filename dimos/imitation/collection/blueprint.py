@@ -32,11 +32,17 @@ from dimos.core.stream import In
 from dimos.hardware.sensors.camera.module import CameraModule, CameraModuleConfig
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_pointlio
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.teleop.quest.quest_types import Buttons
 from dimos.robot.manipulators.openarm.blueprints.teleop import teleop_quest_openarm_blueprint
 from dimos.robot.manipulators.openarm.homing_module import OpenArmHomingModule
 from dimos.teleop.quest.blueprints import (
@@ -155,6 +161,19 @@ class OpenArmCollectionRecorder(CollectionRecorder):
     left_wrist_image: In[Image]
     right_wrist_image: In[Image]
     coordinator_joint_targets: In[JointState]  # action (commanded targets)
+    # Raw operator inputs, for end effector space training and episode
+    # forensics. Streams without a producer stay silently empty.
+    left_cartesian_command: In[PoseStamped]
+    right_cartesian_command: In[PoseStamped]
+    teleop_buttons: In[Buttons]
+    twist_command: In[Twist]
+    # Intrinsics for every camera, 1 Hz.
+    camera_info: In[CameraInfo]
+    left_wrist_camera_info: In[CameraInfo]
+    right_wrist_camera_info: In[CameraInfo]
+    # World frame chassis pose when the lidar odometry blueprint is composed
+    # in (the mobile variant below).
+    pointlio_odometry: In[Odometry]
 
 
 def _openarm_cameras_if_real() -> tuple[Blueprint, ...]:
@@ -183,6 +202,14 @@ learning_collect_quest_openarm = autoconnect(
             "right_wrist_image",
             "coordinator_joint_state",
             "coordinator_joint_targets",
+            "left_cartesian_command",
+            "right_cartesian_command",
+            "teleop_buttons",
+            "twist_command",
+            "camera_info",
+            "left_wrist_camera_info",
+            "right_wrist_camera_info",
+            "pointlio_odometry",
             "status",
         ],
         record_tf=False,
@@ -191,4 +218,13 @@ learning_collect_quest_openarm = autoconnect(
     OpenArmHomingModule.blueprint(),  # right thumbstick click, deadman released
     teleop_quest_openarm_blueprint(publish_joint_targets=True, enable_base=True),
     *_openarm_cameras_if_real(),
+)
+
+
+# Mobile manipulation variant: the lidar odometry stack joins, so the
+# recorder's pointlio_odometry stream carries the world frame chassis pose.
+# Needs the Mid-360 reachable and its DIMOS_POINTLIO_* addresses set.
+learning_collect_quest_openarm_mobile = autoconnect(
+    learning_collect_quest_openarm,
+    mid360_pointlio,
 )

@@ -112,6 +112,14 @@ def test_openarm_collection_streams_are_poseless() -> None:
         "right_wrist_image",
         "coordinator_joint_state",
         "coordinator_joint_targets",
+        "left_cartesian_command",
+        "right_cartesian_command",
+        "teleop_buttons",
+        "twist_command",
+        "camera_info",
+        "left_wrist_camera_info",
+        "right_wrist_camera_info",
+        "pointlio_odometry",
         "status",
     ]
     assert recorder.kwargs["record_tf"] is False
