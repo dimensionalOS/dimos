@@ -76,12 +76,14 @@ def test_button_press_executes_homing_trajectory(module: OpenArmHomingModule) ->
     coordinator.execute_trajectory.assert_called_once()
     trajectory = coordinator.execute_trajectory.call_args.args[0]
     assert list(trajectory.joint_names) == list(OPENARM_ARM_JOINTS)
-    assert len(trajectory.points) == 2
+    assert len(trajectory.points) >= 2
     assert trajectory.points[0].positions == [0.5] * len(OPENARM_ARM_JOINTS)
-    assert trajectory.points[1].positions == [
+    assert trajectory.points[-1].positions == [
         OPENARM_HOME_POSITIONS[name] for name in OPENARM_ARM_JOINTS
     ]
-    assert trajectory.points[1].time_from_start >= 3.0
+    assert trajectory.points[-1].time_from_start >= 5.0
+    times = [p.time_from_start for p in trajectory.points]
+    assert times == sorted(times)
 
 
 def test_press_is_edge_triggered_not_level_triggered(module: OpenArmHomingModule) -> None:
@@ -115,7 +117,7 @@ def test_duration_scales_with_distance_and_caps(module: OpenArmHomingModule) -> 
     module.go_home()
 
     trajectory = module._control_coordinator.execute_trajectory.call_args.args[0]
-    assert trajectory.points[1].time_from_start == pytest.approx(12.0)
+    assert trajectory.points[-1].time_from_start == pytest.approx(15.0)
 
 
 def test_rejected_execution_returns_false(module: OpenArmHomingModule) -> None:
