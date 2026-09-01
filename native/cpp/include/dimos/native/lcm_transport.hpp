@@ -73,6 +73,24 @@ public:
         ensure_recv_thread();
     }
 
+    /// LCM has no per-topic publisher settings and no notion of a session-local
+    /// publisher, so a baked host cannot hide an internal hop on this transport.
+    void set_publisher_qos(const nlohmann::json& qos) override {
+        if (!qos.is_object()) {
+            return;
+        }
+        std::string suppressed;
+        for (const auto& entry : qos.items()) {
+            if (entry.value().is_object() && entry.value().contains("locality")) {
+                suppressed += suppressed.empty() ? entry.key() : ", " + entry.key();
+            }
+        }
+        if (!suppressed.empty()) {
+            log::warn("LCM cannot suppress a topic; these stay visible on the multicast bus",
+                      {log::Field("channels", suppressed)});
+        }
+    }
+
 private:
     void on_lcm_message(const lcm::ReceiveBuffer* rbuf, const std::string& channel) {
         std::shared_ptr<const std::vector<Dispatch>> handlers;
