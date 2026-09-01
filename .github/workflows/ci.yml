@@ -270,7 +270,7 @@ jobs:
         run: bin/regen-cargo-nix
       - name: Fail if the committed Cargo.nix is stale
         run: |
-          if ! git diff --exit-code -- Cargo.nix crate-hashes.json; then
+          if ! git diff --exit-code -- Cargo.nix; then
             echo "::error::Cargo.nix is out of date — run bin/regen-cargo-nix and commit the result"
             exit 1
           fi

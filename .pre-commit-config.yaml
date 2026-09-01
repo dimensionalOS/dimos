@@ -41,14 +41,14 @@ repos:
       - id: check-case-conflict
       # These three rewrite bytes, so they are kept off files that must stay
       # byte-identical to something outside this repo: patches (upstream
-      # diffs), and Cargo.nix / crate-hashes.json, which bin/regen-cargo-nix
-      # reproduces verbatim and the cargo-nix-current CI job diffs. Reformatting
-      # the generated pair here would fail that job on every run, because CI
-      # does not run these hooks.
+      # diffs), and Cargo.nix, which bin/regen-cargo-nix reproduces verbatim
+      # and the cargo-nix-current CI job diffs. crate2nix ends it with a blank
+      # line; reformatting it here would fail that job on every run, because
+      # CI does not run these hooks.
       - id: trailing-whitespace
         language: python
         types: [text]
-        exclude: &verbatim-files (\.patch$|^Cargo\.nix$|^crate-hashes\.json$)
+        exclude: &verbatim-files (\.patch$|^Cargo\.nix$)
       - id: end-of-file-fixer
         exclude: *verbatim-files
       - id: mixed-line-ending
