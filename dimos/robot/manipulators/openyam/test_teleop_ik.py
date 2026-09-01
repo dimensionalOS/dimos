@@ -25,7 +25,7 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import _openyam_quest_ta
 from dimos.robot.manipulators.openyam.config import OPENYAM_ARM_JOINTS, OPENYAM_HOME_JOINTS
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
 
-_TARGET_FRAME = _openyam_quest_task.params["robot_model"].end_effector_link
+_TARGET_FRAME = _openyam_quest_task.params["robot_model"].planning_groups[0].tip_link
 
 
 def _solver(
