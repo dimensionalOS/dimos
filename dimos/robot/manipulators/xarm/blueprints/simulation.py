@@ -136,7 +136,7 @@ _XARM_GRASP_SIM_MODULES = (
     ManipulationModule.blueprint(
         model=_xarm_grasp_sim_model,
         planning_timeout=10.0,
-        visualization={"backend": "none"},
+        visualization={"backend": "viser"},
         world_frame="world",
         voxel_map_resolution=XARM_GRASP_VOXEL_SIZE,
     ),
