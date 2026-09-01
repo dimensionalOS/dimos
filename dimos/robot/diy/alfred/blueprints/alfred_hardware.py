@@ -14,9 +14,8 @@
 
 """Alfred's physical layer: the mast D455, the mount transforms, and the base controller.
 
-Every Alfred blueprint composes this and then adds what it does with the sensors.
-
-    dimos run alfred-hardware
+Every Alfred blueprint composes this and then adds what it does with the sensors. Private, so
+it stays out of the runnable blueprint registry: sensors with nothing consuming them.
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
 # out of its fd table so EMFILE cannot take down rerun/keyboard controls.
 RealSenseCamera.dedicated_worker = True
 
-alfred_hardware = autoconnect(
+_alfred_hardware = autoconnect(
     RealSenseCamera.blueprint(
         fps=30,
         enable_infrared=True,
