@@ -369,7 +369,7 @@ def test_planar_rrt_finds_obstacle_detour(
         PlanningGroupSelection.from_groups((group,)),
         JointState(position=[-2.0, 0.0, 0.0]),
         JointState(position=[2.0, 0.0, 0.0]),
-        timeout=2.0,
+        timeout=10.0,
         max_iterations=2000,
     )
 

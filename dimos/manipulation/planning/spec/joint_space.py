@@ -20,9 +20,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 from itertools import pairwise
 import math
+from typing import Annotated, Literal
 
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import ConfigDict, Field, model_validator
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+from typing_extensions import Self
 
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -35,34 +39,34 @@ class CoordinateTopology(StrEnum):
     CIRCLE = "circle"
 
 
-@dataclass(frozen=True)
+_JOINT_COORDINATE_CONFIG = ConfigDict(extra="forbid", validate_default=True)
+_NonEmptyString = Annotated[str, Field(min_length=1)]
+_FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
+_PositiveFiniteFloat = Annotated[float, Field(gt=0.0, allow_inf_nan=False)]
+
+
+@pydantic_dataclass(frozen=True, config=_JOINT_COORDINATE_CONFIG)
 class JointCoordinate:
     """Compiled semantics and motion limits for one scalar URDF joint."""
 
-    name: str
-    mechanism_type: str
+    name: _NonEmptyString
+    mechanism_type: Literal["continuous", "prismatic", "revolute"]
     topology: CoordinateTopology
-    lower: float | None
-    upper: float | None
-    max_velocity: float
-    max_acceleration: float
+    lower: _FiniteFloat | None
+    upper: _FiniteFloat | None
+    max_velocity: _PositiveFiniteFloat
+    max_acceleration: _PositiveFiniteFloat
 
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("Joint coordinate name must be non-empty")
-        if not math.isfinite(self.max_velocity) or self.max_velocity <= 0.0:
-            raise ValueError(f"Joint '{self.name}' velocity limit must be positive and finite")
-        if not math.isfinite(self.max_acceleration) or self.max_acceleration <= 0.0:
-            raise ValueError(f"Joint '{self.name}' acceleration limit must be positive and finite")
+    @model_validator(mode="after")
+    def _validate_topology_bounds(self) -> Self:
         if self.topology is CoordinateTopology.INTERVAL:
             if self.lower is None or self.upper is None:
                 raise ValueError(f"Interval joint '{self.name}' requires two position limits")
-            if not math.isfinite(self.lower) or not math.isfinite(self.upper):
-                raise ValueError(f"Interval joint '{self.name}' limits must be finite")
             if self.lower > self.upper:
                 raise ValueError(f"Interval joint '{self.name}' has inverted position limits")
         elif self.lower is not None or self.upper is not None:
             raise ValueError(f"{self.topology.value} joint '{self.name}' cannot have bounds")
+        return self
 
 
 @dataclass(frozen=True)
