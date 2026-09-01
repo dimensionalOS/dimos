@@ -16,9 +16,7 @@
 
 from __future__ import annotations
 
-import inspect
 import os
-from pathlib import Path
 import pickle
 import select
 import subprocess
@@ -29,6 +27,7 @@ from typing import Any, ClassVar
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
+from dimos.core.python_native_environment import PythonNativeProject
 from dimos.core.rpc_client import RPCClient
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -91,52 +90,26 @@ class IsolatedPythonModule(NativeModule):
         return super().__getattribute__(name)
 
     @property
-    def runtime_project(self) -> Path:
-        source = Path(inspect.getfile(type(self))).resolve()
-        project = source.parent / "python"
-        if not project.is_dir():
-            raise FileNotFoundError(
-                f"Isolated Python runtime project is missing: {project}; "
-                "create a sibling 'python/' directory"
-            )
-        if not (project / "pyproject.toml").is_file():
-            raise FileNotFoundError(
-                f"Isolated Python runtime manifest is missing: {project / 'pyproject.toml'}"
-            )
-        return project
-
-    def _uv_command(self, *args: str) -> list[str]:
-        command = ["uv", *args]
-        if (self.runtime_project / "pixi.toml").is_file():
-            return ["pixi", "run", "--executable", *command]
-        return command
+    def runtime_project(self) -> PythonNativeProject:
+        return PythonNativeProject.sibling(type(self))
 
     def _prepare_command(self) -> list[str]:
-        args = ["sync"]
-        if (self.runtime_project / "uv.lock").is_file():
-            args.append("--frozen")
-        return self._uv_command(*args)
+        return self.runtime_project.sync_command()
 
     def _launch_command(self, handshake_fd: int) -> list[str]:
-        args = ["run"]
-        if (self.runtime_project / "uv.lock").is_file():
-            args.append("--frozen")
-        args.extend(
-            [
-                "python",
-                "-m",
-                "dimos.core.isolated_python_bootstrap",
-                "--declaration",
-                f"{type(self).__module__}:{type(self).__name__}",
-                "--implementation",
-                self.implementation,
-                "--instance-name",
-                self._new_runtime_name(),
-                "--handshake-fd",
-                str(handshake_fd),
-            ]
+        return self.runtime_project.run_command(
+            "python",
+            "-m",
+            "dimos.core.isolated_python_bootstrap",
+            "--declaration",
+            f"{type(self).__module__}:{type(self).__name__}",
+            "--implementation",
+            self.implementation,
+            "--instance-name",
+            self._new_runtime_name(),
+            "--handshake-fd",
+            str(handshake_fd),
         )
-        return self._uv_command(*args)
 
     def _new_runtime_name(self) -> str:
         public_name = self.config.instance_name or type(self).__name__
@@ -144,20 +117,11 @@ class IsolatedPythonModule(NativeModule):
         return self._runtime_name
 
     def _runtime_env(self) -> dict[str, str]:
-        env = dict(os.environ)
-        env.pop("VIRTUAL_ENV", None)
-        env.update(self.config.extra_env)
-        return env
+        return self.runtime_project.environment(self.config.extra_env)
 
     def _run_prepare(self) -> None:
         command = self._prepare_command()
-        result = subprocess.run(
-            command,
-            cwd=self.runtime_project,
-            env=self._runtime_env(),
-            capture_output=True,
-            text=True,
-        )
+        result = self.runtime_project.run(command, extra_env=self.config.extra_env)
         if result.returncode:
             output = (result.stdout + "\n" + result.stderr).strip()
             raise RuntimeError(
@@ -174,11 +138,11 @@ class IsolatedPythonModule(NativeModule):
                 "Starting isolated Python runtime",
                 module=type(self).__name__,
                 command=" ".join(command),
-                cwd=str(self.runtime_project),
+                cwd=str(self.runtime_project.path),
             )
             self._process = subprocess.Popen(
                 command,
-                cwd=self.runtime_project,
+                cwd=self.runtime_project.path,
                 env=self._runtime_env(),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,

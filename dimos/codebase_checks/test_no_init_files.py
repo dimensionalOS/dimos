@@ -14,10 +14,16 @@
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 
+VIRTUAL_ENVIRONMENT_DIRECTORIES = frozenset({".venv", "venv"})
+
 
 def test_no_init_files():
     dimos_dir = DIMOS_PROJECT_ROOT / "dimos"
-    init_files = sorted(dimos_dir.rglob("__init__.py"))
+    init_files = sorted(
+        path
+        for path in dimos_dir.rglob("__init__.py")
+        if not VIRTUAL_ENVIRONMENT_DIRECTORIES.intersection(path.parts)
+    )
     # The root dimos/__init__.py is allowed for the porcelain lazy import.
     init_files = [f for f in init_files if f != dimos_dir / "__init__.py"]
     if init_files:
