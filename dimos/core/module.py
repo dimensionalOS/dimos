@@ -106,17 +106,12 @@ Deployment = Literal["python", "docker"]
 class TopicFunnel(BaseModel):
     """Several same-typed streams that one declared port fans into one handler.
 
-    Built by `Blueprint.remappings()` from a list or dict value; blueprints do
-    not construct it directly.
+    Built by `Blueprint.remappings()`, not by blueprint authors::
 
-    `names` are stream names — `left_cam`, `robot1/lidar` — never a backend
-    topic string. Each entry replaces the port as an `In` stream, so autoconnect
-    matches it against producers, `.namespace()` rewrites it, and transport pins
-    apply. A python module subscribes the wired streams itself; a native module
-    hands their channels to its subprocess, which does the subscribing.
-
-    `names` may also be a dict attaching arbitrary per-stream info that the
-    handler receives on `TopicMetadata.info`.
+        .remappings([
+            (Fuser, "scan", ["front_lidar", "rear_lidar"]),
+            (Fuser, "image", {"depth": {"meters_per_unit": 0.001}, "color": {}}),
+        ])
     """
 
     names: list[str]

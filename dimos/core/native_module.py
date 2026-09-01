@@ -275,9 +275,7 @@ class NativeModule(Module):
         return pinned.rebased()
 
     def _argv(self, topics: TopicsMap) -> list[str]:
-        """The command line the native process is spawned with. Per-topic funnel
-        info travels only on the stdin JSON, so an entry object contributes just
-        its topic here."""
+        """The command line the native process is spawned with."""
         cmd = [self.config.executable]
         for name, value in topics.items():
             if isinstance(value, list):

@@ -242,17 +242,6 @@ class Blueprint:
             ]
         ],
     ) -> "Blueprint":
-        """Rewrite what a module's streams and module refs connect to.
-
-        A string (or Spec/Module class) renames one stream (or redirects one ref).
-        A list of names, or a dict of name -> arbitrary info, instead fans several
-        same-typed streams into that one port, so its handler serves all of them:
-
-            .remappings([
-                (Fuser, "scan", ["front_lidar", "rear_lidar"]),
-                (Fuser, "image", {"depth": {"meters_per_unit": 0.001}, "color": {}}),
-            ])
-        """
         remappings_dict = dict(self.remapping_map)
         atoms = list(self.blueprints)
         for module, old, new in remappings:
