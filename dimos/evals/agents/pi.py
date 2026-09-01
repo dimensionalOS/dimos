@@ -38,9 +38,7 @@ if TYPE_CHECKING:
 OPENAI_URL = "https://api.openai.com/v1"
 PI_TOOLS = ("read", "bash", "edit", "write")
 
-PI_SYSTEM_PROMPT = (
-    "Answer the question from the files and tools listed below and nothing else."
-)
+PI_SYSTEM_PROMPT = "Answer the question from the files and tools listed below and nothing else."
 
 RECORDING_HELP = (
     "The recording is a dimos memory store (sqlite). In Python:\n"
