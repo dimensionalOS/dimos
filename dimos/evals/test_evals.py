@@ -282,7 +282,7 @@ def test_sim_is_not_a_case_without_its_stack() -> None:
         Sim()  # type: ignore[call-arg]
 
 
-def _driving_sim(poses: int) -> tuple[Sim, threading.Thread]:
+def _driving_sim(poses: int, **kwargs: Any) -> tuple[Sim, threading.Thread]:
     """A Sim over a live store whose robot drives for *poses* samples, then rests."""
     from dimos.memory.store.memory import MemoryStore
 
@@ -295,18 +295,13 @@ def _driving_sim(poses: int) -> tuple[Sim, threading.Thread]:
             odom.append(_pose(0.2 * (i + 1), 0.0), ts=time.time())
             time.sleep(0.02)
 
-    env = _sim()
+    env = _sim(**kwargs)
     env._recording = store
     return env, threading.Thread(target=drive)
 
 
-def test_sim_settle_waits_until_the_robot_is_at_rest(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dimos.evals.environments import sim as sim_env
-
-    monkeypatch.setattr(sim_env, "AT_REST_S", 0.1)
-    monkeypatch.setattr(sim_env, "SETTLE_POLL_S", 0.02)
-
-    env, drive = _driving_sim(poses=15)  # ~0.3s of motion, then at rest
+def test_sim_settle_waits_until_the_robot_is_at_rest() -> None:
+    env, drive = _driving_sim(poses=15, at_rest_s=0.1, settle_poll_s=0.02)  # ~0.3s of motion
     drive.start()
     time.sleep(0.05)  # motion underway before settle first samples
     t0 = time.monotonic()
@@ -316,13 +311,8 @@ def test_sim_settle_waits_until_the_robot_is_at_rest(monkeypatch: pytest.MonkeyP
     assert 0.3 <= elapsed < 5.0, "returns once motion ends, not at the budget"
 
 
-def test_sim_settle_gives_up_at_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    from dimos.evals.environments import sim as sim_env
-
-    monkeypatch.setattr(sim_env, "AT_REST_S", 5.0)  # never satisfiable here
-    monkeypatch.setattr(sim_env, "SETTLE_POLL_S", 0.02)
-
-    env, drive = _driving_sim(poses=1)
+def test_sim_settle_gives_up_at_the_budget() -> None:
+    env, drive = _driving_sim(poses=1, at_rest_s=5.0, settle_poll_s=0.02)  # never satisfiable
     drive.start()
     t0 = time.monotonic()
     env.settle(0.3)

@@ -52,11 +52,6 @@ def _no_setup(sim: DimSimClient) -> None:
     return None
 
 
-AT_REST_M = 0.05
-AT_REST_S = 2.0
-SETTLE_POLL_S = 0.5
-
-
 @dataclass(kw_only=True)
 class Sim:
     """A live simulator. ``start(modules)`` launches ``dimos --simulation
@@ -73,6 +68,9 @@ class Sim:
     setup: Callable[[DimSimClient], None] = _no_setup
     attach: bool = False
     launch_timeout_s: float = 1200.0  # blueprint + MCP readiness (e2e parity)
+    at_rest_m: float = 0.05  # settle: at rest = moved less than this for at_rest_s
+    at_rest_s: float = 2.0
+    settle_poll_s: float = 0.5
 
     artifacts: ClassVar[tuple[str, ...]] = ("recording",)
     has_robot: ClassVar[bool] = True
@@ -156,11 +154,11 @@ class Sim:
                 p = self._recording.streams.odom.last().data.position
             except (AttributeError, LookupError):
                 return
-            if anchor is None or math.hypot(p.x - anchor.x, p.y - anchor.y) > AT_REST_M:
+            if anchor is None or math.hypot(p.x - anchor.x, p.y - anchor.y) > self.at_rest_m:
                 anchor, anchor_t = p, time.monotonic()
-            elif time.monotonic() - anchor_t >= AT_REST_S:
+            elif time.monotonic() - anchor_t >= self.at_rest_s:
                 return
-            time.sleep(SETTLE_POLL_S)
+            time.sleep(self.settle_poll_s)
 
     def stop(self) -> None:
         if self._recording is not None:
