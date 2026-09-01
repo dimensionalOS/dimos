@@ -17,7 +17,7 @@ from pathlib import Path
 from pydantic import ValidationError
 import pytest
 
-from dimos.core.isolated_python_module import contract_rpc_names
+from dimos.experimental.isolated_python.module import contract_rpc_names
 from dimos.imitation.policy.lerobot.module import (
     LeRobotPolicyModule,
     LeRobotPolicyModuleConfig,
