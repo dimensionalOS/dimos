@@ -31,16 +31,14 @@
 #include "dimos/native/log.hpp"
 #include "dimos/native/transport.hpp"
 
-// Reliability QoS and the link list this transport waits on are both behind
-// zenoh-c's unstable API, and the rust transport uses them unconditionally. A
-// build without them would silently drop the messages it publishes first.
+// Reliability and the link list this waits on are both behind zenoh-c's unstable
+// API, and the rust transport uses both unconditionally.
 #if !defined(Z_FEATURE_UNSTABLE_API)
 #error "the zenoh transport needs zenoh-c built with -DZENOHC_BUILD_WITH_UNSTABLE_API=ON"
 #endif
 
 namespace dimos::native {
 
-/// The launch key carrying the session settings python resolved.
 inline constexpr const char* kSessionKey = "session";
 
 /// Zenoh keys can't start with '/'.
@@ -50,11 +48,9 @@ inline std::string zenoh_key(const std::string& channel) {
 
 namespace zenoh_detail {
 
-/// Poll interval while waiting for the dialed endpoints to link.
 constexpr std::chrono::milliseconds kConnectPoll{50};
 
-/// The session settings python sends on the launch line. It owns every value
-/// and resolves every derived one, so no field here has a default.
+/// Python resolves every value, so no field here has a default.
 struct SessionSettings {
     std::string mode;
     std::vector<std::string> connect;
@@ -66,15 +62,14 @@ struct SessionSettings {
     std::uint64_t connect_timeout_ms = 0;
 };
 
-/// Read `key` off `object`, requiring the JSON type `T` maps to.
 template <class T>
 T require_field(const nlohmann::json& object, const std::string& key) {
     auto it = object.find(key);
     if (it == object.end()) {
         throw std::runtime_error("zenoh session settings: missing field '" + key + "'");
     }
-    // Without this a negative number is cast rather than rejected, turning a
-    // bad timeout into a wait of a few hundred million years.
+    // nlohmann casts a negative number rather than rejecting it, which would
+    // turn a bad timeout into a wait of a few hundred million years.
     if constexpr (std::is_unsigned_v<T> && !std::is_same_v<T, bool>) {
         if (!it->is_number_unsigned()) {
             throw std::runtime_error("zenoh session settings: field '" + key +
@@ -88,8 +83,7 @@ T require_field(const nlohmann::json& object, const std::string& key) {
     }
 }
 
-/// The settings the launch carried, empty when it carried none. A module
-/// started by hand keeps zenoh's own defaults.
+/// Empty when the launch carried no session block.
 inline std::optional<SessionSettings> settings_from_launch(const nlohmann::json& launch) {
     if (!launch.is_object()) {
         return std::nullopt;
@@ -111,8 +105,7 @@ inline std::optional<SessionSettings> settings_from_launch(const nlohmann::json&
     settings.gossip = require_field<bool>(object, "gossip");
     settings.interface = require_field<std::string>(object, "interface");
     settings.connect_timeout_ms = require_field<std::uint64_t>(object, "connect_timeout_ms");
-    // The rust settings deny unknown fields. A key python sends that this SDK
-    // never reads is version skew, and silently ignoring it loses the setting.
+    // The rust settings deny unknown fields, so a version skew is loud here too.
     static const std::set<std::string> known = {"mode",       "connect", "listen",
                                                 "multicast",  "gossip",  "interface",
                                                 "scout_addr", "connect_timeout_ms"};
@@ -130,7 +123,6 @@ inline std::optional<SessionSettings> settings_from_launch(const nlohmann::json&
     return settings;
 }
 
-/// These settings as a zenoh session config.
 inline ::zenoh::Config zenoh_config(const SessionSettings& settings) {
     ::zenoh::Config config = ::zenoh::Config::create_default();
     std::vector<std::pair<std::string, std::string>> inserts = {
@@ -139,22 +131,21 @@ inline ::zenoh::Config zenoh_config(const SessionSettings& settings) {
         {"scouting/multicast/interface", nlohmann::json(settings.interface).dump()},
         {"scouting/gossip/enabled", nlohmann::json(settings.gossip).dump()},
     };
-    // Empty means the stock multicast group. A moved group is a private
-    // discovery bus, which is how parallel sessions on one host stay apart.
+    // Empty means the stock group; a moved one is a private discovery bus.
     if (!settings.scout_addr.empty()) {
         inserts.emplace_back("scouting/multicast/address",
                              nlohmann::json(settings.scout_addr).dump());
     }
-    // An empty list means "whatever zenoh listens on by default", which for a
-    // peer is an ephemeral port, not nothing at all.
+    // An empty list means zenoh's own default, which for a peer is an ephemeral
+    // port rather than nothing at all.
     if (!settings.connect.empty()) {
         inserts.emplace_back("connect/endpoints", nlohmann::json(settings.connect).dump());
     }
     if (!settings.listen.empty()) {
         inserts.emplace_back("listen/endpoints", nlohmann::json(settings.listen).dump());
     }
-    // Zero means "don't wait", which zenoh reads as "dial once and never
-    // retry". Leaving the key unset keeps its own retry policy.
+    // Written as zero zenoh dials once and never retries; unset keeps its own
+    // retry policy.
     if (settings.connect_timeout_ms > 0) {
         inserts.emplace_back("connect/timeout_ms",
                              nlohmann::json(settings.connect_timeout_ms).dump());
@@ -165,14 +156,14 @@ inline ::zenoh::Config zenoh_config(const SessionSettings& settings) {
     return config;
 }
 
-/// The trailing `host:port` of a locator, which is the part a link reports.
+/// The trailing `host:port`, which is the part a link reports.
 inline std::string locator_address(const std::string& locator) {
     std::size_t slash = locator.rfind('/');
     return slash == std::string::npos ? locator : locator.substr(slash + 1);
 }
 
-/// The host:port forms a live link to this locator may report. A locator dialed
-/// by name never matches the address the link reports.
+/// Every host:port a live link to this endpoint may report. Dialed by name it
+/// would otherwise never match.
 inline std::unordered_set<std::string> endpoint_addresses(const std::string& endpoint) {
     const std::string address = locator_address(endpoint);
     std::unordered_set<std::string> out = {address};
@@ -209,9 +200,7 @@ inline std::unordered_set<std::string> endpoint_addresses(const std::string& end
     return out;
 }
 
-/// Block until the dialed endpoints have links, bounded by the timeout.
-///
-/// A peer opens before its endpoints are dialed, so without this the first
+/// A peer opens before its endpoints are dialed, so without this wait the first
 /// published messages have nowhere to go.
 inline void await_connect(const ::zenoh::Session& session,
                           const std::vector<std::string>& endpoints, const std::string& mode,
@@ -224,8 +213,7 @@ inline void await_connect(const ::zenoh::Session& session,
     for (const std::string& endpoint : endpoints) {
         pending.emplace_back(endpoint, endpoint_addresses(endpoint));
     }
-    // A client session holds one link. Zenoh dials the endpoints as
-    // alternatives and keeps the first that answers.
+    // A client holds one link: zenoh dials the endpoints as alternatives.
     const std::size_t needed = mode == "client" ? 1 : pending.size();
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (true) {
@@ -258,19 +246,15 @@ inline void await_connect(const ::zenoh::Session& session,
     }
 }
 
-/// Publisher QoS for one channel. Unset fields keep zenoh's defaults.
+/// Unset fields keep zenoh's defaults.
 struct ChannelQos {
     std::optional<::zenoh::CongestionControl> congestion_control;
-    /// Where the publisher is allowed to deliver. Session-local keeps a topic
-    /// inside the process that publishes it, which is how a baked host hides
-    /// its internal hops without changing the modules.
     std::optional<::zenoh::Locality> locality;
     std::optional<::zenoh::Reliability> reliability;
 };
 
-/// Parse the coordinator's `qos` object (channel -> {reliability,
-/// congestion_control, locality}) into a lookup. Unknown or absent fields keep
-/// zenoh's defaults.
+/// The coordinator's `qos` object, channel -> settings. An unrecognized value
+/// keeps zenoh's default rather than erroring.
 inline std::unordered_map<std::string, ChannelQos> parse_channel_qos(
     const nlohmann::json& value) {
     std::unordered_map<std::string, ChannelQos> map;
@@ -311,12 +295,10 @@ inline std::unordered_map<std::string, ChannelQos> parse_channel_qos(
 
 }  // namespace zenoh_detail
 
-/// Zenoh transport for a native module.
 class ZenohTransport : public Transport {
 public:
-    /// Open the session the launch config describes. A launch with no session
-    /// block keeps zenoh's own defaults, which is what a hand-started module
-    /// gets.
+    /// A launch with no session block keeps zenoh's own defaults, which is what
+    /// a hand-started module gets.
     static std::unique_ptr<ZenohTransport> from_launch(const nlohmann::json& launch) {
         std::optional<zenoh_detail::SessionSettings> settings =
             zenoh_detail::settings_from_launch(launch);
@@ -346,13 +328,11 @@ public:
     ZenohTransport& operator=(const ZenohTransport&) = delete;
 
     void publish(const std::string& channel, std::vector<uint8_t> data) override {
-        // This runs on a publish worker thread, and zenoh-cpp reports every
-        // failure by throwing. An escaped exception would terminate the process,
-        // so a failed publish is logged and dropped the way LCM's is.
+        // Runs on a publish worker thread with no catch of its own, so an
+        // escaped zenoh exception would terminate the process.
         try {
-            // Declaring a publisher talks to the network, so each channel
-            // declares once and reuses it. The lock is released before the put
-            // so a stalled channel can't block the others.
+            // The lock is released before the put so a stalled channel cannot
+            // block the others.
             std::shared_ptr<::zenoh::Publisher> publisher;
             {
                 std::lock_guard<std::mutex> lock(publishers_mu_);
@@ -371,14 +351,11 @@ public:
     }
 
     void subscribe(const std::string& channel, Dispatch on_msg) override {
-        // A background subscriber lives as long as the session, which outlives
-        // every route the module declares.
         session_.declare_background_subscriber(
             ::zenoh::KeyExpr(zenoh_key(channel)),
             [on_msg = std::move(on_msg)](const ::zenoh::Sample& sample) {
-                // Zenoh usually holds a payload as one contiguous slice, which
-                // is handed straight to the callback. Only a fragmented one is
-                // joined, and only that case costs a copy.
+                // A contiguous payload goes straight to the callback; only a
+                // fragmented one costs a copy.
                 const ::zenoh::Bytes& payload = sample.get_payload();
                 ::zenoh::Bytes::SliceIterator slices = payload.slice_iter();
                 const std::optional<::zenoh::Slice> first = slices.next();

@@ -49,12 +49,10 @@ target_link_libraries(dimos_native INTERFACE
 set(DIMOS_NATIVE_ZENOH AUTO CACHE STRING "Build zenoh transport support: AUTO, ON or OFF")
 set_property(CACHE DIMOS_NATIVE_ZENOH PROPERTY STRINGS AUTO ON OFF)
 if(NOT DIMOS_NATIVE_ZENOH STREQUAL "OFF")
-  # zenohcxxConfig.cmake only defines its backend target when zenohc::lib
-  # already exists, and hard-errors when no backend does, so zenoh-c is looked
-  # up first and zenoh-cpp only when it was found.
-  # The version the rust transport pins. Older zenoh-c spells the locality
-  # enum ZC_LOCALITY_*, so accepting one trades this message for a page of
-  # compiler errors.
+  # zenohcxxConfig.cmake only defines its backend target when zenohc::lib already
+  # exists, and hard-errors when no backend does, so zenoh-c goes first.
+  # Older zenoh-c spells the locality enum ZC_LOCALITY_*, so accepting one trades
+  # this version message for a page of compiler errors.
   set(zenoh_min_version 1.9.0)
   if(DIMOS_NATIVE_ZENOH STREQUAL "ON")
     find_package(zenohc ${zenoh_min_version} REQUIRED)
@@ -67,9 +65,8 @@ if(NOT DIMOS_NATIVE_ZENOH STREQUAL "OFF")
   endif()
 endif()
 if(zenohcxx_FOUND)
-  # The transport needs reliability QoS and the link list it waits on, which
-  # zenoh-c only emits under its unstable API. That is off in an upstream source
-  # build and on in every published binary, so it is detected, not assumed.
+  # Off in an upstream source build and on in every published binary, so it is
+  # detected rather than assumed.
   include(CheckCXXSourceCompiles)
   get_target_property(zenohc_includes zenohc::lib INTERFACE_INCLUDE_DIRECTORIES)
   set(CMAKE_REQUIRED_INCLUDES ${zenohc_includes})
