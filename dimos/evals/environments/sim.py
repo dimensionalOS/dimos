@@ -100,9 +100,7 @@ class Sim:
             self.setup(sim)
         path = self._wait_recording(deadline)
         self._recording = SqliteStore(path=str(path), must_exist=True)
-        return RunningEnvironment(
-            mcp_url=mcp_url, recording=self._recording, artifacts={"recording": path}
-        )
+        return RunningEnvironment(mcp_url=mcp_url, streams=(), artifacts={"recording": path})
 
     def _wait_recording(self, deadline: float) -> Path:
         """``recordings/<run-id>/memory.db`` of the dimos this environment drives."""

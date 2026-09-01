@@ -165,7 +165,7 @@ class Trajectory:
 @dataclass(frozen=True, kw_only=True)
 class RunningEnvironment:
     mcp_url: str  # "" when there is no robot
-    recording: Store  # the one sensor channel. Dataset: what the case selected. Sim: live
+    streams: Sequence[Stream[Any, Any]]  # what the agent may look at. Dataset: the selection
     artifacts: Mapping[str, Path]  # name -> path; every declared name is present
 
 

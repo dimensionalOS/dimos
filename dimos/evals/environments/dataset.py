@@ -47,7 +47,7 @@ class Dataset:
     launch_timeout_s: float = 300.0  # module stack + MCP readiness; no simulator to boot
 
     artifacts: ClassVar[tuple[str, ...]] = ("recording",)
-    _recording: Store | None = field(default=None, init=False, repr=False, compare=False)
+    _store: Store | None = field(default=None, init=False, repr=False, compare=False)
     _proc: DimosCliCall | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
@@ -73,8 +73,6 @@ class Dataset:
 
     def start(self, modules: str) -> RunningEnvironment:
         from dimos.memory.cli.dataset import open_dataset, resolve_dataset
-        from dimos.memory.store.base import copy_streams
-        from dimos.memory.store.memory import MemoryStore
 
         mcp_url = self.mcp_url
         if modules:
@@ -89,29 +87,24 @@ class Dataset:
             mcp_url = default_mcp_url()
             if not McpAdapter(mcp_url).wait_for_ready(timeout=self.launch_timeout_s, interval=2.0):
                 raise RuntimeError(f"MCP at {mcp_url} not ready — is dimos up?")
-        source = open_dataset(self.name)
-        try:
-            streams = (
-                [sel(source) for sel in self.select]
-                if self.select
-                else [source.stream(name) for name in source.list_streams()]
-            )
-            self._recording = copy_streams(streams, MemoryStore())
-        finally:
-            source.stop()
+        store = open_dataset(self.name)
+        self._store = store  # stays open while the agent reads; stop() closes it
+        streams = (
+            [sel(store) for sel in self.select]
+            if self.select
+            else [store.stream(name) for name in store.list_streams()]
+        )
         return RunningEnvironment(
-            mcp_url=mcp_url,
-            recording=self._recording,
-            artifacts={"recording": resolve_dataset(self.name)},
+            mcp_url=mcp_url, streams=streams, artifacts={"recording": resolve_dataset(self.name)}
         )
 
     def settle(self, budget_s: float) -> None:
         return None
 
     def stop(self) -> None:
-        if self._recording is not None:
-            self._recording.stop()
-            self._recording = None
+        if self._store is not None:
+            self._store.stop()
+            self._store = None
         if self._proc is not None:
             self._proc.stop()
             self._proc = None

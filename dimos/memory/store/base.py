@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 
 from dimos.core.resource import CompositeResource
@@ -218,14 +217,3 @@ class Store(Configurable, CompositeResource):
         for stream in self._streams.values():
             stream.stop()
         super().stop()
-
-
-def copy_streams(streams: Iterable[Stream[Any]], into: Store) -> Store:
-    """Append every observation of *streams*, under the same stream names, to *into*."""
-    for stream in streams:
-        if stream.name is None:
-            raise ValueError("a stream must be bound to a store to be copied")
-        target: Stream[Any] = into.stream(stream.name, stream.data_type)
-        for obs in stream:
-            target.append(obs.data, ts=obs.ts, pose=obs.pose_tuple, tags=obs.tags)
-    return into

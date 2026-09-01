@@ -162,12 +162,8 @@ class FakeEnvironment:
         self.calls.append("preflight")
 
     def start(self, modules: str) -> RunningEnvironment:
-        from dimos.memory.store.memory import MemoryStore
-
         self.calls.append("start")
-        return RunningEnvironment(
-            mcp_url="", recording=MemoryStore(), artifacts={"recording": self.path}
-        )
+        return RunningEnvironment(mcp_url="", streams=(), artifacts={"recording": self.path})
 
     def settle(self, budget_s: float) -> None:
         self.calls.append("settle")
@@ -247,17 +243,17 @@ def test_parsers() -> None:
 # -- environments -------------------------------------------------------------------
 
 
-def test_dataset_start_copies_the_selection(dataset: str) -> None:
+def test_dataset_start_hands_out_the_selection(dataset: str) -> None:
     env = Dataset(dataset, select=(lambda s: s.streams.odom.limit(2),))
     running = env.start("")
     try:
-        observations = list(running.recording.streams.odom)
+        (odom,) = running.streams
+        assert odom.name == "odom"
+        observations = list(odom)
         assert [o.ts for o in observations] == [1000.0, 1001.0]
         assert observations[0].data.position.x == 0.0
         assert running.mcp_url == "" and not env.has_robot
         assert running.artifacts["recording"] == Path(dataset)
-        with pytest.raises(AttributeError, match="No stream 'lidar'"):
-            list(running.recording.streams.lidar)
     finally:
         env.stop()
 
@@ -325,7 +321,8 @@ def test_image_file_environment(tmp_path: Path) -> None:
     env.preflight(QuestionAnswer())
     running = env.start("")
     try:
-        (obs,) = list(running.recording.streams.image)
+        (image_stream,) = running.streams
+        (obs,) = list(image_stream)
         assert obs.data.agent_encode()[0]["type"] == "image_url"
         assert running.artifacts == {"image": path}
     finally:
@@ -441,9 +438,7 @@ def test_question_answer_encodes_the_recording_into_one_call(dataset: str, tmp_p
 
 
 def test_question_answer_refuses_an_empty_recording(tmp_path: Path) -> None:
-    from dimos.memory.store.memory import MemoryStore
-
-    running = RunningEnvironment(mcp_url="", recording=MemoryStore(), artifacts={})
+    running = RunningEnvironment(mcp_url="", streams=(), artifacts={})
     with pytest.raises(RuntimeError, match="would be blind"):
         QuestionAnswer(chat_model=SpyChat()).run("?", running, tmp_path, timeout_s=60.0)
 
@@ -765,7 +760,7 @@ def test_mcp_client_agent_drives_a_turn_over_real_transports(
         lambda msg: threading.Thread(target=fake_mcp_client, args=(msg,)).start()
     )
     try:
-        env = RunningEnvironment(mcp_url="http://localhost:1/mcp", recording=None, artifacts={})  # type: ignore[arg-type]
+        env = RunningEnvironment(mcp_url="http://localhost:1/mcp", streams=(), artifacts={})
         agent = McpClientAgent()
         trajectory = agent.run(
             "go to the bed", env, tmp_path / "case", timeout_s=10.0 if goes_idle else 0.5

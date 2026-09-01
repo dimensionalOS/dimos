@@ -52,10 +52,9 @@ class ImageFile:
 
         image = Image.from_file(self.path)
         self._recording = MemoryStore()
-        self._recording.stream("image", Image).append(image, ts=image.ts or 0.0)
-        return RunningEnvironment(
-            mcp_url="", recording=self._recording, artifacts={"image": self.path}
-        )
+        stream = self._recording.stream("image", Image)
+        stream.append(image, ts=image.ts or 0.0)
+        return RunningEnvironment(mcp_url="", streams=(stream,), artifacts={"image": self.path})
 
     def settle(self, budget_s: float) -> None:
         return None

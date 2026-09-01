@@ -185,14 +185,8 @@ def test_grader_reads_the_history_the_environment_recorded(tmp_path: Path) -> No
             pass
 
         def start(self, modules: str) -> RunningEnvironment:
-            from dimos.memory.store.sqlite import SqliteStore
-
             thread.start()
-            return RunningEnvironment(
-                mcp_url="",
-                recording=SqliteStore(path=str(db), must_exist=True),
-                artifacts={"recording": db},
-            )
+            return RunningEnvironment(mcp_url="", streams=(), artifacts={"recording": db})
 
         def settle(self, budget_s: float) -> None:
             return None

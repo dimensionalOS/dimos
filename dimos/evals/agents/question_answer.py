@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -26,7 +27,7 @@ from dimos.evals.agents.lib.chat import Blocks, ChatAgent, single_call
 from dimos.evals.types import Environment, RunningEnvironment, Trajectory
 
 if TYPE_CHECKING:
-    from dimos.memory.store.base import Store
+    from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
 
 
@@ -63,14 +64,15 @@ class QuestionAnswer(ChatAgent):
     def run(
         self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
     ) -> Trajectory:
-        blocks = self._encode(env.recording)
+        blocks = self._encode(env.streams)
         if not blocks:
             raise RuntimeError("nothing in the recording to encode; the run would be blind")
         return single_call(self, blocks, inputs, run_dir)
 
-    def _encode(self, recording: Store) -> Blocks:
+    def _encode(self, streams: Sequence[Stream[Any, Any]]) -> Blocks:
         blocks: Blocks = []
-        for name, stream in recording.streams.items():
+        for stream in streams:
+            name = stream.name
             observations = list(stream)
             if not observations:
                 continue
