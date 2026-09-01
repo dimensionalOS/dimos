@@ -39,7 +39,7 @@ def test_contract_resolves_sibling_runtime_project() -> None:
         joint_names=["joint"],
     )
     try:
-        assert module.runtime_project.path == Path(__file__).parent / "python"
+        assert module.runtime_project == Path(__file__).parent / "python"
     finally:
         module.stop()
 
