@@ -56,6 +56,7 @@ def _bar(name: str) -> Iterator[Callable[[str, int, int], None]]:
 def upload(
     path: Path | None, robot: str | None, kind: str | None, since_s: float | None, chunk: int | None
 ) -> None:
+    explicit = path is not None
     path = None if str(path) == "latest" else path
     cloud = CloudData()
     targets = recordings(since_s) if since_s else [path] if path else recordings()[-1:]
@@ -71,7 +72,7 @@ def upload(
                     kind=kind,
                     chunk_mb=chunk,
                     progress=tick,
-                    skip_recent=path is None,
+                    skip_recent=not explicit,
                 )
             note = "already uploaded" if r["skipped"] else r["state"]
             typer.echo(f"{t.name}: {note} ({r['upload_id'][:12]})")
