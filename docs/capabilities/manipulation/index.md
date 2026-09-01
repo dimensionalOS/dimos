@@ -71,8 +71,8 @@ dimos run xarm7-planner-coordinator \
   --kinematics.dt=0.02
 ```
 
-The same nested shorthand applies to blueprints that instantiate
-`PickAndPlaceModule`:
+The same nested shorthand applies to the `ManipulationModule` composed by
+pick-and-place blueprints:
 
 ```bash
 dimos run xarm-perception-sim \

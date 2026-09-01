@@ -1,0 +1,27 @@
+// Copyright 2026 Dimensional Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// realsense-sys only emits -L for librealsense2; bake its directory in as an
+// rpath so the binary runs outside the nix shell that built it. nixpkgs' .pc
+// names lib/x86_64-linux-gnu while the .so sits in lib/, so walk up to it.
+fn main() {
+    let lib = pkg_config::probe_library("realsense2").expect("librealsense2 via pkg-config");
+    for path in lib.link_paths {
+        let dir = path
+            .ancestors()
+            .find(|d| d.join("librealsense2.so").exists())
+            .unwrap_or(&path);
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
+    }
+}

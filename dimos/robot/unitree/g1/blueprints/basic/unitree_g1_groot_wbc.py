@@ -22,15 +22,14 @@ Real hardware (default):
     start; activate explicitly through ControlCoordinator RPC after
     verifying commands. The policy ramps from the current pose to its
     bent-knee default over 10 s before taking torque control. The 14 arm
-    joints are held at the relaxed GR00T-trained default via a lower-priority
-    servo task.
+    joints accept bounded position commands through the lower-priority joint
+    trajectory task.
 
 Sim (``--simulation``):
     MujocoSimModule (in-process MuJoCo + SHM) + sim_mujoco_g1 adapter.
     50 Hz tick (matches the rate the policy was trained at). No arming
-    ramp and no dry-run. The 14 arm joints are still held with the same
-    lower-priority servo task as hardware so headless and viewer runs do not
-    depend on incidental startup timing.
+    ramp and no dry-run. The same bounded arm-command path is available in
+    simulation and on hardware.
 
 Usage:
     dimos run unitree-g1-groot-wbc                 # real hardware
@@ -52,13 +51,13 @@ from typing import Any, cast
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
-    ARM_DEFAULT_POSE,
     G1_GROOT_KD,
     G1_GROOT_KP,
     g1_arms,
     g1_joints,
     g1_legs_waist,
 )
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import Out
@@ -278,13 +277,11 @@ if global_config.simulation == "mujoco":
     _default_ramp_seconds = 0.0
     _decimation: int | None = 1
     _n_workers = 2  # sim: keep the default worker count
-    _arm_holder = TaskConfig(
-        name="servo_arms",
-        type="servo",
-        joint_names=g1_arms,
+    _arm_holder = joint_trajectory_task(
+        g1_arms,
         priority=10,
-        auto_start=True,
-        params={"default_positions": ARM_DEFAULT_POSE},
+        velocity_limits={name: 1.0 for name in g1_arms},
+        hold_position_when_idle=True,
     )
     _mapper = VoxelGridMapper.blueprint(emit_every=1)
     _nav_stack = autoconnect(
@@ -327,15 +324,11 @@ else:
     _decimation = 2  # 100 Hz tick / 2 = 50 Hz policy (training + sim rate).
     # One process per heavy module; fewer workers starve the Rerun bridge.
     _n_workers = 10
-    # Real hardware needs the arms held -- kd damping alone would let
-    # them sag toward singular configurations between trajectories.
-    _arm_holder = TaskConfig(
-        name="servo_arms",
-        type="servo",
-        joint_names=g1_arms,
+    _arm_holder = joint_trajectory_task(
+        g1_arms,
         priority=10,
-        auto_start=True,
-        params={"default_positions": ARM_DEFAULT_POSE},
+        velocity_limits={name: 1.0 for name in g1_arms},
+        hold_position_when_idle=True,
     )
     # Same nav middle as unitree-g1-nav-simple, fed by Point-LIO from the
     # MID-360, executed through the coordinator's twist_command.
