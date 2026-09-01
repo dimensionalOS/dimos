@@ -104,6 +104,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -190,6 +191,8 @@ class ManipulationModule(Module):
     # Input: occupied cells of a mapped workspace, in the planning frame. Each
     # message is a complete map, so it replaces the obstacle rather than adding.
     voxel_map: In[PointCloud2]
+    # Display only: what the grasp generator proposed, and in what order.
+    grasp_candidates: In[GraspCandidateArray]
     objects: In[list[DetObject]]
     tf: Out[TFMessage]
 
@@ -1427,6 +1430,16 @@ class ManipulationModule(Module):
             mesh_path=mesh_path,
         )
         return self._world_monitor.update_obstacle(obstacle)
+
+    async def handle_grasp_candidates(self, candidates: GraspCandidateArray) -> None:
+        """Hand the ranked proposals to the viewer.
+
+        The grasp pipeline lives in a sibling module, which owns no visualizer,
+        so the proposals travel here as a stream and reach the scene through the
+        world monitor like every other rendered thing.
+        """
+        if self._world_monitor is not None:
+            await asyncio.to_thread(self._world_monitor.show_grasp_proposals, candidates)
 
     async def handle_voxel_map(self, cloud: PointCloud2) -> None:
         """Replace the mapped workspace, held as one octree obstacle.

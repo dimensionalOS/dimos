@@ -25,6 +25,7 @@ from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import Out
 from dimos.manipulation.grasp_verification import (
     GraspVerificationConfig,
     GripperSettle,
@@ -57,6 +58,11 @@ class PickAndPlaceModule(Module):
     """Coordinate scene registration, grasp generation, and manipulation execution."""
 
     config: PickAndPlaceModuleConfig
+    # Published so a viewer can show what the generator proposed and in what
+    # order. The RPC only answers after the fact, which is no help while the arm
+    # is choosing between them.
+    grasp_candidates: Out[GraspCandidateArray]
+
     _scene: ObjectSceneRegistrationSpec
     _grasp_generator: GraspGenSpec
     _manipulation: ManipulationSpec
@@ -132,6 +138,7 @@ class PickAndPlaceModule(Module):
         except (RuntimeError, ValueError) as exc:
             return SkillResult.fail("GRASP_GENERATION_FAILED", str(exc))
         self._grasp_candidates = candidates
+        self.grasp_candidates.publish(candidates)
         if candidates.header.frame_id != self.config.planning_frame:
             return SkillResult.fail(
                 "GRASP_FRAME_MISMATCH",
@@ -231,6 +238,7 @@ class PickAndPlaceModule(Module):
 
     def _clear_selection(self) -> None:
         self._grasp_candidates = GraspCandidateArray()
+        self.grasp_candidates.publish(GraspCandidateArray())
         self._selected_object_id = None
         self._selected_grasp = None
 

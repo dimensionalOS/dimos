@@ -74,6 +74,19 @@ into it can only ever be rejected. The pregrasp-to-grasp leg and the retreat are
 therefore straight-line `move_linear` servos with collision checking off; only
 the approach to the pregrasp pose is a checked plan.
 
+## Seeing the proposals
+
+The viser scene draws the ranked proposals as pose glyphs: an approach axis with
+the closing axis across it, coloured best-green through worst-orange so the
+ordering reads at a glance, with the top three drawn thicker and labelled with
+their score. Only the leading twenty are drawn — a hundred glyphs bury the
+ranking they exist to show. `manipulation.grasp-proposals` in the Scene panel
+toggles them.
+
+The markers are pose indicators, not a gripper: what they promise is where a
+grasp points and in what order the generator ranked it. To see what the arm will
+actually do with one, watch the plan preview.
+
 ## The scene
 
 The scene is an enclosed 2.6 m by 3.0 m room. The xArm is bolted to the world

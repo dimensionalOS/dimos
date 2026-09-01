@@ -26,6 +26,7 @@ from typing import Any, Protocol, TypeAlias, cast
 import xml.etree.ElementTree as ET
 
 import numpy as np
+from numpy.typing import NDArray
 import trimesh
 from yourdfpy import URDF  # type: ignore[import-untyped]
 
@@ -43,6 +44,8 @@ from dimos.manipulation.visualization.viser.runtime import (
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
@@ -95,6 +98,22 @@ OBSTACLE_DEFAULT_RGBA = DEFAULT_OBSTACLE_RGBA
 OBSTACLE_FALLBACK_COLOR = (55, 190, 210)
 OBSTACLE_FALLBACK_OPACITY = 0.55
 OBSTACLE_PROXY_COLOR = (255, 45, 25)
+GRASP_PROPOSAL_NAMESPACE = "/manipulation/grasp-proposals"
+# Best rank green through worst orange, so the ordering reads at a glance.
+GRASP_PROPOSAL_BEST_COLOR = (60, 220, 60)
+GRASP_PROPOSAL_WORST_COLOR = (255, 160, 60)
+# Drawing every proposal of a hundred buries the ranking; the leaders are what
+# matters when you are deciding whether the generator is pointing anywhere sane.
+GRASP_PROPOSAL_DRAW_LIMIT = 20
+# The leaders are drawn thicker and labelled with their score.
+GRASP_PROPOSAL_EMPHASIS_COUNT = 3
+# Glyph geometry, in metres. Deliberately not the gripper: this marks where a
+# grasp points, and a jaw-shaped drawing sized by anything but the configured
+# sweep volume would be a claim about the hardware that nothing checks.
+GRASP_PROPOSAL_APPROACH_LENGTH = 0.05
+GRASP_PROPOSAL_CLOSING_HALF_WIDTH = 0.02
+GRASP_PROPOSAL_WIDTH = 1.5
+GRASP_PROPOSAL_EMPHASIS_WIDTH = 3.5
 
 
 class RobotDisplayMode(StrEnum):
@@ -140,6 +159,8 @@ class ViserManipulationScene:
         self._obstacles_visible = True
         self._obstacle_gui_handles: list[object] = []
         self._obstacle_warning_handle: Any | None = None
+        self._grasp_proposal_handles: list[Any] = []
+        self._grasp_proposals_visible = True
         self._closed = False
         self._ensure_obstacle_control()
         self._ensure_reference_grid()
@@ -287,6 +308,111 @@ class ViserManipulationScene:
             for obstacle_id in list(self._obstacle_handles):
                 self.remove_vis_obstacle(obstacle_id)
 
+    def set_grasp_proposals_visible(self, visible: bool) -> None:
+        """Toggle the proposal markers without discarding their scene handles."""
+        with self._scene_lock:
+            if self._closed:
+                return
+            self._grasp_proposals_visible = bool(visible)
+            for handle in self._grasp_proposal_handles:
+                self._set_handle_visibility(handle, self._grasp_proposals_visible)
+
+    def show_grasp_proposals(self, candidates: GraspCandidateArray) -> None:
+        """Draw the ranked proposals as pose glyphs, best first.
+
+        One line-segment node carries every glyph, plus a label per emphasised
+        leader. Scores are only meaningful against each other, so rank drives
+        the colour rather than the absolute value. An empty array clears.
+        """
+        with self._scene_lock:
+            if self._closed:
+                return
+            self.clear_grasp_proposals()
+            drawn = list(candidates.candidates[:GRASP_PROPOSAL_DRAW_LIMIT])
+            if not drawn:
+                return
+            emphasis = min(GRASP_PROPOSAL_EMPHASIS_COUNT, len(drawn))
+            handles: list[Any] = []
+            for start, stop, width in (
+                (emphasis, len(drawn), GRASP_PROPOSAL_WIDTH),
+                (0, emphasis, GRASP_PROPOSAL_EMPHASIS_WIDTH),
+            ):
+                if start >= stop:
+                    continue
+                segments, colors = self._grasp_proposal_segments(drawn, start, stop, len(drawn))
+                handles.append(
+                    self.server.scene.add_line_segments(
+                        f"{GRASP_PROPOSAL_NAMESPACE}/rank-{start}",
+                        points=segments,
+                        colors=colors,
+                        line_width=width,
+                        visible=self._grasp_proposals_visible,
+                    )
+                )
+            for rank in range(emphasis):
+                pose = drawn[rank].pose
+                handles.append(
+                    self.server.scene.add_label(
+                        f"{GRASP_PROPOSAL_NAMESPACE}/label-{rank}",
+                        f"#{rank} {drawn[rank].score:.3f}",
+                        position=(
+                            float(pose.position.x),
+                            float(pose.position.y),
+                            float(pose.position.z),
+                        ),
+                        visible=self._grasp_proposals_visible,
+                    )
+                )
+            self._grasp_proposal_handles = handles
+
+    def clear_grasp_proposals(self) -> None:
+        """Remove every proposal marker while retaining the viewer's toggle."""
+        with self._scene_lock:
+            for handle in self._grasp_proposal_handles:
+                self._remove_scene_handle(handle)
+            self._grasp_proposal_handles = []
+
+    @staticmethod
+    def _grasp_proposal_segments(
+        candidates: Sequence[GraspCandidate], start: int, stop: int, total: int
+    ) -> tuple[NDArray[np.float32], NDArray[np.uint8]]:
+        """Two segments per grasp: the approach axis, and the closing axis across it.
+
+        Both arrays are shaped the way ``add_line_segments`` requires: (N, 2, 3)
+        for the endpoints, and one colour per endpoint rather than per segment.
+        """
+        segments: list[NDArray[np.float32]] = []
+        colors: list[tuple[tuple[int, int, int], tuple[int, int, int]]] = []
+        local = np.array(
+            [
+                [0.0, 0.0, -GRASP_PROPOSAL_APPROACH_LENGTH],
+                [0.0, 0.0, 0.0],
+                [0.0, -GRASP_PROPOSAL_CLOSING_HALF_WIDTH, 0.0],
+                [0.0, GRASP_PROPOSAL_CLOSING_HALF_WIDTH, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        for rank in range(start, stop):
+            pose = candidates[rank].pose
+            rotation = np.asarray(pose.orientation.to_rotation_matrix(), dtype=np.float32)
+            origin = np.asarray(
+                [pose.position.x, pose.position.y, pose.position.z], dtype=np.float32
+            )
+            points = local @ rotation.T + origin
+            segments.append(points.reshape(2, 2, 3))
+            color = ViserManipulationScene._grasp_rank_color(rank, total)
+            colors.extend([(color, color)] * 2)
+        return (
+            np.concatenate(segments).astype(np.float32),
+            np.asarray(colors, dtype=np.uint8),
+        )
+
+    @staticmethod
+    def _grasp_rank_color(rank: int, total: int) -> tuple[int, int, int]:
+        t = 0.0 if total <= 1 else rank / (total - 1)
+        best, worst = GRASP_PROPOSAL_BEST_COLOR, GRASP_PROPOSAL_WORST_COLOR
+        return tuple(round(b + (w - b) * t) for b, w in zip(best, worst, strict=True))  # type: ignore[return-value]
+
     def show_obstacle_warning(self, message: str) -> None:
         """Expose a persistent renderer warning in the frontend when available."""
         with self._scene_lock:
@@ -305,8 +431,12 @@ class ViserManipulationScene:
             self._obstacle_gui_handles.append(folder)
             with folder:
                 handle = self.server.gui.add_checkbox("manipulation.obstacles", initial_value=True)
+                proposals = self.server.gui.add_checkbox(
+                    "manipulation.grasp-proposals", initial_value=True
+                )
             handle.on_update(lambda event: self.set_obstacles_visible(event.target.value))
-            self._obstacle_gui_handles.append(handle)
+            proposals.on_update(lambda event: self.set_grasp_proposals_visible(event.target.value))
+            self._obstacle_gui_handles.extend((handle, proposals))
         except (AttributeError, TypeError):
             self._obstacle_gui_handles.clear()
 

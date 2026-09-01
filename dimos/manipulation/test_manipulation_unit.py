@@ -515,6 +515,7 @@ class TestPlanningInitialization:
         module.coordinator_joint_state = None
         module.voxel_map = None
         module.objects = None
+        module.grasp_candidates = None
         initialize_planning = mocker.patch.object(module, "_initialize_planning")
         initialize_execution = mocker.patch.object(module, "_initialize_execution")
 
@@ -527,6 +528,7 @@ class TestPlanningInitialization:
         module.coordinator_joint_state = None
         module.voxel_map = None
         module.objects = None
+        module.grasp_candidates = None
         initialize_planning = mocker.patch.object(module, "_initialize_planning")
         initialize_execution = mocker.patch.object(module, "_initialize_execution")
 
@@ -549,6 +551,7 @@ class TestPlanningInitialization:
         module.coordinator_joint_state = None
         module.voxel_map = None
         module.objects = None
+        module.grasp_candidates = None
         observed_status: list[ExecutionStatus] = []
 
         def observe_state() -> None:

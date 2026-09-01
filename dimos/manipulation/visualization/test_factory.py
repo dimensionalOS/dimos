@@ -42,6 +42,7 @@ from dimos.manipulation.visualization.config import (
 from dimos.manipulation.visualization.factory import create_manipulation_visualization
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.robot.assets.model import RobotModel
@@ -81,6 +82,9 @@ class FakeVisualization:
         return None
 
     def clear_vis_obstacles(self) -> None:
+        return None
+
+    def show_grasp_proposals(self, candidates):
         return None
 
 
@@ -231,6 +235,9 @@ class FakeMeshcatWorld(FakeWorld):
     def clear_vis_obstacles(self) -> None:
         self.visualization_calls.append(("clear_vis_obstacles",))
 
+    def show_grasp_proposals(self, candidates):
+        self.visualization_calls.append(("show_grasp_proposals", candidates))
+
 
 def test_config_defaults_to_no_visualization() -> None:
     config = ManipulationModuleConfig(model=FakeWorld().get_model_config())
@@ -320,6 +327,8 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
     visualization.add_vis_obstacle("box", obstacle)
     visualization.remove_vis_obstacle("box")
     visualization.clear_vis_obstacles()
+    proposals = GraspCandidateArray()
+    visualization.show_grasp_proposals(proposals)
     assert fake_world.visualization_calls == [
         ("initialize", session),
         ("get_visualization_url",),
@@ -330,6 +339,7 @@ def test_create_visualization_meshcat_accepts_structural_world() -> None:
         ("add_vis_obstacle", "box", obstacle),
         ("remove_vis_obstacle", "box"),
         ("clear_vis_obstacles",),
+        ("show_grasp_proposals", proposals),
     ]
     assert fake_world.native_calls == []
 
@@ -378,6 +388,7 @@ def test_drake_meshcat_visualization_lifecycle_is_noop_without_meshcat() -> None
     world.add_vis_obstacle("box", obstacle)
     world.remove_vis_obstacle("box")
     world.clear_vis_obstacles()
+    world.show_grasp_proposals(GraspCandidateArray())
     world.cancel_preview_animation()
     world.close()
 
