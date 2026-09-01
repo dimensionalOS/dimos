@@ -32,11 +32,11 @@ from __future__ import annotations
 import json
 import math
 import os
+from pathlib import Path
 import signal
 import struct
 import subprocess
 import time
-from pathlib import Path
 
 import lcm as lcm_module
 import pytest
@@ -77,9 +77,7 @@ def _udp_record(ts: float, src_port: int, payload: bytes) -> bytes:
     udp = struct.pack(">HHHH", src_port, _HOST_POINT_PORT, 8 + len(payload), 0) + payload
     ip = bytes([0x45]) + bytes(8) + bytes([17]) + bytes(10)
     frame = bytes(12) + b"\x08\x00" + ip + udp
-    return (
-        struct.pack("<IIII", int(ts), int((ts % 1) * 1e6), len(frame), len(frame)) + frame
-    )
+    return struct.pack("<IIII", int(ts), int((ts % 1) * 1e6), len(frame), len(frame)) + frame
 
 
 @pytest.fixture(scope="session")
@@ -121,7 +119,9 @@ def synth_pcap(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def _require_binary(name: str) -> Path:
     binary = _RELEASE / name
     if not binary.exists():
-        pytest.skip(f"{binary} missing; run: cargo build --release -p dimos-livox -p virtual-mid360")
+        pytest.skip(
+            f"{binary} missing; run: cargo build --release -p dimos-livox -p virtual-mid360"
+        )
     return binary
 
 
@@ -154,9 +154,7 @@ def _collect(topics: dict[str, type], seconds: float) -> dict[str, list]:
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         lc.handle_timeout(200)
-    return {
-        topic: [topics[topic].lcm_decode(data) for data in raw[topic]] for topic in topics
-    }
+    return {topic: [topics[topic].lcm_decode(data) for data in raw[topic]] for topic in topics}
 
 
 def _terminate(*processes: subprocess.Popen[bytes]) -> None:
@@ -214,9 +212,7 @@ def test_pcap_replay_publishes_streams(synth_pcap: Path) -> None:
     }
     process = _spawn(binary, blob)
     try:
-        received = _collect(
-            {"/e2e_pcap_lidar": PointCloud2, "/e2e_pcap_imu": Imu}, seconds=4.0
-        )
+        received = _collect({"/e2e_pcap_lidar": PointCloud2, "/e2e_pcap_imu": Imu}, seconds=4.0)
     finally:
         _terminate(process)
     _assert_stream_contents(received["/e2e_pcap_lidar"], received["/e2e_pcap_imu"])
@@ -258,9 +254,7 @@ def test_live_loopback_handshake_and_stream(synth_pcap: Path) -> None:
     virtual = _spawn(virtual_binary, virtual_blob)
     try:
         # Handshake arms the virtual within ~1 s, then 2 s of half-rate stream.
-        received = _collect(
-            {"/e2e_live_lidar": PointCloud2, "/e2e_live_imu": Imu}, seconds=8.0
-        )
+        received = _collect({"/e2e_live_lidar": PointCloud2, "/e2e_live_imu": Imu}, seconds=8.0)
     finally:
         _terminate(driver, virtual)
     _assert_stream_contents(received["/e2e_live_lidar"], received["/e2e_live_imu"])
