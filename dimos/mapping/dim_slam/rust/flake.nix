@@ -11,9 +11,11 @@
     # viable alternative for reaching local path deps outside the flake dir currently
     # presumably an alternative will be added before this is removed.
     dimos-repo = { url = "git+file:../../../.."; flake = false; };
+    crate2nix.url = "github:nix-community/crate2nix";
+    crate2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, flake-utils, cu-vslam-rs, dimos-repo }:
+  outputs = { self, nixpkgs, flake-utils, cu-vslam-rs, dimos-repo, crate2nix }:
     # Not eachDefaultSystem: nixpkgs 26.11 dropped x86_64-darwin, and merely naming
     # it is an eval error.
     flake-utils.lib.eachSystem [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ] (system:
@@ -44,24 +46,31 @@
           cp -r ${dimos-repo}/native/rust/dimos-module-macros $out/native/rust/dimos-module-macros
         '';
 
+        # One derivation per crate rather than one vendored blob, so a dependency bump
+        # only rebuilds what changed and the SDK variants share everything below
+        # cu_vslam_rs.
+        # src, not the crate dir: the whole tree has to be visible or the crate's
+        # ../../../../native path dependency escapes it.
+        generatedCargoNix = crate2nix.tools.${system}.generatedCargoNix {
+          name = "dim-slam-module";
+          inherit src;
+          cargoToml = "dimos/mapping/dim_slam/rust/Cargo.toml";
+        };
+
         packageFor = variant: let sdkPackage = sdkPackages."sdk-${variant}"; in
-          pkgs.rustPlatform.buildRustPackage {
-            pname = "dim-slam-module";
-            version = "0.1.0";
-            inherit src;
-            cargoRoot = "dimos/mapping/dim_slam/rust";
-            buildAndTestSubdir = "dimos/mapping/dim_slam/rust";
-            cargoLock = {
-              lockFile = ./Cargo.lock;
-              allowBuiltinFetchGit = true;
+          (import generatedCargoNix {
+            inherit pkgs;
+            buildRustCrateForPkgs = cratePkgs: cratePkgs.buildRustCrate.override {
+              defaultCrateOverrides = cratePkgs.defaultCrateOverrides // {
+                # cu_vslam_rs's build.rs compiles its shim against this SDK.
+                cu_vslam_rs = _: { CUVSLAM_SDK_DIR = sdkPackage; };
+                # buildRustCrate names DEP_ vars after the crate, cargo after the
+                # `links` key, so cu_vslam_rs's lib_dir never reaches our build.rs
+                # and the binary comes out with no rpath for libcuvslam.
+                dim-slam-module = _: { DEP_CUVSLAM_LIB_DIR = "${sdkPackage}/lib"; };
+              };
             };
-            # cu_vslam_rs's build.rs compiles its shim against this SDK.
-            env.CUVSLAM_SDK_DIR = sdkPackage;
-            # The test binary links libcuvslam, whose CUDA runtime wants a GPU
-            # driver the build sandbox lacks; unit tests run via plain cargo test.
-            doCheck = false;
-            meta.mainProgram = "dim_slam";
-          };
+          }).rootCrate.build;
       in {
         # No `default`: nix sees neither /proc/device-tree nor the installed driver, so orin
         # vs thor and cuda12 vs cuda13 are not decidable here, and guessing one builds a
