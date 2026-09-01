@@ -369,17 +369,14 @@
           );
           buildInputs = depsField "buildInputs";
           nativeBuildInputs = depsField "nativeBuildInputs";
-          # Vendored from the lock file's own per-crate checksums, so there is
-          # no aggregate `cargoHash` to re-paste whenever Cargo.lock moves. Git
-          # dependencies are the exception -- the lock records no checksum for
-          # them -- but the hash below is keyed to a pinned rev, so it changes
-          # only when that rev does, never on a dependabot bump.
-          cargoLock = {
-            lockFile = ./Cargo.lock;
-            outputHashes = {
-              "dimos-lcm-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
-            };
-          };
+          # Vendored by cargo rather than by `cargoLock.lockFile`, which would
+          # need no hash at all: nixpkgs downloads crates from crates.io's API,
+          # which 403s its `curl/*` user agent. Its CDN serves them fine, but
+          # the `extraRegistries` override for that also emits a second
+          # `[source]` block for crates-io, and cargo refuses the duplicate.
+          # So this hash has to be re-pasted whenever Cargo.lock moves; the CI
+          # failure prints the new value.
+          cargoHash = "sha256-PRncaRtNrPM55JS7QPvwvRUm2bkcMwZOdeZGjVsWwpM=";
           cargoBuildFlags = builtins.concatMap (name: [ "-p" name ]) (depsField "binaries");
           doCheck = false;
         };
