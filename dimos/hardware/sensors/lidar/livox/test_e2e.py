@@ -153,9 +153,7 @@ def spawn() -> Generator[Spawn]:
             process.kill()
 
 
-def _collect(
-    topics: dict[str, type], seconds: float, enough: dict[str, int]
-) -> dict[str, list]:
+def _collect(topics: dict[str, type], seconds: float, enough: dict[str, int]) -> dict[str, list]:
     """Decode each topic until every count in enough is met or time runs out."""
     raw: dict[str, list[bytes]] = {topic: [] for topic in topics}
     lc = lcm_module.LCM()
