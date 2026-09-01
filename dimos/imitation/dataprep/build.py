@@ -26,7 +26,7 @@ from collections.abc import Iterator
 from itertools import chain
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from dimos.imitation.dataprep.core import (
     DataPrepConfig,
@@ -36,7 +36,6 @@ from dimos.imitation.dataprep.core import (
     Sample,
     Writer,
     extract_episodes,
-    get_inspector,
     get_writer,
     inspect_episode_quality,
     inspect_episodes,
@@ -56,9 +55,20 @@ def _open_recording(path: str | Path) -> Store:
 
         return SqliteStore(path=str(source), must_exist=True)
     if source.suffix == ".mcap":
+        from dimos.memory.codecs.lcm import LcmCodec
         from dimos.memory.store.mcap import McapStore
+        from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
+        from dimos.msgs.protocol import DimosMsg
+        from dimos.msgs.sensor_msgs.JointState import JointState
 
-        return McapStore(path=str(source))
+        return McapStore(
+            path=str(source),
+            codecs={
+                "coordinator_joint_state": LcmCodec(JointState),
+                "applied_joint_position_command": LcmCodec(JointState),
+                "status": LcmCodec(cast("type[DimosMsg]", EpisodeStatus)),
+            },
+        )
     raise ValueError(f"Unsupported recording {str(source)!r}: expected a .db or .mcap artifact")
 
 
@@ -293,25 +303,25 @@ def inspect_recording(
         store.stop()
 
 
-def inspect_dataset(path: Path | str, fmt: str | None = None) -> dict[str, Any]:
+def inspect_dataset(path: Path | str) -> dict[str, Any]:
     """Summarize a source recording or built dataset.
 
     Recordings report stream and episode counts plus any episode left open at
     EOF. Built datasets report feature shapes/dtypes, frame counts, and shape
-    uniformity. ``fmt`` is auto-detected when omitted.
+    uniformity. The format is detected from the path.
     """
     p = Path(path)
-    if fmt is None:
-        if p.suffix in {".db", ".mcap"}:
-            return inspect_recording(p)
-        if p.suffix in (".h5", ".hdf5"):
-            fmt = "hdf5"
-        elif (p / "meta" / "info.json").exists():
-            fmt = "lerobot"
-        else:
-            raise ValueError(
-                f"Cannot detect data format at {p}: expected a recording .db/.mcap, "
-                f"a .hdf5 file, "
-                f"or a lerobot directory with meta/info.json. Pass --format explicitly."
-            )
-    return get_inspector(fmt)(p)
+    if p.suffix in {".db", ".mcap"}:
+        return inspect_recording(p)
+    if p.suffix in (".h5", ".hdf5"):
+        from dimos.imitation.dataprep.formats.hdf5.reader import inspect
+
+        return inspect(p)
+    if (p / "meta" / "info.json").exists():
+        from dimos.imitation.dataprep.lerobot import inspect_lerobot_dataset
+
+        return inspect_lerobot_dataset(p)
+    raise ValueError(
+        f"Cannot detect data format at {p}: expected a recording .db/.mcap, "
+        "a .hdf5 file, or a lerobot directory with meta/info.json."
+    )

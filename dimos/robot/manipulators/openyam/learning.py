@@ -14,8 +14,6 @@
 
 """The data contract shared by OpenYAM collection, training, and rollout."""
 
-from pathlib import Path
-
 from pydantic import Field
 
 from dimos.imitation.dataprep.core import (
@@ -45,18 +43,13 @@ class OpenYamLearningProfile(BaseConfig):
     camera_frame_prefix: str = "wrist"
     camera_frame_id: str = "wrist_camera_link"
     image_feature: str = "observation.images.wrist"
+    repo_id: str = "local/openyam-wrist"
 
-    def dataprep_config(
-        self,
-        *,
-        source: str | Path,
-        output: Path,
-        repo_id: str = "local/openyam-wrist",
-    ) -> DataPrepConfig:
+    def dataprep_config(self) -> DataPrepConfig:
         """Build the matching native-recording to LeRobot conversion config."""
         joint_names = list(self.joint_names)
         return DataPrepConfig(
-            source=str(source),
+            source="",
             observation={
                 self.image_feature: FeatureSpec(
                     stream="color_image",
@@ -95,8 +88,8 @@ class OpenYamLearningProfile(BaseConfig):
             ),
             output=OutputConfig(
                 format="lerobot",
-                path=output,
-                metadata={"repo_id": repo_id, "robot_type": self.robot_type},
+                path=DataPrepConfig().output.path,
+                metadata={"repo_id": self.repo_id, "robot_type": self.robot_type},
             ),
         )
 
