@@ -1,38 +1,39 @@
-# xArm Grasp Simulation
+# xArm Grasping
 
-`xarm-grasp-sim` launches the complete room demo: xArm7 MuJoCo simulation,
-wrist-camera OWL-ViT scene registration, perception-backed planner obstacles,
-composed pick-and-place, and the control coordinator.
+Two blueprints, differing only in which grasp provider they compose. Both run on
+the real arm by default and fall back to the MuJoCo room scene with
+`--simulation`:
 
-```bash
-MUJOCO_GL=glfw dimos run xarm-grasp-sim --headless false
-```
-
-The blueprint ships `headless: True`, so `--headless false` is what opens the
-MuJoCo passive viewer. To run without a window instead, drop the flag and use
-the offscreen renderer:
+| Blueprint | Grasps |
+|---|---|
+| `xarm-grasp` | one top-down heuristic grasp, score 1.0 |
+| `xarm-grasp-graspgenx` | up to 100 ranked learned grasps |
 
 ```bash
-MUJOCO_GL=egl dimos run xarm-grasp-sim
+dimos run xarm-grasp-graspgenx --xarm7-ip 192.168.1.x     # hardware
+dimos run xarm-grasp-graspgenx --simulation mujoco        # the room scene
 ```
 
-## Grasp providers
+Miss `--xarm7-ip` on hardware and the arm has no address to reach; leave
+`--simulation` set and everything reverts to MuJoCo regardless of the IP.
 
-The scene composes one `GraspGenSpec` provider, chosen by blueprint:
+Both carry the coordinator, the wrist camera, scene registration, a live voxel
+map, and pick-and-place. `xarm-grasp-agent` and `xarm-grasp-graspgenx-agent` add
+an MCP agent over the top; drive those with `dimos agent-send "..."`.
 
-| Blueprint | Provider | Output |
-|---|---|---|
-| `xarm-grasp-sim` | `HeuristicGraspModule` | one top-down grasp, score 1.0 |
-| `xarm-grasp-sim-graspgenx` | `GraspGenXModule` | up to 100 ranked learned grasps |
-
-`xarm-grasp-sim-graspgenx` needs the `graspgenx` extra and a CUDA GPU. The
-checkpoints download once from Hugging Face on first use and are cached under
-`~/.cache/huggingface`; no other setup is required.
+`xarm-grasp-graspgenx` needs the `graspgenx` extra and a CUDA GPU. Checkpoints
+download once from Hugging Face and cache under `~/.cache/huggingface`.
 
 ```bash
 uv sync --extra graspgenx
-MUJOCO_GL=egl dimos run xarm-grasp-sim-graspgenx
 ```
+
+What differs between the arm and the sim is decided at import time: the hardware
+adapter, the base pose, the camera (RealSense plus its mount edge, versus the
+MuJoCo wrist camera), the detector backends, and the home pose.
+
+The manipulation viewer is on viser at `http://127.0.0.1:8095`. To watch the
+MuJoCo scene itself, add `--headless false` with `MUJOCO_GL=glfw`.
 
 ## Voxel map obstacles
 
@@ -66,40 +67,6 @@ Because the target object is itself mapped geometry, a collision-checked plan
 into it can only ever be rejected. The pregrasp-to-grasp leg and the retreat are
 therefore straight-line `move_linear` servos with collision checking off; only
 the approach to the pregrasp pose is a checked plan.
-
-## Driving it with an agent
-
-Two agentic variants add `McpServer` plus an `McpClient` agent over the same
-scene, so the skills are driven in natural language instead of by hand:
-
-| Blueprint | Provider |
-|---|---|
-| `xarm-grasp-sim-agent` | heuristic |
-| `xarm-grasp-sim-graspgenx-agent` | GraspGenX |
-
-```bash
-MUJOCO_GL=egl dimos run xarm-grasp-sim-graspgenx-agent
-```
-
-Then talk to it from a second terminal:
-
-```bash
-dimos agent-send "scan the table, then pick up the bottle"
-dimos agent-send "put it down at x=0.45 y=-0.25 z=0.25"
-```
-
-`dimos mcp` lists the tools the agent sees; the MCP server is on
-`http://localhost:9990/mcp`. Watch the agent's replies with
-`app.peek_stream("agent", 5.0)`, or read them in the run's log.
-
-These variants set `n_workers=6`. The scene already carries a detector, a
-segmenter and a voxel mapper, and adding the agent on top packs all of them into
-one worker, where the detector's lazy `transformers` import fails outright with
-`Could not import module 'Owlv2ForObjectDetection'`.
-
-Since the agent picks its own prompt words, the label caveat above applies to it
-too: ask it for the object by position when a name comes back attached to the
-wrong thing.
 
 ## The scene
 
@@ -138,7 +105,7 @@ dimos shell
 Then run this complete scan and obstacle-inspection sequence:
 
 ```python skip
-from dimos.robot.manipulators.xarm.blueprints.simulation import XARM_GRASP_PROMPTS
+from dimos.robot.manipulators.xarm.blueprints.grasp import XARM_GRASP_PROMPTS
 
 app.ManipulationSkills.go_init()
 scan = app.PickAndPlaceModule.scan_objects(XARM_GRASP_PROMPTS)

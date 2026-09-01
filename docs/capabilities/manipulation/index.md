@@ -403,7 +403,7 @@ telemetry snapshots.
 
 ```bash
 # Coordinator + perception + manipulation + LLM agent (single command)
-XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
+dimos run xarm-grasp-agent --xarm7-ip <ip>
 ```
 
 For a simulation walkthrough, see [Agentic xArm simulation](/docs/capabilities/manipulation/agentic.md).
@@ -474,8 +474,10 @@ planner is locked for its whole native call.
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
 | `dual-xarm6-planner-coordinator` | Dual XArm6 planning with mock coordinator hardware |
-| `xarm-perception` | XArm7 + RealSense camera for perception |
-| `xarm-perception-agent` | XArm7 perception + LLM agent |
+| [`xarm-grasp`](/docs/capabilities/manipulation/xarm-grasp.md) | XArm7 grasping stack, heuristic grasps; `--simulation` for MuJoCo |
+| [`xarm-grasp-graspgenx`](/docs/capabilities/manipulation/xarm-grasp.md) | The same stack with learned GraspGenX grasps |
+| `xarm-grasp-agent` | XArm7 grasping + LLM agent |
+| `xarm-grasp-graspgenx-agent` | Learned grasping + LLM agent |
 | `xarm-perception-sim` | XArm7 simulation perception stack |
 | [`xarm-perception-sim-agent`](/docs/capabilities/manipulation/agentic.md) | XArm7 simulation perception stack + LLM agent |
 
