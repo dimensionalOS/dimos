@@ -84,9 +84,15 @@ def create_or_attach_shm(
 
 def _try_attach(name: str) -> tuple[SharedMemory | None, str]:
     try:
-        return unregister(SharedMemory(name=name)), ""
+        shm = unregister(SharedMemory(name=name))
     except FileNotFoundError:
         return None, "segment does not exist"
     except ValueError:
         # shm_open has landed but ftruncate has not: the creation window.
         return None, "creator has not sized the segment yet"
+    if shm.size == 0:
+        # fstat may observe size 0 before the creator's ftruncate while mmap(0)
+        # succeeds just after it, leaving SharedMemory.size stale at zero.
+        shm.close()
+        return None, "creator has not sized the segment yet"
+    return shm, ""
