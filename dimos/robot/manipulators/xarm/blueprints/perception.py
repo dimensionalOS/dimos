@@ -54,10 +54,9 @@ xarm_perception = autoconnect(
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
     HeuristicGraspModule.blueprint(),
-    RealSenseCamera.blueprint(
-        base_frame_id="link7",
-        base_transform=XARM_PERCEPTION_CAMERA_TRANSFORM,
-    ),
+    # TODO: tf tree is broken here; RealSenseCamera no longer publishes its mount
+    # edge, so camera_link needs a parent (e.g. from the arm) to resolve into world.
+    RealSenseCamera.blueprint(),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
         detector_backend="moondream",

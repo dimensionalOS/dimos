@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import threading
 import time
 from typing import Any, Literal
@@ -23,6 +25,8 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.models.segmentation.edge_tam import BoxPromptImageSegmenter
+from dimos.models.segmentation.yoloe import YoloeBoxSegmenter
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -52,6 +56,8 @@ class ObjectSceneRegistrationConfig(ModuleConfig):
     prompt_mode: YoloePromptMode = YoloePromptMode.LRPC
     detector_backend: Literal["yoloe", "owlv2", "moondream"] = "yoloe"
     segmentation_backend: Literal["yolo", "edgetam"] = "yolo"
+    detector_confidence: float = 0.6
+    segmentation_confidence: float = 0.05
     detect_on_request: bool = False
     distance_threshold: float = 0.2
     min_detections_for_permanent: int = 6
@@ -74,7 +80,7 @@ class ObjectSceneRegistrationModule(Module):
     pointcloud: Out[PointCloud2]
 
     _detector: Any | None = None
-    _segmenter: Any | None = None
+    _segmenter: BoxPromptImageSegmenter | None = None
     _camera_info: CameraInfo | None = None
     _object_db: ObjectDB
     _text_prompts: list[str]
@@ -92,7 +98,8 @@ class ObjectSceneRegistrationModule(Module):
         self._prompt_mode = self.config.prompt_mode
         self._detector_backend = self.config.detector_backend
         self._segmentation_backend = self.config.segmentation_backend
-        self._detector_confidence = 0.6
+        self._detector_confidence = self.config.detector_confidence
+        self._segmentation_confidence = self.config.segmentation_confidence
         self._detect_on_request = self.config.detect_on_request
         self._object_db = ObjectDB(
             distance_threshold=self.config.distance_threshold,
@@ -129,15 +136,7 @@ class ObjectSceneRegistrationModule(Module):
                 conf=self._detector_confidence,
             )
 
-        if self._segmentation_backend == "edgetam":
-            try:
-                from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
-
-                self._segmenter = EdgeTAMImageSegmenter()
-            except ModuleNotFoundError as e:
-                raise ModuleNotFoundError(
-                    "EdgeTAM requires the optional dependencies from dimos[misc]"
-                ) from e
+        self._segmenter = self._create_segmenter()
 
         self.camera_info.subscribe(lambda msg: setattr(self, "_camera_info", msg))
 
@@ -149,15 +148,34 @@ class ObjectSceneRegistrationModule(Module):
         )
         backpressure(aligned_frames).subscribe(self._on_aligned_frames)
 
+    def _create_segmenter(self) -> BoxPromptImageSegmenter | None:
+        if self._segmentation_backend == "yolo":
+            if self._detector_backend == "yoloe":
+                return None
+            return YoloeBoxSegmenter(confidence=self._segmentation_confidence)
+
+        if self._segmentation_backend == "edgetam":
+            try:
+                from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
+
+                return EdgeTAMImageSegmenter()
+            except ModuleNotFoundError as e:
+                raise ModuleNotFoundError(
+                    "EdgeTAM requires the optional dependencies from dimos[misc]"
+                ) from e
+        return None
+
     @rpc
     def stop(self) -> None:
         """Stop the module and clean up resources."""
 
         with self._processing_lock:
+            if self._segmenter is not None:
+                self._segmenter.stop()
+            self._segmenter = None
             if self._detector:
                 self._detector.stop()
                 self._detector = None
-            self._segmenter = None
 
             self._object_db.clear()
             self._latest_aligned_frames = None
@@ -389,6 +407,17 @@ class ObjectSceneRegistrationModule(Module):
             data=depth_cv, format=ImageFormat.DEPTH, frame_id=depth_msg.frame_id, ts=depth_msg.ts
         )
 
+        camera_transform = None
+        if self._target_frame != color_image.frame_id:
+            camera_transform = self.tfbuffer.get(
+                self._target_frame,
+                color_image.frame_id,
+                color_image.ts,
+                0.1,
+                forward_tolerance=0.2,
+            )
+
+        detections_2d: ImageDetections2D[Any]
         if self._detector_backend == "owlv2":
             if not self._text_prompts:
                 detections_2d = ImageDetections2D(color_image, [])
@@ -421,31 +450,24 @@ class ObjectSceneRegistrationModule(Module):
         self.detections_2d.publish(detections_2d_msg)
 
         # Process 3D detections
-        return self._process_3d_detections(detections_2d, color_image, depth_image)
+        return self._process_3d_detections(
+            detections_2d, color_image, depth_image, camera_transform
+        )
 
     def _process_3d_detections(
         self,
         detections_2d: ImageDetections2D[Any],
         color_image: Image,
         depth_image: Image,
+        camera_transform: Transform | None,
     ) -> list[DetObject]:
         """Convert 2D detections to 3D and publish."""
         if self._camera_info is None:
             return []
 
-        # Look up transform from camera frame to target frame (e.g., map)
-        camera_transform = None
-        if self._target_frame != color_image.frame_id:
-            camera_transform = self.tfbuffer.get(
-                self._target_frame,
-                color_image.frame_id,
-                color_image.ts,
-                0.1,
-                forward_tolerance=0.2,
-            )
-            if camera_transform is None:
-                logger.info("Failed to lookup transform from camera frame to target frame")
-                return []
+        if self._target_frame != color_image.frame_id and camera_transform is None:
+            logger.warning("Failed to lookup transform from camera frame to target frame")
+            return []
 
         # Cache depth and transform together, only after the lookup succeeds.
         self._latest_scene_snapshot = (depth_image, camera_transform)
