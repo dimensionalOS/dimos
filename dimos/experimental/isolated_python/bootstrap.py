@@ -27,7 +27,7 @@ from typing import Any
 
 import typer
 
-from dimos.core.isolated_python_module import IsolatedPythonModule, contract_rpc_names
+from dimos.experimental.isolated_python.module import IsolatedPythonModule, contract_rpc_names
 from dimos.spec.utils import _signatures_compatible
 
 

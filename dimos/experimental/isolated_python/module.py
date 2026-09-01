@@ -139,7 +139,7 @@ class IsolatedPythonModule(NativeModule):
             self.runtime_project,
             "python",
             "-m",
-            "dimos.core.isolated_python_bootstrap",
+            "dimos.experimental.isolated_python.bootstrap",
             "--declaration",
             f"{type(self).__module__}:{type(self).__name__}",
             "--implementation",
