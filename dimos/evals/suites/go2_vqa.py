@@ -38,7 +38,7 @@ def _generated(row: dict[str, Any]) -> EvalCase:
     expected, band = float(row["a"]), float(row["band"])
     return EvalCase(
         id=str(row["id"]),
-        inputs=str(row["q"]),
+        inputs=f"{row['q']} Answer with just the number.",
         environment=Dataset(
             str(row["dataset"]), select=(lambda s: s.streams[stream].range_time(*window),)
         ),
@@ -51,7 +51,7 @@ def _generated(row: dict[str, Any]) -> EvalCase:
 _hand: list[EvalCase] = [
     EvalCase(
         id="hk_couch_seen",
-        inputs="Did you see a couch or sofa at any point?",
+        inputs="Did you see a couch or sofa at any point? Answer yes or no.",
         environment=Dataset(
             "go2_hongkong_office",
             select=(lambda s: s.streams.color_image.range_time(150, 250),),
@@ -61,7 +61,7 @@ _hand: list[EvalCase] = [
     ),
     EvalCase(
         id="hk_plants_seen",
-        inputs="Did you see any potted plants?",
+        inputs="Did you see any potted plants? Answer yes or no.",
         environment=Dataset(
             "go2_hongkong_office", select=(lambda s: s.streams.color_image.range_time(0, 60),)
         ),

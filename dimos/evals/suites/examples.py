@@ -38,7 +38,7 @@ from dimos.evals.types import EvalCase, Suite
 # reaches the model is the agent (`qa` encodes it into one prompt).
 single_lidar_frame = EvalCase(
     id="example_single_lidar_frame",
-    inputs="How many points does the shown pointcloud contain?",
+    inputs="How many points does the shown pointcloud contain? Answer with just the number.",
     environment=Dataset("go2_short", select=(lambda s: s.streams.lidar.limit(1),)),
     grade=lambda o: within(5000.0)(20834.0, first_number(o.trajectory.final_answer)),
     tags=frozenset({"example", "encoding", "pointcloud"}),
@@ -52,7 +52,7 @@ single_lidar_frame = EvalCase(
 # downsample evenly instead.
 ten_image_range = EvalCase(
     id="example_ten_image_range",
-    inputs="Is a person visible in any of these images?",
+    inputs="Is a person visible in any of these images? Answer yes or no.",
     environment=Dataset(
         "go2_short", select=(lambda s: s.streams.color_image.range_time(58, 61).limit(10),)
     ),

@@ -31,7 +31,7 @@ _NOT_SEEN = ["a couch", "store shelves", "a swimming pool", "an office chair"]
 SUITE: Suite = [
     EvalCase(
         id="short_person_visible",
-        inputs="Is a person visible in any of these images?",
+        inputs="Is a person visible in any of these images? Answer yes or no.",
         environment=Dataset(
             "go2_short", select=(lambda s: s.streams.color_image.range_time(40, 61),)
         ),
@@ -51,14 +51,14 @@ SUITE: Suite = [
     EvalCase(
         id="short_displacement",
         inputs="How far in a straight line is your final position from your first "
-        "shown position, in meters?",
+        "shown position, in meters? Answer with just the number.",
         environment=Dataset("go2_short", select=(lambda s: s.streams.odom,)),
         grade=lambda o: within(1.5)(1.7, first_number(o.trajectory.final_answer)),
         tags=frozenset({"odom", "numeric"}),
     ),
     EvalCase(
         id="short_lidar_points",
-        inputs="How many points does the shown pointcloud contain?",
+        inputs="How many points does the shown pointcloud contain? Answer with just the number.",
         environment=Dataset("go2_short", select=(lambda s: s.streams.lidar.limit(1),)),
         grade=lambda o: within(5000.0)(20834.0, first_number(o.trajectory.final_answer)),
         tags=frozenset({"pointcloud", "numeric"}),

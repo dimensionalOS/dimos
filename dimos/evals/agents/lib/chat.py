@@ -28,11 +28,7 @@ from dimos.evals.types import Trajectory
 
 DEFAULT_MODEL = "gpt-5.6-luna"
 
-EVAL_SYSTEM_PROMPT = (
-    "You are evaluating a robot's perception and memory. Answer the question "
-    "using only the provided observations. Reply with the answer value only — "
-    "a bare number or a short phrase. No explanation, no units unless asked."
-)
+EVAL_SYSTEM_PROMPT = "Answer the question using only the provided observations."
 
 Blocks = list[str | dict[str, Any]]  # HumanMessage content blocks
 

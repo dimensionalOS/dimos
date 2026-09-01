@@ -39,10 +39,7 @@ OPENAI_URL = "https://api.openai.com/v1"
 PI_TOOLS = ("read", "bash", "edit", "write")
 
 PI_SYSTEM_PROMPT = (
-    "You are evaluating a robot's perception and memory. Answer the question "
-    "from the files and tools listed below and nothing else. Reply with the "
-    "answer value only — a bare number or a short phrase. No explanation, no "
-    "units unless asked."
+    "Answer the question from the files and tools listed below and nothing else."
 )
 
 RECORDING_HELP = (
