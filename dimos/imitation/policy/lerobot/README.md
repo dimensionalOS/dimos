@@ -9,49 +9,37 @@ The host contract subscribes to:
 - `color_image: Image`
 - `coordinator_joint_state: JointState`
 
-It publishes `joint_command: JointState` in the configured `joint_names` order.
-The receiving coordinator and hardware stack must enforce joint limits and
-other actuation safety constraints.
+It publishes arm targets through `joint_command: JointState`. When
+`gripper_joint_name` is set, it removes that element from `joint_command` and
+publishes it through `gripper_command: Float32`. The checkpoint still receives
+and returns the complete vector in `joint_names` order.
 
 ```python
-from dimos.imitation.policy.lerobot.module import (
-    LeRobotPolicyConfig,
-    LeRobotPolicyModule,
-)
+from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
 
 policy = LeRobotPolicyModule.blueprint(
-    policies={
-        "pick": LeRobotPolicyConfig(
-            policy_path="outputs/pick/checkpoints/last/pretrained_model",
-            task="pick up the object",
-        )
-    },
+    policy_path="outputs/pick/checkpoints/last/pretrained_model",
+    task="pick up the object",
     joint_names=["arm/joint1", "arm/joint2", "arm/gripper"],
-    fps=15.0,
+    gripper_joint_name="arm/gripper",
+    fps=30.0,
     robot_type="my_robot",
 )
 ```
 
-The module exposes three RPCs: `execute_learned_policy`,
-`stop_learned_policy`, and `policy_status`. Checkpoints are loaded lazily on the
-first execution. The runtime rejects missing or stale observations, missing
-joints, non-finite values, incompatible checkpoint features, and actions with
-the wrong dimension.
+The module exposes `start_rollout`, `stop_rollout`, and `rollout_status` RPCs.
+It owns one configured checkpoint and loads it lazily on the first rollout.
+The runtime rejects missing or stale observations, missing joints, non-finite
+values, incompatible checkpoint features, and actions with the wrong dimension.
 
-Run the hardware-independent process smoke example from the repository root:
-
-```bash
-uv run python examples/native-modules/python_lerobot.py
-```
-
-The example starts the real isolated runtime and calls `policy_status`, but it
-does not load the placeholder checkpoint or publish a command.
+The runtime calls LeRobot's `select_action()` at the configured rate. ACT keeps
+its action chunk internally and returns one queued action per call. Configure
+the runtime rate to match the action frequency used by the training dataset.
 
 Run isolated runtime checks with:
 
 ```bash
 cd dimos/imitation/policy/lerobot/python
-uv sync --locked --group tests
-uv run --locked --group tests pytest
-uv run --locked --group tests mypy
+uv run --locked --group tests --with-editable ../../../../../ python -m pytest
+uv run --locked --group tests --with-editable ../../../../../ python -m mypy
 ```

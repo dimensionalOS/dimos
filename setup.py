@@ -56,7 +56,7 @@ def python_is_macos_universal_binary(executable: str | None = None) -> bool:
         return False
 
 
-TEST_MODULE_PATTERNS = ("test_*.py", "conftest.py")
+TEST_MODULE_PATTERNS = ("test_*.py", "*_tests.py", "conftest.py")
 
 # The Deno relay (repo-root web/) ships inside the wheel so a pip-installed
 # dimos can run it without a checkout. Copied into build_lib below; editable
@@ -92,8 +92,16 @@ class build_py(_build_py):
 
     def run(self):
         super().run()
+        self._remove_test_modules()
         if not getattr(self, "editable_mode", False):
             self._copy_relay_dist()
+
+    def _remove_test_modules(self) -> None:
+        """Remove tests left by either this build or a stale incremental build."""
+        build_root = Path(self.build_lib)
+        for pattern in TEST_MODULE_PATTERNS:
+            for test_module in build_root.rglob(pattern):
+                test_module.unlink()
 
     def _copy_relay_dist(self):
         src = Path(__file__).parent / "web"
