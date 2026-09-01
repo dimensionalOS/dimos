@@ -295,6 +295,7 @@ class JointTrajectoryTask(BaseControlTask):
             else [name for name in self._joint_names_list if name in self._motions]
         )
         all_complete = bool(self._motions)
+        completed_joints: list[str] = []
         for joint_name, (run, index) in list(self._motions.items()):
             if run.start_time is None:
                 run.start_time = state.t_now
@@ -320,6 +321,7 @@ class JointTrajectoryTask(BaseControlTask):
             reached = math.isclose(commanded, final_position, abs_tol=1e-9)
             if nominal_complete and reached:
                 del self._motions[joint_name]
+                completed_joints.append(joint_name)
             else:
                 all_complete = False
 
@@ -332,11 +334,17 @@ class JointTrajectoryTask(BaseControlTask):
         emitted_names = [name for name in output_names if name in self._commanded_positions]
         if not emitted_names:
             return None
-        return JointCommandOutput(
+        output = JointCommandOutput(
             joint_names=emitted_names,
             positions=[self._commanded_positions[name] for name in emitted_names],
             mode=ControlMode.SERVO_POSITION,
         )
+        # Without hold, other tasks may move completed joints next; a kept
+        # entry would anchor a later trajectory to a stale position.
+        if not self._config.hold_position_when_idle:
+            for joint_name in completed_joints:
+                self._commanded_positions.pop(joint_name, None)
+        return output
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         """Handle preemption by higher-priority task.

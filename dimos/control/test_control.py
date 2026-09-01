@@ -600,6 +600,45 @@ class TestJointTrajectoryTask:
         assert held is not None
         assert held.positions == [1.0, -0.5]
 
+    def test_second_trajectory_starts_from_measured_not_stale_commanded(self):
+        task = JointTrajectoryTask(
+            JointTrajectoryTaskConfig(
+                joint_names=["arm/joint1"],
+                start_position_tolerance=2.0,
+                velocity_limits={"arm/joint1": 10.0},
+            )
+        )
+        first = JointTrajectory(
+            joint_names=["arm/joint1"],
+            points=[
+                TrajectoryPoint(positions=[0.0], time_from_start=0.0),
+                TrajectoryPoint(positions=[1.0], time_from_start=0.1),
+            ],
+        )
+        state = JointStateSnapshot(joint_positions={"arm/joint1": 0.0})
+        assert task.execute(first, {"arm/joint1": 0.0}).status is TrajectoryExecutionStatus.ACCEPTED
+        task.compute(CoordinatorState(joints=state, t_now=1.0, dt=0.1))
+        task.compute(CoordinatorState(joints=state, t_now=1.2, dt=0.2))
+        assert task.get_state() == TrajectoryState.COMPLETED
+
+        # Another task moved the joint while this one idled; the next
+        # trajectory must start from the measured position, not the stale
+        # commanded goal of the finished run.
+        moved = JointStateSnapshot(joint_positions={"arm/joint1": 0.3})
+        second = JointTrajectory(
+            joint_names=["arm/joint1"],
+            points=[
+                TrajectoryPoint(positions=[0.3], time_from_start=0.0),
+                TrajectoryPoint(positions=[1.0], time_from_start=5.0),
+            ],
+        )
+        assert (
+            task.execute(second, {"arm/joint1": 0.3}).status is TrajectoryExecutionStatus.ACCEPTED
+        )
+        output = task.compute(CoordinatorState(joints=moved, t_now=2.0, dt=0.01))
+        assert output is not None
+        assert output.positions[0] == pytest.approx(0.3, abs=0.05)
+
     def test_claim(self, trajectory_task):
         claim = trajectory_task.claim()
         assert claim.priority == 10
