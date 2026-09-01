@@ -170,6 +170,13 @@ _XARM_GRASP_SIM_MODULES = (
         model=_xarm_grasp_sim_model.model,
         voxel_size=XARM_GRASP_VOXEL_SIZE,
         world_frame="world",
+        # ManipulationModule publishes robot TF at 10Hz, so the stock 20ms
+        # tolerance cannot bracket a ~92ms publish period: 61% of clouds found no
+        # transform and were dropped, each with a warning. One full period admits
+        # them all. The arm holds still while scanning, so a transform up to a
+        # period old describes the same pose.
+        tf_tolerance_s=0.1,
+        tf_forward_tolerance_s=0.1,
     ),
     # Tabletop reach, not a room-scale lidar sweep: a short max_range keeps the
     # octree to the workspace the arm can actually plan into.

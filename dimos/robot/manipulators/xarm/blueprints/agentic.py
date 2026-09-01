@@ -26,7 +26,11 @@ from dimos.robot.manipulators.common.agent_prompts import (
 )
 from dimos.robot.manipulators.xarm.blueprints.basic import xarm7_planner_coordinator
 from dimos.robot.manipulators.xarm.blueprints.perception import xarm_perception
-from dimos.robot.manipulators.xarm.blueprints.simulation import xarm_perception_sim
+from dimos.robot.manipulators.xarm.blueprints.simulation import (
+    xarm_grasp_sim,
+    xarm_grasp_sim_graspgenx,
+    xarm_perception_sim,
+)
 
 xarm7_planner_coordinator_agent = autoconnect(
     xarm7_planner_coordinator,
@@ -46,3 +50,18 @@ xarm_perception_sim_agent = autoconnect(
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
+
+# The scene blueprints already carry a detector, a segmenter and a voxel mapper;
+# adding the agent on top packs every one of them into a single worker, where the
+# detector's lazy transformers import fails outright.
+xarm_grasp_sim_agent = autoconnect(
+    xarm_grasp_sim,
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
+).global_config(n_workers=6)
+
+xarm_grasp_sim_graspgenx_agent = autoconnect(
+    xarm_grasp_sim_graspgenx,
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
+).global_config(n_workers=6)

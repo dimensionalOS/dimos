@@ -29,12 +29,29 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
 from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
 
 XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
     translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
     rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
+    frame_id="link7",
+    child_frame_id="camera_link",
 )
+
+
+class XArmWristCameraTf(StaticTfPublisher):
+    """Hang the eye-in-hand camera off the wrist.
+
+    RealSenseCamera publishes only its own subtree, so without this edge
+    camera_link has no parent, nothing resolves into world, and every cloud the
+    camera produces is silently unusable. link7 is the frame the model already
+    publishes through tf_extra_links.
+    """
+
+    def transforms(self) -> list[Transform]:
+        return [XARM_PERCEPTION_CAMERA_TRANSFORM]
+
 
 xarm_perception = autoconnect(
     ManipulationModule.blueprint(
@@ -54,9 +71,8 @@ xarm_perception = autoconnect(
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
     HeuristicGraspModule.blueprint(),
-    # TODO: tf tree is broken here; RealSenseCamera no longer publishes its mount
-    # edge, so camera_link needs a parent (e.g. from the arm) to resolve into world.
     RealSenseCamera.blueprint(),
+    XArmWristCameraTf.blueprint(),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
         detector_backend="moondream",

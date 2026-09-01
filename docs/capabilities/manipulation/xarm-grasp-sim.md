@@ -67,6 +67,40 @@ into it can only ever be rejected. The pregrasp-to-grasp leg and the retreat are
 therefore straight-line `move_linear` servos with collision checking off; only
 the approach to the pregrasp pose is a checked plan.
 
+## Driving it with an agent
+
+Two agentic variants add `McpServer` plus an `McpClient` agent over the same
+scene, so the skills are driven in natural language instead of by hand:
+
+| Blueprint | Provider |
+|---|---|
+| `xarm-grasp-sim-agent` | heuristic |
+| `xarm-grasp-sim-graspgenx-agent` | GraspGenX |
+
+```bash
+MUJOCO_GL=egl dimos run xarm-grasp-sim-graspgenx-agent
+```
+
+Then talk to it from a second terminal:
+
+```bash
+dimos agent-send "scan the table, then pick up the bottle"
+dimos agent-send "put it down at x=0.45 y=-0.25 z=0.25"
+```
+
+`dimos mcp` lists the tools the agent sees; the MCP server is on
+`http://localhost:9990/mcp`. Watch the agent's replies with
+`app.peek_stream("agent", 5.0)`, or read them in the run's log.
+
+These variants set `n_workers=6`. The scene already carries a detector, a
+segmenter and a voxel mapper, and adding the agent on top packs all of them into
+one worker, where the detector's lazy `transformers` import fails outright with
+`Could not import module 'Owlv2ForObjectDetection'`.
+
+Since the agent picks its own prompt words, the label caveat above applies to it
+too: ask it for the object by position when a name comes back attached to the
+wrong thing.
+
 ## The scene
 
 The scene is an enclosed 2.6 m by 3.0 m room. The xArm is bolted to the world
@@ -113,6 +147,37 @@ print(scan)
 print(app.ObjectSceneRegistrationModule.get_detected_objects())
 print(app.ManipulationModule.refresh_obstacles())
 print(app.ManipulationModule.get_obstacles())
+```
+
+To pick, hand `pick_object` an `object_id` from that scan. OWL-ViT's labels are
+unreliable on these renders, so choose the target by where its point cloud
+actually is rather than by name:
+
+```python skip
+scene = app.ObjectSceneRegistrationModule
+
+for obj in scan.metadata["objects"]:
+    cloud = scene.get_object_pointcloud_by_object_id(obj["object_id"])
+    print(obj, cloud.points_f32().mean(axis=0) if cloud else None)
+
+# the bottle sits at roughly (0.58, 0.19); pick whichever id landed there
+pick = app.PickAndPlaceModule.pick_object("<object_id>")
+print(pick)          # metadata carries the winning rank, its score, and the candidate count
+print(app.PickAndPlaceModule.get_grasp_candidates())
+
+app.PickAndPlaceModule.place_at(0.45, -0.25, 0.25)
+```
+
+`pick_object` generates the grasps itself, so there is no separate grasp call.
+It opens the gripper, plans to the pregrasp, servos in, closes, verifies, and
+retreats; with a learned provider it walks the ranked candidates until one is
+reachable. To inspect grasps without moving the arm, call `propose_grasps` on
+the provider directly:
+
+```python skip
+cloud = scene.get_object_pointcloud_by_object_id("<object_id>")
+candidates = app.GraspGenXModule.propose_grasps(cloud)   # HeuristicGraspModule in the base blueprint
+print(len(candidates.candidates), [c.score for c in candidates.candidates[:5]])
 ```
 
 Wait for `scan_objects` to finish before issuing another scan. The prompt set

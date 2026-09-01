@@ -152,7 +152,9 @@ all_blueprints = {
     "unitree-go2-webrtc-rage-keyboard-teleop": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_webrtc_rage_keyboard_teleop:unitree_go2_webrtc_rage_keyboard_teleop",
     "unity-sim": "dimos.simulation.unity.blueprint:unity_sim",
     "xarm-grasp-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_grasp_sim",
+    "xarm-grasp-sim-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_grasp_sim_agent",
     "xarm-grasp-sim-graspgenx": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_grasp_sim_graspgenx",
+    "xarm-grasp-sim-graspgenx-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_grasp_sim_graspgenx_agent",
     "xarm-perception": "dimos.robot.manipulators.xarm.blueprints.perception:xarm_perception",
     "xarm-perception-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_perception_agent",
     "xarm-perception-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_perception_sim",
@@ -305,5 +307,6 @@ all_modules = {
     "world-belief-module": "dimos.experimental.world_belief.worldbelief_module.WorldBeliefModule",
     "world-belief-recorder": "dimos.experimental.world_belief.worldbelief_recorder.WorldBeliefRecorder",
     "wrist-camera": "dimos.teleop.hosted.blueprints.cloudflare.WristCamera",
+    "x-arm-wrist-camera-tf": "dimos.robot.manipulators.xarm.blueprints.perception.XArmWristCameraTf",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }
