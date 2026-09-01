@@ -151,7 +151,7 @@ def test_r1pro_blueprint_wires_viser_planner_to_fake_hardware() -> None:
     )
 
     assert manipulation.visualization.backend == "viser"
-    assert manipulation.trajectory_parametrization.backend == "simple_trapezoid"
+    assert manipulation.trajectory_parametrization.backend == "roboplan_toppra"
     assert coordinator.hardware[0].hardware_type == HardwareType.WHOLE_BODY
     assert coordinator.hardware[0].adapter_type == "mock_whole_body"
     assert coordinator.hardware[0].joints == list(R1PRO_PLANNING_JOINTS)

@@ -16,12 +16,13 @@
 
 import math
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.joint_space import CoordinateTopology
+from dimos.manipulation.planning.spec.joint_space import CoordinateTopology, JointCoordinate
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.robot.assets.model import RobotModel
 
@@ -76,6 +77,31 @@ def test_preparation_compiles_urdf_joint_types_into_topologies(tmp_path: Path) -
     )
     assert prepared.joint_space.velocity_limits == (2.0, 2.0, 2.0, 2.0)
     assert prepared.joint_space.acceleration_limits == (3.0, 3.0, 3.0, 3.0)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"name": ""},
+        {"max_velocity": 0.0},
+        {"max_acceleration": math.inf},
+        {"topology": CoordinateTopology.LINE, "lower": -1.0, "upper": 1.0},
+    ],
+)
+def test_joint_coordinate_rejects_invalid_compiled_semantics(changes: dict[str, Any]) -> None:
+    values = {
+        "name": "joint",
+        "mechanism_type": "revolute",
+        "topology": CoordinateTopology.INTERVAL,
+        "lower": -1.0,
+        "upper": 1.0,
+        "max_velocity": 2.0,
+        "max_acceleration": 3.0,
+        **changes,
+    }
+
+    with pytest.raises(ValueError):
+        JointCoordinate(**values)
 
 
 @pytest.mark.parametrize(

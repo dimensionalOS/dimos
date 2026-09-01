@@ -1,7 +1,6 @@
 # Unbounded Planar-Base Planning
 
 **Status:** Implemented
-**Decision:** [ADR 0001](../../adr/0001-canonical-joint-space.md)
 **Stack:** follow-up to PR #3784
 
 R1 Pro mobile manipulation uses the same canonical joint-space semantics as every other robot. The planar base contributes two unbounded prismatic coordinates and one continuous revolute coordinate:
@@ -36,7 +35,7 @@ Distance, interpolation, edge subdivision, simplification, and reported path len
 | Drake | Keeps native scalar coordinates and takes physical limits and finite request domains from the prepared joint space. |
 | RoboPlan | Uses native planning for interval-only selections. A selection containing a line or circle uses dimOS RRT with RoboPlan collision and FK queries. Cartesian waypoint planning remains interval-only. RoboPlan itself is unchanged. |
 | Viser | Renders interval sliders, unbounded line number inputs, and wrapped circle sliders from coordinate topology. |
-| Trajectory | Reads velocity and acceleration maxima from the selected prepared coordinates. R1 Pro uses the simple trapezoid parametrizer. |
+| Trajectory | RoboPlan TOPP-RA expands continuous scalar inputs to cosine/sine coordinates, then collapses and lifts its output back into a continuous canonical path. Unbounded translations pass through unchanged. |
 
 Base execution remains disabled on the R1 Pro blueprint until a feedback-controlled base trajectory executor exists. That safety check is tied to the planar-base controller capability, not to circular topology; a continuous arm joint is not rejected merely because it is periodic.
 
