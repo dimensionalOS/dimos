@@ -50,6 +50,7 @@ module = [
     "lerobot.policies.pretrained",
     "lerobot.policies.utils",
     "lerobot.processor",
+    "lerobot.types",
     "lerobot.utils.import_utils",
 ]
 follow_untyped_imports = true
