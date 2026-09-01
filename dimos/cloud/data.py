@@ -181,23 +181,16 @@ class MultipartBackend:
     def pull(self, upload_id: str, dest: Path | None, tag: str = "") -> Path:
         d = self.api.download(upload_id)
         wire = d.get("content_encoding") or ""
-        name = Path(d["filename"]).name
-        plain = name.removesuffix(codecs.suffix(wire)) if wire else name
-        if not plain or plain in (".", ".."):
-            raise RuntimeError(f"server returned an invalid filename: {d['filename']!r}")
-        out = dest or DOWNLOADS_DIR / f"{tag}{plain}"
+        out = dest or DOWNLOADS_DIR / f"{tag}{_plain_name(d['filename'], wire)}"
         out.parent.mkdir(parents=True, exist_ok=True)
         with self._staging(out) as tmp:
-            raw = Path(tmp) / name
+            raw = Path(tmp) / "wire"
             self._retry(functools.partial(self.api.fetch, d["url"], raw), "download")
             if _sha256(raw) != d["sha256"]:
                 raise RuntimeError("sha256 mismatch — refusing to keep the file")
-            if wire:
-                decoded = Path(tmp) / plain
-                codecs.decompress(wire, raw, decoded)
-                _move_into_place(decoded, out)
-            else:
-                _move_into_place(raw, out)
+            plain = Path(tmp) / "plain"
+            codecs.decompress(wire, raw, plain) if wire else raw.rename(plain)
+            _move_into_place(plain, out)
         return out
 
     def ls(self) -> list[dict[str, Any]]:
@@ -361,6 +354,13 @@ def _manifest(db: Path) -> dict[str, Any] | None:
         return {"streams": [{"name": n, **json.loads(c)} for n, c in rows]}
     except sqlite3.Error:
         return None
+
+
+def _plain_name(filename: str, wire: str) -> str:
+    name = Path(filename).name.removesuffix(codecs.suffix(wire))
+    if not name or name in (".", ".."):
+        raise RuntimeError(f"server returned an invalid filename: {filename!r}")
+    return name
 
 
 def _tag(row: dict[str, Any]) -> str:
