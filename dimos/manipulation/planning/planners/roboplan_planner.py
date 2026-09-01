@@ -99,8 +99,9 @@ class RoboPlanPlanner:
                 status=PlanningStatus.INVALID_START,
                 message="RoboPlan planning scene is not ready: authoritative state is incomplete",
             )
-        model_config = self._world.get_model_config()
-        if model_config.model.planar_base is not None:
+        prepared = self._world.get_prepared_model()
+        model_config = prepared.config
+        if not prepared.joint_space.is_interval_only:
             all_joints = PlanningGroup(
                 id="all",
                 joint_names=tuple(model_config.joint_names),
@@ -127,7 +128,7 @@ class RoboPlanPlanner:
                 status=PlanningStatus.INVALID_START,
                 message="RoboPlan planning scene is not ready: authoritative state is incomplete",
             )
-        config = self._world.get_model_config()
+        config = self._world.get_prepared_model().config
         group = self._world.all_planning_group()
         with self._world.scratch_context() as ctx:
             self._world.set_joint_state(
@@ -168,7 +169,7 @@ class RoboPlanPlanner:
                 status=PlanningStatus.INVALID_START,
                 message="RoboPlan planning scene is not ready: authoritative state is incomplete",
             )
-        if self._selection_has_planar_base(selection):
+        if self._selection_requires_shared_planner(selection):
             return self._shared_rrt.plan_selected_joint_path(
                 world,
                 selection,
@@ -222,10 +223,10 @@ class RoboPlanPlanner:
                 status=PlanningStatus.UNSUPPORTED,
                 message="RoboPlan-native planner requires its RoboPlanWorld instance",
             )
-        if self._selection_has_planar_base(selection):
+        if self._selection_requires_shared_planner(selection):
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
-                message="Cartesian waypoint planning does not support a moving planar base",
+                message="Cartesian waypoint planning requires interval-only joint coordinates",
             )
         validation_error = self._validate_cartesian_request(selection, targets, auxiliary_groups)
         if validation_error is not None:
@@ -294,9 +295,10 @@ class RoboPlanPlanner:
         """Get planner name."""
         return "RoboPlan"
 
-    def _selection_has_planar_base(self, selection: PlanningGroupSelection) -> bool:
-        planar = self._world.get_model_config().model.planar_base
-        return planar is not None and bool(set(selection.joint_names) & set(planar.joint_names))
+    def _selection_requires_shared_planner(self, selection: PlanningGroupSelection) -> bool:
+        return not self._world.get_prepared_model().joint_space.select(
+            selection.joint_names
+        ).is_interval_only
 
     def _normalize_selection_start(
         self,
@@ -393,7 +395,7 @@ class RoboPlanPlanner:
 
     def _apply_selected_state(self, ctx: RoboPlanContext, state: JointState) -> None:
         positions = dict(zip(state.name, state.position, strict=True))
-        config = self._world.get_model_config()
+        config = self._world.get_prepared_model().config
         q = ctx.q.copy()
         for index, name in enumerate(config.joint_names):
             if name in positions:

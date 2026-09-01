@@ -33,12 +33,18 @@ from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.planners.selected_joint_space import SelectedJointSpace
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, PlanarBaseDefinition, RobotModel
 
 
 def _pose() -> PoseStamped:
@@ -69,9 +75,28 @@ class _World:
                 PlanningGroupDefinition("arm", ("arm/joint_a", "arm/joint_b"), "base", "tool")
             ],
         )
+        self.prepared = PreparedRobotModel(
+            config=self.config,
+            description=LoadedRobotModel("<robot/>", Path("robot.urdf"), {}),
+            joint_space=JointSpace(
+                tuple(
+                    JointCoordinate(
+                        name=name,
+                        mechanism_type="revolute",
+                        topology=CoordinateTopology.INTERVAL,
+                        lower=-1.0,
+                        upper=1.0,
+                        max_velocity=1.0,
+                        max_acceleration=2.0,
+                    )
+                    for name in self.config.joint_names
+                )
+            ),
+            planning_groups=(),
+        )
 
-    def get_model_config(self) -> RobotModelConfig:
-        return self.config
+    def get_prepared_model(self) -> PreparedRobotModel:
+        return self.prepared
 
     def scratch_context(self) -> nullcontext[None]:
         return nullcontext(None)
@@ -113,6 +138,42 @@ class _PlanarWorld(_World):
             planning_groups=[
                 PlanningGroupDefinition("moving_base", planar.joint_names, planar.root_link)
             ],
+        )
+        self.prepared = PreparedRobotModel(
+            config=self.config,
+            description=LoadedRobotModel("<robot/>", Path("robot.urdf"), {}),
+            joint_space=JointSpace(
+                (
+                    JointCoordinate(
+                        name=planar.joint_names[0],
+                        mechanism_type="prismatic",
+                        topology=CoordinateTopology.LINE,
+                        lower=None,
+                        upper=None,
+                        max_velocity=2.0,
+                        max_acceleration=4.0,
+                    ),
+                    JointCoordinate(
+                        name=planar.joint_names[1],
+                        mechanism_type="prismatic",
+                        topology=CoordinateTopology.LINE,
+                        lower=None,
+                        upper=None,
+                        max_velocity=1.0,
+                        max_acceleration=2.0,
+                    ),
+                    JointCoordinate(
+                        name=planar.joint_names[2],
+                        mechanism_type="continuous",
+                        topology=CoordinateTopology.CIRCLE,
+                        lower=None,
+                        upper=None,
+                        max_velocity=4.0,
+                        max_acceleration=8.0,
+                    ),
+                )
+            ),
+            planning_groups=(),
         )
 
     def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:

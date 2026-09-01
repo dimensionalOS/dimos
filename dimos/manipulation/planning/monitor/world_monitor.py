@@ -32,6 +32,7 @@ from dimos.manipulation.planning.spec.models import (
     VisualizationStateFrame,
 )
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel, prepare_robot_model
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -71,7 +72,7 @@ class WorldMonitor:
         # Keep renderer mutations and periodic publishes ordered.  Cancellation is
         # deliberately issued outside this lock so it can interrupt an animation.
         self._visualization_lock = threading.RLock()
-        self._model_config: RobotModelConfig | None = None
+        self._prepared_model: PreparedRobotModel | None = None
         self._planning_groups = PlanningGroupRegistry()
         self._state_monitor: RobotStateMonitor | None = None
         self._obstacle_monitor: WorldObstacleMonitor | None = None
@@ -84,11 +85,12 @@ class WorldMonitor:
     def load_model(self, config: RobotModelConfig) -> None:
         """Load the one logical robot model."""
         with self._lock:
-            if self._model_config is not None:
+            if self._prepared_model is not None:
                 raise ValueError("A model is already loaded")
             self._validate_planning_group_config(config)
-            self._world.load_model(config)
-            self._model_config = config
+            prepared = prepare_robot_model(config)
+            self._world.load_model(prepared)
+            self._prepared_model = prepared
             self._planning_groups = PlanningGroupRegistry(config.planning_groups)
 
     @property
@@ -100,26 +102,23 @@ class WorldMonitor:
         """Return a stable metadata snapshot of the initialized planning scene."""
         with self._lock:
             return PlanningSceneInfo(
-                model=self.get_model_config(),
+                model=self.get_prepared_model(),
                 planning_groups=tuple(self._planning_groups.list()),
             )
 
     def get_model_config(self) -> RobotModelConfig:
         """Get the configured model."""
         with self._lock:
-            if self._model_config is None:
+            if self._prepared_model is None:
                 raise RuntimeError("Model is not loaded")
-            return self._model_config
+            return self._prepared_model.config
 
-    def get_joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Get model joint limits."""
+    def get_prepared_model(self) -> PreparedRobotModel:
+        """Get the immutable prepared model."""
         with self._lock:
-            return self._world.get_joint_limits()
-
-    def get_joint_velocity_limits(self) -> NDArray[np.float64]:
-        """Get positive velocity limits in canonical joint order."""
-        with self._lock:
-            return self._world.get_joint_velocity_limits()
+            if self._prepared_model is None:
+                raise RuntimeError("Model is not loaded")
+            return self._prepared_model
 
     # Obstacle Management
 
@@ -508,7 +507,7 @@ class WorldMonitor:
             if attached_visualization is not None:
                 session = VisualizationSession(
                     scene=PlanningSceneInfo(
-                        model=self.get_model_config(),
+                        model=self.get_prepared_model(),
                         planning_groups=tuple(self._planning_groups.list()),
                     ),
                     operator=operator,

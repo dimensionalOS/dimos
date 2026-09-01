@@ -26,8 +26,14 @@ from dimos.manipulation.planning.groups.models import (
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
 from dimos.manipulation.planning.spec.models import PlanningResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.trajectory_generator.config import (
     SimpleTrapezoidParametrizationConfig,
 )
@@ -39,7 +45,7 @@ from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 def _selection() -> PlanningGroupSelection:
@@ -61,11 +67,28 @@ def _world(*, velocity: float = 2.0, acceleration: float = 6.0) -> WorldSpec:
         base_pose=PoseStamped(),
         joint_names=["arm/a", "arm/b"],
         base_link="base",
-        max_velocity=velocity,
-        max_acceleration=acceleration,
+    )
+    joint_space = JointSpace(
+        tuple(
+            JointCoordinate(
+                name=name,
+                mechanism_type="revolute",
+                topology=CoordinateTopology.INTERVAL,
+                lower=-1.0,
+                upper=1.0,
+                max_velocity=velocity,
+                max_acceleration=acceleration,
+            )
+            for name in config.joint_names
+        )
     )
     world = MagicMock(spec=WorldSpec)
-    world.get_model_config.return_value = config
+    world.get_prepared_model.return_value = PreparedRobotModel(
+        config=config,
+        description=LoadedRobotModel("<robot/>", Path("/robot.urdf"), {}),
+        joint_space=joint_space,
+        planning_groups=(),
+    )
     return world
 
 
@@ -111,17 +134,16 @@ def test_simple_parametrizer_materializes_segmented_trapezoid_plan() -> None:
     ]
 
 
-def test_simple_parametrizer_rejects_invalid_dimos_limits() -> None:
-    parametrizer = SimpleTrapezoidParametrizer(SimpleTrapezoidParametrizationConfig())
-
-    with pytest.raises(
-        TrajectoryParametrizationError,
-        match="Invalid velocity limit for 'arm/a'",
-    ):
-        parametrizer.materialize_plan(
-            _world(velocity=0.0),
-            _selection(),
-            _result(),
+def test_joint_space_rejects_invalid_motion_limits_before_parametrization() -> None:
+    with pytest.raises(ValueError, match="velocity limit"):
+        JointCoordinate(
+            name="arm/a",
+            mechanism_type="revolute",
+            topology=CoordinateTopology.INTERVAL,
+            lower=-1.0,
+            upper=1.0,
+            max_velocity=0.0,
+            max_acceleration=1.0,
         )
 
 

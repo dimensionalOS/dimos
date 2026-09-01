@@ -41,7 +41,7 @@ class SinglePoseTargetRequest:
 def unique_pose_target_frame(world: WorldSpec) -> str | None:
     frames = [
         group.tip_link
-        for group in world.get_model_config().planning_groups
+        for group in world.get_prepared_model().config.planning_groups
         if group.tip_link is not None
     ]
     unique = list(dict.fromkeys(frames))
@@ -87,7 +87,7 @@ def resolve_single_pose_target_request(
     if not group.has_pose_target:
         return None, _failure(IKStatus.UNSUPPORTED, f"Planning group '{group.id}' has no tip")
     try:
-        joint_names = list(world.get_model_config().joint_names)
+        joint_names = list(world.get_prepared_model().joint_space.names)
         seed_positions = seed_positions_with_world_fallback(world, joint_names, seed)
         indices = [joint_names.index(name) for name in group.joint_names]
     except ValueError as exc:

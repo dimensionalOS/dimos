@@ -22,6 +22,7 @@ from typing import Any, TypeAlias, cast
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.joint_space import CoordinateTopology
 from dimos.manipulation.planning.spec.models import PlanningGroupID, PlanningSceneInfo
 from dimos.manipulation.visualization.operator import (
     CartesianTargetRequest,
@@ -84,8 +85,6 @@ PanelHandle: TypeAlias = (
     | TransformControlsHandle
 )
 
-# Fallback slider range in native joint coordinates when a config omits limits.
-DEFAULT_JOINT_LIMITS = (-3.14, 3.14)
 PRIMARY_ACTION_COLOR = (0, 102, 179)
 ACTIVE_GROUP_COLOR = PRIMARY_ACTION_COLOR
 INACTIVE_GROUP_COLOR = (52, 52, 52)
@@ -183,7 +182,7 @@ class ViserPanelGui:
         return list(self.scene_info.planning_groups)
 
     def get_model_config(self) -> RobotModelConfig:
-        return self.scene_info.model
+        return self.scene_info.model.config
 
     def get_init_joints(self) -> JointState | None:
         return _copy_joint_state(self.operator.get_init_joints())
@@ -631,29 +630,23 @@ class ViserPanelGui:
                 target = self.state.group_joint_targets.get(group_id)
                 if config is None or target is None:
                     continue
-                config_indexes = {str(name): index for index, name in enumerate(config.joint_names)}
-                planar = config.model.planar_base
-                translation_names = set(planar.joint_names[:2]) if planar is not None else set()
-                yaw_name = planar.joint_names[2] if planar is not None else None
                 for joint_name, value in zip(group.joint_names, target.position, strict=True):
-                    index = config_indexes.get(str(joint_name))
-                    lower, upper = DEFAULT_JOINT_LIMITS
-                    if index is not None and config.joint_limits_lower is not None:
-                        lower = config.joint_limits_lower[index]
-                    if index is not None and config.joint_limits_upper is not None:
-                        upper = config.joint_limits_upper[index]
+                    coordinate = self.scene_info.model.joint_space.coordinate(str(joint_name))
                     key = (group_id, str(joint_name))
                     handle: Any
-                    if joint_name in translation_names:
+                    if coordinate.topology is CoordinateTopology.LINE:
                         handle = gui.add_number(
                             f"{group_id}/{joint_name}",
                             step=0.001,
                             initial_value=float(value),
                         )
                     else:
-                        if joint_name == yaw_name:
+                        if coordinate.topology is CoordinateTopology.CIRCLE:
                             lower, upper = -math.pi, math.pi
                             value = _wrap_angle(float(value))
+                        else:
+                            assert coordinate.lower is not None and coordinate.upper is not None
+                            lower, upper = coordinate.lower, coordinate.upper
                         handle = gui.add_slider(
                             f"{group_id}/{joint_name}",
                             min=float(lower),
@@ -840,8 +833,8 @@ class ViserPanelGui:
                 for joint_name, value in zip(joint_names, values, strict=True):
                     handle = self._joint_sliders.get((group_id, str(joint_name)))
                     if handle is not None:
-                        planar = self.get_model_config().model.planar_base
-                        if planar is not None and joint_name == planar.joint_names[2]:
+                        coordinate = self.scene_info.model.joint_space.coordinate(str(joint_name))
+                        if coordinate.topology is CoordinateTopology.CIRCLE:
                             value = _wrap_angle(float(value))
                         handle.value = float(value)
             finally:

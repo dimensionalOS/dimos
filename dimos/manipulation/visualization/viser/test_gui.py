@@ -27,11 +27,17 @@ pytest.importorskip("viser", reason="Viser optional dependency is not installed"
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
 from dimos.manipulation.planning.spec.models import (
     GeneratedPlan,
     PlanningGroupID,
     PlanningSceneInfo,
 )
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.visualization.operator import OperatorStatus, TargetEvaluationResult
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
@@ -47,7 +53,7 @@ from dimos.manipulation.visualization.viser.state import (
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, PlanarBaseDefinition, RobotModel
 
 
 class EmptyServer:
@@ -208,11 +214,17 @@ def planning_group(name: str, joints: tuple[str, ...]) -> PlanningGroup:
 
 def make_gui(module: FakeOperatorBackend | None = None) -> ViserPanelGui:
     module = module or FakeOperatorBackend()
+    config = RobotModelConfig(
+        model=RobotModel.from_file(Path("/tmp/model.urdf")), joint_names=[]
+    )
     return ViserPanelGui(
         EmptyServer(),
         PlanningSceneInfo(
-            model=RobotModelConfig(
-                model=RobotModel.from_file(Path("/tmp/model.urdf")), joint_names=[]
+            model=PreparedRobotModel(
+                config=config,
+                description=LoadedRobotModel("<robot/>", Path("/tmp/model.urdf"), {}),
+                joint_space=JointSpace(()),
+                planning_groups=(),
             )
         ),
         FakeOperator(module),
@@ -227,13 +239,31 @@ def test_planar_joint_controls_use_unbounded_translation_inputs_and_wrapped_yaw(
         acceleration_limits=(2.0, 2.0, 4.0),
     )
     group = PlanningGroup("moving_base", planar.joint_names, planar.root_link)
+    config = RobotModelConfig(
+        model=RobotModel.from_file(Path("/tmp/model.urdf")).with_planar_base(planar),
+        joint_names=list(planar.joint_names),
+        base_link=planar.root_link,
+    )
     panel = ViserPanelGui(
         EmptyServer(),
         PlanningSceneInfo(
-            model=RobotModelConfig(
-                model=RobotModel.from_file(Path("/tmp/model.urdf")).with_planar_base(planar),
-                joint_names=list(planar.joint_names),
-                base_link=planar.root_link,
+            model=PreparedRobotModel(
+                config=config,
+                description=LoadedRobotModel("<robot/>", Path("/tmp/model.urdf"), {}),
+                joint_space=JointSpace(
+                    (
+                        JointCoordinate(
+                            planar.joint_names[0], "prismatic", CoordinateTopology.LINE, None, None, 1.0, 2.0
+                        ),
+                        JointCoordinate(
+                            planar.joint_names[1], "prismatic", CoordinateTopology.LINE, None, None, 1.0, 2.0
+                        ),
+                        JointCoordinate(
+                            planar.joint_names[2], "continuous", CoordinateTopology.CIRCLE, None, None, 2.0, 4.0
+                        ),
+                    )
+                ),
+                planning_groups=(group,),
             ),
             planning_groups=[group],
         ),

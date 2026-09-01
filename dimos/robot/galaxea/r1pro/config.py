@@ -84,6 +84,7 @@ R1PRO_MODEL = (
         R1PRO_MODEL_PATH,
         package_paths={"r1pro_urdf": R1PRO_PACKAGE_ROOT},
     )
+    .with_default_joint_acceleration_limit(2.0)
     .with_fixed_joints(*PASSIVE_JOINTS)
     .with_renamed_joints({joint: coordinator_name(joint) for joint in UPPER_BODY_JOINTS})
 )

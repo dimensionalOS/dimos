@@ -140,7 +140,9 @@ def make_piper_model_config(
     model_joint_names = joint_names(dof)
     model_home_joints = list(home_joints) if home_joints is not None else list(PIPER_HOME_JOINTS)
     return RobotModelConfig(
-        model=RobotModel.from_file(PIPER_MODEL_PATH, package_paths=PIPER_PACKAGE_PATHS),
+        model=RobotModel.from_file(
+            PIPER_MODEL_PATH, package_paths=PIPER_PACKAGE_PATHS
+        ).with_default_joint_acceleration_limit(2.0),
         joint_names=model_joint_names,
         base_link="base_link",
         planning_groups=[

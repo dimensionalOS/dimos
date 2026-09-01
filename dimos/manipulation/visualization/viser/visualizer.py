@@ -129,7 +129,7 @@ class ViserManipulationVisualizer:
         """Initialize Viser robot visuals from a one-shot visualization session."""
         self._operator = session.operator
         self._session_scene = session.scene
-        self._model_config = session.scene.model
+        self._model_config = session.scene.model.config
         self._initialize_scene(session.scene)
 
     def _initialize_scene(self, scene: PlanningSceneInfo) -> None:

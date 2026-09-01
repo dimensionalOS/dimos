@@ -26,7 +26,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule, Manipulat
 from dimos.manipulation.planning.factory import create_planning_stack
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.spec.enums import IKStatus
-from dimos.manipulation.planning.spec.validation import validate_robot_model_config
+from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
 from dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_planner_coordinator import (
@@ -99,8 +99,9 @@ def test_r1pro_config_exposes_disjoint_mobile_bimanual_groups() -> None:
     ]
     assert len(grouped_joints) == len(set(grouped_joints))
     assert set(grouped_joints) == set(R1PRO_PLANNING_JOINTS)
-    assert config.canonical_velocity_limits()[:3] == list(R1PRO_PLANAR_BASE.velocity_limits)
-    assert config.canonical_acceleration_limits()[:3] == list(R1PRO_PLANAR_BASE.acceleration_limits)
+    prepared = prepare_robot_model(config)
+    assert prepared.joint_space.velocity_limits[:3] == R1PRO_PLANAR_BASE.velocity_limits
+    assert prepared.joint_space.acceleration_limits[:3] == R1PRO_PLANAR_BASE.acceleration_limits
 
 
 def test_r1pro_hardware_model_matches_upper_body_feedback() -> None:
@@ -182,7 +183,7 @@ def test_r1pro_real_control_keeps_planar_positions_unwired() -> None:
 def test_r1pro_materialized_model_matches_configured_coordinates() -> None:
     config = make_r1pro_planar_model_config()
 
-    model = validate_robot_model_config(config)
+    model = prepare_robot_model(config).description
 
     assert model.root_link == R1PRO_PLANAR_BASE.root_link
     assert {joint.name for joint in model.joints if joint.type != "fixed"} == set(
