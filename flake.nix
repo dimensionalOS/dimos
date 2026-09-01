@@ -313,14 +313,10 @@
         # ------------------------------------------------------------
         # 3b. Native modules built from the cargo workspace
         # ------------------------------------------------------------
-        # One derivation for every rust native module, because they are one
-        # cargo workspace: splitting them per module would vendor the deps and
-        # rebuild the shared crates once each.
-        #
-        # Each module owns a `deps.nix` naming the crate directories it
-        # contributes to the workspace, the cargo packages that are module
-        # executables, and any system libraries it links. Adding a module is
-        # just a new deps.nix; nothing here has to change.
+        # Each module owns a `deps.nix` naming the cargo packages that are its
+        # executables. Adding a module is just a new deps.nix; nothing here has
+        # to change. Crate sources and workspace membership are not repeated
+        # there -- they come from Cargo.nix and Cargo.toml.
         #
         # The rule is deliberately the dumbest one possible -- every file named
         # `deps.nix`, anywhere in the tree -- because
@@ -343,46 +339,33 @@
         moduleDeps = map (file: import file pkgs) (findDepsFiles ./.);
         depsField = field: builtins.concatLists (map (dep: dep.${field} or [ ]) moduleDeps);
 
-        rustNativeModules = pkgs.rustPlatform.buildRustPackage {
-          pname = "dimos-rust-native-modules";
-          version = "0.1.0";
-          # Assembled from the declared crate directories rather than filtered
-          # out of `./.`, so the only repo content reaching the derivation is
-          # the workspace itself: a doc or python edit leaves this unchanged
-          # and Cachix substitutes it. It also makes the build independent of
-          # whether a clone has pulled the git-lfs datasets.
-          # `bin/build-native-modules --inputs-hash` follows the same imports
-          # to key the Cachix publish marker.
-          src = pkgs.runCommand "dimos-rust-workspace" { } (
-            ''
-              mkdir -p $out
-              cp ${./Cargo.toml} $out/Cargo.toml
-              cp ${./Cargo.lock} $out/Cargo.lock
-            ''
-            + pkgs.lib.concatMapStrings
-              (dep: pkgs.lib.concatStrings (pkgs.lib.mapAttrsToList (dest: tree: ''
-                mkdir -p $out/${builtins.dirOf dest}
-                cp -r ${tree} $out/${dest}
-              '') (dep.sources or { })))
-              moduleDeps
-            + "chmod -R u+w $out\n"
-          );
-          buildInputs = depsField "buildInputs";
-          nativeBuildInputs = depsField "nativeBuildInputs";
-          # Vendored by cargo rather than by `cargoLock.lockFile`, which would
-          # need no hash at all: nixpkgs fetches each crate with curl from
-          # `crates.io/api/v1/.../download`, and that endpoint 403s curl's user
-          # agent. Cargo itself is allowed, which is why vendoring works here.
-          # `static.crates.io` also serves them fine, but nothing in
-          # `importCargoLock` can point at it -- `registries` supplies only a
-          # base, always suffixed `/<name>/<version>/download`, and the CDN's
-          # path is `/<name>/<name>-<version>.crate`. Note the 403 is invisible
-          # locally, where the crates substitute from cache.nixos.org instead.
-          # So this hash has to be re-pasted whenever Cargo.lock moves; the CI
-          # failure prints the new value.
-          cargoHash = "sha256-Tm1TeMi8A0ESvARlLglV/ycax2GFqvh54zjEPkOTXm8=";
-          cargoBuildFlags = builtins.concatMap (name: [ "-p" name ]) (depsField "binaries");
-          doCheck = false;
+        # One derivation per crate, from hashes already in Cargo.lock, so there
+        # is no aggregate `cargoHash` to re-paste when the lock moves -- which
+        # it does on main, breaking branches that never touched rust, because
+        # CI builds the merge commit.
+        #
+        # Regenerate with `bin/regen-cargo-nix` after any Cargo.lock or member
+        # Cargo.toml change; the `cargo-nix-current` CI job fails if it is
+        # stale. Unlike a hash, a stale Cargo.nix is a diff CI can show you.
+        cargoNix = import ./Cargo.nix { inherit pkgs; };
+
+        # `binaries` names the cargo packages that are module executables. Each
+        # gets its own derivation and its own flake attr, so editing one module
+        # does not rebuild the others -- the shared crates below them are
+        # already separate store paths and come straight from Cachix.
+        moduleBinaries = depsField "binaries";
+        rustNativeModulePackages = pkgs.lib.listToAttrs (map
+          (name: {
+            name = "rust_native_module_${name}";
+            value = cargoNix.workspaceMembers.${name}.build;
+          })
+          moduleBinaries);
+
+        # Every module at once. The Cachix job builds this so one CI run warms
+        # the cache for all of them; nothing at runtime uses it.
+        rustNativeModules = pkgs.symlinkJoin {
+          name = "dimos-rust-native-modules-0.1.0";
+          paths = map (name: cargoNix.workspaceMembers.${name}.build) moduleBinaries;
         };
 
         # ------------------------------------------------------------
@@ -398,16 +381,24 @@
         ## Local dev shell
         devShells = devShells;
 
-        packages.rust_native_modules = rustNativeModules;
+        packages = rustNativeModulePackages // {
+          rust_native_modules = rustNativeModules;
 
-        ## Layered docker image with DockerTools
-        packages.devcontainer = pkgs.dockerTools.buildLayeredImage {
-          name      = "dimensional/dimos-dev";
-          tag       = "latest";
-          contents  = [ imageRoot ];
-          config = {
-            WorkingDir = "/workspace";
-            Cmd        = [ "bash" ];
+          # Pinned by flake.lock so `bin/regen-cargo-nix` and the
+          # `cargo-nix-current` CI job always agree; the generator stamps its
+          # own version into Cargo.nix, so a channel bump would otherwise show
+          # up as a spurious diff.
+          crate2nix = pkgs.crate2nix;
+
+          ## Layered docker image with DockerTools
+          devcontainer = pkgs.dockerTools.buildLayeredImage {
+            name      = "dimensional/dimos-dev";
+            tag       = "latest";
+            contents  = [ imageRoot ];
+            config = {
+              WorkingDir = "/workspace";
+              Cmd        = [ "bash" ];
+            };
           };
         };
       });

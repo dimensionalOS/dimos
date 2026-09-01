@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Regenerate Cargo.nix from Cargo.lock. Run after changing Cargo.lock or any
+# workspace member's Cargo.toml; the `cargo-nix-current` CI job fails when the
+# committed file no longer matches.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+exec nix run .#crate2nix -- generate "$@"

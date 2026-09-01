@@ -27,11 +27,14 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
-    # The crate is a workspace member, so it is built from the repo root along
-    # with every other rust native module.
+    # Built from the repo root, but only this module's crate: the crates it
+    # shares with the other modules are separate store paths already in the
+    # cache. The out-link is per-module so builds do not clobber each other.
     cwd: str | None = "../../../.."
-    executable: str = "result/bin/mls_planner"
-    build_command: str | None = "nix build -L .#rust_native_modules"
+    executable: str = "result-mls_planner/bin/mls_planner"
+    build_command: str | None = (
+        "nix build -L .#rust_native_module_dimos-mls-planner --out-link result-mls_planner"
+    )
     stdin_config: bool = True
 
     world_frame: str = "odom"

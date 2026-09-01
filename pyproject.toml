@@ -748,6 +748,9 @@ ignore = [
     "*/package-lock.json",
     "Cargo.lock",
     "*/Cargo.lock",
+    # Generated from Cargo.lock by bin/regen-cargo-nix. LFS is wrong for it:
+    # the cargo-nix-current CI job diffs it as text.
+    "Cargo.nix",
     "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
     "dimos/manipulation/test_roboplan.py",
