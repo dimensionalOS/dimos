@@ -18,7 +18,31 @@ import cv2
 import numpy as np
 import pytest_mock
 
-from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.hardware.sensors.camera.module import CameraModuleConfig
+from dimos.hardware.sensors.camera.webcam import Webcam, WebcamConfig
+
+
+def test_camera_config_defaults_to_one_typed_webcam_field() -> None:
+    config = CameraModuleConfig()
+
+    assert isinstance(config.hardware, WebcamConfig)
+
+
+def test_camera_config_parses_nested_webcam_settings() -> None:
+    config = CameraModuleConfig.model_validate({"hardware": {"camera_index": 2}})
+
+    assert isinstance(config.hardware, WebcamConfig)
+    assert config.hardware.camera_index == 2
+
+
+def test_camera_config_accepts_hardware_factory_and_instance() -> None:
+    webcam = Webcam(camera_index=2)
+
+    def factory() -> Webcam:
+        return webcam
+
+    assert CameraModuleConfig(hardware=factory).hardware is factory
+    assert CameraModuleConfig(hardware=webcam).hardware is webcam
 
 
 def test_start_requests_and_reports_camera_mode(mocker: pytest_mock.MockerFixture) -> None:

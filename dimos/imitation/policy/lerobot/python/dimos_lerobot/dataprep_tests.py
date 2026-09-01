@@ -13,8 +13,10 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+from io import StringIO
 import json
 from pathlib import Path
+import sys
 
 from dimos_lerobot import dataprep
 from dimos_lerobot.dataprep import write
@@ -22,22 +24,37 @@ import numpy as np
 import pytest
 import pytest_mock
 
-from dimos.imitation.dataprep.core import OutputConfig, Sample
+from dimos.imitation.dataprep._lerobot_protocol import BuildRequest, BuildResult
+from dimos.imitation.dataprep.core import DataPrepConfig, OutputConfig, Sample
 
 JOINTS = [f"arm/joint{index}" for index in range(1, 7)] + ["arm/gripper"]
 
 
-def test_module_entry_point_converts_one_config(mocker: pytest_mock.MockerFixture) -> None:
-    convert = mocker.patch.object(dataprep, "convert")
+def test_module_entry_point_executes_typed_build_request(
+    tmp_path: Path,
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = DataPrepConfig(
+        source="recording.mcap",
+        output=OutputConfig(format="lerobot", path=tmp_path / "dataset"),
+    )
+    request = BuildRequest(config=config)
+    run = mocker.patch.object(dataprep, "run_dataprep", return_value=tmp_path / "dataset")
+    monkeypatch.setattr(sys, "stdin", StringIO(request.model_dump_json()))
 
-    dataprep.main(["config.json"])
+    dataprep.main([])
 
-    convert.assert_called_once_with("config.json")
+    result = BuildResult.model_validate_json(capsys.readouterr().out)
+    assert result.path == tmp_path / "dataset"
+    assert run.call_args.args[0].source == "recording.mcap"
+    assert run.call_args.kwargs["writer"] is write
 
 
-@pytest.mark.parametrize("args", [[], ["one.json", "two.json"]])
-def test_module_entry_point_requires_one_config(args: list[str]) -> None:
-    with pytest.raises(SystemExit, match="usage: python -m dimos_lerobot.dataprep CONFIG_JSON"):
+@pytest.mark.parametrize("args", [["config.json"], ["one", "two"]])
+def test_module_entry_point_rejects_arguments(args: list[str]) -> None:
+    with pytest.raises(SystemExit, match="usage: python -m dimos_lerobot.dataprep"):
         dataprep.main(args)
 
 
@@ -102,6 +119,17 @@ def test_native_writer_creates_canonical_openyam_dataset(tmp_path: Path) -> None
         "complementary_info.is_filled",
     }
     assert info["features"]["observation.state"]["names"] == JOINTS
+
+    summary = dataprep.inspect_dataset(root)
+    assert summary["episodes"] == 2
+    assert summary["frames"] == 6
+    assert summary["episode_lengths"] == {
+        "min": 3,
+        "max": 3,
+        "mean": 3.0,
+        "uniform": True,
+    }
+    assert summary["observation"]["observation.images.wrist"]["dtype"] == "video"
 
 
 def test_native_writer_requires_repo_id(tmp_path: Path) -> None:
