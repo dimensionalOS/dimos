@@ -71,3 +71,12 @@ echo 'DIMOS_UPLOAD_CODEC=gzip' >> .env
 | `dimos_staging_dir` | `None` | Compression/decode staging dir; default is beside the file |
 
 Implementation: [`dimos/cloud/data.py`](/dimos/cloud/data.py); codec table in [`dimos/constants.py`](/dimos/constants.py).
+
+## Organizations
+
+Accounts can belong to an organization. Members of an org see every dataset the org
+owns: `dimos data ls` lists them with an extra `uploader` column, and `dimos data
+pull` works on any of them. Uploads are stamped with your org automatically. Datasets
+can be deleted by their uploader or by an org admin, and they stay with the org if
+the uploader leaves. Admins manage members, roles and per-member storage limits at
+[console.dimensional.org](https://console.dimensional.org).
