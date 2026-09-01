@@ -7,10 +7,13 @@
 
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
@@ -150,6 +153,31 @@ constexpr const char* kIsolatedLaunch = R"({
     "connect_timeout_ms": 0
   }
 })";
+
+TEST_CASE("a published payload reaches a subscriber unchanged") {
+    std::unique_ptr<Transport> transport =
+        ZenohTransport::from_launch(nlohmann::json::parse(kIsolatedLaunch));
+
+    std::mutex received_mu;
+    std::vector<uint8_t> received;
+    transport->subscribe("/dimos_test/round_trip",
+                         [&](const uint8_t* data, std::size_t len) {
+                             std::lock_guard<std::mutex> lock(received_mu);
+                             received.assign(data, data + len);
+                         });
+
+    // Republish until it lands, since declaring a subscriber is not immediate.
+    const std::vector<uint8_t> payload = {0, 1, 2, 250, 251, 252};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    std::vector<uint8_t> got;
+    while (got.empty() && std::chrono::steady_clock::now() < deadline) {
+        transport->publish("/dimos_test/round_trip", payload);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::lock_guard<std::mutex> lock(received_mu);
+        got = received;
+    }
+    CHECK(got == payload);
+}
 
 TEST_CASE("a publish zenoh rejects is logged rather than thrown") {
     // Publishing happens on a worker thread with no catch of its own, so an

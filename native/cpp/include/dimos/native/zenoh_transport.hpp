@@ -359,8 +359,20 @@ public:
         session_.declare_background_subscriber(
             ::zenoh::KeyExpr(zenoh_key(channel)),
             [on_msg = std::move(on_msg)](const ::zenoh::Sample& sample) {
-                const std::vector<uint8_t> payload = sample.get_payload().as_vector();
-                on_msg(payload.data(), payload.size());
+                // Zenoh usually holds a payload as one contiguous slice, which
+                // is handed straight to the callback. Only a fragmented one is
+                // joined, and only that case costs a copy.
+                const ::zenoh::Bytes& payload = sample.get_payload();
+                ::zenoh::Bytes::SliceIterator slices = payload.slice_iter();
+                const std::optional<::zenoh::Slice> first = slices.next();
+                if (!first.has_value()) {
+                    on_msg(nullptr, 0);
+                } else if (!slices.next().has_value()) {
+                    on_msg(first->data, first->len);
+                } else {
+                    const std::vector<uint8_t> joined = payload.as_vector();
+                    on_msg(joined.data(), joined.size());
+                }
             },
             ::zenoh::closures::none);
     }
