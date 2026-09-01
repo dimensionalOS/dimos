@@ -52,13 +52,17 @@ if(NOT DIMOS_NATIVE_ZENOH STREQUAL "OFF")
   # zenohcxxConfig.cmake only defines its backend target when zenohc::lib
   # already exists, and hard-errors when no backend does, so zenoh-c is looked
   # up first and zenoh-cpp only when it was found.
+  # The version the rust transport pins. Older zenoh-c spells the locality
+  # enum ZC_LOCALITY_*, so accepting one trades this message for a page of
+  # compiler errors.
+  set(zenoh_min_version 1.9.0)
   if(DIMOS_NATIVE_ZENOH STREQUAL "ON")
-    find_package(zenohc REQUIRED)
-    find_package(zenohcxx REQUIRED)
+    find_package(zenohc ${zenoh_min_version} REQUIRED)
+    find_package(zenohcxx ${zenoh_min_version} REQUIRED)
   else()
-    find_package(zenohc QUIET)
+    find_package(zenohc ${zenoh_min_version} QUIET)
     if(zenohc_FOUND)
-      find_package(zenohcxx QUIET)
+      find_package(zenohcxx ${zenoh_min_version} QUIET)
     endif()
   endif()
 endif()
