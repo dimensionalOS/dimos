@@ -22,6 +22,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.manipulation.planning.groups.models import (
     PlanningGroup,
@@ -29,7 +30,7 @@ from dimos.manipulation.planning.groups.models import (
     PlanningGroupSelection,
 )
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanCartesianPathConfig
-from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
+from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner, TreeNode
 from dimos.manipulation.planning.planners.selected_joint_space import SelectedJointSpace
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import PlanningStatus
@@ -376,3 +377,43 @@ def test_planar_rrt_finds_obstacle_detour(
     assert result.status == PlanningStatus.SUCCESS
     assert result.path is not None
     assert any(abs(state.position[1]) >= 1.5 for state in result.path)
+
+
+def test_planar_rrt_counts_connection_growth_against_global_budget(
+    mocker: MockerFixture,
+) -> None:
+    world = _WallPlanarWorld()
+    group = PlanningGroup("moving_base", tuple(world.config.joint_names), world.config.base_link)
+    planner = RRTConnectPlanner()
+    max_iterations = 20
+    connection_growth: list[int] = []
+
+    extend = mocker.patch.object(
+        planner,
+        "_extend_selected_tree",
+        return_value=TreeNode(config=np.zeros(3)),
+    )
+
+    def exhaust_connection_budget(*args: object) -> tuple[None, int]:
+        max_new_nodes = args[-1]
+        assert isinstance(max_new_nodes, int)
+        connection_growth.append(max_new_nodes)
+        return None, max_new_nodes
+
+    mocker.patch.object(
+        planner,
+        "_connect_selected_tree",
+        side_effect=exhaust_connection_budget,
+    )
+
+    result = planner.plan_selected_joint_path(
+        world,
+        PlanningGroupSelection.from_groups((group,)),
+        JointState(position=[-2.0, 0.0, 0.0]),
+        JointState(position=[2.0, 0.0, 0.0]),
+        max_iterations=max_iterations,
+    )
+
+    assert result.status == PlanningStatus.NO_SOLUTION
+    assert result.iterations == extend.call_count + sum(connection_growth)
+    assert result.iterations <= max_iterations

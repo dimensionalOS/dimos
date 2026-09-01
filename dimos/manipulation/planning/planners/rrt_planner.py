@@ -302,6 +302,7 @@ class RRTConnectPlanner:
                         attempt_budget - nodes,
                     )
                     nodes += connected_nodes
+                    iterations += connected_nodes
                     if connected is not None:
                         path = self._extract_path(extended, connected, selected_joint_names)
                         if trees_swapped:
