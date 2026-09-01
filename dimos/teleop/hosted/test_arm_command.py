@@ -100,9 +100,9 @@ def _sent_acks(module: ArmCommandModule) -> list[dict[str, Any]]:
     return [json.loads(call.args[0]) for call in module.cmd_ack.publish.call_args_list]
 
 
-def _engage_right(module: ArmCommandModule) -> None:
+def _publish_right(module: ArmCommandModule) -> None:
     module._on_cmd_raw(_pose_bytes("right"))
-    module._controllers[Hand.RIGHT] = QuestControllerState(is_left=False, primary=True)
+    module._controllers[Hand.RIGHT] = QuestControllerState(is_left=False)
     _tick(module)
 
 
@@ -238,27 +238,29 @@ def test_gripper_dropped_while_estopped(module: ArmCommandModule) -> None:
 # ─── Engage → publish on the hand's own port ───────────────────────────
 
 
-def test_engage_publishes_on_hand_port(module: ArmCommandModule) -> None:
-    _engage_right(module)
-    assert module._is_engaged[Hand.RIGHT]
+def test_controller_pose_publishes_on_hand_port(module: ArmCommandModule) -> None:
+    _publish_right(module)
+    assert not module._is_engaged[Hand.RIGHT]
     module.right_controller_output.publish.assert_called()
     out = module.right_controller_output.publish.call_args.args[0]
     assert out.frame_id == "right"  # handedness preserved; no task-name overwrite
     module.left_controller_output.publish.assert_not_called()
 
 
-def test_release_disengages(module: ArmCommandModule) -> None:
-    _engage_right(module)
+def test_face_button_release_does_not_gate_raw_pose(module: ArmCommandModule) -> None:
+    _publish_right(module)
+    module.right_controller_output.publish.reset_mock()
     module._controllers[Hand.RIGHT] = QuestControllerState(is_left=False, primary=False)
     _tick(module)
     assert not module._is_engaged[Hand.RIGHT]
+    module.right_controller_output.publish.assert_called_once()
 
 
 # ─── E-STOP latch ──────────────────────────────────────────────────────
 
 
 def test_estop_disengages_blocks_publish_and_acks(module: ArmCommandModule) -> None:
-    _engage_right(module)
+    _publish_right(module)
     module.right_controller_output.publish.reset_mock()
 
     module._on_state_json(b'{"type": "estop", "nonce": 7}')
@@ -267,7 +269,7 @@ def test_estop_disengages_blocks_publish_and_acks(module: ArmCommandModule) -> N
     assert not module._is_engaged[Hand.RIGHT]
     wait_until(lambda: bool(_sent_acks(module)), timeout=2.0)  # latch runs off-thread
     module.coordinator.set_estop.assert_called_once_with(True)
-    _tick(module)  # primary still held — must NOT re-engage or publish
+    _tick(module)
     assert not module._is_engaged[Hand.RIGHT]
     module.right_controller_output.publish.assert_not_called()
     assert _sent_acks(module) == [{"type": "cmd_ack", "nonce": 7, "ok": True}]
@@ -281,8 +283,8 @@ def test_estop_nacked_when_coordinator_latch_fails(module: ArmCommandModule) -> 
     assert _sent_acks(module) == [{"type": "cmd_ack", "nonce": 5, "ok": False}]
 
 
-def test_estop_clear_reengages_held_button_from_current_pose(module: ArmCommandModule) -> None:
-    _engage_right(module)
+def test_estop_clear_keeps_raw_pose_forwarding(module: ArmCommandModule) -> None:
+    _publish_right(module)
     module._on_state_json(b'{"type": "estop", "nonce": 1}')
     wait_until(lambda: len(_sent_acks(module)) == 1, timeout=2.0)
     module.right_controller_output.publish.reset_mock()
@@ -292,15 +294,13 @@ def test_estop_clear_reengages_held_button_from_current_pose(module: ArmCommandM
     wait_until(lambda: len(_sent_acks(module)) == 2, timeout=2.0)
     module.coordinator.set_estop.assert_called_with(False)
 
-    # Button still held from before the estop: the next tick re-engages and
-    # rebaselines to the CURRENT pose (delta zero), so the arm resumes tracking
-    # from where it is — no jump.
     _tick(module)
-    assert module._is_engaged[Hand.RIGHT]
+    assert not module._is_engaged[Hand.RIGHT]
+    module.right_controller_output.publish.assert_called_once()
 
 
 def test_operator_lost_disengages(module: ArmCommandModule) -> None:
-    _engage_right(module)
+    _publish_right(module)
     module._on_state_json(b'{"type": "operator_lost"}')
     assert not module._is_engaged[Hand.RIGHT]
     assert not module._estopped  # loss is not an estop; re-engage allowed

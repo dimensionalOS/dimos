@@ -65,7 +65,6 @@ from dimos.hardware.drive_trains.spec import (
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.hardware.whole_body.spec import WholeBodyAdapter
-from dimos.msgs.control_msgs.TaskPreemption import TaskPreemption
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
@@ -154,8 +153,6 @@ class ControlCoordinator(Module):
     coordinator_joint_state: Out[JointState]
     # Output: Post-arbitration position commands accepted by hardware.
     applied_joint_position_command: Out[JointState]
-    # Output: Transitions where one task loses joints to another task.
-    task_preempted: Out[TaskPreemption]
 
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
@@ -912,7 +909,6 @@ class ControlCoordinator(Module):
             joint_to_hardware=self._joint_to_hardware,
             publish_callback=publish_cb,
             publish_command_callback=self.applied_joint_position_command.publish,
-            publish_preemption_callback=self.task_preempted.publish,
             publish_robot_callback=publish_robot_cb,
             frame_id=self.config.joint_state_frame_id,
             log_ticks=self.config.log_ticks,

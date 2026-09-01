@@ -191,8 +191,8 @@ def test_openarm_quest_commands_both_arms_and_grippers_through_coordinator(
         }
         assert task._teleop_config.joint_command_filter_cutoff_hz == 5.0
         buttons = Buttons()
-        buttons.left_primary = True
-        buttons.right_primary = True
+        buttons.left_grip = True
+        buttons.right_grip = True
         buttons.pack_analog_triggers(left=0.25, right=0.75)
         coordinator._dispatch("teleop_buttons", buttons)
         coordinator._dispatch("left_gripper_command", Float32(data=0.75))

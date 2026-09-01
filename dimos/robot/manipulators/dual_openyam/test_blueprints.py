@@ -108,6 +108,6 @@ def test_mock_quest_coordinator_commands_both_arms_and_grippers(
         adapter = cast("WholeBodyAdapter", coordinator._hardware["dual_openyam"].adapter)
         states = adapter.read_motor_states()
         assert [state.q for state in states[:12]] == [0.01] * 12
-        assert [state.q for state in states[12:]] == pytest.approx([0.25, 0.75], abs=0.01)
+        assert [state.q for state in states[12:]] == pytest.approx([0.75, 0.25], abs=0.01)
     finally:
         coordinator.stop()
