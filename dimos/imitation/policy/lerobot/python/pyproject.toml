@@ -7,8 +7,8 @@ name = "dimos-lerobot-runtime"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "dimos",
     "lerobot==0.6.0",
+    "opencv-contrib-python>=4.8,<5",
     "transformers[torch]>=5.4,<5.6",
 ]
 
@@ -27,25 +27,25 @@ override-dependencies = [
     "opencv-python-headless; sys_platform == 'never'",
 ]
 
-[tool.uv.sources]
-dimos = { path = "../../../../..", editable = true }
-
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["dimos_lerobot*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["runtime_tests.py"]
+testpaths = ["dimos_lerobot"]
+python_files = ["*_tests.py"]
 
 [tool.mypy]
 files = ["dimos_lerobot/"]
 python_version = "3.12"
 strict = true
+explicit_package_bases = true
+mypy_path = "../../../../../"
 
 [[tool.mypy.overrides]]
 module = [
     "lerobot.configs.policies",
+    "lerobot.datasets.lerobot_dataset",
     "lerobot.policies.factory",
     "lerobot.policies.pretrained",
     "lerobot.policies.utils",
