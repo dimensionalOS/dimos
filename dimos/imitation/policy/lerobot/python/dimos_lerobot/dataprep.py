@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import suppress
 from pathlib import Path
+import sys
 from typing import Any, Protocol, cast
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -161,3 +162,15 @@ def convert(config_path: str) -> None:
     config = DataPrepConfig.model_validate_json(Path(config_path).read_text())
     path = run_dataprep(config, writer=write)
     print(path)
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Convert the config supplied to the module entry point."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    if len(args) != 1:
+        raise SystemExit("usage: python -m dimos_lerobot.dataprep CONFIG_JSON")
+    convert(args[0])
+
+
+if __name__ == "__main__":
+    main()
