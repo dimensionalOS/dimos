@@ -53,6 +53,7 @@ from dimos.robot.manipulators.xarm.config import (
 )
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.utils.data import LfsPath
+from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 SIMULATED = bool(global_config.simulation)
 
@@ -161,7 +162,12 @@ def _sensing() -> tuple[Blueprint, ...]:
                 }
             ),
         )
-    return (RealSenseCamera.blueprint(), XArmWristCameraTf.blueprint())
+    return (
+        # enable_pointcloud is off by default here too, and the voxel chain has
+        # nothing to map without it.
+        RealSenseCamera.blueprint(enable_pointcloud=True),
+        XArmWristCameraTf.blueprint(),
+    )
 
 
 def _scene_registration() -> Blueprint:
@@ -248,6 +254,7 @@ _XARM_GRASP_MODULES = (
     *_sensing(),
     _scene_registration(),
     *_voxel_mapping(),
+    RerunBridgeModule.blueprint(),
     coordinator(
         hardware=[_hardware],
         tasks=[
