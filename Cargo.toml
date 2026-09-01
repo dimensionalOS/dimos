@@ -4,7 +4,6 @@ members = [
     "native/rust/experimental/dimos-memory-recorder",
     "native/rust/dimos-module",
     "native/rust/dimos-module-macros",
-    "native/rust/experimental/dimos-memory-recorder",
     "dimos/mapping/ray_tracing/rust",
     "dimos/mapping/ray_tracing/rust/py",
     "dimos/navigation/nav_3d/mls_planner/rust",

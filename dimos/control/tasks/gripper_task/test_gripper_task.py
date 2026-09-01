@@ -111,13 +111,23 @@ def test_stream_input_rejects_non_finite_normalized_opening() -> None:
     assert task.compute(_state()) is None
 
 
-def test_cancel_releases_latched_target() -> None:
-    task = _task()
-    assert task.set_normalized([0.5])
+def test_activation_required_task_fails_closed_after_preemption() -> None:
+    task = GripperControlTask(
+        "tool",
+        GripperControlTaskConfig(
+            joint_names=["arm/tool_joint"],
+            requires_activation=True,
+        ),
+        limits=[(0.0, 850.0)],
+    )
 
-    assert task.cancel() is True
-    assert task.cancel() is False
-    assert task.compute(_state()) is None
+    assert task.set_normalized([0.5]) is False
+    assert task.activate()
+    assert task.set_normalized([0.5])
+    task.on_preempted("manual_override", frozenset({"arm/tool_joint"}))
+
+    assert not task.is_active()
+    assert task.set_normalized([0.5]) is False
 
 
 def test_hold_expiry_releases_streaming_target() -> None:

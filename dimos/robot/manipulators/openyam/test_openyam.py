@@ -26,7 +26,6 @@ from dimos.robot.manipulators.openyam.blueprints.basic import (
     openyam_planner_coordinator,
 )
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
-    _openyam_quest_hardware,
     keyboard_teleop_openyam,
     keyboard_teleop_openyam_planner,
     teleop_quest_openyam,
@@ -208,12 +207,12 @@ def test_keyboard_teleop_openyam_planner_trajectory_has_priority_over_eef_task()
     assert eef_twist.priority == 10
 
 
-def test_keyboard_teleop_openyam_gripper_command_expires() -> None:
+def test_keyboard_teleop_openyam_gripper_task_has_no_extra_params() -> None:
     tasks = _coordinator_kwargs(keyboard_teleop_openyam)["tasks"]
     gripper = next(task for task in tasks if task.name == "openyam_gripper")
 
     assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
-    assert gripper.params == {"hold_duration": 0.1}
+    assert gripper.params == {}
 
 
 def test_quest_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
@@ -223,10 +222,5 @@ def test_quest_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
 
     assert teleop.params["bindings"] == [{"hand": "right", "target_frame": "gripper_tip"}]
     assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
+    assert gripper.params == {"hold_duration": 0.1}
     assert gripper.stream_bind == {"gripper_command": "right_gripper_command"}
-
-
-def test_quest_openyam_defaults_to_fake_hardware_at_collection_ready_pose() -> None:
-    hardware = _openyam_quest_hardware(None)
-    assert hardware.adapter_type == "mock_whole_body"
-    assert hardware.adapter_kwargs["initial_positions"] == [*OPENYAM_HOME_JOINTS, 0.0]
