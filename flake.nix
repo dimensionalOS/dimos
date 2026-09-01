@@ -346,7 +346,8 @@
           # fetcher sends a `curl/*` user agent, which crates.io answers with a
           # 403, so every crate not already in cache.nixos.org fails to fetch.
           # Cargo sends its own user agent and is served normally.
-          cargoHash = "sha256-YZHhJ1O++lYGGBfrvSCGolfglFF8Zxsly44+1+N/Hb0=";
+          # Rotates whenever Cargo.lock does.
+          cargoHash = "sha256-PRncaRtNrPM55JS7QPvwvRUm2bkcMwZOdeZGjVsWwpM=";
           # The `py` members are pyo3 cdylibs for the python side, not module
           # executables, so only the binary crates are built here.
           cargoBuildFlags = [ "-p" "dimos-voxel-ray-tracing" "-p" "dimos-mls-planner" ];
