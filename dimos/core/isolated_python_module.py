@@ -26,6 +26,7 @@ import threading
 import time
 from typing import Any, ClassVar
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -34,6 +35,22 @@ from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+
+def isolated_python_run_command(project: Path, *command: str) -> list[str]:
+    """Run a command with the host DimOS available in an isolated project."""
+    args = ["uv", "run"]
+    if (project / "uv.lock").is_file():
+        args.append("--frozen")
+    if (DIMOS_PROJECT_ROOT / "pyproject.toml").is_file():
+        args.extend(("--with-editable", str(DIMOS_PROJECT_ROOT)))
+    else:
+        # Installed hosts intentionally accept the newest compatible DimOS.
+        args.extend(("--with", "dimos"))
+    args.extend(command)
+    if (project / "pixi.toml").is_file():
+        return ["pixi", "run", "--executable", *args]
+    return args
 
 
 class IsolatedPythonModuleConfig(NativeModuleConfig):
@@ -118,25 +135,20 @@ class IsolatedPythonModule(NativeModule):
         return self._uv_command(*args)
 
     def _launch_command(self, handshake_fd: int) -> list[str]:
-        args = ["run"]
-        if (self.runtime_project / "uv.lock").is_file():
-            args.append("--frozen")
-        args.extend(
-            [
-                "python",
-                "-m",
-                "dimos.core.isolated_python_bootstrap",
-                "--declaration",
-                f"{type(self).__module__}:{type(self).__name__}",
-                "--implementation",
-                self.implementation,
-                "--instance-name",
-                self._new_runtime_name(),
-                "--handshake-fd",
-                str(handshake_fd),
-            ]
+        return isolated_python_run_command(
+            self.runtime_project,
+            "python",
+            "-m",
+            "dimos.core.isolated_python_bootstrap",
+            "--declaration",
+            f"{type(self).__module__}:{type(self).__name__}",
+            "--implementation",
+            self.implementation,
+            "--instance-name",
+            self._new_runtime_name(),
+            "--handshake-fd",
+            str(handshake_fd),
         )
-        return self._uv_command(*args)
 
     def _new_runtime_name(self) -> str:
         public_name = self.config.instance_name or type(self).__name__

@@ -52,11 +52,46 @@ def test_uv_lock_enables_frozen_commands(tmp_path: Path, monkeypatch: pytest.Mon
     project.mkdir()
     (project / "pyproject.toml").touch()
     (project / "uv.lock").touch()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "pyproject.toml").touch()
     monkeypatch.setattr("dimos.core.isolated_python_module.inspect.getfile", lambda _: str(source))
+    monkeypatch.setattr("dimos.core.isolated_python_module.DIMOS_PROJECT_ROOT", checkout)
     module = Contract()
     try:
+        command = module._launch_command(7)
+
         assert module._prepare_command() == ["uv", "sync", "--frozen"]
-        assert module._launch_command(7)[:3] == ["uv", "run", "--frozen"]
+        assert command[:5] == [
+            "uv",
+            "run",
+            "--frozen",
+            "--with-editable",
+            str(checkout),
+        ]
+        assert "--python" not in command
+    finally:
+        module.stop()
+
+
+def test_installed_host_uses_unversioned_dimos(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "contract.py"
+    source.touch()
+    project = tmp_path / "python"
+    project.mkdir()
+    (project / "pyproject.toml").touch()
+    installed_root = tmp_path / "site-packages"
+    installed_root.mkdir()
+    monkeypatch.setattr("dimos.core.isolated_python_module.inspect.getfile", lambda _: str(source))
+    monkeypatch.setattr("dimos.core.isolated_python_module.DIMOS_PROJECT_ROOT", installed_root)
+    module = Contract()
+    try:
+        command = module._launch_command(7)
+
+        assert command[:4] == ["uv", "run", "--with", "dimos"]
+        assert "--python" not in command
     finally:
         module.stop()
 
