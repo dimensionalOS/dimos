@@ -255,6 +255,7 @@ all_modules = {
     "local-map-relocalization": "dimos.mapping.relocalization.lidar.module.LocalMapRelocalization",
     "m20-camera-relay": "dimos.robot.deeprobotics.m20.camera.M20CameraRelay",
     "m20-connection": "dimos.robot.deeprobotics.m20.connection.M20Connection",
+    "le-robot-policy-module": "dimos.imitation.policy.lerobot.module.LeRobotPolicyModule",
     "manipulation-module": "dimos.manipulation.manipulation_module.ManipulationModule",
     "manipulation-skills": "dimos.manipulation.manipulation_skills.ManipulationSkills",
     "map": "dimos.robot.unitree.type.map.Map",
