@@ -6,229 +6,72 @@ This guide helps you set up a camera-based navigation system.
 
 # ⚠️ What Works and What Does Not
 
-Let me be up front about what works and what does not. All camera-based systems are worse than a good lidar. You can build production-quality navigation with cameras alone, but only if you do it carefully.
+Let me be up front about what works and what does not. All camera-based systems are worse than a good 360 lidar, like the mid360. You can build production-quality navigation with cameras alone, but only if we do it carefully.
 
-A regular phone camera facing forward on a humanoid, with no data from the motors, is basically impossible as of 2026. A wheeled robot with motor encoders and a downward-facing RealSense depth camera can do some pretty cool stuff.
+A regular mono raspberry pi camera facing forward on a humanoid, with no data from the motors, is basically impossible to get to get a real time production-grade map out of as of 2026. A wheeled robot with motor encoders and a downward-facing RealSense depth camera can do some pretty cool stuff.
 
 Use these rules of thumb:
 
-- We need good odometry first. A map built on drifting poses will also drift.
-- We need a depth camera and good odometry to make a half-decent map.
-- Calibration is the difference between incredible and useless. Some cameras, including RealSense cameras, arrive pre-calibrated.
+- We need good odometry first.
+- To make a good map, we need a depth camera and good odometry.
+- Calibration is the difference between incredible and useless. Some cameras, including RealSense cameras, arrive with intrinsics pre-calibrated. Look online for how to calibrate the intrinsics for you camera.
 - Make sure everything on your robot is stiff. Flexing and wobble between sensors can ruin performance.
 - Stereo cameras are significantly better than mono cameras because they observe metric depth.
-- Turn the IR blaster off for better odometry. Its projected pattern moves across the scene as the robot moves.
+- An IR flood light is great, but an IR dot emitter is not. Both are often built into IR cameras. Turn off the IR dot emitter to get better odometry at the cost of some depth quality.
 - Global-shutter cameras, such as the RealSense D455, are much better than rolling-shutter cameras, such as the ZED Mini.
-- Motor encoder data is a game changer. It significantly improves the motion estimate.
-- An IMU plus a camera does not do much, but an IMU plus motor encoders improves accuracy significantly.
+- Motor encoder data is a game changer. It significantly improves the final odometry.
+- An IMU + camera does not do much, but an IMU + motor encoders improves accuracy significantly.
 - Multiple cameras are a game changer. They significantly improve coverage and robustness.
 
 ---
 
 # 🔌 Software Setup
 
-Assume your calibrated camera is mounted rigidly on the robot. The navigation system needs sensor measurements plus enough metadata to interpret them correctly.
+So you've got your robot with a calibrated camera. What next?
 
-`DimSlam` is a native dimos visual odometry module built on cuVSLAM. It tracks camera images and estimates the robot's motion, while extending stock cuVSLAM with inertial and odometry fusion. Give it an IMU and any wheel, leg, or other odometry your robot already produces, and those sensors improve its estimate.
-
-`DimSlam` is configured from Python, then runs as its own Rust process. The module publishes `odometry` and the `odom -> base_link` transform.
-
-Import its configuration types from:
-
-```python skip
-from dimos.mapping.dim_slam.dim_slam import (
-    CameraConfig,
-    Covariance,
-    DimSlam,
-    DimSlamConfig,
-    ImuConfig,
-    InitialStds,
-    SourceConfig,
-)
-```
-
-## The complete list of what you must supply
-
-1. **A `camera_mode`.** This is required and has no default because it determines which inputs are required. Choose `"mono"`, `"stereo"`, `"rgbd"`, or `"multisensor"`.
-
-   `"multisensor"` is experimental in cuVSLAM. It supports a mixture of RGB and RGB-D cameras and requires an explicit `cameras` list. Auto-discovery cannot know when a multisensor rig is complete.
-
-2. **Camera and IMU intrinsics.** Camera intrinsics arrive through `camera_info`. RealSense cameras publish their factory calibration. Non-RealSense cameras must be calibrated first. Configure each IMU with noise figures from its datasheet.
-
-3. **Extrinsics through tf.** Supply a static transform from the robot base to every camera optical frame. An IMU mount must also exist as a frame in the robot URDF because dimSLAM reads IMU mounts from tf.
-
-4. **The `cameras` list in the correct order.** For stereo, the first two entries define the rig, with the left camera first. If the list is empty, cuVSLAM auto-discovers cameras from `camera_info` and sorts their frame names. That produces left-then-right ordering only by luck. Declare the list explicitly for a production robot.
-
-   Entries after the rig can configure settings-only streams, such as an RGB-D depth stream.
-
-5. **Timestamps that agree.** Stereo pairs must satisfy cuVSLAM's 1 ms timestamp contract by default. `max_skew_ms` permits the measured spread of a rig that cannot meet it. All sensors also need compatible clocks.
-
-6. **A second of stillness at startup when using an IMU.** dimSLAM uses stationary samples to estimate gyro bias and level itself.
-
-7. **An `odom_sources` entry for every wheel, leg, or other external odometry source.** Its `parent_frame_id` and `child_frame_id` must exactly match the messages.
-
-8. **Trust values.** Configure `visual_odom_pose_variances`, each source's pose and twist variances, and `per_dimension_error_variance`.
-
-## Shared input streams
-
-`DimSlam` accepts these streams:
-
-| Input | Message type |
-| --- | --- |
-| `image` | `Image` |
-| `depth_image` | `Image` |
-| `camera_info` | `CameraInfo` |
-| `depth_camera_info` | `CameraInfo` |
-| `imu` | `Imu` |
-| `odom_sources` | `Odometry` |
-
-It publishes:
-
-| Output | Message type |
-| --- | --- |
-| `odometry` | `Odometry` |
-| `depth_cloud` | `PointCloud2` |
-| `tf` | `TFMessage`, bidirectional |
-
-Every camera publishes onto the same `image` and `camera_info` streams. dimSLAM distinguishes cameras using `frame_id`.
-
-Every IMU publishes onto the same `imu` stream and is matched by `frame_id`. Every external odometry source publishes onto `odom_sources` and is matched by `header.frame_id` plus `child_frame_id`.
-
-An unlisted frame is dropped. It does not contribute to the estimate.
-
-## Camera only, with no IMU or wheel odometry
-
-The following blueprint uses the stereo infrared pair from a RealSense camera. It also includes `OdometryHist`, which records the estimated path and publishes it as `odom_hist`.
-
-Run it with:
-
-```sh skip
-dimos run demo-dim-slam-realsense --viewer rerun --rerun-host 0.0.0.0
-```
+1. Either use a dimos camera module, or write your own. Use the dimos Realsense module as an example of how to publish the camera frames, local transform frames, and camera intrinsics.
+2. If you have an IMU or the camera has an IMU, make sure those are published as well, again use the Realsense as an example for the IMU message types.
+3. You'll need to `tf.publish` a transform between your `base_link` (main point on your robot) and the camera (often called `camera_link`). To do that create a URDF for your robot, then create a `YourRobotStaticTf` module that inherits from `dimos.protocol.tf.static_tf_publisher.StaticTfPublisher`. Use the `SpotHighLevel` module as an example for how to load and publish everything from a URDF.
+4. Create a blueprint with the DimSlam module similar to the one below:
 
 ```python skip
-from typing import Any
-
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.mapping.dim_slam.dim_slam import DimSlam
-from dimos.mapping.odometry_hist import OdometryHist, path_at_true_height
+from dimos.mapping.odometry_hist import OdometryHist
 from dimos.visualization.vis_module import vis_module
+from dimos.mapping.dim_slam.demo_dim_slam_realsense import rerun_config
 
-
-def dim_slam_rerun_blueprint() -> Any:
-    """Rerun names entities after the topic, which both cameras share."""
-    import rerun as rr
-    import rerun.blueprint as rrb
-
-    return rrb.Blueprint(
-        rrb.Horizontal(
-            rrb.Spatial2DView(origin="world/image", name="cameras"),
-            rrb.Spatial3DView(
-                origin="world",
-                name="3D",
-                background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
-                line_grid=rrb.LineGrid3D(
-                    plane=rr.components.Plane3D.XY.with_distance(0.5)
-                ),
-            ),
-            column_shares=[1, 3],
-        ),
-        rrb.TimePanel(state="hidden"),
-        rrb.SelectionPanel(state="hidden"),
-    )
-
-
-demo_dim_slam_realsense = (
-    autoconnect(
-        RealSenseCamera.blueprint(
-            fps=30,
-            enable_infrared=True,
-            emitter_enabled=False,
-            enable_color=False,
-            enable_depth=False,
-        ),
-        DimSlam.blueprint(camera_mode="stereo"),
-        OdometryHist.blueprint(),
-        vis_module(
-            global_config.viewer,
-            rerun_config={
-                "blueprint": dim_slam_rerun_blueprint,
-                "visual_override": {
-                    "world/odom_hist": path_at_true_height
-                },
-            },
-        ),
-    )
-    .remappings(
-        [
-            (RealSenseCamera, "infrared_left", "image"),
-            (RealSenseCamera, "infrared_right", "image"),
-            (
-                RealSenseCamera,
-                "infrared_left_camera_info",
-                "camera_info",
-            ),
-            (
-                RealSenseCamera,
-                "infrared_right_camera_info",
-                "camera_info",
-            ),
-        ]
-    )
-    .global_config(n_workers=4)
+blueprint = autoconnect(
+    RealSenseCamera.blueprint(
+        fps=30,
+        enable_infrared=True,
+        emitter_enabled=False,
+        enable_color=False,
+        enable_depth=False,
+    ),
+    YourRobotStaticTf.blueprint(),
+    DimSlam.blueprint(
+        camera_mode="stereo", # pick one of "mono", "stereo", "rgbd", or "multisensor".
+        imus=[
+            # NOTE: keep the robot still for a moment when powering it on to calibrate IMU gravity
+            ImuConfig(
+                frame_id="camera_accel_optical_frame", # needs to match the frame name from RealSenseCamera (or your camera module)
+                gyro_noise_density=2e-4,
+                gyro_random_walk=1e-5,
+                accel_noise_density=1.8e-3,
+                accel_random_walk=1e-4,
+            )
+        ],
+    ),
+    OdometryHist.blueprint(),
+    vis_module(
+        global_config.viewer,
+        rerun_config=rerun_config,
+    ),
 )
 ```
-
-Several details matter:
-
-- `emitter_enabled=False` turns off the IR blaster because it hurts odometry.
-- Both infrared images are remapped onto the same `image` stream. Their frame IDs distinguish them.
-- Grayscale infrared images are sufficient. Tracking does not require color.
-- Pure odometry needs neither the color stream nor the depth stream.
-- The RealSense publishes calibrated `camera_info`, so no calibration code appears here.
-- `OdometryHist` subscribes to `odometry` and publishes a `Path` on `odom_hist`.
-- `path_at_true_height` draws the path at its real z instead of lifting it above a costmap.
-
-In Rerun, inspect `world/odom_hist`. It should retrace the route you walked.
-
-`OdometryHist` defaults to a 0.02 m minimum step, 20,000 poses, and a 0.1 second minimum publish interval. Its empty `frame_id` follows the incoming odometry frame.
-
-## Adding an IMU
-
-Build on the first blueprint by remapping the camera's IMU stream to `imu` and configuring the matching frame. The frame ID must match the samples, and its mount must exist in tf.
-
-The minimum dimSLAM configuration is:
-
-```python skip
-from dimos.mapping.dim_slam.dim_slam import DimSlam, ImuConfig
-
-DimSlam.blueprint(
-    camera_mode="stereo",
-    imus=[
-        ImuConfig(
-            frame_id="camera_accel_optical_frame",
-            gyro_noise_density=2e-4,
-            gyro_random_walk=1e-5,
-            accel_noise_density=1.8e-3,
-            accel_random_walk=1e-4,
-        )
-    ],
-)
-```
-
-These are the RealSense D455 datasheet noise figures. Each configured IMU has independent noise values and estimated biases. A good gyro does not lose its influence because another IMU is noisy.
-
-Keep the robot still during initialization. `init_samples=200` corresponds to one second at 200 Hz. Initialization restarts when angular velocity exceeds `init_gyro_limit`, whose default is 0.05 rad/s.
-
-Validation rejects an IMU entry when:
-
-- `frame_id` is empty or duplicated.
-- Any noise figure is zero or negative.
-- `init_gyro_limit` is zero or negative.
-
-An IMU alone is not the main improvement. The production configuration adds wheel odometry.
 
 ## Adding wheel odometry
 
