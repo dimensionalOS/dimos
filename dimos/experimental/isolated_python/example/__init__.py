@@ -1,1 +1,0 @@
-"""Isolated Python module example."""
