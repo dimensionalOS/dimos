@@ -137,8 +137,31 @@ TEST_CASE("a locator's address is the part a link reports") {
     CHECK(zenoh_detail::locator_address("127.0.0.1:7447") == "127.0.0.1:7447");
 }
 
+// A session that neither scouts nor dials, so opening it touches no network.
+constexpr const char* kIsolatedLaunch = R"({
+  "session": {
+    "mode": "peer",
+    "connect": [],
+    "listen": [],
+    "multicast": false,
+    "scout_addr": "",
+    "gossip": false,
+    "interface": "lo",
+    "connect_timeout_ms": 0
+  }
+})";
+
+TEST_CASE("a publish zenoh rejects is logged rather than thrown") {
+    // Publishing happens on a worker thread with no catch of its own, so an
+    // escaped zenoh exception would terminate the process.
+    std::unique_ptr<Transport> transport =
+        ZenohTransport::from_launch(nlohmann::json::parse(kIsolatedLaunch));
+    // '?' cannot appear in a key expression, so declaring the publisher fails.
+    CHECK_NOTHROW(transport->publish("/bad?key", std::vector<uint8_t>{1, 2, 3}));
+}
+
 // Compiled (so every inline body is typechecked against zenoh-cpp) but never
-// called: constructing a real session opens sockets and scouts the network.
+// called: a client-mode session dials an endpoint and scouts the network.
 [[maybe_unused]] static void zenoh_transport_compile_check() {
     std::unique_ptr<Transport> transport =
         ZenohTransport::from_launch(nlohmann::json::parse(kClientLaunch));

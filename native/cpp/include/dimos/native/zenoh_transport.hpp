@@ -329,19 +329,28 @@ public:
     ZenohTransport& operator=(const ZenohTransport&) = delete;
 
     void publish(const std::string& channel, std::vector<uint8_t> data) override {
-        // Declaring a publisher talks to the network, so each channel declares
-        // once and reuses it. The lock is released before the put so a stalled
-        // channel can't block the others.
-        std::shared_ptr<::zenoh::Publisher> publisher;
-        {
-            std::lock_guard<std::mutex> lock(publishers_mu_);
-            auto it = publishers_.find(channel);
-            if (it == publishers_.end()) {
-                it = publishers_.emplace(channel, declare_publisher(channel)).first;
+        // This runs on a publish worker thread, and zenoh-cpp reports every
+        // failure by throwing. An escaped exception would terminate the process,
+        // so a failed publish is logged and dropped the way LCM's is.
+        try {
+            // Declaring a publisher talks to the network, so each channel
+            // declares once and reuses it. The lock is released before the put
+            // so a stalled channel can't block the others.
+            std::shared_ptr<::zenoh::Publisher> publisher;
+            {
+                std::lock_guard<std::mutex> lock(publishers_mu_);
+                auto it = publishers_.find(channel);
+                if (it == publishers_.end()) {
+                    it = publishers_.emplace(channel, declare_publisher(channel)).first;
+                }
+                publisher = it->second;
             }
-            publisher = it->second;
+            publisher->put(::zenoh::Bytes(std::move(data)));
+        } catch (const std::exception& e) {
+            DIMOS_ERROR_THROTTLED(log::from_secs(1), "zenoh publish failed",
+                                  log::Field("channel", channel),
+                                  log::Field("error", e.what()));
         }
-        publisher->put(::zenoh::Bytes(std::move(data)));
     }
 
     void subscribe(const std::string& channel, Dispatch on_msg) override {
