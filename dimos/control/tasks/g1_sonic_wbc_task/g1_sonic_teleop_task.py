@@ -473,7 +473,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
 
     def _apply_pose_stream_locked(self) -> dict[str, Any]:
         fields = self._pose_stream.fields()
-        result = self._pipeline.apply_pose_message(fields)
+        result = self._pipeline.set_pose_window(fields)
         if "error" not in result:
             self._publish_pose_reference_locked(
                 SonicPoseReference.from_arrays(

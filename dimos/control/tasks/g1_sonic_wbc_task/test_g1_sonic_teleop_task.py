@@ -109,7 +109,7 @@ def task_and_pipeline(mocker: Any) -> Iterator[tuple[G1SonicTeleopTask, Any]]:
         "dimos.control.tasks.g1_sonic_wbc_task.g1_sonic_wbc_task.SonicPipeline"
     )
     pipeline = pipeline_class.return_value
-    pipeline.apply_pose_message.return_value = {"frames": 10, "encode_mode": 2}
+    pipeline.set_pose_window.return_value = {"frames": 10, "encode_mode": 2}
     pipeline.begin_stream_transition.return_value = True
     pipeline.prepare_planner_transition.return_value = True
     pipeline.planner_transition_ready = False
@@ -153,7 +153,7 @@ def test_live_policy_enters_planner_without_controller_buttons(
     assert teleop["mode"] == "planner"
     assert teleop["buffered_frames"] == 0
     assert task.state_snapshot()["reference_source"] == "planner"
-    pipeline.apply_pose_message.assert_not_called()
+    pipeline.set_pose_window.assert_not_called()
 
 
 def test_dry_run_keeps_webxr_planner_available(
@@ -182,7 +182,7 @@ def test_dry_run_pose_preview_runs_sonic_without_actuator_output(
     assert snapshot["dry_run"] is True
     assert snapshot["webxr_teleop"]["mode"] == "pose"
     assert snapshot["reference_source"] == "webxr_pose"
-    pipeline.apply_pose_message.assert_called()
+    pipeline.set_pose_window.assert_called()
     assert publish.call_args.args[0].active is True
 
 
@@ -260,13 +260,13 @@ def test_pose_updates_continue_during_transition(
 ) -> None:
     task, pipeline = task_and_pipeline
     _start_pose_transition(task)
-    initial_calls = pipeline.apply_pose_message.call_count
+    initial_calls = pipeline.set_pose_window.call_count
 
     task.on_body_tracking(_body_snapshot(capture_time_s=1.20), t_now=1.20)
     task.compute(_state(1.20))
 
     assert task.state_snapshot()["webxr_teleop"]["mode"] == "pose_transition"
-    assert pipeline.apply_pose_message.call_count == initial_calls + 1
+    assert pipeline.set_pose_window.call_count == initial_calls + 1
 
 
 def test_tracking_loss_during_transition_returns_to_planner(
@@ -306,7 +306,7 @@ def test_ax_is_ignored_while_policy_is_unarmed(task_and_pipeline: tuple[Any, Any
     task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.0)
 
     assert task.state_snapshot()["webxr_teleop"]["mode"] == "off"
-    pipeline.apply_pose_message.assert_not_called()
+    pipeline.set_pose_window.assert_not_called()
 
 
 def test_pose_requires_complete_ten_frame_buffer(task_and_pipeline: tuple[Any, Any]) -> None:
@@ -318,7 +318,7 @@ def test_pose_requires_complete_ten_frame_buffer(task_and_pipeline: tuple[Any, A
     teleop = task.state_snapshot()["webxr_teleop"]
     assert teleop["mode"] == "planner"
     assert teleop["last_transition_reason"] == "pose_buffer_not_ready"
-    pipeline.apply_pose_message.assert_not_called()
+    pipeline.set_pose_window.assert_not_called()
 
 
 def test_low_latency_pipeline_requires_four_frames_and_is_reported(mocker: Any) -> None:
@@ -351,7 +351,7 @@ def test_low_latency_pipeline_requires_four_frames_and_is_reported(mocker: Any) 
         task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.07)
 
         teleop = task.state_snapshot()["webxr_teleop"]
-        fields = pipeline.apply_pose_message.call_args.args[0]
+        fields = pipeline.set_pose_window.call_args.args[0]
         assert teleop["mode"] == "pose_transition"
         assert teleop["sonic_pipeline"] == "sonic-low-latency"
         assert teleop["pose_window_frames"] == 4
@@ -367,15 +367,15 @@ def test_pose_data_is_applied_before_stream_source_is_selected(
     _prime_pose_stream(task)
     _fill_pose_buffer(task)
     pipeline.reset_mock()
-    pipeline.apply_pose_message.return_value = {"frames": 10, "encode_mode": 2}
+    pipeline.set_pose_window.return_value = {"frames": 10, "encode_mode": 2}
 
     task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.19)
 
-    fields = pipeline.apply_pose_message.call_args.args[0]
+    fields = pipeline.set_pose_window.call_args.args[0]
     assert fields["frame_index"].tolist() == list(range(10))
     assert fields["smpl_joints"].shape == (10, 24, 3)
     call_names = [call[0] for call in pipeline.method_calls]
-    assert call_names.index("apply_pose_message") < call_names.index("begin_stream_transition")
+    assert call_names.index("set_pose_window") < call_names.index("begin_stream_transition")
     assert task.state_snapshot()["webxr_teleop"]["mode"] == "pose_transition"
 
 
@@ -389,7 +389,7 @@ def test_accepted_pose_publishes_exact_sonic_reference(
 
     _enter_pose(task)
 
-    fields = pipeline.apply_pose_message.call_args.args[0]
+    fields = pipeline.set_pose_window.call_args.args[0]
     reference = publish.call_args.args[0]
     assert reference.active is True
     np.testing.assert_array_equal(reference.frame_indices, fields["frame_index"])
@@ -506,14 +506,14 @@ def test_webxr_stays_off_while_policy_is_unarmed(
 ) -> None:
     task, pipeline = task_and_pipeline
     assert task.disarm()
-    pipeline.apply_pose_message.reset_mock()
+    pipeline.set_pose_window.reset_mock()
     task.on_body_tracking(_body_snapshot(), t_now=1.0)
 
     task.on_teleop_buttons(_buttons(a=True, x=True), t_now=1.0)
 
     assert task.control_state is SonicControlState.UNARMED
     assert task.state_snapshot()["webxr_teleop"]["mode"] == "off"
-    pipeline.apply_pose_message.assert_not_called()
+    pipeline.set_pose_window.assert_not_called()
 
 
 def test_tracking_loss_in_pose_returns_to_planner(

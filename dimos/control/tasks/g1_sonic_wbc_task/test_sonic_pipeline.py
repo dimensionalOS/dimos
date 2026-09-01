@@ -214,6 +214,36 @@ def test_smpl_pose_chunk_populates_all_ten_encoder_frames(pipeline: SonicPipelin
     np.testing.assert_array_equal(encoded_wrists, joint_pos[:, WRIST_ONNX_INDICES])
 
 
+def test_live_pose_window_replaces_backlogged_stream(pipeline: SonicPipeline) -> None:
+    first = _smpl_pose_fields()
+    pipeline.apply_pose_message(first)
+    pipeline._streamed_frame = 3
+
+    latest = _smpl_pose_fields()
+    latest["frame_index"] += 20
+    latest["smpl_joints"][:, :, 0] = np.arange(20, 30, dtype=np.float32)[:, None]
+
+    summary = pipeline.set_pose_window(latest)
+    observation = pipeline._build_streamed_encoder_obs(
+        np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    )
+
+    assert summary == {"frames": 10, "encode_mode": 2, "catchup": True}
+    assert pipeline.snapshot()["stream_frames"] == 10
+    assert pipeline.snapshot()["stream_frame"] == 0
+    assert pipeline.snapshot()["stream_backlog_frames"] == 9
+    encoded_smpl = observation[SMPL_JOINTS_OFFSET : SMPL_JOINTS_OFFSET + 720].reshape(10, 24, 3)
+    np.testing.assert_array_equal(encoded_smpl[:, :, 0], latest["smpl_joints"][:, :, 0])
+
+    for start in range(22, 222, 2):
+        rolling = _smpl_pose_fields()
+        rolling["frame_index"] += start
+        pipeline.set_pose_window(rolling)
+        pipeline._streamed_frame += 1
+        assert pipeline.snapshot()["stream_frames"] == 10
+        assert pipeline.snapshot()["stream_backlog_frames"] == 8
+
+
 def test_low_latency_profile_is_the_released_four_frame_model_contract() -> None:
     profile = sonic_model_profile(SONIC_LOW_LATENCY_PIPELINE)
 
