@@ -46,6 +46,9 @@ from dimos.perception.experimental.object_scene_registration_spec import ObjectS
 class PickAndPlaceModuleConfig(ModuleConfig):
     planning_frame: str = "base_link"
     pregrasp_offset: float = Field(default=0.10, gt=0.0)
+    # A learned provider returns a ranked spread whose best-scoring pose is not
+    # always kinematically reachable; a single-candidate provider is unaffected.
+    max_grasp_attempts: int = Field(default=5, gt=0)
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
 
@@ -141,37 +144,46 @@ class PickAndPlaceModule(Module):
             return SkillResult.fail(
                 "ROBOT_NOT_FOUND", "Gripper-capable planning group is missing or ambiguous"
             )
-        candidate = candidates.candidates[0]
-        grasp = self._apply_yaw_policy(
-            PoseStamped(
-                ts=candidates.header.timestamp,
-                frame_id=candidates.header.frame_id,
-                position=candidate.pose.position,
-                orientation=candidate.pose.orientation,
-            ),
-            group,
-        )
-        pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
         if failure := self._open_gripper(group, "pre-grasp open"):
             return failure
-        if failure := self._move(pregrasp, group):
-            return failure
-        if failure := self._move(grasp, group):
-            return failure
-        if failure := self._close_and_verify(group):
-            return failure
 
-        self._selected_object_id = object_id
-        self._selected_grasp = grasp
-        self._holding_object = True
-        if failure := self._move(pregrasp, group):
-            return failure
-        return SkillResult.ok(
-            "Pick complete",
-            object_id=object_id,
-            rank=0,
-            score=candidate.score,
-            candidates=len(candidates.candidates),
+        unreachable: SkillResult[ManipulationSkillError] | None = None
+        for rank, candidate in enumerate(candidates.candidates[: self.config.max_grasp_attempts]):
+            grasp = self._apply_yaw_policy(
+                PoseStamped(
+                    ts=candidates.header.timestamp,
+                    frame_id=candidates.header.frame_id,
+                    position=candidate.pose.position,
+                    orientation=candidate.pose.orientation,
+                ),
+                group,
+            )
+            pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
+            failure = self._move(pregrasp, group) or self._move(grasp, group)
+            if failure is not None:
+                # Only an unreachable pose is worth demoting to the next candidate;
+                # a drive or execution fault would repeat for every one of them.
+                if failure.error_code != "PLANNING_FAILED":
+                    return failure
+                unreachable = failure
+                continue
+            if failure := self._close_and_verify(group):
+                return failure
+
+            self._selected_object_id = object_id
+            self._selected_grasp = grasp
+            self._holding_object = True
+            if failure := self._move(pregrasp, group):
+                return failure
+            return SkillResult.ok(
+                "Pick complete",
+                object_id=object_id,
+                rank=rank,
+                score=candidate.score,
+                candidates=len(candidates.candidates),
+            )
+        return unreachable or SkillResult.fail(
+            "PLANNING_FAILED", "No grasp candidate was reachable"
         )
 
     @rpc
