@@ -20,19 +20,19 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from threading import Event, RLock, Thread, current_thread
 import time
-from typing import Any, Protocol, cast
+from typing import Any
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline
+from lerobot.types import PolicyAction, RobotObservation
 from lerobot.utils.import_utils import register_third_party_plugins
 import numpy as np
 from numpy.typing import NDArray
 from reactivex.disposable import Disposable
 import torch
-from torch import Tensor
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
@@ -52,20 +52,14 @@ _STATE_FEATURE = "observation.state"
 _ACTION_FEATURE = "action"
 
 RawObservation = dict[str, NDArray[np.uint8] | NDArray[np.float32]]
-PreparedObservation = dict[str, Tensor | str]
-PolicyBatch = dict[str, Tensor]
-
-
-class _Resettable(Protocol):
-    def reset(self) -> None: ...
 
 
 @dataclass(frozen=True)
 class _LoadedPolicy:
     policy: PreTrainedPolicy
     device: torch.device
-    preprocessor: PolicyProcessorPipeline[PreparedObservation, PreparedObservation]
-    postprocessor: PolicyProcessorPipeline[Tensor, Tensor]
+    preprocessor: PolicyProcessorPipeline[RobotObservation, RobotObservation]
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction]
     use_amp: bool
     chunk_size: int | None
     n_action_steps: int | None
@@ -232,13 +226,11 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         return _LoadedPolicy(
             policy=loaded_policy,
             device=device,
-            preprocessor=cast(
-                "PolicyProcessorPipeline[PreparedObservation, PreparedObservation]", preprocessor
-            ),
+            preprocessor=preprocessor,
             postprocessor=postprocessor,
             use_amp=bool(policy_config.use_amp),
-            chunk_size=getattr(policy_config, "chunk_size", None),
-            n_action_steps=getattr(policy_config, "n_action_steps", None),
+            chunk_size=_optional_int_attribute(policy_config, "chunk_size"),
+            n_action_steps=_optional_int_attribute(policy_config, "n_action_steps"),
         )
 
     def _validate_features(self, policy_config: PreTrainedConfig) -> None:
@@ -283,17 +275,14 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             if loaded_policy.device.type == "cuda" and loaded_policy.use_amp
             else nullcontext(),
         ):
-            prepared = cast(
-                "PreparedObservation",
-                prepare_observation_for_inference(
-                    observation,
-                    loaded_policy.device,
-                    task=task,
-                    robot_type=self.config.robot_type,
-                ),
+            prepared = prepare_observation_for_inference(
+                observation,
+                loaded_policy.device,
+                task=task,
+                robot_type=self.config.robot_type,
             )
             prepared = loaded_policy.preprocessor(prepared)
-            action = loaded_policy.policy.select_action(cast("PolicyBatch", prepared))
+            action = loaded_policy.policy.select_action(prepared)
             action = loaded_policy.postprocessor(action)
         return np.asarray(action.squeeze(0).to("cpu").numpy(), dtype=np.float32)
 
@@ -386,9 +375,9 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
 
     @staticmethod
     def _reset_policy(loaded_policy: _LoadedPolicy) -> None:
-        cast("_Resettable", loaded_policy.policy).reset()
-        cast("_Resettable", loaded_policy.preprocessor).reset()
-        cast("_Resettable", loaded_policy.postprocessor).reset()
+        _reset(loaded_policy.policy)
+        _reset(loaded_policy.preprocessor)
+        _reset(loaded_policy.postprocessor)
 
     def _stop_policy(self) -> bool:
         with self._lock:
@@ -399,3 +388,17 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         if thread is not None and thread is not current_thread():
             thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         return was_running
+
+
+def _reset(instance: object) -> None:
+    reset = getattr(instance, "reset", None)
+    if not callable(reset):
+        raise TypeError(f"{type(instance).__name__} does not provide reset()")
+    reset()
+
+
+def _optional_int_attribute(instance: object, name: str) -> int | None:
+    value = getattr(instance, name, None)
+    if value is not None and not isinstance(value, int):
+        raise TypeError(f"{name} must be an int, got {type(value).__name__}")
+    return value
