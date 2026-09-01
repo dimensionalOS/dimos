@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping
+from dataclasses import replace
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -29,6 +30,8 @@ from dimos.hosted.fragment import (
     BoundaryStream,
     HostFragment,
     PythonFragmentPayload,
+    RemoteModuleReference,
+    run_module_rpc_name,
     run_stream_base_topic,
     run_stream_key,
 )
@@ -71,7 +74,12 @@ def compile_fragments(
             "Multi-Host fragments do not yet support Blueprint requirements or configurators"
         )
 
-    _validate_module_references(blueprint, assignments)
+    resolved_references = _resolve_module_references(blueprint)
+    remote_provider_names = {
+        provider.name
+        for (consumer_name, _), provider in resolved_references.items()
+        if assignments[consumer_name] != assignments[provider.name]
+    }
     stream_endpoints = _stream_endpoints(blueprint)
     boundary_keys = {
         key
@@ -84,8 +92,23 @@ def compile_fragments(
 
     fragments: dict[str, HostFragment] = {}
     for host_id in host_ids:
-        local_atoms = tuple(atom for atom in atoms if assignments[atom.name] == host_id)
+        local_atoms = tuple(
+            _with_rpc_name(atom, run_id, host_id) if atom.name in remote_provider_names else atom
+            for atom in atoms
+            if assignments[atom.name] == host_id
+        )
         local_names = {atom.name for atom in local_atoms}
+        remote_references = tuple(
+            _remote_module_reference(
+                run_id,
+                consumer_name,
+                reference_name,
+                provider,
+                assignments[provider.name],
+            )
+            for (consumer_name, reference_name), provider in sorted(resolved_references.items())
+            if assignments[consumer_name] == host_id and assignments[provider.name] != host_id
+        )
         local_stream_keys = {
             key
             for key, endpoint_names in stream_endpoints.items()
@@ -122,6 +145,7 @@ def compile_fragments(
                 blueprint=local_blueprint,
                 config=local_config,
                 boundary_streams=local_boundaries,
+                remote_module_references=remote_references,
             ),
         )
 
@@ -169,6 +193,33 @@ def _boundary_transport(run_id: str, boundary: BoundaryStream) -> TransportSpec:
     return ZenohTransport.spec(
         run_stream_base_topic(run_id, boundary.name),
         boundary.message_type,
+    )
+
+
+def _with_rpc_name(
+    atom: BlueprintAtom,
+    run_id: str,
+    host_id: str,
+) -> BlueprintAtom:
+    kwargs = dict(atom.kwargs)
+    kwargs["rpc_name"] = run_module_rpc_name(run_id, host_id, atom.name)
+    return replace(atom, kwargs=kwargs)
+
+
+def _remote_module_reference(
+    run_id: str,
+    consumer_name: str,
+    reference_name: str,
+    provider: BlueprintAtom,
+    provider_host_id: str,
+) -> RemoteModuleReference:
+    return RemoteModuleReference(
+        consumer_name=consumer_name,
+        reference_name=reference_name,
+        provider_name=provider.name,
+        provider_host_id=provider_host_id,
+        provider_type=provider.module,
+        rpc_name=run_module_rpc_name(run_id, provider_host_id, provider.name),
     )
 
 
@@ -233,7 +284,7 @@ def _resolve_reference_target(
     blueprint: Blueprint,
     consumer: BlueprintAtom,
     reference: ModuleRef,
-) -> str | None:
+) -> BlueprintAtom | None:
     replacement = blueprint.remapping_map.get((consumer.name, reference.name))
     requested = (
         cast("type", replacement)
@@ -274,28 +325,22 @@ def _resolve_reference_target(
         ]
     )
     if len(possible) == 1:
-        return possible[0].name
+        return possible[0]
     if len(valid) == 1:
-        return valid[0].name
+        return valid[0]
     candidates = ", ".join(sorted(candidate.name for candidate in possible))
     raise ValueError(
         f"Module reference {consumer.name}.{reference.name} is ambiguous: {candidates}"
     )
 
 
-def _validate_module_references(
+def _resolve_module_references(
     blueprint: Blueprint,
-    assignments: Mapping[str, str],
-) -> None:
+) -> dict[tuple[str, str], BlueprintAtom]:
+    resolved: dict[tuple[str, str], BlueprintAtom] = {}
     for consumer in blueprint.active_blueprints:
         for reference in consumer.module_refs:
             provider = _resolve_reference_target(blueprint, consumer, reference)
-            if provider is None:
-                continue
-            consumer_host = assignments[consumer.name]
-            provider_host = assignments[provider]
-            if consumer_host != provider_host:
-                raise ValueError(
-                    f"Module reference {consumer.name}.{reference.name} crosses Hosts: "
-                    f"{consumer_host} -> {provider_host}"
-                )
+            if provider is not None:
+                resolved[consumer.name, reference.name] = provider
+    return resolved

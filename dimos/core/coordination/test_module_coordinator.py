@@ -87,6 +87,10 @@ class ModuleB(Module):
     def what_is_as_name(self) -> str:
         return self.module_a.get_name()
 
+    @rpc
+    def module_a_rpc_name(self) -> str:
+        return self.module_a.get_name.remote_name
+
 
 class ModuleC(Module):
     data3: In[Data3]
@@ -768,6 +772,36 @@ def test_build_with_explicit_instance_name(build_coordinator) -> None:
     assert module_b is not None
     assert module_a.data1.transport.topic == module_b.data1.transport.topic
     assert module_b.what_is_as_name() == "A, Module A"
+
+
+def test_build_calls_remote_module_reference_over_zenoh() -> None:
+    rpc_name = "runs/run-1/hosts/host-a/modules/modulea"
+    provider_blueprint = ModuleA.blueprint(rpc_name=rpc_name)
+    provider_config = BlueprintConfigParser(provider_blueprint).parse(
+        environ={},
+        overrides={"g": {"n_workers": 1, "transport": "zenoh", "viewer": "none"}},
+    )
+    consumer_blueprint = ModuleB.blueprint()
+    consumer_config = BlueprintConfigParser(consumer_blueprint).parse(
+        environ={},
+        overrides={"g": {"n_workers": 1, "transport": "zenoh", "viewer": "none"}},
+    )
+
+    provider = ModuleCoordinator.build(provider_blueprint, provider_config)
+    consumer = ModuleCoordinator.build(
+        consumer_blueprint,
+        consumer_config,
+        remote_module_refs={("moduleb", "module_a"): (ModuleA, rpc_name)},
+    )
+
+    try:
+        module_b = consumer.get_instance(ModuleB)
+        assert module_b is not None
+        assert module_b.module_a_rpc_name() == rpc_name
+        assert module_b.what_is_as_name() == "A, Module A"
+    finally:
+        consumer.stop()
+        provider.stop()
 
 
 def test_load_blueprint_auto_scales_empty_pool(dynamic_coordinator) -> None:

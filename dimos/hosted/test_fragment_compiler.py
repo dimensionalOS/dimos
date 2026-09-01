@@ -19,7 +19,12 @@ from dimos.core.coordination.blueprints import TransportSpec, autoconnect
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import ZenohTransport
-from dimos.hosted.fragment import run_stream_base_topic, run_stream_key
+from dimos.hosted.fragment import (
+    RemoteModuleReference,
+    run_module_rpc_name,
+    run_stream_base_topic,
+    run_stream_key,
+)
 from dimos.hosted.fragment_compiler import compile_fragments
 from dimos.msgs.std_msgs.String import String
 
@@ -115,20 +120,64 @@ def test_compiler_rejects_incomplete_placement(
         _compile(assignments)
 
 
-def test_compiler_rejects_module_references_across_hosts() -> None:
+def test_compiler_emits_cross_host_module_reference_and_provider_rpc_name() -> None:
     blueprint = autoconnect(ProviderModule.blueprint(), ConsumerModule.blueprint())
     config = BlueprintConfigParser(blueprint).parse(environ={})
 
-    with pytest.raises(ValueError, match="crosses Hosts"):
-        compile_fragments(
-            blueprint,
-            config,
-            {
-                "providermodule": "host-a",
-                "consumermodule": "host-b",
-            },
-            run_id="run-1",
-            generation=1,
-            application_name="compiler-test",
-            application_revision="revision-1",
-        )
+    fragments = compile_fragments(
+        blueprint,
+        config,
+        {
+            "providermodule": "host-a",
+            "consumermodule": "host-b",
+        },
+        run_id="run-1",
+        generation=1,
+        application_name="compiler-test",
+        application_revision="revision-1",
+    )
+
+    provider_payload = fragments["host-a"].load_payload()
+    consumer_payload = fragments["host-b"].load_payload()
+    rpc_name = run_module_rpc_name("run-1", "host-a", "providermodule")
+
+    provider_atom = provider_payload.blueprint.active_blueprints[0]
+    assert provider_atom.name == "providermodule"
+    assert provider_atom.kwargs["rpc_name"] == rpc_name
+    assert provider_payload.remote_module_references == ()
+    assert consumer_payload.remote_module_references == (
+        RemoteModuleReference(
+            consumer_name="consumermodule",
+            reference_name="provider",
+            provider_name="providermodule",
+            provider_host_id="host-a",
+            provider_type=ProviderModule,
+            rpc_name=rpc_name,
+        ),
+    )
+
+
+def test_compiler_keeps_same_host_module_reference_on_local_rpc_name() -> None:
+    blueprint = autoconnect(ProviderModule.blueprint(), ConsumerModule.blueprint())
+    config = BlueprintConfigParser(blueprint).parse(environ={})
+
+    fragment = compile_fragments(
+        blueprint,
+        config,
+        {
+            "providermodule": "host-a",
+            "consumermodule": "host-a",
+        },
+        run_id="run-1",
+        generation=1,
+        application_name="compiler-test",
+        application_revision="revision-1",
+    )["host-a"]
+
+    payload = fragment.load_payload()
+    provider = next(
+        atom for atom in payload.blueprint.active_blueprints if atom.name == "providermodule"
+    )
+
+    assert payload.remote_module_references == ()
+    assert "rpc_name" not in provider.kwargs

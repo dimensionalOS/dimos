@@ -25,11 +25,19 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
 from dimos.core.module import Module
 from dimos.hosted.daemon import HostDaemon, HostFragment, _run_fragment
-from dimos.hosted.fragment import PythonFragmentPayload
+from dimos.hosted.fragment import PythonFragmentPayload, RemoteModuleReference
 
 
 class DaemonModule(Module):
     pass
+
+
+class RemoteProvider(Module):
+    pass
+
+
+class RemoteConsumer(Module):
+    provider: RemoteProvider
 
 
 @pytest.fixture
@@ -286,8 +294,61 @@ def test_run_fragment_loads_identity_bound_payload(
 
     built_blueprint, built_config = build.call_args.args
     built_config.assert_matches(built_blueprint)
+    assert build.call_args.kwargs == {"remote_module_refs": {}}
     coordinator.start_rpc_service.assert_called_once_with()
     stop_requested.wait.assert_called_once_with()
     ready.send.assert_called_once_with((True, None))
     coordinator.stop.assert_called_once_with()
     assert os.environ[DIMOS_RUN_ID_ENV] == "run-1"
+
+
+def test_run_fragment_passes_remote_module_targets_to_coordinator(
+    tmp_path: Path,
+    mocker: MockerFixture,
+) -> None:
+    blueprint = RemoteConsumer.blueprint()
+    config = BlueprintConfigParser(blueprint).parse(environ={})
+    rpc_name = "runs/run-1/hosts/host-a/modules/remoteprovider"
+    fragment = HostFragment.create(
+        run_id="run-1",
+        generation=1,
+        host_id="host-b",
+        application_name="test-application",
+        application_revision="revision-1",
+        payload=PythonFragmentPayload(
+            blueprint=blueprint,
+            config=config,
+            remote_module_references=(
+                RemoteModuleReference(
+                    consumer_name="remoteconsumer",
+                    reference_name="provider",
+                    provider_name="remoteprovider",
+                    provider_host_id="host-a",
+                    provider_type=RemoteProvider,
+                    rpc_name=rpc_name,
+                ),
+            ),
+        ),
+    )
+    coordinator = mocker.MagicMock()
+    coordinator.health_check.return_value = True
+    build = mocker.patch(
+        "dimos.hosted.daemon.ModuleCoordinator.build",
+        return_value=coordinator,
+    )
+    stop_requested = mocker.MagicMock()
+    mocker.patch("dimos.hosted.daemon.threading.Event", return_value=stop_requested)
+    mocker.patch("dimos.hosted.daemon.signal.signal")
+    mocker.patch("dimos.hosted.daemon.set_run_log_dir")
+    ready = mocker.MagicMock()
+
+    _run_fragment(fragment, tmp_path, ready)
+
+    build.assert_called_once_with(
+        blueprint,
+        config,
+        remote_module_refs={
+            ("remoteconsumer", "provider"): (RemoteProvider, rpc_name),
+        },
+    )
+    coordinator.stop.assert_called_once_with()
