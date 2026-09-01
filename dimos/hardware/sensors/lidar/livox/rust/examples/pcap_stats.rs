@@ -18,6 +18,7 @@
 
 use dimos_livox::pipeline::{imu_records, FrameAssembler, PacketSource};
 use dimos_livox::wire::{self, DataPacket, DataType};
+use std::time::Instant;
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: pcap_stats <pcap>");
@@ -38,6 +39,9 @@ fn main() {
     let mut frames = Vec::new();
     let mut first_imu = None;
     let mut last_imu = None;
+    let started = Instant::now();
+    let mut frame_started = started;
+    let mut frame_times = Vec::new();
 
     while let Some(len) = source.recv(&mut buf) {
         let packet = match DataPacket::parse(&buf[..len]) {
@@ -59,12 +63,15 @@ fn main() {
             _ => {
                 point_packets += 1;
                 if let Some(frame) = assembler.push(&packet) {
+                    frame_times.push(frame_started.elapsed());
+                    frame_started = Instant::now();
                     frames.push(frame);
                 }
             }
         }
     }
     frames.extend(assembler.flush());
+    let total_time = started.elapsed();
 
     let total_points: usize = frames.iter().map(|f| f.points.len()).sum();
     let first = frames.first().map(|f| f.start_ns).unwrap_or(0);
@@ -79,6 +86,20 @@ fn main() {
     println!("point packets:   {point_packets}");
     println!("imu packets:     {imu_packets} ({imu_samples} samples)");
     println!("bad packets:     {bad_packets}");
+    println!(
+        "processing:      {:.0} ms total, {:.2} M pts/s",
+        total_time.as_secs_f64() * 1e3,
+        total_points as f64 / total_time.as_secs_f64() / 1e6
+    );
+    if !frame_times.is_empty() {
+        let sum: f64 = frame_times.iter().map(|t| t.as_secs_f64()).sum();
+        let max = frame_times.iter().max().unwrap();
+        println!(
+            "frame process:   {:.3} ms avg, {:.3} ms max",
+            sum / frame_times.len() as f64 * 1e3,
+            max.as_secs_f64() * 1e3
+        );
+    }
     println!(
         "frames:          {} over {span_s:.1} s of sensor time",
         frames.len()
