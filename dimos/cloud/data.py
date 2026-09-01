@@ -14,7 +14,7 @@
 
 """Dimensional cloud datasets: upload / pull / ls / status / quota.
 
-`CloudData` is a thin facade over a `DatasetBackend`. `MultipartBackend` (today)
+`CloudData` is a thin facade over `MultipartBackend` (today)
 speaks the /v1/data blob API; a sync backend plugs in beside it without touching
 callers. Every knob lives on GlobalConfig; nothing here is hardcoded."""
 
@@ -33,7 +33,7 @@ import shutil
 import sqlite3
 import tempfile
 import time
-from typing import Any, Protocol
+from typing import Any
 
 from dimos.cli.cloud import api_key
 from dimos.cloud import codecs
@@ -42,22 +42,6 @@ from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
 from dimos.core.global_config import global_config
 
 Progress = Callable[[str, int, int], None]  # (phase, done_bytes, total_bytes)
-
-
-class DatasetBackend(Protocol):
-    def upload(
-        self,
-        path: Path,
-        *,
-        robot_id: str | None,
-        kind: str,
-        part_size: int | None,
-        progress: Progress | None,
-    ) -> dict[str, Any]: ...
-    def pull(self, upload_id: str, dest: Path | None, tag: str = "") -> Path: ...
-    def ls(self) -> list[dict[str, Any]]: ...
-    def status(self, upload_id: str) -> dict[str, Any]: ...
-    def quota(self) -> dict[str, Any]: ...
 
 
 class DataApi:
@@ -203,13 +187,10 @@ class MultipartBackend:
         return self.api.quota()
 
 
-BACKENDS: dict[str, Any] = {"multipart": MultipartBackend}
-
-
 class CloudData:
     """Facade: resolves auth + config once, delegates to the configured backend."""
 
-    def __init__(self, backend: DatasetBackend | None = None) -> None:
+    def __init__(self, backend: MultipartBackend | None = None) -> None:
         if backend is None:
             key = global_config.dimos_api_key or api_key()
             if not key:
@@ -217,7 +198,7 @@ class CloudData:
             request = HttpCloudRequest(
                 global_config.dimos_cloud_url, key, global_config.dimos_http_timeout
             )
-            backend = BACKENDS[global_config.dimos_cloud_backend](
+            backend = MultipartBackend(
                 DataApi(request),
                 global_config.dimos_upload_codec,
                 global_config.dimos_staging_dir,
