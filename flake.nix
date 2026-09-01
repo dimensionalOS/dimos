@@ -380,7 +380,7 @@
           # locally, where the crates substitute from cache.nixos.org instead.
           # So this hash has to be re-pasted whenever Cargo.lock moves; the CI
           # failure prints the new value.
-          cargoHash = "sha256-PRncaRtNrPM55JS7QPvwvRUm2bkcMwZOdeZGjVsWwpM=";
+          cargoHash = "sha256-Tm1TeMi8A0ESvARlLglV/ycax2GFqvh54zjEPkOTXm8=";
           cargoBuildFlags = builtins.concatMap (name: [ "-p" name ]) (depsField "binaries");
           doCheck = false;
         };
