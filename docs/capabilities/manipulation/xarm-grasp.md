@@ -1,19 +1,31 @@
 # xArm Grasping
 
-`xarm-grasp` is the xArm7 grasping stack: the control coordinator, the wrist
-camera, scene registration, pick-and-place and a top-down heuristic grasp
-provider. It runs on the real arm by default and switches to the MuJoCo room
-scene with `--simulation`:
+Two blueprints, differing only in which grasp provider they compose. Both carry
+the control coordinator, the wrist camera, scene registration and
+pick-and-place; both run on the real arm by default and switch to the MuJoCo
+room scene with `--simulation`:
+
+| Blueprint | Grasps |
+|---|---|
+| `xarm-grasp` | one top-down heuristic grasp, score 1.0 |
+| `xarm-grasp-graspgenx` | up to 100 ranked learned grasps |
 
 ```bash
-dimos run xarm-grasp --xarm7-ip 192.168.1.x     # hardware
-dimos run xarm-grasp --simulation mujoco        # the room scene
+dimos run xarm-grasp-graspgenx --xarm7-ip 192.168.1.x     # hardware
+dimos run xarm-grasp-graspgenx --simulation mujoco        # the room scene
 ```
 
 Miss `--xarm7-ip` on hardware and the arm has no address to reach; leave
 `--simulation` set and everything reverts to MuJoCo regardless of the IP.
-`xarm-grasp-agent` adds an MCP agent over the top; drive it with
-`dimos agent-send "..."`.
+`xarm-grasp-agent` and `xarm-grasp-graspgenx-agent` add an MCP agent over the
+top; drive those with `dimos agent-send "..."`.
+
+`xarm-grasp-graspgenx` needs the `graspgenx` extra and a CUDA GPU. Checkpoints
+download once from Hugging Face and cache under `~/.cache/huggingface`.
+
+```bash
+uv sync --extra graspgenx
+```
 
 What differs between the arm and the sim is decided at import time: the hardware
 adapter, the base pose, the camera (RealSense plus its mount edge, versus the
@@ -99,7 +111,18 @@ app.PickAndPlaceModule.place_at(0.45, -0.25, 0.25)
 
 `pick_object` generates the grasps itself, so there is no separate grasp call.
 It opens the gripper, plans to the pregrasp, moves in, closes, verifies, and
-retreats. The prompt set includes a `green ring` fallback because the tape loses
+retreats; with a learned provider it walks the ranked candidates until one is
+reachable, and the result metadata carries the winning rank, its score and the
+candidate count. To inspect grasps without moving the arm, call `propose_grasps`
+on the provider directly:
+
+```python skip
+cloud = scene.get_object_pointcloud_by_object_id("<object_id>")
+candidates = app.GraspGenXModule.propose_grasps(cloud)   # HeuristicGraspModule in the base blueprint
+print(len(candidates.candidates), [c.score for c in candidates.candidates[:5]])
+```
+
+The prompt set includes a `green ring` fallback because the tape loses
 its category silhouette in the wrist camera's top-down view.
 
 A failed grasp knocks free-body targets out of place, and `MujocoSimModule.reset()`

@@ -67,6 +67,8 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "teleop-quest-xarm7-video",
         "xarm-grasp",
         "xarm-grasp-agent",
+        "xarm-grasp-graspgenx",
+        "xarm-grasp-graspgenx-agent",
         "xarm-perception-sim",
         "xarm-perception-sim-agent",
         "xarm7-planner-coordinator",

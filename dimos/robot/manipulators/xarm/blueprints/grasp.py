@@ -14,14 +14,15 @@
 
 """The xArm grasping stack, on hardware by default.
 
-``dimos run xarm-grasp --xarm7-ip 192.168.1.x``   the real arm
+``dimos run xarm-grasp --xarm7-ip 192.168.1.x``   heuristic grasps
+``dimos run xarm-grasp-graspgenx --xarm7-ip ...`` learned grasps
 ``dimos run xarm-grasp --simulation mujoco``      the same stack in MuJoCo
 
-The arm-versus-sim split is decided here at import time, because composition runs
-before module config is applied. What it swaps is the hardware adapter, the base
-pose, the camera and the engine behind it, the detector backends and the home
-pose. Everything else -- the coordinator, pick-and-place, scene registration --
-is the same stack either way.
+Only the grasp provider separates the two blueprints. The arm-versus-sim split is
+decided here at import time, because composition runs before module config is
+applied. What it swaps is the hardware adapter, the base pose, the camera and the
+engine behind it, the detector backends and the home pose. Everything else -- the
+coordinator, pick-and-place, scene registration -- is the same stack either way.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.manipulation.grasping.grasp_gen_x import GraspGenXModule
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
@@ -70,6 +72,28 @@ XARM_GRASP_PROMPTS = [
     # as a ring instead of a roll. Keep a shape-word fallback for that view.
     "green ring",
 ]
+
+# Measured off data/xarm_grasp_sim (mj_forward at the driver joint limits) and the
+# gripper URDF, expressed in GraspGenX's convention -- approach along +Z, jaws
+# closing along X -- with the origin on xarm_gripper_base_link, the frame
+# GraspGenX predicts into. The geometry is the real gripper's, so it holds on
+# hardware too.
+XARM_GRIPPER_SWEEP_VOLUME = {
+    "extents_open": (0.0889, 0.030, 0.0370),
+    "offset_open": (0.0, 0.0, 0.1421),
+    "extents_half_open": (0.0479, 0.030, 0.0370),
+    "offset_half_open": (0.0, 0.0, 0.1530),
+    "fingertip_depth": 0.1606,
+}
+# xarm_gripper_base_link -> link_tcp, the planning tip frame: +0.172 m along the
+# approach axis (xarm_gripper.urdf.xacro joint_tcp) plus the quarter turn that
+# takes GraspGenX's X closing axis onto the xArm gripper's Y.
+XARM_GRASP_FRAME_TO_TCP = (
+    (0.0, 1.0, 0.0, 0.0),
+    (-1.0, 0.0, 0.0, 0.0),
+    (0.0, 0.0, 1.0, 0.172),
+    (0.0, 0.0, 0.0, 1.0),
+)
 
 # Hand-eye calibration for the eye-in-hand RealSense.
 XARM_WRIST_CAMERA_TRANSFORM = Transform(
@@ -188,3 +212,11 @@ _XARM_GRASP_MODULES = (
 )
 
 xarm_grasp = autoconnect(*_XARM_GRASP_MODULES, HeuristicGraspModule.blueprint())
+
+xarm_grasp_graspgenx = autoconnect(
+    *_XARM_GRASP_MODULES,
+    GraspGenXModule.blueprint(
+        gripper=XARM_GRIPPER_SWEEP_VOLUME,
+        grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
+    ),
+)

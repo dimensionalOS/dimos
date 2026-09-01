@@ -153,6 +153,8 @@ all_blueprints = {
     "unity-sim": "dimos.simulation.unity.blueprint:unity_sim",
     "xarm-grasp": "dimos.robot.manipulators.xarm.blueprints.grasp:xarm_grasp",
     "xarm-grasp-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_grasp_agent",
+    "xarm-grasp-graspgenx": "dimos.robot.manipulators.xarm.blueprints.grasp:xarm_grasp_graspgenx",
+    "xarm-grasp-graspgenx-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_grasp_graspgenx_agent",
     "xarm-perception-sim": "dimos.robot.manipulators.xarm.blueprints.simulation:xarm_perception_sim",
     "xarm-perception-sim-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm_perception_sim_agent",
     "xarm6-worldbelief": "dimos.experimental.world_belief.xarm6_blueprint:xarm6_worldbelief",
