@@ -19,12 +19,19 @@ Each blueprint launches the full stack: keyboard UI, mock controller, IK solver,
 dimos run keyboard-teleop-a750    # A-750 6-DOF
 dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
 dimos run r1pro-planner-coordinator # R1 Pro mobile bimanual planner + fake hardware
+dimos run teleop-quest-r1pro      # R1 Pro Quest arms + waist, fixed base + fake hardware
 dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
 dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
 dimos run keyboard-teleop-xarm6   # XArm6 6-DOF
 dimos run keyboard-teleop-xarm7   # XArm7 7-DOF
 ```
+
+The R1 Pro Quest blueprint controls its 14 arm and four torso joints as one
+Pink IK task. The Quest controllers target both gripper links while relative
+headset motion targets forward/vertical torso motion and pitch/yaw. It uses
+mock hardware and Viser; the planar base and grippers are excluded
+from the task so they remain stationary.
 
 OpenYAM is exposed as one whole-body device with six angular arm joints and a
 normalized gripper joint. `arm/gripper` uses `0.0` for fully closed and `1.0`
@@ -470,6 +477,7 @@ planner is locked for its whole native call.
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
 | `dual-xarm6-planner-coordinator` | Dual XArm6 planning with mock coordinator hardware |
 | `r1pro-planner-coordinator` | R1 Pro planar-base, torso, and bimanual planner with fake hardware |
+| `teleop-quest-r1pro` | R1 Pro Quest bimanual and torso teleop with fixed base, mock hardware, and Viser |
 | `xarm-perception` | XArm7 + RealSense camera for perception |
 | `xarm-perception-agent` | XArm7 perception + LLM agent |
 | `xarm-perception-sim` | XArm7 simulation perception stack |

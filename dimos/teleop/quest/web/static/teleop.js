@@ -466,13 +466,15 @@ function sendJoy(handedness, axes, buttons) {
 }
 
 // Send raw controller and wrist tracking data (no processing - done in Python)
-function processTracking(frame) {
+function processTracking(frame, viewerPose) {
     // Rate limit tracking data
     const now = performance.now();
     if (now - lastSendTime < sendInterval) {
         return;
     }
     lastSendTime = now;
+
+    if (viewerPose) sendPose('head', viewerPose);
 
     // Process controller and hand input sources.
     for (const inputSource of frame.session.inputSources) {
@@ -551,8 +553,9 @@ function processTracking(frame) {
 function onXRFrame(_time, frame) {
     if (!xrSession) return;
     xrSession.requestAnimationFrame(onXRFrame);
+    const pose = frame.getViewerPose(xrRefSpace);
     // Process and send tracking data
-    processTracking(frame);
+    processTracking(frame, pose);
 
     const glLayer = xrSession.renderState.baseLayer;
     gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
@@ -565,7 +568,6 @@ function onXRFrame(_time, frame) {
     }
     if (videoReady) updateVideoModelMatrix();
     updateHudTexture();
-    const pose = frame.getViewerPose(xrRefSpace);
     if (pose) {
         if (!hudPlaced) placeCollectionHud(pose);
         for (const view of pose.views) {

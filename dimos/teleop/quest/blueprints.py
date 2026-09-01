@@ -25,6 +25,7 @@ from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.robot.galaxea.r1pro.blueprints.manipulation.teleop import coordinator_teleop_r1pro
 from dimos.robot.manipulators.a1z.blueprints.teleop import coordinator_teleop_a1z
 from dimos.robot.manipulators.common.mixed import coordinator_teleop_dual
 from dimos.robot.manipulators.piper.blueprints.teleop import coordinator_teleop_piper
@@ -37,6 +38,7 @@ from dimos.teleop.quest.quest_extensions import (
     ArmTeleopModule,
     Go2TeleopModule,
     HandTeleopModule,
+    HeadsetArmTeleopModule,
     VideoArmTeleopModule,
 )
 from dimos.visualization.vis_module import vis_module
@@ -117,6 +119,19 @@ teleop_quest_a1z = autoconnect(
     [
         (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
         (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
+    ]
+)
+
+
+# R1 Pro mock teleop: both controllers + headset -> arms and waist; base stays fixed.
+teleop_quest_r1pro = autoconnect(
+    HeadsetArmTeleopModule.blueprint(),
+    coordinator_teleop_r1pro,
+).remappings(
+    [
+        (HeadsetArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+        (HeadsetArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (HeadsetArmTeleopModule, "headset_output", "head_cartesian_command"),
     ]
 )
 
