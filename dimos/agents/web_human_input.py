@@ -13,22 +13,17 @@
 # limitations under the License.
 
 from threading import Thread
-from typing import TYPE_CHECKING
 
 import reactivex as rx
-import reactivex.operators as ops
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
-from dimos.stream.audio.node_normalizer import AudioNormalizer
+from dimos.stream.audio.pipeline import whisper_pipeline
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
-
-if TYPE_CHECKING:
-    from dimos.stream.audio.base import AudioEvent
 
 logger = setup_logger()
 
@@ -44,7 +39,8 @@ class WebInput(Module):
 
         self._human_transport = make_transport("/human_input")
 
-        audio_subject: rx.subject.Subject[AudioEvent] = rx.subject.Subject()
+        # Browser audio -> the owned STT chain (normalizer -> whisper).
+        audio_subject, transcripts = whisper_pipeline()
 
         self._web_interface = RobotWebInterface(
             port=5555,
@@ -52,24 +48,13 @@ class WebInput(Module):
             audio_subject=audio_subject,
         )
 
-        normalizer = AudioNormalizer()
-
-        # Here to prevent unwanted imports in the file.
-        from dimos.stream.audio.stt.node_whisper import WhisperNode
-
-        stt_node = WhisperNode()
-
-        # Connect audio pipeline: browser audio → normalizer → whisper
-        normalizer.consume_audio(audio_subject.pipe(ops.share()))
-        stt_node.consume_audio(normalizer.emit_audio())
-
         # Subscribe to both text input sources
         # 1. Direct text from web interface
         unsub = self._web_interface.query_stream.subscribe(self._human_transport.publish)
         self.register_disposable(unsub)
 
         # 2. Transcribed text from STT
-        unsub = stt_node.emit_text().subscribe(self._human_transport.publish)
+        unsub = transcripts.subscribe(self._human_transport.publish)
         self.register_disposable(unsub)
 
         self._thread = Thread(target=self._web_interface.run, daemon=True)

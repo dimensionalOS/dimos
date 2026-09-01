@@ -92,7 +92,7 @@ export function chatTranscript(store: ChannelStore, ch: string): ChatTranscript 
 /** Start the transcript of every chat panel's message channel (slot 1). */
 export function startChatTranscripts(store: ChannelStore, manifest: Manifest): void {
   for (const panel of manifest.panels) {
-    if (panel.kind === "chat" && panel.channels.length === 3) {
+    if (panel.kind === "chat" && panel.channels.length === 4) {
       chatTranscript(store, panel.channels[1]);
     }
   }

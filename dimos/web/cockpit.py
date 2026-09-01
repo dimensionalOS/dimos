@@ -396,27 +396,34 @@ class Chat(Panel):
     goes out on `input` (McpClient.human_input); the LangChain transcript
     comes back on `messages` (McpClient.agent, one chat.json.v1 frame per
     message, none dropped) and `idle` (McpClient.agent_idle) drives the
-    thinking spinner. A grid panel next to video/map; works as a page too.
+    thinking spinner. The composer's push-to-talk mic ships recordings as
+    audio.json.v1 chunks on `audio` (VoiceInput.audio_in); the transcript
+    joins the conversation like typed text. A grid panel next to video/map;
+    works as a page too.
     """
 
     kind: ClassVar[str] = "chat"
     input: str = "human_input"
     messages: str = "agent"
     idle: str = "agent_idle"
+    audio: str = "audio_in"
     title: str = field(default="", kw_only=True)
 
     def __post_init__(self) -> None:
         _check_stream("input", self.input)
         _check_stream("messages", self.messages)
         _check_stream("idle", self.idle)
+        _check_stream("audio", self.audio)
 
     def _channels(self) -> tuple[Channel, ...]:
         # Inline on purpose: langchain-core belongs to the optional [agents]
-        # extra, so only a Chat panel pays for it; the codec module import
-        # registers chat.json.v1 for cockpit()'s encoder resolution.
+        # extra, so only a Chat panel pays for it; the codec module imports
+        # register chat.json.v1 and audio.json.v1 for cockpit()'s codec
+        # resolution.
         from langchain_core.messages import BaseMessage
 
         from dimos.web.relay_bridge import chat_codec  # noqa: F401
+        from dimos.web.relay_bridge.audio_codec import AudioChunk
 
         return (
             Channel(
@@ -424,6 +431,14 @@ class Chat(Panel):
             ),
             Channel(self.messages, BaseMessage, encoding="chat.json.v1", max_hz=20.0),
             Channel(self.idle, bool, delivery="latest", max_hz=20.0),
+            Channel(
+                self.audio,
+                AudioChunk,
+                dir="tx",
+                encoding="audio.json.v1",
+                publish="shared",
+                max_hz=20.0,
+            ),
         )
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:

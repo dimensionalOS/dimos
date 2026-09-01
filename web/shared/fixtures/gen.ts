@@ -241,8 +241,20 @@ const chChat = {
 };
 const chAgent = { ch: "agent", encoding: "chat.json.v1", delivery: "reliable", maxHz: 20.5 };
 const chIdle = { ch: "agent_idle", encoding: "json.v1", delivery: "latest", maxHz: 20.5 };
+const chAudio = {
+  ch: "audio_in",
+  dir: "tx",
+  encoding: "audio.json.v1",
+  delivery: "reliable",
+  maxHz: 20.5,
+  publish: "shared",
+};
 const pCamera = { id: "camera", kind: "video", channels: ["color_image"] };
-const pChat = { id: "chat", kind: "chat", channels: ["human_input", "agent", "agent_idle"] };
+const pChat = {
+  id: "chat",
+  kind: "chat",
+  channels: ["human_input", "agent", "agent_idle", "audio_in"],
+};
 const pPose = { id: "pose", kind: "readout", channels: ["odom"] };
 const longId = "x".repeat(65);
 const manifestCases: Record<string, unknown> = {
@@ -588,10 +600,11 @@ const manifestCases: Record<string, unknown> = {
   pages_not_list: { version: 1, channels: [chOdom], panels: [pPose], pages: {} },
   pages_not_strings: { version: 1, channels: [chOdom], panels: [pPose], pages: [1.5] },
   pages_null: { version: 1, channels: [chOdom], panels: [pPose], pages: null },
-  // Chat panel: text input (publish tx), messages, idle flag, in that order.
+  // Chat panel: text input (publish tx), messages, idle flag, push-to-talk
+  // audio (publish tx), in that order.
   chat_panel: {
     version: 1,
-    channels: [chChat, chAgent, chIdle],
+    channels: [chChat, chAgent, chIdle, chAudio],
     panels: [pChat],
   },
   chat_panel_two_channels: {
@@ -599,23 +612,40 @@ const manifestCases: Record<string, unknown> = {
     channels: [chChat, chAgent],
     panels: [{ ...pChat, channels: ["human_input", "agent"] }],
   },
+  // The pre-audio shape: three channels stopped being a chat panel.
+  chat_panel_three_channels: {
+    version: 1,
+    channels: [chChat, chAgent, chIdle],
+    panels: [{ ...pChat, channels: ["human_input", "agent", "agent_idle"] }],
+  },
   chat_panel_input_not_publishable: {
     version: 1,
     channels: [
       { ch: "human_input", dir: "tx", encoding: "text.json.v1", delivery: "reliable", maxHz: 2.5 },
       chAgent,
       chIdle,
+      chAudio,
     ],
     panels: [pChat],
   },
   chat_panel_messages_wrong_encoding: {
     version: 1,
-    channels: [chChat, chOdom, chIdle],
-    panels: [{ ...pChat, channels: ["human_input", "odom", "agent_idle"] }],
+    channels: [chChat, chOdom, chIdle, chAudio],
+    panels: [{ ...pChat, channels: ["human_input", "odom", "agent_idle", "audio_in"] }],
   },
   chat_panel_idle_wrong_delivery: {
     version: 1,
-    channels: [chChat, chAgent, { ...chIdle, delivery: "reliable" }],
+    channels: [chChat, chAgent, { ...chIdle, delivery: "reliable" }, chAudio],
+    panels: [pChat],
+  },
+  chat_panel_audio_not_publishable: {
+    version: 1,
+    channels: [
+      chChat,
+      chAgent,
+      chIdle,
+      { ch: "audio_in", dir: "tx", encoding: "audio.json.v1", delivery: "reliable", maxHz: 20.5 },
+    ],
     panels: [pChat],
   },
 };
