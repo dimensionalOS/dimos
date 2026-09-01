@@ -25,8 +25,6 @@ because composition runs before module config is applied.
 
 from __future__ import annotations
 
-import math
-
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
@@ -135,10 +133,7 @@ else:
     _model = make_xarm7_model_config(
         add_gripper=True,
         gripper_hardware_id="arm",
-        base_pose=PoseStamped(
-            frame_id="world",
-            orientation=Quaternion.from_euler(Vector3(0.0, math.radians(45), 0.0)),
-        ),
+        base_pose=PoseStamped(frame_id="world"),
         # The self filter needs a capture-time transform for every collision link
         # and drops the whole cloud when one is missing.
         tf_extra_links=XARM7_COLLISION_LINKS,
