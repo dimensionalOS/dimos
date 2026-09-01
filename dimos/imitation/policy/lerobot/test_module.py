@@ -73,7 +73,7 @@ def test_contract_resolves_sibling_runtime_project() -> None:
 )
 def test_config_rejects_ambiguous_names(config: dict[str, object], message: str) -> None:
     with pytest.raises(ValidationError, match=message):
-        LeRobotPolicyModuleConfig(**config)
+        LeRobotPolicyModuleConfig.model_validate(config)
 
 
 def test_existing_relative_checkpoint_is_resolved_before_isolation(
