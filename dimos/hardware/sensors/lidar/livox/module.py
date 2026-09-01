@@ -71,7 +71,7 @@ class Mid360Config(NativeModuleConfig):
     # Replay this capture instead of a live sensor. host_ip/lidar_ip are unused.
     pcap: str | None = None
     # Replay speed relative to capture time. None runs flat-out.
-    replay_rate: float | None = 1.0
+    replay_rate: float | None = Field(default=1.0, gt=0)
     # Multicast group the device streams to. None receives unicast only, which
     # loopback replay needs and macOS requires (see virtual_mid360).
     multicast_ip: str | None = Field(

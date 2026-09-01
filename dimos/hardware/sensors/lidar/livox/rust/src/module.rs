@@ -49,6 +49,7 @@ pub struct Config {
     /// Replay this capture instead of a live sensor.
     pcap: Nullable<String>,
     /// Replay speed relative to capture time. Null runs flat-out.
+    #[validate(custom(function = positive_replay_rate))]
     replay_rate: Nullable<f64>,
     /// Multicast group the device streams data to. Null receives unicast
     /// only, the loopback/virtual arrangement.
@@ -63,6 +64,15 @@ pub struct Config {
     host_point_data_port: u16,
     host_imu_data_port: u16,
     host_log_data_port: u16,
+}
+
+fn positive_replay_rate(rate: &Nullable<f64>) -> Result<(), validator::ValidationError> {
+    match rate.0 {
+        Some(r) if r <= 0.0 => Err(validator::ValidationError::new(
+            "replay_rate must be > 0 (or null for flat-out replay)",
+        )),
+        _ => Ok(()),
+    }
 }
 
 // Wire layout per point, matching the Python Mid360Config docstring:

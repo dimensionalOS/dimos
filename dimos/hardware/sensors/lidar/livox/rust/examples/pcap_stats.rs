@@ -84,10 +84,14 @@ fn main() {
         frames.len()
     );
     if !frames.is_empty() {
-        println!(
-            "frame rate:      {:.2} Hz (data time)",
-            (frames.len() - 1) as f64 / span_s
-        );
+        if frames.len() > 1 && span_s > 0.0 {
+            println!(
+                "frame rate:      {:.2} Hz (data time)",
+                (frames.len() - 1) as f64 / span_s
+            );
+        } else {
+            println!("frame rate:      n/a (single frame)");
+        }
         println!(
             "points/frame:    {:.0} avg",
             total_points as f64 / frames.len() as f64
@@ -104,9 +108,13 @@ fn main() {
     }
     if let (Some(a), Some(b)) = (first_imu, last_imu) {
         let imu_span = (b.saturating_sub(a)) as f64 / 1e9;
-        println!(
-            "imu rate:        {:.1} Hz over {imu_span:.1} s",
-            (imu_samples - 1) as f64 / imu_span
-        );
+        if imu_samples > 1 && imu_span > 0.0 {
+            println!(
+                "imu rate:        {:.1} Hz over {imu_span:.1} s",
+                (imu_samples - 1) as f64 / imu_span
+            );
+        } else {
+            println!("imu rate:        n/a (single sample)");
+        }
     }
 }

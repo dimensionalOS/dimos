@@ -28,3 +28,6 @@ serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
 validator = { version = "0.21", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
