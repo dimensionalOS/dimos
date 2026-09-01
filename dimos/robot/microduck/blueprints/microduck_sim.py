@@ -48,10 +48,8 @@ _SCENE_XML = Path(__file__).resolve().parents[1] / "assets" / "room_scene.xml"
 
 # Ground-truth object positions; must match assets/room_scene.xml.
 MICRODUCK_ROOM_OBJECTS: dict[str, tuple[float, float]] = {
-    "red_ball": (1.5, 0.9),
-    "blue_cube": (-1.5, -1.0),
-    "green_pillar": (1.4, -1.0),
-    "yellow_block": (-1.4, 1.0),
+    "red_box": (1.5, 0.8),
+    "blue_box": (-1.5, -0.8),
 }
 
 # The duck is ~25 cm tall and ~12 cm wide; nav scales follow.

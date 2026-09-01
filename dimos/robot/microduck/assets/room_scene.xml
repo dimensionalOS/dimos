@@ -34,13 +34,9 @@
     <geom name="wall_west" type="box" size="0.05 1.6 0.25" pos="-2.05 0 0.25"
           material="wallmat" group="0"/>
 
-    <geom name="red_ball" type="sphere" size="0.07" pos="1.5 0.9 0.07"
+    <geom name="red_box" type="box" size="0.08 0.08 0.08" pos="1.5 0.8 0.08"
           rgba="0.85 0.1 0.1 1" group="0"/>
-    <geom name="blue_cube" type="box" size="0.06 0.06 0.06" pos="-1.5 -1.0 0.06"
+    <geom name="blue_box" type="box" size="0.08 0.08 0.08" pos="-1.5 -0.8 0.08"
           rgba="0.1 0.25 0.85 1" group="0"/>
-    <geom name="green_pillar" type="cylinder" size="0.05 0.14" pos="1.4 -1.0 0.14"
-          rgba="0.1 0.65 0.2 1" group="0"/>
-    <geom name="yellow_block" type="box" size="0.05 0.09 0.08" pos="-1.4 1.0 0.08"
-          rgba="0.9 0.75 0.1 1" group="0"/>
   </worldbody>
 </mujoco>
