@@ -17,15 +17,19 @@
 from typing import Any
 
 import numpy as np
+import pytest
 from pytest_mock import MockerFixture
 
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver, PoseTargetIKTaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.galaxea.r1pro.blueprints.manipulation.teleop import (
     R1PRO_QUEST_TASK_NAME,
+    R1ProTeleopCoordinator,
     coordinator_teleop_r1pro,
 )
 from dimos.robot.galaxea.r1pro.config import (
@@ -43,7 +47,7 @@ def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
 
 
 def test_r1pro_quest_blueprint_controls_only_arms_and_torso() -> None:
-    coordinator = _module_kwargs(coordinator_teleop_r1pro, TeleopControlCoordinator)
+    coordinator = _module_kwargs(coordinator_teleop_r1pro, R1ProTeleopCoordinator)
     manipulation = _module_kwargs(coordinator_teleop_r1pro, ManipulationModule)
     task = coordinator["tasks"][0]
 
@@ -66,6 +70,48 @@ def test_r1pro_quest_blueprint_controls_only_arms_and_torso() -> None:
         (HeadsetArmTeleopModule.name, "right_controller_output"): "right_cartesian_command",
         (HeadsetArmTeleopModule.name, "headset_output"): "head_cartesian_command",
     }
+
+
+def test_r1pro_quest_exposes_module_cli_teleop_mode() -> None:
+    parser = BlueprintConfigParser(teleop_quest_r1pro)
+
+    parsed = parser.parse(["--teleop-mode", "hands"], environ={})
+    qualified = parser.parse(
+        ["--controlcoordinator.teleop-mode", "hands"],
+        environ={},
+    )
+
+    assert parsed.module_kwargs("ControlCoordinator")["teleop_mode"] == "hands"
+    assert qualified.module_kwargs("ControlCoordinator")["teleop_mode"] == "hands"
+    assert (
+        "--teleop-mode, --ControlCoordinator.teleop-mode "
+        "<Literal['headset', 'hands']> (default: headset)" in parser.format_help()
+    )
+
+
+def test_r1pro_quest_rejects_invalid_teleop_mode() -> None:
+    parser = BlueprintConfigParser(teleop_quest_r1pro)
+
+    with pytest.raises(BlueprintConfigError, match="headset.*hands"):
+        parser.parse(["--teleop-mode", "arms"], environ={})
+
+
+def test_r1pro_hands_mode_omits_head_target_and_keeps_upper_body(
+    mocker: MockerFixture,
+) -> None:
+    kwargs = _module_kwargs(coordinator_teleop_r1pro, R1ProTeleopCoordinator)
+    coordinator = R1ProTeleopCoordinator(**kwargs, teleop_mode="hands")
+    mocker.patch.object(TeleopControlCoordinator, "_setup_from_config")
+
+    try:
+        coordinator._setup_from_config()
+        task = coordinator.config.tasks[0]
+
+        assert "head_target_frame" not in task.params
+        assert task.joint_names == R1PRO_UPPER_BODY_JOINTS
+        assert set(task.joint_names).isdisjoint(R1PRO_PLANAR_BASE.joint_names)
+    finally:
+        coordinator.stop()
 
 
 def test_r1pro_head_task_ignores_lateral_translation_and_roll(
@@ -104,5 +150,35 @@ def test_r1pro_head_task_ignores_lateral_translation_and_roll(
         head_task.set_orientation_cost.call_args.args[0],
         np.array([0.0, 2.0, 2.0]),
     )
+    left_task.set_position_cost.assert_not_called()
+    right_task.set_position_cost.assert_not_called()
+
+
+def test_r1pro_hands_only_solver_does_not_require_head_task(
+    mocker: MockerFixture,
+) -> None:
+    left_task = mocker.Mock()
+    right_task = mocker.Mock()
+    tasks = {
+        "frame/left_gripper_link": left_task,
+        "frame/right_gripper_link": right_task,
+    }
+    mocker.patch.object(PinkPoseTargetSolver, "_create_tasks", return_value=tasks)
+    mocker.patch.object(R1ProPinkPoseTargetSolver, "_validate_frame_targets")
+    solver = R1ProPinkPoseTargetSolver(
+        PoseTargetIKTaskConfig(
+            joint_names=tuple(R1PRO_UPPER_BODY_JOINTS),
+            robot_model=make_r1pro_model_config(),
+            target_frames=("left_gripper_link", "right_gripper_link"),
+            pink=PinkKinematicsConfig(position_cost=8.0, orientation_cost=2.0),
+        )
+    )
+
+    result = solver._create_tasks(
+        mocker.Mock(),
+        ("left_gripper_link", "right_gripper_link"),
+    )
+
+    assert result is tasks
     left_task.set_position_cost.assert_not_called()
     right_task.set_position_cost.assert_not_called()
