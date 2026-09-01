@@ -434,6 +434,38 @@ class TestStateMachine:
         assert module._state == ManipulationState.IDLE
         assert module._error_message == ""
 
+    def test_reset_recovers_from_fault(self, module_factory):
+        """Planning only runs from IDLE or COMPLETED, so FAULT must be escapable."""
+        module = module_factory()
+        module._state = ManipulationState.FAULT
+        module._error_message = "Execution failed"
+
+        result = module.reset()
+
+        assert result.succeeded
+        assert module._state == ManipulationState.IDLE
+        assert module._error_message == ""
+
+    def test_reset_cancels_an_active_trajectory(self, module_factory):
+        """Refusing and asking the caller to cancel first is a dead end."""
+        module = module_factory()
+        config = _one_joint_config()
+        _install_generated_plan(module, config, [0.0], [0.1])
+        module._control_coordinator = _control_coordinator(
+            cancel_status=TrajectoryCancellationStatus.CANCELLED
+        )
+        module._control_coordinator.task_invoke.return_value = TrajectoryStatus(
+            state=TrajectoryState.ABORTED
+        )
+        module._initialize_execution()
+        module.execute(blocking=False)
+
+        result = module.reset()
+
+        module._control_coordinator.cancel_trajectory.assert_called_once_with()
+        assert "Cancelled" in result.message
+        assert module._state == ManipulationState.IDLE
+
     def test_fail_sets_fault_state(self, module_factory):
         """_fail helper sets FAULT state and message."""
         module = module_factory()

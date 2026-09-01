@@ -91,6 +91,19 @@ class ManipulationSkills(Module):
         return self._execution_result(self.manipulation.execute(blocking=True))
 
     @skill
+    def cancel(self) -> SkillResult[ManipulationSkillError]:
+        """Stop the active motion or planning attempt, leaving the arm where it is."""
+        return SkillResult.ok(self.manipulation.cancel().message or "Cancelled")
+
+    @skill
+    def reset(self) -> SkillResult[ManipulationSkillError]:
+        """Stop any motion and return to IDLE. Use after a motion fails."""
+        result = self.manipulation.reset()
+        if not result.succeeded:
+            return SkillResult.fail("INVALID_STATE", result.message)
+        return SkillResult.ok(result.message)
+
+    @skill
     def get_robot_state(
         self, planning_group: PlanningGroupID | None = None
     ) -> SkillResult[ManipulationSkillError]:

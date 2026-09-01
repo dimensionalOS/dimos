@@ -247,6 +247,8 @@ class ManipulationSpec(Spec, Protocol):
         timeout: float | None = None,
     ) -> MoveResult: ...
 
+    def reset(self) -> CommandResult: ...
+
     def set_gripper_position(
         self,
         position: float,
