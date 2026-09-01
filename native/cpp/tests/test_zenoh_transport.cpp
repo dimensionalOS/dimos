@@ -15,6 +15,7 @@
 #include <string>
 #include <thread>
 #include <type_traits>
+#include <unordered_set>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -99,8 +100,13 @@ TEST_CASE("an unknown session mode is rejected") {
 TEST_CASE("the session settings become a zenoh config") {
     auto settings = settings_from_launch(nlohmann::json::parse(kClientLaunch));
     REQUIRE(settings.has_value());
-    zenoh_detail::zenoh_config(*settings);  // every insert_json5 key is accepted
-    CHECK(true);
+    ::zenoh::Config config = zenoh_detail::zenoh_config(*settings);
+    CHECK(config.get("mode") == R"("client")");
+    CHECK(config.get("connect/endpoints") == R"(["tcp/192.0.2.10:7447"])");
+    CHECK(config.get("connect/timeout_ms") == "2000");
+    CHECK(config.get("scouting/multicast/enabled") == "true");
+    CHECK(config.get("scouting/multicast/interface") == R"("lo")");
+    CHECK(config.get("scouting/gossip/enabled") == "false");
 }
 
 TEST_CASE("publisher qos is read per channel, and unset fields keep defaults") {
@@ -140,6 +146,17 @@ TEST_CASE("a locator's address is the part a link reports") {
     CHECK(zenoh_detail::locator_address("127.0.0.1:7447") == "127.0.0.1:7447");
 }
 
+TEST_CASE("an endpoint dialed by name also matches the address a link reports") {
+    // A link reports a numeric address, so a named endpoint would never be seen
+    // as connected without resolving it first.
+    auto addresses = zenoh_detail::endpoint_addresses("tcp/localhost:7447");
+    CHECK(addresses.count("localhost:7447") == 1);
+    CHECK(addresses.count("127.0.0.1:7447") == 1);
+    // Nothing to resolve, so a portless endpoint is left as it is.
+    CHECK(zenoh_detail::endpoint_addresses("tcp/localhost") ==
+          std::unordered_set<std::string>{"localhost"});
+}
+
 // A session that neither scouts nor dials, so opening it touches no network.
 constexpr const char* kIsolatedLaunch = R"({
   "session": {
@@ -153,6 +170,30 @@ constexpr const char* kIsolatedLaunch = R"({
     "connect_timeout_ms": 0
   }
 })";
+
+TEST_CASE("an empty setting leaves zenoh's own default in place") {
+    auto settings = settings_from_launch(nlohmann::json::parse(kIsolatedLaunch));
+    REQUIRE(settings.has_value());
+    ::zenoh::Config config = zenoh_detail::zenoh_config(*settings);
+    // Unset, so zenoh falls back to its own default. Writing the empty string
+    // would instead mean an empty multicast group and a never-retrying dial.
+    CHECK(config.get("scouting/multicast/address") == "null");
+    CHECK(config.get("connect/timeout_ms") == "null");
+}
+
+TEST_CASE("waiting on an endpoint that never links gives up at the timeout") {
+    // Nothing listens on the endpoint, so the wait can only end at the deadline.
+    // If it did not, opening a session against a dead peer would hang forever.
+    ::zenoh::Session session =
+        ::zenoh::Session::open(zenoh_detail::zenoh_config(*settings_from_launch(
+            nlohmann::json::parse(kIsolatedLaunch))));
+    const auto started = std::chrono::steady_clock::now();
+    zenoh_detail::await_connect(session, {"tcp/127.0.0.1:1"}, "peer",
+                                std::chrono::milliseconds(200));
+    const auto waited = std::chrono::steady_clock::now() - started;
+    CHECK(waited >= std::chrono::milliseconds(200));
+    CHECK(waited < std::chrono::seconds(5));
+}
 
 TEST_CASE("a published payload reaches a subscriber unchanged") {
     std::unique_ptr<Transport> transport =
