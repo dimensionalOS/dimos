@@ -22,7 +22,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from dimos.core.isolated_python_module import isolated_python_run_command
+from dimos.experimental.isolated_python.module import isolated_python_run_command
 from dimos.imitation.dataprep.core import DataPrepConfig
 from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
 from dimos.utils.cache import cache_usage_guard
