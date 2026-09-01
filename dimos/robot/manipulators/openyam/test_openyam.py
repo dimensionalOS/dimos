@@ -220,6 +220,6 @@ def test_quest_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
     teleop = next(task for task in tasks if task.type == "teleop_ik")
     gripper = next(task for task in tasks if task.type == "gripper")
 
-    assert teleop.params["bindings"] == [{"hand": "right", "target_frame": "yam_hand_tcp"}]
+    assert teleop.params["bindings"] == [{"hand": "right", "target_frame": "gripper_tip"}]
     assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
     assert gripper.stream_bind == {"gripper_command": "right_gripper_command"}
