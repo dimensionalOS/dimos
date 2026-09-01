@@ -51,7 +51,7 @@ from dimos.utils.safe_thread_map import safe_thread_map
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
     from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
-    from dimos.core.rpc_client import ModuleProxy, ModuleProxyProtocol
+    from dimos.core.rpc_client import ModuleProxy, ModuleProxyProtocol, RPCClient
 
 logger = setup_logger()
 
@@ -62,9 +62,8 @@ class ModuleDescriptor(NamedTuple):
     class_name: str
     qualified_path: str
     rpc_names: list[str]
-    # RPC topic prefix: the class name, or the instance name for modules
-    # deployed under a non-default name. Defaulted so the tuple stays
-    # wire-compatible with older daemons.
+    # RPC topic prefix. Usually the class/instance name; hosted modules may
+    # advertise a run- and Host-scoped address. Defaulted for wire compatibility.
     rpc_name: str = ""
 
 
@@ -87,6 +86,7 @@ class ModuleCoordinator(Resource):
         self._transport_registry: dict[tuple[str, type], Transport[Any]] = {}
         self._class_aliases: dict[type[ModuleBase], type[ModuleBase]] = {}
         self._module_transports: dict[str, dict[str, Transport[Any]]] = {}
+        self._remote_module_ref_clients: list[RPCClient] = []
         self._started = False
         self._modules_lock = threading.RLock()
         self._rpc_lock = threading.RLock()
@@ -113,6 +113,10 @@ class ModuleCoordinator(Resource):
             except Exception:
                 logger.error("Error stopping module", module=name, exc_info=True)
             logger.info("Module stopped.", module=name)
+
+        for client in self._remote_module_ref_clients:
+            client.stop_rpc_client()
+        self._remote_module_ref_clients.clear()
 
         def _stop_manager(m: WorkerManager) -> None:
             try:
@@ -155,7 +159,7 @@ class ModuleCoordinator(Resource):
                         class_name=cls.__name__,
                         qualified_path=qualified,
                         rpc_names=list(cls.rpcs.keys()),
-                        rpc_name=_rpc_name(name, cls),
+                        rpc_name=self._deployed_modules[name].remote_name,
                     )
                 )
             return descriptors
@@ -168,7 +172,7 @@ class ModuleCoordinator(Resource):
 
     def list_module_names(self) -> list[str]:
         with self._modules_lock:
-            return [_rpc_name(name, cls) for name, cls in self._instance_classes.items()]
+            return [module.remote_name for module in self._deployed_modules.values()]
 
     def health_check(self) -> bool:
         return all(m.health_check() for m in self._managers.values())
@@ -346,6 +350,8 @@ class ModuleCoordinator(Resource):
         cls,
         blueprint: Blueprint,
         parsed_config: ParsedBlueprintConfig | None = None,
+        *,
+        remote_module_refs: Mapping[tuple[str, str], tuple[type[ModuleBase], str]] | None = None,
     ) -> ModuleCoordinator:
         """Build a blueprint from its pinned values or an exact parsed config.
 
@@ -370,9 +376,16 @@ class ModuleCoordinator(Resource):
         coordinator.start()
 
         try:
+            remote_ref_proxies = coordinator._create_remote_module_ref_clients(
+                remote_module_refs or {}
+            )
             _deploy_all_modules(blueprint, coordinator, global_config, module_kwargs)
             coordinator._connect_streams(blueprint, transports)
-            _connect_module_refs(blueprint, coordinator)
+            _connect_module_refs(
+                blueprint,
+                coordinator,
+                remote_module_refs=remote_ref_proxies,
+            )
 
             coordinator.build_all_modules()
             coordinator.start_all_modules()
@@ -385,6 +398,19 @@ class ModuleCoordinator(Resource):
         _log_blueprint_graph(blueprint, coordinator)
 
         return coordinator
+
+    def _create_remote_module_ref_clients(
+        self,
+        targets: Mapping[tuple[str, str], tuple[type[ModuleBase], str]],
+    ) -> dict[tuple[str, str], RPCClient]:
+        from dimos.core.rpc_client import RPCClient
+
+        clients: dict[tuple[str, str], RPCClient] = {}
+        for key, (module_type, rpc_name) in targets.items():
+            client = RPCClient.remote(module_type, remote_name=rpc_name)
+            self._remote_module_ref_clients.append(client)
+            clients[key] = client
+        return clients
 
     def load_blueprint(
         self,
@@ -663,11 +689,6 @@ class ModuleCoordinator(Resource):
             return
         finally:
             self.stop()
-
-
-def _rpc_name(instance_key: str, cls: type[ModuleBase]) -> str:
-    """The module's RPC topic prefix: class name unless an instance name is set."""
-    return cls.__name__ if instance_key == cls.name else instance_key
 
 
 def stream_name_types(blueprint: Blueprint) -> set[tuple[str, type]]:
@@ -1070,12 +1091,14 @@ def _connect_module_refs(
     module_coordinator: ModuleCoordinator,
     existing_atoms: tuple[BlueprintAtom, ...] = (),
     existing_modules: set[type[ModuleBase]] | None = None,
+    remote_module_refs: Mapping[tuple[str, str], ModuleProxyProtocol] | None = None,
 ) -> None:
     from dimos.core.coordination.blueprints import DisabledModuleProxy
     from dimos.core.module import is_module_type
     from dimos.core.rpc_client import AsyncSpecProxy
 
-    mod_and_mod_ref_to_proxy = {
+    external_refs = dict(remote_module_refs or {})
+    mod_and_mod_ref_to_proxy: dict[tuple[str, str], Any] = {
         (instance_key, name): replacement
         for (instance_key, name), replacement in blueprint.remapping_map.items()
         if is_spec(replacement) or is_module_type(replacement)
@@ -1090,7 +1113,11 @@ def _connect_module_refs(
 
     for bp in blueprint.active_blueprints:
         for module_ref in bp.module_refs:
-            declared_spec[bp.name, module_ref.name] = module_ref.spec
+            ref_key = (bp.name, module_ref.name)
+            declared_spec[ref_key] = module_ref.spec
+            if ref_key in external_refs:
+                mod_and_mod_ref_to_proxy[ref_key] = external_refs.pop(ref_key)
+                continue
             spec = mod_and_mod_ref_to_proxy.get((bp.name, module_ref.name), module_ref.spec)
 
             result = _resolve_single_ref(
@@ -1111,15 +1138,24 @@ def _connect_module_refs(
             else:
                 mod_and_mod_ref_to_proxy[bp.name, module_ref.name] = result
 
+    if external_refs:
+        names = ", ".join(f"{module}.{ref}" for module, ref in sorted(external_refs))
+        raise ValueError(f"Remote module references do not exist in the Blueprint: {names}")
+
     for (base_key, ref_name), target in mod_and_mod_ref_to_proxy.items():
         base_instance = module_coordinator.get_instance(base_key)
-        target_instance: Any = module_coordinator.get_instance(target)  # type: ignore[arg-type]
+        is_remote = (base_key, ref_name) in (remote_module_refs or {})
+        target_instance: Any = (
+            target if is_remote else module_coordinator.get_instance(target)  # type: ignore[arg-type]
+        )
         async_methods = _async_methods_of_spec(declared_spec.get((base_key, ref_name)))
         if async_methods:
             target_instance = AsyncSpecProxy(target_instance, async_methods)
         setattr(base_instance, ref_name, target_instance)
         base_instance.set_module_ref(ref_name, target_instance)
-        if isinstance(target, str):
+        if is_remote:
+            module_coordinator._resolved_module_refs[base_key, ref_name] = target.remote_name
+        elif isinstance(target, str):
             module_coordinator._resolved_module_refs[base_key, ref_name] = target
         else:
             target_keys = module_coordinator._instance_keys_of(cast("type[ModuleBase]", target))

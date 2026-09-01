@@ -309,7 +309,10 @@ class BlueprintConfigParser:
 
         target_annotations: dict[tuple[str, str, tuple[str, ...]], list[Any]] = defaultdict(list)
         for module in modules:
-            for path, annotation in leaf_fields(module.config_cls, excluded={"g", "instance_name"}):
+            for path, annotation in leaf_fields(
+                module.config_cls,
+                excluded={"g", "instance_name", "rpc_name"},
+            ):
                 target_annotations[("module", module.atom.name, path)].append(annotation)
         for path, annotation in leaf_fields(GlobalConfig):
             target_annotations[("global", "g", path)].append(annotation)
@@ -424,6 +427,7 @@ class BlueprintConfigParser:
             dumped = model.model_dump(mode="python", exclude_unset=True)
             dumped.pop("g", None)
             dumped.pop("instance_name", None)
+            dumped.pop("rpc_name", None)
             parsed[module.atom.name] = dumped
         return parsed
 

@@ -21,7 +21,10 @@ This file is only for documentation purposes and is not meant to be executed.
 
 from __future__ import annotations
 
-from dimos.hosted.fragment import RUN_STREAM_KEY as RUN_STREAM_KEY
+from dimos.hosted.fragment import (
+    RUN_MODULE_RPC_NAME as RUN_MODULE_RPC_NAME,
+    RUN_STREAM_KEY as RUN_STREAM_KEY,
+)
 
 # Top level Blueprint
 # Keep the robot stack local and run marker detection on one GPU Host.
@@ -55,9 +58,6 @@ available_g1 = unitree_g1.blueprint().placement(tags={"g1"})
 # ZenohRPC adds the ``dimos/rpc/`` prefix to the logical RPC names below.
 HOST_LIVELINESS_KEY = "dimos/hosts/{host_id}/live"
 HOST_CONTROL_RPC_NAME = "hosts/{host_id}"
-RUN_MODULE_RPC_NAME = "runs/{run_id}/hosts/{host_id}/modules/{module}"
-
-
 # Host control plane
 # ```bash
 # dimos host serve --name g1-01 --tag g1 --tag lab-a

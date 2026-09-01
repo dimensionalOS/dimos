@@ -113,6 +113,9 @@ class ModuleConfig(BaseConfig):
     # once (see BlueprintAtom.instance_name). Changes the RPC topic prefix
     # from the class name to this name.
     instance_name: str | None = None
+    # Optional RPC-only address. Unlike instance_name, this does not change the
+    # module's Blueprint identity, configuration key, or stream namespace.
+    rpc_name: str | None = None
     g: GlobalConfig = global_config
 
 
@@ -161,7 +164,10 @@ class ModuleBase(Configurable, CompositeResource):
             # start() before serve_module_rpc(): Zenoh's subscribe needs an open
             # session (acquired in start()), whereas LCM tolerates either order.
             self.rpc.start()  # type: ignore[attr-defined]
-            self.rpc.serve_module_rpc(self, name=self.config.instance_name)
+            self.rpc.serve_module_rpc(
+                self,
+                name=self.config.rpc_name or self.config.instance_name,
+            )
         except ValueError:
             ...
 

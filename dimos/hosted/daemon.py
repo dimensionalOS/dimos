@@ -313,7 +313,18 @@ def _run_fragment(fragment: HostFragment, log_dir: Path, ready: Connection) -> N
     signal.signal(signal.SIGINT, stop)
     try:
         payload = fragment.load_payload()
-        coordinator = ModuleCoordinator.build(payload.blueprint, payload.config)
+        remote_module_refs = {
+            (reference.consumer_name, reference.reference_name): (
+                reference.provider_type,
+                reference.rpc_name,
+            )
+            for reference in payload.remote_module_references
+        }
+        coordinator = ModuleCoordinator.build(
+            payload.blueprint,
+            payload.config,
+            remote_module_refs=remote_module_refs,
+        )
         coordinator.start_rpc_service()
         if not coordinator.health_check():
             raise RuntimeError("Deployment failed its initial health check")
