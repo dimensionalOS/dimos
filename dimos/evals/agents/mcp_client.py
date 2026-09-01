@@ -30,22 +30,38 @@ from dimos.evals.types import Environment, RunningEnvironment, Step, ToolCall, T
 
 class _Turn:
     """One McpClient turn as seen on the wire: every message on ``/agent``
-    from the moment ``/agent_idle`` goes False until it comes back True."""
+    from the moment ``/agent_idle`` goes False until it comes back True.
+    ``/agent_idle`` is its own topic and can overtake the last ``/agent``
+    message, so the turn is done only once the received ``AIMessage``s match
+    the raw trace, which is complete before the idle flip is published."""
 
-    def __init__(self) -> None:
+    def __init__(self, raw_dir: Path) -> None:
         self.received: list[BaseMessage] = []
-        self.idle = threading.Event()
+        self.done = threading.Event()
         self._started = threading.Event()
+        self._lock = threading.Lock()
+        self._raw_dir = raw_dir
+        self._expected: int | None = None
 
     def on_agent(self, msg: Any) -> None:
         if isinstance(msg, BaseMessage):
-            self.received.append(msg)
+            with self._lock:
+                self.received.append(msg)
+                self._maybe_done()
 
     def on_idle(self, flag: Any) -> None:
         if flag is False:
             self._started.set()
         elif flag is True and self._started.is_set():
-            self.idle.set()
+            with self._lock:
+                self._expected = len(_pairs(self._raw_dir))
+                self._maybe_done()
+
+    def _maybe_done(self) -> None:
+        if self._expected is not None and (
+            sum(isinstance(m, AIMessage) for m in self.received) >= self._expected
+        ):
+            self.done.set()
 
 
 def _pairs(raw_dir: Path) -> list[tuple[Path, Path]]:
@@ -93,7 +109,7 @@ class McpClientAgent:
     def run(self, inputs: str, env: RunningEnvironment, run_dir: Path) -> Trajectory:
         from dimos.core.transport_factory import make_transport
 
-        turn = _Turn()
+        turn = _Turn(run_dir / "raw")
         agent_t, idle_t, human_t = (
             make_transport("/agent"),
             make_transport("/agent_idle"),
@@ -106,7 +122,7 @@ class McpClientAgent:
             agent_t.subscribe(turn.on_agent)
             idle_t.subscribe(turn.on_idle)
             human_t.publish(inputs)
-            turn.idle.wait()  # the runner's timeout is the only limit
+            turn.done.wait()  # the runner's timeout is the only limit
         finally:
             for t in (agent_t, idle_t, human_t):
                 t.stop()
