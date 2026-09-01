@@ -1,0 +1,46 @@
+<mujoco model="microduck_room">
+  <!-- A small enclosed room for the Microduck (a ~25 cm biped): open top,
+       0.5 m walls, and a few distinctly colored objects to explore and walk
+       to. All world geometry lives in geom group 0 so the raycast lidar can
+       select it while ignoring the robot (visual group 2 / collision
+       group 3). Object poses are mirrored in the microduck blueprints'
+       ground-truth object table; keep the two in sync. -->
+  <visual>
+    <headlight diffuse="0.7 0.7 0.7" ambient="0.35 0.35 0.35" specular="0 0 0"/>
+    <global azimuth="150" elevation="-25"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.4 0.55 0.7" rgb2="0.05 0.05 0.1"
+             width="512" height="3072"/>
+    <texture type="2d" name="floortex" builtin="checker" mark="edge" rgb1="0.32 0.3 0.28"
+             rgb2="0.24 0.22 0.2" markrgb="0.5 0.5 0.5" width="300" height="300"/>
+    <material name="floormat" texture="floortex" texuniform="true" texrepeat="8 8"
+              reflectance="0.15"/>
+    <material name="wallmat" rgba="0.75 0.73 0.68 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 2.5" dir="0 0 -1" directional="true"/>
+
+    <geom name="floor" type="plane" size="2.2 1.7 0.05" material="floormat" group="0"/>
+
+    <geom name="wall_north" type="box" size="2.05 0.05 0.25" pos="0 1.55 0.25"
+          material="wallmat" group="0"/>
+    <geom name="wall_south" type="box" size="2.05 0.05 0.25" pos="0 -1.55 0.25"
+          material="wallmat" group="0"/>
+    <geom name="wall_east" type="box" size="0.05 1.6 0.25" pos="2.05 0 0.25"
+          material="wallmat" group="0"/>
+    <geom name="wall_west" type="box" size="0.05 1.6 0.25" pos="-2.05 0 0.25"
+          material="wallmat" group="0"/>
+
+    <geom name="red_ball" type="sphere" size="0.07" pos="1.5 0.9 0.07"
+          rgba="0.85 0.1 0.1 1" group="0"/>
+    <geom name="blue_cube" type="box" size="0.06 0.06 0.06" pos="-1.5 -1.0 0.06"
+          rgba="0.1 0.25 0.85 1" group="0"/>
+    <geom name="green_pillar" type="cylinder" size="0.05 0.14" pos="1.4 -1.0 0.14"
+          rgba="0.1 0.65 0.2 1" group="0"/>
+    <geom name="yellow_block" type="box" size="0.05 0.09 0.08" pos="-1.4 1.0 0.08"
+          rgba="0.9 0.75 0.1 1" group="0"/>
+  </worldbody>
+</mujoco>
