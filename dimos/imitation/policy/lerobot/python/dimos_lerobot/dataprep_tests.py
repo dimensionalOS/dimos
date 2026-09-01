@@ -16,13 +16,29 @@ from collections.abc import Iterator
 import json
 from pathlib import Path
 
+from dimos_lerobot import dataprep
 from dimos_lerobot.dataprep import write
 import numpy as np
 import pytest
+import pytest_mock
 
 from dimos.imitation.dataprep.core import OutputConfig, Sample
 
 JOINTS = [f"arm/joint{index}" for index in range(1, 7)] + ["arm/gripper"]
+
+
+def test_module_entry_point_converts_one_config(mocker: pytest_mock.MockerFixture) -> None:
+    convert = mocker.patch.object(dataprep, "convert")
+
+    dataprep.main(["config.json"])
+
+    convert.assert_called_once_with("config.json")
+
+
+@pytest.mark.parametrize("args", [[], ["one.json", "two.json"]])
+def test_module_entry_point_requires_one_config(args: list[str]) -> None:
+    with pytest.raises(SystemExit, match="usage: python -m dimos_lerobot.dataprep CONFIG_JSON"):
+        dataprep.main(args)
 
 
 def samples() -> Iterator[Sample]:
