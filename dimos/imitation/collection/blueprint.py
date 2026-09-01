@@ -102,7 +102,12 @@ learning_collect_quest_piper = autoconnect(
 OPENARM_LEFT_WRIST_CAMERA_DEVICE = (
     "/dev/v4l/by-path/platform-3610000.usb-usb-0:2.1.4:1.0-video-index0"
 )
-OPENARM_RIGHT_WRIST_CAMERA_DEVICE = ""
+OPENARM_RIGHT_WRIST_CAMERA_DEVICE = (
+    "/dev/v4l/by-path/platform-3610000.usb-usb-0:2.3:1.0-video-index0"
+)
+OPENARM_CHEST_CAMERA_DEVICE = (
+    "/dev/v4l/by-path/platform-140c0000.pcie-pci-0009:01:00.0-usb-0:1:1.0-video-index0"
+)
 
 # Front D455 on the Alfred rig; pinned so the scene camera never grabs the
 # rig's other RealSense. Override with --real-sense-camera.serial-number.
@@ -147,12 +152,12 @@ class WristCameraModule(CameraModule):
         super().start()
 
 
-def _wrist_camera(side: str, device: str) -> Blueprint:
-    name = f"{side}_wrist_camera"
-    return WristCameraModule.blueprint(instance_name=name, device=device).remappings(
+def _usb_camera(name: str, device: str) -> Blueprint:
+    instance = f"{name}_camera"
+    return WristCameraModule.blueprint(instance_name=instance, device=device).remappings(
         [
-            (name, "color_image", f"{side}_wrist_image"),
-            (name, "camera_info", f"{side}_wrist_camera_info"),
+            (instance, "color_image", f"{name}_image"),
+            (instance, "camera_info", f"{name}_camera_info"),
         ]
     )
 
@@ -160,6 +165,7 @@ def _wrist_camera(side: str, device: str) -> Blueprint:
 class OpenArmCollectionRecorder(CollectionRecorder):
     left_wrist_image: In[Image]
     right_wrist_image: In[Image]
+    chest_image: In[Image]
     coordinator_joint_targets: In[JointState]  # action (commanded targets)
     # Raw operator inputs, for end effector space training and episode
     # forensics. Streams without a producer stay silently empty.
@@ -171,6 +177,7 @@ class OpenArmCollectionRecorder(CollectionRecorder):
     camera_info: In[CameraInfo]
     left_wrist_camera_info: In[CameraInfo]
     right_wrist_camera_info: In[CameraInfo]
+    chest_camera_info: In[CameraInfo]
     # World frame chassis pose when the lidar odometry blueprint is composed
     # in (the mobile variant below).
     pointlio_odometry: In[Odometry]
@@ -188,8 +195,9 @@ def _openarm_cameras_if_real() -> tuple[Blueprint, ...]:
             enable_depth=False,
             enable_pointcloud=False,
         ),
-        _wrist_camera("left", OPENARM_LEFT_WRIST_CAMERA_DEVICE),
-        _wrist_camera("right", OPENARM_RIGHT_WRIST_CAMERA_DEVICE),
+        _usb_camera("left_wrist", OPENARM_LEFT_WRIST_CAMERA_DEVICE),
+        _usb_camera("right_wrist", OPENARM_RIGHT_WRIST_CAMERA_DEVICE),
+        _usb_camera("chest", OPENARM_CHEST_CAMERA_DEVICE),
     )
 
 
@@ -200,6 +208,7 @@ learning_collect_quest_openarm = autoconnect(
             "color_image",
             "left_wrist_image",
             "right_wrist_image",
+            "chest_image",
             "coordinator_joint_state",
             "coordinator_joint_targets",
             "left_cartesian_command",
@@ -209,6 +218,7 @@ learning_collect_quest_openarm = autoconnect(
             "camera_info",
             "left_wrist_camera_info",
             "right_wrist_camera_info",
+            "chest_camera_info",
             "pointlio_odometry",
             "status",
         ],

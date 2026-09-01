@@ -110,6 +110,7 @@ def test_openarm_collection_streams_are_poseless() -> None:
         "color_image",
         "left_wrist_image",
         "right_wrist_image",
+        "chest_image",
         "coordinator_joint_state",
         "coordinator_joint_targets",
         "left_cartesian_command",
@@ -119,6 +120,7 @@ def test_openarm_collection_streams_are_poseless() -> None:
         "camera_info",
         "left_wrist_camera_info",
         "right_wrist_camera_info",
+        "chest_camera_info",
         "pointlio_odometry",
         "status",
     ]
