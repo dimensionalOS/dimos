@@ -17,9 +17,11 @@ from queue import Queue
 import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from dimos.core.module import Module, TopicMetadata
+from dimos.core.module import Module, TopicFunnel, TopicMetadata
 from dimos.core.stream import In, Out
 from dimos.core.transport_factory import make_transport
+
+DELIVERY_TIMEOUT = 1.0
 
 
 class FanInModule(Module):
@@ -72,14 +74,14 @@ def test_topic_funnel_tags_each_message_with_its_stream(start_fan_in_module, gro
     scaled.subscribe(scales.put)
 
     s0.publish(7)
-    assert queue.get(timeout=1.0) == 7
-    assert names.get(timeout=1.0) == "s0"
-    assert scales.get(timeout=1.0) == 3.5
+    assert queue.get(timeout=DELIVERY_TIMEOUT) == 7
+    assert names.get(timeout=DELIVERY_TIMEOUT) == "s0"
+    assert scales.get(timeout=DELIVERY_TIMEOUT) == 3.5
 
     s1.publish(7)
-    assert queue.get(timeout=1.0) == 107
-    assert names.get(timeout=1.0) == "s1"
-    assert scales.get(timeout=1.0) == 7.0
+    assert queue.get(timeout=DELIVERY_TIMEOUT) == 107
+    assert names.get(timeout=DELIVERY_TIMEOUT) == "s1"
+    assert scales.get(timeout=DELIVERY_TIMEOUT) == 7.0
 
 
 @pytest.fixture
@@ -104,8 +106,8 @@ def test_topic_funnel_entries_follow_remappings(start_remapped_fan_in_module, ea
         tagged.subscribe(queue.put)
         named.subscribe(names.put)
         alt0.publish(7)
-        assert queue.get(timeout=1.0) == 7
-        assert names.get(timeout=1.0) == "s0"
+        assert queue.get(timeout=DELIVERY_TIMEOUT) == 7
+        assert names.get(timeout=DELIVERY_TIMEOUT) == "s0"
     finally:
         for transport in (alt0, tagged, named):
             transport.stop()
@@ -118,7 +120,7 @@ def test_fanning_in_an_undeclared_port_is_an_error():
 
 def test_a_funnel_entry_cannot_collide_with_a_declared_stream():
     with pytest.raises(ValueError, match="collides"):
-        FanInModule(topic_funnels={"sensors": {"names": ["tagged"]}})
+        FanInModule(topic_funnels={"sensors": TopicFunnel(["tagged"])})
 
 
 class PlainFanInModule(Module):
@@ -143,7 +145,7 @@ def test_a_funnel_handler_without_meta_gets_just_the_message(each_transport):
         queue: Queue[int] = Queue()
         echoed.subscribe(queue.put)
         s1.publish(7)
-        assert queue.get(timeout=1.0) == 7
+        assert queue.get(timeout=DELIVERY_TIMEOUT) == 7
     finally:
         for transport in (s1, echoed):
             transport.stop()

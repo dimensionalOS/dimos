@@ -31,7 +31,7 @@ from typing import (
     get_type_hints,
 )
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field
 from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.core.core import T, rpc
@@ -103,7 +103,8 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 Deployment = Literal["python", "docker"]
 
 
-class TopicFunnel(BaseModel):
+@dataclass(init=False)
+class TopicFunnel:
     """Several same-typed streams that one declared port fans into one handler.
 
     Built by `Blueprint.remappings()`, not by blueprint authors::
@@ -115,26 +116,21 @@ class TopicFunnel(BaseModel):
     """
 
     names: list[str]
-    info: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    info: dict[str, dict[str, Any]]
 
-    @classmethod
-    def of(cls, entries: "Sequence[str] | Mapping[str, Mapping[str, Any]]") -> "TopicFunnel":
-        """Build one from a plain list of names, or a dict of name -> info."""
-        if isinstance(entries, Mapping):
-            info = {name: dict(value) for name, value in entries.items() if value}
-            return cls(names=list(entries), info=info)
-        return cls(names=list(entries))
-
-    @field_validator("names")
-    @classmethod
-    def _reject_topic_strings(cls, names: list[str]) -> list[str]:
-        leading_slash = [n for n in names if n.startswith("/")]
+    def __init__(self, entries: "Sequence[str] | Mapping[str, Mapping[str, Any]]") -> None:
+        self.names = list(entries)
+        self.info = (
+            {name: dict(value) for name, value in entries.items() if value}
+            if isinstance(entries, Mapping)
+            else {}
+        )
+        leading_slash = [name for name in self.names if name.startswith("/")]
         if leading_slash:
             raise ValueError(
                 f"topic funnel names must be stream names, not topics: {leading_slash} "
                 "start with '/' (use `left_cam`, not `/left_cam`)"
             )
-        return names
 
 
 @dataclass(frozen=True)

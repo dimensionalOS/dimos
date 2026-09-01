@@ -249,7 +249,7 @@ class Blueprint:
             if isinstance(new, (str, type)):
                 remappings_dict[instance_key, old] = new
             else:
-                atoms = _fan_in(atoms, instance_key, old, TopicFunnel.of(new))
+                atoms = _fan_in(atoms, instance_key, old, TopicFunnel(new))
         return replace(
             self, blueprints=tuple(atoms), remapping_map=MappingProxyType(remappings_dict)
         )

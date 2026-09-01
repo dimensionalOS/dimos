@@ -222,7 +222,7 @@ def test_a_topic_funnel_reaches_the_native_process_as_a_list(monkeypatch) -> Non
     monkeypatch.setattr(native_module_mod.global_config, "transport", "lcm")
     module = StubFunnelModule(
         executable=_ECHO,
-        topic_funnels={"cams": TopicFunnel(names=["cam0/imu", "cam1/imu"])},
+        topic_funnels={"cams": TopicFunnel(["cam0/imu", "cam1/imu"])},
     )
     try:
         topics = module._collect_topics()
@@ -240,7 +240,7 @@ def test_funnel_info_rides_the_launch_line_but_not_the_argv(monkeypatch) -> None
     monkeypatch.setattr(native_module_mod.global_config, "transport", "lcm")
     module = StubFunnelModule(
         executable=_ECHO,
-        topic_funnels={"cams": TopicFunnel.of({"cam0/imu": {"rectified": True}, "cam1/imu": {}})},
+        topic_funnels={"cams": TopicFunnel({"cam0/imu": {"rectified": True}, "cam1/imu": {}})},
     )
     try:
         topics = module._collect_topics()
@@ -260,7 +260,7 @@ def test_a_wired_topic_funnel_entry_uses_its_transport() -> None:
     """Remapping/pins arrive as set_transport on the entry, and the launch line follows."""
     module = StubFunnelModule(
         executable=_ECHO,
-        topic_funnels={"cams": TopicFunnel(names=["cam0/imu"])},
+        topic_funnels={"cams": TopicFunnel(["cam0/imu"])},
     )
     transport = LCMTransport("/remapped/imu", Imu)
     try:
@@ -275,14 +275,14 @@ def test_a_wired_topic_funnel_entry_uses_its_transport() -> None:
 def test_a_topic_funnel_needs_a_declared_port() -> None:
     """The funnel replaces a port's wiring, so it has to have one to replace."""
     with pytest.raises(ValueError, match="not an In or IO stream"):
-        StubFunnelModule(executable=_ECHO, topic_funnels={"nope": TopicFunnel(names=["cam0/imu"])})
+        StubFunnelModule(executable=_ECHO, topic_funnels={"nope": TopicFunnel(["cam0/imu"])})
 
 
 def test_a_topic_funnel_is_not_a_native_config_field() -> None:
     """The funnel is wiring, so it belongs in `topics`, not the config struct."""
     module = StubFunnelModule(
         executable=_ECHO,
-        topic_funnels={"cams": TopicFunnel(names=["cam0/imu"])},
+        topic_funnels={"cams": TopicFunnel(["cam0/imu"])},
     )
     try:
         assert "topic_funnels" not in module.config.to_config_dict()
