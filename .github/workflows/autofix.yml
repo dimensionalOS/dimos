@@ -6,7 +6,7 @@ permissions: {}
 
 jobs:
   lint:
-    timeout-minutes: 1
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
