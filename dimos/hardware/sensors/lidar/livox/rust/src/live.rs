@@ -439,6 +439,13 @@ mod tests {
         let ports = test_ports(47600);
         let device = spawn_fake_device(ports);
 
+        let stop = Arc::new(AtomicBool::new(false));
+        // A dropped loopback datagram fails the test instead of hanging it.
+        let watchdog = stop.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(10));
+            watchdog.store(true, Ordering::Relaxed);
+        });
         let mut source = LiveSource::start(
             LiveConfig {
                 host_ip: Ipv4Addr::LOCALHOST,
@@ -447,7 +454,7 @@ mod tests {
                 enable_imu: true,
                 ports,
             },
-            Arc::new(AtomicBool::new(false)),
+            stop,
         )
         .unwrap();
 

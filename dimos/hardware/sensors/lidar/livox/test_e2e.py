@@ -25,6 +25,7 @@ Run with::
 
 from __future__ import annotations
 
+from collections.abc import Callable, Generator
 import json
 import math
 import os
@@ -39,14 +40,21 @@ import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.hardware.sensors.lidar.livox.module import Mid360Config
+from dimos.hardware.sensors.lidar.livox.ports import (
+    SDK_HOST_POINT_DATA_PORT,
+    SDK_IMU_DATA_PORT,
+    SDK_POINT_DATA_PORT,
+)
+from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360Config
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.utils.data import get_data
 
 _RELEASE = DIMOS_PROJECT_ROOT / "target" / "release"
 
-_LIDAR_POINT_PORT = 56300
-_LIDAR_IMU_PORT = 56400
-_HOST_POINT_PORT = 56301
+GRAVITY_MS2 = 9.80665
+
+Spawn = Callable[[Path, dict[str, object]], "subprocess.Popen[bytes]"]
 
 
 def _data_packet(data_type: int, time_interval: int, ts_ns: int, payload: bytes) -> bytes:
@@ -68,7 +76,7 @@ def _data_packet(data_type: int, time_interval: int, ts_ns: int, payload: bytes)
 
 
 def _udp_record(ts: float, src_port: int, payload: bytes) -> bytes:
-    udp = struct.pack(">HHHH", src_port, _HOST_POINT_PORT, 8 + len(payload), 0) + payload
+    udp = struct.pack(">HHHH", src_port, SDK_HOST_POINT_DATA_PORT, 8 + len(payload), 0) + payload
     ip = bytes([0x45]) + bytes(8) + bytes([17]) + bytes(10)
     frame = bytes(12) + b"\x08\x00" + ip + udp
     return struct.pack("<IIII", int(ts), int((ts % 1) * 1e6), len(frame), len(frame)) + frame
@@ -95,13 +103,13 @@ def synth_pcap(tmp_path_factory: pytest.TempPathFactory) -> Path:
             for j in range(100)
         )
         packet = _data_packet(1, 1000, base_ns + offset_ns, points)
-        records.append(_udp_record(base_ts + offset_ns / 1e9, _LIDAR_POINT_PORT, packet))
+        records.append(_udp_record(base_ts + offset_ns / 1e9, SDK_POINT_DATA_PORT, packet))
     # 200 IMU packets at 200 Hz: gravity on z, slow roll on x.
     for i in range(200):
         offset_ns = i * 5_000_000
         sample = struct.pack("<6f", 0.01, 0.0, 0.0, 0.0, 0.0, 1.0)
         packet = _data_packet(0, 0, base_ns + offset_ns, sample)
-        records.append(_udp_record(base_ts + offset_ns / 1e9, _LIDAR_IMU_PORT, packet))
+        records.append(_udp_record(base_ts + offset_ns / 1e9, SDK_IMU_DATA_PORT, packet))
 
     records.sort(key=lambda r: struct.unpack("<II", r[:8]))
     pcap_header = struct.pack("<IHHiIII", 0xA1B2_C3D4, 2, 4, 0, 0, 0, 1)
@@ -113,44 +121,33 @@ def synth_pcap(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def _require_binary(name: str) -> Path:
     binary = _RELEASE / name
     if not binary.exists():
-        pytest.skip(
+        pytest.fail(
             f"{binary} missing; run: cargo build --release -p dimos-livox -p dimos-virtual-mid360"
         )
     return binary
 
 
-def _spawn(binary: Path, blob: dict) -> subprocess.Popen[bytes]:
-    process = subprocess.Popen(
-        [str(binary)],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env={**os.environ, "DIMOS_TRANSPORT": "lcm"},
-    )
-    assert process.stdin is not None
-    process.stdin.write(json.dumps(blob).encode() + b"\n")
-    process.stdin.flush()
-    return process
+@pytest.fixture
+def spawn() -> Generator[Spawn]:
+    """Spawn a native module binary. Everything spawned is torn down."""
+    processes: list[subprocess.Popen[bytes]] = []
 
+    def factory(binary: Path, blob: dict[str, object]) -> subprocess.Popen[bytes]:
+        process = subprocess.Popen(
+            [str(binary)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env={**os.environ, "DIMOS_TRANSPORT": "lcm"},
+        )
+        processes.append(process)
+        assert process.stdin is not None
+        process.stdin.write(json.dumps(blob).encode() + b"\n")
+        process.stdin.flush()
+        return process
 
-def _collect(topics: dict[str, type], seconds: float) -> dict[str, list]:
-    """Subscribe to `topic -> msg type` and decode everything for `seconds`."""
-    raw: dict[str, list[bytes]] = {topic: [] for topic in topics}
-    lc = lcm_module.LCM()
-    for topic in topics:
-        # Buffer bytes only. Decoding inline drops packets.
-        def on_msg(_ch: str, data: bytes, topic=topic) -> None:
-            raw[topic].append(data)
+    yield factory
 
-        msg_type = topics[topic]
-        lc.subscribe(f"{topic}#sensor_msgs.{msg_type.__name__}", on_msg)
-    end = time.monotonic() + seconds
-    while time.monotonic() < end:
-        lc.handle_timeout(200)
-    return {topic: [topics[topic].lcm_decode(data) for data in raw[topic]] for topic in topics}
-
-
-def _terminate(*processes: subprocess.Popen[bytes]) -> None:
     for process in processes:
         if process.poll() is None:
             process.send_signal(signal.SIGTERM)
@@ -161,35 +158,45 @@ def _terminate(*processes: subprocess.Popen[bytes]) -> None:
             process.kill()
 
 
-def _assert_stream_contents(clouds: list, imus: list) -> None:
-    # Large clouds drop under the default receive buffer, so the IMU packets
-    # carry the rate assertion.
-    assert len(clouds) >= 3, f"expected >=3 clouds, got {len(clouds)}"
-    assert len(imus) >= 120, f"expected >=120 imu samples, got {len(imus)}"
+def _collect(
+    topics: dict[str, type], seconds: float, enough: dict[str, int]
+) -> dict[str, list]:
+    """Decode each topic until every count in `enough` is met or time runs out."""
+    raw: dict[str, list[bytes]] = {topic: [] for topic in topics}
+    lc = lcm_module.LCM()
+    for topic in topics:
+        # Buffer bytes only. Decoding inline drops packets.
+        def on_msg(_ch: str, data: bytes, topic: str = topic) -> None:
+            raw[topic].append(data)
 
-    cloud = clouds[len(clouds) // 2]
+        msg_type = topics[topic]
+        lc.subscribe(f"{topic}#sensor_msgs.{msg_type.__name__}", on_msg)
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if all(len(raw[topic]) >= count for topic, count in enough.items()):
+            break
+        lc.handle_timeout(200)
+    return {topic: [topics[topic].lcm_decode(data) for data in raw[topic]] for topic in topics}
+
+
+def _magnitude(sample: Imu) -> float:
+    acc = sample.linear_acceleration
+    return math.sqrt(acc.x**2 + acc.y**2 + acc.z**2)
+
+
+def _assert_cloud_shape(cloud: PointCloud2, min_points: int) -> None:
     assert cloud.frame_id == "lidar_link"
     points, _ = cloud.as_numpy()
-    assert len(points) > 1000
+    assert len(points) > min_points
     # Full point format carries per-point deskew offsets within one frame.
     offsets = cloud.offset_times_u32()
     assert offsets is not None
     assert offsets.max() < 150_000_000, "offsets exceed one frame interval"
 
-    # The synthesized IMU reports exactly 1 g on z.
-    sample = imus[len(imus) // 2]
-    acc = sample.linear_acceleration
-    magnitude = math.sqrt(acc.x**2 + acc.y**2 + acc.z**2)
-    assert 6.0 < magnitude < 14.0, f"accel magnitude {magnitude}"
-    assert sample.orientation_covariance[0] == -1.0
-    assert sample.frame_id == "imu_link"
-
 
 @pytest.mark.self_hosted
-def test_real_capture_replay_publishes_streams() -> None:
+def test_real_capture_replay_publishes_streams(spawn: Spawn) -> None:
     """Replay a real Mid-360 recording: the non-circular wire-format check."""
-    from dimos.utils.data import get_data
-
     binary = _require_binary("mid360_native")
     pcap = get_data("mid360_shake_stairs/mid360_shake_stairs.pcap")
     config = Mid360Config(
@@ -206,33 +213,22 @@ def test_real_capture_replay_publishes_streams() -> None:
         "config": config.to_config_dict(),
         "session": {"id": "pointlio-e2e", "links": []},
     }
-    process = _spawn(binary, blob)
-    try:
-        received = _collect({"/e2e_real_lidar": PointCloud2, "/e2e_real_imu": Imu}, seconds=10.0)
-    finally:
-        _terminate(process)
+    spawn(binary, blob)
+    received = _collect(
+        {"/e2e_real_lidar": PointCloud2, "/e2e_real_imu": Imu},
+        seconds=15.0,
+        enough={"/e2e_real_lidar": 20, "/e2e_real_imu": 800},
+    )
 
     clouds = received["/e2e_real_lidar"]
     imus = received["/e2e_real_imu"]
     # Thresholds leave headroom for receive-buffer drops on the big clouds.
     assert len(clouds) >= 20, f"expected >=20 clouds, got {len(clouds)}"
     assert len(imus) >= 800, f"expected >=800 imu samples, got {len(imus)}"
-
-    cloud = clouds[len(clouds) // 2]
-    assert cloud.frame_id == "lidar_link"
-    points, _ = cloud.as_numpy()
-    assert len(points) > 5000
-    offsets = cloud.offset_times_u32()
-    assert offsets is not None
-    assert offsets.max() < 150_000_000, "offsets exceed one frame interval"
+    _assert_cloud_shape(clouds[len(clouds) // 2], min_points=5000)
 
     # The rig shakes, so single samples spike. The median stays near 1 g.
-    magnitudes = sorted(
-        math.sqrt(
-            s.linear_acceleration.x**2 + s.linear_acceleration.y**2 + s.linear_acceleration.z**2
-        )
-        for s in imus
-    )
+    magnitudes = sorted(_magnitude(sample) for sample in imus)
     median = magnitudes[len(magnitudes) // 2]
     assert 5.0 < median < 15.0, f"median accel magnitude {median}"
     assert imus[0].orientation_covariance[0] == -1.0
@@ -240,21 +236,21 @@ def test_real_capture_replay_publishes_streams() -> None:
 
 
 @pytest.mark.native_e2e
-def test_live_loopback_handshake_and_stream(synth_pcap: Path) -> None:
+def test_live_loopback_handshake_and_stream(spawn: Spawn, synth_pcap: Path) -> None:
     driver_binary = _require_binary("mid360_native")
     virtual_binary = _require_binary("virtual_mid360")
 
+    virtual_config = VirtualMid360Config(
+        pcap=str(synth_pcap),
+        rate=0.5,
+        delay=1.0,
+        lidar_ip="127.0.0.1",
+        host_ip="127.0.0.1",
+        mcast_data="224.1.1.5",
+    )
     virtual_blob = {
         "topics": {},
-        "config": {
-            "pcap": str(synth_pcap),
-            "rate": 0.5,
-            "delay": 1.0,
-            "lidar_ip": "127.0.0.1",
-            "host_ip": "127.0.0.1",
-            "lidar_netns": "",
-            "mcast_data": "224.1.1.5",
-        },
+        "config": virtual_config.to_config_dict(),
         "session": {"id": "pointlio-e2e", "links": []},
     }
     config = Mid360Config(
@@ -272,11 +268,25 @@ def test_live_loopback_handshake_and_stream(synth_pcap: Path) -> None:
         "session": {"id": "pointlio-e2e", "links": []},
     }
 
-    driver = _spawn(driver_binary, driver_blob)
-    virtual = _spawn(virtual_binary, virtual_blob)
-    try:
-        # Handshake arms the virtual within ~1 s, then 2 s of half-rate stream.
-        received = _collect({"/e2e_live_lidar": PointCloud2, "/e2e_live_imu": Imu}, seconds=8.0)
-    finally:
-        _terminate(driver, virtual)
-    _assert_stream_contents(received["/e2e_live_lidar"], received["/e2e_live_imu"])
+    spawn(driver_binary, driver_blob)
+    spawn(virtual_binary, virtual_blob)
+    # Handshake arms the virtual within ~1 s, then 2 s of half-rate stream.
+    received = _collect(
+        {"/e2e_live_lidar": PointCloud2, "/e2e_live_imu": Imu},
+        seconds=10.0,
+        enough={"/e2e_live_lidar": 3, "/e2e_live_imu": 120},
+    )
+
+    clouds = received["/e2e_live_lidar"]
+    imus = received["/e2e_live_imu"]
+    # Large clouds drop under the default receive buffer, so the IMU packets
+    # carry the rate assertion.
+    assert len(clouds) >= 3, f"expected >=3 clouds, got {len(clouds)}"
+    assert len(imus) >= 120, f"expected >=120 imu samples, got {len(imus)}"
+    _assert_cloud_shape(clouds[len(clouds) // 2], min_points=1000)
+
+    # The synthesized IMU reports exactly 1 g on z.
+    sample = imus[len(imus) // 2]
+    assert abs(_magnitude(sample) - GRAVITY_MS2) < 1e-3
+    assert sample.orientation_covariance[0] == -1.0
+    assert sample.frame_id == "imu_link"
