@@ -39,7 +39,7 @@ def run_pytest(extra_args):
             "pytest",
             "dimos",
             "-m",
-            "not (tool or mujoco)",
+            "not mujoco",
             f"--junit-xml={xml_file.name}",
             "--tb=no",
             *extra_args,

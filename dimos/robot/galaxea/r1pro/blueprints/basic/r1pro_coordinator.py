@@ -44,6 +44,7 @@ from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnection
+from dimos.visualization.vis_module import vis_module
 
 _chassis_joints = make_twist_base_joints("chassis")
 
@@ -241,21 +242,15 @@ _r1pro_base = (
             # chassis has none. To bring them back: enable_chassis_cameras=True
             # on R1ProConnection.blueprint() + re-pin their JpegLcmTransports.
             ("head_left_color", Image): JpegLcmTransport("/r1pro/head_left_color", Image),
-            ("head_right_color", Image): JpegLcmTransport(
-                "/r1pro/head_right_color", Image
-            ),
+            ("head_right_color", Image): JpegLcmTransport("/r1pro/head_right_color", Image),
             ("head_depth", Image): LCMTransport("/r1pro/head_depth", Image),
             ("lidar", PointCloud2): LCMTransport("/r1pro/lidar", PointCloud2),
             ("wrist_left_color", Image): JpegLcmTransport("/r1pro/wrist_left_color", Image),
             ("wrist_left_depth", Image): LCMTransport("/r1pro/wrist_left_depth", Image),
-            ("wrist_right_color", Image): JpegLcmTransport(
-                "/r1pro/wrist_right_color", Image
-            ),
+            ("wrist_right_color", Image): JpegLcmTransport("/r1pro/wrist_right_color", Image),
             ("wrist_right_depth", Image): LCMTransport("/r1pro/wrist_right_depth", Image),
             # ControlCoordinator outs.
-            ("joint_state", JointState): LCMTransport(
-                "/coordinator/joint_state", JointState
-            ),
+            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
             ("joint_command", JointState): LCMTransport("/r1pro/joint_command", JointState),
         }
     )
@@ -265,24 +260,6 @@ _r1pro_base = (
 )
 
 
-# Compose the rerun bridge when the user asks for it via `dimos --viewer rerun`.
-# Mirrors `unitree_go2_basic` / `uintree_g1_primitive_no_nav` — gate on
-# global_config.viewer.startswith("rerun") so "rerun", "rerun-web", and
-# "rerun-connect" all light up. Without the flag, no bridge is attached and
-# nothing changes from the headless coordinator path.
-if global_config.viewer.startswith("rerun"):
-    from dimos.visualization.rerun.bridge import RerunBridgeModule
+_vis = vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config)
 
-    r1pro_coordinator = autoconnect(
-        _r1pro_base,
-        RerunBridgeModule.blueprint(
-            rerun_open=global_config.rerun_open,
-            rerun_web=global_config.rerun_web,
-            **_rerun_config,
-        ),
-    )
-else:
-    r1pro_coordinator = _r1pro_base
-
-
-__all__ = ["r1pro_coordinator"]
+r1pro_coordinator = autoconnect(_r1pro_base, _vis)

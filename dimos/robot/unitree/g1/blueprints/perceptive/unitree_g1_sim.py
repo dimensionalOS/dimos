@@ -25,5 +25,3 @@ unitree_g1_sim = autoconnect(
     unitree_g1_basic_sim,
     _perception_and_memory,
 ).global_config(n_workers=8)
-
-__all__ = ["unitree_g1_sim"]

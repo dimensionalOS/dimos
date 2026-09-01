@@ -82,8 +82,8 @@ assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
 
 # Head stereo pair: stream name → ROS topic.
 _HEAD_CAMERAS: dict[str, str] = {
-    "head_left_color":     "/hdas/camera_head/left_raw/image_raw_color/compressed",
-    "head_right_color":    "/hdas/camera_head/right_raw/image_raw_color/compressed",
+    "head_left_color": "/hdas/camera_head/left_raw/image_raw_color/compressed",
+    "head_right_color": "/hdas/camera_head/right_raw/image_raw_color/compressed",
 }
 
 # Off by default (config.enable_chassis_cameras): streaming several surround
@@ -91,11 +91,11 @@ _HEAD_CAMERAS: dict[str, str] = {
 # scripts/r1pro_test/STREAM_RELIABILITY_DIAGNOSTIC.md), and the next chassis
 # revision has no surround cameras.
 _CHASSIS_CAMERAS: dict[str, str] = {
-    "chassis_front_left":  "/hdas/camera_chassis_front_left/rgb/compressed",
+    "chassis_front_left": "/hdas/camera_chassis_front_left/rgb/compressed",
     "chassis_front_right": "/hdas/camera_chassis_front_right/rgb/compressed",
-    "chassis_left":        "/hdas/camera_chassis_left/rgb/compressed",
-    "chassis_right":       "/hdas/camera_chassis_right/rgb/compressed",
-    "chassis_rear":        "/hdas/camera_chassis_rear/rgb/compressed",
+    "chassis_left": "/hdas/camera_chassis_left/rgb/compressed",
+    "chassis_right": "/hdas/camera_chassis_right/rgb/compressed",
+    "chassis_rear": "/hdas/camera_chassis_rear/rgb/compressed",
 }
 
 
@@ -302,14 +302,10 @@ class R1ProConnection(Module):
                 *seen,
             )
 
-        self.register_disposable(
-            Disposable(self.motor_command.subscribe(self._on_motor_command))
-        )
+        self.register_disposable(Disposable(self.motor_command.subscribe(self._on_motor_command)))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
 
-        self._publish_thread = Thread(
-            target=self._publish_loop, name="r1pro-publish", daemon=True
-        )
+        self._publish_thread = Thread(target=self._publish_loop, name="r1pro-publish", daemon=True)
         self._publish_thread.start()
 
         logger.info("R1ProConnection started")
@@ -413,24 +409,14 @@ class R1ProConnection(Module):
         self._cmd_right_topic = RawROSTopic(
             "/motion_target/target_joint_state_arm_right", RosJointState, qos=qos
         )
-        self._fb_torso_topic = RawROSTopic(
-            "/hdas/feedback_torso", RosJointState, qos=qos
-        )
-        self._fb_left_topic = RawROSTopic(
-            "/hdas/feedback_arm_left", RosJointState, qos=qos
-        )
-        self._fb_right_topic = RawROSTopic(
-            "/hdas/feedback_arm_right", RosJointState, qos=qos
-        )
+        self._fb_torso_topic = RawROSTopic("/hdas/feedback_torso", RosJointState, qos=qos)
+        self._fb_left_topic = RawROSTopic("/hdas/feedback_arm_left", RosJointState, qos=qos)
+        self._fb_right_topic = RawROSTopic("/hdas/feedback_arm_right", RosJointState, qos=qos)
         self._speed_topic = RawROSTopic(
             "/motion_target/target_speed_chassis", TwistStamped, qos=qos
         )
-        self._acc_topic = RawROSTopic(
-            "/motion_target/chassis_acc_limit", TwistStamped, qos=qos
-        )
-        self._brake_topic = RawROSTopic(
-            "/motion_target/brake_mode", Bool, qos=qos
-        )
+        self._acc_topic = RawROSTopic("/motion_target/chassis_acc_limit", TwistStamped, qos=qos)
+        self._brake_topic = RawROSTopic("/motion_target/brake_mode", Bool, qos=qos)
         self._chassis_speed_topic = RawROSTopic(
             "/motion_control/chassis_speed", TwistStamped, qos=qos
         )
@@ -459,10 +445,12 @@ class R1ProConnection(Module):
         from rclpy.node import Node as RclpyNode
 
         try:
-            from sensor_msgs.msg import CompressedImage
-            from sensor_msgs.msg import Image as RosImage
-            from sensor_msgs.msg import Imu as RosImu
-            from sensor_msgs.msg import PointCloud2 as RosPointCloud2
+            from sensor_msgs.msg import (
+                CompressedImage,
+                Image as RosImage,
+                Imu as RosImu,
+                PointCloud2 as RosPointCloud2,
+            )
         except ImportError:
             logger.warning("sensor_msgs not available — sensor streams disabled")
             return
@@ -476,9 +464,7 @@ class R1ProConnection(Module):
         self._sensor_node = RclpyNode("r1pro_sensors", context=self._sensor_context)
         # 4 threads is empirically sufficient on Jetson Orin; bumping doesn't
         # add throughput, just contention.
-        self._sensor_executor = MultiThreadedExecutor(
-            num_threads=4, context=self._sensor_context
-        )
+        self._sensor_executor = MultiThreadedExecutor(num_threads=4, context=self._sensor_context)
         self._sensor_executor.add_node(self._sensor_node)
 
         # JPEG color cameras (head + optional chassis surround) → one decode
@@ -624,7 +610,7 @@ class R1ProConnection(Module):
         while not self._sensor_stop.is_set() and ctx.ok():
             try:
                 executor.spin_once(timeout_sec=0.1)
-            except Exception as exc:  # noqa: BLE001 — we genuinely want to log-and-continue
+            except Exception as exc:
                 if not ctx.ok() or "context is not valid" in str(exc):
                     logger.warning(f"Sensor context invalid, exiting spin: {exc}")
                     break
@@ -639,6 +625,7 @@ class R1ProConnection(Module):
         on the worker. ``dropped`` counts size-1 queue evictions = the consumer
         falling behind the wire.
         """
+
         def cb(msg: Any) -> None:
             data = getattr(msg, "data", None)
             nbytes = len(data) if data is not None else 0
@@ -724,9 +711,7 @@ class R1ProConnection(Module):
 
     def _on_motor_command(self, msg: MotorCommandArray) -> None:
         if msg.num_joints != _NUM_MOTORS:
-            logger.warning(
-                f"Expected {_NUM_MOTORS} motor commands, got {msg.num_joints}; ignoring"
-            )
+            logger.warning(f"Expected {_NUM_MOTORS} motor commands, got {msg.num_joints}; ignoring")
             return
 
         from sensor_msgs.msg import JointState as RosJointState
@@ -801,17 +786,23 @@ class R1ProConnection(Module):
 
     def _on_feedback_torso(self, msg: Any, _topic: Any) -> None:
         with self._lock:
-            self._copy_segment(msg, self._latest_torso_q, self._latest_torso_dq, self._latest_torso_eff)
+            self._copy_segment(
+                msg, self._latest_torso_q, self._latest_torso_dq, self._latest_torso_eff
+            )
             self._torso_seen = True
 
     def _on_feedback_left(self, msg: Any, _topic: Any) -> None:
         with self._lock:
-            self._copy_segment(msg, self._latest_left_q, self._latest_left_dq, self._latest_left_eff)
+            self._copy_segment(
+                msg, self._latest_left_q, self._latest_left_dq, self._latest_left_eff
+            )
             self._left_seen = True
 
     def _on_feedback_right(self, msg: Any, _topic: Any) -> None:
         with self._lock:
-            self._copy_segment(msg, self._latest_right_q, self._latest_right_dq, self._latest_right_eff)
+            self._copy_segment(
+                msg, self._latest_right_q, self._latest_right_dq, self._latest_right_eff
+            )
             self._right_seen = True
 
     @staticmethod
@@ -1077,10 +1068,3 @@ def _enqueue_drop_oldest(q: queue.Queue[Any], item: Any) -> bool:
         except queue.Full:
             pass
         return True
-
-
-__all__ = [
-    "R1PRO_UPPER_BODY_JOINTS",
-    "R1ProConnection",
-    "R1ProConnectionConfig",
-]

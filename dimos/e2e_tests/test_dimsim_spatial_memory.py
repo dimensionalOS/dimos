@@ -15,7 +15,7 @@
 import pytest
 
 
-@pytest.mark.dimsim
+@pytest.mark.self_hosted_large
 def test_go_to_the_bed(lcm_spy, start_blueprint, human_input, dim_sim, explore_house) -> None:
     start_blueprint(
         "run",
@@ -29,4 +29,4 @@ def test_go_to_the_bed(lcm_spy, start_blueprint, human_input, dim_sim, explore_h
 
     human_input("go to the bed")
 
-    lcm_spy.wait_until_odom_position(-3.567, -1.332, threshold=2)
+    lcm_spy.wait_until_odom_position(-3.567, -1.332, threshold=2, timeout=180)

@@ -33,5 +33,3 @@ unitree_go2_fleet = (
     .global_config(n_workers=4, robot_model="unitree_go2")
     .configurators(ClockSyncConfigurator())
 )
-
-__all__ = ["unitree_go2_fleet"]

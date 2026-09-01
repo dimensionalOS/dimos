@@ -13,22 +13,17 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import Field
 from reactivex.disposable import Disposable
 
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
-from dimos.spec.control import LocalPlanner
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.core.rpc_client import ModuleProxy
 
 logger = setup_logger()
 
@@ -36,6 +31,8 @@ logger = setup_logger()
 class G1Config(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
     connection_type: str = Field(default_factory=lambda m: m["g"].unitree_connection_type)
+    # Per-device AES-128 key (G1 fw >=1.5.1); defaults from GlobalConfig.
+    aes_128_key: str | None = Field(default_factory=lambda m: m["g"].unitree_aes_128_key)
 
 
 class G1ConnectionBase(Module, ABC):
@@ -78,7 +75,9 @@ class G1Connection(G1ConnectionBase):
 
         match self.config.connection_type:
             case "webrtc":
-                self.connection = UnitreeWebRTCConnection(self.config.ip)
+                self.connection = UnitreeWebRTCConnection(
+                    self.config.ip, aes_128_key=self.config.aes_128_key
+                )
             case "replay":
                 raise ValueError("Replay connection not implemented for G1 robot")
             case "mujoco":
@@ -109,10 +108,3 @@ class G1Connection(G1ConnectionBase):
         logger.info(f"Publishing request to topic: {topic} with data: {data}")
         assert self.connection is not None
         return self.connection.publish_request(topic, data)  # type: ignore[no-any-return]
-
-
-def deploy(dimos: ModuleCoordinator, ip: str, local_planner: LocalPlanner) -> "ModuleProxy":
-    connection = dimos.deploy(G1Connection, ip=ip)
-    connection.cmd_vel.connect(local_planner.cmd_vel)
-    connection.start()
-    return connection

@@ -163,7 +163,6 @@ A common pattern is creating replay-based connection stubs for testing without h
 
 This is a bit primitive. We'd like to write a higher-order API for recording full module I/O for any module, but this is a work in progress at the moment.
 
-
 ```python skip
 class ReplayConnection(UnitreeWebRTCConnection):
     dir_name = "go2_sf_office"

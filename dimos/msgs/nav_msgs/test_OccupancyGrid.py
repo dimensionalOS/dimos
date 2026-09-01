@@ -24,7 +24,9 @@ from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.pointclouds.occupancy import general_occupancy
 from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
 
@@ -131,6 +133,27 @@ def test_lcm_encode_decode() -> None:
     assert decoded.grid[5, 10] == 50  # Value we set should be preserved in grid
 
 
+def test_lcm_decode_origin_is_dimos_pose() -> None:
+    """The decoded origin must be the dimos Pose (with .yaw), not the raw
+    generated pose from the wire (the relay costmap encoder reads origin.yaw)."""
+    quat = Quaternion.from_euler(Vector3(0.0, 0.0, 0.5))
+    origin = Pose(1.0, 2.0, 0.0, quat.x, quat.y, quat.z, quat.w)
+    grid = OccupancyGrid(grid=np.zeros((2, 3), dtype=np.int8), resolution=0.05, origin=origin)
+
+    decoded = OccupancyGrid.lcm_decode(grid.lcm_encode())
+
+    assert isinstance(decoded.origin, Pose)
+    assert decoded.origin.yaw == pytest.approx(0.5)
+
+
+def test_lcm_decode_empty_grid() -> None:
+    """An empty grid (mapper warming up) must survive the wire; the decoder
+    used to rebuild it as a 1-D array the constructor rejects."""
+    decoded = OccupancyGrid.lcm_decode(OccupancyGrid().lcm_encode())
+    assert decoded.grid.size == 0
+    assert isinstance(decoded.origin, Pose)
+
+
 def test_string_representation() -> None:
     """Test string representations."""
     grid = OccupancyGrid(width=10, height=10, resolution=0.1, frame_id="map")
@@ -170,7 +193,6 @@ def test_invalid_grid_dimensions() -> None:
         OccupancyGrid(grid=np.zeros(10), resolution=0.1)
 
 
-@pytest.mark.self_hosted
 def test_from_pointcloud() -> None:
     """Test creating OccupancyGrid from PointCloud2."""
     file_path = get_data("lcm_msgs") / "sensor_msgs/PointCloud2.pickle"
@@ -364,3 +386,34 @@ def test_max() -> None:
     assert maxed.unknown_cells == 3  # Same as original
     assert maxed.occupied_cells == 13  # All non-unknown cells
     assert maxed.free_cells == 0  # No free cells
+
+
+def test_block_max_reduce_preserves_lone_obstacle() -> None:
+    cells = np.zeros((10, 10), dtype=np.int8)
+    cells[3, 4] = 100
+    reduced = block_max_reduce(cells, 5)
+    assert reduced.shape == (2, 2)
+    assert reduced.dtype == np.int8
+    assert reduced[0, 0] == 100
+    assert reduced[0, 1] == 0
+
+
+def test_block_max_reduce_unknown_only_when_whole_block_unknown() -> None:
+    cells = np.array([[-1, -1, -1, 50], [-1, -1, 0, -1]], dtype=np.int8)
+    reduced = block_max_reduce(cells, 2)
+    assert reduced.tolist() == [[-1, 50]]
+    assert reduced.dtype == np.int8
+
+
+def test_block_max_reduce_trims_remainder() -> None:
+    cells = np.arange(35, dtype=np.int8).reshape(7, 5)
+    reduced = block_max_reduce(cells, 2)
+    # 7x5 at factor 2 keeps rows 0-5 and cols 0-3 (origin corner side).
+    assert reduced.shape == (3, 2)
+    assert reduced[0, 0] == 6  # max of rows 0-1, cols 0-1
+    assert reduced[2, 1] == 28  # max of rows 4-5, cols 2-3
+
+
+def test_block_max_reduce_thin_grid_passes_through() -> None:
+    cells = np.zeros((1, 10), dtype=np.int8)
+    assert block_max_reduce(cells, 5) is cells

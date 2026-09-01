@@ -21,6 +21,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.resource_monitor.stats import ProcessStats, WorkerStats
+    from dimos.core.transport import PubSubTransport
 
 logger = setup_logger()
 
@@ -63,12 +64,12 @@ class StructlogResourceLogger:
 
 
 class LCMResourceLogger:
-    """Publishes resource stats as dicts over a pickle LCM channel."""
+    """Publishes resource stats as dicts over the active transport's pubsub channel."""
 
-    def __init__(self, topic: str = "/dimos/resource_stats") -> None:
-        from dimos.core.transport import pLCMTransport
+    def __init__(self, topic: str = "/resource_stats") -> None:
+        from dimos.core.transport_factory import make_transport
 
-        self._transport: pLCMTransport[dict[str, Any]] = pLCMTransport(topic)
+        self._transport: PubSubTransport[dict[str, Any]] = make_transport(topic)
 
     def stop(self) -> None:
         self._transport.stop()

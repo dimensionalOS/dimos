@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Test 3: Chassis Command via Gatekeeper
 
@@ -15,13 +29,15 @@ Run with:
 
 Pass condition: Robot moves forward briefly (~5-10cm) and stops cleanly.
 """
-import rclpy
-from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
+
 import time
+
 from geometry_msgs.msg import Twist
+import rclpy
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 
 VELOCITY = 0.2  # m/s forward — small and safe
-DURATION = 2.0   # seconds of movement
+DURATION = 2.0  # seconds of movement
 PUBLISH_HZ = 20  # match gatekeeper tick rate
 DISCOVERY_WAIT = 3.0
 

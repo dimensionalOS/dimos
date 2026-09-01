@@ -26,16 +26,26 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryCancellationResult,
+    TrajectoryCancellationStatus,
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
+)
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
 )
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.planners.config import RRTConnectPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
 from dimos.utils.data import get_data
 
 pytestmark = pytest.mark.self_hosted
@@ -58,27 +68,23 @@ def _get_xarm7_config() -> RobotModelConfig:
     """Create XArm7 robot config for testing."""
     desc_path = get_data("xarm_description")
     return RobotModelConfig(
-        name="test_arm",
-        model_path=desc_path / "urdf/xarm_device.urdf.xacro",
+        model=RobotModel.from_file(desc_path / "urdf/xarm_device.urdf.xacro"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
-        end_effector_link="link7",
         base_link="link_base",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=("joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"),
+                base_link="link_base",
+                tip_link="link7",
+            )
+        ],
         package_paths={"xarm_description": desc_path},
         xacro_args={"dof": "7", "limited": "true"},
         auto_convert_meshes=True,
         max_velocity=1.0,
         max_acceleration=2.0,
-        joint_name_mapping={
-            "arm/joint1": "joint1",
-            "arm/joint2": "joint2",
-            "arm/joint3": "joint3",
-            "arm/joint4": "joint4",
-            "arm/joint5": "joint5",
-            "arm/joint6": "joint6",
-            "arm/joint7": "joint7",
-        },
-        coordinator_task_name="traj_arm",
     )
 
 
@@ -92,13 +98,13 @@ def joint_state_zeros():
     """Create a JointState message with zeros for XArm7."""
     return JointState(
         name=[
-            "arm/joint1",
-            "arm/joint2",
-            "arm/joint3",
-            "arm/joint4",
-            "arm/joint5",
-            "arm/joint6",
-            "arm/joint7",
+            "joint1",
+            "joint2",
+            "joint3",
+            "joint4",
+            "joint5",
+            "joint6",
+            "joint7",
         ],
         position=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         velocity=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -109,12 +115,23 @@ def joint_state_zeros():
 @pytest.fixture
 def module(xarm7_config):
     """Create a started ManipulationModule with ports disabled."""
-    mod = ManipulationModule(
-        robots=[xarm7_config],
-        planning_timeout=10.0,
-        enable_viz=False,
+    coordinator = MagicMock(spec=ControlCoordinator)
+    coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
+        TrajectoryExecutionStatus.ACCEPTED
     )
-    mod.joint_state = None
+    coordinator.cancel_trajectory.return_value = TrajectoryCancellationResult(
+        TrajectoryCancellationStatus.ALREADY_STOPPED
+    )
+    mod = ManipulationModule(
+        model=xarm7_config,
+        planning_timeout=10.0,
+        world_backend="drake",
+        planner=RRTConnectPlannerConfig(),
+        visualization={"backend": "none"},
+    )
+    mod._control_coordinator = coordinator
+    mod.coordinator_joint_state = None
+    mod.voxel_map = None
     mod.objects = None
     mod.start()
     yield mod
@@ -132,7 +149,7 @@ class TestManipulationModuleIntegration:
         assert module._world_monitor is not None
         assert module._planner is not None
         assert module._kinematics is not None
-        assert "test_arm" in module._robots
+        assert module.get_model_config() == module.config.model
 
     def test_joint_state_sync(self, module, joint_state_zeros):
         """Test joint state synchronization to Drake world."""
@@ -161,10 +178,23 @@ class TestManipulationModuleIntegration:
         assert module._state == ManipulationState.COMPLETED
         assert module.has_planned_path() is True
 
-        assert "test_arm" in module._planned_trajectories
-        traj = module._planned_trajectories["test_arm"]
-        assert len(traj.points) > 1
-        assert traj.duration > 0
+        assert module._last_plan is not None
+        assert len(module._last_plan.trajectory.points) > 1
+        assert module._last_plan.trajectory.duration > 0
+        assert module._last_plan.group_ids == ("manipulator",)
+
+    def test_plan_to_explicit_joint_target(self, module, joint_state_zeros):
+        """Test planning to an explicit planning-group joint target."""
+        module._on_joint_state(joint_state_zeros)
+
+        success = module.plan_to_joint_targets({"manipulator": JointState(position=[0.05] * 7)})
+
+        assert success is True
+        assert module._state == ManipulationState.COMPLETED
+        assert module._last_plan is not None
+        assert module._last_plan.group_ids == ("manipulator",)
+        assert module.has_planned_path() is True
+        assert module._last_plan.trajectory.points
 
     def test_add_and_remove_obstacle(self, module, joint_state_zeros):
         """Test adding and removing obstacles."""
@@ -182,16 +212,18 @@ class TestManipulationModuleIntegration:
         removed = module.remove_obstacle(obstacle_id)
         assert removed is True
 
-    def test_robot_info(self, module):
-        """Test getting robot information."""
-        info = module.get_robot_info()
+    def test_model_info(self, module):
+        """Test getting model information."""
+        info = module.get_model_info()
 
-        assert info is not None
-        assert info["name"] == "test_arm"
         assert len(info["joint_names"]) == 7
         assert info["end_effector_link"] == "link7"
-        assert info["coordinator_task_name"] == "traj_arm"
-        assert info["has_joint_name_mapping"] is True
+        groups = info["planning_groups"]
+        assert len(groups) == 1
+        assert groups[0].id == "manipulator"
+
+        all_groups = module.list_planning_groups()
+        assert [group.id for group in all_groups] == ["manipulator"]
 
     def test_ee_pose(self, module, joint_state_zeros):
         """Test getting end-effector pose."""
@@ -204,20 +236,18 @@ class TestManipulationModuleIntegration:
         assert hasattr(pose, "y")
         assert hasattr(pose, "z")
 
-    def test_trajectory_name_translation(self, module, joint_state_zeros):
-        """Test that trajectory joint names are translated for coordinator."""
+    def test_trajectory_uses_canonical_names(self, module, joint_state_zeros):
+        """Test that execution preserves canonical model joint names."""
         module._on_joint_state(joint_state_zeros)
 
         success = module.plan_to_joints(JointState(position=[0.05] * 7))
         assert success is True
 
-        traj = module._planned_trajectories["test_arm"]
-        robot_config = module._robots["test_arm"][1]
+        assert module._last_plan is not None
+        assert module.execute() is True
+        trajectory = module._control_coordinator.execute_trajectory.call_args.args[0]
 
-        translated = module._translate_trajectory_to_coordinator(traj, robot_config)
-
-        for name in translated.joint_names:
-            assert name.startswith("arm_")  # Should have arm_ prefix
+        assert trajectory.joint_names == module.config.model.joint_names
 
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
@@ -232,27 +262,17 @@ class TestCoordinatorIntegration:
         success = module.plan_to_joints(JointState(position=[0.05] * 7))
         assert success is True
 
-        # Mock the coordinator client
-        mock_client = MagicMock()
-        mock_client.task_invoke.return_value = True
-        module._coordinator_client = mock_client
-
         result = module.execute()
 
         assert result is True
         assert module._state == ManipulationState.COMPLETED
 
         # Verify coordinator was called
-        mock_client.task_invoke.assert_called_once()
-        call_args = mock_client.task_invoke.call_args
-        task_name, method_name, kwargs = call_args[0]
+        module._control_coordinator.execute_trajectory.assert_called_once()
+        trajectory = module._control_coordinator.execute_trajectory.call_args.args[0]
 
-        assert task_name == "traj_arm"
-        assert method_name == "execute"
-        trajectory = kwargs["trajectory"]
         assert len(trajectory.points) > 1
-        # Joint names should be translated
-        assert all(n.startswith("arm_") for n in trajectory.joint_names)
+        assert trajectory.joint_names == module.config.model.joint_names
 
     def test_execute_rejected_by_coordinator(self, module, joint_state_zeros):
         """Test handling of coordinator rejection."""
@@ -260,15 +280,14 @@ class TestCoordinatorIntegration:
 
         module.plan_to_joints(JointState(position=[0.05] * 7))
 
-        # Mock coordinator to reject
-        mock_client = MagicMock()
-        mock_client.task_invoke.return_value = False
-        module._coordinator_client = mock_client
+        module._control_coordinator.execute_trajectory.return_value = TrajectoryExecutionResult(
+            TrajectoryExecutionStatus.INVALID_TRAJECTORY
+        )
 
         result = module.execute()
 
         assert result is False
-        assert module._state == ManipulationState.FAULT
+        assert module._state == ManipulationState.COMPLETED
         assert "rejected" in module._error_message.lower()
 
     def test_state_transitions_during_execution(self, module, joint_state_zeros):
@@ -287,11 +306,6 @@ class TestCoordinatorIntegration:
 
         # Plan again
         module.plan_to_joints(JointState(position=[0.05] * 7))
-
-        # Mock coordinator
-        mock_client = MagicMock()
-        mock_client.task_invoke.return_value = True
-        module._coordinator_client = mock_client
 
         # Execute - should go to EXECUTING then COMPLETED
         module.execute()

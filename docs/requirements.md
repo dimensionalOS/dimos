@@ -40,22 +40,20 @@ pip install 'dimos[base,unitree,manipulation]'       # + Arm control
 | Extra | What it adds | Key packages | GPU? |
 |-------|-------------|--------------|------|
 | *(core)* | Transport, streams, CLI, blueprints, occupancy maps | dimos-lcm, numpy, scipy, opencv, open3d, numba, Pinocchio, typer, textual | No |
-| `agents` | LLM agent, speech, tool use | langchain, openai, faster-whisper, anthropic | No |
+| `agents` | LLM agent, speech, tool use | langchain, openai, ollama, faster-whisper | No |
 | `perception` | Object detection, VLMs, tracking | ultralytics, transformers, moondream | **Yes** |
 | `visualization` | Rerun viewer + bridge | rerun-sdk, dimos-viewer | No |
 | `web` | FastAPI web interface, audio | fastapi, uvicorn, ffmpeg-python | No |
 | `sim` | MuJoCo simulation | mujoco, playground, pygame | No |
 | `unitree` | Unitree Go2 / G1 support | unitree-webrtc-connect | No |
-| `unitree-dds` | Unitree DDS bridge (superset of `unitree`) | unitree-sdk2py, cyclonedds | No |
+| `unitree-dds` | Unitree DDS bridge (superset of 'unitree') | unitree-sdk2py, cyclonedds | No |
 | `drone` | DJI Tello / MAVLink drones | pymavlink | No |
 | `manipulation` | Arm planning + control | Drake, piper-sdk, xarm-sdk | No |
-| `navigation` | GTSAM-backed pose graph optimization | gtsam-extended | No |
-| `cuda` | GPU acceleration | cupy, onnxruntime-gpu, xformers | **Yes** |
-| `cpu` | CPU inference backends | onnxruntime, ctransformers | No |
-| `misc` | Extra models, embeddings, hardware SDKs | cerebras, edgetam, sentence-transformers, tiktoken | Varies |
-| `docker` | Minimal set for Docker sidecar modules | dimos-lcm, numpy, opencv-headless, rerun-sdk | No |
+| `mapping` | GTSAM-backed pose graph optimization (relocalization) | gtsam-extended | No |
+| `cuda` | GPU acceleration | cupy, onnxruntime-gpu | **Yes** |
+| `cpu` | CPU inference backends | onnxruntime | No |
+| `misc` | Extra models, embeddings, hardware SDKs | edgetam, timm, torchreid, xarm-sdk | Varies |
 | `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |
-| `psql` | PostgreSQL storage | psycopg2 | No |
 | `dds` | DDS transport (CycloneDDS) | cyclonedds | No |
 
 ## Headless / Server Environments
@@ -66,4 +64,4 @@ If running on a headless Ubuntu server (no display), install OpenGL libraries fo
 sudo apt-get install -y libgl1 libegl1
 ```
 
-Nix users (`nix develop`) don't need this — the flake provides `libGL`, `libGLU`, and `mesa`.
+Nix users (`nix develop`) don't need this. The flake provides `libGL`, `libGLU`, and `mesa`.

@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Test 1: Topic Discovery
 Verify that the DiMOS laptop can see the R1 Pro's ROS2 topics over ethernet.
@@ -10,8 +24,10 @@ Or via run_all_tests.py (preferred — single DDS session).
 
 Pass condition: All expected R1 Pro topics found.
 """
-import rclpy
+
 import time
+
+import rclpy
 
 DISCOVERY_WAIT = 10.0
 

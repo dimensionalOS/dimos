@@ -10,7 +10,7 @@ brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python pre-commit
 curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
 ```
 
-# Using DimOS as a library
+## Using dimOS as a library
 
 ```sh skip
 mkdir myproject && cd myproject
@@ -23,7 +23,7 @@ source .venv/bin/activate
 uv pip install 'dimos[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu]'
 ```
 
-# Developing on DimOS
+## Developing on dimOS
 
 ```sh skip
 # this allows getting large files on-demand (and not pulling all immediately)
@@ -40,4 +40,20 @@ uv run mypy dimos
 
 # tests (around a minute to run)
 uv run pytest --numprocesses=auto dimos
+```
+
+## Transport note for macOS
+
+LCM over UDP can be unreliable on macOS for large or high-rate replay workloads. dimOS defaults the global stream transport to **Zenoh** everywhere, so you never need `--transport=zenoh`. Use `--transport=lcm` if you need to force the legacy multicast path.
+
+See the [Zenoh quickstart](/docs/usage/transports/index.md#zenoh-quickstart) for what the localhost-pinned default reaches and how to point it at a robot or the LAN.
+
+```sh skip
+dimos --dtop --replay --replay-db=go2_bigoffice run unitree-go2
+```
+
+If you are developing on the repository, prefer syncing the full environment with the checked-in lockfile:
+
+```sh skip
+uv sync --extra all --frozen
 ```

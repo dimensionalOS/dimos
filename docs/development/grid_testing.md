@@ -15,7 +15,6 @@ from typing import Any, Generic, TypeVar
 TopicT = TypeVar("TopicT")
 MsgT = TypeVar("MsgT")
 
-
 @dataclass
 class Case(Generic[TopicT, MsgT]):
     name: str  # For pytest id
@@ -87,7 +86,6 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-
 
 @contextmanager
 def lcm_typed_context() -> Generator[LCM, None, None]:

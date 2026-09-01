@@ -24,9 +24,7 @@ from dimos_lcm.nav_msgs import (
     OccupancyGrid as LCMOccupancyGrid,
 )
 from dimos_lcm.std_msgs import Time as LCMTime
-import matplotlib.pyplot as plt
 import numpy as np
-from PIL import Image
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
@@ -36,6 +34,9 @@ from dimos.types.timestamped import Timestamped
 @lru_cache(maxsize=16)
 def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
     """Get a matplotlib colormap by name (cached for performance)."""
+    # Lazy import to save time.
+    import matplotlib.pyplot as plt
+
     return plt.get_cmap(name)
 
 
@@ -96,6 +97,29 @@ if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
 
 
+def block_max_reduce(cells: NDArray[np.int8], factor: int) -> NDArray[np.int8]:
+    """Coarsen an occupancy grid by taking the max of factor x factor blocks.
+
+    Block maximum (not mean) so coarsening never erases an obstacle; a block
+    is unknown (-1) only when every cell in it is unknown. Trailing remainder
+    rows/cols are trimmed, keeping row 0/col 0 - the origin corner - so the
+    grid origin stays valid. Grids thinner than `factor` pass through.
+    """
+    h, w = cells.shape[:2]
+    new_h, new_w = h // factor, w // factor
+    if new_h == 0 or new_w == 0:
+        return cells
+    trimmed = cells[: new_h * factor, : new_w * factor]
+    blocks = trimmed.reshape(new_h, factor, new_w, factor)
+    # Sink unknown below every known value for the max, then map it back.
+    as_int = blocks.astype(np.int16)
+    known = np.where(as_int < 0, -1000, as_int)
+    reduced = known.max(axis=(1, 3))
+    reduced[reduced == -1000] = -1
+    result: NDArray[np.int8] = reduced.astype(np.int8)
+    return result
+
+
 class CostValues(IntEnum):
     """Standard cost values for occupancy grid cells.
 
@@ -132,7 +156,7 @@ class OccupancyGrid(Timestamped):
         resolution: float = 0.05,
         origin: Pose | None = None,
         frame_id: str = "world",
-        ts: float = 0.0,
+        ts: float | None = None,
     ) -> None:
         """Initialize OccupancyGrid.
 
@@ -147,7 +171,7 @@ class OccupancyGrid(Timestamped):
         """
 
         self.frame_id = frame_id
-        self.ts = ts if ts != 0 else time.time()
+        self.ts = time.time() if ts is None else ts
 
         if grid is not None:
             # Initialize from numpy array
@@ -244,6 +268,10 @@ class OccupancyGrid(Timestamped):
             case ".npy":
                 return cls(grid=np.load(path))
             case ".png":
+                # Lazy import: Pillow serves only this file loader; message
+                # transport must not depend on it.
+                from PIL import Image
+
                 img = Image.open(path).convert("L")
                 return cls(grid=np.array(img).astype(np.int8))
             case _:
@@ -349,13 +377,22 @@ class OccupancyGrid(Timestamped):
         ts = lcm_msg.header.stamp.sec + (lcm_msg.header.stamp.nsec / 1_000_000_000)
         frame_id = lcm_msg.header.frame_id
 
-        # Extract grid data
+        # Extract grid data; empty stays 2-D so the constructor accepts it.
         if lcm_msg.data and lcm_msg.info.width > 0 and lcm_msg.info.height > 0:
             grid = np.array(lcm_msg.data, dtype=np.int8).reshape(
                 (lcm_msg.info.height, lcm_msg.info.width)
             )
         else:
-            grid = np.array([], dtype=np.int8)
+            grid = np.zeros((0, 0), dtype=np.int8)
+
+        # The wire origin decodes as a plain generated pose without the dimos
+        # Pose surface (.yaw etc.); rebuild it field by field so the origin
+        # property honors its declared type.
+        o = lcm_msg.info.origin
+        lcm_msg.info.origin = Pose(
+            position=[o.position.x, o.position.y, o.position.z],
+            orientation=[o.orientation.x, o.orientation.y, o.orientation.z, o.orientation.w],
+        )
 
         # Create new instance
         instance = cls(
@@ -485,6 +522,7 @@ class OccupancyGrid(Timestamped):
         opacity: float = 1.0,
         cost_range: tuple[int, int] | None = None,
         background: str | None = None,
+        color_lookup_table: np.ndarray | None = None,
     ) -> Archetype:
         """Convert to 3D textured mesh overlay on floor plane.
 
@@ -504,8 +542,9 @@ class OccupancyGrid(Timestamped):
             step_w = max(1, grid.shape[1] // max_tex)
             grid = grid[::step_h, ::step_w]
 
-        lut = _build_occupancy_lut(colormap, opacity, background)
-        rgba = np.ascontiguousarray(lut[np.clip(grid + 1, 0, 101)])
+        if color_lookup_table is None:
+            color_lookup_table = _build_occupancy_lut(colormap, opacity, background)
+        rgba = np.ascontiguousarray(color_lookup_table[np.clip(grid + 1, 0, 101)])
 
         # Apply cost_range filter on downsampled grid
         if cost_range is not None:

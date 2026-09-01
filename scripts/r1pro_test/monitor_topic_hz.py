@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Sensor topic frequency monitor — logs per-topic delivery over time, from launch.
 
@@ -46,20 +60,44 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 # name -> (ros topic, message type path). Mirrors R1ProConnection subscriptions.
 TOPICS: dict[str, tuple[str, str]] = {
-    "head_color":          ("/hdas/camera_head/left_raw/image_raw_color/compressed", "sensor_msgs/msg/CompressedImage"),
-    "chassis_front_left":  ("/hdas/camera_chassis_front_left/rgb/compressed",        "sensor_msgs/msg/CompressedImage"),
-    "chassis_front_right": ("/hdas/camera_chassis_front_right/rgb/compressed",       "sensor_msgs/msg/CompressedImage"),
-    "chassis_left":        ("/hdas/camera_chassis_left/rgb/compressed",              "sensor_msgs/msg/CompressedImage"),
-    "chassis_right":       ("/hdas/camera_chassis_right/rgb/compressed",             "sensor_msgs/msg/CompressedImage"),
-    "chassis_rear":        ("/hdas/camera_chassis_rear/rgb/compressed",              "sensor_msgs/msg/CompressedImage"),
-    "head_depth":          ("/hdas/camera_head/depth/depth_registered",              "sensor_msgs/msg/Image"),
-    "lidar":               ("/hdas/lidar_chassis_left",                              "sensor_msgs/msg/PointCloud2"),
-    "imu_chassis":         ("/hdas/imu_chassis",                                     "sensor_msgs/msg/Imu"),
-    "imu_torso":           ("/hdas/imu_torso",                                       "sensor_msgs/msg/Imu"),
-    "wrist_left_color":    ("/hdas/camera_wrist_left/color/image_raw/compressed",    "sensor_msgs/msg/CompressedImage"),
-    "wrist_left_depth":    ("/hdas/camera_wrist_left/aligned_depth_to_color/image_raw", "sensor_msgs/msg/Image"),
-    "wrist_right_color":   ("/hdas/camera_wrist_right/color/image_raw/compressed",   "sensor_msgs/msg/CompressedImage"),
-    "wrist_right_depth":   ("/hdas/camera_wrist_right/aligned_depth_to_color/image_raw", "sensor_msgs/msg/Image"),
+    "head_color": (
+        "/hdas/camera_head/left_raw/image_raw_color/compressed",
+        "sensor_msgs/msg/CompressedImage",
+    ),
+    "chassis_front_left": (
+        "/hdas/camera_chassis_front_left/rgb/compressed",
+        "sensor_msgs/msg/CompressedImage",
+    ),
+    "chassis_front_right": (
+        "/hdas/camera_chassis_front_right/rgb/compressed",
+        "sensor_msgs/msg/CompressedImage",
+    ),
+    "chassis_left": ("/hdas/camera_chassis_left/rgb/compressed", "sensor_msgs/msg/CompressedImage"),
+    "chassis_right": (
+        "/hdas/camera_chassis_right/rgb/compressed",
+        "sensor_msgs/msg/CompressedImage",
+    ),
+    "chassis_rear": ("/hdas/camera_chassis_rear/rgb/compressed", "sensor_msgs/msg/CompressedImage"),
+    "head_depth": ("/hdas/camera_head/depth/depth_registered", "sensor_msgs/msg/Image"),
+    "lidar": ("/hdas/lidar_chassis_left", "sensor_msgs/msg/PointCloud2"),
+    "imu_chassis": ("/hdas/imu_chassis", "sensor_msgs/msg/Imu"),
+    "imu_torso": ("/hdas/imu_torso", "sensor_msgs/msg/Imu"),
+    "wrist_left_color": (
+        "/hdas/camera_wrist_left/color/image_raw/compressed",
+        "sensor_msgs/msg/CompressedImage",
+    ),
+    "wrist_left_depth": (
+        "/hdas/camera_wrist_left/aligned_depth_to_color/image_raw",
+        "sensor_msgs/msg/Image",
+    ),
+    "wrist_right_color": (
+        "/hdas/camera_wrist_right/color/image_raw/compressed",
+        "sensor_msgs/msg/CompressedImage",
+    ),
+    "wrist_right_depth": (
+        "/hdas/camera_wrist_right/aligned_depth_to_color/image_raw",
+        "sensor_msgs/msg/Image",
+    ),
 }
 
 QOS = QoSProfile(
@@ -84,12 +122,12 @@ def stamp_from_cdr(buf: bytes) -> float | None:
 
 
 class TopicStat:
-    __slots__ = ("count", "bytes", "total", "last_arrival", "last_stamp")
+    __slots__ = ("bytes", "count", "last_arrival", "last_stamp", "total")
 
     def __init__(self) -> None:
-        self.count = 0          # window
-        self.bytes = 0          # window
-        self.total = 0          # cumulative
+        self.count = 0  # window
+        self.bytes = 0  # window
+        self.total = 0  # cumulative
         self.last_arrival = 0.0  # monotonic
         self.last_stamp: float | None = None
 
@@ -104,8 +142,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("--interval", type=float, default=2.0, help="report interval seconds")
     ap.add_argument("--csv", type=str, default=None, help="also append rows to this CSV")
-    ap.add_argument("--only", action="append", default=None,
-                    help="substring filter on stream name; repeatable")
+    ap.add_argument(
+        "--only", action="append", default=None, help="substring filter on stream name; repeatable"
+    )
     args = ap.parse_args()
 
     names = list(TOPICS)
@@ -169,11 +208,15 @@ def main() -> None:
 
             n_nodes = len(node.get_node_names())
             print(f"\nt=+{t:7.1f}s  visible_nodes={n_nodes}")
-            print(f"  {'stream':<20} {'hz':>6} {'MiB/s':>7} {'gap(s)':>7} {'stale(s)':>8} {'pubs':>4} {'total':>7}")
+            print(
+                f"  {'stream':<20} {'hz':>6} {'MiB/s':>7} {'gap(s)':>7} {'stale(s)':>8} {'pubs':>4} {'total':>7}"
+            )
             for name, hz, mibps, gap, stale, total in rows:
                 pubs = node.count_publishers(TOPICS[name][0])
                 flag = "  <-- SILENT" if gap > 2 * args.interval else ""
-                print(f"  {name:<20} {hz:>6.1f} {mibps:>7.2f} {gap:>7.1f} {stale:>8.2f} {pubs:>4} {total:>7}{flag}")
+                print(
+                    f"  {name:<20} {hz:>6.1f} {mibps:>7.2f} {gap:>7.1f} {stale:>8.2f} {pubs:>4} {total:>7}{flag}"
+                )
                 if csv_file:
                     csv_file.write(
                         f"{t:.1f},{name},{hz:.2f},{mibps:.3f},{gap:.2f},{stale:.3f},{pubs},{total}\n"

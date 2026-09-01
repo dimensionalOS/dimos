@@ -14,6 +14,4 @@
 
 # Backwards compatibility stub for unpickling old data.
 # AbstractImage and ImageFormat were moved to Image.
-from dimos.msgs.sensor_msgs.Image import Image as AbstractImage, ImageFormat
-
-__all__ = ["AbstractImage", "ImageFormat"]
+from dimos.msgs.sensor_msgs.Image import Image as AbstractImage, ImageFormat  # noqa: F401

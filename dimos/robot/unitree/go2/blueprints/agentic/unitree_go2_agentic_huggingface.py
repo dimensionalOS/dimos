@@ -25,5 +25,3 @@ unitree_go2_agentic_huggingface = autoconnect(
     McpClient.blueprint(model="huggingface:Qwen/Qwen2.5-1.5B-Instruct"),
     _common_agentic,
 )
-
-__all__ = ["unitree_go2_agentic_huggingface"]

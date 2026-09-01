@@ -21,27 +21,22 @@ import os
 import signal
 import sys
 import threading
-import time
 import traceback
 from typing import TYPE_CHECKING, Any
 
-from rpyc.utils.server import ThreadedServer
-
-from dimos.core.coordination.rpyc_services import WorkerRpycService
 from dimos.core.coordination.worker_messages import (
     CallMethodRequest,
     DeployModuleRequest,
     GetAttrRequest,
     SetRefRequest,
     ShutdownRequest,
-    StartRpycRequest,
     SuppressConsoleRequest,
     UndeployModuleRequest,
     WorkerRequest,
     WorkerResponse,
 )
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.library_config import apply_library_config
+from dimos.protocol.pubsub.impl.webrtc.providers.spec import shutdown_all_providers
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
@@ -135,10 +130,6 @@ class Actor:
         result = self._send_request_to_worker(SetRefRequest(module_id=self._module_id, ref=ref))
         return ActorFuture(result)
 
-    def start_rpyc(self) -> int:
-        port: int = self._send_request_to_worker(StartRpycRequest())
-        return port
-
     def __getattr__(self, name: str) -> Any:
         """Proxy attribute access to the worker process."""
         if name.startswith("_"):
@@ -231,7 +222,7 @@ class PythonWorker:
         if self._conn is None:
             raise RuntimeError("Worker process not started")
 
-        kwargs = kwargs or {}
+        kwargs = dict(kwargs or {})
         kwargs["g"] = global_config
         module_id = _module_ids.next()
 
@@ -333,13 +324,10 @@ def _suppress_console_output() -> None:
 class _WorkerState:
     instances: dict[int, Any]
     worker_id: int
-    rpyc_server: ThreadedServer | None = None
-    rpyc_thread: threading.Thread | None = None
     should_stop: bool = False
 
 
 def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
-    apply_library_config()
     signal.signal(signal.SIGINT, signal.SIG_IGN)  # coordinator handles shutdown
     state = _WorkerState(instances={}, worker_id=worker_id)
 
@@ -377,12 +365,22 @@ def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
                 )
             except Exception:
                 logger.error("Error during worker shutdown", exc_info=True)
+        try:
+            # Disconnect provider singletons so broker sessions close promptly.
+            shutdown_all_providers()
+        except Exception:
+            logger.error("Error during worker provider shutdown", exc_info=True)
 
 
 def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
     match request:
         case DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs):
+            host_config = kwargs.get("g")
+            if host_config is not None:
+                global_config.update(**host_config.model_dump())
+
             state.instances[module_id] = module_class(**kwargs)
+
             return WorkerResponse(result=module_id)
 
         case SetRefRequest(module_id=module_id, ref=ref):
@@ -406,40 +404,7 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
             _suppress_console_output()
             return WorkerResponse(result=True)
 
-        case StartRpycRequest():
-            if state.rpyc_server is not None:
-                return WorkerResponse(result=state.rpyc_server.port)
-            WorkerRpycService._instances = state.instances
-            state.rpyc_server = ThreadedServer(
-                WorkerRpycService,
-                port=0,
-                hostname=global_config.listen_host,
-                protocol_config={
-                    "allow_all_attrs": True,
-                    "allow_public_attrs": True,
-                    "allow_pickle": True,
-                },
-            )
-            # `ThreadedServer.__init__` binds the socket but `listen()` only
-            # runs once `start()` executes on the thread, which sets
-            # `active=True` immediately after. Wait on that flag so callers
-            # never see a Connection refused before the accept loop is live.
-            state.rpyc_thread = threading.Thread(target=state.rpyc_server.start, daemon=True)
-            state.rpyc_thread.start()
-            deadline = time.monotonic() + 5.0
-            while not state.rpyc_server.active:
-                if not state.rpyc_thread.is_alive():
-                    raise RuntimeError("rpyc server thread died before listening")
-                if time.monotonic() > deadline:
-                    raise RuntimeError("rpyc server failed to start listening within 5s")
-                time.sleep(0.001)
-            return WorkerResponse(result=state.rpyc_server.port)
-
         case ShutdownRequest():
-            if state.rpyc_server is not None:
-                state.rpyc_server.close()
-                if state.rpyc_thread is not None:
-                    state.rpyc_thread.join(timeout=5)
             state.should_stop = True
             return WorkerResponse(result=True)
 
@@ -467,6 +432,17 @@ def _worker_loop(conn: Connection, state: _WorkerState) -> None:
             conn.send(response)
         except (BrokenPipeError, EOFError):
             break
+        except Exception as e:
+            # A result that cannot be pickled must not take the worker with it.
+            logger.error(
+                "Worker response could not be sent",
+                worker_id=state.worker_id,
+                error_repr=repr(e),
+            )
+            try:
+                conn.send(WorkerResponse(error=f"{e.__class__.__name__}: {e}"))
+            except (BrokenPipeError, EOFError):
+                break
 
         if state.should_stop:
             break

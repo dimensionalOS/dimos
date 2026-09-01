@@ -29,8 +29,8 @@ connection = ConnectionModule.blueprint
 
 Now you can create the blueprint with:
 
-```python skip session=blueprint-ex1
-blueprint = connection('arg1', 'arg2', kwarg='value')
+```python session=blueprint-ex1
+blueprint = connection(arg1=5, arg2="foo")
 ```
 
 ## Linking blueprints
@@ -83,6 +83,50 @@ expanded_blueprint = autoconnect(
 ```
 
 Blueprints are frozen data classes, and `autoconnect()` always constructs an expanded blueprint so you never have to worry about changes in one affecting the other.
+
+## Publishing external blueprints
+
+dimOS can discover runnable blueprints from installed Python packages. External
+packages declare entry points in the `dimos.blueprints` group:
+
+```toml
+[project]
+name = "my-robot-stack"
+
+[project.entry-points."dimos.blueprints"]
+go2 = "my_robot_stack.go2:go2_blueprint"
+keyboard-teleop = "my_robot_stack.teleop:KeyboardTeleop"
+```
+
+After the package is installed in the same Python environment as dimOS, users can run
+those blueprints by fully qualified name:
+
+```bash
+dimos run my-robot-stack.go2
+dimos run unitree-go2 my-robot-stack.keyboard-teleop
+```
+
+External names are always `<canonical-distribution-namespace>.<external-local-blueprint-name>`:
+
+- The namespace comes from the installed distribution name. dimOS lowercases it and
+  collapses runs of `-`, `_`, and `.` into `-`, so `My_Robot.Stack` becomes
+  `my-robot-stack`.
+- The local blueprint name is the entry point name. It must be lowercase kebab-case
+  matching `^[a-z0-9]+(-[a-z0-9]+)*$`, such as `go2` or `keyboard-teleop`.
+
+Entry point targets may be either:
+
+- a `Blueprint` object, such as a module-level `go2_blueprint`; or
+- a dimOS `Module` class, such as `KeyboardTeleop`, which dimOS converts with
+  `.blueprint()`.
+
+`dimos list` includes external names from package metadata without importing the target
+modules. `dimos run my-robot-stack.go2` imports only the requested entry point target.
+
+Remote coordinator resolution happens in the coordinator environment. If a client asks
+a coordinator to load `my-robot-stack.go2`, the `my-robot-stack` package must be
+installed where the coordinator performs name resolution; installing it only in the
+client environment is not enough.
 
 ### Duplicate module handling
 
@@ -209,6 +253,85 @@ blueprint.remappings([
 })
 ```
 
+## Multi-robot blueprints (namespaces)
+
+You can use namespaces to control several robot instances.
+
+Use `.namespace(prefix, expose=...)` on a blueprint to isolate its modules
+under a name prefix so several copies can coexist. Because blueprints are plain
+Python values, a variable-size (and mixed-type) fleet is just a loop:
+
+```python session=blueprint-ns
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
+
+class SensorConfig(ModuleConfig):
+    ip: str = ""
+
+class Sensor(Module):
+    config: SensorConfig
+    pointcloud: Out[str]
+
+class AggregateMapper(Module):
+    pointcloud: In[str]
+
+robot_ips = ["10.0.0.1", "10.0.0.2"]
+
+fleet = autoconnect(
+    AggregateMapper.blueprint(),   # shared: one instance for the whole fleet
+    *[
+        Sensor.blueprint(ip=ip).namespace(f"robot{i}", expose={"pointcloud"})
+        for i, ip in enumerate(robot_ips)
+    ],
+)
+```
+
+Inside a namespace everything is prefixed:
+
+* instance names (`robot0/go2connection`),
+* stream names and topics (`/robot0/lidar`),
+* TF frames (`frame_id_prefix`, unless you set one yourself),
+* and RPC topics (`robot0/go2connection/move`).
+
+Prefixed streams only connect within their namespace.
+
+Stream names listed in `expose` are left unprefixed, so they connect globally.
+That is how data crosses the boundary.
+
+In the above example, both `Sensor` modules can send `pointcloud` data to the `AggregateMapper` module.
+
+If you want to manually redirect to a namespaced name, you can use the namespaced prefix:  `.remappings([(FleetPlanner, "cmd_r0", "robot0/cmd_vel")])`
+
+Module references (Specs or direct classes) resolve within the consumer's
+namespace first, then enclosing namespaces, then globally, so per-robot
+consumers bind to their own robot's providers.
+
+Dynamic CLI configuration uses the canonical namespaced instance address:
+`--robot0/go2connection.ip=10.0.0.5`. Environment configuration uses
+`ROBOT0_GO2CONNECTION__IP=...`. `.remappings` accepts an instance name string
+wherever it accepts a module class.
+
+The downside of this is that the number of modules is fixed at blueprint creation. But it can be easily overcome by using a global variable. For example you can invoke with this:
+
+```bash
+ROBOT_IPS=10.0.0.1,10.0.0.2 dimos run blueprint-name
+```
+
+and construct `robot_ips` from the environment variable:
+
+```python skip
+robot_ips = (global_config.robot_ips or "").split(",")
+```
+
+For convenience `global_config.processed_robot_ips` is available which automatically splits the string and errors if no IPs are present.
+
+This works in simulation too: adding `--simulation` starts one MuJoCo instance per robot and the IPs are ignored. For example, to run two simulated Go2 robots:
+
+```bash
+ROBOT_IPS=10.0.0.1,10.0.0.2 dimos --simulation run unitree-go2-multi
+```
+
 ## Overriding global configuration.
 
 Each module includes the global config available as `self.config.g`. E.g.:
@@ -232,56 +355,56 @@ blueprint = ModuleA.blueprint().global_config(n_workers=8)
 
 ## Providing blueprint configuration to users
 
-`Blueprint.config()` can be used to get a `pydantic.BaseModel` that can be used to
-inspect or test configuration settings that can be passed to `Blueprint.build()`:
+`BlueprintConfigParser` discovers the configuration exposed by a blueprint,
+resolves configuration sources, and returns an immutable
+`ParsedBlueprintConfig` for the coordinator:
 
 ```python session=blueprint-ex1
-# Validate config input
-blueprint_args = {
-    "module1": {"arg1": 5}
-}
-config = base_blueprint.config()
-config(**blueprint_args)  # raises pydantic.ValidationError if args are incorrect
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+
+parser = BlueprintConfigParser(base_blueprint)
+parsed = parser.parse(["--module1.arg1=5"])
 ```
 
-`dimos.robot.cli.dimos.arg_help()` is a helper function that will return a string
-containing all details of these arguments (this is how the output is produced when
-running `dimos run unitree-go2 --help`, for example):
+Use the same parser to render blueprint-aware CLI help (this is how
+`dimos run unitree-go2 --help` lists module configuration):
 
-```python session=blueprint-ex1
-from dimos.robot.cli.dimos import arg_help
-
-print(arg_help(base_blueprint.config(), base_blueprint))
+```python skip
+print(parser.format_help())
 ```
 
-```results
-    module1:
-      * module1.default_rpc_timeout: float (default: 120.0)
-      * module1.frame_id_prefix: str | None (default: None)
-      * module1.frame_id: str | None (default: None)
-      * module1.arg1: int (default: 1)
-    module2:
-      * module2.default_rpc_timeout: float (default: 120.0)
-      * module2.frame_id_prefix: str | None (default: None)
-      * module2.frame_id: str | None (default: None)
+The output includes each unambiguous shorthand alongside its stable qualified
+address:
+
+```text
+Blueprint configuration options:
+  ...
+  --arg1, --module1.arg1 <int> (default: 1)
+  --module1.default-rpc-timeout <float> (default: 120.0)
+  --module2.default-rpc-timeout <float> (default: 120.0)
 ```
 
-Another function is `dimos.robot.cli.dimos.load_config_args()` which can create the
-argument dict for users from a config file, environment variables and CLI arguments:
+`parse()` combines a config file, recognized environment variables, programmatic
+overrides, and dynamic CLI flags. Pass its result directly to the coordinator:
 
-
-```python session=blueprint-ex1
+```python skip
 from pathlib import Path
 
-from dimos.robot.cli.dimos import load_config_args
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 config_path = Path.home() / "base-blueprint-config.json"
-cli_args = ["module1.arg1=5"]
-blueprint_args = load_config_args(base_blueprint.config(), cli_args, config_path)
-# Test user input is valid
-config(**blueprint_args)
-# Then pass blueprint_args to ModuleCoordinator.build(...) (see coordinator docs)
+cli_args = ["--module1.arg1=5"]
+parsed = BlueprintConfigParser(base_blueprint).parse(
+    cli_args,
+    config_path=config_path,
+)
+coordinator = ModuleCoordinator.build(base_blueprint, parsed)
 ```
+
+Note that `build()` resets the process-global `global_config` to the full parsed
+resolution (schema defaults plus all sources). Loading into an already-running
+coordinator with `load_blueprint(blueprint, parsed)` applies only the fields a
+configuration source explicitly set.
 
 ## Calling the methods of other modules
 
@@ -302,19 +425,18 @@ class HelperModule(Module):
         ...
 ```
 
-And you want to call `ModuleA.get_time` in `ModuleB.request_the_time`.
+And you want to call `Drone.get_time` in `HelperModule.set_alarm_clock`.
 
-To do this, you can request a module reference.
+To do this, you can request a module reference. Annotate an attribute with the module class and dimOS will inject a proxy for the running module at build time. Calling `get_time()` on it performs the RPC call.
 
 ```python session=blueprint-ex3
-from dimos.core.core import rpc
 from dimos.core.module import Module
 
 class HelperModule(Module):
     drone_module: Drone
 
     def set_alarm_clock(self) -> None:
-        print(self.drone_module.get_time_rpc())
+        print(self.drone_module.get_time())
 ```
 
 But what if we want `HelperModule` to work for more than just `Drone`? For that we can use a spec.
@@ -324,10 +446,12 @@ from dimos.spec.utils import Spec
 from typing import Protocol
 
 class Drone(Module):
+    @rpc
     def get_time(self) -> str:
         return "1:00 PM"
 
 class Car(Module):
+    @rpc
     def get_time(self) -> str:
         return "2:00 PM"
 
@@ -335,10 +459,10 @@ class Car(Module):
 class AnyModuleWithGetTime(Spec, Protocol):
     def get_time(self) -> str: ...
 
-class ModuleB(Module):
+class HelperModule(Module):
     device: AnyModuleWithGetTime
 
-    def request_the_time(self) -> None:
+    def set_alarm_clock(self) -> None:
         # autoconnect() will automatically find whatever module has a get_time() method
         print(self.device.get_time())
 ```
@@ -385,8 +509,7 @@ module_coordinator = ModuleCoordinator.build(SomeSkill.blueprint())
 module_coordinator.stop()
 ```
 
-<!--Result:-->
-```
+```results
 16:30:00.119 [inf][dination/module_coordinator.py] Building the blueprint
 16:30:00.133 [inf][dination/module_coordinator.py] Starting the modules
 16:30:01.320 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2

@@ -1022,7 +1022,7 @@ git commit -m "lfs: add r1_pro_description (urdf + meshes)"
 The original v1 of this branch shipped a standalone bridge launcher
 (`scripts/r1pro_test/run_rerun_bridge.py`) plus a separate layout file
 (`dimos/robot/galaxea/r1pro/rerun.py`). Worked, but diverged from how
-Go2 and G1 do it. 
+Go2 and G1 do it.
 
 ### 13. V2.2.1 firmware reflash silently reverted everything (2026-06-13)
 

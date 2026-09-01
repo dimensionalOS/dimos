@@ -43,7 +43,6 @@ import threading
 import time
 from typing import Any
 
-import cv2
 import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -61,6 +60,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.ros1 import (
@@ -248,6 +248,7 @@ class UnityBridgeModule(Module):
     color_image: Out[Image]
     semantic_image: Out[Image]
     camera_info: Out[CameraInfo]
+    tf: Out[TFMessage]
 
     @staticmethod
     def rerun_blueprint() -> Any:
@@ -663,6 +664,8 @@ class UnityBridgeModule(Module):
             self._send_queue.put(("__raw__", frame))
 
     def _handle_unity_message(self, topic: str, data: bytes) -> None:
+        import cv2
+
         if topic == "/registered_scan":
             pc_result = deserialize_pointcloud2(data)
             if pc_result is not None:
@@ -782,20 +785,22 @@ class UnityBridgeModule(Module):
         )
 
         self.tf.publish(
-            Transform(
-                translation=Vector3(x, y, z),
-                rotation=quat,
-                frame_id="map",
-                child_frame_id="sensor",
-                ts=now,
-            ),
-            Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="map",
-                child_frame_id="world",
-                ts=now,
-            ),
+            TFMessage(
+                Transform(
+                    translation=Vector3(x, y, z),
+                    rotation=quat,
+                    frame_id="map",
+                    child_frame_id="sensor",
+                    ts=now,
+                ),
+                Transform(
+                    translation=Vector3(0.0, 0.0, 0.0),
+                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    frame_id="map",
+                    child_frame_id="world",
+                    ts=now,
+                ),
+            )
         )
 
         with self._state_lock:

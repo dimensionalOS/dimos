@@ -14,9 +14,11 @@
 
 """Process-lifecycle utilities: tag descendants by run id, sweep strays.
 
-Every descendant of a `dimos run` invocation inherits `DIMOS_RUN_ID` in
-its environment. kill_run_processes scans the system via psutil and
-terminates any process whose environment matches a given run id.
+Every descendant of a `dimos run` invocation inherits a tag env var
+(default `DIMOS_RUN_ID`) in its environment. kill_run_processes scans the
+system via psutil and terminates any process whose environment matches a
+given run id. The tag env var is configurable so other entry points (e.g.
+the pytest harness) can reuse the same sweep with their own tag.
 
 spawn_watchdog launches a small sidecar process that watches the main
 PID; when main dies for any reason (including SIGKILL) the sidecar invokes
@@ -40,8 +42,10 @@ logger = setup_logger()
 DIMOS_RUN_ID_ENV = "DIMOS_RUN_ID"
 
 
-def _iter_matching_processes(run_id: str, exclude_pids: frozenset[int]) -> list[psutil.Process]:
-    """Return live processes whose environment contains DIMOS_RUN_ID=run_id."""
+def _iter_matching_processes(
+    run_id: str, exclude_pids: frozenset[int], *, env_var: str = DIMOS_RUN_ID_ENV
+) -> list[psutil.Process]:
+    """Return live processes whose environment contains env_var=run_id."""
     matches: list[psutil.Process] = []
     for proc in psutil.process_iter(attrs=["pid"]):
         pid = proc.info["pid"]
@@ -54,7 +58,7 @@ def _iter_matching_processes(run_id: str, exclude_pids: frozenset[int]) -> list[
         except OSError:
             # /proc entry may transiently fail on slow systems.
             continue
-        if env.get(DIMOS_RUN_ID_ENV) == run_id:
+        if env.get(env_var) == run_id:
             matches.append(proc)
     return matches
 
@@ -65,10 +69,11 @@ def kill_run_processes(
     exclude_pids: Iterable[int] = (),
     term_timeout: float = 2.0,
     kill_timeout: float = 1.0,
+    env_var: str = DIMOS_RUN_ID_ENV,
 ) -> int:
-    """Terminate every process tagged with `DIMOS_RUN_ID == run_id`."""
+    """Terminate every process tagged with `env_var == run_id`."""
     excluded = frozenset({os.getpid(), *exclude_pids})
-    targets = _iter_matching_processes(run_id, excluded)
+    targets = _iter_matching_processes(run_id, excluded, env_var=env_var)
     if not targets:
         return 0
 
@@ -91,10 +96,20 @@ def kill_run_processes(
 
 
 def spawn_watchdog(
-    run_id: str, log_dir: str | os.PathLike[str] | None = None
+    run_id: str,
+    log_dir: str | os.PathLike[str] | None = None,
+    *,
+    env_var: str = DIMOS_RUN_ID_ENV,
 ) -> subprocess.Popen[bytes]:
-    """Launch a sidecar that kills run processes if main dies abruptly."""
-    env = {k: v for k, v in os.environ.items() if k != DIMOS_RUN_ID_ENV}
+    """Launch a sidecar that kills run processes if main dies abruptly.
+
+    The sidecar sweeps processes tagged with ``env_var``; that var is stripped
+    from the sidecar's own env (so it never sweeps itself) and its name is
+    passed through ``DIMOS_WATCHDOG_TARGET_ENV`` so the sidecar knows which tag
+    to match.
+    """
+    env = {k: v for k, v in os.environ.items() if k != env_var}
+    env["DIMOS_WATCHDOG_TARGET_ENV"] = env_var
     if log_dir is not None:
         env["DIMOS_RUN_LOG_DIR"] = str(log_dir)
 

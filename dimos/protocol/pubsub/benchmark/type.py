@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Generic
 
 from dimos.protocol.pubsub.spec import MsgT, PubSub, TopicT
+from dimos.utils.colors import HEAT_GRADIENT_ANSI256
 from dimos.utils.human import human_bytes, human_duration, human_number
 
 MsgGen = Callable[[int], tuple[TopicT, MsgT]]
@@ -50,11 +51,17 @@ class BenchmarkResult:
     msgs_received: int
     msg_size_bytes: int
     receive_time: float = 0.0  # Time after publishing until all messages received
+    cpu_seconds: float = 0.0  # CPU time (user+system) consumed during the run
 
     @property
     def total_time(self) -> float:
         """Total time including latency."""
         return self.duration + self.receive_time
+
+    @property
+    def cpu_cores(self) -> float:
+        """Average CPU cores used while publishing (cpu_seconds / duration)."""
+        return self.cpu_seconds / self.duration if self.duration > 0 else 0
 
     @property
     def throughput_msgs(self) -> float:
@@ -99,6 +106,7 @@ class BenchmarkResults:
         table.add_column("Recv", justify="right")
         table.add_column("Msgs/s", justify="right", style="green")
         table.add_column("MiB/s", justify="right", style="green")
+        table.add_column("CPU", justify="right")
         table.add_column("Latency", justify="right")
         table.add_column("Loss", justify="right")
 
@@ -114,6 +122,7 @@ class BenchmarkResults:
                 (lambda m: f"{m:.2f}" if m < 1 else f"{m:.1f}" if m < 10 else f"{m:.0f}")(
                     r.throughput_bytes / 1024**2
                 ),
+                f"{r.cpu_cores:.2f}",
                 f"[{recv_style}]{r.receive_time * 1000:.0f}ms[/{recv_style}]",
                 f"[{loss_style}]{r.loss_pct:.1f}%[/{loss_style}]",
             )
@@ -156,29 +165,7 @@ class BenchmarkResults:
             return
         min_val, max_val = min(all_vals), max(all_vals)
 
-        # ANSI 256 gradient: red -> orange -> yellow -> green
-        gradient = [
-            52,
-            88,
-            124,
-            160,
-            196,
-            202,
-            208,
-            214,
-            220,
-            226,
-            190,
-            154,
-            148,
-            118,
-            82,
-            46,
-            40,
-            34,
-        ]
-        if not high_is_good:
-            gradient = gradient[::-1]
+        gradient = HEAT_GRADIENT_ANSI256 if high_is_good else HEAT_GRADIENT_ANSI256[::-1]
 
         def val_to_color(v: float) -> int:
             if v <= 0 or max_val == min_val:
@@ -221,6 +208,16 @@ class BenchmarkResults:
             return human_bytes(v, concise=True, decimals=1)
 
         self._print_heatmap("Bandwidth (IEC)", lambda r: r.throughput_bytes, fmt)
+
+    def print_cpu_heatmap(self) -> None:
+        """Print CPU utilization heatmap (cores used during the run, lower is better)."""
+
+        self._print_heatmap(
+            "CPU (cores)",
+            lambda r: r.cpu_cores,
+            lambda v: f"{v:.2f}",
+            high_is_good=False,
+        )
 
     def print_latency_heatmap(self) -> None:
         """Print latency heatmap (time waiting for messages after publishing)."""

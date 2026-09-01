@@ -159,13 +159,3 @@ def adaptive_keyframes(
             keyframe_indices.update(candidates[::step][:needed])
 
     return [frames[i] for i in sorted(keyframe_indices)]
-
-
-__all__ = [
-    "CLIP_AVAILABLE",
-    "adaptive_keyframes",
-    "select_diverse_frames_simple",
-]
-
-if CLIP_AVAILABLE:
-    __all__.append("CLIPFrameFilter")

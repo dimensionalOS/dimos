@@ -21,7 +21,6 @@ from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -29,15 +28,16 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.module3D import Detection3DModule
-from dimos.perception.detection.moduleDB import ObjectDBModule
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
+from dimos.perception.experimental.moduleDB import ObjectDBModule
 from dimos.protocol.tf.tf import TF
 from dimos.robot.unitree.go2 import connection
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 
 class Moment(TypedDict, total=False):
@@ -63,7 +63,7 @@ class Moment3D(Moment):
 def tf():
     t = TF()
     yield t
-    t.stop()
+    t.dispose()
 
 
 @pytest.fixture(scope="session")

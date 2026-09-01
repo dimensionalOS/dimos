@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Test 6: Torso Joint Movement
 Reads current torso position, moves to home pose, holds, then returns to zero.
@@ -5,7 +19,7 @@ Reads current torso position, moves to home pose, holds, then returns to zero.
 WARNING: Torso will physically move. Ensure clear workspace above and around robot.
 
 Home pose (from Galaxea startup scripts):
-    [0.25, -0.62, -0.53, 0.0]  rad  (torso_joint1–4)
+    [0.25, -0.62, -0.53, 0.0]  rad  (torso_joint1-4)
 
 Run standalone:
     export ROS_DOMAIN_ID=41
@@ -16,15 +30,17 @@ Or via run_all_tests.py (preferred — single DDS session).
 Pass condition: Torso moves to home pose then returns to zero, positions
 within 0.1 rad of commanded values.
 """
-import rclpy
+
 import time
+
+import rclpy
 from sensor_msgs.msg import JointState
 
 DOF = 4
-MOVE_DURATION = 3.0   # seconds to hold each position
-VELOCITY = 0.5        # rad/s tracking speed
+MOVE_DURATION = 3.0  # seconds to hold each position
+VELOCITY = 0.5  # rad/s tracking speed
 DISCOVERY_WAIT = 5.0  # DDS peer discovery time (s)
-FEEDBACK_WAIT = 5.0   # time to wait for first feedback (s)
+FEEDBACK_WAIT = 5.0  # time to wait for first feedback (s)
 
 FEEDBACK_TOPIC = "/hdas/feedback_torso"
 CMD_TOPIC = "/motion_target/target_joint_state_torso"
@@ -98,7 +114,7 @@ def main(skip_prompt=False) -> bool:
 
     if final_home[0] is not None:
         print(f"Torso at home: {[round(p, 3) for p in final_home[0]]}")
-        errors = [abs(a - b) for a, b in zip(final_home[0], HOME_POSE)]
+        errors = [abs(a - b) for a, b in zip(final_home[0], HOME_POSE, strict=False)]
         max_err = max(errors)
         if max_err > 0.15:
             print(f"WARNING: max position error {max_err:.3f} rad > 0.15 rad")

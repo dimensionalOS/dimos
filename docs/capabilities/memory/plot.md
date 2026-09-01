@@ -7,8 +7,8 @@ You add streams, system auto assigns colors
 import math
 import random
 
-from dimos.memory2.vis.plot.elements import Series
-from dimos.memory2.vis.plot.plot import Plot
+from dimos.memory.vis.plot.elements import Series
+from dimos.memory.vis.plot.plot import Plot
 
 rng = random.Random(42)
 xs = [i * 0.1 for i in range(120)]
@@ -33,8 +33,8 @@ the named colors, the auto-cycle excludes it for the remaining series, so
 you never end up with two lines that share a color by accident.
 
 ```python session=plot output=none
-from dimos.memory2.vis import color
-from dimos.memory2.vis.plot.elements import Series, HLine, Style
+from dimos.memory.vis import color
+from dimos.memory.vis.plot.elements import Series, HLine, Style
 
 p = Plot()
 # auto → blue
@@ -55,11 +55,11 @@ p.to_svg("assets/plot_named.svg")
 you can assign different axes to different time series, label them etc
 
 ```python session=robotdata output=none
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.transform import smooth, speed, throttle
-from dimos.memory2.vis import color
-from dimos.memory2.vis.plot.elements import Series
-from dimos.memory2.vis.plot.plot import Plot
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.transform import smooth, speed, throttle
+from dimos.memory.vis import color
+from dimos.memory.vis.plot.elements import Series
+from dimos.memory.vis.plot.plot import Plot
 from dimos.utils.data import get_data
 
 store = SqliteStore(path=get_data("go2_bigoffice.db"))
@@ -95,9 +95,9 @@ plot.to_svg("assets/plot_robot_data.svg")
 Let's find some plants!
 
 ```python session=robotdata
-from dimos.memory2.vis.plot.elements import Series, HLine, Style
-from dimos.memory2.vis import color
-from dimos.memory2.transform import normalize, smooth_time
+from dimos.memory.vis.plot.elements import Series, HLine, Style
+from dimos.memory.vis import color
+from dimos.memory.transform import normalize, smooth_time
 
 from dimos.models.embedding.clip import CLIPModel
 clip = CLIPModel()
@@ -138,7 +138,7 @@ plot.to_svg("assets/plot_plantness.svg")
 ```results
 Stream("color_image_embedded") | vector_search() | order_by(ts)
 Stream("materialize")
-Stream("materialize"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s)
+Stream("materialize"): 267 items, 2025-12-26 11:09:12 to 2025-12-26 11:14:00 (288.4s, 0.92 Hz)
 ```
 
 ![output](assets/plot_plantness.svg)
@@ -199,13 +199,13 @@ Looks better, these are some very obvious peaks, I'm curious let's see what was 
 Let's auto-detect the peaks, extract images from those moments, and run a 2D detector
 
 ```python skip session=robotdata
-from dimos.mapping.voxels import VoxelMapTransformer
-from dimos.memory2.vis.space.space import Space
-from dimos.memory2.transform import peaks
-from dimos.memory2.vis.color import ColorRange
-from dimos.memory2.vis.plot.elements import VLine
-from dimos.memory2.vis.utils import mosaic
-from dimos.memory2.stream import Stream
+from dimos.mapping.voxels.module import VoxelMapTransformer
+from dimos.memory.vis.space.space import Space
+from dimos.memory.transform import peaks
+from dimos.memory.vis.color import ColorRange
+from dimos.memory.vis.plot.elements import VLine
+from dimos.memory.vis.utils import mosaic
+from dimos.memory.stream import Stream
 from itertools import chain
 
 semantic_peaks = plantness_query_materialized.transform(peaks(key=lambda obs: obs.similarity, distance=1.0))
@@ -240,8 +240,7 @@ m = mosaic(semantic_peaks.map_data(lambda obs: moondream.query_detections(obs.da
 m.data.save("assets/plants_auto.png")
 ```
 
-<!--Result:-->
-```
+```results
 14:59:33.042 [inf][dimos/mapping/voxels.py       ] VoxelGrid using device: CUDA:0
 t=  14.1s score=0.224 prominence=0.031
 t=  26.3s score=0.225 prominence=0.033
@@ -260,7 +259,6 @@ t= 245.6s score=0.224 prominence=0.028
 t= 279.6s score=0.230 prominence=0.030
 ```
 
-
 ![output](assets/plot_plantness_autopeaks.svg)
 
 ![output](assets/plants_auto.png)
@@ -276,7 +274,7 @@ We got 15 peaks back, we ran a detector on all of them so we can start projectin
 Once we put the surviving peaks on the timeline we get two very obvious plants.
 
 ```python skip session=robotdata
-from dimos.memory2.transform import significant
+from dimos.memory.transform import significant
 
 plot = Plot()
 plot.add(
@@ -295,7 +293,6 @@ m.data.save("assets/plants_meaningful.png")
 plot.to_svg("assets/plot_plantness_significant.svg")
 ```
 
-
 ![output](assets/plot_plantness_significant.svg)
 
 ![output](assets/plants_meaningful.png)
@@ -311,8 +308,8 @@ We'll also pull all lidar frames in their vicinity and reconstruct global maps f
 
 ```python skip session=robotdata
 
-from dimos.memory2.vis.space.elements import Point
-from dimos.memory2.transform import QualityWindow
+from dimos.memory.vis.space.elements import Point
+from dimos.memory.transform import QualityWindow
 
 drawing = Space()
 
@@ -364,7 +361,7 @@ from dimos.robot.unitree.go2.connection import (
     _camera_info_static as go2_camerainfo,
     BASE_TO_OPTICAL,
 )
-from dimos.memory2.vis.space.elements import Box3D
+from dimos.memory.vis.space.elements import Box3D
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3

@@ -1,4 +1,4 @@
-# DimOS Modules
+# dimOS Modules
 
 Modules are subsystems on a robot that operate autonomously and communicate with other subsystems using standardized messages.
 
@@ -22,7 +22,6 @@ from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
 to_svg(unitree_go2, "assets/go2_nav.svg")
 ```
-<!--Result:-->
 ![output](assets/go2_nav.svg)
 
 ## Camera Module
@@ -49,14 +48,15 @@ print(CameraModule.io())
 └┬─────────────┘
  ├─ color_image: Image
  ├─ camera_info: CameraInfo
+ ├─ tf: TFMessage
  │
  ├─ RPC build() -> None
  ├─ RPC get_skills() -> list
+ ├─ RPC peek_stream(stream_name: str, timeout: float) -> Any
  ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
  ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
  ├─ RPC start() -> None
  ├─ RPC stop() -> None
- ├─ RPC take_a_picture() -> Image
 ```
 
 We can see that the camera module outputs two streams:
@@ -66,7 +66,7 @@ We can see that the camera module outputs two streams:
 
 It offers two RPC calls: `start()` and `stop()` (lifecycle methods).
 
-It also exposes an agentic [skill](/docs/usage/blueprints.md#defining-skills) called `take_a_picture` (more on skills in the Blueprints guide).
+Camera observation as an agentic [skill](/docs/usage/blueprints.md#defining-skills) is provided separately by the reusable `ObserveSkill` container (`dimos/agents/skills/observe_skill.py`), which subscribes to `color_image` and can be added to any blueprint (more on skills in the Blueprints guide).
 
 We can start this module and explore the output of its streams in real time (this will use your webcam).
 
@@ -84,8 +84,7 @@ time.sleep(0.5)
 camera.stop()
 ```
 
-<!--Result:-->
-```
+```results
 Out color_image[Image] @ CameraModule
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:16)
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:16)
@@ -99,7 +98,6 @@ Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:17)
 ```
 
-
 ## Connecting modules
 
 Let's load a standard 2D detector module and hook it up to a camera.
@@ -109,8 +107,7 @@ from dimos.perception.detection.module2D import Detection2DModule, Config
 print(Detection2DModule.io())
 ```
 
-<!--Result:-->
-```
+```results
  ├─ color_image: Image
 ┌┴──────────────────┐
 │ Detection2DModule │
@@ -129,7 +126,7 @@ print(Detection2DModule.io())
  ├─ RPC stop() -> None
 ```
 
-<!-- TODO: add easy way to print config -->
+{/* TODO: add easy way to print config */}
 
 Looks like the detector just needs an image input and outputs some sort of detection and annotation messages. Let's connect it to a camera.
 
@@ -156,7 +153,7 @@ camera.stop()
 
 As we build module structures, we'll quickly want to utilize all cores on the machine (which Python doesn't allow as a single process) and potentially distribute modules across machines or even the internet.
 
-For this, we use `dimos.core` and DimOS transport protocols.
+For this, we use `dimos.core` and dimOS transport protocols.
 
 Defining message exchange protocols and message types also gives us the ability to write models in faster languages.
 
@@ -173,6 +170,93 @@ class HeavyModule(Module):
 ```
 
 If declaring dedicated modules would push the pool past half-dedicated, the coordinator auto-grows it so non-dedicated workers always at least match the dedicated count.
+
+## Sync input handlers
+
+If you don't need an asyncio loop, subscribe to your `In[T]` streams from `start()` and register the unsubscribe with `register_disposable` so cleanup happens automatically at `stop()`.
+
+```python
+from reactivex.disposable import Disposable
+
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In
+from dimos.msgs.std_msgs.Int32 import Int32
+
+
+class Counter(Module):
+    value: In[Int32]
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._total = 0
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(Disposable(self.value.subscribe(self._on_value)))
+
+    def _on_value(self, msg: Int32) -> None:
+        self._total += msg.data
+```
+
+`In.subscribe(cb)` returns an *unsubscribe function*, not a `DisposableBase`. Wrap it in `Disposable(...)` so `register_disposable` can dispose it on `stop()`. Without this, your handler keeps running after `stop()` and tests will fail thread-leak checks.
+
+The callback runs on whatever thread emits the message, so guard mutable state with a lock if multiple inputs share it.
+
+## Triggering side effects via Specs
+
+A common pattern is "subscribe to a stream, react by calling another module". Declare the other module's protocol as a `Spec` field (single-underscore, private). The coordinator binds the proxy at deploy time, so handlers can call it directly with no extra wiring:
+
+```python
+from typing import Protocol
+
+from reactivex.disposable import Disposable
+
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In
+from dimos.msgs.std_msgs.Int32 import Int32
+from dimos.spec.utils import Spec
+
+
+class NotifierSpec(Spec, Protocol):
+    def notify(self, text: str) -> None: ...
+
+
+class Watchdog(Module):
+    value: In[Int32]
+
+    _notifier: NotifierSpec
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(Disposable(self.value.subscribe(self._on_value)))
+
+    def _on_value(self, msg: Int32) -> None:
+        if msg.data > 100:
+            self._notifier.notify(f"value={msg.data}")
+```
+
+The Spec must match the target module's `@rpc` signatures. Sync and async are interchangeable (see [Async modules](#async-modules-lock-free-state)).
+
+To deploy `Watchdog`, add `Watchdog.blueprint()` to an existing blueprint's `autoconnect(...)` chain. The coordinator matches `Out[T]` to `In[T]` by name across the union of modules, and resolves `_notifier: NotifierSpec` to whichever module in the blueprint implements `notify`. No manual wiring required.
+
+## Testing modules
+
+Mock spec dependencies (anything typed `: SomeSpec`) after construction, since the framework normally wires them at deploy time:
+
+```python skip
+@pytest.fixture()
+def module(mocker):
+    m = MyModule(step=10)
+    m._speak_skill = mocker.MagicMock()
+    yield m
+    m.stop()  # required: cleans up the per-instance asyncio loop and thread
+```
+
+The `m.stop()` in teardown matters. The test session-wide thread-leak detector will fail the test otherwise, even if your test body never started any threads.
 
 ## Restarting a module
 
@@ -211,7 +295,6 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 
-
 class MovementManager(Module):
     clicked_point: In[PointStamped]
     nav_cmd_vel: In[Twist]
@@ -237,7 +320,7 @@ class MovementManager(Module):
         self.cmd_vel.publish(msg)
 ```
 
-Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are serialized: only one invocation of `handle_x` runs at a time. If messages arrive faster than the handler can process them, intermediate messages are dropped — only the most recent unprocessed message is kept (LATEST policy). The handler is guaranteed to eventually run with the most recently published value.
+Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are serialized: only one invocation of `handle_x` runs at a time. If messages arrive faster than the handler can process them, intermediate messages are dropped. Only the most recent unprocessed message is kept (LATEST policy). The handler is guaranteed to eventually run with the most recently published value.
 
 ### Async `@rpc` methods
 
@@ -249,7 +332,6 @@ Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are
 ```python
 from dimos.core.core import rpc
 from dimos.core.module import Module
-
 
 class NameModule(Module):
     @rpc
@@ -271,11 +353,9 @@ from typing import Protocol
 from dimos.core.module import Module
 from dimos.spec.utils import Spec
 
-
 class NameSpec(Spec, Protocol):
     async def say_hello(self, name: str) -> str: ...
     async def set_my_name(self, new_name: str) -> None: ...
-
 
 class StartModule(Module):
     _name_module: NameSpec
@@ -291,7 +371,6 @@ class StartModule(Module):
 from typing import Protocol
 
 from dimos.spec.utils import Spec
-
 
 class SyncNameSpec(Spec, Protocol):
     def say_hello(self, name: str) -> str: ...
@@ -311,7 +390,6 @@ import asyncio
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
-
 
 class TimerExample(Module):
     @rpc
@@ -356,7 +434,6 @@ from typing import Any
 
 from dimos.core.module import Module
 
-
 def create(name: str) -> Any:
     del name
     class _Model:
@@ -364,7 +441,6 @@ def create(name: str) -> Any:
             pass
 
     return _Model()
-
 
 class PersonFollowSkillContainer(Module):
     async def main(self) -> AsyncIterator[None]:
@@ -392,8 +468,6 @@ from dimos.robot.unitree_webrtc.unitree_go2_blueprints import agentic
 to_svg(agentic, "assets/go2_agentic.svg")
 ```
 
-<!--Result:-->
 ![output](assets/go2_agentic.svg)
-
 
 To see more information on how to use Blueprints, see [Blueprints](/docs/usage/blueprints.md).

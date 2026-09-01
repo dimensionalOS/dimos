@@ -14,7 +14,7 @@
 
 import pytest
 
-from dimos.perception.detection.moduleDB import Object3D
+from dimos.perception.experimental.moduleDB import Object3D
 
 pytestmark = pytest.mark.self_hosted
 

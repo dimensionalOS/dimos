@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Test 4: Arm Joint Movement
 Reads current arm position, moves joint 0 by DELTA radians, holds, then returns home.
@@ -12,14 +26,16 @@ Or via run_all_tests.py (preferred — single DDS session).
 
 Pass condition: Arm moves noticeably then returns to start position.
 """
-import rclpy
+
 import time
+
+import rclpy
 from sensor_msgs.msg import JointState
 
-SIDE = "left"        # change to "right" to test right arm
-DELTA = 0.3          # radians (~17 degrees)
+SIDE = "left"  # change to "right" to test right arm
+DELTA = 0.3  # radians (~17 degrees)
 MOVE_DURATION = 3.0  # seconds to hold moved position
-VELOCITY = 0.5       # rad/s tracking speed
+VELOCITY = 0.5  # rad/s tracking speed
 DISCOVERY_WAIT = 5.0
 
 FEEDBACK_TOPIC = f"/hdas/feedback_arm_{SIDE}"

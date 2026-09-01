@@ -1,0 +1,233 @@
+{
+  "vectors": [
+    {
+      "name": "hello_robot",
+      "message": {
+        "t": "hello",
+        "v": 5,
+        "role": "robot",
+        "robot": {
+          "id": "go2-lab",
+          "name": "Go2 Laborator β",
+          "model": "unitree-go2"
+        },
+        "manifest": {
+          "version": 1,
+          "channels": [
+            {
+              "ch": "color_image",
+              "dir": "rx",
+              "encoding": "jpeg.v1",
+              "delivery": "latest",
+              "maxHz": 15.5,
+              "params": {
+                "quality": 75.5
+              }
+            },
+            {
+              "ch": "odom",
+              "dir": "rx",
+              "encoding": "pose.json.v1",
+              "delivery": "reliable",
+              "maxHz": 20.5,
+              "params": {}
+            }
+          ],
+          "panels": [
+            {
+              "id": "p0",
+              "kind": "video",
+              "title": "Camera β",
+              "channels": [
+                "color_image"
+              ],
+              "params": {}
+            }
+          ],
+          "layout": {
+            "row": [
+              "p0"
+            ]
+          },
+          "pages": []
+        }
+      },
+      "b64": "5wEAAHsidCI6ImhlbGxvIiwidiI6NSwicm9sZSI6InJvYm90Iiwicm9ib3QiOnsiaWQiOiJnbzItbGFiIiwibmFtZSI6IkdvMiBMYWJvcmF0b3IgzrIiLCJtb2RlbCI6InVuaXRyZWUtZ28yIn0sIm1hbmlmZXN0Ijp7InZlcnNpb24iOjEsImNoYW5uZWxzIjpbeyJjaCI6ImNvbG9yX2ltYWdlIiwiZGlyIjoicngiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41LCJwYXJhbXMiOnsicXVhbGl0eSI6NzUuNX19LHsiY2giOiJvZG9tIiwiZGlyIjoicngiLCJlbmNvZGluZyI6InBvc2UuanNvbi52MSIsImRlbGl2ZXJ5IjoicmVsaWFibGUiLCJtYXhIeiI6MjAuNSwicGFyYW1zIjp7fX1dLCJwYW5lbHMiOlt7ImlkIjoicDAiLCJraW5kIjoidmlkZW8iLCJ0aXRsZSI6IkNhbWVyYSDOsiIsImNoYW5uZWxzIjpbImNvbG9yX2ltYWdlIl0sInBhcmFtcyI6e319XSwibGF5b3V0Ijp7InJvdyI6WyJwMCJdfSwicGFnZXMiOltdfX0="
+    },
+    {
+      "name": "hello_viewer",
+      "message": {
+        "t": "hello",
+        "v": 5,
+        "role": "viewer"
+      },
+      "b64": "IwAAAHsidCI6ImhlbGxvIiwidiI6NSwicm9sZSI6InZpZXdlciJ9"
+    },
+    {
+      "name": "welcome",
+      "message": {
+        "t": "welcome",
+        "v": 5
+      },
+      "b64": "FQAAAHsidCI6IndlbGNvbWUiLCJ2Ijo1fQ=="
+    },
+    {
+      "name": "ping",
+      "message": {
+        "t": "ping",
+        "n": 7,
+        "ts": 1752576000.5
+      },
+      "b64": "JAAAAHsidCI6InBpbmciLCJuIjo3LCJ0cyI6MTc1MjU3NjAwMC41fQ=="
+    },
+    {
+      "name": "pong",
+      "message": {
+        "t": "pong",
+        "n": 7,
+        "ts": 1752576000.5
+      },
+      "b64": "JAAAAHsidCI6InBvbmciLCJuIjo3LCJ0cyI6MTc1MjU3NjAwMC41fQ=="
+    },
+    {
+      "name": "error_version",
+      "message": {
+        "t": "error",
+        "code": "version_mismatch",
+        "message": "protocol v5 required, versiune neacceptată"
+      },
+      "b64": "XwAAAHsidCI6ImVycm9yIiwiY29kZSI6InZlcnNpb25fbWlzbWF0Y2giLCJtZXNzYWdlIjoicHJvdG9jb2wgdjUgcmVxdWlyZWQsIHZlcnNpdW5lIG5lYWNjZXB0YXTEgyJ9"
+    },
+    {
+      "name": "robots_two",
+      "message": {
+        "t": "robots",
+        "robots": [
+          {
+            "id": "go2-lab",
+            "name": "Go2 Laborator β",
+            "model": "unitree-go2"
+          },
+          {
+            "id": "arm-01",
+            "name": "Braț 01",
+            "model": "xarm7"
+          }
+        ]
+      },
+      "b64": "jAAAAHsidCI6InJvYm90cyIsInJvYm90cyI6W3siaWQiOiJnbzItbGFiIiwibmFtZSI6IkdvMiBMYWJvcmF0b3IgzrIiLCJtb2RlbCI6InVuaXRyZWUtZ28yIn0seyJpZCI6ImFybS0wMSIsIm5hbWUiOiJCcmHImyAwMSIsIm1vZGVsIjoieGFybTcifV19"
+    },
+    {
+      "name": "robots_empty",
+      "message": {
+        "t": "robots",
+        "robots": []
+      },
+      "b64": "GgAAAHsidCI6InJvYm90cyIsInJvYm90cyI6W119"
+    },
+    {
+      "name": "watch",
+      "message": {
+        "t": "watch",
+        "robotId": "go2-lab"
+      },
+      "b64": "IQAAAHsidCI6IndhdGNoIiwicm9ib3RJZCI6ImdvMi1sYWIifQ=="
+    },
+    {
+      "name": "manifest_reply",
+      "message": {
+        "t": "manifest",
+        "robotId": "go2-lab",
+        "manifest": {
+          "version": 1,
+          "channels": [
+            {
+              "ch": "odom",
+              "encoding": "pose.json.v1",
+              "delivery": "reliable",
+              "maxHz": 20.5
+            }
+          ],
+          "panels": [
+            {
+              "id": "pose",
+              "kind": "readout",
+              "title": "Poziție",
+              "channels": [
+                "odom"
+              ]
+            }
+          ],
+          "layout": "pose"
+        }
+      },
+      "b64": "9gAAAHsidCI6Im1hbmlmZXN0Iiwicm9ib3RJZCI6ImdvMi1sYWIiLCJtYW5pZmVzdCI6eyJ2ZXJzaW9uIjoxLCJjaGFubmVscyI6W3siY2giOiJvZG9tIiwiZW5jb2RpbmciOiJwb3NlLmpzb24udjEiLCJkZWxpdmVyeSI6InJlbGlhYmxlIiwibWF4SHoiOjIwLjV9XSwicGFuZWxzIjpbeyJpZCI6InBvc2UiLCJraW5kIjoicmVhZG91dCIsInRpdGxlIjoiUG96acibaWUiLCJjaGFubmVscyI6WyJvZG9tIl19XSwibGF5b3V0IjoicG9zZSJ9fQ=="
+    },
+    {
+      "name": "manifest_reply_bare",
+      "message": {
+        "t": "manifest",
+        "robotId": "arm-01"
+      },
+      "b64": "IwAAAHsidCI6Im1hbmlmZXN0Iiwicm9ib3RJZCI6ImFybS0wMSJ9"
+    },
+    {
+      "name": "sub",
+      "message": {
+        "t": "sub",
+        "ch": "color_image"
+      },
+      "b64": "HgAAAHsidCI6InN1YiIsImNoIjoiY29sb3JfaW1hZ2UifQ=="
+    },
+    {
+      "name": "unsub",
+      "message": {
+        "t": "unsub",
+        "ch": "color_image"
+      },
+      "b64": "IAAAAHsidCI6InVuc3ViIiwiY2giOiJjb2xvcl9pbWFnZSJ9"
+    },
+    {
+      "name": "subs_snapshot",
+      "message": {
+        "t": "subs",
+        "chs": [
+          "color_image",
+          "odom"
+        ],
+        "n": 3
+      },
+      "b64": "LwAAAHsidCI6InN1YnMiLCJjaHMiOlsiY29sb3JfaW1hZ2UiLCJvZG9tIl0sIm4iOjN9"
+    },
+    {
+      "name": "subs_empty",
+      "message": {
+        "t": "subs",
+        "chs": [],
+        "n": 4
+      },
+      "b64": "GwAAAHsidCI6InN1YnMiLCJjaHMiOltdLCJuIjo0fQ=="
+    },
+    {
+      "name": "teleop_start",
+      "message": {
+        "t": "teleop_start"
+      },
+      "b64": "FAAAAHsidCI6InRlbGVvcF9zdGFydCJ9"
+    },
+    {
+      "name": "teleop_started",
+      "message": {
+        "t": "teleop_started"
+      },
+      "b64": "FgAAAHsidCI6InRlbGVvcF9zdGFydGVkIn0="
+    },
+    {
+      "name": "teleop_stop",
+      "message": {
+        "t": "teleop_stop"
+      },
+      "b64": "EwAAAHsidCI6InRlbGVvcF9zdG9wIn0="
+    }
+  ]
+}

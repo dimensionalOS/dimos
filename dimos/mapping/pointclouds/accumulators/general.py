@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
-from open3d.geometry import PointCloud  # type: ignore[import-untyped]
-from open3d.io import read_point_cloud  # type: ignore[import-untyped]
 
 from dimos.core.global_config import GlobalConfig
+
+if TYPE_CHECKING:
+    from open3d.geometry import PointCloud  # type: ignore[import-untyped]
 
 
 class GeneralPointCloudAccumulator:
@@ -24,6 +29,9 @@ class GeneralPointCloudAccumulator:
     _voxel_size: float
 
     def __init__(self, voxel_size: float, global_config: GlobalConfig) -> None:
+        from open3d.geometry import PointCloud
+        from open3d.io import read_point_cloud
+
         self._point_cloud = PointCloud()
         self._voxel_size = voxel_size
 

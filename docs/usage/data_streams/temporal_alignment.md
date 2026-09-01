@@ -4,7 +4,8 @@ Robots have multiple sensors emitting data at different rates and latencies. A c
 
 `align_timestamped` solves this by buffering messages and matching them within a time tolerance.
 
-<details><summary>Pikchr</summary>
+<details>
+<summary>Pikchr</summary>
 
 ```pikchr fold output=assets/alignment_overview.svg
 color = white
@@ -24,7 +25,6 @@ Out: box "(image, pointcloud)" rad 5px fit wid 170% ht 170%
 </details>
 
 ![output](assets/alignment_overview.svg)
-
 
 ## Basic Usage
 
@@ -66,7 +66,6 @@ lidar_stream = lidar_replay.stream(from_timestamp=seek_ts, duration=2.0).pipe(
 
 ```
 
-
 </details>
 
 Streams would normally come from an actual robot into your module via `In` inputs. [`detection/module3D.py`](/dimos/perception/detection/module3D.py#L11) is a good example of this.
@@ -94,8 +93,7 @@ if aligned_pairs:
     print(f"\nFirst matched pair: Δ{dt*1000:.1f}ms")
 ```
 
-<!--Result:-->
-```
+```results
 Video: 29 frames, Lidar: 15 scans
 Aligned pairs: 11 out of 29 video frames
 
@@ -162,7 +160,6 @@ def plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, path):
 plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 ```
 
-<!--Result:-->
 ![output](assets/alignment_timeline.png)
 
 If we loosen up our match tolerance, we might get multiple pairs matching the same lidar frame.
@@ -179,18 +176,15 @@ print(f"Video: {len(video_frames)} frames, Lidar: {len(lidar_scans)} scans")
 print(f"Aligned pairs: {len(aligned_pairs)} out of {len(video_frames)} video frames")
 ```
 
-<!--Result:-->
-```
+```results
 Video: 58 frames, Lidar: 30 scans
 Aligned pairs: 23 out of 58 video frames
 ```
-
 
 ```python skip session=align output=assets/alignment_timeline2.png
 plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 ```
 
-<!--Result:-->
 ![output](assets/alignment_timeline2.png)
 
 ## Combine Frame Alignment with a Quality Filter
@@ -225,8 +219,7 @@ print(f"Aligned pairs: {len(aligned_pairs)} out of {len(video_frames)} video fra
 
 ```
 
-<!--Result:-->
-```
+```results
 Video: 6 frames, Lidar: 15 scans
 Aligned pairs: 1 out of 6 video frames
 ```
@@ -235,7 +228,6 @@ Aligned pairs: 1 out of 6 video frames
 plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 ```
 
-<!--Result:-->
 ![output](assets/alignment_timeline3.png)
 
 We are very picky but data is high quality. Best frame, with closest lidar match in this window.
@@ -284,8 +276,6 @@ text "waiting..." at (Buffer.w.x - 0.4in, Buffer.w.y - 0.15in)
 | `*secondary_observables` | `Observable[S]...` | required | One or more secondary streams to align          |
 | `match_tolerance`        | `float`            | 0.1      | Max time difference for a match (seconds)       |
 | `buffer_size`            | `float`            | 1.0      | How long to buffer unmatched messages (seconds) |
-
-
 
 ## Usage in Modules
 

@@ -15,7 +15,7 @@
 import pytest
 
 
-@pytest.mark.dimsim
+@pytest.mark.self_hosted_large
 def test_path_replanning(
     lcm_spy, start_blueprint, dim_sim, direct_cmd_vel_explorer, spawn_wall_on_pose
 ) -> None:

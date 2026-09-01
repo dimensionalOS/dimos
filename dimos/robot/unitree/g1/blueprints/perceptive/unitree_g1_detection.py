@@ -26,8 +26,8 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.module3D import Detection3DModule
-from dimos.perception.detection.moduleDB import ObjectDBModule
 from dimos.perception.detection.person_tracker import PersonTracker
+from dimos.perception.experimental.moduleDB import ObjectDBModule
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_basic import unitree_g1_basic
 
 
@@ -102,5 +102,3 @@ unitree_g1_detection = (
         }
     )
 )
-
-__all__ = ["unitree_g1_detection"]

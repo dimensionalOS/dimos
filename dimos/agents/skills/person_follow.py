@@ -19,9 +19,9 @@ from typing import Any
 
 import numpy as np
 from reactivex.disposable import Disposable
-from turbojpeg import TurboJPEG
 
 from dimos.agents.annotation import skill
+from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -34,11 +34,12 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.patrolling.patrolling_module_spec import PatrollingModuleSpec
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.navigation.visual_servoing.detection_navigation import DetectionNavigation
 from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.turbojpeg import get_turbojpeg
 
 logger = setup_logger()
 
@@ -63,10 +64,10 @@ class PersonFollowSkillContainer(Module):
     color_image: In[Image]
     global_map: In[PointCloud2]
     cmd_vel: Out[Twist]
+    tf: In[TFMessage]
 
     _frequency: float = 20.0  # Hz - control loop frequency
     _max_lost_frames: int = 15  # number of frames to wait before declaring person lost
-    _patrolling_module_spec: PatrollingModuleSpec
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -90,11 +91,12 @@ class PersonFollowSkillContainer(Module):
             camera_info = DimSimConnection.camera_info_static
 
         self._visual_servo = VisualServoing2D(camera_info, bool(self.config.g.simulation))
-        self._detection_navigation = DetectionNavigation(self.tf, camera_info)
+        self._camera_info = camera_info
 
     @rpc
     def start(self) -> None:
         super().start()
+        self._detection_navigation = DetectionNavigation(self.tfbuffer, self._camera_info)
         self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
         if self.config.use_3d_navigation:
             self.register_disposable(Disposable(self.global_map.subscribe(self._on_pointcloud)))
@@ -116,7 +118,7 @@ class PersonFollowSkillContainer(Module):
         self._vl_model.stop()
         super().stop()
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT], lifecycle="background")
     def follow_person(
         self,
         query: str,
@@ -153,33 +155,45 @@ class PersonFollowSkillContainer(Module):
 
         self._should_stop.clear()
 
-        with self._lock:
-            latest_image = self._latest_image
+        # Open the tool-stream up front so every early-return path can release
+        # the `movement` capability via the matching `stop_tool` below. The
+        # success path (background thread launched) leaves the stream open;
+        # `_follow_loop`'s teardown closes it.
+        self.start_tool("follow_person")
+        background_launched = False
+        try:
+            with self._lock:
+                latest_image = self._latest_image
 
-        if latest_image is None:
-            return "No image available to detect person."
+            if latest_image is None:
+                return "No image available to detect person."
 
-        detection_image: Image | None = None
-        if initial_bbox is not None:
-            bbox: BBox = (
-                initial_bbox[0],
-                initial_bbox[1],
-                initial_bbox[2],
-                initial_bbox[3],
-            )
-            if initial_image is not None:
-                detection_image = _decode_base64_image(initial_image)
-        else:
-            detected = get_object_bbox_from_image(
-                self._vl_model,
-                latest_image,
-                query,
-            )
-            if detected is None:
-                return f"Could not find '{query}' in the current view."
-            bbox = detected
+            detection_image: Image | None = None
+            if initial_bbox is not None:
+                bbox: BBox = (
+                    initial_bbox[0],
+                    initial_bbox[1],
+                    initial_bbox[2],
+                    initial_bbox[3],
+                )
+                if initial_image is not None:
+                    detection_image = _decode_base64_image(initial_image)
+            else:
+                detected = get_object_bbox_from_image(
+                    self._vl_model,
+                    latest_image,
+                    query,
+                )
+                if detected is None:
+                    return f"Could not find '{query}' in the current view."
+                bbox = detected
 
-        return self._follow_person(query, bbox, detection_image)
+            result = self._follow_person(query, bbox, detection_image)
+            background_launched = self._thread is not None
+            return result
+        finally:
+            if not background_launched:
+                self.stop_tool("follow_person")
 
     @skill
     def stop_following(self) -> str:
@@ -238,7 +252,9 @@ class PersonFollowSkillContainer(Module):
 
         logger.info(f"EdgeTAM initialized with {len(initial_detections)} detections")
 
-        self.start_tool("follow_person")
+        # The tool-stream was opened in the parent `follow_person` skill;
+        # leaving `self._thread` set is the signal the parent uses to keep it
+        # open for the background loop instead of closing on early return.
         self._thread = Thread(target=self._follow_loop, args=(tracker, query), daemon=True)
         self._thread.start()
 
@@ -246,15 +262,6 @@ class PersonFollowSkillContainer(Module):
             "Found the person. Starting to follow. You can stop following by calling "
             "the 'stop_following' tool. You will receive streaming updates."
         )
-
-        if self._patrolling_module_spec.is_patrolling():
-            message += (
-                " Note: since the robot was patrolling, this has been stopped automatically "
-                "(the equivalent of calling the `stop_patrol` tool call) so you don't have "
-                "to do it. "
-            )
-            self._patrolling_module_spec.stop_patrol()
-
         return message
 
     def _follow_loop(self, tracker: "EdgeTAMProcessor", query: str) -> None:
@@ -324,5 +331,5 @@ class PersonFollowSkillContainer(Module):
 
 
 def _decode_base64_image(b64: str) -> Image:
-    bgr_array = TurboJPEG().decode(base64.b64decode(b64))
+    bgr_array = get_turbojpeg().decode(base64.b64decode(b64))
     return Image(data=bgr_array, format=ImageFormat.BGR)

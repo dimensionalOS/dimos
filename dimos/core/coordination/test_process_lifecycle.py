@@ -47,11 +47,16 @@ def run_id() -> str:
 
 @pytest.fixture
 def spawn_tagged():
-    """Factory that spawns subprocesses tagged with DIMOS_RUN_ID; auto-cleans."""
+    """Factory that spawns subprocesses tagged with an env var; auto-cleans."""
     procs: list[subprocess.Popen[bytes]] = []
 
-    def _spawn(rid: str, code: str = "import time; time.sleep(60)") -> subprocess.Popen[bytes]:
-        env = {**os.environ, DIMOS_RUN_ID_ENV: rid}
+    def _spawn(
+        rid: str,
+        code: str = "import time; time.sleep(60)",
+        *,
+        env_var: str = DIMOS_RUN_ID_ENV,
+    ) -> subprocess.Popen[bytes]:
+        env = {**os.environ, env_var: rid}
         proc = subprocess.Popen(
             [sys.executable, "-c", code],
             env=env,
@@ -84,6 +89,19 @@ def test_kill_run_processes_kills_only_matching_run_id(spawn_tagged, run_id):
     assert _wait_gone(a1)
     assert _wait_gone(a2)
     # The other child must still be alive.
+    assert b.poll() is None
+
+
+def test_kill_run_processes_matches_custom_env_var(spawn_tagged, run_id):
+    # `a` is tagged with a custom var, `b` with the default DIMOS_RUN_ID.
+    # Sweeping on the custom var must hit `a` and leave `b` (whose custom var
+    # is the ambient pytest tag, not run_id) alone.
+    a = spawn_tagged(run_id, env_var="DIMOS_PYTEST_RUN_ID")
+    b = spawn_tagged(run_id)
+
+    killed = kill_run_processes(run_id, env_var="DIMOS_PYTEST_RUN_ID")
+    assert killed == 1
+    assert _wait_gone(a)
     assert b.poll() is None
 
 
@@ -184,4 +202,21 @@ def test_spawn_watchdog_strips_run_id_env(mocker: MockerFixture, run_id: str) ->
 
     kwargs = popen_mock.call_args.kwargs
     assert DIMOS_RUN_ID_ENV not in kwargs["env"]
+    assert kwargs["env"]["DIMOS_WATCHDOG_TARGET_ENV"] == DIMOS_RUN_ID_ENV
     assert kwargs["start_new_session"] is True
+
+
+def test_spawn_watchdog_custom_env_var(mocker: MockerFixture, run_id: str) -> None:
+    # With a custom tag var, the sidecar gets that var stripped from its own
+    # env and its name forwarded via DIMOS_WATCHDOG_TARGET_ENV; the default
+    # run-id var is left untouched.
+    custom = "DIMOS_PYTEST_RUN_ID"
+    mocker.patch.dict(os.environ, {custom: run_id, DIMOS_RUN_ID_ENV: "other"})
+    popen_mock = mocker.patch("dimos.core.coordination.process_lifecycle.subprocess.Popen")
+    popen_mock.return_value = mocker.MagicMock(pid=12345)
+    spawn_watchdog(run_id, env_var=custom)
+
+    kwargs = popen_mock.call_args.kwargs
+    assert custom not in kwargs["env"]
+    assert kwargs["env"]["DIMOS_WATCHDOG_TARGET_ENV"] == custom
+    assert kwargs["env"][DIMOS_RUN_ID_ENV] == "other"

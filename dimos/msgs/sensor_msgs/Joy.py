@@ -15,10 +15,9 @@
 from __future__ import annotations
 
 import time
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from dimos_lcm.sensor_msgs import Joy as LCMJoy
-from plum import dispatch
 
 from dimos.types.timestamped import Timestamped
 
@@ -33,6 +32,27 @@ def sec_nsec(ts):  # type: ignore[no-untyped-def]
     return [s, int((ts - s) * 1_000_000_000)]
 
 
+def _fields_of(source: Any) -> tuple[Any, ...]:
+    """Pull the four Joy fields out of a dict, an (axes, buttons) pair, a Joy or an LCM message."""
+    if isinstance(source, dict):
+        return (
+            source.get("ts"),
+            source.get("frame_id", ""),
+            source.get("axes"),
+            source.get("buttons"),
+        )
+    if isinstance(source, tuple | list):
+        return (None, "", list(source[0]), list(source[1]))
+    if isinstance(source, Joy):
+        return (source.ts, source.frame_id, list(source.axes), list(source.buttons))
+    return (
+        source.header.stamp.sec + (source.header.stamp.nsec / 1_000_000_000),
+        source.header.frame_id,
+        list(source.axes),
+        list(source.buttons),
+    )
+
+
 class Joy(Timestamped):
     msg_name = "sensor_msgs.Joy"
     ts: float
@@ -40,15 +60,17 @@ class Joy(Timestamped):
     axes: list[float]
     buttons: list[int]
 
-    @dispatch
     def __init__(
         self,
-        ts: float = 0.0,
+        ts: float | JoyConvertable | Joy | None = None,
         frame_id: str = "",
         axes: list[float] | None = None,
         buttons: list[int] | None = None,
     ) -> None:
         """Initialize a Joy message.
+
+        The first argument doubles as the source for the copy/dict/pair/LCM forms:
+        ``Joy(other)``, ``Joy({...})``, ``Joy((axes, buttons))``, ``Joy(lcm_msg)``.
 
         Args:
             ts: Timestamp in seconds
@@ -56,42 +78,14 @@ class Joy(Timestamped):
             axes: List of axis values (typically -1.0 to 1.0)
             buttons: List of button states (0 or 1)
         """
-        self.ts = ts if ts != 0 else time.time()
+        stamp: Any = ts
+        if isinstance(stamp, dict | tuple | list | Joy | LCMJoy):
+            stamp, frame_id, axes, buttons = _fields_of(stamp)
+
+        self.ts = time.time() if stamp is None else stamp
         self.frame_id = frame_id
         self.axes = axes if axes is not None else []
         self.buttons = buttons if buttons is not None else []
-
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, joy_tuple: tuple[list[float], list[int]]) -> None:
-        """Initialize from a tuple of (axes, buttons)."""
-        self.ts = time.time()
-        self.frame_id = ""
-        self.axes = list(joy_tuple[0])
-        self.buttons = list(joy_tuple[1])
-
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, joy_dict: dict[str, list[float] | list[int]]) -> None:
-        """Initialize from a dictionary with 'axes' and 'buttons' keys."""
-        self.ts = joy_dict.get("ts", time.time())
-        self.frame_id = joy_dict.get("frame_id", "")
-        self.axes = list(joy_dict.get("axes", []))
-        self.buttons = list(joy_dict.get("buttons", []))
-
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, joy: Joy) -> None:
-        """Initialize from another Joy (copy constructor)."""
-        self.ts = joy.ts
-        self.frame_id = joy.frame_id
-        self.axes = list(joy.axes)
-        self.buttons = list(joy.buttons)
-
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, lcm_joy: LCMJoy) -> None:
-        """Initialize from an LCM Joy message."""
-        self.ts = lcm_joy.header.stamp.sec + (lcm_joy.header.stamp.nsec / 1_000_000_000)
-        self.frame_id = lcm_joy.header.frame_id
-        self.axes = list(lcm_joy.axes)
-        self.buttons = list(lcm_joy.buttons)
 
     def lcm_encode(self) -> bytes:
         lcm_msg = LCMJoy()

@@ -1,0 +1,202 @@
+dataset: mid360_athens_stairs
+cases:
+- id: auto_00_down
+  start: [1.32, -0.84, 2.72]
+  goal: [-2.52, -0.52, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_01_up
+  start: [7.24, -3.96, -6.08]
+  goal: [6.44, -5.56, -1.44]
+  tags: [auto, stairs, up, long]
+- id: auto_02_up
+  start: [0.68, -4.12, -0.32]
+  goal: [8.04, -0.76, 3.04]
+  tags: [auto, stairs, up, long]
+- id: auto_03_down
+  start: [5.88, -4.52, 2.96]
+  goal: [-2.36, -4.36, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_04_down
+  start: [-0.2, -3.0, 2.56]
+  goal: [-2.04, 3.16, -0.48]
+  tags: [auto, stairs, down, long]
+- id: auto_05_down
+  start: [7.4, -4.04, 0.56]
+  goal: [5.96, -3.64, -3.52]
+  tags: [auto, stairs, down, long]
+- id: auto_06_up
+  start: [6.36, -5.4, -4.48]
+  goal: [-0.04, 0.04, -0.32]
+  tags: [auto, stairs, up, long]
+- id: auto_07_down
+  start: [6.68, -5.56, 2.08]
+  goal: [5.72, -5.48, -1.04]
+  tags: [auto, stairs, down, long]
+- id: auto_08_down
+  start: [-0.04, -1.96, 2.56]
+  goal: [7.16, -3.8, -3.12]
+  tags: [auto, stairs, down, long]
+- id: auto_09_down
+  start: [5.0, -1.88, 2.96]
+  goal: [2.28, -6.52, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_10_down
+  start: [2.68, -2.28, 2.72]
+  goal: [3.64, -4.12, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_11_down
+  start: [6.92, -2.12, 3.04]
+  goal: [-2.44, -2.44, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_12_down
+  start: [5.8, -3.56, 2.96]
+  goal: [0.44, -2.2, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_13_down
+  start: [3.16, -1.0, 2.88]
+  goal: [-0.12, -0.6, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_14_down
+  start: [5.56, -2.6, 2.96]
+  goal: [-2.36, 0.44, -0.4]
+  tags: [auto, stairs, down, long]
+- id: auto_15_down
+  start: [5.64, -3.88, -0.32]
+  goal: [6.44, -3.72, -3.52]
+  tags: [auto, stairs, down, long]
+- id: auto_16_down
+  start: [4.36, -1.24, 2.96]
+  goal: [-2.44, 2.36, -0.4]
+  tags: [auto, stairs, down, long]
+- id: auto_17_down
+  start: [2.76, -4.2, -0.32]
+  goal: [4.84, -4.28, -3.44]
+  tags: [auto, stairs, down, long]
+- id: auto_18_up
+  start: [0.52, -3.16, -0.32]
+  goal: [3.48, -1.72, 2.88]
+  tags: [auto, stairs, up, long]
+- id: auto_19_down
+  start: [6.52, -1.16, 3.04]
+  goal: [0.2, -1.32, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_20_down
+  start: [1.96, -2.84, 2.56]
+  goal: [-1.96, 0.12, -0.4]
+  tags: [auto, stairs, down, long]
+- id: auto_21_down
+  start: [0.44, -1.24, 2.64]
+  goal: [-2.44, 2.36, -0.4]
+  tags: [auto, stairs, down, long]
+- id: auto_22_down
+  start: [7.96, -0.12, 3.04]
+  goal: [-0.12, -0.6, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_23_down
+  start: [-0.04, -4.04, -0.32]
+  goal: [6.36, -5.56, -4.48]
+  tags: [auto, stairs, down, long]
+- id: auto_24_up
+  start: [4.52, -4.36, -0.32]
+  goal: [5.88, -4.52, 2.96]
+  tags: [auto, stairs, up, long]
+- id: auto_25_down
+  start: [4.04, -1.4, 2.96]
+  goal: [-2.44, -2.44, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_26_down
+  start: [0.52, -4.68, -0.32]
+  goal: [6.44, -3.72, -3.52]
+  tags: [auto, stairs, down, long]
+- id: auto_27_down
+  start: [0.2, -3.64, -0.32]
+  goal: [4.84, -4.28, -3.44]
+  tags: [auto, stairs, down, long]
+- id: auto_28_down
+  start: [0.28, -3.64, 2.56]
+  goal: [-2.52, -0.52, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_29_down
+  start: [6.36, -3.8, -0.24]
+  goal: [6.36, -5.56, -4.48]
+  tags: [auto, stairs, down, long]
+- id: auto_30_down
+  start: [-0.2, -3.0, 2.56]
+  goal: [5.16, -5.08, -0.56]
+  tags: [auto, stairs, down, long]
+- id: auto_31_down
+  start: [1.32, -0.84, 2.72]
+  goal: [-2.44, -2.44, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_32_down
+  start: [1.32, -0.84, 2.72]
+  goal: [-2.36, -4.36, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_33_down
+  start: [1.32, -0.84, 2.72]
+  goal: [-0.12, -0.6, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_34_down
+  start: [2.68, -2.28, 2.72]
+  goal: [-2.44, -2.44, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_35_down
+  start: [2.68, -2.28, 2.72]
+  goal: [-2.36, -4.36, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_36_down
+  start: [3.16, -1.0, 2.88]
+  goal: [-2.52, -0.52, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_37_down
+  start: [4.36, -1.24, 2.96]
+  goal: [-2.36, -4.36, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_38_down
+  start: [5.56, -2.6, 2.96]
+  goal: [-2.44, 2.36, -0.4]
+  tags: [auto, stairs, down, long]
+- id: auto_39_down
+  start: [5.56, -2.6, 2.96]
+  goal: [-2.36, -4.36, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_40_down
+  start: [5.56, -2.6, 2.96]
+  goal: [-0.12, -0.6, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_41_down
+  start: [5.88, -4.52, 2.96]
+  goal: [-2.52, -0.52, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_42_down
+  start: [5.88, -4.52, 2.96]
+  goal: [-2.44, -2.44, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_43_down
+  start: [5.88, -4.52, 2.96]
+  goal: [-2.44, 2.36, -0.4]
+  tags: [auto, stairs, down, long]
+- id: auto_44_down
+  start: [5.88, -4.52, 2.96]
+  goal: [-0.12, -0.6, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_45_down
+  start: [2.68, -2.28, 2.72]
+  goal: [-2.44, 2.36, -0.4]
+  tags: [auto, stairs, down, long]
+- id: auto_46_down
+  start: [6.52, -1.16, 3.04]
+  goal: [-2.52, -0.52, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_47_down
+  start: [8.04, -0.76, 3.04]
+  goal: [-2.52, -0.52, -0.32]
+  tags: [auto, stairs, down, long]
+- id: auto_48_up
+  start: [0.52, -3.16, -0.32]
+  goal: [5.88, -4.52, 2.96]
+  tags: [auto, stairs, up, long]
+- id: auto_49_flat
+  start: [5.08, -3.8, -6.48]
+  goal: [7.24, -3.96, -6.08]
+  tags: [auto, flat]

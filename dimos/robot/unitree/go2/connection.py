@@ -12,31 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from enum import Enum
 from importlib import resources
 import sys
 from threading import Thread
 import time
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from pydantic import Field
+from reactivex import empty
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
-import rerun.blueprint as rrb
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.resource import CompositeResource
 from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport, pSHMTransport
-from dimos.spec.perception import Camera, Pointcloud
-from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.core.rpc_client import ModuleProxy
+from dimos.memory.replay import Replay, ReplayStream, resolve_db_path
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -45,9 +42,12 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
-from dimos.utils.decorators.decorators import simple_mcache
-from dimos.utils.testing.replay import TimedSensorReplay, TimedSensorStorage
+from dimos.robot.unitree.type.lowstate import LowStateMsg
+from dimos.spec.perception import Camera, Pointcloud
+from dimos.utils.decorators.decorators import cached_property, simple_mcache
+from dimos.utils.logging_config import setup_logger
 
 if sys.version_info < (3, 13):
     from typing_extensions import TypeVar
@@ -65,6 +65,19 @@ class Go2Mode(str, Enum):
 class ConnectionConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
     mode: Go2Mode = Go2Mode.DEFAULT
+    lidar: bool = True
+    camera: bool = True
+    velocity_api: bool = False
+    # "mcf" for stair traversal, "normal" for basic, None to leave it as is
+    motion_mode: str | None = None
+    # Per-device AES-128 key (Go2 fw >=1.1.15); defaults from GlobalConfig.
+    aes_128_key: str | None = Field(default_factory=lambda m: m["g"].unitree_aes_128_key)
+    # TF parent frame of the internal odometry (odom_frame_id -> base_link).
+    # Rename (e.g. "go2_odom") when another odom source owns the tree root
+    odom_frame_id: str = "world"
+    # Turn off where another module owns the base_link edge. The odom port
+    # keeps publishing either way.
+    publish_tf: bool = True
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -72,15 +85,20 @@ class Go2ConnectionProtocol(Protocol):
 
     def start(self) -> None: ...
     def stop(self) -> None: ...
-    def lidar_stream(self) -> Observable: ...  # type: ignore[type-arg]
-    def odom_stream(self) -> Observable: ...  # type: ignore[type-arg]
-    def video_stream(self) -> Observable: ...  # type: ignore[type-arg]
+    def lidar_stream(self) -> Observable[PointCloud2]: ...
+    def odom_stream(self) -> Observable[PoseStamped]: ...
+    def video_stream(self) -> Observable[Image]: ...
+    def lowstate_stream(self) -> Observable[LowStateMsg]: ...
     def move(self, twist: Twist, duration: float = 0.0) -> bool: ...
+    def stop_movement(self) -> None: ...
     def standup(self) -> bool: ...
     def liedown(self) -> bool: ...
     def balance_stand(self) -> bool: ...
-    def set_obstacle_avoidance(self, enabled: bool = True) -> None: ...
-    def enable_rage_mode(self) -> bool: ...
+    def sport_command(self, api_id: int) -> bool: ...
+    def set_obstacle_avoidance(self, enabled: bool = True) -> bool: ...
+    def set_rage_mode(self, enable: bool) -> bool: ...
+    def set_light(self, level: int) -> bool: ...
+    def switch_joystick(self, enable: bool = True) -> bool: ...
     def publish_request(self, topic: str, data: dict) -> dict: ...  # type: ignore[type-arg]
 
 
@@ -92,6 +110,13 @@ _FRONT_CAMERA_720_YAML = resources.files("dimos.robot.unitree.go2").joinpath(
 def _camera_info_static() -> CameraInfo:
     with resources.as_file(_FRONT_CAMERA_720_YAML) as yaml_path:
         return CameraInfo.from_yaml(str(yaml_path))
+
+
+def _prefixed(prefix: str | None, name: str) -> str:
+    """Apply a TF namespace prefix (ModuleConfig.frame_id_prefix) to a frame name."""
+    if not prefix or not name:
+        return name
+    return f"{prefix}/{name}"
 
 
 # Static camera mount chain: base_link -> camera_link -> camera_optical.
@@ -109,13 +134,18 @@ BASE_TO_OPTICAL: Transform = Transform(
 )
 
 
-def make_connection(ip: str | None, cfg: GlobalConfig) -> Go2ConnectionProtocol:
-    connection_type = cfg.unitree_connection_type
+def make_connection(
+    ip: str | None,
+    cfg: GlobalConfig,
+    aes_128_key: str | None = None,
+    velocity_api: bool = False,
+) -> Go2ConnectionProtocol:
+    connection_type = cfg.unitree_connection_type.lower()
 
     if ip in ("fake", "mock", "replay") or connection_type == "replay":
         dataset = cfg.replay_db
         return ReplayConnection(dataset=dataset)
-    elif ip == "mujoco" or connection_type == "mujoco":
+    elif ip == "mujoco" or connection_type in ("mujoco", "true"):
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
         return MujocoConnection(cfg)
@@ -125,24 +155,35 @@ def make_connection(ip: str | None, cfg: GlobalConfig) -> Go2ConnectionProtocol:
         return DimSimConnection(cfg)
     elif connection_type == "webrtc":
         assert ip is not None, "IP address must be provided"
-        return UnitreeWebRTCConnection(ip)
+        return UnitreeWebRTCConnection(
+            ip,
+            aes_128_key=aes_128_key,
+            velocity_api=velocity_api,
+        )
     else:
         raise ValueError(f"Unknown simulator {cfg.simulation!r}. Choose from: mujoco, dimsim")
 
 
-class ReplayConnection(UnitreeWebRTCConnection):
-    # we don't want UnitreeWebRTCConnection to init
+class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
     def __init__(  # type: ignore[no-untyped-def]
         self,
         dataset: str = "go2_china_office",
         **kwargs,
     ) -> None:
         self.dataset = dataset
-        self.replay_config = {
-            "loop": kwargs.get("loop", True),
-            "seek": kwargs.get("seek"),
-            "duration": kwargs.get("duration"),
-        }
+        self._loop = kwargs.get("loop", False)
+        self._seek = kwargs.get("seek")
+        self._duration = kwargs.get("duration")
+
+    @cached_property
+    def replay(self) -> Replay:
+        # One shared store + Replay so lidar/odom/video advance against the
+        # same wall-clock anchor on subscribe.
+        store = self.register_disposable(
+            SqliteStore(path=str(resolve_db_path(self.dataset)), must_exist=True)
+        )
+        store.start()
+        return store.replay(loop=self._loop, seek=self._seek, duration=self._duration)
 
     def connect(self) -> None:
         pass
@@ -159,26 +200,60 @@ class ReplayConnection(UnitreeWebRTCConnection):
     def balance_stand(self) -> bool:
         return True
 
-    def set_obstacle_avoidance(self, enabled: bool = True) -> None:
-        pass
-
-    def enable_rage_mode(self) -> bool:
+    def sport_command(self, api_id: int) -> bool:
         return True
 
-    @simple_mcache
-    def lidar_stream(self):  # type: ignore[no-untyped-def]
-        lidar_store = TimedSensorReplay(f"{self.dataset}/lidar")  # type: ignore[var-annotated]
-        return lidar_store.stream(**self.replay_config)
+    def stop_movement(self) -> None:
+        # No webrtc deadman timer to cancel; the cmd_vel timeout covers replay.
+        pass
+
+    def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
+        return True
+
+    def set_motion_mode(self, name: str) -> None:
+        pass
+
+    def set_rage_mode(self, enable: bool) -> bool:
+        return True
+
+    def set_light(self, level: int) -> bool:
+        return True
+
+    def switch_joystick(self, enable: bool = True) -> bool:
+        return True
+
+    def _stream_name(self, *names: str) -> str:
+        """Return the first of ``names`` present in the dataset (stream naming
+        changed over time: mid360 recordings use go2_lidar/go2_odom, older ones
+        lidar/odom)."""
+        available = self.replay.list_streams()
+        for name in names:
+            if name in available:
+                return name
+        raise KeyError(f"None of {names!r} in dataset {self.dataset!r}; available: {available}")
 
     @simple_mcache
-    def odom_stream(self):  # type: ignore[no-untyped-def]
-        odom_store = TimedSensorReplay(f"{self.dataset}/odom")  # type: ignore[var-annotated]
-        return odom_store.stream(**self.replay_config)
+    def lidar_stream(self) -> Observable[PointCloud2]:
+        stream: ReplayStream[PointCloud2] = self.replay.stream(
+            self._stream_name("go2_lidar", "lidar")
+        )
+        return stream.observable()
 
     @simple_mcache
-    def video_stream(self):  # type: ignore[no-untyped-def]
-        video_store: TimedSensorReplay[Image] = TimedSensorReplay(f"{self.dataset}/color_image")
-        return video_store.stream(**self.replay_config)
+    def odom_stream(self) -> Observable[PoseStamped]:
+        stream: ReplayStream[PoseStamped] = self.replay.stream(
+            self._stream_name("go2_odom", "odom")
+        )
+        return stream.observable()
+
+    @simple_mcache
+    def video_stream(self) -> Observable[Image]:
+        return self.replay.streams.color_image.observable()
+
+    @simple_mcache
+    def lowstate_stream(self) -> Observable:  # type: ignore[type-arg]
+        # Replay datasets carry no low-level state (battery/IMU) — emit nothing.
+        return empty()
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         return True
@@ -201,14 +276,17 @@ class GO2Connection(Module, Camera, Pointcloud):
     lidar: Out[PointCloud2]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
+    tf: Out[TFMessage]
 
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()
     _camera_info_thread: Thread | None = None
-    _latest_video_frame: Image | None = None
+    _latest_lowstate: LowStateMsg | None = None
 
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
+        import rerun.blueprint as rrb
+
         """Return Rerun view blueprints for GO2 camera visualization."""
         return [
             rrb.Spatial2DView(
@@ -219,21 +297,22 @@ class GO2Connection(Module, Camera, Pointcloud):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.connection = make_connection(self.config.ip, self.config.g)
+        self.connection = make_connection(
+            self.config.ip,
+            self.config.g,
+            aes_128_key=self.config.aes_128_key,
+            velocity_api=self.config.velocity_api,
+        )
 
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static
 
-    @rpc
-    def record(self, recording_name: str) -> None:
-        lidar_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/lidar")  # type: ignore[type-arg]
-        lidar_store.consume_stream(self.connection.lidar_stream())
-
-        odom_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/odom")  # type: ignore[type-arg]
-        odom_store.consume_stream(self.connection.odom_stream())
-
-        video_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/video")  # type: ignore[type-arg]
-        video_store.consume_stream(self.connection.video_stream())
+        if self.config.frame_id_prefix and self.camera_info_static.frame_id:
+            # Copy so the class-level default is not mutated.
+            self.camera_info_static = copy.copy(self.camera_info_static)
+            self.camera_info_static.frame_id = _prefixed(
+                self.config.frame_id_prefix, self.camera_info_static.frame_id
+            )
 
     @rpc
     def start(self) -> None:
@@ -243,37 +322,48 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.connection.start()
 
         def onimage(image: Image) -> None:
+            image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
             self.color_image.publish(image)
-            self._latest_video_frame = image
 
-        self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
+        if self.config.lidar:
+            self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
         self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
-        self.register_disposable(self.connection.video_stream().subscribe(onimage))
+        self.register_disposable(self.connection.lowstate_stream().subscribe(self._on_lowstate))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
-        self._camera_info_thread = Thread(
-            target=self.publish_camera_info,
-            daemon=True,
-        )
-        self._camera_info_thread.start()
+        if self.config.camera:
+            self.register_disposable(self.connection.video_stream().subscribe(onimage))
+            self._camera_info_thread = Thread(
+                target=self.publish_camera_info,
+                daemon=True,
+            )
+            self._camera_info_thread.start()
+
+        if self.config.motion_mode and isinstance(self.connection, UnitreeWebRTCConnection):
+            self.connection.set_motion_mode(self.config.motion_mode)
 
         self.standup()
         time.sleep(3)
         self.connection.balance_stand()
 
         if self.config.mode == Go2Mode.RAGE:
-            self.connection.enable_rage_mode()
+            self.connection.set_rage_mode(True)
 
         self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
 
-        # self.record("go2_bigoffice")
-
     @rpc
     def stop(self) -> None:
-        self.liedown()
+        # Best-effort steps: teardown must always reach the WebRTC disconnect.
+        try:
+            self.liedown()
+        except Exception:
+            logger.warning("liedown on stop failed (link already down?) — continuing teardown")
 
         if self.connection:
-            self.connection.stop()
+            try:
+                self.connection.stop()
+            except Exception:
+                logger.warning("connection stop failed", exc_info=True)
 
         if self._camera_info_thread and self._camera_info_thread.is_alive():
             self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
@@ -281,32 +371,36 @@ class GO2Connection(Module, Camera, Pointcloud):
         super().stop()
 
     @classmethod
-    def _odom_to_tf(cls, odom: PoseStamped) -> list[Transform]:
+    def _odom_to_tf(cls, odom: PoseStamped, prefix: str = "") -> list[Transform]:
+        # The odom parent frame (odom.frame_id) stays unprefixed so namespaced
+        # robots still hang off one shared tree root.
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="base_link",
-            child_frame_id="camera_link",
+            frame_id=_prefixed(prefix, "base_link"),
+            child_frame_id=_prefixed(prefix, "camera_link"),
             ts=odom.ts,
         )
 
         camera_optical = Transform(
             translation=Vector3(0.0, 0.0, 0.0),
             rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-            frame_id="camera_link",
-            child_frame_id="camera_optical",
+            frame_id=_prefixed(prefix, "camera_link"),
+            child_frame_id=_prefixed(prefix, "camera_optical"),
             ts=odom.ts,
         )
 
         return [
-            Transform.from_pose("base_link", odom),
+            Transform.from_pose(_prefixed(prefix, "base_link"), odom),
             camera_link,
             camera_optical,
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
-        transforms = self._odom_to_tf(msg)
-        self.tf.publish(*transforms)
+        msg.frame_id = self.config.odom_frame_id
+        if self.config.publish_tf:
+            transforms = self._odom_to_tf(msg, prefix=self.config.frame_id_prefix or "")
+            self.tf.publish(TFMessage(*transforms))
         if self.odom.transport:
             self.odom.publish(msg)
 
@@ -336,15 +430,61 @@ class GO2Connection(Module, Camera, Pointcloud):
         return self.connection.balance_stand()
 
     @rpc
-    def enable_rage_mode(self) -> bool:
-        """Enable Rage Mode (~2.5 m/s forward velocity envelope).
-        Ensures BalanceStand precondition regardless of current FSM state.
+    def set_rage_mode(self, enable: bool) -> bool:
+        """Toggle Rage Mode on/off (~2.5 m/s envelope when on).
+        On the WebRTC backend this re-establishes the BalanceStand
+        precondition before toggling; sim backends are no-ops.
         """
-        self.connection.balance_stand()
-        time.sleep(0.3)
-        result = self.connection.enable_rage_mode()
-        logger.info("Rage Mode enabled")
+        result = self.connection.set_rage_mode(enable)
+        logger.info("Rage Mode", enabled=enable)
         return result
+
+    @rpc
+    def sport_command(self, api_id: int) -> bool:
+        """Send a parameterless SPORT_MOD command by api_id (Hello, Damp, ...)."""
+        return self.connection.sport_command(api_id)
+
+    @rpc
+    def set_light(self, level: int) -> bool:
+        """Head-LED brightness level 0-10 (0 = off)."""
+        return self.connection.set_light(level)
+
+    @rpc
+    def set_obstacle_avoidance(self, enabled: bool = True) -> bool:
+        """Toggle the onboard obstacle avoidance."""
+        return self.connection.set_obstacle_avoidance(enabled)
+
+    @rpc
+    def switch_joystick(self, enable: bool = True) -> bool:
+        """Firmware joystick listening on/off (WASD stick emulation needs it on)."""
+        return self.connection.switch_joystick(enable)
+
+    @rpc
+    def stop_movement(self) -> None:
+        """Zero the base immediately (webrtc deadman stop)."""
+        self.connection.stop_movement()
+
+    def _on_lowstate(self, msg: LowStateMsg) -> None:
+        """Cache the latest low-level state push (battery, IMU, motors, etc.)."""
+        self._latest_lowstate = msg
+
+    @skill
+    def get_battery_soc(self) -> int | None:
+        """Returns the robot's battery state-of-charge as a percentage (0-100).
+
+        Use this skill to answer battery / power / charge questions. Returns
+        None if no low-level state has been received yet.
+        """
+        return self.battery_soc()
+
+    @rpc
+    def battery_soc(self) -> int | None:
+        """Battery SOC 0-100 (or None until lowstate arrives). Plain RPC — no
+        skill-log spam, for the hosted telemetry poll."""
+        try:
+            return int(self._latest_lowstate["data"]["bms_state"]["soc"])  # type: ignore[index]
+        except (KeyError, TypeError, ValueError):
+            return None
 
     @rpc
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
@@ -356,32 +496,3 @@ class GO2Connection(Module, Camera, Pointcloud):
             The result of the publish request
         """
         return self.connection.publish_request(topic, data)
-
-    @skill
-    def observe(self) -> Image | None:
-        """Returns the latest video frame from the robot camera. Use this skill for any visual world queries.
-
-        This skill provides the current camera view for perception tasks.
-        Returns None if no frame has been captured yet.
-        """
-        return self._latest_video_frame
-
-
-def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy":
-    from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-
-    connection = dimos.deploy(GO2Connection, ip=ip)
-
-    connection.pointcloud.transport = pSHMTransport(
-        f"{prefix}/lidar", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-    )
-    connection.color_image.transport = pSHMTransport(
-        f"{prefix}/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-    )
-
-    connection.cmd_vel.transport = LCMTransport(f"{prefix}/cmd_vel", Twist)
-
-    connection.camera_info.transport = LCMTransport(f"{prefix}/camera_info", CameraInfo)
-    connection.start()
-
-    return connection

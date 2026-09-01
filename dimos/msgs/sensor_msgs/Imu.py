@@ -117,3 +117,9 @@ class Imu(Timestamped):
             f"linear_acceleration={self.linear_acceleration}, "
             f"orientation={self.orientation})"
         )
+
+    def to_rerun(self, axis_length: float = 0.2):  # type: ignore[no-untyped-def]
+        """Orientation axes for rerun."""
+        import rerun as rr
+
+        return rr.TransformAxes3D(axis_length=axis_length)

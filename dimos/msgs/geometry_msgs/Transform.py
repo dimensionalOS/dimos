@@ -15,9 +15,10 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 if TYPE_CHECKING:
+    import numpy as np
     import rerun as rr
 
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -47,12 +48,12 @@ class Transform(Timestamped):
         rotation: Quaternion | None = None,
         frame_id: str = "world",
         child_frame_id: str = "unset",
-        ts: float = 0.0,
+        ts: float | None = None,
         **kwargs,
     ) -> None:
         self.frame_id = frame_id
         self.child_frame_id = child_frame_id
-        self.ts = ts if ts != 0.0 else time.time()
+        self.ts = time.time() if ts is None else ts
         self.translation = translation if translation is not None else Vector3()
         self.rotation = rotation if rotation is not None else Quaternion()
 
@@ -193,7 +194,7 @@ class Transform(Timestamped):
         else:
             raise TypeError(f"Expected Pose or PoseStamped, got {type(pose).__name__}")
 
-    def to_pose(self, **kwargs: object) -> PoseStamped:
+    def to_pose(self, **kwargs: Any) -> PoseStamped:
         """Create a Transform from a Pose or PoseStamped.
 
         Args:
@@ -206,15 +207,31 @@ class Transform(Timestamped):
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as _PoseStamped
 
         # Handle both Pose and PoseStamped
-        result: PoseStamped = _PoseStamped(
-            **{
-                "position": self.translation,
-                "orientation": self.rotation,
-                "frame_id": self.frame_id,
-            },
-            **kwargs,
-        )
+        fields: dict[str, Any] = {
+            "position": self.translation,
+            "orientation": self.rotation,
+            "frame_id": self.frame_id,
+        }
+        result: PoseStamped = _PoseStamped(**fields, **kwargs)
         return result
+
+    @classmethod
+    def from_matrix(
+        cls,
+        matrix: np.ndarray,
+        *,
+        ts: float | None = None,
+        frame_id: str = "world",
+        child_frame_id: str = "unset",
+    ) -> Transform:
+        """Build a Transform from a 4x4 homogeneous transformation matrix."""
+        return cls(
+            translation=Vector3(matrix[:3, 3]),
+            rotation=Quaternion.from_rotation_matrix(matrix[:3, :3]),
+            frame_id=frame_id,
+            child_frame_id=child_frame_id,
+            ts=ts,
+        )
 
     def to_matrix(self) -> np.ndarray:  # type: ignore[name-defined]
         """Convert Transform to a 4x4 transformation matrix.
@@ -289,17 +306,24 @@ class Transform(Timestamped):
             ts=ts,
         )
 
-    def to_rerun(self) -> rr.Transform3D:
-        """Convert to rerun Transform3D format with frame IDs.
+    def to_rerun(self, frameless: bool = False) -> rr.Transform3D:
+        """Convert to a rerun Transform3D.
 
-        Returns:
-            rr.Transform3D archetype for logging to rerun with parent/child frames
+        Args:
+            frameless: omit ``parent_frame``/``child_frame``. By default the
+                transform carries its frame IDs (resolved via rerun's tf-graph);
+                set this when positioning by entity-path hierarchy instead, where
+                the named frames would not compose.
         """
         import rerun as rr
 
+        translation = [self.translation.x, self.translation.y, self.translation.z]
+        rotation = self.rotation.to_rerun()
+        if frameless:
+            return rr.Transform3D(translation=translation, rotation=rotation)
         return rr.Transform3D(
-            translation=[self.translation.x, self.translation.y, self.translation.z],
-            rotation=self.rotation.to_rerun(),
+            translation=translation,
+            rotation=rotation,
             parent_frame="tf#/" + self.frame_id,
             child_frame="tf#/" + self.child_frame_id,
         )

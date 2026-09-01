@@ -24,6 +24,7 @@ from dimos_lcm.nav_msgs import Odometry as LCMOdometry
 import numpy as np
 
 from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
@@ -41,13 +42,13 @@ class Odometry(Timestamped):
 
     def __init__(
         self,
-        ts: float = 0.0,
+        ts: float | None = None,
         frame_id: str = "",
         child_frame_id: str = "",
         pose: PoseWithCovariance | Pose | None = None,
         twist: TwistWithCovariance | Twist | None = None,
     ) -> None:
-        self.ts = ts if ts != 0 else time.time()
+        self.ts = time.time() if ts is None else ts
         self.frame_id = frame_id
         self.child_frame_id = child_frame_id
 
@@ -130,6 +131,19 @@ class Odometry(Timestamped):
     @property
     def yaw(self) -> float:
         return self.pose.yaw
+
+    def to_pose_stamped(self) -> PoseStamped:
+        return PoseStamped(
+            ts=self.ts,
+            frame_id=self.frame_id,
+            position=[self.position.x, self.position.y, self.position.z],
+            orientation=[
+                self.orientation.x,
+                self.orientation.y,
+                self.orientation.z,
+                self.orientation.w,
+            ],
+        )
 
     # -- Serialization --
 

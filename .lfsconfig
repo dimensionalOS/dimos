@@ -1,0 +1,3 @@
+[lfs]
+	url = https://lfs.dimensionalos.com/dimensionalOS/dimos
+	fetchexclude = data/.lfs/*

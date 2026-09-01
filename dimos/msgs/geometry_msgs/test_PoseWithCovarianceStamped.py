@@ -146,12 +146,11 @@ def test_pose_with_covariance_stamped_lcm_encode_decode() -> None:
 
 
 def test_pose_with_covariance_stamped_zero_timestamp() -> None:
-    """Test that zero timestamp gets replaced with current time."""
-    pose_cov_stamped = PoseWithCovarianceStamped(ts=0.0)
+    """Test that an explicit zero timestamp is kept, and an omitted one stamps now."""
+    assert PoseWithCovarianceStamped(ts=0.0).ts == 0.0
 
-    # Should have been replaced with current time
-    assert pose_cov_stamped.ts > 0
-    assert pose_cov_stamped.ts <= time.time()
+    before = time.time()
+    assert before <= PoseWithCovarianceStamped().ts <= time.time()
 
 
 def test_pose_with_covariance_stamped_inheritance() -> None:

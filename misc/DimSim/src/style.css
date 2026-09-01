@@ -1,0 +1,992 @@
+/* ============================================================================
+  SimStudio - Professional Training Environment
+  ============================================================================ */
+:root {
+  color-scheme: dark;
+
+  /* Core Colors — flat terminal/cyberdeck */
+  --bg-primary: #06080b;
+  --bg-secondary: #0b0e13;
+  --bg-tertiary: #10141b;
+  --bg-elevated: rgba(9, 12, 17, 0.96);
+
+  /* Surface Colors */
+  --surface-1: rgba(255, 255, 255, 0.02);
+  --surface-2: rgba(255, 255, 255, 0.04);
+  --surface-3: rgba(255, 255, 255, 0.07);
+
+  /* Border Colors — hairline */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  /* Text Colors */
+  --text-primary: rgba(255, 255, 255, 0.95);
+  --text-secondary: rgba(255, 255, 255, 0.68);
+  --text-tertiary: rgba(255, 255, 255, 0.44);
+
+  /* Accent Colors — dimos-style cool cyan-white */
+  --accent-primary: #d6dde6;
+  --accent-primary-hover: #ffffff;
+  --accent-primary-subtle: rgba(214, 221, 230, 0.14);
+  --accent-primary-glow: rgba(214, 221, 230, 0.28);
+
+  --accent-success: #7fe3c4;
+  --accent-success-subtle: rgba(127, 227, 196, 0.14);
+
+  --accent-warning: #f5c06b;
+  --accent-warning-subtle: rgba(245, 192, 107, 0.12);
+
+  --accent-info: #7fd4f5;
+  --accent-info-subtle: rgba(127, 212, 245, 0.12);
+
+  /* Shadows — flat, no heavy drop shadows */
+  --shadow-sm: 0 0 0 1px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 0 0 1px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 0 0 1px rgba(0, 0, 0, 0.4);
+  --shadow-xl: 0 0 0 1px rgba(0, 0, 0, 0.5);
+
+  /* Transitions */
+  --transition-fast: 0.1s linear;
+  --transition-normal: 0.15s linear;
+  --transition-slow: 0.2s linear;
+
+  /* Border Radius — sharp corners */
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 2px;
+
+  /* Font Stacks */
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'SF Mono', 'Fira Code', 'Menlo', 'Monaco', 'Consolas', ui-monospace, monospace;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+/* ============================================================================
+   Base Styles
+   ============================================================================ */
+html, body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  overflow: hidden;
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+/* ============================================================================
+   Canvas
+   ============================================================================ */
+
+#c {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+/* ============================================================================
+   Overlay Layout
+   ============================================================================ */
+#overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  padding: 0;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 330px 1fr 380px;
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "top    top    top"
+    "left   .      right";
+  gap: 0;
+}
+/* Collapsed states for edit mode panels */
+html[data-mode="sim"] #overlay {
+  grid-template-columns: 1fr 340px;
+  grid-template-rows: 1fr;
+  grid-template-areas: ". panel";
+  padding: 16px;
+  gap: 16px;
+}
+html[data-mode="sim"] #overlay.sim-panel-collapsed {
+  grid-template-columns: 1fr 0;
+}
+/* ============================================================================
+   Slim Toolbar (UE-inspired)
+   ============================================================================ */
+/* Toolbar generic button */
+.tb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.1s linear;
+}
+.tb-btn:hover { background: rgba(255,255,255,0.04); color: var(--text-primary); border-color: var(--border-default); }
+.tb-btn.active { color: var(--accent-primary); background: var(--accent-primary-subtle); border-color: var(--accent-primary); }
+.tb-btn.tb-primary { background: transparent; color: var(--accent-primary); border: 1px solid var(--accent-primary); }
+.tb-btn.tb-primary:hover { background: var(--accent-primary-subtle); color: var(--accent-primary-hover); border-color: var(--accent-primary-hover); }
+.tb-btn.tb-danger { color: #ef4444; }
+.tb-btn.tb-danger:hover { background: rgba(239,68,68,0.12); color: #f87171; }
+.tb-btn.tb-muted { color: var(--text-tertiary); font-weight: 500; }
+.tb-btn.tb-muted:hover { color: var(--text-secondary); }
+.tb-btn svg { flex-shrink: 0; }
+/* ============================================================================
+   Buttons
+   ============================================================================ */
+button {
+  cursor: pointer;
+  user-select: none;
+  padding: 7px 14px;
+  border-radius: 0;
+  border: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transition: all var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+/* Toolbar buttons override the heavy defaults */
+.tb-btn {
+  padding: 5px 10px;
+  border-radius: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  transform: none !important;
+}
+button:hover {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary-subtle);
+  color: var(--accent-primary-hover);
+}
+button:active {
+  transform: none;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+/* Watermark logo */
+.watermark-logo {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  height: 32px;
+  width: auto;
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 9999;
+  user-select: none;
+}
+/* ============================================
+   PORTAL LOADING SCREEN
+   ============================================ */
+/* ============================================================================
+   Form Elements
+   ============================================================================ */
+input[type="text"],
+input[type="email"],
+input[type="password"],
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: 14px;
+  outline: none;
+  transition: all var(--transition-fast);
+}
+input[type="text"]:hover,
+textarea:hover {
+  border-color: var(--border-strong);
+}
+input[type="text"]:focus,
+textarea:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-primary-subtle);
+}
+input[type="text"]::placeholder,
+textarea::placeholder {
+  color: var(--text-tertiary);
+}
+textarea {
+  resize: vertical;
+  min-height: 100px;
+  font-family: inherit;
+  line-height: 1.5;
+}
+/* Checkbox Styling */
+input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--border-strong);
+  background: var(--surface-2);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: all var(--transition-fast);
+  position: relative;
+}
+input[type="checkbox"]:checked {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+input[type="checkbox"]:checked::after {
+  content: "✓";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+}
+input[type="checkbox"]:hover {
+  border-color: var(--accent-primary);
+}
+/* ============================================================================
+   Status Bar
+   ============================================================================ */
+/* ============================================================================
+   Details / Accordion
+   ============================================================================ */
+/* ============================================================================
+   Slider
+   ============================================================================ */
+/* ============================================================================
+   Side Panel (UE-inspired)
+   ============================================================================ */
+.side-panel {
+  pointer-events: auto;
+  width: 100%;
+  height: calc(100vh - 36px); /* below toolbar */
+  display: flex;
+  flex-direction: column;
+  background: #1a1d24;
+  overflow: hidden;
+}
+/* Hide panels when overlay is collapsed */
+html[data-mode="sim"] .side-panel {
+  grid-area: panel;
+  height: calc(100vh - 32px);
+  border-radius: 0;
+  border: 1px solid var(--border-default);
+  backdrop-filter: blur(20px);
+  background: var(--bg-elevated);
+}
+.panel-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.02);
+}
+.panel-title {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.panel-title::before {
+  content: "[";
+  color: var(--accent-primary);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 12px;
+  background: transparent;
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  letter-spacing: 0;
+}
+.panel-title::after {
+  content: "]";
+  color: var(--accent-primary);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 12px;
+  margin-left: 2px;
+  letter-spacing: 0;
+}
+.mode-toggle {
+  padding: 3px 8px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  font-family: var(--font-mono) !important;
+  background: transparent !important;
+  border: 1px solid var(--border-default) !important;
+  color: var(--text-tertiary) !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  border-radius: 0 !important;
+  cursor: pointer;
+  transition: all 0.1s !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+.mode-toggle:hover { background: rgba(255,255,255,0.06) !important; color: var(--text-primary) !important; }
+.panel-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+/* Right AI panel open button (shown when collapsed) */
+.sim-panel-open {
+  pointer-events: auto;
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  width: 30px;
+  height: 30px;
+  border-radius: 0;
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  z-index: 150;
+  font-family: var(--font-mono);
+}
+.sim-panel-open:hover { color: var(--text-primary); background: rgba(255,255,255,0.08); }
+.sim-panel-open.hidden { display: none; }
+.shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+.shortcuts b {
+  color: var(--accent-primary);
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid var(--border-default);
+  padding: 0 4px;
+  border-radius: 0;
+  font-size: 9px;
+  font-family: var(--font-mono);
+}
+/* Floating bottom-left shortcuts strip (always visible in sim mode) */
+.shortcuts-floating {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  padding: 8px 12px;
+  background: rgba(8, 10, 14, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  z-index: 9998;
+  backdrop-filter: blur(4px);
+}
+.shortcuts-floating b {
+  font-size: 10px;
+  padding: 1px 5px;
+}
+/* Dimos-only: hide the sim side panel + command bar + top-left status
+   pill (the small "Click to look around" + B/G chip is the human-player
+   prompt; the agent is driven externally).  Bottom-left WASD shortcuts
+   stay visible. */
+body.dimos-mode #agent-panel,
+body.dimos-mode #sim-panel-open,
+body.dimos-mode #agent-command-bar,
+body.dimos-mode .status-floating {
+  display: none !important;
+}
+/* Floating status for sim mode */
+.status-floating {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: 0;
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+  max-width: 300px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status-floating:empty { display: none; }
+/* ============================================================================
+   Outliner (Scene tree, collapsible sections)
+   ============================================================================ */
+/* ============================================================================
+   Groups in Outliner
+   ============================================================================ */
+/* ============================================================================
+   Details Panel (Properties of selected object)
+   ============================================================================ */
+/* ============================================================================
+   Transform XYZ Grid (UE-style)
+   ============================================================================ */
+/* Legacy compat: hide old elements that are now in toolbar */
+.section-label { display: none; }
+/* ============================================================================
+   Modal
+   ============================================================================ */
+/* ============================================================================
+   Agent Panel Components
+   ============================================================================ */
+/* ---------- Floating Command Bar ---------- */
+.agent-cmd-bar {
+  pointer-events: auto;
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: 0;
+  backdrop-filter: blur(16px);
+  box-shadow: none;
+  z-index: 160;
+  max-width: min(600px, calc(100vw - 32px));
+  transition: opacity var(--transition-fast);
+  opacity: 0.75;
+}
+.agent-cmd-bar:hover,
+.agent-cmd-bar:focus-within,
+.agent-cmd-bar.active {
+  opacity: 1;
+}
+.agent-cmd-status {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  max-width: 80px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agent-cmd-status:empty {
+  display: none;
+}
+.agent-cmd-input {
+  flex: 1;
+  min-width: 140px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  background: rgba(0,0,0,0.35);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 0;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+.agent-cmd-input:focus {
+  border-color: var(--accent-primary);
+}
+.agent-cmd-input::placeholder {
+  color: var(--text-tertiary);
+}
+.agent-cmd-btn {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: transparent;
+  color: var(--accent-primary);
+  border: 1px solid var(--accent-primary);
+  border-radius: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+.agent-cmd-btn:hover {
+  background: var(--accent-primary-subtle);
+  color: var(--accent-primary-hover);
+  border-color: var(--accent-primary-hover);
+}
+.agent-cmd-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.agent-cmd-stop {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+}
+.agent-cmd-stop:hover {
+  background: rgba(239,68,68,0.08);
+  border-color: #ef4444;
+  color: #f87171;
+}
+.agent-control-strip {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+.agent-control-selected {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-control-actions {
+  display: flex;
+  gap: 6px;
+}
+.agent-control-actions .tb-btn {
+  flex: 1;
+  justify-content: center;
+  padding: 5px 8px;
+  font-size: 11px;
+}
+.agent-control-task-row {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+}
+.agent-control-task-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+.agent-control-task-input:focus {
+  border-color: var(--accent-primary);
+}
+/* Agent Vision */
+.agent-vision {
+  border-bottom: 1px solid var(--border-subtle);
+}
+.agent-shot-img {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: var(--bg-primary);
+  aspect-ratio: 2.2 / 1;
+  object-fit: cover;
+}
+.agent-decision-content {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  background: var(--surface-1);
+  border-radius: 0;
+  border: 1px solid var(--border-subtle);
+  max-height: 160px;
+  overflow-y: auto;
+}
+/* Collapsible Sections */
+.agent-collapse {
+  border-bottom: 1px solid var(--border-subtle);
+}
+.agent-collapse:last-child {
+  border-bottom: none;
+}
+.agent-collapse > summary {
+  cursor: pointer;
+  padding: 9px 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-family: var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  user-select: none;
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+}
+.agent-collapse > summary::-webkit-details-marker {
+  display: none;
+}
+.agent-collapse > summary::before {
+  content: "▸";
+  font-size: 10px;
+  transition: transform var(--transition-fast);
+}
+.agent-collapse[open] > summary::before {
+  transform: rotate(90deg);
+}
+.agent-collapse > summary:hover {
+  background: var(--surface-1);
+  color: var(--text-primary);
+}
+.agent-collapse-content {
+  padding: 0 12px 12px;
+}
+.agent-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+/* Sub-collapse (nested details) */
+.agent-sub-collapse {
+  border: 1px solid var(--border-subtle);
+  border-radius: 0;
+  margin-bottom: 6px;
+  background: var(--surface-1);
+}
+.agent-sub-collapse:last-child {
+  margin-bottom: 0;
+}
+.agent-sub-collapse > summary {
+  cursor: pointer;
+  padding: 7px 10px;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  user-select: none;
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+}
+.agent-sub-collapse > summary::-webkit-details-marker {
+  display: none;
+}
+.agent-sub-collapse > summary::before {
+  content: "▸";
+  font-size: 9px;
+  transition: transform var(--transition-fast);
+}
+.agent-sub-collapse[open] > summary::before {
+  transform: rotate(90deg);
+}
+.agent-sub-collapse > summary:hover {
+  color: var(--text-secondary);
+}
+.agent-pre {
+  margin: 0;
+  padding: 10px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  background: var(--bg-primary);
+  max-height: 300px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border-subtle);
+}
+/* Activity Log */
+.agent-log {
+  padding: 8px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.agent-log-item {
+  padding: 8px 10px;
+  border-radius: 0;
+  background: var(--surface-1);
+  border-left: 2px solid var(--border-default);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  line-height: 1.4;
+}
+/* ============================================================================
+   Crosshair
+   ============================================================================ */
+#crosshair {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0.9;
+}
+#crosshair::before,
+#crosshair::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  transform: translate(-50%, -50%);
+  border-radius: 1px;
+  transition: all var(--transition-fast);
+}
+#crosshair::before {
+  width: 12px;
+  height: 2px;
+}
+#crosshair::after {
+  width: 2px;
+  height: 12px;
+}
+#crosshair.interactable::before,
+#crosshair.interactable::after {
+  background: var(--accent-primary);
+  box-shadow: 0 0 10px var(--accent-primary-glow);
+}
+#crosshair.interactable {
+  opacity: 1;
+}
+#crosshair.holding::before,
+#crosshair.holding::after {
+  background: var(--accent-warning);
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+}
+#crosshair.holding {
+  opacity: 1;
+}
+/* ============================================================================
+   Interaction Hint
+   ============================================================================ */
+#interaction-hint {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) translateY(40px);
+  pointer-events: none;
+  opacity: 0;
+  transition: all var(--transition-normal);
+  z-index: 101;
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent-primary);
+  border-radius: 0;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  white-space: nowrap;
+  backdrop-filter: blur(12px);
+  box-shadow: none;
+}
+#interaction-hint.visible {
+  opacity: 1;
+  transform: translate(-50%, -50%) translateY(35px);
+}
+#interaction-hint .hint-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  background: transparent;
+  border: 1px solid var(--accent-primary);
+  border-radius: 0;
+  padding: 0 6px;
+  margin-left: 8px;
+  font-size: 10px;
+  font-weight: 500;
+  font-family: var(--font-mono);
+  color: var(--accent-primary);
+  box-shadow: none;
+}
+/* ============================================================================
+   Interaction Popup
+   ============================================================================ */
+#interaction-popup {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) translateY(70px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: 0;
+  padding: 6px;
+  z-index: 150;
+  min-width: 220px;
+  backdrop-filter: blur(20px);
+  box-shadow: none;
+  animation: popupSlideIn 0.2s ease;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: auto;
+}
+@keyframes popupSlideIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) translateY(60px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) translateY(70px) scale(1);
+  }
+}
+.interact-action-btn {
+  width: 100%;
+  padding: 10px 14px !important;
+  text-align: left !important;
+  justify-content: flex-start !important;
+  margin-bottom: 4px;
+  background: var(--surface-1) !important;
+  border: 1px solid var(--border-subtle) !important;
+}
+.interact-action-btn:last-child {
+  margin-bottom: 0;
+}
+.interact-action-btn:hover {
+  background: var(--accent-primary-subtle) !important;
+  border-color: rgba(99, 102, 241, 0.3) !important;
+}
+/* ============================================================================
+   Visibility Utilities
+   ============================================================================ */
+.hidden {
+  display: none !important;
+}
+.edit-only,
+.sim-only {
+  /* default shown */
+}
+/* ============================================================================
+   Responsive Design
+   ============================================================================ */
+@media (max-width: 1100px) {#overlay {
+    grid-template-columns: 280px 1fr 320px;
+  }
+.tb-btn span { display: none; }
+/* hide text labels, keep icons */
+.tb-btn svg + span { display: none; }}
+@media (max-width: 900px) {#overlay {
+    grid-template-columns: 0 1fr 320px;
+  }}
+@media (max-width: 640px) {#overlay {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    grid-template-areas: "top" ".";
+  }
+.side-panel {
+    height: auto;
+    max-height: 50vh;
+  }}
+/* ============================================================================
+   Scrollbar Styling
+   ============================================================================ */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+/* ============================================================================
+   Selection
+   ============================================================================ */
+::selection {
+  background: var(--accent-primary-subtle);
+  color: var(--text-primary);
+}
+/* ============================================================================
+   Level Editor – Shape Dropdown, Primitives, Lights
+   ============================================================================ */
+/* Primitive & Light Properties Panel */
+input[type="color"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 32px;
+  height: 24px;
+  border: 1px solid var(--border-default);
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 2px;
+}
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+input[type="color"]::-webkit-color-swatch { border: none; border-radius: 0; }
+/* ============================================================================
+   Agent Sensor Panels (sidebar)
+   ============================================================================ */
+.agent-sensor-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 4px 8px 2px;
+}

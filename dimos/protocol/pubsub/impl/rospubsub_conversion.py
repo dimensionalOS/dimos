@@ -26,11 +26,13 @@ from __future__ import annotations
 
 import importlib
 import re
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
     from dimos.msgs.protocol import DimosMsg
     from dimos.protocol.pubsub.impl.rospubsub import ROSMessage
+
+DimosMsgT = TypeVar("DimosMsgT", bound="DimosMsg")
 
 
 # Complex types that need LCM roundtrip (explicit list)
@@ -38,6 +40,7 @@ if TYPE_CHECKING:
 COMPLEX_TYPES: set[str] = {
     "sensor_msgs.PointCloud2",
     "sensor_msgs.Image",
+    "sensor_msgs.CompressedImage",
     "sensor_msgs.CameraInfo",
     "geometry_msgs.PoseStamped",
 }
@@ -336,7 +339,7 @@ def dimos_to_ros(msg: DimosMsg, ros_type: type[ROSMessage]) -> ROSMessage:
     return ros_msg
 
 
-def ros_to_dimos(msg: Any, dimos_type: type[DimosMsg]) -> DimosMsg:
+def ros_to_dimos(msg: Any, dimos_type: type[DimosMsgT]) -> DimosMsgT:
     """Convert a ROS message to a dimos message.
 
     For complex types (PointCloud2, Image, CameraInfo), uses LCM roundtrip
@@ -357,7 +360,7 @@ def ros_to_dimos(msg: Any, dimos_type: type[DimosMsg]) -> DimosMsg:
         lcm_type = derive_lcm_type(dimos_type)
         lcm_msg = lcm_type()
         _copy_ros_to_lcm_recursive(msg, lcm_msg)
-        return dimos_type.lcm_decode(lcm_msg.lcm_encode())
+        return cast("DimosMsgT", dimos_type.lcm_decode(lcm_msg.lcm_encode()))
 
     # Simple type: recursive field copy (handles nested messages)
     dimos_msg = dimos_type()

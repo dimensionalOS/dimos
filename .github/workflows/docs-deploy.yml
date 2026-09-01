@@ -1,0 +1,80 @@
+name: Deploy docs
+
+# The rendered site is served straight from the working tree of the pages
+# repo, so deploying is a build and a sync. bin/docs-deploy does exactly what
+# it does locally; this workflow only supplies the checkout and the key.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "misc/mkdocs/**"
+      - "README.md"
+      - "assets/readme/**"
+      - "bin/docs-deploy"
+      - ".github/workflows/docs-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The docs media is LFS-tracked, and without it the build copies 130 byte
+      # pointer files where the images should be, with nothing failing to say
+      # so. Fetched by path: `lfs: true` on the checkout would pull all 50GB in
+      # the repo, most of it recorded sessions under data/.
+      - name: Fetch the LFS media the site needs
+        run: git lfs pull --include="docs/**,assets/readme/**" --exclude=""
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      # --only-group, not --group: the site build imports nothing from dimos,
+      # and syncing the project drags in the default groups, where pyaudio
+      # wants portaudio headers this runner has no reason to carry.
+      - name: Install docs dependencies
+        run: uv sync --only-group docs
+
+      # Deploy keys are disabled org-wide, so write access to the pages repo
+      # comes from the dimos-docs-bot app: a token minted per run, scoped to
+      # that one repository, expiring with the job.
+      - name: Mint a token for the pages repo
+        uses: actions/create-github-app-token@v3
+        id: pages-token
+        with:
+          app-id: ${{ vars.DOCS_BOT_APP_ID }}
+          private-key: ${{ secrets.DOCS_BOT_APP_PRIVATE_KEY }}
+          owner: dimensionalOS
+          repositories: docs
+
+      - name: Check out the pages repo
+        uses: actions/checkout@v7
+        with:
+          repository: dimensionalOS/docs
+          path: pages
+          token: ${{ steps.pages-token.outputs.token }}
+
+      - name: Build, stage and commit
+        run: |
+          git -C pages config user.name "dimos-docs-bot[bot]"
+          git -C pages config user.email \
+            "${{ steps.pages-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+          bin/docs-deploy --pages-repo pages --target . --commit
+
+      # docs-deploy exits without committing when the build is byte-identical,
+      # so an unchanged run pushes nothing rather than failing.
+      - name: Push
+        working-directory: pages
+        run: git push

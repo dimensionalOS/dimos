@@ -17,7 +17,6 @@ from contextlib import contextmanager
 import math
 import pickle
 import threading
-import time
 from typing import Any
 
 import lcm
@@ -25,6 +24,7 @@ import lcm
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.service.lcmservice import LCMService
+from dimos.utils.testing.waiting import wait_until
 
 
 class LcmSpy(LCMService):
@@ -89,30 +89,15 @@ class LcmSpy(LCMService):
         finally:
             self.unregister_topic_listener(topic, listener)
 
-    def wait_until(
-        self,
-        *,
-        condition: Callable[[], bool],
-        timeout: float,
-        error_message: str,
-        poll_interval: float = 0.1,
-    ) -> None:
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            if condition():
-                return
-            time.sleep(poll_interval)
-        raise TimeoutError(error_message)
-
     def wait_for_saved_topic(self, topic: str, timeout: float = 30.0) -> None:
         def condition() -> bool:
             with self._messages_lock:
                 return topic in self.messages
 
-        self.wait_until(
-            condition=condition,
+        wait_until(
+            condition,
             timeout=timeout,
-            error_message=f"Timeout waiting for topic {topic}",
+            message=f"Timeout waiting for topic {topic}",
         )
 
     def wait_for_saved_topic_content(
@@ -122,10 +107,10 @@ class LcmSpy(LCMService):
             with self._messages_lock:
                 return any(content_contains in msg for msg in self.messages.get(topic, []))
 
-        self.wait_until(
-            condition=condition,
+        wait_until(
+            condition,
             timeout=timeout,
-            error_message=f"Timeout waiting for '{topic}' to contain '{content_contains!r}'",
+            message=f"Timeout waiting for '{topic}' to contain '{content_contains!r}'",
         )
 
     def wait_for_message_pickle_result(
@@ -143,10 +128,10 @@ class LcmSpy(LCMService):
                 event.set()
 
         with self.topic_listener(topic, listener):
-            self.wait_until(
-                condition=event.is_set,
+            wait_until(
+                event.is_set,
                 timeout=timeout,
-                error_message=fail_message,
+                message=fail_message,
             )
 
     def wait_for_message_result(
@@ -165,10 +150,10 @@ class LcmSpy(LCMService):
                 event.set()
 
         with self.topic_listener(topic, listener):
-            self.wait_until(
-                condition=event.is_set,
+            wait_until(
+                event.is_set,
                 timeout=timeout,
-                error_message=fail_message,
+                message=fail_message,
             )
 
     def wait_until_odom_position(

@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import math
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from dimos.visualization.rerun.bridge import RerunData, RerunMulti
+    from dimos.visualization.rerun.bridge import RerunData
 
 # Import LCM types
 from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo
@@ -182,11 +182,13 @@ class CameraInfo(Timestamped):
         )
 
     @classmethod
-    def from_yaml(cls, yaml_file: str) -> CameraInfo:
+    def from_yaml(cls, yaml_file: str, frame_id: str = "camera_optical") -> CameraInfo:
         """Create CameraInfo from YAML file.
 
         Args:
             yaml_file: Path to YAML file containing camera calibration data
+            frame_id: Optical frame the intrinsics apply to; must match the
+                ``Image.frame_id`` published for that camera
 
         Returns:
             CameraInfo instance with loaded calibration data
@@ -223,7 +225,7 @@ class CameraInfo(Timestamped):
             K=K,
             R=R,
             P=P,
-            frame_id="camera_optical",
+            frame_id=frame_id,
         )
 
     def get_K_matrix(self) -> np.ndarray:
@@ -401,7 +403,7 @@ class CameraInfo(Timestamped):
         fx, fy = self.K[0], self.K[4]
         cx, cy = self.K[2], self.K[5]
 
-        pinhole = rr.Pinhole(
+        pinhole_kwargs: dict[str, Any] = dict(
             focal_length=[fx, fy],
             principal_point=[cx, cy],
             width=self.width,
@@ -412,39 +414,29 @@ class CameraInfo(Timestamped):
         # If no image topic is specified, We don't know which Image this CameraInfo refers to
         # return just the pinhole
         if not image_topic:
-            return pinhole
+            return rr.Pinhole(**pinhole_kwargs)
 
-        ret: RerunMulti = []
+        return [(image_topic, self.to_rerun_pinhole(image_plane_distance, optical_frame))]
 
-        # Add pinhole under world/image_topic (we know which Image this CameraInfo refers to)
-        # Note: parent_frame is supposed to work according to:
-        # https://rerun.io/docs/reference/types/archetypes/pinhole
-        # But it doesn't, so we add the transform separately below
-        ret.append(
-            (
-                image_topic,
-                rr.Pinhole(
-                    focal_length=[fx, fy],
-                    principal_point=[cx, cy],
-                    width=self.width,
-                    height=self.height,
-                    image_plane_distance=image_plane_distance,
-                ),
-            )
+    def to_rerun_pinhole(
+        self, image_plane_distance: float = 1.0, optical_frame: str | None = None
+    ) -> Any:
+        """The Pinhole to log on this camera's image entity, parented to its optical frame."""
+        import rerun as rr
+
+        fx, fy = self.K[0], self.K[4]
+        cx, cy = self.K[2], self.K[5]
+        # Re-parent the image entity here rather than with a separate
+        # Transform3D, which would give it a second parent and lose the frustum.
+        frame = optical_frame or self.frame_id
+        return rr.Pinhole(
+            focal_length=[fx, fy],
+            principal_point=[cx, cy],
+            width=self.width,
+            height=self.height,
+            image_plane_distance=image_plane_distance,
+            parent_frame=f"tf#/{frame}" if frame else None,
         )
-
-        if not optical_frame:
-            return ret
-
-        # Add 3d transform from optical frame to world/image_topic (We know where the camera is)
-        ret.append(
-            (
-                image_topic,
-                rr.Transform3D(parent_frame=f"tf#/{optical_frame}"),
-            )
-        )
-
-        return ret
 
 
 class CalibrationProvider:

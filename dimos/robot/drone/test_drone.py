@@ -27,7 +27,6 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.drone.connection_module import DroneConnectionModule
@@ -196,7 +195,7 @@ class TestReplayMode(unittest.TestCase):
 
     def test_fake_mavlink_connection(self) -> None:
         """Test FakeMavlinkConnection replays messages correctly."""
-        with patch("dimos.memory.timeseries.legacy.LegacyPickleStore") as mock_replay:
+        with patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore") as mock_replay:
             # Mock the replay stream
             MagicMock()
             mock_messages = [
@@ -222,7 +221,7 @@ class TestReplayMode(unittest.TestCase):
 
     def test_fake_video_stream_no_throttling(self) -> None:
         """Test FakeDJIVideoStream returns replay stream with format fix."""
-        with patch("dimos.memory.timeseries.legacy.LegacyPickleStore") as mock_replay:
+        with patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore") as mock_replay:
             mock_stream = MagicMock()
             mock_replay.return_value.stream.return_value = mock_stream
 
@@ -284,7 +283,7 @@ class TestReplayMode(unittest.TestCase):
 
         os.environ["DRONE_CONNECTION"] = "replay"
 
-        with patch("dimos.memory.timeseries.legacy.LegacyPickleStore") as mock_replay:
+        with patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore") as mock_replay:
             # Set up MAVLink replay stream
             mavlink_messages = [
                 {"mavpackettype": "HEARTBEAT", "type": 2, "base_mode": 193},
@@ -413,160 +412,10 @@ class TestReplayMode(unittest.TestCase):
                 module.stop()
 
 
-@unittest.skip("Skipped: TestDroneFullIntegration tests deprecated Drone class")
-class TestDroneFullIntegration(unittest.TestCase):
-    """Full integration test of Drone class with replay mode."""
-
-    def setUp(self) -> None:
-        """Set up test environment."""
-        # Mock the DimOS core module
-        self.mock_dimos = MagicMock()
-        self.mock_dimos.deploy.return_value = MagicMock()
-
-        # Mock pubsub.lcm.autoconf
-        self.pubsub_patch = patch("dimos.protocol.pubsub.lcm.autoconf")
-        self.pubsub_patch.start()
-
-    def tearDown(self) -> None:
-        """Clean up patches."""
-        self.pubsub_patch.stop()
-
-    @patch("dimos.robot.drone.drone.ModuleCoordinator")
-    @patch("dimos.memory.timeseries.legacy.LegacyPickleStore")
-    def test_full_system_with_replay(self, mock_replay, mock_coordinator_class) -> None:
-        """Test full drone system initialization and operation with replay mode."""
-        # Set up mock replay data
-        mavlink_messages = [
-            {"mavpackettype": "HEARTBEAT", "type": 2, "base_mode": 193, "armed": True},
-            {"mavpackettype": "ATTITUDE", "roll": 0.1, "pitch": 0.2, "yaw": 0.3},
-            {
-                "mavpackettype": "GLOBAL_POSITION_INT",
-                "lat": 377810501,
-                "lon": -1224069671,
-                "alt": 5000,
-                "relative_alt": 5000,
-                "vx": 100,  # 1 m/s North
-                "vy": 200,  # 2 m/s East
-                "vz": -50,  # 0.5 m/s Up
-                "hdg": 9000,  # 90 degrees
-            },
-            {
-                "mavpackettype": "BATTERY_STATUS",
-                "voltages": [3800, 3800, 3800, 3800],
-                "battery_remaining": 75,
-            },
-        ]
-
-        video_frames = [
-            Image(
-                data=np.random.randint(0, 255, (360, 640, 3), dtype=np.uint8),
-                format=ImageFormat.BGR,
-            )
-        ]
-
-        def replay_side_effect(store_name: str):
-            mock = MagicMock()
-            if "mavlink" in store_name:
-                # Create stream that emits MAVLink messages
-                stream = MagicMock()
-                stream.subscribe = lambda callback: [callback(msg) for msg in mavlink_messages]
-                mock.stream.return_value = stream
-            elif "video" in store_name:
-                # Create stream that emits video frames
-                stream = MagicMock()
-                stream.subscribe = lambda callback: [callback(frame) for frame in video_frames]
-                mock.stream.return_value = stream
-            return mock
-
-        mock_replay.side_effect = replay_side_effect
-
-        # Mock ModuleCoordinator
-        mock_coordinator_class.return_value = self.mock_dimos
-
-        # Create drone in replay mode
-        drone = Drone(connection_string="replay", video_port=5600)
-
-        # Mock the deployed modules
-        mock_connection = MagicMock()
-        mock_camera = MagicMock()
-
-        # Set up return values for module methods
-        mock_connection.start.return_value = True
-        mock_connection.get_odom.return_value = PoseStamped(
-            position=Vector3(1.0, 2.0, 3.0), orientation=Quaternion(0, 0, 0, 1), frame_id="world"
-        )
-        mock_connection.get_status.return_value = {
-            "armed": True,
-            "battery_voltage": 15.2,
-            "battery_remaining": 75,
-            "altitude": 5.0,
-        }
-
-        mock_camera.start.return_value = True
-
-        # Configure deploy to return our mocked modules
-        def deploy_side_effect(module_class, **kwargs):
-            if "DroneConnectionModule" in str(module_class):
-                return mock_connection
-            elif "DroneCameraModule" in str(module_class):
-                return mock_camera
-            return MagicMock()
-
-        self.mock_dimos.deploy.side_effect = deploy_side_effect
-
-        # Start the drone system
-        drone.start()
-
-        # Verify modules were deployed
-        self.assertEqual(self.mock_dimos.deploy.call_count, 4)
-
-        # Test get_odom
-        odom = drone.get_odom()
-        self.assertIsNotNone(odom)
-        self.assertEqual(odom.position.x, 1.0)
-        self.assertEqual(odom.position.y, 2.0)
-        self.assertEqual(odom.position.z, 3.0)
-
-        # Test get_status
-        status = drone.get_status()
-        self.assertIsNotNone(status)
-        self.assertTrue(status["armed"])
-        self.assertEqual(status["battery_remaining"], 75)
-
-        # Test movement command
-        drone.move(Vector3(1.0, 0.0, 0.5), duration=2.0)
-        mock_connection.move.assert_called_once_with(Vector3(1.0, 0.0, 0.5), 2.0)
-
-        # Test control commands
-        drone.arm()
-        mock_connection.arm.assert_called_once()
-
-        drone.takeoff(altitude=10.0)
-        mock_connection.takeoff.assert_called_once_with(10.0)
-
-        drone.land()
-        mock_connection.land.assert_called_once()
-
-        drone.disarm()
-        mock_connection.disarm.assert_called_once()
-
-        # Test mode setting
-        drone.set_mode("GUIDED")
-        mock_connection.set_mode.assert_called_once_with("GUIDED")
-
-        # Clean up
-        drone.stop()
-
-        # Verify cleanup was called
-        mock_connection.stop.assert_called_once()
-        mock_camera.stop.assert_called_once()
-        self.mock_dimos.stop.assert_called_once()
-
-
 class TestDroneControlCommands(unittest.TestCase):
     """Test drone control commands with FakeMavlinkConnection."""
 
-    @patch("dimos.memory.timeseries.legacy.LegacyPickleStore")
+    @patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore")
     @patch("dimos.utils.data.get_data")
     def test_arm_disarm_commands(self, mock_get_data, mock_replay) -> None:
         """Test arm and disarm commands work with fake connection."""
@@ -585,7 +434,7 @@ class TestDroneControlCommands(unittest.TestCase):
         result = conn.disarm()
         self.assertIsInstance(result, bool)  # Should return bool without crashing
 
-    @patch("dimos.memory.timeseries.legacy.LegacyPickleStore")
+    @patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore")
     @patch("dimos.utils.data.get_data")
     def test_takeoff_land_commands(self, mock_get_data, mock_replay) -> None:
         """Test takeoff and land commands with fake connection."""
@@ -604,7 +453,7 @@ class TestDroneControlCommands(unittest.TestCase):
         result = conn.land()
         self.assertIsNotNone(result)
 
-    @patch("dimos.memory.timeseries.legacy.LegacyPickleStore")
+    @patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore")
     @patch("dimos.utils.data.get_data")
     def test_set_mode_command(self, mock_get_data, mock_replay) -> None:
         """Test flight mode setting with fake connection."""
@@ -625,7 +474,7 @@ class TestDroneControlCommands(unittest.TestCase):
 class TestDronePerception(unittest.TestCase):
     """Test drone perception capabilities."""
 
-    @patch("dimos.memory.timeseries.legacy.LegacyPickleStore")
+    @patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore")
     @patch("dimos.utils.data.get_data")
     def test_video_stream_replay(self, mock_get_data, mock_replay) -> None:
         """Test video stream works with replay data."""
@@ -695,7 +544,7 @@ class TestDronePerception(unittest.TestCase):
 class TestDroneMovementAndOdometry(unittest.TestCase):
     """Test drone movement commands and odometry."""
 
-    @patch("dimos.memory.timeseries.legacy.LegacyPickleStore")
+    @patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore")
     @patch("dimos.utils.data.get_data")
     def test_movement_command_conversion(self, mock_get_data, mock_replay) -> None:
         """Test movement commands are properly converted from ROS to NED."""
@@ -715,7 +564,7 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
         # Movement should be converted to NED internally
         # The fake connection doesn't actually send commands, but it should not crash
 
-    @patch("dimos.memory.timeseries.legacy.LegacyPickleStore")
+    @patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore")
     @patch("dimos.utils.data.get_data")
     def test_odometry_from_replay(self, mock_get_data, mock_replay) -> None:
         """Test odometry is properly generated from replay messages."""
@@ -762,7 +611,7 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
         self.assertIsNotNone(odom.orientation)
         self.assertEqual(odom.frame_id, "world")
 
-    @patch("dimos.memory.timeseries.legacy.LegacyPickleStore")
+    @patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore")
     @patch("dimos.utils.data.get_data")
     def test_position_integration_indoor(self, mock_get_data, mock_replay) -> None:
         """Test position integration for indoor flight without GPS."""
@@ -807,7 +656,7 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
 class TestDroneStatusAndTelemetry(unittest.TestCase):
     """Test drone status and telemetry reporting."""
 
-    @patch("dimos.memory.timeseries.legacy.LegacyPickleStore")
+    @patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore")
     @patch("dimos.utils.data.get_data")
     def test_status_extraction(self, mock_get_data, mock_replay) -> None:
         """Test status is properly extracted from MAVLink messages."""
@@ -852,7 +701,7 @@ class TestDroneStatusAndTelemetry(unittest.TestCase):
         self.assertIn("altitude", status)
         self.assertIn("heading", status)
 
-    @patch("dimos.memory.timeseries.legacy.LegacyPickleStore")
+    @patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore")
     @patch("dimos.utils.data.get_data")
     def test_telemetry_json_publishing(self, mock_get_data, mock_replay) -> None:
         """Test full telemetry is published as JSON."""
@@ -906,7 +755,7 @@ class TestDroneStatusAndTelemetry(unittest.TestCase):
 class TestFlyToErrorHandling(unittest.TestCase):
     """Test fly_to() error handling paths."""
 
-    @patch("dimos.memory.timeseries.legacy.LegacyPickleStore")
+    @patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore")
     @patch("dimos.utils.data.get_data")
     def test_concurrency_lock(self, mock_get_data, mock_replay) -> None:
         """flying_to_target=True rejects concurrent fly_to() calls."""
@@ -920,7 +769,7 @@ class TestFlyToErrorHandling(unittest.TestCase):
         result = conn.fly_to(37.0, -122.0, 10.0)
         self.assertIn("Already flying to target", result)
 
-    @patch("dimos.memory.timeseries.legacy.LegacyPickleStore")
+    @patch("dimos.utils.testing.legacy_pickle.LegacyPickleStore")
     @patch("dimos.utils.data.get_data")
     def test_error_when_not_connected(self, mock_get_data, mock_replay) -> None:
         """connected=False returns error immediately."""

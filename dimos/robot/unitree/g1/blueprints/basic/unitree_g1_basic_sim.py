@@ -17,15 +17,13 @@
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
-from dimos.robot.unitree.g1.blueprints.primitive.uintree_g1_primitive_no_nav import (
-    uintree_g1_primitive_no_nav,
+from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_primitive_no_nav import (
+    unitree_g1_primitive_no_nav,
 )
 from dimos.robot.unitree.g1.mujoco_sim import G1SimConnection
 
 unitree_g1_basic_sim = autoconnect(
-    uintree_g1_primitive_no_nav,
+    unitree_g1_primitive_no_nav,
     G1SimConnection.blueprint(),
     ReplanningAStarPlanner.blueprint(),
 )
-
-__all__ = ["unitree_g1_basic_sim"]

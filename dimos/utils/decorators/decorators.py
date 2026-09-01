@@ -115,6 +115,53 @@ def limit(max_freq: float, accumulator: Accumulator | None = None):  # type: ign
     return decorator
 
 
+_T = TypeVar("_T")
+_R = TypeVar("_R")
+_lock_creation_lock = threading.Lock()
+
+
+class cached_property(Generic[_T, _R]):
+    """Thread-safe lazy property. Computes once per instance under a per-instance lock."""
+
+    def __init__(self, fget: Callable[[_T], _R]) -> None:
+        self.fget = fget
+        self.attrname: str | None = None
+        self.__doc__ = fget.__doc__
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        if self.attrname is None:
+            self.attrname = name
+        elif name != self.attrname:
+            raise TypeError(
+                f"Cannot assign cached_property to two different names "
+                f"({self.attrname!r} and {name!r})."
+            )
+
+    def __get__(self, instance: _T | None, owner: type | None = None) -> _R:
+        if instance is None:
+            return self  # type: ignore[return-value]
+        if self.attrname is None:
+            raise TypeError("cached_property used outside a class body")
+        cache_attr = f"_cached_{self.attrname}"
+        lock_attr = f"_lock_{self.attrname}"
+        cached = instance.__dict__.get(cache_attr, _MISSING)
+        if cached is not _MISSING:
+            return cast("_R", cached)
+        lock = instance.__dict__.get(lock_attr)
+        if lock is None:
+            with _lock_creation_lock:
+                lock = instance.__dict__.setdefault(lock_attr, threading.Lock())
+        with lock:
+            cached = instance.__dict__.get(cache_attr, _MISSING)
+            if cached is _MISSING:
+                cached = self.fget(instance)
+                instance.__dict__[cache_attr] = cached
+        return cast("_R", cached)
+
+
+_MISSING: Any = object()
+
+
 def simple_mcache(method: Callable[..., _CacheReturn]) -> CachedMethod[_CacheReturn]:
     """
     Decorator to cache the result of a method call on the instance.

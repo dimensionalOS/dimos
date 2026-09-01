@@ -60,7 +60,7 @@ def damped_pseudoinverse(
         n x 6 pseudoinverse matrix
 
     Example:
-        J = world.get_jacobian(ctx, robot_id)
+        J = world.get_jacobian(ctx)
         J_pinv = damped_pseudoinverse(J, damping=0.01)
         q_dot = J_pinv @ twist
     """
@@ -88,7 +88,7 @@ def check_singularity(
         True if near singularity (manipulability < threshold)
 
     Example:
-        J = world.get_jacobian(ctx, robot_id)
+        J = world.get_jacobian(ctx)
         if check_singularity(J, threshold=0.001):
             logger.warning("Near singularity, using damped IK")
     """
@@ -114,7 +114,7 @@ def get_manipulability(J: Jacobian) -> float:
         Manipulability measure (non-negative)
 
     Example:
-        J = world.get_jacobian(ctx, robot_id)
+        J = world.get_jacobian(ctx)
         w = get_manipulability(J)
         print(f"Manipulability: {w:.4f}")
     """
@@ -140,7 +140,7 @@ def compute_pose_error(
         Tuple of (position_error, orientation_error) in meters and radians
 
     Example:
-        current = world.get_ee_pose(ctx, robot_id)
+        current = world.get_ee_pose(ctx)
         pos_err, ori_err = compute_pose_error(current, target)
         converged = pos_err < 0.001 and ori_err < 0.01
     """

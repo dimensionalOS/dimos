@@ -1,0 +1,61 @@
+# release.yml is dispatch-only, so changes to it (including dependabot bumps of
+# pypa/cibuildwheel) merge without ever being executed. This smoke-builds one wheel
+# and the sdist at PR time so release-build breakage surfaces before release day.
+name: release-build-check
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/workflows/release-build-check.yml
+      - .github/actions/build-cockpit/action.yml
+      - .github/scripts/check_sdist.py
+      - .github/scripts/wheel_smoke.py
+      - pyproject.toml
+      - setup.py
+      - MANIFEST.in
+      - web/cockpit/**
+      - web/sdk/**
+      - web/shared/**
+      - web/deno.json
+      - web/deno.lock
+      - dimos/utils/deno.py
+
+permissions: {}
+
+jobs:
+  build-one-wheel:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Keep in sync with the build-wheels env in release.yml
+      CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_34
+      CIBW_TEST_COMMAND: "python {project}/.github/scripts/wheel_smoke.py"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Build cockpit dist
+        uses: ./.github/actions/build-cockpit
+      - name: Build one wheel
+        uses: pypa/cibuildwheel@v4.2.0
+        with:
+          only: cp312-manylinux_x86_64
+
+  build-sdist:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Build cockpit dist
+        uses: ./.github/actions/build-cockpit
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+      - name: Build sdist
+        run: uv build --sdist
+      - name: Check sdist contents
+        run: python3 .github/scripts/check_sdist.py dist/*.tar.gz

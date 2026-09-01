@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 R1 Pro Test Runner — Single DDS Session
 
@@ -11,18 +25,23 @@ Usage:
     python3 scripts/r1pro_test/run_all_tests.py --skip-chassis
     python3 scripts/r1pro_test/run_all_tests.py --skip-arm
 """
-import sys
+
 import argparse
 
 # Ensure scripts package is importable
 from pathlib import Path
+import sys
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import rclpy
-from scripts.r1pro_test import test_01_topic_discovery as t01
-from scripts.r1pro_test import test_02_read_arm_feedback as t02
-from scripts.r1pro_test import test_03_chassis_command as t03
-from scripts.r1pro_test import test_04_arm_joint_command as t04
+
+from scripts.r1pro_test import (
+    test_01_topic_discovery as t01,
+    test_02_read_arm_feedback as t02,
+    test_03_chassis_command as t03,
+    test_04_arm_joint_command as t04,
+)
 
 
 def main():
@@ -65,7 +84,9 @@ def main():
         print("\n[SKIPPED] Test 03: Chassis Command")
         results["03_chassis_command"] = None
     else:
-        if not confirm("Ready for Test 03 (Chassis — robot will move, gatekeeper must be running)?"):
+        if not confirm(
+            "Ready for Test 03 (Chassis — robot will move, gatekeeper must be running)?"
+        ):
             print("Stopping early.")
             rclpy.shutdown()
             return True

@@ -1,0 +1,8 @@
+* @leshy @paul-nechifor @spomichter @mustafab0 @Dreamsorcerer @aclauer
+/.github/ @Dreamsorcerer @leshy @paul-nechifor @spomichter
+/dimos/mapping/ @leshy @paul-nechifor @spomichter @aclauer
+/dimos/perception/ @leshy
+
+# Any experimental/ dir, anywhere
+# Last match wins, so this must stay at the bottom.
+experimental/ @leshy @paul-nechifor @spomichter @mustafab0 @Dreamsorcerer @aclauer @bogwi @jeff-hykin @TomCC7

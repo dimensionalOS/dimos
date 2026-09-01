@@ -28,7 +28,6 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.go2.connection import GO2Connection
 
 _go2_joints = make_twist_base_joints("go2")
@@ -67,10 +66,7 @@ unitree_go2_coordinator = (
             ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
             ("go2_cmd_vel", Twist): LCMTransport("/go2/cmd_vel", Twist),
             ("go2_odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
-            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
     )
     .global_config(obstacle_avoidance=False)
 )
-
-__all__ = ["unitree_go2_coordinator"]

@@ -1,6 +1,25 @@
 #!/usr/bin/env python3
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Raw-socket LCM channel-rate meter for udpm://239.255.76.67:7300 (lo)."""
-import socket, struct, time, collections, sys
+
+import collections
+import socket
+import struct
+import sys
+import time
 
 GRP, PORT, DUR = "239.255.76.67", 7300, float(sys.argv[1]) if len(sys.argv) > 1 else 12.0
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -10,8 +29,11 @@ s.bind((GRP, PORT))
 # join on loopback (LCM ttl=0 routed via lo) and default
 for ifip in ("127.0.0.1", "0.0.0.0"):
     try:
-        s.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
-                     socket.inet_aton(GRP) + socket.inet_aton(ifip))
+        s.setsockopt(
+            socket.IPPROTO_IP,
+            socket.IP_ADD_MEMBERSHIP,
+            socket.inet_aton(GRP) + socket.inet_aton(ifip),
+        )
     except OSError:
         pass
 s.settimeout(1.0)
@@ -22,7 +44,7 @@ t0 = time.time()
 while time.time() - t0 < DUR:
     try:
         pkt, _ = s.recvfrom(65535)
-    except socket.timeout:
+    except TimeoutError:
         continue
     if len(pkt) < 8:
         continue
@@ -49,4 +71,4 @@ print(f"--- LCM {GRP}:{PORT}, {el:.1f}s ---")
 if not counts:
     print("NO TRAFFIC SEEN")
 for ch, n in sorted(counts.items(), key=lambda kv: -kv[1]):
-    print(f"{ch:55s} {n/el:7.2f} Hz  {bytes_[ch]/el/1e6:8.3f} MB/s")
+    print(f"{ch:55s} {n / el:7.2f} Hz  {bytes_[ch] / el / 1e6:8.3f} MB/s")

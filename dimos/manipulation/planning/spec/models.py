@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -29,22 +30,68 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
+    from dimos.manipulation.planning.groups.models import PlanningGroup
+    from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
-RobotName: TypeAlias = str
-"""User-facing robot name (e.g., 'left_arm', 'right_arm')"""
+PlanningGroupID: TypeAlias = str
+"""Stable public planning-group name."""
 
-WorldRobotID: TypeAlias = str
-"""Internal Drake world robot ID"""
+JointName: TypeAlias = str
+"""Canonical joint name used by model, planning, state, and execution."""
 
 JointPath: TypeAlias = "list[JointState]"
 """List of joint states forming a path (each waypoint has names + positions)"""
 
 
+CartesianWaypoint: TypeAlias = "PoseStamped | Transform"
+"""One absolute TCP pose or relative rigid displacement from the planning start."""
+
+CartesianTarget: TypeAlias = "Sequence[PoseStamped] | Sequence[Transform]"
+"""Ordered homogeneous Cartesian waypoints for one planning group."""
+
+
+@dataclass(frozen=True)
+class PlanningSceneInfo:
+    """Stable planning-scene metadata for external collaborators.
+
+    This snapshot intentionally carries setup metadata only. It must not expose
+    backend handles, mutable world contexts, GUI state, or execution state.
+    """
+
+    model: RobotModelConfig
+    """The configured logical robot model."""
+
+    planning_groups: tuple[PlanningGroup, ...] = ()
+    """Resolved immutable planning groups for the initialized scene."""
+
+
+@dataclass(frozen=True)
+class VisualizationSession:
+    """One-shot immutable visualization initialization payload."""
+
+    scene: PlanningSceneInfo
+    operator: object | None = None
+    """Optional concrete ManipulationOperator; typed as object to avoid low-level cycles."""
+
+
+@dataclass(frozen=True)
+class VisualizationStateFrame:
+    """Pushed current joint states for visualization backends."""
+
+    joint_state: JointState | None
+
+
 Jacobian: TypeAlias = "NDArray[np.float64]"
 """6 x n Jacobian matrix (rows: [vx, vy, vz, wx, wy, wz])"""
+
+
+DEFAULT_OBSTACLE_RGBA: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
+"""Default RGBA (0-1 range) applied to obstacles that carry no explicit color."""
 
 
 @dataclass
@@ -53,7 +100,7 @@ class Obstacle:
 
     Attributes:
         name: Unique name for the obstacle
-        obstacle_type: Type of geometry (BOX, SPHERE, CYLINDER, MESH)
+        obstacle_type: Type of geometry (BOX, SPHERE, CYLINDER, MESH, OCTREE)
         pose: Pose of the obstacle in world frame
         dimensions: Type-specific dimensions:
             - BOX: (width, height, depth)
@@ -62,14 +109,20 @@ class Obstacle:
             - MESH: Not used
         color: RGBA color tuple (0-1 range)
         mesh_path: Path to mesh file (for MESH type)
+        points: Occupied cell centers in the obstacle's frame (for OCTREE type)
+        octree_resolution: Edge length of an OCTREE cell (meters)
     """
 
     name: str
     obstacle_type: ObstacleType
     pose: PoseStamped
     dimensions: tuple[float, ...] = ()
-    color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
+    color: tuple[float, float, float, float] = DEFAULT_OBSTACLE_RGBA
     mesh_path: str | None = None
+    # Plain tuples rather than an array: obstacles are deepcopied, compared and
+    # pickled across worker RPC, and an ndarray field breaks all three.
+    points: tuple[tuple[float, float, float], ...] = ()
+    octree_resolution: float | None = None
 
 
 @dataclass
@@ -128,6 +181,24 @@ class PlanningResult:
 
 
 @dataclass
+class GeneratedPlan:
+    """Canonical selected-planning-group plan exposed by ManipulationModule."""
+
+    group_ids: tuple[PlanningGroupID, ...]
+    trajectory: JointTrajectory
+    path: list[JointState] = field(default_factory=list)
+    status: PlanningStatus = PlanningStatus.NO_SOLUTION
+    planning_time: float = 0.0
+    path_length: float = 0.0
+    iterations: int = 0
+    message: str = ""
+
+    def is_success(self) -> bool:
+        """Check if the generated plan was successful."""
+        return self.status == PlanningStatus.SUCCESS
+
+
+@dataclass
 class CollisionObjectMessage:
     """Message for adding/updating/removing obstacles.
 
@@ -139,7 +210,7 @@ class CollisionObjectMessage:
         primitive_type: "box", "sphere", or "cylinder" (for add/update)
         pose: Pose of the obstacle (for add/update)
         dimensions: Type-specific dimensions (for add/update)
-        color: RGBA color tuple
+        color: RGBA color tuple. ``None`` means the field was omitted.
     """
 
     id: str
@@ -147,4 +218,4 @@ class CollisionObjectMessage:
     primitive_type: str | None = None
     pose: PoseStamped | None = None
     dimensions: tuple[float, ...] | None = None
-    color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
+    color: tuple[float, float, float, float] | None = None

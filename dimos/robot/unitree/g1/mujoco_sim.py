@@ -32,6 +32,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.g1.connection import G1ConnectionBase
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.robot.unitree.type.odometry import Odometry as SimOdometry
@@ -51,6 +52,7 @@ class G1SimConnection(G1ConnectionBase):
     odom: Out[PoseStamped]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
+    tf: Out[TFMessage]
     connection: MujocoConnection | None = None
     _camera_info_thread: Thread | None = None
 
@@ -98,7 +100,7 @@ class G1SimConnection(G1ConnectionBase):
     def _publish_tf(self, msg: PoseStamped) -> None:
         self.odom.publish(msg)
 
-        self.tf.publish(Transform.from_pose("base_link", msg))
+        base_link = Transform.from_pose("base_link", msg)
 
         # Publish camera_link and camera_optical transforms
         camera_link = Transform(
@@ -125,7 +127,7 @@ class G1SimConnection(G1ConnectionBase):
             ts=time.time(),
         )
 
-        self.tf.publish(camera_link, camera_optical, map_to_world)
+        self.tf.publish(TFMessage(base_link, camera_link, camera_optical, map_to_world))
 
     def _publish_sim_odom(self, msg: SimOdometry) -> None:
         self._publish_tf(
@@ -147,6 +149,3 @@ class G1SimConnection(G1ConnectionBase):
         logger.info(f"Publishing request to topic: {topic} with data: {data}")
         assert self.connection is not None
         return self.connection.publish_request(topic, data)
-
-
-__all__ = ["G1SimConnection"]

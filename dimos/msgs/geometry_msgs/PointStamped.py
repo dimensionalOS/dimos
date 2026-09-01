@@ -45,11 +45,11 @@ class PointStamped(Point, Timestamped):
         x: float = 0.0,
         y: float = 0.0,
         z: float = 0.0,
-        ts: float = 0.0,
+        ts: float | None = None,
         frame_id: str = "",
     ) -> None:
         self.frame_id = frame_id
-        self.ts = ts if ts != 0 else time.time()
+        self.ts = time.time() if ts is None else ts
         super().__init__(float(x), float(y), float(z))
 
     # -- LCM encode / decode --

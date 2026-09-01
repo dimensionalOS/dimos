@@ -19,20 +19,19 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
 
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.type.detection2d.base import Filter2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.spec.perception import Camera
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
 
@@ -55,6 +54,7 @@ class Detection2DModule(Module):
     detector: Detector
 
     color_image: In[Image]
+    tf: IO[TFMessage]
 
     detections: Out[Detection2DArray]
     detected_image_0: Out[Image]
@@ -89,7 +89,7 @@ class Detection2DModule(Module):
         return backpressure(self.sharp_image_stream().pipe(ops.map(self.process_image_frame)))
 
     def track(self, detections: ImageDetections2D) -> None:
-        sensor_frame = self.tf.get("sensor", "camera_optical", detections.image.ts, 5.0)
+        sensor_frame = self.tfbuffer.get("sensor", "camera_optical", detections.image.ts, 5.0)
 
         if not sensor_frame:
             return
@@ -127,7 +127,7 @@ class Detection2DModule(Module):
             )
 
         self.previous_detection_count = current_count
-        self.tf.publish(*transforms)
+        self.tfbuffer.publish(*transforms)
 
     @rpc
     def start(self) -> None:
@@ -148,24 +148,3 @@ class Detection2DModule(Module):
     @rpc
     def stop(self) -> None:
         return super().stop()
-
-
-def deploy(  # type: ignore[no-untyped-def]
-    dimos: ModuleCoordinator,
-    camera: Camera,
-    prefix: str = "/detector2d",
-    **kwargs,
-) -> Detection2DModule:
-    from dimos.core.transport import LCMTransport
-
-    detector = Detection2DModule(**kwargs)
-    detector.color_image.connect(camera.color_image)
-
-    detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)
-
-    detector.detected_image_0.transport = LCMTransport(f"{prefix}/image/0", Image)
-    detector.detected_image_1.transport = LCMTransport(f"{prefix}/image/1", Image)
-    detector.detected_image_2.transport = LCMTransport(f"{prefix}/image/2", Image)
-
-    detector.start()
-    return detector

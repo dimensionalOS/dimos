@@ -166,7 +166,6 @@ sample: latest value at each tick
 throttle_first: first value, then block
 ```
 
-
 ## What is an Observable?
 
 An Observable is like a list, but instead of holding all values at once, it produces values over time.
@@ -220,7 +219,6 @@ Handler: box "callback" rad 5px fit wid 170% ht 170%
 </details>
 
 ![output](assets/observable_flow.svg)
-
 
 **Key property: Observables are lazy.** Nothing happens until you call `.subscribe()`. This means you can build up complex pipelines without any work being done, then start the flow when ready.
 
@@ -277,13 +275,11 @@ import time
 import reactivex as rx
 from dimos.core.module import Module
 
-
 class MyModule(Module):
     def start(self) -> None:
         super().start()
         source = rx.interval(0.05)
         self.register_disposable(source.subscribe(lambda x: print(f"got {x}")))
-
 
 module = MyModule()
 module.start()

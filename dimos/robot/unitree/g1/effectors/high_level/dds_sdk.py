@@ -79,6 +79,17 @@ class G1HighLevelDdsSdkConfig(ModuleConfig):
     motion_switcher_timeout: float = 5.0
     loco_client_timeout: float = 10.0
     cmd_vel_timeout: float = 0.2
+    # deadzone compensation
+    min_effective_linear_velocity: float = 0.05  # m/s
+    min_effective_angular_velocity: float = 0.2  # radians/s
+
+
+def _boost_above_deadzone(value: float, min_effective_magnitude: float) -> float:
+    if value == 0.0 or min_effective_magnitude <= 0.0:
+        return value
+    if abs(value) >= min_effective_magnitude:
+        return value
+    return min_effective_magnitude if value > 0 else -min_effective_magnitude
 
 
 class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
@@ -150,9 +161,13 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         assert self.loco_client is not None
-        vx = twist.linear.x
-        vy = twist.linear.y
-        vyaw = twist.angular.z
+        raw_vx = twist.linear.x
+        raw_vy = twist.linear.y
+        raw_vyaw = twist.angular.z
+
+        vx = _boost_above_deadzone(raw_vx, self.config.min_effective_linear_velocity)
+        vy = _boost_above_deadzone(raw_vy, self.config.min_effective_linear_velocity)
+        vyaw = _boost_above_deadzone(raw_vyaw, self.config.min_effective_angular_velocity)
 
         if self._stop_timer:
             self._stop_timer.cancel()
@@ -376,6 +391,3 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
         except Exception as e:
             logger.error(f"Error getting FSM ID: {e}")
             return None
-
-
-__all__ = ["FsmState", "G1HighLevelDdsSdk", "G1HighLevelDdsSdkConfig"]

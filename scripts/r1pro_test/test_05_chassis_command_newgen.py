@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Test 5: Chassis Command — NEW-GEN R1 Pro (firmware V2.3.0)
 
@@ -24,21 +38,22 @@ robot's /motion_control/chassis_speed feedback goes nonzero while we command
 motion (proves the controller accepted the command — not just "did it look
 like it moved").
 """
+
 import os
 import time
 
-import rclpy
-from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from geometry_msgs.msg import TwistStamped
+import rclpy
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool
 
-VELOCITY = 0.12   # m/s forward — small and safe
-DURATION = 3.0    # seconds of commanded motion
-PUBLISH_HZ = 50   # chassis_control_node runs its loop at 50 Hz
-WARMUP_S = 1.0    # latch brake-release + acc_limit at zero velocity first
+VELOCITY = 0.12  # m/s forward — small and safe
+DURATION = 3.0  # seconds of commanded motion
+PUBLISH_HZ = 50  # chassis_control_node runs its loop at 50 Hz
+WARMUP_S = 1.0  # latch brake-release + acc_limit at zero velocity first
 DISCOVERY_WAIT = 4.0
 ACC_LIMIT = (2.5, 1.0, 1.0)  # vendor max ax, ay, alpha
-FB_MOTION_THRESH = 0.02      # |vx| on chassis_speed feedback that counts as "moving"
+FB_MOTION_THRESH = 0.02  # |vx| on chassis_speed feedback that counts as "moving"
 
 CMD_TOPIC = "/motion_target/target_speed_chassis"
 ACC_TOPIC = "/motion_target/chassis_acc_limit"
@@ -93,8 +108,10 @@ def main() -> bool:
     print(f"  subscribers on {CMD_TOPIC}: {cmd_subs}  (need >=1 = chassis controller)")
     print(f"  publishers on {FB_TOPIC}: {fb_pubs}  (>=1 means the controller is alive)")
     if cmd_subs == 0:
-        print(f"\nFAIL: nothing is subscribed to {CMD_TOPIC}. Is the ~/galaxea-dimos "
-              f"tree booted (gatekeeper + chassis_control_node) and ROS_DOMAIN_ID=1?")
+        print(
+            f"\nFAIL: nothing is subscribed to {CMD_TOPIC}. Is the ~/galaxea-dimos "
+            f"tree booted (gatekeeper + chassis_control_node) and ROS_DOMAIN_ID=1?"
+        )
         node.destroy_node()
         return False
 
@@ -144,9 +161,11 @@ def main() -> bool:
         print("FAIL: no chassis_speed feedback — Gate 1/discovery/QoS suspect.")
         return False
     if not moved:
-        print(f"FAIL: controller feedback never exceeded {FB_MOTION_THRESH} m/s — "
-              f"command was accepted on the wire but the chassis didn't move "
-              f"(check gatekeeper: mode/brake/acc gates).")
+        print(
+            f"FAIL: controller feedback never exceeded {FB_MOTION_THRESH} m/s — "
+            f"command was accepted on the wire but the chassis didn't move "
+            f"(check gatekeeper: mode/brake/acc gates)."
+        )
         return False
     print("PASS: chassis moved under direct target_speed_chassis command.")
     return True

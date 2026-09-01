@@ -37,6 +37,7 @@ import pytest
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.simulation.unity import module as unity_module
 from dimos.simulation.unity.module import (
     UnityBridgeConfig,
     UnityBridgeModule,
@@ -53,8 +54,6 @@ from dimos.utils.ros1 import (
 
 _is_linux_x86 = platform.system() == "Linux" and platform.machine() in ("x86_64", "AMD64")
 _has_display = bool(os.environ.get("DISPLAY"))
-
-pytestmark = pytest.mark.self_hosted
 
 
 class _MockTransport:
@@ -162,8 +161,18 @@ class TestPlatformValidation:
         else:
             pytest.skip("Not on Linux x86_64")
 
-    @pytest.mark.skipif(_is_linux_x86, reason="Only tests rejection on unsupported platforms")
-    def test_rejects_unsupported_platform(self):
+    @pytest.mark.parametrize(
+        "system, machine",
+        (
+            ("Darwin", "arm64"),  # not Linux
+            ("Linux", "aarch64"),  # Linux but not x86_64
+        ),
+    )
+    def test_rejects_unsupported_platform(self, monkeypatch, system, machine):
+        # Mock the platform so the rejection path runs regardless of the
+        # actual runner (otherwise this only runs on non-Linux-x86 hosts).
+        monkeypatch.setattr(unity_module.platform, "system", lambda: system)
+        monkeypatch.setattr(unity_module.platform, "machine", lambda: machine)
         with pytest.raises(RuntimeError, match="requires"):
             _validate_platform()
 
@@ -396,6 +405,7 @@ class TestSensorOffset:
         assert last.twist.angular.y == pytest.approx(0.0, abs=1e-6)
 
 
+@pytest.mark.self_hosted
 @pytest.mark.skipif(not _is_linux_x86, reason="Unity binary requires Linux x86_64")
 @pytest.mark.skipif(not _has_display, reason="Unity requires DISPLAY (X11)")
 class TestLiveUnity:

@@ -2,7 +2,7 @@
 
 Prerequisite for this is to understand dimos [Modules](/docs/usage/modules.md) and [Blueprints](/docs/usage/blueprints.md).
 
-Native modules let you wrap **any executable** as a first-class DimOS module, given it speaks LCM.
+Native modules let you wrap **any executable** as a first-class dimOS module, given it speaks LCM.
 
 Python will handle blueprint wiring, lifecycle, and logging. Native binary handles the actual computation, publishing and subscribing directly on LCM.
 
@@ -34,11 +34,9 @@ class MyLidar(NativeModule):
     pointcloud: Out[PointCloud2]
     imu: Out[Imu]
 
-
 ```
 
-That's it. `MyLidar` is a full DimOS module. You can use it with `autoconnect`, blueprints, transport overrides, and specs. Once this module is started, your `./build/my_lidar` will get called with specific CLI args.
-
+That's it. `MyLidar` is a full dimOS module. You can use it with `autoconnect`, blueprints, transport overrides, and specs. Once this module is started, your `./build/my_lidar` will get called with specific CLI args.
 
 ## How it works
 
@@ -67,8 +65,7 @@ mylidar.imu.transport = LCMTransport("/imu", Imu)
 mylidar.start()
 ```
 
-<!--Result:-->
-```
+```results
 2026-02-14T11:22:12.123963Z [info     ] Starting native process   [dimos/core/native_module.py] cmd='./build/my_lidar --pointcloud /lidar#sensor_msgs.PointCloud2 --imu /imu#sensor_msgs.Imu --host_ip 192.168.1.5 --frequency 10.0' cwd=/home/lesh/coding/dimos/docs/usage/build
 ```
 
@@ -93,7 +90,7 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 
 ### Auto CLI arg generation
 
-Any field you add to your config subclass automatically becomes a `--name value` CLI arg. Fields from `NativeModuleConfig` itself (like `executable`, `extra_args`, `cwd`) are **not** passed — they're for Python-side orchestration only.
+Any field you add to your config subclass automatically becomes a `--name value` CLI arg. Fields from `NativeModuleConfig` itself (like `executable`, `extra_args`, `cwd`) are **not** passed. They're for Python-side orchestration only.
 
 ```python skip
 from pydantic import Field
@@ -119,11 +116,11 @@ class MyConfig(NativeModuleConfig):
 If a config field shouldn't be a CLI arg, add it to `cli_exclude`:
 
 ```python skip
-class FastLio2Config(NativeModuleConfig):
-    executable: str = "./build/fastlio2"
-    config: str = "mid360.yaml"                          # human-friendly name
-    config_path: str = Field(default_factory=lambda m: str(Path(m["config"]).resolve()))
-    cli_exclude: frozenset[str] = frozenset({"config"})  # only config_path is passed
+class MyNativeConfig(NativeModuleConfig):
+    executable: str = "./build/my_native"
+    acc_cov: float = 1.0                                  # rendered into a config file, not a CLI arg
+    config_path: str | None = None                        # set at start() to the generated file
+    cli_exclude: frozenset[str] = frozenset({"acc_cov"})  # only config_path is passed
 ```
 
 ## Using with blueprints
@@ -181,41 +178,55 @@ Malformed lines fall back to plain text logging.
 
 ## Writing the C++ side
 
-A header-only helper is provided at [`dimos/hardware/sensors/lidar/common/dimos_native_module.hpp`](/dimos/hardware/sensors/lidar/common/dimos_native_module.hpp):
+The header-only C++ SDK lives at [native/cpp/](/native/cpp/). Set `stdin_config: bool = True` in the Python config. Topics and config then arrive as one JSON line on stdin instead of CLI args. A module includes `dimos/native.hpp`, subclasses `Module`, and calls `run_with_transport<M>()` from `main()`:
 
 ```cpp
-#include "dimos_native_module.hpp"
-#include "sensor_msgs/PointCloud2.hpp"
+#include "dimos/native.hpp"
+#include "geometry_msgs/Twist.hpp"
 
-int main(int argc, char** argv) {
-    dimos::NativeModule mod(argc, argv);
+using dimos::native::Builder;
+using dimos::native::Config;
+using dimos::native::Module;
+using dimos::native::Output;
+using geometry_msgs::Twist;
 
-    // Get the LCM channel for a declared port
-    std::string pc_topic = mod.topic("pointcloud");
+struct PongConfig {
+    std::int64_t sample_config;
+};
 
-    // Get config values
-    float freq = mod.arg_float("frequency", 10.0);
-    std::string ip = mod.arg("host_ip", "192.168.1.5");
+class Pong : public Module {
+public:
+    void build(Builder& builder, Config& config) override {
+        config_ = config.parse<PongConfig>();
+        confirm_ = builder.output<Twist>("confirm");
+        builder.input<Twist>("data", &Pong::on_data, this);
+    }
 
-    // Set up LCM publisher and publish on pc_topic...
+private:
+    void on_data(const Twist& msg) {
+        Twist reply = msg;
+        reply.angular.z = static_cast<double>(config_.sample_config);
+        confirm_.publish(reply);
+    }
+
+    Output<Twist> confirm_;
+    PongConfig config_;
+};
+
+int main() {
+    dimos::native::run_with_transport<Pong>();
+    return 0;
 }
 ```
 
-The helper provides:
+The config is a plain aggregate struct. `config.parse<PongConfig>()` reflects over its fields (via PFR, C++20), so the struct declaration is the whole contract: every field is required, unknown fields are rejected, and there is no limit on field count. Python owns all defaults and always sends every field. Add a `void validate() const` method for range checks. It runs automatically after parsing. Input handlers run serialized on the dispatch thread. Each output publishes through its own worker, so a slow channel only stalls itself. A source-style module with no inputs (a sensor driver) overrides `handle()` with its own loop and `setup()`/`teardown()` for device lifecycle.
 
-| Method                    | Description                                                    |
-|---------------------------|----------------------------------------------------------------|
-| `topic(port)`             | Get the full LCM channel string (`/topic#msg_type`) for a port |
-| `arg(key, default)`       | Get a string config value                                      |
-| `arg_float(key, default)` | Get a float config value                                       |
-| `arg_int(key, default)`   | Get an int config value                                        |
-| `has(key)`                | Check if a port/arg was provided                               |
 
-It also includes `make_header()` and `time_from_seconds()` for building ROS-compatible stamped messages.
+A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/native-modules/cpp/), and [`dimos/hardware/sensors/lidar/livox/cpp/main.cpp`](/dimos/hardware/sensors/lidar/livox/cpp/main.cpp) is a real driver example.
 
 ## Examples
 
-For language interop examples (subscribing to DimOS topics from C++, TypeScript, Lua), see [/examples/language-interop/](/examples/language-interop/README.md).
+For language interop examples (subscribing to dimOS topics from C++, TypeScript, Lua), see [/examples/language-interop/](/examples/language-interop/README.md).
 
 ### Livox Mid-360 Module
 
@@ -259,15 +270,29 @@ autoconnect(
 ## Auto Building
 
 If `build_command` is set in the module config, and the executable doesn't exist when `start()` is called, NativeModule runs the build command automatically.
-Build output is piped through structlog (stdout at `info`, stderr at `warning`).
+Build output is streamed line by line through structlog at `info`, with stderr merged into
+stdout. `nix build` prints no build logs unless `-L` is passed, so the built-in modules all
+include it.
 
 ```python skip
 class MyLidarConfig(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/my_lidar"
-    build_command: str | None = "nix build .#my_lidar"
+    build_command: str | None = "nix build -L .#my_lidar"
 ```
 
 `cwd` is used for both the build command and the runtime subprocess. Relative paths are resolved against the directory of the Python file that defines the module
 
 If the executable already exists, the build step is skipped entirely.
+
+### Faster builds via the Cachix substituter
+
+Nix-built native modules can be substituted from the `dimensionalos` Cachix
+cache (the same substituter CI uses) instead of compiled from source. Opt in
+locally to skip cold compiles when the cache has them:
+
+```
+# ~/.config/nix/nix.conf  (single-user)  or  /etc/nix/nix.conf  (multi-user)
+extra-substituters = https://dimensionalos.cachix.org
+extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+```

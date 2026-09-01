@@ -19,9 +19,9 @@ import asyncio
 import pytest
 
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.core.tests.stress_test_module import StressTestModule
 from dimos.porcelain.dimos import Dimos, _resolve_target
 
 
@@ -61,6 +61,18 @@ def test_resolve_string_name():
     assert bp is not None
 
 
+def test_resolve_external_string_name_uses_shared_resolver(monkeypatch):
+    expected = StressTestModule.blueprint()
+
+    def fake_get_by_name(name: str):
+        assert name == "my-test-stack.demo"
+        return expected
+
+    monkeypatch.setattr("dimos.porcelain.dimos.get_by_name", fake_get_by_name)
+
+    assert _resolve_target("my-test-stack.demo") is expected
+
+
 def test_resolve_unknown_string():
     with pytest.raises(ValueError, match="Unknown"):
         _resolve_target("nonexistent-blueprint-xyz")
@@ -89,7 +101,7 @@ def test_repr_when_stopped(app):
 
 def test_skills_before_run(app):
     with pytest.raises(RuntimeError, match="No modules are running"):
-        _ = app.skills
+        app.skills  # noqa: B018
 
 
 def test_peek_stream_before_run(app):
@@ -130,19 +142,19 @@ def test_run_after_stop(app):
 def test_getattr_private_raises(app):
     app.run(StressTestModule)
     with pytest.raises(AttributeError):
-        _ = app._nonexistent
+        app._nonexistent  # noqa: B018
 
 
 def test_getattr_unknown_module(app):
     app.run(StressTestModule)
     with pytest.raises(AttributeError, match="No module named"):
-        _ = app.Nonexistent
+        app.Nonexistent  # noqa: B018
 
 
 def test_getattr_exists_but_not_running(app):
     app.run(StressTestModule)
     with pytest.raises(AttributeError, match="exists but is not running"):
-        _ = app.CameraModule
+        app.CameraModule  # noqa: B018
 
 
 def test_run_module_class(app):
@@ -159,10 +171,52 @@ def test_run_blueprint_object(app):
     assert app.is_running
 
 
-def test_rpyc_module_access(running_app):
+def test_module_rpc_call(running_app):
     module = running_app.StressTestModule
-    # Access an attribute from ModuleBase
-    assert module._module_closed is False
+    assert module.ping() == "pong"
+
+
+def test_list_modules_returns_structured_instance_information(running_app):
+    modules = running_app.list_modules()
+
+    assert len(modules) == 1
+    assert modules[0].instance_name == "StressTestModule"
+    assert modules[0].class_name == "StressTestModule"
+    assert modules[0].qualified_path.endswith(".StressTestModule")
+    assert repr(modules[0]).startswith("<Module StressTestModule")
+
+
+def test_get_module_supports_public_lookup(running_app):
+    assert running_app.get_module("StressTestModule").ping() == "pong"
+
+
+def test_list_rpcs_includes_skills_and_preserves_metadata(running_app):
+    rpcs = running_app.list_rpcs("StressTestModule")
+    ping = next(rpc_info for rpc_info in rpcs if rpc_info.name == "ping")
+    slow = next(rpc_info for rpc_info in rpcs if rpc_info.name == "slow")
+
+    assert ping.documentation == "Simple health check. Returns 'pong'."
+    assert slow.module_name == "StressTestModule"
+    assert slow.signature == "(self, seconds: 'float' = 1.0) -> 'str'"
+    assert repr(slow) == "<RPC StressTestModule.slow(seconds: float = 1.0) -> str>"
+
+
+def test_list_rpcs_accepts_module_proxy(running_app):
+    proxy = running_app.get_module("StressTestModule")
+    assert {rpc_info.name for rpc_info in running_app.list_rpcs(proxy)} >= {"ping", "echo"}
+
+
+def test_describe_module_and_rpc(running_app):
+    module = running_app.get_module("StressTestModule")
+
+    assert running_app.describe(module).instance_name == "StressTestModule"
+    assert running_app.describe(module.ping).name == "ping"
+    assert running_app.describe("StressTestModule.ping").name == "ping"
+
+
+def test_describe_rejects_unqualified_rpc_name(running_app):
+    with pytest.raises(ValueError, match="not qualified"):
+        running_app.describe("ping")
 
 
 def test_dir_lists_modules(running_app):
@@ -187,6 +241,10 @@ def test_connected_run_by_name_adds_module(running_app, client):
     client.run("mcp-server")
     assert "McpServer" in client._source.list_module_names()
     assert "McpServer" in running_app._source.list_module_names()
+    assert {module.instance_name for module in client.list_modules()} >= {
+        "StressTestModule",
+        "McpServer",
+    }
 
 
 def test_connected_run_by_class_adds_module(client):

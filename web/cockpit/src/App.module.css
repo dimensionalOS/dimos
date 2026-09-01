@@ -1,0 +1,17 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.main {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.notice {
+  color: #8b949e;
+  margin: 2rem auto;
+  text-align: center;
+}

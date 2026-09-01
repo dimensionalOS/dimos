@@ -12,16 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shim layer exposing the legacy ``TimedSensorReplay`` API over memory2.
+"""Shim layer exposing the legacy ``TimedSensorReplay`` API over memory.
 
-``TimedSensorReplay(name, autocast=...)`` opens the memory2 SQLite database at
+``TimedSensorReplay(name, autocast=...)`` opens the memory SQLite database at
 ``{get_data_dir}/{dataset}.db`` and reads the named stream. ``name`` is expected
 to be ``"<dataset>/<stream>"``.
 
 Callers that still need to read from legacy pickle dirs should import
-``LegacyPickleStore`` directly from ``dimos.memory.timeseries.legacy``. The
+``LegacyPickleStore`` directly from ``dimos.utils.testing.legacy_pickle``. The
 write-side (``TimedSensorStorage``/``SensorStorage``) still points at
-``LegacyPickleStore`` — out of scope for the memory2 migration.
+``LegacyPickleStore`` — out of scope for the memory migration.
 """
 
 from __future__ import annotations
@@ -37,9 +37,9 @@ from reactivex.disposable import Disposable, SerialDisposable
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
-from dimos.memory.timeseries.legacy import LegacyPickleStore
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.data import get_data
+from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
 T = TypeVar("T")
 
@@ -175,8 +175,8 @@ def timed_playback(
     return rx.create(subscribe)
 
 
-class Memory2ReplayAdapter(Generic[T]):
-    """Memory2-backed replacement for the legacy ``TimedSensorReplay``.
+class MemoryReplayAdapter(Generic[T]):
+    """Memory-backed replacement for the legacy ``TimedSensorReplay``.
 
     Accepts names shaped like ``"<dataset>/<stream>"`` (e.g.
     ``"go2_bigoffice/lidar"``). ``autocast`` is applied after the codec
@@ -227,7 +227,7 @@ class Memory2ReplayAdapter(Generic[T]):
             start_ts = start if start is not None else first_ts
             end = start_ts + duration
 
-        # Time-bound stream using memory2 filters. time_range is inclusive on
+        # Time-bound stream using memory filters. time_range is inclusive on
         # both sides; .after is exclusive. Use time_range with +inf for the
         # inclusive-start semantics legacy callers rely on.
         if start is not None and end is not None:
@@ -285,14 +285,14 @@ class Memory2ReplayAdapter(Generic[T]):
 
     @property
     def files(self) -> list[Path]:
-        """Compat stub — memory2 has no per-frame files."""
+        """Compat stub — memory has no per-frame files."""
         return []
 
     def load_one(self, name: int | str | Path) -> tuple[float, T]:
         """Compat stub — index-based access by offset."""
         if not isinstance(name, int):
             raise TypeError(
-                f"Memory2ReplayAdapter.load_one only supports integer offsets; got {name!r}"
+                f"MemoryReplayAdapter.load_one only supports integer offsets; got {name!r}"
             )
         obs = self._stream.limit(1).offset(int(name)).first()
         return (obs.ts, self._decode(obs))
@@ -314,7 +314,7 @@ class Memory2ReplayAdapter(Generic[T]):
         )
 
 
-TimedSensorReplay = Memory2ReplayAdapter
+TimedSensorReplay = MemoryReplayAdapter
 
 # Write-side + non-timed read-side stay on legacy pickle.
 SensorReplay = LegacyPickleStore

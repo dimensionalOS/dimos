@@ -12,19 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import time
 from typing import TYPE_CHECKING
 
 import pytest
 
+from dimos.cli.plot import bar
 from dimos.core.transport import LCMTransport
 from dimos.models.vl.moondream import MoondreamVlModel
-from dimos.models.vl.moondream_hosted import MoondreamHostedVlModel
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.utils.cli.plot import bar
 from dimos.utils.data import get_data
 
 if TYPE_CHECKING:
@@ -38,16 +36,12 @@ if TYPE_CHECKING:
     "model_class,model_name",
     [
         (MoondreamVlModel, "Moondream"),
-        (MoondreamHostedVlModel, "Moondream Hosted"),
         (QwenVlModel, "Qwen"),
     ],
 )
 @pytest.mark.self_hosted
 @pytest.mark.skipif_in_ci
 def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> None:
-    if model_class is MoondreamHostedVlModel and "MOONDREAM_API_KEY" not in os.environ:
-        pytest.skip("Need MOONDREAM_API_KEY to run")
-
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
 
     print(f"Testing {model_name}")
@@ -102,7 +96,6 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
     "model_class,model_name",
     [
         (MoondreamVlModel, "Moondream"),
-        (MoondreamHostedVlModel, "Moondream Hosted"),
         (QwenVlModel, "Qwen"),
     ],
 )
@@ -110,9 +103,6 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
 @pytest.mark.skipif_in_ci
 def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> None:
     """Test VLM point detection capabilities."""
-
-    if model_class is MoondreamHostedVlModel and "MOONDREAM_API_KEY" not in os.environ:
-        pytest.skip("Need MOONDREAM_API_KEY to run")
 
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
 
@@ -211,58 +201,6 @@ def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "model_class,model_name",
-    [
-        (MoondreamVlModel, "Moondream"),
-    ],
-)
-@pytest.mark.tool
-def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
-    """Test query_batch optimization - multiple images, same query."""
-    from dimos.memory.timeseries.legacy import LegacyPickleStore
-
-    # Load 5 frames at 1-second intervals using LegacyPickleStore
-    replay = LegacyPickleStore[Image]("unitree_go2_office_walk2/video")
-    images = [replay.find_closest_seek(i).to_rgb() for i in range(0, 10, 2)]
-
-    print(f"\nTesting {model_name} query_batch with {len(images)} images")
-
-    model: VlModel = model_class()
-    model.start()
-
-    query = "Describe this image in a short sentence"
-
-    # Sequential queries (print as they come in)
-    print("\nSequential queries:")
-    sequential_results = []
-    start_time = time.time()
-    for i, img in enumerate(images):
-        result = model.query(img, query)
-        sequential_results.append(result)
-        print(f"  [{i}] {result[:120]}...")
-    sequential_time = time.time() - start_time
-    print(f"  Time: {sequential_time:.3f}s")
-
-    # Batched queries (pre-encode all images)
-    print("\nBatched queries (query_batch):")
-    start_time = time.time()
-    batch_results = model.query_batch(images, query)
-    batch_time = time.time() - start_time
-    for i, result in enumerate(batch_results):
-        print(f"  [{i}] {result[:120]}...")
-    print(f"  Time: {batch_time:.3f}s")
-
-    speedup_pct = (sequential_time - batch_time) / sequential_time * 100
-    print(f"\nSpeedup: {speedup_pct:.1f}%")
-
-    # Verify results are valid strings
-    assert len(batch_results) == len(images)
-    assert all(isinstance(r, str) and len(r) > 0 for r in batch_results)
-
-    model.stop()
-
-
-@pytest.mark.parametrize(
     "model_class,sizes",
     [
         (MoondreamVlModel, [None, (512, 512), (256, 256)]),
@@ -276,7 +214,7 @@ def test_vlm_resize(
     sizes: list[tuple[int, int] | None],
 ) -> None:
     """Test VLM auto_resize effect on performance."""
-    from dimos.memory.timeseries.legacy import LegacyPickleStore
+    from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
     replay = LegacyPickleStore[Image]("unitree_go2_office_walk2/video")
     image = replay.find_closest_seek(0).to_rgb()

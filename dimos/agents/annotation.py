@@ -18,7 +18,7 @@ import functools
 import inspect
 import threading
 import time
-from typing import Any, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast, overload
 
 from dimos.core.core import rpc
 from dimos.utils.logging_config import setup_logger
@@ -28,6 +28,9 @@ F = TypeVar("F", bound=Callable[..., Any])
 logger = setup_logger()
 
 _SKILL_CONTEXT = threading.local()
+
+SkillLifecycle = Literal["instant", "background"]
+_VALID_LIFECYCLES = ("instant", "background")
 
 
 def current_skill_context() -> dict[str, Any] | None:
@@ -66,7 +69,7 @@ def _stamp_and_log(func_name: str, result: Any, elapsed_ms: float) -> Any:
     return result
 
 
-def skill(func: F) -> F:
+def _make_skill(func: F, uses: list[str], lifecycle: SkillLifecycle) -> F:
     if inspect.iscoroutinefunction(func):
 
         @functools.wraps(func)
@@ -108,4 +111,42 @@ def skill(func: F) -> F:
 
     wrapped = rpc(context_wrapper)
     wrapped.__skill__ = True  # type: ignore[attr-defined]
+    wrapped.__skill_uses__ = list(uses)  # type: ignore[attr-defined]
+    wrapped.__skill_lifecycle__ = lifecycle  # type: ignore[attr-defined]
     return cast("F", wrapped)
+
+
+@overload
+def skill(func: F) -> F: ...
+@overload
+def skill(*, uses: list[str] | None = ..., lifecycle: SkillLifecycle = ...) -> Callable[[F], F]: ...
+
+
+def skill(
+    func: F | None = None,
+    *,
+    uses: list[str] | None = None,
+    lifecycle: SkillLifecycle = "instant",
+) -> F | Callable[[F], F]:
+    """Mark a method as an agent-callable skill.
+
+    Supports both bare-form `@skill` and parameterized `@skill(uses=[...], lifecycle=...)`.
+
+    `uses` declares capabilities the skill needs (e.g. `["movement"]`). The MCP
+    server uses these to refuse the call when another skill is already holding
+    a required capability. Default: no capabilities.
+
+    `lifecycle` is `"instant"` (default) for skills that finish their work before
+    returning, or `"background"` for skills that kick off background work and
+    return early -- those must use `start_tool`/`stop_tool` so the matching
+    stop-tool frame can release their capabilities.
+    """
+    if lifecycle not in _VALID_LIFECYCLES:
+        raise ValueError(f"lifecycle must be one of {_VALID_LIFECYCLES}, got {lifecycle!r}")
+    if func is not None:
+        return _make_skill(func, uses=[], lifecycle="instant")
+
+    def decorator(f: F) -> F:
+        return _make_skill(f, uses=list(uses or []), lifecycle=lifecycle)
+
+    return decorator
