@@ -99,8 +99,9 @@ async def test_pump_dies_visibly_on_encode_error() -> None:
     session = StubSession()
     writer = _client(session).latest_writer("cam")
     writer.offer(b"data", meta=object())  # not a dict: header validation rejects it
-    with pytest.raises(ValueError):  # pydantic ValidationError
-        await asyncio.wait_for(writer._task, timeout=5)
+    await asyncio.sleep(0.05)  # let the pump run and die
+    assert writer._task.done()
+    assert isinstance(writer._task.exception(), ValueError)  # pydantic ValidationError
     # The dead channel is visible at the producer, not silently accepting.
     with pytest.raises(RuntimeError):
         writer.offer(b"more")
@@ -110,7 +111,9 @@ async def test_pump_stops_cleanly_on_session_close() -> None:
     session = StubSession()
     writer = _client(session).latest_writer("cam")
     session.closed.set()
-    await asyncio.wait_for(writer._task, timeout=5)  # a close is not an error
+    await asyncio.sleep(0.05)
+    assert writer._task.done()
+    assert writer._task.exception() is None  # a close is not an error
     with pytest.raises(RuntimeError):
         writer.offer(b"x")
 
