@@ -49,6 +49,7 @@ from dimos.imitation.dataprep.core import (
     summarize_lengths,
 )
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 
 @pytest.mark.parametrize(
@@ -150,6 +151,35 @@ def test_resolve_field_attribute() -> None:
     )
     assert isinstance(arr, np.ndarray)
     np.testing.assert_array_equal(arr, np.array([1.0, 2.0, 3.0]))
+
+
+def test_resolve_field_orders_joint_state_by_feature_names() -> None:
+    arr = resolve_field(
+        JointState(name=["joint_b", "joint_a"], position=[2.0, 1.0]),
+        FeatureSpec(
+            stream="state",
+            field="position",
+            dtype="float32",
+            shape=(2,),
+            names=["joint_a", "joint_b"],
+        ),
+    )
+
+    np.testing.assert_array_equal(arr, np.array([1.0, 2.0]))
+
+
+def test_resolve_field_rejects_missing_configured_joint() -> None:
+    with pytest.raises(ValueError, match="missing configured joints.*joint_b"):
+        resolve_field(
+            JointState(name=["joint_a"], position=[1.0]),
+            FeatureSpec(
+                stream="state",
+                field="position",
+                dtype="float32",
+                shape=(2,),
+                names=["joint_a", "joint_b"],
+            ),
+        )
 
 
 def test_resolve_field_dict_payload() -> None:

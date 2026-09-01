@@ -16,21 +16,14 @@ from __future__ import annotations
 
 import pytest
 
-from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.transport import pSHMTransport
-from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.imitation.collection.blueprint import (
-    learning_collect_quest_openyam,
     learning_collect_quest_piper,
     learning_collect_quest_xarm7,
 )
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 AGGREGATE = "coordinator_joint_state"
@@ -86,7 +79,7 @@ def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:
 
 @pytest.mark.parametrize(
     "blueprint",
-    [learning_collect_quest_xarm7, learning_collect_quest_piper, learning_collect_quest_openyam],
+    [learning_collect_quest_xarm7, learning_collect_quest_piper],
 )
 def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
     streams = _joint_streams(blueprint)
@@ -95,48 +88,3 @@ def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
     # atom carries its explicit instance_name (the RPC lookup contract).
     assert streams[("collectionrecorder", AGGREGATE)] == AGGREGATE
     assert streams[("ControlCoordinator", AGGREGATE)] == AGGREGATE
-
-
-def test_openyam_collection_has_one_wrist_webcam_and_all_joints() -> None:
-    camera_atoms = [
-        atom
-        for atom in learning_collect_quest_openyam.active_blueprints
-        if atom.module is CameraModule
-    ]
-    coordinator = next(
-        atom
-        for atom in learning_collect_quest_openyam.active_blueprints
-        if atom.instance_name == "ControlCoordinator"
-    )
-
-    assert len(camera_atoms) == 1
-    assert camera_atoms[0].instance_name == "WristCamera"
-    webcam = camera_atoms[0].kwargs["webcam"]
-    assert webcam.width == 640
-    assert webcam.height == 480
-    assert webcam.fps == 30.0
-    hardware = coordinator.kwargs["hardware"]
-    assert len(hardware) == 1
-    assert hardware[0].joints == OPENYAM_JOINTS
-
-
-def test_openyam_collection_records_wrist_camera_over_shared_memory() -> None:
-    transport = learning_collect_quest_openyam.transport_map[("color_image", Image)]
-
-    assert isinstance(transport, pSHMTransport)
-    assert transport.shm.config.default_capacity == DEFAULT_CAPACITY_COLOR_IMAGE
-
-
-@pytest.mark.parametrize(
-    ("argument", "expected"),
-    [("2", 2), ("/dev/v4l/by-id/usb-wrist-camera", "/dev/v4l/by-id/usb-wrist-camera")],
-)
-def test_openyam_wrist_camera_device_is_configurable_from_cli(
-    argument: str, expected: int | str
-) -> None:
-    parsed = BlueprintConfigParser(learning_collect_quest_openyam).parse(
-        ["--WristCamera.webcam.camera-index", argument, "--task", "pick up the block"],
-        environ={},
-    )
-
-    assert parsed.module_kwargs("WristCamera")["webcam"]["camera_index"] == expected
