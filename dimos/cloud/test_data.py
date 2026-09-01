@@ -115,6 +115,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CloudData, Fak
     t = FakeTransport()
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
     monkeypatch.setattr(cd, "DOWNLOADS_DIR", tmp_path)
+    monkeypatch.setattr(cd.time, "sleep", lambda s: None)
     monkeypatch.setattr(global_config, "dimos_upload_retries", 1)
     cloud = CloudData(MultipartBackend(DataApi(t), "lz4", None, retries=1))
     return cloud, t, recording(tmp_path)
