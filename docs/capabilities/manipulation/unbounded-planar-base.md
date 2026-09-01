@@ -1,126 +1,64 @@
-# Unbounded Planar-Base Planning Handoff
+# Unbounded Planar-Base Planning
 
 **Status:** Implemented
-**Version:** 2 (2026-08-31)
-**Depends on:** PR #3784
+**Decision:** [ADR 0001](../../adr/0001-canonical-joint-space.md)
+**Stack:** follow-up to PR #3784
 
-This document specifies the stacked follow-up to PR #3784. That PR deliberately
-uses finite `workspace_lower` and `workspace_upper` values so the existing
-planners work end to end. Those values are planner search bounds, not physical
-stops. The follow-up removes permanent planar-base position bounds while keeping
-each planning query finite and deterministic.
+R1 Pro mobile manipulation uses the same canonical joint-space semantics as every other robot. The planar base contributes two unbounded prismatic coordinates and one continuous revolute coordinate:
 
-## Target contract
+```text
+URDF                         prepared joint space
 
-`PlanarBaseDefinition` continues to define the generated root and ordered
-`x`, `y`, and `yaw` coordinates, plus their velocity and acceleration limits.
-It no longer contains `workspace_lower` or `workspace_upper`.
+base/x   prismatic, no bounds  ───────► LINE
+base/y   prismatic, no bounds  ───────► LINE
+base/yaw continuous            ───────► CIRCLE
+```
 
-- `x` and `y` are globally unbounded translations.
-- `yaw` is continuous modulo $2\pi$.
-- Equivalent yaw values represent the same configuration.
-- Planning and interpolation use the shortest wrapped yaw displacement.
-- Hardware execution remains out of scope until a feedback-controlled base
-  trajectory executor exists.
+`PlanarBaseDefinition` owns the generated joint names and their velocity and acceleration limits. It does not define a workspace. The final materialized URDF is compiled once by `prepare_robot_model()`, and all planning adapters consume that prepared description and its ordered `JointSpace`.
 
-The portable model cannot rely on parser defaults for this contract. With the
-currently installed dependencies, a URDF prismatic joint without lower/upper
-limits parses as unbounded in Drake but as zero-range in Pinocchio. A continuous
-URDF joint is one scalar coordinate in Drake but a two-value cosine/sine
-configuration in Pinocchio. RoboPlan currently rejects non-finite model limits.
-The backend adapters therefore need explicit unbounded planar-coordinate
-handling instead of treating raw parser limits as the public contract.
+## Query-local planning domains
 
-## Per-request planning domain
+An unbounded model does not imply unbounded sampling. For each selected-joint request, dimOS builds a finite domain:
 
-The backend-independent selected-joint planning space creates a finite domain
-for each request. RoboPlan-backed worlds route selections containing planar-base
-joints to this shared RRT implementation. The request domain never mutates the
-world model or cached global joint limits.
+- `INTERVAL`: use the physical lower and upper limits.
+- `LINE`: span the request start and goal, then add a margin on each side.
+- `CIRCLE`: sample the canonical interval `[-pi, pi]`.
 
-For planar translation:
+The shared RRT begins with a one-metre line margin. If the request is blocked and budget remains, it retries with 2, 4, 8, then 16 metres. Attempts share the request deadline and total node budget. The domain never mutates the robot model.
 
-1. Start with the axis-aligned box spanning the start and solved goal base
-   positions.
-2. Expand each x/y side by one metre.
-3. If a bounded search reports no solution while request budget remains, double
-   the margin and retry.
-4. All attempts share the original planning deadline and node budget. Timeout
-   and iteration reporting remain totals for the request, not per-attempt values.
+Distance, interpolation, edge subdivision, simplification, and reported path length use the same metric: shortest circular deltas divided by each coordinate's velocity maximum, followed by L2 distance. A final circular path is lifted before trajectory parametrization so a short crossing at `pi` does not become an almost-full rotation.
 
-This makes every individual search finite while allowing any global start or
-goal coordinate and progressively larger obstacle detours.
+## Backend behavior
 
-## Coordinate metric
+| Backend | Canonical adaptation |
+|---|---|
+| Pink / Pinocchio | Maps every circle scalar to cosine/sine, repairs every line coordinate to infinite native limits, preserves locked-joint constraints, and uses the shared finite retry domain. |
+| Drake | Keeps native scalar coordinates and takes physical limits and finite request domains from the prepared joint space. |
+| RoboPlan | Uses native planning for interval-only selections. A selection containing a line or circle uses dimOS RRT with RoboPlan collision and FK queries. Cartesian waypoint planning remains interval-only. RoboPlan itself is unchanged. |
+| Viser | Renders interval sliders, unbounded line number inputs, and wrapped circle sliders from coordinate topology. |
+| Trajectory | Reads velocity and acceleration maxima from the selected prepared coordinates. R1 Pro uses the simple trapezoid parametrizer. |
 
-Replace raw mixed-unit L2 operations in planning with a common metric:
-
-1. Compute x/y and revolute-joint deltas normally.
-2. Compute yaw with the shortest modulo-$2\pi$ displacement.
-3. Divide every delta by that coordinate's positive velocity limit.
-4. Apply L2 distance in the normalized coordinates.
-
-Use the same metric for nearest-node selection, steering/interpolation step
-sizing, edge subdivision, shortcutting, and reported path length. This prevents
-one metre and one radian from receiving an accidental identical weight.
-
-## Backend work
-
-- **Portable model:** emit semantic unbounded x/y and continuous yaw without
-  presenting temporary search bounds as physical URDF stops.
-- **Pinocchio/Pink:** map continuous yaw's two-value configuration to one public
-  scalar yaw coordinate, repair unbounded prismatic limits after parsing, and
-  preserve locked-joint QP constraints.
-- **Drake:** retain native infinite translation/continuous-yaw semantics while
-  applying the per-request domain only to sampling and planning constraints.
-- **RoboPlan:** keep native planning for bounded non-planar selections and route
-  selections containing planar coordinates through the shared DimOS RRT. Convert
-  scalar yaw to RoboPlan's cosine/sine scene representation where needed.
-- **Viser:** expose unbounded numeric x/y inputs and a yaw slider wrapped to
-  $[-\pi, \pi]$; planner domains are never shown as physical control limits.
-- **Trajectory generation:** use the simple trapezoid parametrizer for the R1 Pro
-  blueprint and apply the planar base's declared velocity and acceleration limits.
-
-## Acceptance criteria
-
-- The same robot model can start and finish beyond the old R1 Pro $\pm5$ metre
-  workspace without rebuilding or mutating the world.
-- A blocked direct path succeeds after at least one query-domain expansion.
-- Crossing yaw from $+\pi-\epsilon$ to $-\pi+\epsilon$ follows the short rotation.
-- Planar selections on Drake and RoboPlan worlds use the same initial/expanded
-  domains and normalized metric implementation.
-- Pink and Drake FK agree for arbitrary x/y and equivalent wrapped yaw values.
-- Arm-only planning still locks torso and base coordinates.
-- Plans containing base joints remain preview-only until base execution support
-  is implemented separately.
+Base execution remains disabled on the R1 Pro blueprint until a feedback-controlled base trajectory executor exists. That safety check is tied to the planar-base controller capability, not to circular topology; a continuous arm joint is not rejected merely because it is periodic.
 
 ## R1 Pro manual test
 
-Run the blueprint and use the Viser URL printed in its log:
+Run the fake-hardware blueprint and open the Viser URL printed in the log:
 
 ```bash
 uv sync --extra all
 dimos run r1pro-planner-coordinator
 ```
 
-The blueprint uses fake hardware. It is safe for planning and preview, but base
-execution is intentionally rejected.
-
-| Check | Viser action | Expected result |
+| Check | Action | Expected result |
 |---|---|---|
-| Unbounded translation | Select `moving_base`, set `base/x` to `6.0`, and plan | Planning succeeds even though the goal is beyond the former +5 m workspace |
-| Negative unbounded translation | Set `base/y` to `-6.0`, and plan again | Planning succeeds without rebuilding the world |
-| Wrapped yaw | Set yaw near `3.04`, plan, then use a start near `3.04` and target near `-3.04` | Preview uses the short rotation across the wrap boundary, not an almost-full turn |
-| Mobile manipulation | Select `left_arm`, `torso`, and `moving_base`; move the left TCP target and plan | Pink solves one joint goal and shared RRT produces a collision-checked joint path |
-| Cartesian guard | Choose Cartesian mode while `moving_base` is selected | The request reports that Cartesian waypoint planning does not support a moving planar base |
-| Preview-only safety | Preview a base plan, then press Execute | Preview works; execution is rejected with the feedback-base-controller message |
+| Positive line coordinate | Select `moving_base`, set `base/x` to `6.0`, plan | Planning succeeds beyond the former +5 m bound without rebuilding the world. |
+| Negative line coordinate | Set `base/y` to `-6.0`, plan | Planning succeeds with the same prepared model. |
+| Circle crossing | Start `base/yaw` near `3.04`, target `-3.04`, plan | Preview follows the short crossing, not an almost-full turn. |
+| Whole-body target | Select `left_arm`, `torso`, and `moving_base`; move the left TCP target; plan | Pink solves one selected goal; shared RRT produces a collision-checked joint path. |
+| Locked coordinates | Repeat with only `left_arm` selected | Torso, right arm, and base remain fixed. |
+| Cartesian guard | Choose Cartesian mode with `moving_base` selected | The request reports that Cartesian planning requires interval-only coordinates. |
+| Preview safety | Preview a base plan, then execute | Preview works; execution reports the missing feedback base-controller capability. |
 
-For the wrapped-yaw check, set the planning start through the manipulation
-module's `set_init_joints()` RPC in `dimos shell`, then choose the **Init** preset
-in Viser. Preserve every configured joint name and current non-base position;
-change only `base/yaw`.
+To set the wrapped-yaw start precisely, use `set_init_joints()` in `dimos shell`, preserve every configured joint name and non-base position, change only `base/yaw`, then choose the **Init** preset in Viser.
 
-While testing an obstructed scene, inspect `dimos log -f` for
-`RRT planning-domain attempt`. The margins should progress through 1, 2, 4, 8,
-and 16 metres as needed, with no more than 1,000 nodes per attempt and 5,000
-nodes for the request.
+For an obstructed scene, follow logs with `dimos log -f`. `RRT planning-domain attempt` should show margins of 1, 2, 4, 8, and 16 metres as needed, no more than 1,000 nodes per attempt, and no more than 5,000 nodes for the request.

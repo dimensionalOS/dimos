@@ -83,8 +83,6 @@ def _get_xarm7_config() -> RobotModelConfig:
         package_paths={"xarm_description": desc_path},
         xacro_args={"dof": "7", "limited": "true"},
         auto_convert_meshes=True,
-        max_velocity=1.0,
-        max_acceleration=2.0,
     )
 
 

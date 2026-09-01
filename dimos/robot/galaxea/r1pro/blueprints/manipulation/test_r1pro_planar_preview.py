@@ -18,6 +18,7 @@ from dimos.control.components import HardwareType, make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
+from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
 from dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_planar_preview import (
     r1pro_planar_preview,
@@ -47,12 +48,9 @@ def test_planar_preview_uses_fake_hardware_for_all_planning_joints() -> None:
 
     assert manipulation.visualization.backend == "viser"
     assert manipulation.trajectory_parametrization.backend == "simple_trapezoid"
-    assert manipulation.model.canonical_velocity_limits()[:3] == list(
-        R1PRO_PLANAR_BASE.velocity_limits
-    )
-    assert manipulation.model.canonical_acceleration_limits()[:3] == list(
-        R1PRO_PLANAR_BASE.acceleration_limits
-    )
+    prepared = prepare_robot_model(manipulation.model)
+    assert prepared.joint_space.velocity_limits[:3] == R1PRO_PLANAR_BASE.velocity_limits
+    assert prepared.joint_space.acceleration_limits[:3] == R1PRO_PLANAR_BASE.acceleration_limits
     assert coordinator.hardware[0].hardware_type == HardwareType.WHOLE_BODY
     assert coordinator.hardware[0].adapter_type == "mock_whole_body"
     assert coordinator.hardware[0].joints == list(R1PRO_PLANNING_JOINTS)

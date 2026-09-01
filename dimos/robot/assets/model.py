@@ -46,6 +46,10 @@ class JointDescription:
     child_link: str = ""
     origin_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
     origin_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    lower: float | None = None
+    upper: float | None = None
+    velocity: float | None = None
+    acceleration: float | None = None
 
 
 @dataclass(frozen=True)
@@ -139,6 +143,7 @@ class RobotModel:
     _subtree_root_link: str | None = None
     _removed_joint_subtrees: tuple[str, ...] = ()
     _planar_base: PlanarBaseDefinition | None = None
+    _default_joint_acceleration_limit: float | None = None
 
     @classmethod
     def from_file(
@@ -248,6 +253,12 @@ class RobotModel:
             ),
         )
 
+    def with_default_joint_acceleration_limit(self, value: float) -> RobotModel:
+        """Fill missing movable-joint acceleration limits during materialization."""
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError("Default joint acceleration limit must be positive and finite")
+        return replace(self, _default_joint_acceleration_limit=float(value))
+
     def load(self) -> LoadedRobotModel:
         """Materialize and memoize the model for a backend adapter."""
         return self._loaded
@@ -286,6 +297,10 @@ class RobotModel:
             xml = _set_joint_position_limits(xml, self._joint_position_limits)
         if self._renamed_joints:
             xml = _rename_joints(xml, dict(self._renamed_joints))
+        if self._default_joint_acceleration_limit is not None:
+            xml = _set_missing_joint_acceleration_limits(
+                xml, self._default_joint_acceleration_limit
+            )
         if self._fixed_frames:
             xml = _add_fixed_frames(xml, self._fixed_frames)
 
@@ -531,6 +546,19 @@ def _set_joint_position_limits(
     return ET.tostring(root, encoding="unicode")
 
 
+def _set_missing_joint_acceleration_limits(xml: str, value: float) -> str:
+    root = ET.fromstring(xml)
+    for joint in root.findall("joint"):
+        if joint.get("type") == "fixed":
+            continue
+        limit = joint.find("limit")
+        if limit is None:
+            limit = ET.SubElement(joint, "limit")
+        if limit.get("acceleration") is None:
+            limit.set("acceleration", str(value))
+    return ET.tostring(root, encoding="unicode")
+
+
 def _parse_topology(xml: str) -> tuple[tuple[JointDescription, ...], str]:
     root = ET.fromstring(xml)
     links = [name for link in root.findall("link") if (name := link.get("name")) is not None]
@@ -546,6 +574,7 @@ def _parse_topology(xml: str) -> tuple[tuple[JointDescription, ...], str]:
             child_links.add(child_link)
 
         origin = joint.find("origin")
+        limit = joint.find("limit")
         joints.append(
             JointDescription(
                 name=joint.get("name", ""),
@@ -554,6 +583,10 @@ def _parse_topology(xml: str) -> tuple[tuple[JointDescription, ...], str]:
                 child_link=child_link,
                 origin_xyz=_triple(origin.get("xyz") if origin is not None else None),
                 origin_rpy=_triple(origin.get("rpy") if origin is not None else None),
+                lower=_optional_float(limit, "lower"),
+                upper=_optional_float(limit, "upper"),
+                velocity=_optional_float(limit, "velocity"),
+                acceleration=_optional_float(limit, "acceleration"),
             )
         )
 
@@ -562,6 +595,12 @@ def _parse_topology(xml: str) -> tuple[tuple[JointDescription, ...], str]:
         logger.warning(f"Multiple root candidates: {root_candidates}; using {root_candidates[0]}")
     root_link = root_candidates[0] if root_candidates else ""
     return tuple(joints), root_link
+
+
+def _optional_float(element: ET.Element | None, attribute: str) -> float | None:
+    if element is None or (value := element.get(attribute)) is None:
+        return None
+    return float(value)
 
 
 def _triple(value: str | None) -> tuple[float, float, float]:

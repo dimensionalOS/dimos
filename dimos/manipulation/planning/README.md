@@ -231,12 +231,16 @@ when `world_backend="roboplan"`: it reuses the finalized `RoboPlanWorld` model
 and planning groups. Selecting it with another world fails during startup.
 DimOS supports RoboPlan `0.6.x` for this integration.
 
-For every selected movable joint, the RoboPlan URDF must provide a finite,
-positive velocity limit. DimOS uses an authored extended acceleration limit
-when present; otherwise it temporarily inserts a global `2.0` fallback in each
-joint's native coordinate per second² while composing the RoboPlan model.
-Formal per-joint acceleration overrides
-will replace this fallback.
+For every selected movable joint, the materialized URDF must provide a finite,
+positive velocity and acceleration limit. Standard URDF has no acceleration
+attribute, so a robot asset can explicitly fill missing values before planning:
+
+```python
+model = RobotModel.from_file(urdf_path).with_default_joint_acceleration_limit(2.0)
+```
+
+This default is applied while materializing the robot description. Every
+backend then consumes the same compiled per-coordinate limits.
 
 ```xml
 <limit
@@ -248,11 +252,8 @@ will replace this fallback.
 />
 ```
 
-RoboPlan scene limits are authoritative for this backend. The current
-`RobotModelConfig.max_velocity`, `velocity_limits`, and `max_acceleration`
-fields are not substituted when a URDF limit is missing. Missing or invalid
-limits fail plan materialization with the affected joint named. Formal
-canonical per-joint overrides are future work.
+Missing or invalid limits fail model preparation with the affected joint
+named, before any backend is created.
 
 ## RobotModelConfig Fields
 
@@ -263,8 +264,10 @@ canonical per-joint overrides are future work.
 | `joint_names` | Canonical joint names in the model |
 | `base_link` | Base link name |
 | `planning_groups` | Named planning subsets with canonical joints and frames |
-| `max_velocity` | Max velocity in each joint's native coordinate per second |
-| `max_acceleration` | Max acceleration in each joint's native coordinate per second² |
+
+Position and velocity limits come from the materialized URDF. Missing
+acceleration limits must be supplied explicitly on `RobotModel` as shown
+above.
 
 ## Components
 

@@ -49,7 +49,7 @@ OPENARM_BIMANUAL_MODEL = RobotModel.from_file(
         "robot_preset": "default_bimanual",
         "emit_grasp_frame": "true",
     },
-).with_fixed_joints(
+).with_default_joint_acceleration_limit(1.0).with_fixed_joints(
     "openarm_left_finger_joint1",
     "openarm_left_finger_joint2",
     "openarm_right_finger_joint1",
@@ -163,7 +163,5 @@ def openarm_bimanual_model_config() -> RobotModelConfig:
         ],
         collision_exclusion_pairs=OPENARM_GRIPPER_COLLISION_EXCLUSIONS,
         auto_convert_meshes=True,
-        max_velocity=0.5,
-        max_acceleration=1.0,
         home_joints=list(OPENARM_HOME_JOINTS),
     )

@@ -16,7 +16,7 @@
 
 import pytest
 
-from dimos.manipulation.planning.spec.validation import validate_robot_model_config
+from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.robot.manipulators.xarm.config import (
     XARM_GRIPPER_COLLISION_EXCLUSIONS,
     make_dual_xarm6_model_config,
@@ -58,7 +58,7 @@ def test_dual_xarm6_configures_canonical_groups() -> None:
 @pytest.mark.self_hosted
 def test_dual_xarm6_model_contains_canonical_joint_topology() -> None:
     config = make_dual_xarm6_model_config()
-    model = validate_robot_model_config(config)
+    model = prepare_robot_model(config).description
 
     assert model.root_link == "world"
     assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
@@ -77,6 +77,6 @@ def test_prefixed_xarm_model_config_uses_coordinator_facing_names() -> None:
 @pytest.mark.self_hosted
 def test_prefixed_xarm_model_asset_uses_coordinator_facing_names() -> None:
     config = make_xarm6_model_config(add_gripper=False, prefix="xarm_arm/")
-    model = validate_robot_model_config(config)
+    model = prepare_robot_model(config).description
 
     assert [joint.name for joint in model.joints if joint.type != "fixed"] == config.joint_names

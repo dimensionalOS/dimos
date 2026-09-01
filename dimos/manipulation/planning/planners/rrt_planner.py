@@ -34,6 +34,7 @@ from dimos.manipulation.planning.planners.selected_joint_space import (
     normalize_selection_target,
 )
 from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.joint_space import CoordinateTopology
 from dimos.manipulation.planning.spec.models import (
     CartesianTarget,
     JointPath,
@@ -112,7 +113,10 @@ class RRTConnectPlanner:
         if world.check_edge_collision_free(start, goal, self._collision_step_size):
             return _create_success_result([start, goal], time.time() - start_time, 0)
 
-        lower, upper = world.get_joint_limits()
+        joint_space = world.get_prepared_model().joint_space
+        lower, upper = joint_space.finite_sampling_domain(
+            joint_space.configuration(q_start), joint_space.configuration(q_goal), 1.0
+        )
         start_tree = [TreeNode(config=q_start.copy())]
         goal_tree = [TreeNode(config=q_goal.copy())]
         trees_swapped = False
@@ -239,7 +243,11 @@ class RRTConnectPlanner:
                 "Direct path found",
             )
 
-        margins = (1.0, 2.0, 4.0, 8.0, 16.0) if selected_space.translation_indices else (1.0,)
+        has_line_coordinate = any(
+            coordinate.topology is CoordinateTopology.LINE
+            for coordinate in selected_space.joint_space.coordinates
+        )
+        margins = (1.0, 2.0, 4.0, 8.0, 16.0) if has_line_coordinate else (1.0,)
         iterations = 0
         attempts = 0
         for attempt, margin in enumerate(margins, start=1):
@@ -247,9 +255,7 @@ class RRTConnectPlanner:
             if remaining <= 0:
                 break
             attempts = attempt
-            attempt_budget = (
-                min(1000, remaining) if selected_space.translation_indices else remaining
-            )
+            attempt_budget = min(1000, remaining) if has_line_coordinate else remaining
             try:
                 domain_lower, domain_upper = selected_space.planning_domain(q_start, q_goal, margin)
             except ValueError as exc:
@@ -425,7 +431,7 @@ class RRTConnectPlanner:
             )
 
         # Check limits with small tolerance for driver floating-point drift
-        lower, upper = world.get_joint_limits()
+        lower, upper = world.get_prepared_model().joint_space.position_limits()
         q_start = np.array(start.position, dtype=np.float64)
         q_goal = np.array(goal.position, dtype=np.float64)
         limit_eps = 1e-3  # ~0.06 degrees

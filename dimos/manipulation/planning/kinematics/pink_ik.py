@@ -28,7 +28,6 @@ from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGro
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.kinematics.pink_solver import (
     _get_frame_id,
-    _JointMapping,
     _PinkRobotContext,
     _PinkSolverCore,
     _seed_positions_for_mapping,
@@ -38,6 +37,7 @@ from dimos.manipulation.planning.kinematics.utils import (
     unique_pose_target_frame as _unique_pose_target_frame,
 )
 from dimos.manipulation.planning.spec.enums import IKStatus
+from dimos.manipulation.planning.spec.joint_space import JointSpace
 from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
@@ -91,8 +91,9 @@ class PinkIK(_PinkSolverCore):
             with world.scratch_context() as ctx:
                 seed = world.get_joint_state(ctx)
 
-        lower_limits, upper_limits = world.get_joint_limits()
-        target_model = self._target_in_model_frame(world.get_model_config(), target_pose)
+        prepared = world.get_prepared_model()
+        lower_limits, upper_limits = prepared.joint_space.position_limits()
+        target_model = self._target_in_model_frame(prepared.config, target_pose)
         fallback_result: IKResult | None = None
 
         for attempt in range(max_attempts):
@@ -165,7 +166,8 @@ class PinkIK(_PinkSolverCore):
 
         try:
             selection = PlanningGroupSelection.from_groups(all_groups)
-            config = world.get_model_config()
+            prepared = world.get_prepared_model()
+            config = prepared.config
             joint_names = list(config.joint_names)
             selected_indices = [joint_names.index(name) for name in selection.joint_names]
             seed_positions = _seed_positions_with_world_fallback(world, joint_names, seed)
@@ -177,7 +179,7 @@ class PinkIK(_PinkSolverCore):
                 _success(joint_names, seed_positions, 0.0, 0.0, 0), selection.joint_names
             )
 
-        lower_limits, upper_limits = world.get_joint_limits()
+        lower_limits, upper_limits = prepared.joint_space.position_limits()
         selected_index_set = set(selected_indices)
         locked_positions = {
             index: float(seed_positions[index])
@@ -203,7 +205,7 @@ class PinkIK(_PinkSolverCore):
             current_positions = seed_positions.copy()
             if attempt > 0:
                 retry_lower, retry_upper = _finite_retry_limits(
-                    targets[0][0].mapping,
+                    targets[0][0].joint_space,
                     seed_positions,
                     lower_limits,
                     upper_limits,
@@ -328,7 +330,9 @@ class PinkIK(_PinkSolverCore):
 
     def _get_model_context(self, world: WorldSpec, frame_name: str) -> _PinkRobotContext:
         if self._model_context is None:
-            self._model_context = self._build_robot_context(world.get_model_config(), frame_name)
+            self._model_context = self._build_robot_context(
+                world.get_prepared_model(), frame_name
+            )
             return self._model_context
         if self._model_context.frame_name == frame_name:
             return self._model_context
@@ -350,7 +354,7 @@ class PinkIK(_PinkSolverCore):
         positions = seed_positions
         if attempt > 0:
             lower, upper = _finite_retry_limits(
-                context.mapping,
+                context.joint_space,
                 seed_positions,
                 lower_limits,
                 upper_limits,
@@ -362,28 +366,25 @@ class PinkIK(_PinkSolverCore):
 
 
 def _finite_retry_limits(
-    mapping: _JointMapping,
+    joint_space: JointSpace,
     seed_positions: NDArray[np.float64],
     lower_limits: NDArray[np.float64],
     upper_limits: NDArray[np.float64],
     movable_indices: Sequence[int],
     attempt: int,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Build finite retry bounds around unbounded planar seed coordinates."""
+    """Build finite retry bounds through the canonical joint-space policy."""
+    margin = float(2 ** (attempt - 1))
+    seed = joint_space.configuration(seed_positions)
+    request_lower, request_upper = joint_space.finite_sampling_domain(seed, seed, margin)
     lower = lower_limits.copy()
     upper = upper_limits.copy()
-    translation_indices = set(mapping.translation_indices)
-    periodic_indices = set(mapping.periodic_indices)
-    margin = float(2 ** (attempt - 1))
     for index in movable_indices:
-        if index in translation_indices:
-            lower[index] = seed_positions[index] - margin
-            upper[index] = seed_positions[index] + margin
-        elif index in periodic_indices:
-            lower[index], upper[index] = -np.pi, np.pi
+        lower[index] = request_lower[index]
+        upper[index] = request_upper[index]
         if not np.isfinite(lower[index]) or not np.isfinite(upper[index]):
             raise ValueError(
-                f"Cannot sample retry seed for unbounded joint '{mapping.dimos_joint_names[index]}'"
+                f"Cannot sample retry seed for unbounded joint '{joint_space.names[index]}'"
             )
     return lower, upper
 
