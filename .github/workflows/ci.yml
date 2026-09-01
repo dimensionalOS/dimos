@@ -247,6 +247,10 @@ jobs:
             dimos/navigation/nav_3d/mls_planner/test_transformer.py
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
+      - name: Pointlio e2e tests
+        run: |
+          cargo build --release --locked -p dimos-livox -p virtual-mid360
+          uv run pytest -m pointlio_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
 
   cpp:
     timeout-minutes: 30

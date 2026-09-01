@@ -151,6 +151,10 @@ impl Mid360 {
     fn build_source(&self) -> Box<dyn PacketSource + Send> {
         let config = &self.config;
         if let Nullable(Some(path)) = &config.pcap {
+            assert!(
+                !path.is_empty(),
+                "pcap replay selected but the path is empty; set DIMOS_MID360_PCAP or config.pcap"
+            );
             let source = PcapSource::from_file(
                 path,
                 config.point_data_port,

@@ -76,6 +76,7 @@ all_blueprints = {
     "learning-collect-quest-piper": "dimos.imitation.collection.blueprint:learning_collect_quest_piper",
     "learning-collect-quest-xarm7": "dimos.imitation.collection.blueprint:learning_collect_quest_xarm7",
     "mid360": "dimos.hardware.sensors.lidar.livox.livox_blueprints:mid360",
+    "mid360-pcap-replay": "dimos.hardware.sensors.lidar.livox.livox_blueprints:mid360_pcap_replay",
     "mid360-fastlio": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio",
     "mid360-fastlio-ray-trace": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio_ray_trace",
     "mid360-fastlio-voxels": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio_voxels",
