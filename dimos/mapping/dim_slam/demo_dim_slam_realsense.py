@@ -52,6 +52,12 @@ def dim_slam_rerun_blueprint() -> Any:
     )
 
 
+rerun_config = {
+    "blueprint": dim_slam_rerun_blueprint,
+    "visual_override": {"world/odom_hist": path_at_true_height},
+}
+
+
 demo_dim_slam_realsense = (
     autoconnect(
         RealSenseCamera.blueprint(
@@ -65,10 +71,7 @@ demo_dim_slam_realsense = (
         OdometryHist.blueprint(),
         vis_module(
             global_config.viewer,
-            rerun_config={
-                "blueprint": dim_slam_rerun_blueprint,
-                "visual_override": {"world/odom_hist": path_at_true_height},
-            },
+            rerun_config=rerun_config,
         ),
     )
     .remappings(
