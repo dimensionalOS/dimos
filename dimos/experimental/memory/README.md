@@ -95,26 +95,23 @@ Both backends preserve source timestamps for common stamped messages. Arbitrary
 pickle payloads, Python `pose_setter_for` hooks, and spatial pose attachment
 remain Python-recorder features; unsupported combinations fail during startup.
 
-## OpenYAM collection profile
+## OpenYAM collection
 
-The experimental imitation-learning profile uses this recorder without adding
-Python-side recording behavior:
+The OpenYAM learning blueprint uses this recorder without adding Python-side
+recording behavior:
 
 ```bash
-dimos --transport zenoh --can-port can0 \
-  run learning-collect-quest-openyam-native \
+dimos --can-port follower_l \
+  run learning-collect-quest-openyam \
   --task "pick up the red block"
 ```
 
 It records the USB wrist camera, aggregate coordinator joint state,
 hardware-accepted joint position command, and typed episode status over
-reliable Zenoh. SQLite is the default; select MCAP for a run with:
+reliable Zenoh. MCAP is the default; override its path with:
 
 ```bash
-  --nativecollectionrecorder.store.kind mcap \
   --nativecollectionrecorder.store.path /path/to/session_openyam.mcap
 ```
 
-Both artifacts feed `dimos dataprep` directly. The stable
-`learning-collect-quest-openyam` command continues to use the Python recorder
-and pSHM.
+The artifact feeds `dimos dataprep build --profile openyam` directly.

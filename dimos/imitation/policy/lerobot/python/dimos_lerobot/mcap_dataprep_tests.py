@@ -39,14 +39,16 @@ JOINTS = [f"arm/joint{index}" for index in range(1, 7)] + ["arm/gripper"]
 
 
 def _channel(writer: McapWriter, name: str, payload_type: type[Any]) -> int:
-    return writer.register_channel(
-        topic=name,
-        message_encoding="lcm",
-        schema_id=0,
-        metadata={
-            "dimos.payload_type": f"{payload_type.__module__}.{payload_type.__qualname__}",
-            "dimos.observation_time": "publish_time",
-        },
+    return int(
+        writer.register_channel(
+            topic=name,
+            message_encoding="lcm",
+            schema_id=0,
+            metadata={
+                "dimos.payload_type": f"{payload_type.__module__}.{payload_type.__qualname__}",
+                "dimos.observation_time": "publish_time",
+            },
+        )
     )
 
 
