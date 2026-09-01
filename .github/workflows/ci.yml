@@ -270,6 +270,11 @@ jobs:
             "$base/zenoh-c/releases/download/$ZENOH_VERSION/zenoh-c-$ZENOH_VERSION-x86_64-unknown-linux-gnu-standalone.zip"
           curl -fsSL -o /tmp/zenoh-cpp.zip \
             "$base/zenoh-cpp/releases/download/$ZENOH_VERSION/zenohcpp-$ZENOH_VERSION-standalone.zip"
+          # A release asset can be replaced in place, so the bytes are pinned too
+          printf '%s  /tmp/zenoh-c.zip\n%s  /tmp/zenoh-cpp.zip\n' \
+            29f6a0dedc7ada0be007058e706df64ff26e62ae56f6efc2b098132c431c263d \
+            b11ba9107bb2035ea4b35cfc009b078e1814287d8c5241703e4e6ea417d61e9e \
+            | sha256sum -c -
           unzip -q /tmp/zenoh-c.zip -d /tmp/zenoh
           unzip -q /tmp/zenoh-cpp.zip -d /tmp/zenoh
       # ON, not AUTO: a zenoh that silently went missing would skip the tests
