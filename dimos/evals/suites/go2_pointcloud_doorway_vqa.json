@@ -1,0 +1,167 @@
+[
+  {
+    "id": "go2_agentic_20260819_doorway_t400",
+    "family": "doorway",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Using only the mapped point cloud, are there any doorways in what you can see? If there are, give the world coordinate of the middle of each one. Answer with the single word none, or with one coordinate per doorway as x,y \u2014 one per line, nothing else.",
+    "a": [
+      [
+        -2.05,
+        -2.47
+      ]
+    ],
+    "radius": 0.8,
+    "context": [
+      [
+        "lidar",
+        [
+          399.88,
+          399.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          399.5,
+          400.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_doorway_t900",
+    "family": "doorway",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Using only the mapped point cloud, are there any doorways in what you can see? If there are, give the world coordinate of the middle of each one. Answer with the single word none, or with one coordinate per doorway as x,y \u2014 one per line, nothing else.",
+    "a": [
+      [
+        -2.05,
+        -2.47
+      ]
+    ],
+    "radius": 0.8,
+    "context": [
+      [
+        "lidar",
+        [
+          899.93,
+          900.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          899.5,
+          900.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_doorway_t1500",
+    "family": "doorway",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Using only the mapped point cloud, are there any doorways in what you can see? If there are, give the world coordinate of the middle of each one. Answer with the single word none, or with one coordinate per doorway as x,y \u2014 one per line, nothing else.",
+    "a": [
+      [
+        -2.7,
+        -2.22
+      ]
+    ],
+    "radius": 0.8,
+    "context": [
+      [
+        "lidar",
+        [
+          1499.86,
+          1499.96
+        ]
+      ],
+      [
+        "odom",
+        [
+          1499.5,
+          1500.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_doorway_t1200",
+    "family": "doorway",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Using only the mapped point cloud, are there any doorways in what you can see? If there are, give the world coordinate of the middle of each one. Answer with the single word none, or with one coordinate per doorway as x,y \u2014 one per line, nothing else.",
+    "a": [],
+    "radius": 0.8,
+    "context": [
+      [
+        "lidar",
+        [
+          1199.89,
+          1199.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          1199.5,
+          1200.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_doorway_t1409",
+    "family": "doorway",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Using only the mapped point cloud, are there any doorways in what you can see? If there are, give the world coordinate of the middle of each one. Answer with the single word none, or with one coordinate per doorway as x,y \u2014 one per line, nothing else.",
+    "a": [],
+    "radius": 0.8,
+    "context": [
+      [
+        "lidar",
+        [
+          1408.89,
+          1408.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          1408.5,
+          1409.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_doorway_t1395",
+    "family": "doorway",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Using only the mapped point cloud, are there any doorways in what you can see? If there are, give the world coordinate of the middle of each one. Answer with the single word none, or with one coordinate per doorway as x,y \u2014 one per line, nothing else.",
+    "a": [],
+    "radius": 0.8,
+    "context": [
+      [
+        "lidar",
+        [
+          1394.94,
+          1395.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          1394.5,
+          1395.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  }
+]

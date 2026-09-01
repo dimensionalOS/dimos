@@ -23,9 +23,13 @@ quizzing whatever lossy encoding the agent receives for a ``PointCloud2``.
 ``go2_bigoffice`` is a 292 s exploration whose lidar is a rolling ~6 m local
 window, which is why the two datasets take different stream families.
 
+Free-space families live in their own suites, one per question class:
+:mod:`dimos.evals.suites.go2_pointcloud_clearance` and
+:mod:`dimos.evals.suites.go2_pointcloud_route`.
+
 Regenerate (needs both recordings)::
 
-    python -m dimos.evals.suites.go2_pointcloud
+    uv run python -m dimos.evals.suites.go2_pointcloud
 """
 
 from __future__ import annotations
@@ -49,7 +53,7 @@ _BIGOFFICE_WINDOWS = [(0.0, 60.0), (60.0, 150.0), (150.0, 240.0), (200.0, 291.0)
 def rows() -> list[generate.Row]:
     """The generator calls behind the committed JSON.
 
-    ponytail: go2_short gets no shift/extent-change families — it maps the room
+    go2_short gets no shift/extent-change families — it maps the room
     in frame 1, so those truths degenerate to ~0 and a blind "0" wins.
     """
     short, big = "go2_short", "go2_bigoffice"

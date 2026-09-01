@@ -21,9 +21,15 @@ surface. Rows are pure data; :func:`cases` maps them onto
 
 Row schema::
 
-    {"id", "family", "type": "numeric"|"mcq", "q", "a",
-     "band" (numeric) | "choices" (mcq),
-     "context": [[stream, [t0, t1]], ...], "dataset"}
+    {"id", "family", "type": "numeric"|"mcq"|"coords", "q", "a",
+     "band" (numeric) | "choices" (mcq) | "radius" + "value_band" (coords),
+     "context": [[stream, [t0, t1], fuse?], ...], "dataset",
+     "split" (optional): "train" | "holdout" | "spare"}
+
+``coords`` answers are open-ended point lists — ``"a": [[x, y], ...]`` or
+``[[x, y, value], ...]``, ``[]`` for "there are none" — scored by
+:func:`~dimos.evals.scorers.matched_set`. The optional third element of a
+context entry fuses that window into one cloud; see :func:`_select`.
 """
 
 from __future__ import annotations
@@ -35,7 +41,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from dimos.evals.environments.dataset import Dataset
-from dimos.evals.scorers import choice, exact, first_number, within
+from dimos.evals.scorers import choice, coord_list, exact, first_number, matched_set, within
 from dimos.evals.types import EvalCase, Outcome, Select
 from dimos.memory.cli.dataset import open_dataset
 
@@ -66,12 +72,66 @@ def _voxels2d(pts: np.ndarray, cell: float = VOXEL) -> set[tuple[int, int]]:
     return set(map(tuple, np.floor(pts[:, :2] / cell).astype(int)))
 
 
-def _cloud_at(store: Store, t: float) -> tuple[np.ndarray, list[list[object]]]:
-    """Points of the last cloud at or before ``t``, plus a context window selecting it."""
+def _frame_at(store: Store, t: float) -> tuple[Any, list[list[object]]]:
+    """The last cloud at or before ``t``, plus a context window selecting it."""
     lidar = store.streams.lidar
     obs = lidar.range_time(0, t).to_list()[-1]
     ts = obs.ts - lidar.first().ts
-    return obs.data.points_f32(), [["lidar", [round(ts - 0.05, 2), round(ts + 0.05, 2)]]]
+    return obs.data, [["lidar", [round(ts - 0.05, 2), round(ts + 0.05, 2)]]]
+
+
+def _cloud_at(store: Store, t: float) -> tuple[np.ndarray, list[list[object]]]:
+    """Points of the last cloud at or before ``t``, plus its context window."""
+    cloud, context = _frame_at(store, t)
+    return cloud.points_f32(), context
+
+
+def _odom_at(store: Store, t: float) -> np.ndarray:
+    """The robot's x-y position at or before ``t``, world meters."""
+    position = store.streams.odom.range_time(0, t).to_list()[-1].data.position
+    return np.array([float(position.x), float(position.y)])
+
+
+def _cell_grid(
+    pts: np.ndarray, cell: float, *, bounds: tuple[np.ndarray, np.ndarray] | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Per x-y cell return count, lowest z and highest z, as ``(origin, count, zmin, zmax)``.
+
+    Cells are ``cell`` squares aligned to multiples of ``cell`` in world x and
+    y, so a question can name a cell by any point inside it. ``bounds`` widens
+    the grid past the cloud (a goal outside the sensing window is then an empty
+    cell, not an index error). Arrays are ``[row=y, col=x]``.
+    """
+    xy = pts[:, :2]
+    lo, hi = xy.min(axis=0), xy.max(axis=0)
+    if bounds is not None:
+        lo, hi = np.minimum(lo, bounds[0]), np.maximum(hi, bounds[1])
+    origin = np.floor(lo / cell) * cell
+    shape = np.floor((hi - origin) / cell).astype(np.int64) + 1
+    nx, ny = int(shape[0]), int(shape[1])
+    ij = np.floor((xy - origin) / cell).astype(np.int64)
+    lin = ij[:, 1] * nx + ij[:, 0]
+    count = np.bincount(lin, minlength=nx * ny).reshape(ny, nx)
+    zmin = np.full(nx * ny, np.inf)
+    zmax = np.full(nx * ny, -np.inf)
+    np.minimum.at(zmin, lin, pts[:, 2])
+    np.maximum.at(zmax, lin, pts[:, 2])
+    return origin, count, zmin.reshape(ny, nx), zmax.reshape(ny, nx)
+
+
+def _cell_centers(
+    origin: np.ndarray, cell: float, shape: tuple[int, ...]
+) -> tuple[np.ndarray, np.ndarray]:
+    """World x and y of every cell centre of a ``_cell_grid`` array, as two ``[row, col]`` arrays."""
+    rows, cols = np.mgrid[0 : shape[0], 0 : shape[1]]
+    return origin[0] + (cols + 0.5) * cell, origin[1] + (rows + 0.5) * cell
+
+
+def _cell_index(origin: np.ndarray, cell: float, point: np.ndarray) -> tuple[int, int]:
+    """``(row, col)`` of the cell containing ``point``."""
+    return int(np.floor((point[1] - origin[1]) / cell)), int(
+        np.floor((point[0] - origin[0]) / cell)
+    )
 
 
 def displacement_rows(dataset: str, windows: Sequence[tuple[float, float]]) -> list[Row]:
@@ -362,14 +422,49 @@ def coverage_direction_rows(
         return rows
 
 
-def _select(name: str, window: tuple[float, ...]) -> Select:
-    """One context entry -> the stream the case contains."""
-    return lambda s: s.streams[name].range_time(*window)
+def _fuse_of(entry: Sequence[Any]) -> dict[str, Any] | None:
+    """The optional third element of a context entry: fuse settings, or None."""
+    return cast("dict[str, Any]", entry[2]) if len(entry) > 2 else None
+
+
+def _select(name: str, window: tuple[float, ...], fuse: dict[str, Any] | None) -> Select:
+    """One context entry -> the stream the case contains.
+
+    Without ``fuse`` this is the plain window. With it, the window is thinned
+    to every ``downsample``-th frame and accumulated into a single voxel map
+    (``emit_every=0`` yields once, at the end), so a long stretch of driving
+    reaches the agent as one fused cloud rather than as snapshots of a
+    rolling local map.
+    """
+    if fuse is None:
+        return lambda s: s.streams[name].range_time(*window)
+
+    # Lazy so that suites that never fuse do not import open3d.
+    from dimos.mapping.voxels.module import VoxelMapTransformer
+    from dimos.memory.transform import downsample
+
+    def select(s: Store) -> Any:
+        return (
+            s.streams[name]
+            .range_time(*window)
+            .transform(downsample(int(fuse.get("downsample", 1))))
+            .transform(
+                VoxelMapTransformer(
+                    voxel_size=float(fuse.get("voxel_size", 0.05)),
+                    device=str(fuse.get("device", "CPU:0")),
+                    emit_every=0,
+                )
+            )
+        )
+
+    return select
 
 
 def _grade(row: Row) -> Callable[[Outcome], float]:
-    """The scorer a row's type implies. A reply the parser cannot read is a
-    wrong answer, not a broken run: it scores 0."""
+    """The scorer a row's type implies: numeric rows score on a band, mcq rows
+    on exact match against the named options, coords rows on set overlap
+    within a radius. A reply the parser cannot read is a wrong answer, not a
+    broken run: it scores 0."""
     if row["type"] == "numeric":
         expected, band = float(cast("float", row["a"])), float(cast("float", row["band"]))
 
@@ -380,6 +475,19 @@ def _grade(row: Row) -> Callable[[Outcome], float]:
                 return 0.0
 
         return numeric
+    if row["type"] == "coords":
+        points = [tuple(c) for c in cast("list[list[float]]", row["a"])]
+        overlap = matched_set(
+            float(cast("float", row["radius"])), cast("float | None", row.get("value_band"))
+        )
+
+        def coords(o: Outcome) -> float:
+            try:
+                return overlap(points, coord_list(o.trajectory.final_answer))
+            except ValueError:
+                return 0.0
+
+        return coords
     answer, parse = str(row["a"]), choice(cast("list[str]", row["choices"]))
 
     def mcq(o: Outcome) -> float:
@@ -392,8 +500,8 @@ def _grade(row: Row) -> Callable[[Outcome], float]:
 
 
 def cases(rows: Sequence[Row], *, tags: frozenset[str] = frozenset()) -> list[EvalCase]:
-    """Rows -> cases. The mirror of the schema above: numeric rows score on a
-    band, mcq rows on exact match against the named options."""
+    """Rows -> cases, the mirror of the schema above. A row's family, type
+    and split (when it has one) become tags."""
     return [
         EvalCase(
             id=str(row["id"]),
@@ -401,12 +509,12 @@ def cases(rows: Sequence[Row], *, tags: frozenset[str] = frozenset()) -> list[Ev
             environment=Dataset(
                 str(row["dataset"]),
                 select=tuple(
-                    _select(str(entry[0]), tuple(cast("list[float]", entry[1])))
+                    _select(str(entry[0]), tuple(cast("list[float]", entry[1])), _fuse_of(entry))
                     for entry in cast("list[list[Any]]", row["context"])
                 ),
             ),
             grade=_grade(row),
-            tags=tags | {str(row["family"]), str(row["type"])},
+            tags=tags | {str(row[key]) for key in ("family", "type", "split") if key in row},
         )
         for row in rows
     ]

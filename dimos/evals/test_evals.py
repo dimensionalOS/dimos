@@ -48,15 +48,18 @@ from dimos.evals.environments.sim import Sim
 from dimos.evals.runner import EvalRunner
 from dimos.evals.scorers import (
     choice,
+    coord_list,
     exact,
     final,
     first_number,
     floor,
+    matched_set,
     mean,
     ramp,
     within,
     yes_no,
 )
+from dimos.evals.suites.lib import generate
 from dimos.evals.types import (
     EvalCase,
     Observation,
@@ -241,6 +244,74 @@ def test_parsers() -> None:
     assert compass("north-east") == "northeast"  # not "east"
     with pytest.raises(ValueError):
         compass("no idea")
+    assert coord_list("9.0,4.1,+0.25\n(1, 2)") == [(9.0, 4.1, 0.25), (1.0, 2.0)]
+    assert coord_list("0 areas at all: none") == []  # one number a line is prose
+    assert coord_list("the floor is level") == []
+    with pytest.raises(ValueError):
+        coord_list("somewhere over there")
+
+
+def test_matched_set_is_f1_over_paired_points() -> None:
+    score = matched_set(0.5)
+    assert score([], []) == 1.0  # none, correctly
+    assert score([(0.0, 0.0)], []) == 0.0 and score([], [(0.0, 0.0)]) == 0.0
+    assert score([(0.0, 0.0), (5.0, 5.0)], [(0.1, 0.0), (5.0, 5.2)]) == 1.0
+    assert score([(0.0, 0.0), (5.0, 5.0)], [(0.1, 0.0)]) == pytest.approx(2 / 3)  # a miss
+    assert score([(0.0, 0.0)], [(0.1, 0.0), (9.0, 9.0)]) == pytest.approx(2 / 3)  # an extra
+    assert score([(0.0, 0.0)], [(0.0, 0.0), (0.1, 0.1)]) == pytest.approx(2 / 3), "no reuse"
+    valued = matched_set(0.5, value_band=1.0)
+    assert valued([(0.0, 0.0, 2.0)], [(0.0, 0.0, 2.5)]) == 0.5  # right place, half the rise
+
+
+def test_generated_rows_become_cases(dataset: str, tmp_path: Path) -> None:
+    """Every row type grades its reply; an unreadable reply is 0, not an error.
+    Family, type and split are tags; the context selects the stream."""
+
+    def row(**fields: Any) -> generate.Row:
+        return {"id": fields["id"], "family": "f", "q": "?", "dataset": dataset, **fields}
+
+    numeric, mcq, coords = generate.cases(
+        [
+            row(
+                id="n",
+                type="numeric",
+                a=3.0,
+                band=1.0,
+                context=[["odom", [0, 10]]],
+                split="holdout",
+            ),
+            row(
+                id="m",
+                type="mcq",
+                a="north",
+                choices=["north", "south"],
+                context=[["odom", [0, 10]]],
+            ),
+            row(id="c", type="coords", a=[[1.0, 2.0]], radius=0.5, context=[["odom", [0, 10]]]),
+        ],
+        tags=frozenset({"pointcloud"}),
+    )
+
+    def score(case: EvalCase, answer: str) -> float:
+        return case.grade(Outcome(trajectory=_trajectory(answer, tmp_path), artifacts={}))
+
+    assert numeric.tags == {"pointcloud", "f", "numeric", "holdout"} and mcq.tags == {
+        "pointcloud",
+        "f",
+        "mcq",
+    }
+    assert score(numeric, "about 3.5") == 0.5 and score(numeric, "no idea") == 0.0
+    assert score(mcq, "South, then north.") == 1.0 and score(mcq, "east") == 0.0
+    assert score(coords, "1.1, 2.0") == 1.0 and score(coords, "none") == 0.0
+    store = _open_store(Path(dataset))
+    running = numeric.environment.start("")
+    try:
+        window = [o.ts for o in store.streams.odom.range_time(0, 10)]
+        assert [s.name for s in running.streams] == ["odom"]
+        assert [o.ts for o in running.streams[0]] == window and window
+    finally:
+        numeric.environment.stop()
+        store.stop()
 
 
 # -- environments -------------------------------------------------------------------
@@ -722,6 +793,19 @@ def test_suites_and_agents_importable() -> None:
         dimsim_pointcloud_mapping,
         examples,
         go2_pointcloud,
+        go2_pointcloud_clearance,
+        go2_pointcloud_doorway,
+        go2_pointcloud_floor_height,
+        go2_pointcloud_floor_level,
+        go2_pointcloud_free_disk,
+        go2_pointcloud_free_range,
+        go2_pointcloud_free_range_holdout,
+        go2_pointcloud_frontier,
+        go2_pointcloud_gap_width,
+        go2_pointcloud_glass,
+        go2_pointcloud_rooms,
+        go2_pointcloud_route,
+        go2_pointcloud_stairs,
         go2_smoke,
         go2_vqa,
     )
@@ -731,6 +815,19 @@ def test_suites_and_agents_importable() -> None:
         go2_smoke,
         go2_vqa,
         go2_pointcloud,
+        go2_pointcloud_clearance,
+        go2_pointcloud_doorway,
+        go2_pointcloud_floor_height,
+        go2_pointcloud_floor_level,
+        go2_pointcloud_free_disk,
+        go2_pointcloud_free_range,
+        go2_pointcloud_free_range_holdout,
+        go2_pointcloud_frontier,
+        go2_pointcloud_gap_width,
+        go2_pointcloud_glass,
+        go2_pointcloud_rooms,
+        go2_pointcloud_route,
+        go2_pointcloud_stairs,
         dimsim_house,
         dimsim_pointcloud_mapping,
     ):

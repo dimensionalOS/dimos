@@ -1,0 +1,1046 @@
+[
+  {
+    "id": "go2_short_route_t7_southeast",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.35, 5.71), 3 m due southeast of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "blocked",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          6.83,
+          6.93
+        ]
+      ],
+      [
+        "odom",
+        [
+          6.5,
+          7.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_route_t21_southwest",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-3.13, 13.55), 3 m due southwest of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "blocked",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          20.88,
+          20.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          20.5,
+          21.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_route_t31_northwest",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.43, 16.53), 3 m due northwest of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "measured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          30.89,
+          30.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          30.5,
+          31.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_route_t41_south",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (2.05, 4.33), 3 m due south of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "blocked",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          40.9,
+          41.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          40.5,
+          41.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_route_t53_south",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-2.28, -1.04), 3 m due south of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "blocked",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          52.87,
+          52.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          52.5,
+          53.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_china_office_route_t34_west",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-1.15, 2.07), 3 m due west of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "unmeasured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          33.79,
+          33.89
+        ]
+      ],
+      [
+        "odom",
+        [
+          33.5,
+          34.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t61_southeast",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (7.60, 3.68), 3 m due southeast of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "blocked",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          60.84,
+          60.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          60.5,
+          61.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t73_west",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.75, 5.83), 3 m due west of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "blocked",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          72.81,
+          72.91
+        ]
+      ],
+      [
+        "odom",
+        [
+          72.5,
+          73.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t85_southwest",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.09, 3.75), 3 m due southwest of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "blocked",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          84.9,
+          85.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          84.5,
+          85.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t97_southeast",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (5.58, 1.34), 3 m due southeast of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "blocked",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          96.91,
+          97.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          96.5,
+          97.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t121_northwest",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.36, 5.33), 3 m due northwest of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "blocked",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          120.85,
+          120.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          120.5,
+          121.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t133_south",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (3.92, 2.21), 3 m due south of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "measured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          132.79,
+          132.89
+        ]
+      ],
+      [
+        "odom",
+        [
+          132.5,
+          133.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_short_route_t3_east",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (2.57, 5.15), 3 m due east of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "measured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          2.8,
+          2.9
+        ]
+      ],
+      [
+        "odom",
+        [
+          2.5,
+          3.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_route_t13_southeast",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.19, 8.53), 3 m due southeast of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "measured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          12.95,
+          13.05
+        ]
+      ],
+      [
+        "odom",
+        [
+          12.5,
+          13.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_route_t31_west",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.55, 14.40), 3 m due west of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "measured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          30.89,
+          30.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          30.5,
+          31.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_route_t47_west",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-2.24, 2.87), 3 m due west of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "unmeasured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          46.88,
+          46.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          46.5,
+          47.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_route_t57_east",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.79, 4.57), 3 m due east of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "measured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          56.9,
+          57.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          56.5,
+          57.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_china_office_route_t28_southwest",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-0.00, -1.46), 3 m due southwest of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "measured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          27.94,
+          28.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          27.5,
+          28.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t46_west",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (0.34, 3.73), 3 m due west of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "measured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          45.89,
+          45.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          45.5,
+          46.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t61_northwest",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (3.36, 7.92), 3 m due northwest of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "measured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          60.84,
+          60.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          60.5,
+          61.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t79_southeast",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (3.84, 3.91), 3 m due southeast of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "measured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          78.93,
+          79.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          78.5,
+          79.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t97_northwest",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.34, 5.58), 3 m due northwest of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "measured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          96.91,
+          97.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          96.5,
+          97.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t121_northeast",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (5.60, 5.33), 3 m due northeast of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "measured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          120.85,
+          120.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          120.5,
+          121.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t133_southeast",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (6.04, 3.09), 3 m due southeast of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "measured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          132.79,
+          132.89
+        ]
+      ],
+      [
+        "odom",
+        [
+          132.5,
+          133.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_short_route_t5_north",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-0.26, 10.05), 3 m due north of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "unmeasured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          4.89,
+          4.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          4.5,
+          5.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_route_t13_west",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-4.93, 10.65), 3 m due west of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "blocked",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          12.95,
+          13.05
+        ]
+      ],
+      [
+        "odom",
+        [
+          12.5,
+          13.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_route_t21_north",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-1.01, 18.67), 3 m due north of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "unmeasured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          20.88,
+          20.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          20.5,
+          21.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_route_t29_east",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (6.53, 15.60), 3 m due east of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "blocked",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          28.81,
+          28.91
+        ]
+      ],
+      [
+        "odom",
+        [
+          28.5,
+          29.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_route_t37_northeast",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (4.78, 11.25), 3 m due northeast of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "unmeasured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          36.87,
+          36.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          36.5,
+          37.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_route_t51_south",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-0.85, -1.43), 3 m due south of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "unmeasured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          50.93,
+          51.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          50.5,
+          51.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_china_office_route_t25_south",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (2.42, -2.82), 3 m due south of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "blocked",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          24.87,
+          24.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          24.5,
+          25.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t37_southeast",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (5.33, 0.82), 3 m due southeast of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "unmeasured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          36.95,
+          37.05
+        ]
+      ],
+      [
+        "odom",
+        [
+          36.5,
+          37.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t55_northeast",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (7.94, 5.91), 3 m due northeast of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "blocked",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          54.84,
+          54.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          54.5,
+          55.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t67_northeast",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (6.34, 7.86), 3 m due northeast of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "unmeasured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          66.95,
+          67.05
+        ]
+      ],
+      [
+        "odom",
+        [
+          66.5,
+          67.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t106_west",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (-1.53, 1.57), 3 m due west of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "unmeasured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          105.9,
+          106.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          105.5,
+          106.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  },
+  {
+    "id": "go2_china_office_route_t130_west",
+    "family": "route",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You want to reach the point at (1.01, 4.86), 3 m due west of you, along any path across the floor. The floor is divided into 0.1 m cells. A cell is passable when no lidar return above z = 0.15 m lies within 0.2 m of its centre (returns within 0.35 m of your own position are your body and do not count). A passable cell is swept when the 0.2 m square containing it (squares aligned to multiples of 0.2 m) holds at least one lidar return at any height, and unmeasured when that square holds none. A path is a chain of passable cells, each touching the next at an edge or a corner, from your position to the goal. Using only the mapped point cloud, answer with exactly one word: measured if some path runs through swept cells alone; unmeasured if every path has to cross unmeasured cells; blocked if there is no path even through unmeasured cells.",
+    "a": "measured",
+    "choices": [
+      "measured",
+      "unmeasured",
+      "blocked"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          129.91,
+          130.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          129.5,
+          130.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office"
+  }
+]
