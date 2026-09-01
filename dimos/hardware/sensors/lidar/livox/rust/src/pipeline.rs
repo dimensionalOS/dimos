@@ -27,6 +27,11 @@ pub trait PacketSource {
     /// Receive the next packet into `buf`, returning its length.
     /// `None` means end of stream or shutdown.
     fn recv(&mut self, buf: &mut [u8]) -> Option<usize>;
+
+    /// Why the stream ended, if it died rather than completing or stopping.
+    fn failure(&self) -> Option<String> {
+        None
+    }
 }
 
 /// A source over an in-memory packet list, for tests and fixtures.

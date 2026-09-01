@@ -189,23 +189,17 @@ impl Mid360 {
             .0
             .as_deref()
             .map(|ip| ip.parse().expect("invalid multicast_ip"));
-        let source = LiveSource::start(LiveConfig {
-            host_ip,
-            lidar_ip,
-            multicast_ip,
-            enable_imu: config.enable_imu,
-            ports: config.ports(),
-        })
+        let source = LiveSource::start(
+            LiveConfig {
+                host_ip,
+                lidar_ip,
+                multicast_ip,
+                enable_imu: config.enable_imu,
+                ports: config.ports(),
+            },
+            self.stop.clone(),
+        )
         .unwrap_or_else(|err| panic!("failed to start live capture: {err}"));
-        // Module shutdown must end the source's blocking recv.
-        let live_stop = source.stop_flag();
-        let module_stop = self.stop.clone();
-        std::thread::spawn(move || {
-            while !module_stop.load(Ordering::Relaxed) {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            live_stop.store(true, Ordering::Relaxed);
-        });
         Box::new(source)
     }
 }
@@ -244,6 +238,10 @@ fn run_pipeline(
                 }
             }
         }
+    }
+    if let Some(reason) = source.failure() {
+        tracing::error!("packet source failed: {reason}");
+        std::process::exit(1);
     }
     if let Some(frame) = assembler.flush() {
         let msg = cloud_message(format, &config.frame_id, &frame);

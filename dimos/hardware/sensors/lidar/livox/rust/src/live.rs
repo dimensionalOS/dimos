@@ -28,8 +28,8 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 
 /// The SDK2 port pair set, defaulting to the standard Mid-360 assignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,38 +80,62 @@ const HANDSHAKE_ATTEMPTS: u32 =
     (HANDSHAKE_TIMEOUT.as_millis() / HANDSHAKE_RETRY.as_millis()) as u32;
 const RECV_POLL: Duration = Duration::from_millis(200);
 
+/// A fatal source error: the reason recorded for the module to act on, and
+/// the stop flag tripped so every loop unwinds.
+#[derive(Clone, Default)]
+struct Failure {
+    reason: Arc<OnceLock<String>>,
+    stop: Arc<AtomicBool>,
+}
+
+impl Failure {
+    fn set(&self, reason: String) {
+        let _ = self.reason.set(reason);
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
 /// Receives the point and IMU streams after driving the config handshake.
 pub struct LiveSource {
     rx: mpsc::Receiver<Vec<u8>>,
     stop: Arc<AtomicBool>,
+    failure: Failure,
+    threads: Vec<std::thread::JoinHandle<()>>,
 }
 
 impl LiveSource {
-    pub fn start(config: LiveConfig) -> io::Result<LiveSource> {
-        let stop = Arc::new(AtomicBool::new(false));
+    /// `stop` ends `recv` when set, e.g. from a module shutdown signal. The
+    /// source also sets it itself when the handshake or a reader fails.
+    pub fn start(config: LiveConfig, stop: Arc<AtomicBool>) -> io::Result<LiveSource> {
+        let failure = Failure {
+            reason: Arc::new(OnceLock::new()),
+            stop: stop.clone(),
+        };
         let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let mut threads = Vec::new();
 
         let point = data_socket(&config, config.ports.host_point_data)?;
-        spawn_reader("point", point, tx.clone(), stop.clone());
+        threads.push(spawn_reader("point", point, tx.clone(), failure.clone()));
         if config.enable_imu {
             let imu = data_socket(&config, config.ports.host_imu_data)?;
-            spawn_reader("imu", imu, tx, stop.clone());
+            threads.push(spawn_reader("imu", imu, tx, failure.clone()));
         }
 
         let cmd = UdpSocket::bind(SocketAddrV4::new(
             config.host_ip,
             config.ports.host_cmd_data,
         ))?;
-        cmd.set_read_timeout(Some(HANDSHAKE_RETRY))?;
-        let handshake_stop = stop.clone();
-        std::thread::spawn(move || run_handshake(&config, &cmd, &handshake_stop));
+        let handshake_failure = failure.clone();
+        threads.push(std::thread::spawn(move || {
+            run_handshake(&config, &cmd, &handshake_failure)
+        }));
 
-        Ok(LiveSource { rx, stop })
-    }
-
-    /// Shared flag that ends `recv` when set, e.g. from a shutdown signal.
-    pub fn stop_flag(&self) -> Arc<AtomicBool> {
-        self.stop.clone()
+        Ok(LiveSource {
+            rx,
+            stop,
+            failure,
+            threads,
+        })
     }
 }
 
@@ -132,11 +156,18 @@ impl PacketSource for LiveSource {
             }
         }
     }
+
+    fn failure(&self) -> Option<String> {
+        self.failure.reason.get().cloned()
+    }
 }
 
 impl Drop for LiveSource {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        for thread in self.threads.drain(..) {
+            let _ = thread.join();
+        }
     }
 }
 
@@ -155,11 +186,11 @@ fn spawn_reader(
     label: &'static str,
     socket: UdpSocket,
     tx: mpsc::Sender<Vec<u8>>,
-    stop: Arc<AtomicBool>,
-) {
+    failure: Failure,
+) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
-        while !stop.load(Ordering::Relaxed) {
+        while !failure.stop.load(Ordering::Relaxed) {
             match socket.recv_from(&mut buf) {
                 Ok((len, _)) => {
                     if tx.send(buf[..len].to_vec()).is_err() {
@@ -173,12 +204,12 @@ fn spawn_reader(
                     continue
                 }
                 Err(err) => {
-                    tracing::warn!("{label} socket recv failed: {err}");
+                    failure.set(format!("{label} socket recv failed: {err}"));
                     return;
                 }
             }
         }
-    });
+    })
 }
 
 /// One param-set step of the handshake: what to send and how to log it.
@@ -228,13 +259,14 @@ fn handshake_steps(config: &LiveConfig) -> Vec<Step> {
 
 /// Send each config step until the device ACKs it, matching the SDK's
 /// one-key-per-request behavior. The work-mode step last starts streaming.
-fn run_handshake(config: &LiveConfig, cmd: &UdpSocket, stop: &AtomicBool) {
+/// A step the device never ACKs, or explicitly rejects, fails the source.
+fn run_handshake(config: &LiveConfig, cmd: &UdpSocket, failure: &Failure) {
     let device = SocketAddrV4::new(config.lidar_ip, config.ports.cmd_data);
     let mut seq: u32 = 0;
     for step in handshake_steps(config) {
         let mut acked = false;
         for _ in 0..HANDSHAKE_ATTEMPTS {
-            if stop.load(Ordering::Relaxed) {
+            if failure.stop.load(Ordering::Relaxed) {
                 return;
             }
             seq = seq.wrapping_add(1);
@@ -253,28 +285,55 @@ fn run_handshake(config: &LiveConfig, cmd: &UdpSocket, stop: &AtomicBool) {
                 tracing::warn!("control send to {device} failed: {err}");
                 continue;
             }
-            if wait_for_ack(cmd, seq) {
-                tracing::info!(step = step.label, "handshake step acked");
-                acked = true;
-                break;
+            match wait_for_ack(cmd, seq, &failure.stop) {
+                Ack::Ok => {
+                    tracing::info!(step = step.label, "handshake step acked");
+                    acked = true;
+                    break;
+                }
+                Ack::Rejected(ret_code) => {
+                    failure.set(format!(
+                        "device {} rejected {} with ret_code {ret_code}",
+                        config.lidar_ip, step.label
+                    ));
+                    return;
+                }
+                Ack::Timeout => {}
             }
         }
         if !acked {
-            tracing::error!(
-                step = step.label,
-                lidar = %config.lidar_ip,
-                "device did not ack within {HANDSHAKE_ATTEMPTS} attempts"
-            );
+            failure.set(format!(
+                "device {} did not ack {} within {HANDSHAKE_ATTEMPTS} attempts",
+                config.lidar_ip, step.label
+            ));
             return;
         }
     }
     tracing::info!(lidar = %config.lidar_ip, "mid360 configured and streaming");
 }
 
-/// Wait one retry interval for the ACK matching `seq`.
-fn wait_for_ack(cmd: &UdpSocket, seq: u32) -> bool {
+enum Ack {
+    Ok,
+    Rejected(u8),
+    Timeout,
+}
+
+/// Wait at most one retry interval for the ACK matching `seq`. The deadline
+/// holds even under a steady trickle of unrelated datagrams.
+fn wait_for_ack(cmd: &UdpSocket, seq: u32, stop: &AtomicBool) -> Ack {
+    let deadline = Instant::now() + HANDSHAKE_RETRY;
     let mut buf = [0u8; 2048];
-    while let Ok((len, _)) = cmd.recv_from(&mut buf) {
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return Ack::Timeout;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() || cmd.set_read_timeout(Some(remaining)).is_err() {
+            return Ack::Timeout;
+        }
+        let Ok((len, _)) = cmd.recv_from(&mut buf) else {
+            return Ack::Timeout;
+        };
         let Ok(frame) = ControlFrame::parse(&buf[..len]) else {
             continue;
         };
@@ -282,15 +341,11 @@ fn wait_for_ack(cmd: &UdpSocket, seq: u32) -> bool {
             continue;
         }
         match AsyncControlAck::parse(frame.data) {
-            Ok(ack) if ack.ret_code == 0 => return true,
-            Ok(ack) => {
-                tracing::warn!(ret_code = ack.ret_code, "device rejected config step");
-                return false;
-            }
+            Ok(ack) if ack.ret_code == 0 => return Ack::Ok,
+            Ok(ack) => return Ack::Rejected(ack.ret_code),
             Err(_) => continue,
         }
     }
-    false
 }
 
 #[cfg(test)]
@@ -408,13 +463,16 @@ mod tests {
         let ports = test_ports(47600);
         let device = spawn_fake_device(ports);
 
-        let mut source = LiveSource::start(LiveConfig {
-            host_ip: Ipv4Addr::LOCALHOST,
-            lidar_ip: Ipv4Addr::LOCALHOST,
-            multicast_ip: None,
-            enable_imu: true,
-            ports,
-        })
+        let mut source = LiveSource::start(
+            LiveConfig {
+                host_ip: Ipv4Addr::LOCALHOST,
+                lidar_ip: Ipv4Addr::LOCALHOST,
+                multicast_ip: None,
+                enable_imu: true,
+                ports,
+            },
+            Arc::new(AtomicBool::new(false)),
+        )
         .unwrap();
 
         let mut buf = [0u8; 4096];
@@ -442,16 +500,88 @@ mod tests {
     #[test]
     fn recv_ends_on_stop() {
         let ports = test_ports(47700);
-        let mut source = LiveSource::start(LiveConfig {
-            host_ip: Ipv4Addr::LOCALHOST,
-            lidar_ip: Ipv4Addr::LOCALHOST,
-            multicast_ip: None,
-            enable_imu: false,
-            ports,
-        })
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut source = LiveSource::start(
+            LiveConfig {
+                host_ip: Ipv4Addr::LOCALHOST,
+                lidar_ip: Ipv4Addr::LOCALHOST,
+                multicast_ip: None,
+                enable_imu: false,
+                ports,
+            },
+            stop.clone(),
+        )
         .unwrap();
-        source.stop_flag().store(true, Ordering::Relaxed);
+        stop.store(true, Ordering::Relaxed);
         let mut buf = [0u8; 16];
         assert_eq!(source.recv(&mut buf), None);
+        assert_eq!(source.failure(), None);
+    }
+
+    #[test]
+    fn rejected_handshake_fails_the_source() {
+        let ports = test_ports(47800);
+        let device = std::thread::spawn(move || {
+            let cmd =
+                UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, ports.cmd_data)).unwrap();
+            cmd.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            let mut buf = [0u8; 2048];
+            let (len, from) = cmd.recv_from(&mut buf).unwrap();
+            let frame = ControlFrame::parse(&buf[..len]).unwrap();
+            let nack_body = AsyncControlAck {
+                ret_code: 1,
+                error_key: 0,
+            }
+            .build();
+            let nack = wire::build_control(
+                frame.seq,
+                frame.cmd_id,
+                wire::CMD_TYPE_ACK,
+                wire::SENDER_LIDAR,
+                &nack_body,
+            );
+            cmd.send_to(&nack, from).unwrap();
+        });
+
+        let mut source = LiveSource::start(
+            LiveConfig {
+                host_ip: Ipv4Addr::LOCALHOST,
+                lidar_ip: Ipv4Addr::LOCALHOST,
+                multicast_ip: None,
+                enable_imu: false,
+                ports,
+            },
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        device.join().unwrap();
+
+        let mut buf = [0u8; 16];
+        assert_eq!(source.recv(&mut buf), None);
+        let reason = source.failure().expect("rejection must fail the source");
+        assert!(reason.contains("rejected"), "{reason}");
+    }
+
+    #[test]
+    fn wait_for_ack_deadline_holds_under_unrelated_traffic() {
+        let cmd = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let target = cmd.local_addr().unwrap();
+        let noisy = std::thread::spawn(move || {
+            let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+            for _ in 0..20 {
+                socket.send_to(b"junk", target).unwrap();
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+
+        let start = Instant::now();
+        let acked = wait_for_ack(&cmd, 1, &AtomicBool::new(false));
+        assert!(matches!(acked, Ack::Timeout));
+        assert!(
+            start.elapsed() < HANDSHAKE_RETRY + Duration::from_millis(200),
+            "deadline overran: {:?}",
+            start.elapsed()
+        );
+        noisy.join().unwrap();
     }
 }
