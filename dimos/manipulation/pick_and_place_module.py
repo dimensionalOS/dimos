@@ -268,7 +268,10 @@ class PickAndPlaceModule(Module):
         return None
 
     def _command_and_settle(
-        self, position: float, planning_group: PlanningGroupID
+        self,
+        position: float,
+        planning_group: PlanningGroupID,
+        arrival_tolerance: float | None = None,
     ) -> GripperSettle | SkillResult[ManipulationSkillError]:
         result = self._manipulation.set_gripper_position(position, planning_group)
         if not result.succeeded:
@@ -276,14 +279,22 @@ class PickAndPlaceModule(Module):
                 "GRIPPER_FAILED", result.message or "Gripper command was rejected"
             )
         return await_gripper_settle(
-            lambda: self._gripper_position(planning_group), position, self.config.grasp_verification
+            lambda: self._gripper_position(planning_group),
+            position,
+            self.config.grasp_verification,
+            arrival_tolerance=arrival_tolerance,
         )
 
     def _open_gripper(
         self, planning_group: PlanningGroupID, step: str
     ) -> SkillResult[ManipulationSkillError] | None:
+        # Jaws resting against the open stop never move and never reach the
+        # commanded extreme; open_tolerance is the band that already decides
+        # whether where they stopped counts as open.
         settle = self._command_and_settle(
-            self.config.grasp_verification.open_position, planning_group
+            self.config.grasp_verification.open_position,
+            planning_group,
+            arrival_tolerance=self.config.grasp_verification.open_tolerance,
         )
         if isinstance(settle, SkillResult):
             return settle
