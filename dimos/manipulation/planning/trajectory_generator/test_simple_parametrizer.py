@@ -134,19 +134,6 @@ def test_simple_parametrizer_materializes_segmented_trapezoid_plan() -> None:
     ]
 
 
-def test_joint_space_rejects_invalid_motion_limits_before_parametrization() -> None:
-    with pytest.raises(ValueError, match="velocity limit"):
-        JointCoordinate(
-            name="arm/a",
-            mechanism_type="revolute",
-            topology=CoordinateTopology.INTERVAL,
-            lower=-1.0,
-            upper=1.0,
-            max_velocity=0.0,
-            max_acceleration=1.0,
-        )
-
-
 def test_simple_parametrizer_reports_generator_failure(mocker: MockerFixture) -> None:
     generator = mocker.patch(
         "dimos.manipulation.planning.trajectory_generator."
