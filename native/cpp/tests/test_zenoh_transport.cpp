@@ -170,6 +170,15 @@ TEST_CASE("an endpoint dialed by name also matches the address a link reports") 
           std::unordered_set<std::string>{"localhost"});
 }
 
+TEST_CASE("an ipv6 endpoint keeps the brackets a link reports it with") {
+    // The long form is written differently from the address a link reports, so
+    // it only matches once resolved. getaddrinfo rejects a bracketed host and
+    // getnameinfo hands back a bare one, so both ends need the brackets.
+    auto addresses = zenoh_detail::endpoint_addresses("tcp/[0:0:0:0:0:0:0:1]:7447");
+    CHECK(addresses.count("[::1]:7447") == 1);
+    CHECK(addresses.count("::1:7447") == 0);
+}
+
 // A session that neither scouts nor dials, so opening it touches no network.
 constexpr const char* kIsolatedLaunch = R"({
   "session": {

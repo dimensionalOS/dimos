@@ -180,7 +180,11 @@ inline std::unordered_set<std::string> endpoint_addresses(const std::string& end
     if (colon == std::string::npos) {
         return out;
     }
-    const std::string host = address.substr(0, colon);
+    // A locator writes an IPv6 host in brackets, which getaddrinfo rejects.
+    std::string host = address.substr(0, colon);
+    if (host.size() >= 2 && host.front() == '[' && host.back() == ']') {
+        host = host.substr(1, host.size() - 2);
+    }
     const std::string port = address.substr(colon + 1);
     ::addrinfo hints{};
     hints.ai_family = AF_UNSPEC;
@@ -195,7 +199,10 @@ inline std::unordered_set<std::string> endpoint_addresses(const std::string& end
         if (::getnameinfo(entry->ai_addr, entry->ai_addrlen, numeric_host, sizeof(numeric_host),
                           numeric_port, sizeof(numeric_port),
                           NI_NUMERICHOST | NI_NUMERICSERV) == 0) {
-            out.insert(std::string(numeric_host) + ":" + numeric_port);
+            const std::string resolved_host = entry->ai_family == AF_INET6
+                                                  ? "[" + std::string(numeric_host) + "]"
+                                                  : std::string(numeric_host);
+            out.insert(resolved_host + ":" + numeric_port);
         }
     }
     ::freeaddrinfo(resolved);
