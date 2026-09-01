@@ -61,9 +61,9 @@ OPENARM_HOME_POSITIONS: dict[str, float] = {
 
 class OpenArmHomingModuleConfig(ModuleConfig):
     button: str = "right_thumbstick"
-    max_joint_speed_rad_s: float = 0.3
-    min_duration_s: float = 3.0
-    max_duration_s: float = 12.0
+    max_joint_speed_rad_s: float = 0.15
+    min_duration_s: float = 5.0
+    max_duration_s: float = 15.0
     home_positions: dict[str, float] | None = None
 
 
@@ -119,12 +119,22 @@ class OpenArmHomingModule(Module):
             max(max_delta / self.config.max_joint_speed_rad_s, self.config.min_duration_s),
             self.config.max_duration_s,
         )
+        # Smoothstep easing: velocity rises from zero and settles back to
+        # zero, instead of the abrupt constant-velocity ramp of two points.
+        steps = max(int(duration * 20), 2)
+        points = []
+        for i in range(steps + 1):
+            f = i / steps
+            eased = f * f * (3.0 - 2.0 * f)
+            points.append(
+                TrajectoryPoint(
+                    time_from_start=duration * f,
+                    positions=[s + (g - s) * eased for s, g in zip(start, goal, strict=True)],
+                )
+            )
         trajectory = JointTrajectory(
             joint_names=list(OPENARM_ARM_JOINTS),
-            points=[
-                TrajectoryPoint(time_from_start=0.0, positions=start),
-                TrajectoryPoint(time_from_start=duration, positions=goal),
-            ],
+            points=points,
         )
         result = self._control_coordinator.execute_trajectory(trajectory)
         accepted = result.status is TrajectoryExecutionStatus.ACCEPTED
