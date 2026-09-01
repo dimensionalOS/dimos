@@ -78,26 +78,24 @@ class M20Connection(Module):
     """Expose the planner-facing M20 command and terrain surface.
 
     The hardware bridge owns ROS 2/DrDDS and the command watchdog. This module
-    remains transport-agnostic: it accepts the standard DimOS ``cmd_vel`` stream,
-    rejects it until ``standup()`` has enabled control, and emits ``safe_cmd_vel``
-    for the robot-local bridge. The native bridge is the single command-validation
+    publishes manual movement RPCs on the standard DimOS ``cmd_vel`` stream. The
+    robot-local bridge consumes that stream and is the single command-validation
     and velocity-clamping boundary.
 
     ``standup()`` is the normal one-call operator entry point: it completes the
-    vendor state and gait transitions, waits for the guarded command path, and
-    enables velocity output. ``set_navigation_terrain()`` is the only exposed
-    vendor-specific control and selects one of the documented agile navigation
-    gaits without exposing raw gait values.
+    vendor state and gait transitions and waits for the command path.
+    ``set_navigation_terrain()`` is the only exposed vendor-specific control and
+    selects one of the documented agile navigation gaits without exposing raw
+    gait values.
     """
 
     config: M20ConnectionConfig
 
-    cmd_vel: In[Twist]
+    cmd_vel: Out[Twist]
     command_ready: In[Bool]
     motion_state: In[Int32]
     gait_state: In[UInt32]
     odometry: In[Odometry]
-    safe_cmd_vel: Out[Twist]
     motion_state_cmd: Out[Int32]
     gait_cmd: Out[UInt32]
     odom: Out[PoseStamped]
@@ -106,7 +104,6 @@ class M20Connection(Module):
         super().__init__(**kwargs)
         self._lock = RLock()
         self._state_condition = Condition(self._lock)
-        self._commands_enabled = False
         self._command_ready = False
         self._motion_state: int | None = None
         self._gait_state: int | None = None
@@ -117,39 +114,36 @@ class M20Connection(Module):
     def start(self) -> None:
         super().start()
         self.register_disposable(Disposable(self.command_ready.subscribe(self._on_command_ready)))
-        self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
         self.register_disposable(Disposable(self.motion_state.subscribe(self._on_motion_state)))
         self.register_disposable(Disposable(self.gait_state.subscribe(self._on_gait_state)))
         self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
-        self.safe_cmd_vel.publish(Twist.zero())
 
     @rpc
     def stop(self) -> None:
-        self._disable_commands()
+        self.stop_movement()
         super().stop()
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
-        """Forward velocity to the native validation boundary when enabled.
+        """Publish velocity to the native validation boundary.
 
         ``duration`` is accepted for connection compatibility. Command lifetime
         is enforced by the native bridge's monotonic watchdog.
         """
         del duration
         with self._lock:
-            enabled = self._commands_enabled and self._command_ready
-        self.safe_cmd_vel.publish(twist if enabled else Twist.zero())
-        return enabled
+            ready = self._command_ready
+        self.cmd_vel.publish(twist)
+        return ready
 
     @rpc
     def stop_movement(self) -> None:
         """Publish an immediate zero velocity without disabling future commands."""
-        self.safe_cmd_vel.publish(Twist.zero())
+        self.cmd_vel.publish(Twist.zero())
 
     @rpc
     def standup(self) -> bool:
         """Bring the M20 to a command-enabled, navigation-ready standing state."""
-        self._disable_commands()
         if not self._enter_navigation_mode():
             logger.error("M20 basic_server rejected the navigation usage mode")
             return False
@@ -169,12 +163,12 @@ class M20Connection(Module):
         if not self._wait_for_control_readiness(self.config.control_ready_timeout_s):
             logger.error("M20 robot control path did not become ready")
             return False
-        return self._enable_commands()
+        return True
 
     @rpc
     def liedown(self) -> bool:
         """Disable velocity output and command the M20 to its Sit/prone state."""
-        self._disable_commands()
+        self.stop_movement()
         self.motion_state_cmd.publish(Int32(MOTION_SIT))
         return True
 
@@ -199,9 +193,8 @@ class M20Connection(Module):
             if self._gait_state == gait:
                 self._navigation_terrain = terrain
                 return True
-            restore_commands = self._commands_enabled
 
-        self._disable_commands()
+        self.stop_movement()
         switched = self._set_gait_and_wait(gait)
         if switched:
             with self._lock:
@@ -210,19 +203,12 @@ class M20Connection(Module):
         else:
             logger.error("M20 did not confirm the agile %s navigation gait", terrain)
 
-        if restore_commands and not self._enable_commands():
-            return False
         return switched
 
     def _on_command_ready(self, msg: Bool) -> None:
-        ready = bool(msg.data)
         with self._state_condition:
-            commands_were_enabled = self._commands_enabled
-            self._command_ready = ready
+            self._command_ready = bool(msg.data)
             self._state_condition.notify_all()
-        if commands_were_enabled and not ready:
-            self.safe_cmd_vel.publish(Twist.zero())
-            logger.warning("M20 command output temporarily inhibited: robot control path is stale")
 
     def _on_motion_state(self, msg: Int32) -> None:
         with self._state_condition:
@@ -272,21 +258,6 @@ class M20Connection(Module):
             logger.error("M20 basic_server usage-mode switch failed: error %s", error_code)
             return False
         return True
-
-    def _enable_commands(self) -> bool:
-        with self._lock:
-            if not self._command_ready:
-                logger.warning("M20 command gate refused enable: robot control path is not ready")
-                return False
-            self._commands_enabled = True
-        logger.info("M20 command output enabled")
-        return True
-
-    def _disable_commands(self) -> None:
-        with self._lock:
-            self._commands_enabled = False
-        self.safe_cmd_vel.publish(Twist.zero())
-        logger.info("M20 command output disabled")
 
     def _basic_server_request(
         self,

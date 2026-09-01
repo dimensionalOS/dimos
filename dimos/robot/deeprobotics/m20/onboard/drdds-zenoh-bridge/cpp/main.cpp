@@ -76,7 +76,7 @@ constexpr char kHesStatusTopic[] = "/HES_STATUS";
 constexpr char kBodyKey[] = "dimos/slam_body_points/sensor_msgs.PointCloud2";
 constexpr char kOdometryKey[] = "dimos/slam_odom/nav_msgs.Odometry";
 constexpr char kTfKey[] = "dimos/tf/tf2_msgs.TFMessage";
-constexpr char kSafeCmdVelKey[] = "dimos/safe_cmd_vel/geometry_msgs.Twist";
+constexpr char kCmdVelKey[] = "dimos/cmd_vel/geometry_msgs.Twist";
 constexpr char kMotionStateCmdKey[] = "dimos/motion_state_cmd/std_msgs.Int32";
 constexpr char kGaitCmdKey[] = "dimos/gait_cmd/std_msgs.UInt32";
 constexpr char kCommandReadyKey[] = "dimos/command_ready/std_msgs.Bool";
@@ -652,8 +652,8 @@ int main() {
     M20ControlBridge control(&command_ready, &motion_state, &gait_state);
     control.start();
 
-    InputPort safe_cmd_vel(
-        kSafeCmdVelKey, "safe_cmd_vel",
+    InputPort cmd_vel(
+        kCmdVelKey, "cmd_vel",
         [&control](const uint8_t* data, size_t len) {
             return control.on_command(data, len);
         });
@@ -667,7 +667,7 @@ int main() {
         [&control](const uint8_t* data, size_t len) {
             return control.on_gait_command(data, len);
         });
-    std::vector<InputPort*> input_ports{&safe_cmd_vel, &motion_state_cmd, &gait_cmd};
+    std::vector<InputPort*> input_ports{&cmd_vel, &motion_state_cmd, &gait_cmd};
     for (InputPort* port : input_ports) {
         if (!declare_zenoh_subscriber(port)) { g_running.store(false); }
     }
