@@ -16,18 +16,22 @@
 
 from __future__ import annotations
 
+import inspect
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 
-from dimos.core.python_native_environment import PythonNativeProject
+from dimos.core.isolated_python_module import isolated_python_run_command
 from dimos.imitation.dataprep.core import DataPrepConfig
 from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
 from dimos.utils.cache import cache_usage_guard
 
 
-def lerobot_project() -> PythonNativeProject:
+def lerobot_project() -> Path:
     """Locate the packaged LeRobot project beside its host contract."""
-    return PythonNativeProject.sibling(LeRobotPolicyModule)
+    source = Path(inspect.getfile(LeRobotPolicyModule)).resolve()
+    return source.parent / "python"
 
 
 def run_lerobot_dataprep(config: DataPrepConfig) -> Path:
@@ -37,13 +41,24 @@ def run_lerobot_dataprep(config: DataPrepConfig) -> Path:
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as config_file:
         config_file.write(config.model_dump_json())
         config_file.flush()
-        command = project.callable_command(
-            "dimos_lerobot.dataprep:convert",
-            [config_file.name],
+        command = isolated_python_run_command(
+            project,
+            "python",
+            "-m",
+            "dimos_lerobot.dataprep",
+            config_file.name,
         )
+        env = dict(os.environ)
+        env.pop("VIRTUAL_ENV", None)
         try:
             with cache_usage_guard():
-                result = project.run(command)
+                result = subprocess.run(
+                    command,
+                    cwd=project,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                )
         except FileNotFoundError as error:
             raise RuntimeError(
                 "uv is required for LeRobot conversion; install uv and ensure it is on PATH"

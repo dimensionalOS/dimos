@@ -18,10 +18,9 @@ import subprocess
 import pytest
 import pytest_mock
 
-from dimos.core.python_native_environment import PythonNativeProject
 from dimos.imitation.dataprep.cli import _load_config
 from dimos.imitation.dataprep.core import DataPrepConfig, OutputConfig
-from dimos.imitation.dataprep.lerobot import run_lerobot_dataprep
+from dimos.imitation.dataprep.lerobot import lerobot_project, run_lerobot_dataprep
 from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
 
 
@@ -44,12 +43,12 @@ def test_profile_and_json_config_are_mutually_exclusive(tmp_path: Path) -> None:
         _load_config(tmp_path / "config.json", "openyam", None, None, None)
 
 
-def test_conversion_uses_packaged_locked_environment(
+def test_conversion_runs_packaged_module_in_policy_project(
     tmp_path: Path, mocker: pytest_mock.MockerFixture
 ) -> None:
-    run = mocker.patch.object(
-        PythonNativeProject,
-        "run",
+    mocker.patch.dict("os.environ", {"VIRTUAL_ENV": "/parent/.venv"})
+    run = mocker.patch(
+        "dimos.imitation.dataprep.lerobot.subprocess.run",
         return_value=subprocess.CompletedProcess([], 0),
     )
     config = DataPrepConfig(
@@ -60,23 +59,20 @@ def test_conversion_uses_packaged_locked_environment(
     assert run_lerobot_dataprep(config) == tmp_path / "dataset"
 
     command = run.call_args.args[0]
-    assert command[:2] == ["uv", "run"]
-    assert "--project" in command
-    assert "--locked" in command
-    assert command[command.index("--python") + 1] == "3.12"
-    entrypoint = command.index("dimos_lerobot.dataprep:convert")
-    assert command[entrypoint - 3 : entrypoint + 1] == [
-        "python",
-        "-m",
-        "dimos.core.python_native_call",
-        "dimos_lerobot.dataprep:convert",
-    ]
+    project = Path(__file__).parents[1] / "policy" / "lerobot" / "python"
+    assert lerobot_project() == project
+    assert command[:3] == ["uv", "run", "--frozen"]
+    assert command[-4:-1] == ["python", "-m", "dimos_lerobot.dataprep"]
+    assert "--python" not in command
+    assert run.call_args.kwargs["cwd"] == project
+    assert "VIRTUAL_ENV" not in run.call_args.kwargs["env"]
+    assert run.call_args.kwargs["capture_output"] is True
+    assert run.call_args.kwargs["text"] is True
 
 
 def test_conversion_reports_missing_uv(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> None:
-    mocker.patch.object(
-        PythonNativeProject,
-        "run",
+    mocker.patch(
+        "dimos.imitation.dataprep.lerobot.subprocess.run",
         side_effect=FileNotFoundError("uv"),
     )
     config = DataPrepConfig(
@@ -85,4 +81,20 @@ def test_conversion_reports_missing_uv(tmp_path: Path, mocker: pytest_mock.Mocke
     )
 
     with pytest.raises(RuntimeError, match="uv is required"):
+        run_lerobot_dataprep(config)
+
+
+def test_conversion_reports_child_process_diagnostics(
+    tmp_path: Path, mocker: pytest_mock.MockerFixture
+) -> None:
+    mocker.patch(
+        "dimos.imitation.dataprep.lerobot.subprocess.run",
+        return_value=subprocess.CompletedProcess([], 9, stdout="partial output", stderr="bad config"),
+    )
+    config = DataPrepConfig(
+        source="recording.db",
+        output=OutputConfig(format="lerobot", path=tmp_path / "dataset"),
+    )
+
+    with pytest.raises(RuntimeError, match="status 9: partial output\nbad config"):
         run_lerobot_dataprep(config)
