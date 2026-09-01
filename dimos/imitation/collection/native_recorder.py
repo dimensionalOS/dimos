@@ -16,31 +16,15 @@
 
 from __future__ import annotations
 
-from pydantic import Field
-
 from dimos.core.stream import In
-from dimos.experimental.memory.rust_recorder import (
-    RustRecorder,
-    RustRecorderConfig,
-    RustRecordingStoreConfig,
-    RustSqliteStoreConfig,
-)
+from dimos.experimental.memory.rust_recorder import RustRecorder
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 
-class NativeCollectionRecorderConfig(RustRecorderConfig):
-    """Native recorder configuration for offline DataPrep."""
-
-    store: RustRecordingStoreConfig = Field(default_factory=RustSqliteStoreConfig)
-    record_tf: bool = Field(default=False, exclude=True)
-
-
 class NativeCollectionRecorder(RustRecorder):
     """Declare the streams captured by the native collection recorder."""
-
-    config: NativeCollectionRecorderConfig
 
     color_image: In[Image]
     coordinator_joint_state: In[JointState]

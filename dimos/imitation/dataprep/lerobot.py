@@ -20,9 +20,18 @@ import inspect
 import os
 from pathlib import Path
 import subprocess
-import tempfile
+from typing import Any
 
 from dimos.experimental.isolated_python.module import isolated_python_run_command
+from dimos.imitation.dataprep._lerobot_protocol import (
+    RESULT_ADAPTER,
+    BuildRequest,
+    BuildResult,
+    InspectRequest,
+    InspectResult,
+    Request,
+    Result,
+)
 from dimos.imitation.dataprep.core import DataPrepConfig
 from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
 from dimos.utils.cache import cache_usage_guard
@@ -34,36 +43,53 @@ def lerobot_project() -> Path:
     return source.parent / "python"
 
 
-def run_lerobot_dataprep(config: DataPrepConfig) -> Path:
-    """Run conversion under the locked LeRobot dependency stack."""
+def _run(request: Request) -> Result:
+    """Run one typed request under the locked LeRobot dependency stack."""
     project = lerobot_project()
-    command: list[str]
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as config_file:
-        config_file.write(config.model_dump_json())
-        config_file.flush()
-        command = isolated_python_run_command(
-            project,
-            "python",
-            "-m",
-            "dimos_lerobot.dataprep",
-            config_file.name,
-        )
-        env = dict(os.environ)
-        env.pop("VIRTUAL_ENV", None)
-        try:
-            with cache_usage_guard():
-                result = subprocess.run(
-                    command,
-                    cwd=project,
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                )
-        except FileNotFoundError as error:
-            raise RuntimeError(
-                "uv is required for LeRobot conversion; install uv and ensure it is on PATH"
-            ) from error
+    command = isolated_python_run_command(
+        project,
+        "python",
+        "-m",
+        "dimos_lerobot.dataprep",
+    )
+    env = dict(os.environ)
+    env.pop("VIRTUAL_ENV", None)
+    try:
+        with cache_usage_guard():
+            result = subprocess.run(
+                command,
+                cwd=project,
+                env=env,
+                input=request.model_dump_json(),
+                capture_output=True,
+                text=True,
+            )
+    except FileNotFoundError as error:
+        raise RuntimeError(
+            "uv is required for LeRobot dataprep; install uv and ensure it is on PATH"
+        ) from error
     if result.returncode:
-        output = (result.stdout + "\n" + result.stderr).strip()
-        raise RuntimeError(f"LeRobot conversion exited with status {result.returncode}: {output}")
-    return config.output.path
+        output = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(f"LeRobot dataprep exited with status {result.returncode}: {output}")
+    try:
+        return RESULT_ADAPTER.validate_json(result.stdout)
+    except ValueError as error:
+        raise RuntimeError(
+            f"LeRobot dataprep returned an invalid result: {result.stdout!r}"
+        ) from error
+
+
+def run_lerobot_dataprep(config: DataPrepConfig) -> Path:
+    """Build a dataset in the isolated LeRobot environment."""
+    result = _run(BuildRequest(config=config))
+    if not isinstance(result, BuildResult):
+        raise RuntimeError(f"LeRobot dataprep returned {result.command!r} for a build request")
+    return result.path
+
+
+def inspect_lerobot_dataset(path: Path) -> dict[str, Any]:
+    """Inspect a dataset in the isolated LeRobot environment."""
+    result = _run(InspectRequest(path=path))
+    if not isinstance(result, InspectResult):
+        raise RuntimeError(f"LeRobot dataprep returned {result.command!r} for an inspect request")
+    return result.info

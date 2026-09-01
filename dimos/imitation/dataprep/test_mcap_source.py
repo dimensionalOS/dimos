@@ -31,15 +31,21 @@ from dimos.imitation.dataprep.core import (
     Sample,
     SyncConfig,
 )
+from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 
-def _register_channel(writer: McapWriter, name: str, payload_type: type[Any]) -> int:
+def _register_channel(
+    writer: McapWriter,
+    name: str,
+    payload_type: type[Any],
+    message_encoding: str = "lcm",
+) -> int:
     return writer.register_channel(
         topic=name,
-        message_encoding="lcm",
+        message_encoding=message_encoding,
         schema_id=0,
         metadata={
             "dimos.payload_type": f"{payload_type.__module__}.{payload_type.__qualname__}",
@@ -54,7 +60,7 @@ def _write_message(writer: McapWriter, channel_id: int, ts: float, message: Any)
         channel_id=channel_id,
         log_time=timestamp_ns,
         publish_time=timestamp_ns,
-        data=message.lcm_encode(),
+        data=message if isinstance(message, bytes) else message.lcm_encode(),
     )
 
 
@@ -63,7 +69,7 @@ def _write_collection(path: Path) -> None:
         writer = McapWriter(output)
         writer.start(profile="dimos", library="test")
         channels = {
-            "color_image": _register_channel(writer, "color_image", Image),
+            "color_image": _register_channel(writer, "color_image", Image, "jpeg"),
             "coordinator_joint_state": _register_channel(
                 writer, "coordinator_joint_state", JointState
             ),
@@ -91,11 +97,13 @@ def _write_collection(path: Path) -> None:
                 writer,
                 channels["color_image"],
                 ts,
-                Image(
-                    ts=ts,
-                    frame_id="wrist_camera_link",
-                    format=ImageFormat.RGB,
-                    data=np.full((8, 8, 3), index, dtype=np.uint8),
+                JpegCodec().encode(
+                    Image(
+                        ts=ts,
+                        frame_id="wrist_camera_link",
+                        format=ImageFormat.RGB,
+                        data=np.full((8, 8, 3), index, dtype=np.uint8),
+                    )
                 ),
             )
             _write_message(
