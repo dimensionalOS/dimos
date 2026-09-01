@@ -151,6 +151,6 @@ uv run dimos run learning-rollout-quest-openyam \
 ```
 
 Quest **A** toggles policy rollout. Hold the right controller grip to take over
-with teleoperation. Coordinator preemption stops the rollout rather than merely
-hiding its commands, so release the grip and press **A** again to resume policy
-control. **B** and **Y** remain reserved for collection save/discard controls.
+with teleoperation. The grip action stops inference and deactivates both policy
+control tasks. Release the grip and press **A** to start a new rollout. **B** and
+**Y** remain reserved for collection save/discard controls.

@@ -59,6 +59,7 @@ def joint_trajectory_task(
     start_position_tolerance: float = 0.05,
     velocity_limits: Mapping[str, float] | None = None,
     hold_position_when_idle: bool = False,
+    requires_activation: bool = False,
 ) -> TaskConfig:
     """Build the coordinator's single canonical joint-trajectory task."""
     # The coordinator imports this module to recognize the canonical JTT.
@@ -69,6 +70,8 @@ def joint_trajectory_task(
         params["velocity_limits"] = dict(velocity_limits)
     if hold_position_when_idle:
         params["hold_position_when_idle"] = True
+    if requires_activation:
+        params["requires_activation"] = True
     return TaskConfig(
         name=JOINT_TRAJECTORY_TASK_NAME,
         type="trajectory",
@@ -87,6 +90,7 @@ class TrajectoryExecutionStatus(Enum):
     START_STATE_UNAVAILABLE = auto()
     START_STATE_MISMATCH = auto()
     ALREADY_EXECUTING = auto()
+    INACTIVE = auto()
 
 
 @dataclass(frozen=True)
@@ -146,6 +150,8 @@ class JointTrajectoryTaskConfig:
             joint. Defaults to 1 rad/s per joint.
         hold_position_when_idle: Keep emitting the last commanded position,
             latching measured positions before the first trajectory.
+        requires_activation: Reject commands until explicitly activated, and
+            deactivate after any control preemption.
     """
 
     joint_names: Annotated[
@@ -161,6 +167,7 @@ class JointTrajectoryTaskConfig:
     )
     velocity_limits: dict[str, float] | None = None
     hold_position_when_idle: bool = False
+    requires_activation: bool = False
 
 
 @dataclass
@@ -213,6 +220,7 @@ class JointTrajectoryTask(BaseControlTask):
         self._pending_start: bool = False  # Defer start time to first compute()
         self._last_duration: float = 0.0
         self._last_elapsed: float = 0.0
+        self._activated = not config.requires_activation
 
         configured_limits = config.velocity_limits
         if configured_limits is None:
@@ -257,7 +265,21 @@ class JointTrajectoryTask(BaseControlTask):
 
     def is_active(self) -> bool:
         """Check if task should run this tick."""
-        return self._config.hold_position_when_idle or self._state == TrajectoryState.EXECUTING
+        return self._activated and (
+            self._config.hold_position_when_idle or self._state == TrajectoryState.EXECUTING
+        )
+
+    def activate(self) -> bool:
+        """Allow new trajectory commands."""
+        self._activated = True
+        return True
+
+    def deactivate(self) -> bool:
+        """Reject new commands and release every claimed joint."""
+        self._activated = False
+        self._state = TrajectoryState.ABORTED
+        self._clear_active_trajectory()
+        return True
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         """Compute trajectory output for this tick.
@@ -351,8 +373,11 @@ class JointTrajectoryTask(BaseControlTask):
         logger.warning(f"Trajectory {self._name} preempted by {by_task} on joints {joints}")
         # Abort if any of our joints were preempted
         if joints & self._joint_names:
-            self._state = TrajectoryState.ABORTED
-            self._clear_active_trajectory()
+            if self._config.requires_activation:
+                self.deactivate()
+            else:
+                self._state = TrajectoryState.ABORTED
+                self._clear_active_trajectory()
 
     def _clear_active_trajectory(self) -> None:
         """Clear stored trajectory-specific execution state."""
@@ -423,6 +448,12 @@ class JointTrajectoryTask(BaseControlTask):
         Returns:
             Semantic execution acceptance result.
         """
+        if not self._activated:
+            return TrajectoryExecutionResult(
+                TrajectoryExecutionStatus.INACTIVE,
+                f"Trajectory task '{self._name}' is not activated",
+            )
+
         if self._state == TrajectoryState.FAULT:
             logger.warning(f"Cannot execute: {self._name} in FAULT state")
             return TrajectoryExecutionResult(
@@ -591,6 +622,7 @@ class JointTrajectoryTaskParams(BaseConfig):
     )
     velocity_limits: dict[str, float] | None = None
     hold_position_when_idle: bool = False
+    requires_activation: bool = False
 
 
 def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
@@ -603,5 +635,6 @@ def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
             start_position_tolerance=params.start_position_tolerance,
             velocity_limits=params.velocity_limits,
             hold_position_when_idle=params.hold_position_when_idle,
+            requires_activation=params.requires_activation,
         ),
     )

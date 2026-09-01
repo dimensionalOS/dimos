@@ -42,46 +42,25 @@ OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
 
 
-def openyam_hardware(*, can_port: str | None = None) -> HardwareComponent:
+def openyam_hardware() -> HardwareComponent:
     """Select the physical or in-memory whole-body adapter for OpenYAM."""
-    explicit_can_port = can_port is not None
-    selected_can_port = can_port if explicit_can_port else global_config.can_port
-    adapter_type = (
-        "mock_whole_body"
-        if global_config.simulation and not explicit_can_port
-        else "openyam_damiao"
-    )
+    adapter_type = "mock_whole_body" if global_config.simulation else "openyam_damiao"
     adapter_kwargs: dict[str, object] = {}
-    if adapter_type == "openyam_damiao":
-        bus_devices = {"openyam": selected_can_port} if selected_can_port is not None else {}
-        adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
-            bus_devices=bus_devices,
-            gravity_comp=True,
-        )
-    return _openyam_hardware_component(adapter_type, adapter_kwargs)
-
-
-def openyam_mock_hardware() -> HardwareComponent:
-    """Build an OpenYAM component that is unconditionally safe and in-memory."""
-    return _openyam_hardware_component(
-        "mock_whole_body",
-        {"initial_positions": [*OPENYAM_HOME_JOINTS, 0.0]},
-    )
-
-
-def _openyam_hardware_component(
-    adapter_type: str,
-    adapter_kwargs: dict[str, object],
-) -> HardwareComponent:
-    limits = (
-        JointLimits(
+    limits: JointLimits | None = None
+    if global_config.simulation:
+        limits = JointLimits(
             position_lower=[*([None] * OPENYAM_DOF), 0.0],
             position_upper=[*([None] * OPENYAM_DOF), 1.0],
             velocity_max=[None] * len(OPENYAM_JOINTS),
         )
-        if adapter_type == "mock_whole_body"
-        else None
-    )
+    else:
+        bus_devices = (
+            {"openyam": global_config.can_port} if global_config.can_port is not None else {}
+        )
+        adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
+            bus_devices=bus_devices,
+            gravity_comp=True,
+        )
     return HardwareComponent(
         hardware_id=OPENYAM_HARDWARE_ID,
         hardware_type=HardwareType.WHOLE_BODY,

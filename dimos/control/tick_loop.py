@@ -40,7 +40,6 @@ from dimos.control.task import (
     ResourceClaim,
 )
 from dimos.hardware.manipulators.spec import ControlMode
-from dimos.msgs.control_msgs.TaskPreemption import TaskPreemption
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
@@ -98,7 +97,6 @@ class TickLoop:
         joint_to_hardware: dict[JointName, HardwareId],
         publish_callback: Callable[[JointState], None] | None = None,
         publish_command_callback: Callable[[JointState], None] | None = None,
-        publish_preemption_callback: Callable[[TaskPreemption], None] | None = None,
         publish_robot_callback: Callable[[HardwareId, JointState], None] | None = None,
         frame_id: str = "coordinator",
         log_ticks: bool = False,
@@ -111,7 +109,6 @@ class TickLoop:
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
         self._publish_command_callback = publish_command_callback
-        self._publish_preemption_callback = publish_preemption_callback
         self._publish_robot_callback = publish_robot_callback
         self._frame_id = frame_id
         self._log_ticks = log_ticks
@@ -121,7 +118,6 @@ class TickLoop:
         self._tick_thread: threading.Thread | None = None
         self._last_tick_time: float = 0.0
         self._tick_count: int = 0
-        self._active_preemptions: set[tuple[str, str, frozenset[str]]] = set()
 
     @property
     def tick_count(self) -> int:
@@ -191,7 +187,7 @@ class TickLoop:
 
         joint_commands, preemptions = self._arbitrate(commands)
 
-        self._notify_preemptions(preemptions, timestamp=joint_states.timestamp)
+        self._notify_preemptions(preemptions)
 
         hw_commands = self._route_to_hardware(joint_commands)
 
@@ -353,14 +349,8 @@ class TickLoop:
 
         return joint_commands, preemptions
 
-    def _notify_preemptions(
-        self,
-        preemptions: dict[str, dict[str, str]],
-        *,
-        timestamp: float,
-    ) -> None:
+    def _notify_preemptions(self, preemptions: dict[str, dict[str, str]]) -> None:
         """Notify each preempted task with affected joints, grouped by winning task."""
-        current_preemptions: set[tuple[str, str, frozenset[str]]] = set()
         with self._task_lock:
             for task_name, joint_winners in preemptions.items():
                 task = self._tasks.get(task_name)
@@ -376,29 +366,13 @@ class TickLoop:
 
                 # Notify once per distinct winning task
                 for winner, joints in by_winner.items():
-                    frozen_joints = frozenset(joints)
-                    transition = (task_name, winner, frozen_joints)
-                    current_preemptions.add(transition)
                     try:
                         task.on_preempted(
                             by_task=winner,
-                            joints=frozen_joints,
+                            joints=frozenset(joints),
                         )
                     except Exception as e:
                         logger.error(f"Error notifying {task_name} of preemption: {e}")
-                    if (
-                        self._publish_preemption_callback is not None
-                        and transition not in self._active_preemptions
-                    ):
-                        self._publish_preemption_callback(
-                            TaskPreemption(
-                                timestamp=timestamp,
-                                preempted_task=task_name,
-                                preempting_task=winner,
-                                joints=sorted(frozen_joints),
-                            )
-                        )
-        self._active_preemptions = current_preemptions
 
     def _route_to_hardware(
         self,

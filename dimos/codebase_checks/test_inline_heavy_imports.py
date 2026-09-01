@@ -15,6 +15,7 @@
 import ast
 from collections.abc import Iterable, Iterator
 
+from dimos.codebase_checks.source_files import python_source_files
 from dimos.constants import DIMOS_PROJECT_ROOT
 
 DIMOS_DIR = DIMOS_PROJECT_ROOT / "dimos"
@@ -67,7 +68,7 @@ def _heavy_import(node: ast.Import | ast.ImportFrom) -> str | None:
 def find_eager_heavy_imports() -> dict[str, list[tuple[int, str]]]:
     """Map of dimos-relative file path -> [(line, module)] for eager heavy imports."""
     hits: dict[str, list[tuple[int, str]]] = {}
-    for path in sorted(DIMOS_DIR.rglob("*.py")):
+    for path in sorted(python_source_files(DIMOS_DIR)):
         if path.name.startswith("test_") or path.name == "conftest.py":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
