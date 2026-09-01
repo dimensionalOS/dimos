@@ -109,7 +109,7 @@ _openyam_quest_task = teleop_ik_task(
     bindings=[
         {
             "hand": "right",
-            "target_frame": "yam_hand_tcp",
+            "target_frame": "gripper_tip",
         }
     ],
     params={
