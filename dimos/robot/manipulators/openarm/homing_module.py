@@ -126,12 +126,12 @@ class OpenArmHomingModule(Module):
         for i in range(steps + 1):
             f = i / steps
             eased = f * f * (3.0 - 2.0 * f)
-            points.append(
-                TrajectoryPoint(
-                    time_from_start=duration * f,
-                    positions=[s + (g - s) * eased for s, g in zip(start, goal, strict=True)],
-                )
+            positions = (
+                list(goal)
+                if i == steps
+                else [s + (g - s) * eased for s, g in zip(start, goal, strict=True)]
             )
+            points.append(TrajectoryPoint(time_from_start=duration * f, positions=positions))
         trajectory = JointTrajectory(
             joint_names=list(OPENARM_ARM_JOINTS),
             points=points,
