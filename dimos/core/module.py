@@ -158,17 +158,10 @@ class TopicMetadata:
 
 def _handler_wants_metadata(handler: Callable[..., Any], label: str) -> bool:
     """True if the bound handler takes `(msg, meta)` rather than just `(msg)`."""
-    positional_kinds = (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-    count = sum(
-        1
-        for parameter in inspect.signature(handler).parameters.values()
-        if parameter.kind in positional_kinds
-    )
-    if count == 1:
-        return False
-    if count == 2:
-        return True
-    raise TypeError(f"{label} must take (msg) or (msg, meta), not {count} positional parameters")
+    count = len(inspect.signature(handler).parameters)
+    if count not in (1, 2):
+        raise TypeError(f"{label} must take (msg) or (msg, meta), not {count} parameters")
+    return count == 2
 
 
 class ModuleConfig(BaseConfig):
