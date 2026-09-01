@@ -683,12 +683,10 @@ def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
     """Half credit for the exact room count, half for the fraction of room
     points the recorded odometry approached; an unparseable reply loses the
     count half but the world still scores."""
-    from dimos.evals.suites.dimsim_pointcloud_mapping import (
-        N_ROOMS,
-        ROOMS,
-        VISIT_RADIUS_M,
-        grade_rooms,
-    )
+    from dimos.evals.suites.dimsim_pointcloud_mapping import N_ROOMS, ROOMS, grade_rooms
+
+    radius = 1.5
+    grade = grade_rooms(radius)
 
     def written(db: Path, points: list[tuple[float, float]]) -> Path:
         store = _open_store(db)
@@ -700,10 +698,10 @@ def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
 
     def score(db: Path, answer: str) -> float:
         outcome = Outcome(trajectory=_trajectory(answer, tmp_path), artifacts={"recording": db})
-        return grade_rooms(outcome)
+        return grade(outcome)
 
     rooms = list(ROOMS.values())
-    two = written(tmp_path / "two.db", [(x + VISIT_RADIUS_M / 2, y) for x, y in rooms[:2]])
+    two = written(tmp_path / "two.db", [(x + radius / 2, y) for x, y in rooms[:2]])
     coverage = 0.5 * 2 / N_ROOMS
     assert score(two, str(N_ROOMS)) == pytest.approx(0.5 + coverage)
     assert score(two, f"{N_ROOMS} rooms, I think") == pytest.approx(0.5 + coverage)
@@ -1003,12 +1001,18 @@ def test_pi_is_killed_at_the_time_budget_and_keeps_its_steps(
     assert all(s.tool_calls for s in trajectory.steps[1:]) and trajectory.final_answer == ""
 
 
-def test_pi_preflight_and_tool_rendering(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pi_preflight_and_tool_rendering(
+    dataset: str, fake_pi: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from dimos.evals.agents.pi import render_tools
 
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     with pytest.raises(RuntimeError, match="not on PATH"):
         Pi(cli=str(tmp_path / "missing")).preflight(ImageFile(tmp_path / "x.png"))
+    with pytest.raises(RuntimeError, match="Pi.tools is a string"):
+        Pi(cli=str(fake_pi), tools="read,bash").preflight(ImageFile(tmp_path / "x.png"))
+    robot = Dataset(dataset, mcp_url="http://localhost:1/mcp")
+    with pytest.raises(RuntimeError, match="bash tool, which is not enabled"):
+        Pi(cli=str(fake_pi), tools=("read",)).preflight(robot)
     tools = [
         {
             "name": "move_to",
@@ -1049,8 +1053,56 @@ def test_pi_skills_become_native_flags_and_preflight_checks_paths(
 
     with pytest.raises(RuntimeError, match="do not exist"):
         Pi(skills=(str(tmp_path / "missing.md"),)).preflight(env)
-    with pytest.raises(RuntimeError, match="list of paths"):
+    with pytest.raises(RuntimeError, match="Pi.skills is a string"):
         Pi(skills="spatial/SKILL.md").preflight(env)
+
+
+def test_pi_prompt_is_composed_from_its_fields(
+    dataset: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The suite's condition follows the agent's own contract; the built-in
+    guidance can be switched off so a skill can carry it, while the robot's
+    tool listing stays."""
+    import dimos.evals.agents.pi as pi_mod
+
+    monkeypatch.setattr(pi_mod, "tool_listing", lambda mcp_url: "- move_to(x, y): Go there.")
+    env = Dataset(dataset, mcp_url="http://localhost:1/mcp")
+    running = env.start("")
+    for d in ("default", "bare"):
+        (tmp_path / d).mkdir()
+    try:
+        Pi(instructions="Use only odometry.")._command("go", running, tmp_path / "default")
+        Pi(builtin_guidance=False, tools=("read", "bash"))._command(
+            "go", running, tmp_path / "bare"
+        )
+    finally:
+        env.stop()
+    default = (tmp_path / "default" / "system-prompt.txt").read_text()
+    bare = (tmp_path / "bare" / "system-prompt.txt").read_text()
+    assert default.startswith(
+        "Answer the question from the files and tools listed below and nothing else.\n\n"
+        "Use only odometry.\n\nFiles:\n"
+    )
+    assert "SqliteStore" in default and "dimos mcp call" in default and "- move_to" in default
+    assert "SqliteStore" not in bare and "dimos mcp call" not in bare and "- move_to" in bare
+    assert bare.startswith(
+        "Answer the question from the files and tools listed below and nothing else.\n\nFiles:\n"
+    )
+
+
+def test_pi_that_exits_with_a_failure_status_is_an_error(
+    dataset: str, fake_pi: Path, tmp_path: Path
+) -> None:
+    fake_pi.write_text(f"#!{sys.executable}\nimport sys; sys.exit('unknown tool: bahs')")
+    env = Dataset(dataset)
+    running = env.start("")
+    try:
+        with pytest.raises(RuntimeError, match="exit status 1: unknown tool: bahs"):
+            Pi(cli=str(fake_pi), tools=("read", "bahs")).run(
+                "go", running, tmp_path, timeout_s=60.0
+            )
+    finally:
+        env.stop()
 
 
 def test_agents_report_every_available_tool() -> None:

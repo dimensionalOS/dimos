@@ -42,26 +42,9 @@ from dimos.evals.types import (
 )
 
 if TYPE_CHECKING:
-    from dimos.memory.store.base import Store
+    from dimos.memory.stream import Stream
 
-OPENAI_URL = "https://api.openai.com/v1"
-PI_TOOLS = ("read", "bash", "edit", "write")
-
-PI_SYSTEM_PROMPT = "Answer the question from the files and tools listed below and nothing else."
-
-RECORDING_HELP = (
-    "The recording is a dimos memory store (sqlite). In Python:\n"
-    "  from dimos.memory.store.sqlite import SqliteStore\n"
-    "  store = SqliteStore(path=PATH, must_exist=True)\n"
-    "store.streams.<name> is a stream, .last().data its latest message; iterating "
-    "a stream yields observations with .ts and .data. Inspect with dir() and help()."
-)
-
-ROBOT_HELP = (
-    "The robot is live. Call one of its tools from bash as\n"
-    "  dimos mcp call <tool> --json-args '{\"arg\": value}'\n"
-    "Tools:\n"
-)
+_PROVIDER = "dimos"  # the one provider in Pi's private config: the recording proxy
 
 
 def render_tools(tools: list[dict[str, Any]]) -> str:
@@ -80,15 +63,21 @@ def tool_listing(mcp_url: str) -> str:
     return render_tools(McpAdapter(mcp_url).list_tools())
 
 
-def recording_file(store: Store, path: Path) -> Path:
-    """*store* as a file a subprocess can open: where it is when it is on disk,
-    else written to *path*."""
-    from dimos.memory.store.base import copy_streams
+def recording_file(streams: Sequence[Stream[Any, Any]], path: Path) -> Path:
+    """*streams* written to a memory store at *path*, under their own names,
+    so a subprocess can open what the case selected and nothing more."""
     from dimos.memory.store.sqlite import SqliteStore
 
-    if isinstance(store, SqliteStore):
-        return Path(store.config.path)
-    copy_streams((s for _, s in store.streams.items()), SqliteStore(path=str(path))).stop()
+    store = SqliteStore(path=str(path))
+    try:
+        for stream in streams:
+            if stream.name is None:
+                raise ValueError("a stream must be bound to a store to be written out")
+            target: Stream[Any, Any] = store.stream(stream.name, stream.data_type)
+            for obs in stream:
+                target.append(obs.data, ts=obs.ts, pose=obs.pose_tuple, tags=obs.tags)
+    finally:
+        store.stop()
     return path
 
 
@@ -196,31 +185,47 @@ class Pi:
     a local :class:`RecordingProxy`, so every call is captured whole under
     ``run_dir/raw`` like any other agent's. OpenAI models only, for now.
 
+    The system prompt is composed from fields, in this order: ``system_prompt``
+    (the agent's own contract), ``instructions`` (a suite's condition, e.g. an
+    access contract; ``""`` for none), the file list, then — with
+    ``builtin_guidance`` — how to open the recording and how to call the
+    robot's tools, and the robot's tool listing whenever there is a robot.
+    Turn ``builtin_guidance`` off to hand that teaching to ``skills`` instead:
+    explicit skill files or directories for Pi's repeatable native ``--skill``
+    flag, resolved to absolute paths (Pi runs in the case dir); ambient skill
+    discovery stays off — ``--no-skills`` disables discovery only, explicit
+    paths still load. ``tools`` is Pi's native tool allowlist.
+    ``passthrough_env`` names the variables Pi's process inherits, on top of
+    every ``DIMOS_*`` one (the dimos CLI it calls needs them).
+
     ``max_steps`` and the case's time budget are enforced from outside: Pi is
     killed when it has made that many model calls and still wants to act, or
     when the budget runs out, and the steps made so far are kept. ``cli`` is
     the ``pi`` executable.
-    ``skills`` are explicit skill files or directories for Pi's repeatable
-    native ``--skill`` flag, resolved to absolute paths (Pi runs in the case
-    dir); ambient skill discovery stays off — ``--no-skills`` disables
-    discovery only, explicit paths still load.
     """
 
     model: str = DEFAULT_MODEL
-    system_prompt: str = PI_SYSTEM_PROMPT
+    system_prompt: str = (
+        "Answer the question from the files and tools listed below and nothing else."
+    )
+    instructions: str = ""
+    builtin_guidance: bool = True
+    tools: Sequence[str] = ("read", "bash", "edit", "write")
     thinking: str = "medium"
     max_steps: int | None = 40
     cli: str = "pi"
     modules: str = ""
     skills: Sequence[str] = ()
+    passthrough_env: Sequence[str] = ("PATH", "HOME", "XDG_STATE_HOME", "OPENAI_API_KEY")
 
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
-        """Pi's fixed built-ins plus robot tools exposed through its bash tool."""
-        return (*PI_TOOLS, *environment_tools)
+        """Pi's native tools plus robot tools exposed through its bash tool."""
+        return (*self.tools, *environment_tools)
 
     def preflight(self, environment: Environment) -> None:
-        if isinstance(self.skills, str):
-            raise RuntimeError("Pi.skills is a string; pass a list of paths (--set skills='[...]')")
+        for name in ("skills", "tools", "passthrough_env"):
+            if isinstance(getattr(self, name), str):
+                raise RuntimeError(f"Pi.{name} is a string; pass a list (--set {name}='[...]')")
         missing = [p for p in self.skills if not Path(p).expanduser().resolve().exists()]
         if missing:
             raise RuntimeError(f"Pi skill paths do not exist: {missing}")
@@ -230,6 +235,8 @@ class Pi:
             )
         if "OPENAI_API_KEY" not in os.environ:
             raise RuntimeError("Pi needs OPENAI_API_KEY")
+        if environment.has_robot and "bash" not in self.tools:
+            raise RuntimeError("Pi reaches the robot through its bash tool, which is not enabled")
         if environment.has_robot and shutil.which("dimos") is None:
             raise RuntimeError("Pi reaches the robot through the dimos CLI, which is not on PATH")
 
@@ -240,7 +247,8 @@ class Pi:
         events = _Events(
             raw_dir, TrajectoryBuilder(inputs, name=type(self).__name__, model=self.model)
         )
-        with RecordingProxy(raw_dir, os.environ.get("OPENAI_BASE_URL", OPENAI_URL)) as proxy_url:
+        upstream = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        with RecordingProxy(raw_dir, upstream) as proxy_url:
             self._write_agent_dir(run_dir, proxy_url)
             ended_by = self._drive(self._command(inputs, env, run_dir), run_dir, events, timeout_s)
         if events.error:
@@ -248,26 +256,35 @@ class Pi:
         return events.trajectory.build(ended_by)
 
     def _command(self, inputs: str, env: RunningEnvironment, run_dir: Path) -> list[str]:
-        files = {
-            **env.artifacts,
-            "recording": recording_file(env.recording, run_dir / "recording.db"),
-        }
-        parts = [
-            self.system_prompt,
-            "Files:\n" + "\n".join(f"- {name}: {path}" for name, path in files.items()),
-            RECORDING_HELP,
-        ]
+        files = dict(env.artifacts)
+        if env.streams:  # the selection, not the whole source the artifact names
+            files["recording"] = recording_file(env.streams, run_dir / "recording.db")
+        parts = [self.system_prompt, self.instructions]
+        parts.append("Files:\n" + "\n".join(f"- {name}: {path}" for name, path in files.items()))
+        if self.builtin_guidance and "recording" in files:
+            parts.append(
+                "The recording is a dimos memory store (sqlite). In Python:\n"
+                "  from dimos.memory.store.sqlite import SqliteStore\n"
+                "  store = SqliteStore(path=PATH, must_exist=True)\n"
+                "store.streams.<name> is a stream, .last().data its latest message; iterating "
+                "a stream yields observations with .ts and .data. Inspect with dir() and help()."
+            )
         if env.mcp_url:
-            parts.append(ROBOT_HELP + tool_listing(env.mcp_url))
-        prompt = "\n\n".join(parts)
+            if self.builtin_guidance:
+                parts.append(
+                    "The robot is live. Call one of its tools from bash as\n"
+                    "  dimos mcp call <tool> --json-args '{\"arg\": value}'"
+                )
+            parts.append("Tools:\n" + tool_listing(env.mcp_url))
+        prompt = "\n\n".join(p for p in parts if p)
         (run_dir / "system-prompt.txt").write_text(prompt)
         # Absolute before Pi changes to the run dir; --no-skills disables only
         # ambient discovery, explicit --skill paths still load.
         skills = [f for p in self.skills for f in ("--skill", str(Path(p).expanduser().resolve()))]
         return [
-            self.cli, "--mode", "json", "--model", f"dimos/{self.model}", "--thinking", self.thinking,
-            "--session-dir", str(run_dir / "pi-session"),
-            "--tools", ",".join(PI_TOOLS),
+            self.cli, "--mode", "json", "--model", f"{_PROVIDER}/{self.model}",
+            "--thinking", self.thinking, "--session-dir", str(run_dir / "pi-session"),
+            "--tools", ",".join(self.tools),
             "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
             "--no-context-files", "--no-approve", *skills,
             "--system-prompt", prompt, inputs,
@@ -287,11 +304,11 @@ class Pi:
             "models": [model],
         }
         (agent_dir / "models.json").write_text(
-            json.dumps({"providers": {"dimos": provider}}, indent=2)
+            json.dumps({"providers": {_PROVIDER: provider}}, indent=2)
         )
 
     def _env(self, run_dir: Path) -> dict[str, str]:
-        keep = ("PATH", "HOME", "XDG_STATE_HOME", "OPENAI_API_KEY")
+        keep = self.passthrough_env
         passed = {k: v for k, v in os.environ.items() if k in keep or k.startswith("DIMOS_")}
         return {
             **passed,
@@ -305,11 +322,14 @@ class Pi:
     ) -> EndedBy:
         """Run Pi to completion, or kill it at ``max_steps`` model calls or
         when *timeout_s* runs out. Pi's events are read on a helper thread so
-        the wait for the next one can carry the deadline."""
+        the wait for the next one can carry the deadline. A Pi that exits on
+        its own with a failure status (a rejected flag, say) is an error, not
+        an answer."""
         deadline = time.monotonic() + timeout_s
         lines: queue.Queue[str | None] = queue.Queue()
+        stderr_path = run_dir / "pi-stderr.txt"
         with (
-            (run_dir / "pi-stderr.txt").open("w") as stderr,
+            stderr_path.open("w") as stderr,
             subprocess.Popen(
                 command,
                 cwd=run_dir,
@@ -329,13 +349,16 @@ class Pi:
                     except queue.Empty:
                         return "timeout"
                     if line is None:
-                        return "answer"
+                        break
                     events.feed(line)
                     if self._over_budget(events):
                         return "max_steps"
             finally:
                 proc.kill()  # a no-op once Pi has exited on its own
                 reader.join()
+        if proc.returncode and not events.error:
+            events.error = f"exit status {proc.returncode}: {stderr_path.read_text().strip()}"
+        return "answer"
 
     def _over_budget(self, events: _Events) -> bool:
         """``max_steps`` calls made and the last one still asks for a tool."""
