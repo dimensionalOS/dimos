@@ -277,6 +277,10 @@ def _resolve_ref(flake: Path, token: str) -> str:
     return PurePosixPath(rel).as_posix()
 
 
+# The repo-root flake's only legitimate use of `./.` — the deps.nix search.
+_DOT_LITERAL = re.compile(r"(?<![\w.@+/-])\./\.")
+_ROOT_SEARCH = re.compile(r"findDepsFiles\s+\./\.")
+
 # Ways a flake can reach repo (or unpinned remote) content with no relative
 # path token for _FLAKE_REF to see: interpolating or dereferencing `self` (for
 # a git-tree flake that is the whole repo), and builtins fetchers. No textual
@@ -327,12 +331,28 @@ def _collect_input_paths(module: DiscoveredModule) -> set[str]:
     paths = {"flake.nix", "flake.lock"} if module.build_dir == "." else {module.build_dir}
     if not _is_local_flake(module):
         return paths
+    # The repo-root flake discovers its build inputs by searching the tree for
+    # files named `deps.nix`, so there is no path literal to scan for. Mirror
+    # that search here -- same rule, stated the same way -- and let the queue
+    # below follow each one to the crate directories it names. Getting this set
+    # wrong is silent: a crate reachable only through a missed deps.nix would be
+    # served from the cache as already published.
+    discovered = (
+        [
+            found
+            for found in REPO_ROOT.rglob("deps.nix")
+            if not any(part.startswith(".") for part in found.relative_to(REPO_ROOT).parts)
+        ]
+        if module.build_dir == "."
+        else []
+    )
+    paths |= {found.relative_to(REPO_ROOT).as_posix() for found in discovered}
     root = REPO_ROOT / module.build_dir / "flake.nix"
     if not root.is_file():
         raise SystemExit(
             f"{module.source}: {module.qualname} builds a local flake but {root} is missing"
         )
-    queue, seen = [root], set()
+    queue, seen = [root, *discovered], set()
     while queue:
         flake = queue.pop()
         if flake in seen:
@@ -353,6 +373,20 @@ def _collect_input_paths(module: DiscoveredModule) -> set[str]:
             if not sub.is_file():
                 raise SystemExit(f"path: input {rel!r} of {flake} has no flake.nix")
             queue.append(sub)  # a path: input is a flake — its refs count too
+    if module.build_dir == "." and "." in paths:
+        # `findDepsFiles ./.` names the whole repo, but readDir reads directory
+        # *names*, not file contents: the only content that reaches the
+        # derivation is the deps.nix files it finds and the crates those name,
+        # and both are already in `paths`. Hashing "." instead would rekey the
+        # marker on every commit in the repo. Narrow on purpose — a plain `./.`
+        # anywhere else in this flake would reach everything for real.
+        text = _strip_nix_comments(root.read_text())
+        if len(_DOT_LITERAL.findall(text)) != len(_ROOT_SEARCH.findall(text)):
+            raise SystemExit(
+                "flake.nix: `./.` outside the deps.nix search reaches the whole repository;"
+                " the inputs hash cannot follow that — name a specific path instead"
+            )
+        paths.discard(".")
     return paths
 
 

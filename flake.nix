@@ -319,15 +319,28 @@
         #
         # Each module owns a `deps.nix` naming the crate directories it
         # contributes to the workspace, the cargo packages that are module
-        # executables, and any system libraries it links. This file only
-        # composes them, so adding a module is a new deps.nix plus a line here.
-        moduleDeps = map (file: import file pkgs) [
-          ./native/rust/deps.nix
-          ./dimos/mapping/ray_tracing/deps.nix
-          ./dimos/navigation/nav_3d/mls_planner/deps.nix
-          ./dimos/hardware/sensors/lidar/virtual_mid360/deps.nix
-          ./examples/native-modules/deps.nix
-        ];
+        # executables, and any system libraries it links. Adding a module is
+        # just a new deps.nix; nothing here has to change.
+        #
+        # The rule is deliberately the dumbest one possible -- every file named
+        # `deps.nix`, anywhere in the tree -- because
+        # `bin/build-native-modules --inputs-hash` has to find exactly the same
+        # set to key the Cachix publish marker, and it does that with a glob
+        # rather than by evaluating nix. Any cleverer rule here (pruning,
+        # restricted roots) would have to be mirrored there, and the two would
+        # drift. Keep them the same sentence.
+        findDepsFiles = dir:
+          let entries = builtins.readDir dir; in
+          builtins.concatMap
+            (name:
+              if entries.${name} == "directory" then
+                findDepsFiles (dir + "/${name}")
+              else if name == "deps.nix" then
+                [ (dir + "/${name}") ]
+              else
+                [ ])
+            (builtins.attrNames entries);
+        moduleDeps = map (file: import file pkgs) (findDepsFiles ./.);
         depsField = field: builtins.concatLists (map (dep: dep.${field} or [ ]) moduleDeps);
 
         rustNativeModules = pkgs.rustPlatform.buildRustPackage {
