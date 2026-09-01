@@ -14,13 +14,22 @@
 
 from dataclasses import replace
 import hashlib
+import os
 from pathlib import Path
 from typing import Any
 
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.hosted.daemon import HostDaemon, HostFragment
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV
+from dimos.core.module import Module
+from dimos.hosted.daemon import HostDaemon, HostFragment, _run_fragment
+from dimos.hosted.fragment import PythonFragmentPayload
+
+
+class DaemonModule(Module):
+    pass
 
 
 @pytest.fixture
@@ -42,8 +51,10 @@ def host_setup(tmp_path: Path, mocker: MockerFixture) -> dict[str, Any]:
         run_id="run-1",
         generation=1,
         host_id="host-1",
+        application_name="test-application",
+        application_revision="revision-1",
         payload_digest=hashlib.sha256(payload).hexdigest(),
-        blueprint_payload=payload,
+        payload=payload,
     )
     daemon = HostDaemon(
         "host-1",
@@ -95,7 +106,7 @@ def test_start_is_idempotent_and_rejects_same_run_conflicts(
             replace(
                 fragment,
                 payload_digest=hashlib.sha256(other_payload).hexdigest(),
-                blueprint_payload=other_payload,
+                payload=other_payload,
             ),
         )
 
@@ -110,7 +121,7 @@ def test_runs_multiple_blueprints_and_stops_them_independently(
         first_fragment,
         run_id="run-2",
         payload_digest=hashlib.sha256(second_payload).hexdigest(),
-        blueprint_payload=second_payload,
+        payload=second_payload,
     )
     first_process = host_setup["process"]
     second_process = mocker.MagicMock(pid=4343, exitcode=None)
@@ -163,6 +174,17 @@ def test_start_validates_epoch_host_and_digest(host_setup: dict[str, Any]) -> No
         daemon.start(epoch, replace(fragment, payload_digest="wrong"))
 
 
+def test_start_validates_application_revision(host_setup: dict[str, Any]) -> None:
+    fragment = host_setup["fragment"]
+    daemon = HostDaemon(
+        "host-1",
+        versions={"application_revision": "revision-2"},
+    )
+
+    with pytest.raises(ValueError, match="application revision"):
+        daemon.start(daemon.describe().epoch, fragment)
+
+
 def test_status_marks_an_exited_process_failed(host_setup: dict[str, Any]) -> None:
     daemon = host_setup["daemon"]
     fragment = host_setup["fragment"]
@@ -213,7 +235,7 @@ def test_shutdown_cleans_up_all_active_deployments(
         first_fragment,
         run_id="run-2",
         payload_digest=hashlib.sha256(second_payload).hexdigest(),
-        blueprint_payload=second_payload,
+        payload=second_payload,
     )
     second_process = mocker.MagicMock(pid=4343, exitcode=None)
     second_process.is_alive.side_effect = [True, False]
@@ -230,3 +252,42 @@ def test_shutdown_cleans_up_all_active_deployments(
     host_setup["process"].terminate.assert_called_once_with()
     second_process.terminate.assert_called_once_with()
     assert host_setup["kill"].call_args_list == [mocker.call("run-1"), mocker.call("run-2")]
+
+
+def test_run_fragment_loads_identity_bound_payload(
+    tmp_path: Path,
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blueprint = DaemonModule.blueprint()
+    config = BlueprintConfigParser(blueprint).parse(environ={})
+    fragment = HostFragment.create(
+        run_id="run-1",
+        generation=1,
+        host_id="host-1",
+        application_name="test-application",
+        application_revision="revision-1",
+        payload=PythonFragmentPayload(blueprint=blueprint, config=config),
+    )
+    coordinator = mocker.MagicMock()
+    coordinator.health_check.return_value = True
+    build = mocker.patch(
+        "dimos.hosted.daemon.ModuleCoordinator.build",
+        return_value=coordinator,
+    )
+    stop_requested = mocker.MagicMock()
+    mocker.patch("dimos.hosted.daemon.threading.Event", return_value=stop_requested)
+    mocker.patch("dimos.hosted.daemon.signal.signal")
+    mocker.patch("dimos.hosted.daemon.set_run_log_dir")
+    ready = mocker.MagicMock()
+    monkeypatch.setenv(DIMOS_RUN_ID_ENV, "previous")
+
+    _run_fragment(fragment, tmp_path, ready)
+
+    built_blueprint, built_config = build.call_args.args
+    built_config.assert_matches(built_blueprint)
+    coordinator.start_rpc_service.assert_called_once_with()
+    stop_requested.wait.assert_called_once_with()
+    ready.send.assert_called_once_with((True, None))
+    coordinator.stop.assert_called_once_with()
+    assert os.environ[DIMOS_RUN_ID_ENV] == "run-1"
