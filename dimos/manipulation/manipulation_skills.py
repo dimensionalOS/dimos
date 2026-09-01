@@ -21,6 +21,7 @@ from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.skill_result import SkillResult
 from dimos.core.module import Module
 from dimos.manipulation.manipulation_spec import (
+    UNCONFIRMED_STOP,
     CommandResult,
     ExecutionResult,
     ManipulationSpec,
@@ -89,6 +90,24 @@ class ManipulationSkills(Module):
         if failure := self._planning_result(plan):
             return failure
         return self._execution_result(self.manipulation.execute(blocking=True))
+
+    @skill
+    def cancel(self) -> SkillResult[ManipulationSkillError]:
+        """Stop the active motion or planning attempt, leaving the arm where it is."""
+        result = self.manipulation.cancel()
+        if result.status in UNCONFIRMED_STOP:
+            # The coordinator never confirmed the arm stopped. Reporting success
+            # lets a caller branch straight into its next motion command.
+            return SkillResult.fail("EXECUTION_FAILED", result.message)
+        return SkillResult.ok(result.message or "Cancelled")
+
+    @skill
+    def reset(self) -> SkillResult[ManipulationSkillError]:
+        """Stop any motion and return to IDLE. Use after a motion fails."""
+        result = self.manipulation.reset()
+        if not result.succeeded:
+            return SkillResult.fail("EXECUTION_FAILED", result.message)
+        return SkillResult.ok(result.message)
 
     @skill
     def get_robot_state(
