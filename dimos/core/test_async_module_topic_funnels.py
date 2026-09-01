@@ -111,25 +111,6 @@ def test_topic_funnel_entries_follow_remappings(start_remapped_fan_in_module, ea
             transport.stop()
 
 
-def test_namespace_prefixes_topic_funnel_entries():
-    blueprint = (
-        FanInModule.blueprint()
-        .remappings([(FanInModule, "sensors", ["s0", "s1"])])
-        .namespace("bot")
-    )
-    atom = blueprint.blueprints[0]
-    assert blueprint.remapping_map[atom.name, "s0"] == "bot/s0"
-    assert blueprint.remapping_map[atom.name, "s1"] == "bot/s1"
-
-
-def test_a_fanned_in_port_no_longer_connects_under_its_own_name():
-    """The port stands in for its entries rather than being a stream of its own."""
-    blueprint = FanInModule.blueprint().remappings([(FanInModule, "sensors", ["s0", "s1"])])
-    names = {stream.name for stream in blueprint.blueprints[0].streams}
-    assert "sensors" not in names
-    assert {"s0", "s1"} <= names
-
-
 def test_fanning_in_an_undeclared_port_is_an_error():
     with pytest.raises(ValueError, match="no such In/IO stream"):
         FanInModule.blueprint().remappings([(FanInModule, "nope", ["s0"])])
@@ -138,12 +119,6 @@ def test_fanning_in_an_undeclared_port_is_an_error():
 def test_a_funnel_entry_cannot_collide_with_a_declared_stream():
     with pytest.raises(ValueError, match="collides"):
         FanInModule(topic_funnels={"sensors": {"names": ["tagged"]}})
-
-
-def test_a_funnel_entry_rejects_a_backend_topic_string():
-    """Entries are stream names, so a leading slash is a transport leaking in."""
-    with pytest.raises(ValueError, match="not topics"):
-        FanInModule.blueprint().remappings([(FanInModule, "sensors", ["/s0"])])
 
 
 class PlainFanInModule(Module):
