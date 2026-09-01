@@ -243,7 +243,13 @@ _XARM_GRASP_MODULES = (
         voxel_map_resolution=XARM_GRASP_VOXEL_SIZE,
     ),
     ManipulationSkills.blueprint(),
-    PickAndPlaceModule.blueprint(planning_frame="world"),
+    PickAndPlaceModule.blueprint(
+        planning_frame="world",
+        # Same geometry the generator is given, so the drawn wireframe and the
+        # commanded pose cannot drift apart.
+        grasp_viz_gripper=XARM_GRIPPER_SWEEP_VOLUME,
+        grasp_viz_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
+    ),
     *_sensing(),
     _scene_registration(),
     *_voxel_mapping(),

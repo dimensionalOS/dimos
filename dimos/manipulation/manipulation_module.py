@@ -470,6 +470,22 @@ class ManipulationModule(Module):
         )
 
     @rpc
+    def set_visualization_layer(self, layer: Any) -> bool:
+        """Hand one display-only layer to the viewer, if there is one.
+
+        PickAndPlaceModule owns the grasp pipeline but not the visualizer, and on
+        this branch it is a sibling module rather than a subclass, so the layer
+        reaches the scene through here.
+        """
+        if self._world_monitor is None or self._world_monitor.visualization is None:
+            return False
+        setter = getattr(self._world_monitor.visualization, "set_layer", None)
+        if setter is None:
+            return False
+        setter(layer)
+        return True
+
+    @rpc
     def get_current_joints(self) -> list[float] | None:
         """Get the complete canonical model joint positions."""
         if self._world_monitor:

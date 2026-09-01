@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from contextlib import suppress
 from typing import Any, Literal
 
 from pydantic import Field
@@ -25,7 +27,6 @@ from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import Out
 from dimos.manipulation.grasp_verification import (
     GraspVerificationConfig,
     GripperSettle,
@@ -34,12 +35,19 @@ from dimos.manipulation.grasp_verification import (
     open_failure,
 )
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.manipulation.grasping.grasp_gen_x import (
+    IDENTITY_TRANSFORM,
+    RigidTransform,
+    SweepVolumeGripperConfig,
+)
 from dimos.manipulation.manipulation_spec import ManipulationSpec
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.manipulation.skill_errors import ManipulationSkillError
+from dimos.manipulation.visualization import grasp_layers
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 
@@ -50,6 +58,12 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     # A learned provider returns a ranked spread whose best-scoring pose is not
     # always kinematically reachable; a single-candidate provider is unaffected.
     max_grasp_attempts: int = Field(default=5, gt=0)
+    # Gripper geometry for grasp visualization only. Source from the same config
+    # object as the grasp generator: grasp_gen_x bakes grasp_frame_to_tcp into
+    # candidate poses and the wireframe un-applies it, so a divergence would
+    # draw correct-looking grasps while the robot goes elsewhere.
+    grasp_viz_gripper: SweepVolumeGripperConfig | None = None
+    grasp_viz_frame_to_tcp: RigidTransform = IDENTITY_TRANSFORM
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
 
@@ -58,11 +72,6 @@ class PickAndPlaceModule(Module):
     """Coordinate scene registration, grasp generation, and manipulation execution."""
 
     config: PickAndPlaceModuleConfig
-    # Published so a viewer can show what the generator proposed and in what
-    # order. The RPC only answers after the fact, which is no help while the arm
-    # is choosing.
-    grasp_candidates: Out[GraspCandidateArray]
-
     _scene: ObjectSceneRegistrationSpec
     _grasp_generator: GraspGenSpec
     _manipulation: ManipulationSpec
@@ -138,7 +147,8 @@ class PickAndPlaceModule(Module):
         except (RuntimeError, ValueError) as exc:
             return SkillResult.fail("GRASP_GENERATION_FAILED", str(exc))
         self._grasp_candidates = candidates
-        self.grasp_candidates.publish(candidates)
+        self._publish_cloud_layer(pointcloud)
+        self._publish_candidate_layers(candidates.candidates)
         if candidates.header.frame_id != self.config.planning_frame:
             return SkillResult.fail(
                 "GRASP_FRAME_MISMATCH",
@@ -166,6 +176,7 @@ class PickAndPlaceModule(Module):
                 group,
             )
             pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
+            self._publish_attempt_layer(grasp, pregrasp)
             failure = self._move(pregrasp, group) or self._servo(pregrasp, grasp, group)
             if failure is not None:
                 # Only an unreachable pose is worth demoting to the next candidate;
@@ -235,6 +246,46 @@ class PickAndPlaceModule(Module):
         self._holding_object = False
         self._clear_selection()
         return self._servo(place, preplace, group) or SkillResult.ok("Place complete")
+
+    def _grasp_viz_enabled(self) -> bool:
+        """Drawing needs the gripper geometry the wireframe is built from."""
+        return self.config.grasp_viz_gripper is not None
+
+    def _publish_layer(self, layer: Any) -> None:
+        with suppress(Exception):
+            self._manipulation.set_visualization_layer(layer)
+
+    def _publish_cloud_layer(self, pointcloud: Any) -> None:
+        if not self._grasp_viz_enabled():
+            return
+        self._publish_layer(
+            grasp_layers.cloud_layer(pointcloud.points_f32(), self.config.planning_frame)
+        )
+
+    def _publish_candidate_layers(self, candidates: Sequence[GraspCandidate]) -> None:
+        if not self._grasp_viz_enabled():
+            return
+        self._publish_layer(
+            grasp_layers.candidates_layer(
+                candidates,
+                self.config.grasp_viz_gripper,
+                self.config.grasp_viz_frame_to_tcp,
+                self.config.planning_frame,
+            )
+        )
+
+    def _publish_attempt_layer(self, grasp: PoseStamped, pregrasp: PoseStamped) -> None:
+        if not self._grasp_viz_enabled():
+            return
+        self._publish_layer(
+            grasp_layers.attempt_layer(
+                grasp,
+                pregrasp,
+                self.config.grasp_viz_gripper,
+                self.config.grasp_viz_frame_to_tcp,
+                self.config.planning_frame,
+            )
+        )
 
     def _clear_selection(self) -> None:
         self._grasp_candidates = GraspCandidateArray()
