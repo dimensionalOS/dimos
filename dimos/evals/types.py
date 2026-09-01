@@ -168,10 +168,6 @@ class Agent(Protocol):
     encodes the whole recording into one prompt, ``Blind`` never looks, ``Pi``
     and ``McpClientAgent`` act through tools. No agent knows anything about
     any particular case.
-
-    Everything that decides what an agent does (model, prompt, step limit,
-    what it adds to the stack) is a constructor argument; the runner records
-    ``vars(agent)``. A limit an agent cannot honor is not a parameter it has.
     """
 
     modules: str

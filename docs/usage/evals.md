@@ -36,14 +36,19 @@ dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi
 dimos evals list
 ```
 
-Every run writes to `~/.local/state/dimos/evals/run-*/`:
+Every runner invocation writes one `~/.local/state/dimos/evals/run-*/` directory. The normal CLI
+invokes the runner once per suite, but the Python API can pass any case sequence.
 
 | file | what |
 |---|---|
+| `manifest.json` | immutable, versioned run inputs: source, ordered selected case IDs, explicit agent arguments, runner settings, and Git state |
 | `results.jsonl` | one row per case: score, steps, tokens, seconds, `ended_by`, trajectory path |
-| `summary.json` | mean/pass rate/errors plus the **agent that ran** (its class and every constructor argument: model, prompt, `max_steps`, `modules`, ...) and the git sha |
+| `summary.json` | aggregate outcomes and a reference to `manifest.json` |
 | `<case_id>/trajectory.json` | every tool available to the agent and one `Step` per model call (message, tool calls with results, tokens, latency) |
 | `<case_id>/raw/NNN-request.json`, `NNN-response.json` | the exact payload sent to and received from the provider for every call |
+
+The manifest includes every case selected after `--tags` and `--limit`, even if preflight later
+fails. A case folder exists only when that case reaches execution.
 
 To generate deterministic image questions from recordings, see
 [Visual Question Answering](/docs/usage/vqa.md).
@@ -125,8 +130,8 @@ grade -> run dir.
 
 An agent is a module defining one dataclass: everything it decides is a
 constructor argument (`model`, `system_prompt`, `max_steps`, `frames_per_stream`,
-`modules`), and `summary.json` records all of them. `--agent` names the
-module; `--set field=value` sets a field. Values that parse as JSON (`10`,
+`modules`). `manifest.json` records the agent module and explicit `--set`
+arguments. `--agent` names the module; `--set field=value` sets a field. Values that parse as JSON (`10`,
 `null`, `true`) are decoded; everything else remains text. The same two flags
 reach an agent from another package.
 
@@ -153,11 +158,9 @@ question_answer  QuestionAnswer  modules='' max_steps=None
   composite, and `autoconnect` dedups the base it shares with the case. To
   compare two tool sets on one task, run the suite twice with a different
   `--set modules=...`; each `trajectory.json` records the tools exposed.
-- `max_steps` caps model calls on the agents that loop; `timeout_s` on the
+- `max_steps` caps model calls on agents that support it; `timeout_s` on the
   case caps wall-clock. Tokens and cost are recorded on the trajectory and
-  ranked, never capped. A limit an agent can't honor is not a parameter it
-  has: `QuestionAnswer(max_steps=3)` and `McpClientAgent(model=...)` are
-  `TypeError`s.
+  ranked, never capped.
 - How the recording reaches the model is the agent, not a parameter:
   `agent_encode()` is called in `QuestionAnswer` and nowhere else. A different channel is a different agent class.
 - `Pi` (`dimos.evals.agents.pi`) is the [Pi coding agent](https://pi.dev)
@@ -275,9 +278,13 @@ already-running dimos (start it with `--record`) instead of launching one.
   evals, grep trajectories, edit prompts/encodings, and run again.
 - **Blind ablation**: run every new suite with
   `--agent dimos.evals.agents.blind` once before trusting it. A case that still
-  passes blind is guessable; fix its distractors. `summary.json` records which
+  passes blind is guessable; fix its distractors. `manifest.json` records which
   agent ran, so blind and sighted runs never get mixed up.
 - **Preflight**: before anything runs, every case is checked against the
   agent. A missing stream fails with `"No stream 'lidar'. Available: [...]"`,
   a mismatched environment/agent pair with what's missing. Errors are per-case;
   one broken case never kills a run.
+
+Direct `EvalRunner.run(cases, agent)` calls still write a manifest, but mark source and agent
+provenance unavailable because arbitrary objects do not identify importable factories. The shipped
+CLI and MCP entry points provide that provenance explicitly.

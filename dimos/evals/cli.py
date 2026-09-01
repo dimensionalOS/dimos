@@ -51,12 +51,38 @@ def _value(text: str) -> Any:
         return text
 
 
+def agent_kwargs(overrides: Iterable[str]) -> dict[str, Any]:
+    pairs = (item.partition("=") for item in overrides)
+    return {name: _value(text) for name, _, text in pairs}
+
+
+def _has_secret(value: Any) -> bool:
+    words = ("key", "token", "secret", "password", "credential", "authorization")
+    if isinstance(value, dict):
+        return any(
+            any(word in str(key).casefold() for word in words) or _has_secret(item)
+            for key, item in value.items()
+        )
+    return isinstance(value, list) and any(_has_secret(item) for item in value)
+
+
+def run_provenance(source: dict[str, Any], module: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+    unavailable = _has_secret(kwargs)
+    try:
+        json.dumps(kwargs, allow_nan=False)
+    except (TypeError, ValueError):
+        unavailable = True
+    agent = {"module": module, "kwargs": None if unavailable else kwargs}
+    if unavailable:
+        agent["unavailable_reason"] = "agent arguments could not be safely serialized"
+    return {"source": source, "agent": agent}
+
+
 def load_agent(module: str, overrides: Iterable[str] = ()) -> Any:
     """``--agent module --set field=value ...``: the agent class in *module*,
     constructed with the overrides. A field the agent does not have is the
     constructor's own ``TypeError``."""
-    pairs = (item.partition("=") for item in overrides)
-    return agent_class(module)(**{name: _value(text) for name, _, text in pairs})
+    return agent_class(module)(**agent_kwargs(overrides))
 
 
 @app.command("run")
@@ -71,17 +97,19 @@ def run(
         [], "--set", help="Agent field override, e.g. --set model=gpt-5.6-luna --set max_steps=10"
     ),
     tags: str = typer.Option("", help="Comma-separated tag filter"),
-    limit: int = typer.Option(0, help="Run at most N cases"),
+    limit: int = typer.Option(0, min=0, help="Run at most N cases"),
 ) -> None:
     from dimos.evals.runner import EvalRunner, summarize
 
     cases = importlib.import_module(suite).SUITE
+    kwargs = agent_kwargs(set_)
     runner = EvalRunner()
     results = runner.run(
         cases,
-        load_agent(agent, set_),
+        agent_class(agent)(**kwargs),
         tags=frozenset(t for t in tags.split(",") if t) if tags else frozenset(),
         limit=limit,
+        provenance=run_provenance({"kind": "suite_module", "value": suite}, agent, kwargs),
     )
 
     for r in results:

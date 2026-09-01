@@ -471,12 +471,93 @@ def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:
     run_dir = runner.run_dir
     lines = (run_dir / "results.jsonl").read_text().strip().splitlines()
     assert len(lines) == 3
+    assert [json.loads(line)["case_id"] for line in lines] == [
+        "disp",
+        "unparseable",
+        "missing_stream",
+    ]
     summary = json.loads((run_dir / "summary.json").read_text())
-    assert summary["agent"]["class"].endswith("FakeAgent")
-    assert summary["agent"]["answer"] == "4.0", "every constructor argument is recorded"
+    assert summary["manifest"] == "manifest.json"
+    assert "agent" not in summary
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    assert manifest["selection"]["case_ids"] == ["disp", "unparseable", "missing_stream"]
+    assert manifest["runner"] == {"threshold": 1.0, "strict": False}
+    assert manifest["source"] == {"kind": "unavailable"}
     trajectory = json.loads(Path(by_id["disp"].trajectory).read_text())
     assert trajectory["tools"] == ["fake_tool"] and trajectory["final_answer"] == "4.0"
     assert trajectory["steps"][0]["message"] == "4.0"
+
+
+def test_manifest_exists_when_strict_preflight_fails(dataset: str, tmp_path: Path) -> None:
+    case = EvalCase(
+        id="missing_stream",
+        inputs="?",
+        environment=Dataset(dataset, select=(lambda store: store.streams.lidar,)),
+        grade=lambda outcome: 1.0,
+    )
+    runner = EvalRunner(out_dir=tmp_path, strict=True)
+
+    with pytest.raises(AttributeError, match="lidar"):
+        runner.run([case], FakeAgent())
+
+    manifest = json.loads((runner.run_dir / "manifest.json").read_text())
+    assert manifest["selection"]["case_ids"] == ["missing_stream"]
+    assert not (runner.run_dir / "missing_stream").exists()
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    [
+        "",
+        "/tmp/escape",
+        "../escape",
+        "a/b",
+        r"a\b",
+        ".",
+        "..",
+        "manifest.json",
+        "summary.json",
+        "results.jsonl",
+    ],
+)
+def test_runner_rejects_unsafe_and_artifact_case_ids(case_id: str, tmp_path: Path) -> None:
+    case = EvalCase(
+        id=case_id,
+        inputs="?",
+        environment=FakeEnvironment(tmp_path / "artifact", []),
+        grade=lambda outcome: 1.0,
+    )
+    out_dir = tmp_path / "runs"
+
+    with pytest.raises(ValueError, match="unsafe eval case ID"):
+        EvalRunner(out_dir=out_dir).run([case], FakeAgent())
+
+    assert not out_dir.exists()
+    assert not (tmp_path / "escape").exists()
+
+
+def test_runner_rejects_duplicate_case_ids_before_preflight(tmp_path: Path) -> None:
+    calls: list[str] = []
+    case = EvalCase(
+        id="duplicate",
+        inputs="?",
+        environment=FakeEnvironment(tmp_path / "artifact", calls),
+        grade=lambda outcome: 1.0,
+    )
+
+    with pytest.raises(ValueError, match="duplicate eval case IDs"):
+        EvalRunner(out_dir=tmp_path / "runs").run([case, case], FakeAgent())
+
+    assert calls == []
+
+
+def test_programmatic_run_manifest_marks_provenance_unavailable(tmp_path: Path) -> None:
+    runner = EvalRunner(out_dir=tmp_path)
+    runner.run([], FakeAgent())
+
+    manifest = json.loads((runner.run_dir / "manifest.json").read_text())
+    assert manifest["source"] == {"kind": "unavailable"}
+    assert manifest["agent"] is None
 
 
 def test_runner_stops_the_environment_before_grading_and_on_failure(

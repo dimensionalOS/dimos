@@ -189,15 +189,32 @@ def test_vqa_run_cli_formats_dataset_errors(
 
 
 def test_vqa_run_cli_runs_shared_evaluator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (tmp_path / "cases.jsonl").write_text('{"id":"q","image":"assets/q.png"}\n')
+    (tmp_path / "labels.jsonl").write_text('{"id":"q","answer":"yes"}\n')
+    (assets / "q.png").write_bytes(b"image")
+
     class FakeRunner:
         def __init__(self, **kwargs: object) -> None:
             assert kwargs == {}
             self.run_dir = tmp_path / "results"
 
-        def run(self, cases: object, agent: Any) -> list[EvalResult]:
+        def run(self, cases: object, agent: Any, *, provenance: dict[str, Any]) -> list[EvalResult]:
             assert cases == ("case",)
             assert agent.model == "test-model"
             assert type(agent).__name__ == "QuestionAnswer"
+            assert provenance["source"]["kind"] == "vqa_dataset"
+            assert provenance["source"]["path"] == str(tmp_path.resolve())
+            assert set(provenance["source"]["fingerprints"]) == {
+                "cases.jsonl",
+                "labels.jsonl",
+                "assets/q.png",
+            }
+            assert provenance["agent"] == {
+                "module": "dimos.evals.agents.question_answer",
+                "kwargs": {"model": "test-model"},
+            }
             return [EvalResult(case_id="q", final_answer="yes", score=1.0, passed=True)]
 
     monkeypatch.setattr(suite_module, "load_suite", lambda dataset: ("case",))
@@ -211,3 +228,20 @@ def test_vqa_run_cli_runs_shared_evaluator(monkeypatch: pytest.MonkeyPatch, tmp_
     assert result.exit_code == 0
     assert "PASS" in result.stdout
     assert "mean 1.00" in result.stdout
+
+
+def test_vqa_source_fingerprints_change_with_reload_inputs(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (tmp_path / "cases.jsonl").write_text("cases")
+    (tmp_path / "labels.jsonl").write_text("labels")
+    image = assets / "frame.png"
+    image.write_bytes(b"first")
+
+    before = suite_module.source_record(tmp_path)
+    image.write_bytes(b"second")
+    after = suite_module.source_record(tmp_path)
+
+    assert before["path"] == str(tmp_path.resolve())
+    assert set(before["fingerprints"]) == {"cases.jsonl", "labels.jsonl", "assets/frame.png"}
+    assert before["fingerprints"]["assets/frame.png"] != after["fingerprints"]["assets/frame.png"]

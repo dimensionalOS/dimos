@@ -59,7 +59,7 @@ class EvalModule(Module):
             agent: agent module (see list_eval_agents), run with its defaults.
             tags: optional comma-separated tag filter.
         """
-        from dimos.evals.cli import load_agent
+        from dimos.evals.cli import load_agent, run_provenance
         from dimos.evals.runner import EvalRunner, summarize
 
         cases = importlib.import_module(suite).SUITE
@@ -68,6 +68,7 @@ class EvalModule(Module):
             cases,
             load_agent(agent),
             tags=frozenset(t for t in tags.split(",") if t) if tags else frozenset(),
+            provenance=run_provenance({"kind": "suite_module", "value": suite}, agent, {}),
         )
         s = summarize(results)
         return SkillResult.ok(

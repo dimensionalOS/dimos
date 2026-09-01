@@ -67,14 +67,17 @@ def run(
 ) -> None:
     """Evaluate a generated standalone VQA dataset."""
     # Keep evaluation implementation imports out of global CLI startup.
-    from dimos.evals.cli import load_agent
+    from dimos.evals.cli import agent_kwargs, load_agent, run_provenance
     from dimos.evals.runner import EvalRunner, summarize
-    from dimos.evals.vqa.suite import load_suite
+    from dimos.evals.vqa.suite import load_suite, source_record
 
     runner = EvalRunner()
+    overrides = [f"model={model}"] if model else []
     try:
         results = runner.run(
-            load_suite(dataset), load_agent(agent, [f"model={model}"] if model else [])
+            load_suite(dataset),
+            load_agent(agent, overrides),
+            provenance=run_provenance(source_record(dataset), agent, agent_kwargs(overrides)),
         )
     except (ValueError, OSError) as exc:
         raise typer.BadParameter(str(exc)) from exc

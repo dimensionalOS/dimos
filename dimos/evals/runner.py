@@ -31,7 +31,7 @@ import threading
 import time
 from typing import Any
 
-from dimos.constants import STATE_DIR
+from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.evals.types import (
     Agent,
     EvalCase,
@@ -75,13 +75,6 @@ def summarize(results: list[EvalResult]) -> RunSummary:
     )
 
 
-def agent_record(agent: Agent) -> dict[str, Any]:
-    """The agent as it goes into ``summary.json``: its class and every
-    constructor argument, so runs are comparable later."""
-    cls = type(agent)
-    return {"class": f"{cls.__module__}.{cls.__qualname__}", **vars(agent)}
-
-
 class EvalRunner(Configurable):
     config: EvalRunnerConfig
 
@@ -96,18 +89,37 @@ class EvalRunner(Configurable):
         *,
         tags: frozenset[str] = frozenset(),
         limit: int = 0,
+        provenance: dict[str, Any] | None = None,
     ) -> list[EvalResult]:
         selected = [c for c in cases if not tags or tags & c.tags]
         if limit:
             selected = selected[:limit]
+        ids = [case.id for case in selected]
+        reserved = {".", "..", "manifest.json", "summary.json", "results.jsonl"}
+        for case_id in ids:
+            if not case_id or set(case_id) & {"/", "\\"} or case_id in reserved:
+                raise ValueError(f"unsafe eval case ID: {case_id!r}")
+        if len(ids) != len(set(ids)):
+            raise ValueError("duplicate eval case IDs")
         self._run_dir = self._new_run_dir()
+        provenance = provenance or {"source": {"kind": "unavailable"}, "agent": None}
+        manifest = {
+            "schema_version": 1,
+            "source": provenance["source"],
+            "selection": {"tags": sorted(tags), "limit": limit, "case_ids": ids},
+            "agent": provenance["agent"],
+            "runner": {"threshold": self.config.threshold, "strict": self.config.strict},
+            "code": _git_record(),
+        }
+        with (self.run_dir / "manifest.json").open("x") as stream:
+            json.dump(manifest, stream, indent=2, allow_nan=False)
 
-        results: list[EvalResult] = []
+        results: dict[str, EvalResult] = {}
         runnable: list[EvalCase] = []
         for case in selected:
             error = self._preflight(case, agent)
             if error:
-                results.append(EvalResult(case_id=case.id, error=error))
+                results[case.id] = EvalResult(case_id=case.id, error=error)
             else:
                 runnable.append(case)
 
@@ -120,10 +132,11 @@ class EvalRunner(Configurable):
                 ended_by=result.ended_by or None,
                 error=result.error or None,
             )
-            results.append(result)
+            results[case.id] = result
 
-        self._write_artifacts(results, agent)
-        return results
+        ordered = [results[case_id] for case_id in ids]
+        self._write_artifacts(ordered)
+        return ordered
 
     def _preflight(self, case: EvalCase, agent: Agent) -> str:
         """Both sides checked before anything starts: the failure text, or ``""``."""
@@ -235,12 +248,12 @@ class EvalRunner(Configurable):
         prefix = time.strftime("run-%Y%m%d-%H%M%S-")
         return Path(tempfile.mkdtemp(prefix=prefix, dir=self.config.out_dir))
 
-    def _write_artifacts(self, results: list[EvalResult], agent: Agent) -> None:
+    def _write_artifacts(self, results: list[EvalResult]) -> None:
         lines = [json.dumps(asdict(r)) for r in results]
         (self.run_dir / "results.jsonl").write_text("\n".join(lines) + "\n")
         summary: dict[str, Any] = asdict(summarize(results))
-        summary |= {"agent": agent_record(agent), "git": _git_sha()}
-        (self.run_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=repr))
+        summary["manifest"] = "manifest.json"
+        (self.run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 
 
 def _tools_exposed(mcp_url: str) -> list[str]:
@@ -257,14 +270,22 @@ def _write_trajectory(case_dir: Path, trajectory: Trajectory, tools: list[str]) 
     (case_dir / "trajectory.json").write_text(json.dumps(record, indent=2, default=str))
 
 
-def _git_sha() -> str:
+def _git(*args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=DIMOS_PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    ).stdout.strip()
+
+
+def _git_record() -> dict[str, Any]:
     try:
-        return subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        ).stdout.strip()
-    except OSError:
-        return ""
+        return {
+            "git_sha": _git("rev-parse", "HEAD") or None,
+            "dirty": bool(_git("status", "--porcelain")),
+        }
+    except (OSError, subprocess.SubprocessError):
+        return {"git_sha": None, "dirty": False}

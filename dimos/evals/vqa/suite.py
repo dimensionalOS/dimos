@@ -21,6 +21,7 @@ model names."""
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
+import hashlib
 import json
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -31,6 +32,21 @@ from dimos.evals.environments.image_file import ImageFile
 from dimos.evals.scorers import choice, exact
 from dimos.evals.types import EvalCase, Outcome, Suite
 from dimos.evals.vqa.generate import PrivateLabel, PublicCase
+
+
+def source_record(dataset: Path) -> dict[str, Any]:
+    """Resolved VQA source and hashes of the files used by the generated layout."""
+    root = dataset.expanduser().resolve()
+    files = [root / "cases.jsonl", root / "labels.jsonl", *sorted((root / "assets").rglob("*"))]
+    return {
+        "kind": "vqa_dataset",
+        "path": str(root),
+        "fingerprints": {
+            str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in files
+            if path.is_file()
+        },
+    }
 
 
 def grade_choice(choices: Sequence[str], answer: str) -> Callable[[Outcome], float]:
