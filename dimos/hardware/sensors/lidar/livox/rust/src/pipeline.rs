@@ -131,6 +131,18 @@ impl FrameAssembler {
                 self.frame_start_ns = Some(ts_ns);
                 frame
             }
+            // A full interval backwards is a clock discontinuity, not
+            // reordering. Re-anchor or no frame would ever cut again.
+            Some(start) if start.saturating_sub(ts_ns) >= self.frame_interval_ns => {
+                tracing::warn!(
+                    anchor_ns = start,
+                    packet_ns = ts_ns,
+                    "device clock jumped backwards, re-anchoring frame"
+                );
+                let frame = self.take_frame(start);
+                self.frame_start_ns = Some(ts_ns);
+                frame
+            }
             Some(_) => None,
             None => {
                 self.frame_start_ns = Some(ts_ns);
@@ -275,9 +287,39 @@ mod tests {
         let first = point_packet(base, 0, &[simple_point(1000)]);
         let stale = point_packet(base - 10_000, 0, &[simple_point(2000)]);
         assembler.push(&DataPacket::parse(&first).unwrap());
-        assembler.push(&DataPacket::parse(&stale).unwrap());
+        assert!(assembler
+            .push(&DataPacket::parse(&stale).unwrap())
+            .is_none());
         let frame = assembler.flush().unwrap();
+        assert_eq!(frame.points.len(), 2);
         assert_eq!(frame.points[1].offset_ns, 0);
+    }
+
+    #[test]
+    fn backwards_clock_jump_reanchors_instead_of_stalling() {
+        let mut assembler = FrameAssembler::new(10.0); // 100 ms frames
+        let start = 1_700_000_000_000_000_000u64;
+        for i in 0..3 {
+            let bytes = point_packet(start + i * 50_000_000, 0, &[simple_point(1)]);
+            assembler.push(&DataPacket::parse(&bytes).unwrap());
+        }
+        // A capture seam jumps the stamp far backwards.
+        let mut frames = Vec::new();
+        for i in 0..21 {
+            let bytes = point_packet(i * 50_000_000, 0, &[simple_point(2)]);
+            if let Some(frame) = assembler.push(&DataPacket::parse(&bytes).unwrap()) {
+                frames.push(frame);
+            }
+        }
+
+        // The jump packet flushes the stale frame and re-anchors.
+        assert_eq!(frames.len(), 11);
+        assert_eq!(frames[0].start_ns, start + 100_000_000);
+        assert_eq!(frames[0].points.len(), 1);
+        assert_eq!(frames[1].start_ns, 0);
+        assert_eq!(frames[1].points[0].offset_ns, 0);
+        assert!(frames[1..].iter().all(|f| f.points.len() == 2));
+        assert_eq!(assembler.flush().unwrap().points.len(), 1);
     }
 
     #[test]
