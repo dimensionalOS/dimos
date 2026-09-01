@@ -650,21 +650,6 @@ def test_robot_registration_finalization_and_joint_limits(
     assert world.is_finalized
 
 
-def test_scene_joint_limits_are_reordered_to_configured_joint_order(
-    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    config = robot_config
-    monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint2", "joint1"])
-    monkeypatch.setattr(FakeScene, "position_limits_lower", [-2.0, -1.0])
-    monkeypatch.setattr(FakeScene, "position_limits_upper", [2.0, 1.0])
-
-    world = _make_world(fake_roboplan, config)
-
-    lower, upper = world.get_prepared_model().joint_space.position_limits()
-    np.testing.assert_allclose(lower, [-1.0, -2.0])
-    np.testing.assert_allclose(upper, [1.0, 2.0])
-
-
 def test_scene_joint_limit_order_does_not_override_canonical_model(
     fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:

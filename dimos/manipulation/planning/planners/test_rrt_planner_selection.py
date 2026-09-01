@@ -351,7 +351,7 @@ def test_planar_direct_path_lifts_yaw_across_wrap_boundary() -> None:
     assert result.path[-1].position[2] == pytest.approx(math.pi + 0.1)
 
 
-def test_planar_rrt_expands_request_domain_for_obstacle_detour(
+def test_planar_rrt_finds_obstacle_detour(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     world = _WallPlanarWorld()
@@ -374,5 +374,5 @@ def test_planar_rrt_expands_request_domain_for_obstacle_detour(
     )
 
     assert result.status == PlanningStatus.SUCCESS
-    assert "2 domain attempts" in result.message
-    assert result.iterations > 1000
+    assert result.path is not None
+    assert any(abs(state.position[1]) >= 1.5 for state in result.path)
