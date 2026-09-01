@@ -31,7 +31,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 mcap_writer = pytest.importorskip("mcap.writer", reason="mcap not installed")
 
 
-def test_self_describing_lcm_channel_decodes_without_a_codec_registry(tmp_path: Path) -> None:
+def test_lcm_channel_decodes_with_explicit_codec(tmp_path: Path) -> None:
     path = tmp_path / "recording.mcap"
     expected = Imu(
         ts=12.5,
@@ -64,7 +64,7 @@ def test_self_describing_lcm_channel_decodes_without_a_codec_registry(tmp_path: 
         )
         writer.finish()
 
-    with McapStore(path=str(path)) as store:
+    with McapStore(path=str(path), codecs={"imu": LcmCodec(Imu)}) as store:
         assert store.list_streams() == ["imu"]
         observation: Observation[Imu] = store.stream("imu").order_by("ts").first()
         assert observation.ts == 11.5
@@ -75,7 +75,7 @@ def test_self_describing_lcm_channel_decodes_without_a_codec_registry(tmp_path: 
         assert latest_observation.data.lcm_encode() == expected.lcm_encode()
 
 
-def test_self_describing_wrapped_codec_decodes_without_a_codec_registry(tmp_path: Path) -> None:
+def test_wrapped_codec_decodes_with_explicit_codec(tmp_path: Path) -> None:
     path = tmp_path / "recording.mcap"
     expected = Imu(
         ts=12.5,
@@ -103,7 +103,7 @@ def test_self_describing_wrapped_codec_decodes_without_a_codec_registry(tmp_path
         )
         writer.finish()
 
-    with McapStore(path=str(path)) as store:
+    with McapStore(path=str(path), codecs={"imu": codec}) as store:
         observation: Observation[Imu] = store.stream("imu").first()
         assert observation.ts == 12.5
         assert observation.data.lcm_encode() == expected.lcm_encode()
@@ -146,3 +146,32 @@ def test_self_describing_jpeg_channel_decodes_without_a_codec_registry(tmp_path:
         assert decoded.format is ImageFormat.RGB
         assert decoded.data.shape == expected.data.shape
         assert np.mean(np.abs(decoded.data.astype(float) - expected.data.astype(float))) < 5
+
+
+def test_lcm_metadata_does_not_import_payload_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "untrusted.mcap"
+    with path.open("wb") as output:
+        writer = mcap_writer.Writer(output)
+        writer.start(profile="dimos", library="test")
+        channel_id = writer.register_channel(
+            topic="untrusted",
+            message_encoding="lcm",
+            schema_id=0,
+            metadata={"dimos.payload_type": "untrusted_module.Payload"},
+        )
+        writer.add_message(
+            channel_id=channel_id,
+            log_time=1,
+            publish_time=1,
+            data=b"raw payload",
+        )
+        writer.finish()
+
+    def fail_import(name: str) -> None:
+        raise AssertionError(f"artifact metadata imported {name!r}")
+
+    monkeypatch.setattr("dimos.memory.codecs.base.importlib.import_module", fail_import)
+    with McapStore(path=str(path)) as store:
+        assert store.stream("untrusted").first().data == b"raw payload"

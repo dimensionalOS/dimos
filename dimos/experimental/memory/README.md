@@ -73,9 +73,23 @@ mcap_recorder = SensorRecorder.blueprint(
 
 MCAP stores each stream's selected `lcm`, `jpeg`, or `lz4+lcm` representation
 in indexed Zstd chunks. Source time is the MCAP publish time and recorder
-reception time is the log time. Codec and payload metadata let the stable
-`McapStore(path="session.mcap")` reader discover and decode the channels without
-a caller-supplied codec registry. Append mode remains unsupported for MCAP.
+reception time is the log time. JPEG channels decode automatically. Supply
+trusted codecs explicitly for LCM channels instead of trusting artifact
+metadata:
+
+```python
+from dimos.memory.codecs.lcm import LcmCodec
+from dimos.memory.codecs.lz4 import Lz4Codec
+from dimos.memory.store.mcap import McapStore
+from dimos.msgs.sensor_msgs.Imu import Imu
+
+store = McapStore(
+    path="session.mcap",
+    codecs={"imu": Lz4Codec(LcmCodec(Imu))},
+)
+```
+
+Append mode remains unsupported for MCAP.
 
 Both backends preserve source timestamps for common stamped messages. Arbitrary
 pickle payloads, Python `pose_setter_for` hooks, and spatial pose attachment
