@@ -142,7 +142,11 @@ class McpClientAgent:
                         message=str(msg.text),
                         reasoning=reasoning_text(msg.content),
                         tool_calls=tuple(
-                            ToolCall(id=str(tc["id"]), name=str(tc["name"]), args=dict(tc.get("args") or {}))
+                            ToolCall(
+                                id=str(tc["id"]),
+                                name=str(tc["name"]),
+                                args=dict(tc.get("args") or {}),
+                            )
                             for tc in msg.tool_calls
                         ),
                         input_tokens=int(usage.get("input_tokens", 0)) - cache_read,

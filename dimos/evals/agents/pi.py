@@ -158,7 +158,9 @@ class _Events:
                     str(c.get("thinking", "")) for c in content if c.get("type") == "thinking"
                 ),
                 tool_calls=[
-                    ToolCall(id=str(c["id"]), name=str(c["name"]), args=dict(c.get("arguments") or {}))
+                    ToolCall(
+                        id=str(c["id"]), name=str(c["name"]), args=dict(c.get("arguments") or {})
+                    )
                     for c in content
                     if c.get("type") == "toolCall"
                 ],
