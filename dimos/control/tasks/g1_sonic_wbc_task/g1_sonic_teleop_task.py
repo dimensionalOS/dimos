@@ -32,6 +32,7 @@ from dimos.control.tasks.g1_sonic_wbc_task.sonic_pipeline import WRIST_ONNX_INDI
 from dimos.control.tasks.g1_sonic_wbc_task.webxr_retargeting import (
     IncompleteBodyPoseError,
     PoseStreamError,
+    PoseStreamGapError,
     WebXRSonicPoseStream,
     WebXRSonicRetargeter,
 )
@@ -98,6 +99,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         self._applied_generation = 0
         self._last_transition_reason = "not_started"
         self._planner_prepare_started_at = 0.0
+        self._pose_refill_started_at = 0.0
         self._last_capture_time_s = 0.0
         self._last_source_age_ms = 0.0
         self._last_retarget_ms = 0.0
@@ -148,6 +150,17 @@ class G1SonicTeleopTask(G1SonicWBCTask):
                 return
             try:
                 self._pose_stream.push(msg)
+            except PoseStreamGapError as exc:
+                logger.warning(
+                    "G1 SONIC WebXR pose stream refilling",
+                    task=self._name,
+                    error=str(exc),
+                )
+                self._applied_generation = -1
+                if self._mode in _POSE_REFERENCE_MODES:
+                    if self._pose_refill_started_at <= 0.0:
+                        self._pose_refill_started_at = t_now
+                    self._last_transition_reason = "body_tracking_refilling"
             except (IncompleteBodyPoseError, PoseStreamError) as exc:
                 logger.warning(
                     "G1 SONIC WebXR pose stream reset",
@@ -358,6 +371,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
             self._return_to_planner_reference()
         self._mode = SonicTeleopMode.PLANNER_PREPARE if prepare_started else SonicTeleopMode.PLANNER
         self._planner_prepare_started_at = time.perf_counter() if prepare_started else 0.0
+        self._pose_refill_started_at = 0.0
         self._pose_stream.reset()
         self._applied_generation = 0
         self._tracking_frame_id = None
@@ -405,6 +419,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         self._mode = SonicTeleopMode.OFF
         self._last_transition_reason = reason
         self._planner_prepare_started_at = 0.0
+        self._pose_refill_started_at = 0.0
         self._last_capture_time_s = 0.0
         self._last_source_age_ms = 0.0
         self._last_retarget_ms = 0.0
@@ -427,6 +442,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
     def _clear_pose_stream_locked(self, reason: str) -> None:
         self._pose_stream.reset()
         self._applied_generation = 0
+        self._pose_refill_started_at = 0.0
         self._last_transition_reason = reason
 
     def _sync_policy_lifecycle_locked(self) -> None:
@@ -443,6 +459,14 @@ class G1SonicTeleopTask(G1SonicWBCTask):
             SonicTeleopMode.PLANNER_PREPARE,
             SonicTeleopMode.PLANNER_TRANSITION,
         }:
+            return
+        if (
+            self._mode in _POSE_REFERENCE_MODES
+            and self._pose_refill_started_at > 0.0
+            and not self._pose_stream.ready
+            and (t_now - self._pose_refill_started_at) > _BODY_HOLD_SECONDS
+        ):
+            self._enter_planner_locked("body_tracking_refill_timeout")
             return
         if (
             self._latest_complete is None
@@ -464,6 +488,9 @@ class G1SonicTeleopTask(G1SonicWBCTask):
                 self._enter_planner_locked("sonic_pose_rejected")
                 return
             self._applied_generation = self._pose_stream.generation
+            if self._pose_refill_started_at > 0.0:
+                self._pose_refill_started_at = 0.0
+                self._last_transition_reason = "body_tracking_refilled"
 
         yaw_is_fresh = self._last_yaw_time > 0.0 and (
             self._config.timeout <= 0.0 or (t_now - self._last_yaw_time) <= self._config.timeout
@@ -517,6 +544,7 @@ class G1SonicTeleopTask(G1SonicWBCTask):
         self._applied_generation = 0
         self._last_transition_reason = reason
         self._planner_prepare_started_at = 0.0
+        self._pose_refill_started_at = 0.0
         self._yaw_rate = 0.0
         self._last_yaw_time = 0.0
         self._pose_stream.reset()
