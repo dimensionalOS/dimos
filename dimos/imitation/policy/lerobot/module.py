@@ -22,11 +22,11 @@ from typing import TypedDict
 from pydantic import Field, field_validator, model_validator
 
 from dimos.core.core import rpc
-from dimos.core.isolated_python_module import (
+from dimos.core.stream import In, Out
+from dimos.experimental.isolated_python.module import (
     IsolatedPythonModule,
     IsolatedPythonModuleConfig,
 )
-from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
