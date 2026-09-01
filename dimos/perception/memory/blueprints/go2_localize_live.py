@@ -551,7 +551,13 @@ rerun_config: dict[str, Any] = {
         "world/global_map": _convert_global_map,
         "world/detections": _detection_entities,
     },
-    "max_hz": {"world/color_image": 0, "world/lidar": 1, "world/global_map": 0},
+    # Rerun keeps every frame it is logged, so an unthrottled entity is an
+    # unbounded allocation: the bridge grows with the feed, not with the
+    # scene. The map is a backdrop that only has to be current, not live.
+    "max_hz": {"world/color_image": 10, "world/lidar": 1, "world/global_map": 0.2},
+    # A share of the machine rather than a number, and small enough that the
+    # viewer drops its own history long before the host runs out.
+    "memory_limit": "5%",
     "tf_axes": 0.5,
     "static": {"world/robot_body": _static_robot_body},
 }
