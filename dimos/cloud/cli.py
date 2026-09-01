@@ -92,17 +92,21 @@ def ls() -> None:
     from rich.filesize import decimal
     from rich.table import Table
 
+    rows = CloudData().ls()
+    org = any(u.get("uploader_email") for u in rows)
     table = Table(box=box.SIMPLE_HEAVY, header_style="bold")
     table.add_column("id", style="cyan", no_wrap=True)
     table.add_column("file", style="bold")
     table.add_column("uploaded", style="dim", no_wrap=True)
     table.add_column("kind")
+    if org:
+        table.add_column("uploader", style="dim")
     table.add_column("blueprint", style="magenta")
     table.add_column("robot", style="magenta")
     table.add_column("topics", style="dim", max_width=48)
     table.add_column("size", justify="right")
     table.add_column("state")
-    for u in CloudData().ls():
+    for u in rows:
         mani = u.get("manifest") or {}
         state = u["state"]
         table.add_row(
@@ -110,6 +114,7 @@ def ls() -> None:
             u["filename"],
             str(u.get("created_at") or "")[:16].replace("T", " ") or "—",
             u.get("kind", ""),
+            *([u.get("uploader_email") or "—"] if org else []),
             mani.get("blueprint") or "—",
             u.get("robot_id") or "—",
             ", ".join(s.get("name", "?") for s in (mani.get("streams") or [])) or "—",
