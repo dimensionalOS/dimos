@@ -370,10 +370,14 @@
           buildInputs = depsField "buildInputs";
           nativeBuildInputs = depsField "nativeBuildInputs";
           # Vendored by cargo rather than by `cargoLock.lockFile`, which would
-          # need no hash at all: nixpkgs downloads crates from crates.io's API,
-          # which 403s its `curl/*` user agent. Its CDN serves them fine, but
-          # the `extraRegistries` override for that also emits a second
-          # `[source]` block for crates-io, and cargo refuses the duplicate.
+          # need no hash at all: nixpkgs fetches each crate with curl from
+          # `crates.io/api/v1/.../download`, and that endpoint 403s curl's user
+          # agent. Cargo itself is allowed, which is why vendoring works here.
+          # `static.crates.io` also serves them fine, but nothing in
+          # `importCargoLock` can point at it -- `registries` supplies only a
+          # base, always suffixed `/<name>/<version>/download`, and the CDN's
+          # path is `/<name>/<name>-<version>.crate`. Note the 403 is invisible
+          # locally, where the crates substitute from cache.nixos.org instead.
           # So this hash has to be re-pasted whenever Cargo.lock moves; the CI
           # failure prints the new value.
           cargoHash = "sha256-PRncaRtNrPM55JS7QPvwvRUm2bkcMwZOdeZGjVsWwpM=";
