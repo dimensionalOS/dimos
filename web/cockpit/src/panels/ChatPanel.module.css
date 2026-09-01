@@ -123,6 +123,35 @@
   opacity: 0.5;
 }
 
+.mic {
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #d7dde3;
+  cursor: pointer;
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  touch-action: none;
+  user-select: none;
+}
+
+.mic:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.mic[data-state="arming"],
+.mic[data-state="recording"] {
+  background: #8f1f2b;
+  border-color: #f85149;
+  color: #fff;
+}
+
+.mic[data-state="sending"] {
+  border-color: #2f81f7;
+  color: #2f81f7;
+}
+
 .thinking {
   color: #2f81f7;
 }

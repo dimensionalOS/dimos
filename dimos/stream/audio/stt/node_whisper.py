@@ -109,9 +109,10 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
                         result = self.model.transcribe(event.data.flatten(), **self.modelopts)
                         text = result["text"].strip()
                     observer.on_next(text)
-                except Exception as e:
-                    logger.error(f"Error processing audio event: {e}")
-                    observer.on_error(e)
+                except Exception:
+                    # A bad clip or transient model failure must not terminate
+                    # the observable and silently disable every later utterance.
+                    logger.exception("Error processing audio event")
 
             # Set up subscription to audio source
             subscription = self.audio_observable.subscribe(

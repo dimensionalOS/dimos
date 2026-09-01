@@ -14,24 +14,36 @@
 
 """The agentic go2 with an authored cockpit: video left, costmap+pose over
 keyboard teleop in the middle, the agent chat right (the humancli
-conversation on McpClient's human_input/agent/agent_idle streams).
+conversation on McpClient's human_input/agent/agent_idle streams, with the
+composer's push-to-talk mic feeding VoiceInput -> the shared Whisper
+pipeline). The cockpit replaces the legacy :5555 WebInput page, so that
+module is disabled here rather than started alongside.
 
 Separate file on purpose: cockpit() needs the [web] extra at import time,
 and `unitree-go2-agentic` itself must stay importable without it.
 """
 
+from dimos.agents.voice_input import VoiceInput
+from dimos.agents.web_human_input import WebInput
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic import unitree_go2_agentic
+from dimos.stream.audio.decode import ffmpeg_requirement
 from dimos.web.cockpit import Chat, Col, Map2D, Row, Teleop, Video, cockpit
 
-unitree_go2_agentic_cockpit = autoconnect(
-    unitree_go2_agentic,
-    cockpit(
-        layout=Row(
-            Video("color_image"),
-            Col(Map2D(costmap="global_costmap", pose="odom"), Teleop(), shares=[3, 1]),
-            Chat(),
-            shares=[2, 1, 1],
+unitree_go2_agentic_cockpit = (
+    autoconnect(
+        unitree_go2_agentic,
+        cockpit(
+            layout=Row(
+                Video("color_image"),
+                Col(Map2D(costmap="global_costmap", pose="odom"), Teleop(), shares=[3, 1]),
+                Chat(),
+                shares=[2, 1, 1],
+            ),
         ),
-    ),
-).global_config(n_workers=9, robot_model="unitree_go2")
+        VoiceInput.blueprint(),
+    )
+    .disabled_modules(WebInput)
+    .requirements(ffmpeg_requirement)
+    .global_config(n_workers=9, robot_model="unitree_go2")
+)

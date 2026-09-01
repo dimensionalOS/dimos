@@ -60,8 +60,9 @@ def transport_topic(name: str, g: GlobalConfig = global_config) -> str:
 # publisher. Matched by message type since that is what makes them high-rate.
 _LATEST_WINS_TYPES = ("sensor_msgs.Image", "sensor_msgs.PointCloud2")
 # Low-rate channels where a drop loses something that never comes back: a whole
-# turn of agent/human conversation, or a one-shot robot action verb.
-_NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle", "command")
+# turn of agent/human conversation, a one-shot robot action verb, or a
+# push-to-talk chunk (one gap discards the whole utterance).
+_NEVER_DROP_CHANNELS = ("human_input", "agent", "agent_idle", "command", "audio_in")
 
 
 def zenoh_key_expr(name: str, msg_name: str) -> str:

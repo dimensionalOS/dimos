@@ -468,10 +468,10 @@ jobs:
         uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
-      - name: Install native dependencies (pyaudio build, JPEG encoding)
+      - name: Install native dependencies (pyaudio build, JPEG encoding, audio decode)
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg
+          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
       - name: Fetch the go2_short replay dataset
         run: git lfs pull --include="data/.lfs/go2_short.db.tar.gz" --exclude=""
       - name: Install dependencies
@@ -483,7 +483,8 @@ jobs:
           uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py
           dimos/e2e_tests/test_sdk_browser.py
           dimos/e2e_tests/test_custom_channel_browser.py
-          dimos/e2e_tests/test_publish_browser.py --no-cov
+          dimos/e2e_tests/test_publish_browser.py
+          dimos/e2e_tests/test_voice_browser.py --no-cov
 
   tests:
     if: |
@@ -538,12 +539,12 @@ jobs:
         with:
           deno-version: ${{ steps.deno-version.outputs.version }}
           cache: true
-      # pyaudio needs portaudio; the relay bridge tests encode JPEG via PyTurboJPEG.
+      # pyaudio needs portaudio; relay/audio tests need TurboJPEG and ffmpeg.
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y portaudio19-dev libturbojpeg
+          sudo apt-get install -y portaudio19-dev libturbojpeg ffmpeg
       - name: Install dependency for pyaudio (macOS)
         if: startsWith(matrix.os, 'macos')
         run: brew install portaudio

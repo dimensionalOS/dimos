@@ -3106,6 +3106,14 @@
             "encoding": "json.v1",
             "delivery": "latest",
             "maxHz": 20.5
+          },
+          {
+            "ch": "audio_in",
+            "dir": "tx",
+            "encoding": "audio.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "shared"
           }
         ],
         "panels": [
@@ -3115,7 +3123,8 @@
             "channels": [
               "human_input",
               "agent",
-              "agent_idle"
+              "agent_idle",
+              "audio_in"
             ]
           }
         ]
@@ -3152,6 +3161,16 @@
             "params": {},
             "publish": "none",
             "requiredScope": null
+          },
+          {
+            "ch": "audio_in",
+            "dir": "tx",
+            "encoding": "audio.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {},
+            "publish": "shared",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -3162,7 +3181,8 @@
             "channels": [
               "human_input",
               "agent",
-              "agent_idle"
+              "agent_idle",
+              "audio_in"
             ],
             "params": {}
           }
@@ -3206,7 +3226,7 @@
       "error": "invalid_chat_panel"
     },
     {
-      "name": "chat_panel_input_not_publishable",
+      "name": "chat_panel_three_channels",
       "data": {
         "version": 1,
         "channels": [
@@ -3215,7 +3235,9 @@
             "dir": "tx",
             "encoding": "text.json.v1",
             "delivery": "reliable",
-            "maxHz": 2.5
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
           },
           {
             "ch": "agent",
@@ -3238,6 +3260,54 @@
               "human_input",
               "agent",
               "agent_idle"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_input_not_publishable",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          },
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "json.v1",
+            "delivery": "latest",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "audio_in",
+            "dir": "tx",
+            "encoding": "audio.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "shared"
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "channels": [
+              "human_input",
+              "agent",
+              "agent_idle",
+              "audio_in"
             ]
           }
         ]
@@ -3269,6 +3339,14 @@
             "encoding": "json.v1",
             "delivery": "latest",
             "maxHz": 20.5
+          },
+          {
+            "ch": "audio_in",
+            "dir": "tx",
+            "encoding": "audio.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "shared"
           }
         ],
         "panels": [
@@ -3278,7 +3356,8 @@
             "channels": [
               "human_input",
               "odom",
-              "agent_idle"
+              "agent_idle",
+              "audio_in"
             ]
           }
         ]
@@ -3310,6 +3389,14 @@
             "encoding": "json.v1",
             "delivery": "reliable",
             "maxHz": 20.5
+          },
+          {
+            "ch": "audio_in",
+            "dir": "tx",
+            "encoding": "audio.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "shared"
           }
         ],
         "panels": [
@@ -3319,7 +3406,57 @@
             "channels": [
               "human_input",
               "agent",
-              "agent_idle"
+              "agent_idle",
+              "audio_in"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_audio_not_publishable",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          },
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "json.v1",
+            "delivery": "latest",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "audio_in",
+            "dir": "tx",
+            "encoding": "audio.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "channels": [
+              "human_input",
+              "agent",
+              "agent_idle",
+              "audio_in"
             ]
           }
         ]
