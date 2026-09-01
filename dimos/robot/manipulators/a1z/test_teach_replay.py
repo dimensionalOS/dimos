@@ -23,11 +23,10 @@ from dimos.control.coordinator import ControlCoordinator
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.hardware.sensors.camera.webcam import Webcam
-from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.imitation.dataprep.core import Episode
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.a1z.blueprints.learning import (
@@ -74,16 +73,17 @@ def _recorded(positions: np.ndarray, period: float = 0.1) -> RecordedEpisode:
 
 
 def test_teach_blueprint_records_webcam_and_all_joint_state(tmp_path: Path) -> None:
-    blueprint = make_a1z_teach_blueprint(tmp_path / "teach.db", camera_index=3)
+    blueprint = make_a1z_teach_blueprint(
+        tmp_path / "teach.db", task_label="pick up the object", camera_index=3
+    )
     camera_kwargs = _module_kwargs(blueprint, CameraModule)
     recorder_kwargs = _module_kwargs(blueprint, CollectionRecorder)
     control_kwargs = _module_kwargs(blueprint, ControlCoordinator)
 
-    camera = camera_kwargs["hardware"]()
+    camera = camera_kwargs["hardware"]
 
-    assert isinstance(camera, Webcam)
-    assert camera.config.camera_index == 3
-    assert (camera.config.width, camera.config.height, camera.config.fps) == (
+    assert camera.camera_index == 3
+    assert (camera.width, camera.height, camera.fps) == (
         A1Z_TEACH_CAMERA_WIDTH,
         A1Z_TEACH_CAMERA_HEIGHT,
         A1Z_TEACH_CAMERA_FPS,
@@ -114,6 +114,7 @@ def test_policy_blueprint_uses_checkpoint_and_all_joints() -> None:
     assert policy_kwargs["policy_path"] == "checkpoints/pick"
     assert policy_kwargs["joint_names"] == list(A1Z_JOINT_NAMES)
     assert policy_kwargs["robot_type"] == "galaxea_a1z"
+    assert control_kwargs["tasks"][0].type == "trajectory"
     assert control_kwargs["tasks"][0].joint_names == list(A1Z_JOINT_NAMES)
 
 

@@ -54,8 +54,9 @@ Convert the recording with the provided 15 Hz A1Z profile:
 
 ```bash
 dimos dataprep build \
+  --profile dimos.robot.manipulators.a1z.learning:A1Z_LEARNING_PROFILE \
   --source /path/to/a1z_teach_<timestamp>.db \
-  --config dimos/imitation/dataprep/galaxea_a1z_state_config.json
+  --output data/datasets/galaxea_a1z
 ```
 
 The profile aligns `color_image` and `coordinator_joint_state`, uses the next

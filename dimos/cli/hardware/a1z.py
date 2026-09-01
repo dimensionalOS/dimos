@@ -421,7 +421,7 @@ def teach(
         None,
         help="Memory2 .db output (default: timestamped file in the dimOS state directory)",
     ),
-    task: str | None = typer.Option(None, "--task", help="Task label stored with each episode"),
+    task: str = typer.Option(..., "--task", help="Task label stored with each episode"),
     camera_index: int = typer.Option(
         0,
         "--camera-index",

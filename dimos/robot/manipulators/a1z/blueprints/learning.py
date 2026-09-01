@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,28 +27,28 @@ from dimos.hardware.manipulators.galaxea_a1z.config import (
     A1ZTeachingConfig,
 )
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.memory.module import OnExisting
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.robot.manipulators.a1z.config import A1Z_G1Z_MODEL_PATH, a1z_hardware
+from dimos.robot.manipulators.a1z.learning import A1Z_LEARNING_PROFILE
 from dimos.robot.manipulators.common.blueprints import coordinator
 
 if TYPE_CHECKING:
     from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
 
 A1Z_REPLAY_TASK_NAME = "teach_replay_arm"
-A1Z_POLICY_TASK_NAME = "lerobot_servo_arm"
-A1Z_TEACH_CAMERA_WIDTH = 640
-A1Z_TEACH_CAMERA_HEIGHT = 480
-A1Z_TEACH_CAMERA_FPS = 15.0
+A1Z_POLICY_TASK_NAME = "lerobot_trajectory_arm"
+A1Z_TEACH_CAMERA_WIDTH = A1Z_LEARNING_PROFILE.camera_width
+A1Z_TEACH_CAMERA_HEIGHT = A1Z_LEARNING_PROFILE.camera_height
+A1Z_TEACH_CAMERA_FPS = A1Z_LEARNING_PROFILE.fps
 
 
 def _a1z_camera(camera_index: int) -> Blueprint:
     return CameraModule.blueprint(
-        hardware=partial(
-            Webcam,
+        hardware=WebcamConfig(
             camera_index=camera_index,
             width=A1Z_TEACH_CAMERA_WIDTH,
             height=A1Z_TEACH_CAMERA_HEIGHT,
@@ -67,7 +66,7 @@ def _a1z_camera(camera_index: int) -> Blueprint:
 def make_a1z_teach_blueprint(
     db_path: Path,
     *,
-    task_label: str | None = None,
+    task_label: str,
     camera_index: int = 0,
     gripper_free_drive: bool = False,
 ) -> Blueprint:
@@ -83,7 +82,7 @@ def make_a1z_teach_blueprint(
     )
     return autoconnect(
         coordinator(hardware=[hardware], tasks=[]),
-        EpisodeMonitorModule.blueprint(default_task_label=task_label),
+        EpisodeMonitorModule.blueprint(task=task_label),
         CollectionRecorder.blueprint(
             db_path=db_path,
             on_existing=OnExisting.ERROR,
@@ -142,10 +141,9 @@ def make_a1z_policy_blueprint(
             tasks=[
                 TaskConfig(
                     name=A1Z_POLICY_TASK_NAME,
-                    type="servo",
+                    type="trajectory",
                     joint_names=hardware.joints,
                     priority=10,
-                    params={"timeout": max(1.0, 3.0 / fps)},
                 )
             ],
         ),

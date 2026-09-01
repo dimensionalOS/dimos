@@ -35,7 +35,7 @@ def test_teach_refuses_to_overwrite_recording(tmp_path: Path) -> None:
     recording = tmp_path / "existing.db"
     recording.touch()
 
-    result = runner.invoke(a1z_cli.app, ["teach", str(recording)])
+    result = runner.invoke(a1z_cli.app, ["teach", str(recording), "--task", "test"])
 
     assert result.exit_code == 2
     assert "refusing to overwrite existing recording" in result.output
