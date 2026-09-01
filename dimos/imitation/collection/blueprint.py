@@ -42,13 +42,13 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.teleop.quest.quest_types import Buttons
 from dimos.robot.manipulators.openarm.blueprints.teleop import teleop_quest_openarm_blueprint
 from dimos.robot.manipulators.openarm.homing_module import OpenArmHomingModule
 from dimos.teleop.quest.blueprints import (
     teleop_quest_piper,
     teleop_quest_xarm7,
 )
+from dimos.teleop.quest.quest_types import Buttons
 
 
 def _session_db(robot: str) -> str:
