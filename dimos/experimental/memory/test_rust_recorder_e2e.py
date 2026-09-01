@@ -38,6 +38,8 @@ from dimos.experimental.memory.rust_recorder import (
     RustRecordingStoreConfig,
     RustSqliteStoreConfig,
 )
+from dimos.memory.codecs.lcm import LcmCodec
+from dimos.memory.codecs.lz4 import Lz4Codec
 from dimos.memory.store.mcap import McapStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.type.observation import Observation
@@ -132,6 +134,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
     suffix = ".db" if store_kind == "sqlite" else ".mcap"
     artifact = tmp_path / f"recording{suffix}"
     store: RustRecordingStoreConfig
+    memory: SqliteStore | McapStore
     if store_kind == "sqlite":
         store = RustSqliteStoreConfig(path=str(artifact))
     else:
@@ -205,8 +208,14 @@ def test_rust_artifact_is_readable_by_python_memory2(
             process.wait(timeout=10.0)
         recorder.stop()
 
-    store_type = SqliteStore if store_kind == "sqlite" else McapStore
-    with store_type(path=str(artifact)) as memory:
+    if store_kind == "sqlite":
+        memory = SqliteStore(path=str(artifact))
+    else:
+        memory = McapStore(
+            path=str(artifact),
+            codecs={"imu": Lz4Codec(LcmCodec(Imu))},
+        )
+    with memory:
         observation = cast("Observation[Imu]", memory.stream("imu").first())
         assert observation.ts == 12.5
         assert observation.data.lcm_encode() == expected.lcm_encode()
