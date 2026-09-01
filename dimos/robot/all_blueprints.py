@@ -304,5 +304,6 @@ all_modules = {
     "world-belief-module": "dimos.experimental.world_belief.worldbelief_module.WorldBeliefModule",
     "world-belief-recorder": "dimos.experimental.world_belief.worldbelief_recorder.WorldBeliefRecorder",
     "wrist-camera": "dimos.teleop.hosted.blueprints.cloudflare.WristCamera",
+    "x-arm-wrist-camera-tf": "dimos.robot.manipulators.xarm.blueprints.perception.XArmWristCameraTf",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }
