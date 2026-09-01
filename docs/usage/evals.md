@@ -1,24 +1,11 @@
 # Evals
 
-An eval case is an environment, an instruction, and a grader. Nothing else.
-Which agent runs it is the run's business, so the same case is benchmarked
-under a bare model, the shipped robot agent, or an external agent CLI without
-changing, and scores stay comparable for years.
+## Terminology
 
-- **Environment**: what exists. `Dataset` (a frozen memory recording, or the
-  part of it the task is about), `ImageFile` (a standalone image), or `Sim`
-  (a live simulator: launches a blueprint, records everything it publishes).
-- **Agent**: how the instruction reaches a model and how the model acts.
-  `QuestionAnswer` encodes the whole recording into one prompt; `Blind`
-  never looks; `Pi` is a coding agent over the recording as a file and, on a
-  live case, the robot's tools; `McpClientAgent` drives the blueprint's own
-  `McpClient`.
-- **Grade**: one function over the outcome, the agent's trajectory (its final
-  answer, steps, tokens) and the artifacts the environment produced (the
-  recording). Runs once, after the agent finishes.
-
-Memory is the only sensor channel: agents read `env.recording` and nothing
-else; graders open the recording artifact.
+- **Case**: a discrete scenario being tested. This specifies the prompt sent to the agent, the environment, and scoring functions for the final world state and agent response.
+- **Environment**: this is either a dataset, a live simulation, or an image file being passed to the agent.
+- **Suite**: a collection of cases.
+- **Agent**: this is a wrapper that might contain an entire agent loop, a single request to an llm provider, and it may contain tools. Agents include our mcp client, pi, as well as a simple single-turn question/answer with no tools.
 
 ## Quick start (CLI)
 
@@ -36,19 +23,15 @@ dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.pi
 dimos evals list
 ```
 
-Every runner invocation writes one `~/.local/state/dimos/evals/run-*/` directory. The normal CLI
-invokes the runner once per suite, but the Python API can pass any case sequence.
+Every runner invocation writes one `~/.local/state/dimos/evals/run-*/` directory.
 
 | file | what |
 |---|---|
 | `manifest.json` | immutable, versioned run inputs: source, ordered selected case IDs, explicit agent arguments, runner settings, and Git state |
 | `results.jsonl` | one row per case: score, steps, tokens, seconds, `ended_by`, trajectory path |
-| `summary.json` | aggregate outcomes and a reference to `manifest.json` |
+| `summary.json` | aggregate outcomes |
 | `<case_id>/trajectory.json` | every tool available to the agent and one `Step` per model call (message, tool calls with results, tokens, latency) |
 | `<case_id>/raw/NNN-request.json`, `NNN-response.json` | the exact payload sent to and received from the provider for every call |
-
-The manifest includes every case selected after `--tags` and `--limit`, even if preflight later
-fails. A case folder exists only when that case reaches execution.
 
 To generate deterministic image questions from recordings, see
 [Visual Question Answering](/docs/usage/vqa.md).
@@ -128,64 +111,26 @@ grade -> run dir.
 
 ## Agents
 
-An agent is a module defining one dataclass: everything it decides is a
-constructor argument (`model`, `system_prompt`, `max_steps`, `frames_per_stream`,
-`modules`). `manifest.json` records the agent module and explicit `--set`
-arguments. `--agent` names the module; `--set field=value` sets a field. Values that parse as JSON (`10`,
-`null`, `true`) are decoded; everything else remains text. The same two flags
-reach an agent from another package.
+Agents live in `dimos/evals/agents/`, one per file. `--agent` takes the
+module path; `--set field=value` sets one of its fields, e.g.
+`--set max_steps=20`.
 
-```python session=evals ansi=false
-from dimos.evals.cli import load_agent
-from dimos.evals.module import list_agents
+**Tools.** The case's blueprint decides the tool set: `Sim.blueprint`
+is the robot stack plus `McpServer`, and its skill containers are the tools.
+There is no tool filter. The agent's `modules` string is appended to the
+launch command (`dimos run <blueprint> <modules>`), and `autoconnect` dedups
+anything shared with the case, so `--set modules=unitree-go2-agentic` adds
+the whole shipped agentic stack. To compare two tool sets on one task, run
+the suite twice with different `--set modules=...`; each `trajectory.json`
+records the tools exposed.
 
-for module in list_agents():
-    a = load_agent(module)
-    print(f"{module.rsplit('.', 1)[1]:16} {type(a).__name__:15} modules={a.modules!r} max_steps={getattr(a, 'max_steps', None)}")
-```
+**Limits.** `max_steps` caps model calls on agents that support it. The
+case's `timeout_s` caps wall-clock time. Tokens and cost have no cap; both
+are recorded on the trajectory and ranked.
 
-```results
-blind            Blind           modules='' max_steps=None
-mcp_client       McpClientAgent  modules='' max_steps=None
-pi               Pi              modules='' max_steps=40
-question_answer  QuestionAnswer  modules='' max_steps=None
-```
-
-- The world is on the case: `Sim.blueprint` is the robot stack plus
-  `McpServer`, and its skill containers **are** the tool set (there is no tool
-  filter). An agent's `modules` are appended at launch (`dimos run <blueprint>
-  <modules>`): the shipped agent adds `unitree-go2-agentic`, the whole
-  composite, and `autoconnect` dedups the base it shares with the case. To
-  compare two tool sets on one task, run the suite twice with a different
-  `--set modules=...`; each `trajectory.json` records the tools exposed.
-- `max_steps` caps model calls on agents that support it; `timeout_s` on the
-  case caps wall-clock. Tokens and cost are recorded on the trajectory and
-  ranked, never capped.
-- How the recording reaches the model is the agent, not a parameter:
-  `agent_encode()` is called in `QuestionAnswer` and nowhere else. A different channel is a different agent class.
-- `Pi` (`dimos.evals.agents.pi`) is the [Pi coding agent](https://pi.dev)
-  run headless with the run dir as its working directory: the recording is a
-  file it opens from Python, and a live robot's tools are listed in its prompt
-  and called through `dimos mcp call` from `bash` (Pi has no MCP client; its
-  authors say to give it CLI tools, and dimos ships one). Provider traffic
-  goes through a local recording proxy, so its `raw/` looks like every other
-  agent's. Needs `pi` on PATH and `OPENAI_API_KEY`; runs on any environment.
-- An agent is any object implementing the `Agent` protocol (`modules`,
-  `available_tools`, `preflight`, `run`), in-repo or from another package. Every implementation
-  saves each provider request/response whole under `<case_id>/raw/`.
-
-A mismatched pair fails **in preflight**, before a sim boots or a model call
-is paid for, with both sides named:
-
-| case environment | agent | preflight raises |
-|---|---|---|
-| `Dataset` / `ImageFile` | non-empty `modules` | a frozen recording launches nothing |
-| `Dataset` / `ImageFile` | `McpClientAgent` | agent needs a running `McpClient`; the environment has no robot |
-| `Sim(attach=True)` | `McpClientAgent` with `modules=""` and no dimos running | nothing to attach to |
-
-Nothing runs blind unless the agent is `Blind()`: an agent that encodes the
-recording and finds nothing to encode raises instead of sending an empty
-observation.
+**Observation encoding.** Each agent class hard-codes how the recording
+reaches the model. `QuestionAnswer` calls `agent_encode()`; no other agent
+does. Sending observations a different way means writing a new agent class.
 
 ## Scoring
 
