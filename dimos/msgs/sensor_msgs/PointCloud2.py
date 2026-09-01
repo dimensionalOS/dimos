@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import functools
+import json
 import struct
 from typing import TYPE_CHECKING, Any
 
@@ -339,65 +340,155 @@ class PointCloud2(Timestamped):
     def __str__(self) -> str:
         return f"PointCloud2(frame_id='{self.frame_id}', num_points={len(self)})"
 
-    def agent_encode(self) -> dict[str, object]:
-        """Compact, spatially structured encoding for LLM consumption.
+    ENCODE_SOFT_CAP = 6000
+    """Ceiling on one frame's encoding, JSON bytes: a full frame fits in one
+    readout of a tool that caps its output here."""
 
-        World-frame meters throughout. Carries the cloud's horizontal centroid
-        (so consecutive frames reveal motion of the mapped region) and exact
-        world-meter bounding boxes of body-height obstacle clusters (so
-        clearance around a given world position is closed-form point-to-box).
+    AGENT_ENCODE_LEGEND = (
+        "World-frame meters throughout: +x is east and +y is north. For numeric "
+        "full-cloud geometry, use window_m rather than raster or body-height boxes: "
+        "horizontal extent is max(xmax-xmin, ymax-ymin), and vertical span is "
+        "zmax-zmin. centroid_xy_m is the full-cloud horizontal center. Across a "
+        "sequence, read overall motion or gained-coverage direction from dx,dy = "
+        "last centroid_xy_m minus first centroid_xy_m; range edges are too noisy for "
+        "direction. For the eight compass directions, if |dx| > 2.41*|dy| use east "
+        "when dx>0 or west when dx<0; if |dy| > 2.41*|dx| use north when dy>0 or "
+        "south when dy<0; otherwise use the diagonal determined by the signs of dx "
+        "and dy (northeast, northwest, southeast, or southwest). "
+        "floor_footprint_m2 is this frame's own measured footprint: the count of "
+        "0.2 m cells with any stored return times 0.04 m2. Compare each frame's own "
+        "value for an area trend; it can decrease as well as increase, so do not "
+        "accumulate it across frames or substitute bounding-box area. "
+        "boxes are exact x-y extents of stored returns within z_m, in world meters, "
+        "as xmin:xmax@ymin:ymax (a lone value is zero width). Horizontal clearance "
+        "from a point qx,qy is the minimum over boxes of hypot(dx,dy), where "
+        "dx=max(0,xmin-qx,qx-xmax) and dy=max(0,ymin-qy,qy-ymax). Each term is zero "
+        "only when the point lies inside that coordinate extent. "
+        "raster.rows: one row per cell_m of y, north to south, prefixed with its y; "
+        "two characters per cell, west to east from origin_xy_m. First character is "
+        "the lowest return in the cell, second the highest, as "
+        "round((z - z_min_m) / z_step_m) in the alphabet 0-9A-U, clamped. "
+        ".. is a cell with no stored return; point absence carries no visibility provenance. "
+        "Lidar z is 0.05 m voxels, so the first character wavers by one level "
+        "across flat ground. window_m is the min/max coordinate bound of stored "
+        "returns in frame_id."
+    )
+    """The whole vocabulary of agent_encode(). The prose gate audits it, and
+    every key it names is present on every frame."""
+
+    _RASTER_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTU"
+    _RASTER_Z_MIN = -0.5
+    _RASTER_Z_STEP = 0.1
+    _RASTER_MAX_CELLS = 48
+    _BOX_Z = (0.15, 1.0)
+
+    def agent_encode(self) -> dict[str, object]:
+        """What the lidar measured, laid out for a language model.
+
+        World-frame meters throughout. Scalars, stored-point coordinate bounds,
+        a min/max height raster and exact x-y extents of returns in one z band. The
+        format is described once, in AGENT_ENCODE_LEGEND; every key is present
+        on every frame, empty when there is nothing to fill it.
         """
         pts = self.points_f32()
         n = int(pts.shape[0])
-        out: dict[str, object] = {"frame_id": self.frame_id, "num_points": n}
+        out: dict[str, object] = {
+            "frame_id": self.frame_id,
+            "ts": None if self.ts is None else round(float(self.ts), 2),
+            "num_points": n,
+            "window_m": {"x": [], "y": [], "z": []},
+            "centroid_xy_m": [],
+            "floor_footprint_m2": 0.0,
+            "raster": {
+                "cell_m": 0.0,
+                "origin_xy_m": [],
+                "z_step_m": self._RASTER_Z_STEP,
+                "z_min_m": self._RASTER_Z_MIN,
+                "rows": [],
+            },
+            "boxes": {"z_m": list(self._BOX_Z), "xmin:xmax@ymin:ymax": ""},
+        }
         if n == 0:
             return out
         xy = pts[:, :2]
-        cx, cy = xy.mean(axis=0)
-        out["centroid_xy_m"] = [round(float(cx), 2), round(float(cy), 2)]
+        z = pts[:, 2]
         mins = pts.min(axis=0)
         maxs = pts.max(axis=0)
-        # Distinct occupied 0.2 m x-y cells of THIS frame's cloud alone.
-        floor_cells = np.unique(np.floor(xy / 0.2).astype(np.int64), axis=0)
-        out["exact_stats"] = {
-            "note": "exact full-cloud values in meters; for numeric extent/span/area "
-            "answers use these, not the body-height interval map below",
-            "x_range": [round(float(mins[0]), 2), round(float(maxs[0]), 2)],
-            "y_range": [round(float(mins[1]), 2), round(float(maxs[1]), 2)],
-            "z_range": [round(float(mins[2]), 2), round(float(maxs[2]), 2)],
-            "horizontal_extent_m": round(float(max(maxs[0] - mins[0], maxs[1] - mins[1])), 2),
-            "vertical_span_m": round(float(maxs[2] - mins[2]), 2),
-            "occupied_floor_footprint_m2": round(float(floor_cells.shape[0]) * 0.2 * 0.2, 1),
-            "footprint_note": "mapped floor area of this frame's cloud only (distinct "
-            "occupied 0.2 m x-y cells); use it, not bbox area, for floor coverage. For "
-            "area trends compare each frame's own footprint value across frames -- it "
-            "can decrease as well as increase; do not accumulate coverage over frames",
+        out["window_m"] = {
+            "x": [round(float(mins[0]), 2), round(float(maxs[0]), 2)],
+            "y": [round(float(mins[1]), 2), round(float(maxs[1]), 2)],
+            "z": [round(float(mins[2]), 2), round(float(maxs[2]), 2)],
         }
-        out["compass"] = (
-            "8-way direction of motion (dx,dy = last minus first): if |dx|>2.41*|dy| "
-            "then east (dx>0) or west (dx<0); if |dy|>2.41*|dx| then north (dy>0) or "
-            "south (dy<0); otherwise diagonal by signs (northeast, northwest, "
-            "southeast, southwest). For any question about which direction the map "
-            "moved or gained coverage, take dx,dy from centroid_xy_m of the last "
-            "minus the first frame; range edges are too noisy for direction"
-        )
-        z = pts[:, 2]
-        band = xy[(z >= 0.15) & (z <= 1.0)]
-        grid = self._body_height_occupancy(band)
-        if grid is not None:
-            out["body_height_occupancy"] = grid
+        cx, cy = xy.mean(axis=0)
+        out["centroid_xy_m"] = [round(float(cx), 2), round(float(cy), 2)]
+        floor_cells = np.unique(np.floor(xy / 0.2).astype(np.int64), axis=0)
+        out["floor_footprint_m2"] = round(float(floor_cells.shape[0]) * 0.04, 1)
+        out["raster"] = self._height_raster(pts)
+        band = xy[(z >= self._BOX_Z[0]) & (z <= self._BOX_Z[1])]
+        boxes = self._body_height_boxes(band)
+        # The raster is the picture and is never cut; the box list is the one
+        # channel that shortens without changing what the rest means.
+        room = self.ENCODE_SOFT_CAP - len(json.dumps(out)) - 2
+        if len(boxes) > room:
+            boxes = boxes[: max(0, room)].rpartition(",")[0]
+        out["boxes"] = {"z_m": list(self._BOX_Z), "xmin:xmax@ymin:ymax": boxes}
         return out
 
-    @staticmethod
-    def _body_height_occupancy(xy: np.ndarray, max_cells: int = 28) -> dict[str, object] | None:
-        """Exact bounding boxes of body-height obstacle clusters, world meters.
+    @classmethod
+    def _height_raster(cls, pts: np.ndarray) -> dict[str, object]:
+        """Lowest and highest return per x-y cell, quantized to one character each.
 
-        ponytail: y binned into bands only to segment clusters; the emitted
-        extents are exact point min/max, so clearance is closed-form
-        point-to-box in both axes.
+        The cell is the smallest of 0.25 m, doubling, that keeps both axes within
+        _RASTER_MAX_CELLS, so a single sweep renders at 0.25 m and a fused map of
+        a building at 0.5 or 1.0 m.
+        """
+        xy = pts[:, :2]
+        lo = xy.min(axis=0)
+        hi = xy.max(axis=0)
+        cell = 0.25
+        while True:
+            origin = np.floor(lo / cell) * cell
+            shape = np.floor((hi - origin) / cell).astype(np.int64) + 1
+            if int(shape.max()) <= cls._RASTER_MAX_CELLS:
+                break
+            cell *= 2.0
+        nx, ny = int(shape[0]), int(shape[1])
+        ij = np.floor((xy - origin) / cell).astype(np.int64)
+        lin = ij[:, 1] * nx + ij[:, 0]
+        levels = len(cls._RASTER_ALPHABET)
+        q = np.clip(np.rint((pts[:, 2] - cls._RASTER_Z_MIN) / cls._RASTER_Z_STEP), 0, levels - 1)
+        q = q.astype(np.int64)
+        qmin = np.full(nx * ny, levels, dtype=np.int64)
+        qmax = np.full(nx * ny, -1, dtype=np.int64)
+        np.minimum.at(qmin, lin, q)
+        np.maximum.at(qmax, lin, q)
+        glyph = np.array([*cls._RASTER_ALPHABET, "."])
+        qmin[qmax < 0] = levels  # empty cells index the trailing "."
+        qmax[qmax < 0] = levels
+        pairs = np.char.add(glyph[qmin], glyph[qmax]).reshape(ny, nx)
+        labels = [f"{origin[1] + j * cell:.2f}" for j in range(ny)]
+        width = max(len(s) for s in labels)
+        rows = [
+            f"{labels[j]:>{width}} " + "".join(pairs[j].tolist()) for j in range(ny - 1, -1, -1)
+        ]
+        return {
+            "cell_m": cell,
+            "origin_xy_m": [round(float(origin[0]), 2), round(float(origin[1]), 2)],
+            "z_step_m": cls._RASTER_Z_STEP,
+            "z_min_m": cls._RASTER_Z_MIN,
+            "rows": rows,
+        }
+
+    @staticmethod
+    def _body_height_boxes(xy: np.ndarray, max_cells: int = 28) -> str:
+        """Exact x-y extents of clusters of the given points, world meters.
+
+        y is binned into bands to segment clusters; the emitted extents are
+        exact point min/max. Listed north to south, comma separated, as
+        xmin:xmax@ymin:ymax with a lone value where an extent is zero.
         """
         if xy.shape[0] == 0:
-            return None
+            return ""
         lo = xy.min(axis=0)
         hi = xy.max(axis=0)
         span = float(max(hi[0] - lo[0], hi[1] - lo[1]))
@@ -420,17 +511,7 @@ class PointCloud2(Timestamped):
                 ya, yb = f"{ry.min():.2f}", f"{ry.max():.2f}"
                 run += f"@{ya}" if ya == yb else f"@{ya}:{yb}"
                 parts.append(run)
-        return {
-            "desc": "Exact bounding boxes (world meters) of obstacle points at "
-            "body height (z 0.15..1.0 m), listed north to south. Each box "
-            "xmin:xmax@ymin:ymax is the exact extent of its points (+x east, "
-            "+y north; a lone value = zero-width, a thin obstacle). "
-            "Horizontal clearance from a query point (qx,qy) = min over all "
-            "boxes of hypot(dx,dy), where dx = max(0, xmin-qx, qx-xmax) and "
-            "dy = max(0, ymin-qy, qy-ymax) (each term is zero only when the "
-            "query lies inside that extent).",
-            "boxes": ",".join(parts),
-        }
+        return ",".join(parts)
 
     @functools.cached_property
     def center(self) -> Vector3:
