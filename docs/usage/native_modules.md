@@ -68,7 +68,12 @@ runs when an implementation inherits a stub or changes the contract.
 
 During `build()`, dimOS runs `uv sync` in the sibling project. If `pixi.toml`
 exists, Pixi supplies `uv`; if `uv.lock` exists, dimOS uses `--frozen` and treats
-the committed lockfile as the source of truth. It then
+the committed lockfile as the source of truth. The runtime command makes the
+host framework available without adding dimOS to the sibling project: source
+checkouts use the current checkout, while installed packages let `uv` resolve
+an unversioned `dimos`. Installed host and runtime versions may therefore differ.
+The sibling project's `.python-version` and `requires-python` select its Python;
+the host does not override them. It then
 starts the isolated interpreter, assigns its stream transports and module
 references, and calls the runtime's `build()`. The later `start()` call starts
 the concrete runtime module.
