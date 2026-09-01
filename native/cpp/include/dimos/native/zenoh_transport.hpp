@@ -333,7 +333,8 @@ public:
         }
         ::zenoh::Session session = ::zenoh::Session::open(zenoh_detail::zenoh_config(*settings));
         log::info("zenoh session opened",
-                  {log::Field("mode", settings->mode),
+                  {log::Field("zid", session.get_zid().to_string()),
+                   log::Field("mode", settings->mode),
                    log::Field("connect", nlohmann::json(settings->connect).dump()),
                    log::Field("listen", nlohmann::json(settings->listen).dump())});
         zenoh_detail::await_connect(session, settings->connect, settings->mode,
