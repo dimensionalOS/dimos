@@ -14,13 +14,8 @@
 
 """End-to-end tests for the Mid-360 rust driver.
 
-The self_hosted test replays a real recording. The native_e2e test runs
-a synthesized capture through the live path against virtual_mid360.
-
-Run with::
-    cargo build --release -p dimos-livox -p dimos-virtual-mid360
-    pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py
-    pytest -m self_hosted dimos/hardware/sensors/lidar/livox/test_e2e.py
+self_hosted replays a real recording. native_e2e runs the live path
+against virtual_mid360 over loopback.
 """
 
 from __future__ import annotations
@@ -161,7 +156,7 @@ def spawn() -> Generator[Spawn]:
 def _collect(
     topics: dict[str, type], seconds: float, enough: dict[str, int]
 ) -> dict[str, list]:
-    """Decode each topic until every count in `enough` is met or time runs out."""
+    """Decode each topic until every count in enough is met or time runs out."""
     raw: dict[str, list[bytes]] = {topic: [] for topic in topics}
     lc = lcm_module.LCM()
     for topic in topics:

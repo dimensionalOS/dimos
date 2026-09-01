@@ -84,10 +84,7 @@ fn positive_replay_rate(rate: &Nullable<f64>) -> Result<(), validator::Validatio
     }
 }
 
-// Wire layout per point, matching the Python Mid360Config docstring:
-//   minimal x,y,z,offset_time                    - 16 B (default)
-//   full    x,y,z,intensity,offset_time,tag,line - 22 B
-//   legacy  x,y,z,intensity                      - 16 B
+// Per-point wire layouts. The Python Mid360Config comment is the reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum PointFormat {

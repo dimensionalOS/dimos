@@ -14,7 +14,7 @@
 
 //! Pure packet-to-frame pipeline, shared by the live and replay paths.
 //!
-//! Sources produce raw data-plane packets; the assembler cuts them into frames
+//! Sources produce raw data-plane packets. The assembler cuts them into frames
 //! on packet time, never wall clock, so replay is deterministic at any speed.
 
 use crate::wire::{DataPacket, DataType};
@@ -114,7 +114,7 @@ impl FrameAssembler {
     }
 
     /// Feed one point packet. Returns the completed frame when this packet's
-    /// timestamp crosses the frame boundary; the packet's own points open the
+    /// timestamp crosses the frame boundary. The packet's own points open the
     /// next frame.
     pub fn push(&mut self, packet: &DataPacket<'_>) -> Option<Frame> {
         if !matches!(

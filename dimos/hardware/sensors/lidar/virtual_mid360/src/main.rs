@@ -402,7 +402,7 @@ fn discovery_ack_payload(lidar_ip: Ipv4Addr) -> Vec<u8> {
 
 /// Control-plane ACK bodies. QueryFwType (0x0101) wants fw_type != 0 => app
 /// firmware (not loader/upgrade mode), so the SDK proceeds to normal
-/// operation; the rest reply ret_code=0 (success).
+/// operation. The rest reply ret_code=0 (success).
 fn control_ack_payload(cmd_id: u16) -> Vec<u8> {
     match cmd_id {
         wire::cmd_id::GET_INTERNAL_INFO => InternalInfoAck {
@@ -454,8 +454,8 @@ mod tests {
     }
 
     #[test]
-    fn fw_type_ack_matches_hand_rolled_layout() {
-        // Byte-identical to the previous hand-built GetInternalInfo payload.
+    fn fw_type_ack_layout() {
+        // GetInternalInfo body is 8 bytes with fw_type last.
         assert_eq!(
             control_ack_payload(wire::cmd_id::GET_INTERNAL_INFO),
             vec![0, 1, 0, 0x10, 0x80, 1, 0, wire::FW_TYPE_APP]
@@ -467,7 +467,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_ack_matches_hand_rolled_layout() {
+    fn generic_ack_layout() {
         assert_eq!(control_ack_payload(wire::cmd_id::PARAM_SET), vec![0, 0, 0]);
     }
 

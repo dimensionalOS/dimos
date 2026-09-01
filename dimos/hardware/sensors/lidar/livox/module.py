@@ -20,7 +20,7 @@ Usage::
 
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     ModuleCoordinator.build(autoconnect(
-        Mid360.blueprint(),  # host_ip auto-detected; set lidar_ip if not the factory default
+        Mid360.blueprint(),  # host_ip auto-detected, lidar_ip defaults to the factory IP
         SomeConsumer.blueprint(),
     )).loop()
 """
@@ -74,11 +74,11 @@ class Mid360Config(NativeModuleConfig):
         default_factory=lambda: None if sys.platform == "darwin" else "224.1.1.5"
     )
     # Wire layout per point:
-    #   "minimal" x,y,z,offset_time                    — 16 B (default)
-    #   "full"    x,y,z,intensity,offset_time,tag,line — 22 B
-    #   "legacy"  x,y,z,intensity                      — 16 B
-    # Scan-undistorting estimators (FAST-LIVO2 etc.) need offset_time; no LIO in
-    # the stack reads intensity (it only feeds viz/map coloring).
+    #   "minimal" x,y,z,offset_time                    - 16 B (default)
+    #   "full"    x,y,z,intensity,offset_time,tag,line - 22 B
+    #   "legacy"  x,y,z,intensity                      - 16 B
+    # Scan-undistorting estimators (FAST-LIVO2 etc.) need offset_time. No LIO in
+    # the stack reads intensity, which only feeds viz and map coloring.
     point_format: Literal["full", "minimal", "legacy"] = "minimal"
     frame_id: str = "lidar_link"
     imu_frame_id: str = "imu_link"
@@ -93,7 +93,7 @@ class Mid360Config(NativeModuleConfig):
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()
-        # The rust struct has every key; None crosses as an explicit null.
+        # The rust struct has every key. None crosses as an explicit null.
         for key in ("host_ip", "pcap", "replay_rate", "multicast_ip"):
             config[key] = getattr(self, key)
         return config

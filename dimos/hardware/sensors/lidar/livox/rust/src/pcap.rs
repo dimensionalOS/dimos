@@ -16,8 +16,7 @@
 //! pipeline as a `PacketSource`.
 //!
 //! Sensor timestamps are replayed unmodified, so downstream output is
-//! deterministic and identical at any replay rate. (The virtual device
-//! shifts timestamps to look live; a driver replaying for itself must not.)
+//! deterministic and identical at any replay rate.
 
 use crate::pipeline::PacketSource;
 use std::fs::File;

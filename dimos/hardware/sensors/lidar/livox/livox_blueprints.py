@@ -23,9 +23,8 @@ mid360 = autoconnect(
     vis_module("rerun"),
 ).global_config(n_workers=2, robot_model="mid360")
 
-# Replays a capture through the same driver pipeline as the live sensor.
-# DIMOS_MID360_PCAP names the recording and is required — empty makes the
-# binary error at start, matching the virtual_mid360 convention.
+# Replays the capture named by DIMOS_MID360_PCAP (required) through the
+# same driver pipeline as the live sensor.
 mid360_pcap_replay = autoconnect(
     Mid360.blueprint(
         pcap=os.environ.get("DIMOS_MID360_PCAP", ""),

@@ -187,7 +187,7 @@ pub fn build_control(seq: u32, cmd_id: u16, cmd_type: u8, sender_type: u8, data:
 pub struct DetectionAck {
     pub ret_code: u8,
     pub dev_type: u8,
-    /// Treated as a C string by the SDK; must be NUL-terminated within 16 bytes.
+    /// Treated as a C string by the SDK. Must be NUL-terminated within 16 bytes.
     pub sn: [u8; 16],
     pub lidar_ip: Ipv4Addr,
     pub cmd_port: u16,
