@@ -29,6 +29,12 @@ Any file type is accepted. Kind is inferred: a mem2 SQLite store (has a `_stream
 
 Pulls land in `downloads/` under the checkout (`~/.local/state/dimos/downloads/` for an installed package), named `<upload-time>-<id-prefix>-<filename>` so nothing overwrites. `--dest` takes an exact target path. The wire bytes are sha256-verified, decoded, and moved into place atomically; a failed pull never clobbers an existing destination file.
 
+View a pulled recording with [`dimos mem rerun`](/docs/usage/cli.md):
+
+```bash
+dimos mem rerun downloads/<pulled-file>.db
+```
+
 ## Compression
 
 `dimos_upload_codec` selects the algorithm; the upload's `content_encoding` stamp selects the decoder on pull, so mixed-codec stores coexist.
