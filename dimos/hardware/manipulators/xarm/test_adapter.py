@@ -127,17 +127,40 @@ def test_activate_prepares_xarm_for_safe_commanded_motion(
     arm = _FakeXArmSdk.instances[-1]
     assert arm.warn_code == 0
     assert arm.error_code == 0
-    assert arm.actions[-8:] == [
+    # Bringing a blueprint up must not command the arm anywhere.
+    assert arm.actions[-7:] == [
         ("clean_warn", None),
         ("clean_error", None),
         ("motion_enable", True),
         ("set_mode", 0),
         ("set_state", 0),
-        ("set_servo_angle", [0.0, -40.0, -50.0, 0.0, 90.0, 0.0], 20.0, 500.0, True),
         ("set_mode", 1),
         ("set_state", 0),
     ]
+    assert not any(action[0] == "set_servo_angle" for action in arm.actions)
     assert adapter.get_control_mode() == xarm_adapter_module.ControlMode.SERVO_POSITION
+
+
+def test_activate_moves_only_to_an_explicitly_configured_initial_pose(
+    xarm_adapter_module: ModuleType,
+) -> None:
+    initial = [0.0, -math.pi / 4, 0.0, 0.0, math.pi / 2, 0.0]
+    adapter = xarm_adapter_module.XArmAdapter(
+        address="192.0.2.10", dof=6, initial_positions=initial
+    )
+    assert adapter.connect()
+
+    assert adapter.activate()
+
+    arm = _FakeXArmSdk.instances[-1]
+    assert ("set_servo_angle", [0.0, -45.0, 0.0, 0.0, 90.0, 0.0], 20.0, 500.0, True) in arm.actions
+
+
+def test_initial_positions_must_match_the_arm_axis_count(
+    xarm_adapter_module: ModuleType,
+) -> None:
+    with pytest.raises(ValueError):
+        xarm_adapter_module.XArmAdapter(address="192.0.2.10", dof=6, initial_positions=[0.0])
 
 
 def test_joint_position_commands_use_degrees_for_xarm_sdk(
