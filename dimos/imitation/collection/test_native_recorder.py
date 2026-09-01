@@ -25,7 +25,8 @@ from dimos.imitation.collection.native_recorder import NativeCollectionRecorder
 @pytest.fixture
 def recorder(tmp_path: Path) -> Iterator[NativeCollectionRecorder]:
     instance = NativeCollectionRecorder(
-        store={"kind": "sqlite", "path": str(tmp_path / "collection.db")}
+        store={"kind": "sqlite", "path": str(tmp_path / "collection.db")},
+        record_tf=False,
     )
     yield instance
     instance.stop()

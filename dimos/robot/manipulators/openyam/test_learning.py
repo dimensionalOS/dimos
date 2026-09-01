@@ -12,19 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
-
 from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
 from dimos.robot.manipulators.openyam.learning import OPENYAM_LEARNING_PROFILE
 
 
-def test_openyam_profile_builds_matching_observation_and_action_schema(tmp_path: Path) -> None:
+def test_openyam_profile_builds_matching_observation_and_action_schema() -> None:
     profile = OPENYAM_LEARNING_PROFILE
 
-    config = profile.dataprep_config(
-        source=tmp_path / "session.mcap",
-        output=tmp_path / "dataset",
-    )
+    config = profile.dataprep_config()
 
     assert config.sync.rate_hz == profile.fps
     assert config.sync.anchor == profile.image_feature
