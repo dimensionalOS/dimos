@@ -40,6 +40,6 @@ Run isolated runtime checks with:
 
 ```bash
 cd dimos/imitation/policy/lerobot/python
-uv run --locked --group tests --with-editable ../../../../../ python -m pytest
-uv run --locked --group tests --with-editable ../../../../../ python -m mypy
+uv run --isolated --locked --group tests --with-editable ../../../../../ python -m pytest
+uv run --isolated --locked --group tests --with-editable ../../../../../ python -m mypy
 ```
