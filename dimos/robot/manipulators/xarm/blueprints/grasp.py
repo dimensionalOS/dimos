@@ -244,13 +244,7 @@ _XARM_GRASP_MODULES = (
         **({} if SIMULATED else {"floor_z": -0.02}),
     ),
     ManipulationSkills.blueprint(),
-    PickAndPlaceModule.blueprint(
-        planning_frame="world",
-        # These jaws asymptote to 0.995-0.996 and never reach 1.0, so opening a
-        # gripper that is already open moves nothing and has to settle on arrival
-        # alone. The stock 0.005 tolerance sits right on that gap.
-        grasp_verification={"settle_tolerance": 0.01},
-    ),
+    PickAndPlaceModule.blueprint(planning_frame="world"),
     *_sensing(),
     _scene_registration(),
     *_voxel_mapping(),

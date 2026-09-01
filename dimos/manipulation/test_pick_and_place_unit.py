@@ -70,7 +70,7 @@ def module() -> Iterator[PickAndPlaceModule]:
 
 @pytest.fixture(autouse=True)
 def settled_gripper(monkeypatch: pytest.MonkeyPatch) -> None:
-    def settle(read: Any, target: float, config: Any) -> GripperSettle:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
         position = 0.5 if target == config.closed_position else target
         return GripperSettle(True, position, True, 0.1)
 
@@ -251,7 +251,7 @@ def test_empty_grasp_reopens_before_failing(
 ) -> None:
     manipulation: Any = module._manipulation
 
-    def settle(read: Any, target: float, config: Any) -> GripperSettle:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
         position = 0.0 if target == config.closed_position else target
         return GripperSettle(True, position, True, 0.1)
 
@@ -267,7 +267,7 @@ def test_empty_grasp_reopens_before_failing(
 def test_pick_rejects_jaws_that_never_closed(
     module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def settle(read: Any, target: float, config: Any) -> GripperSettle:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
         position = config.open_position if target == config.closed_position else target
         return GripperSettle(True, position, True, 0.1)
 
@@ -289,7 +289,7 @@ def test_empty_grasp_reports_failed_recovery(
         SimpleNamespace(succeeded=False, message="recovery open failed"),
     ]
 
-    def settle(read: Any, target: float, config: Any) -> GripperSettle:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
         position = 0.0 if target == config.closed_position else target
         return GripperSettle(True, position, True, 0.1)
 
@@ -315,7 +315,7 @@ def test_pick_fails_when_gripper_command_is_rejected(module: PickAndPlaceModule)
 def test_pick_fails_when_gripper_feedback_is_unavailable(
     module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def settle(read: Any, target: float, config: Any) -> GripperSettle:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
         if target == config.closed_position:
             return GripperSettle(False, None, False, config.timeout)
         return GripperSettle(True, target, True, 0.1)
@@ -334,7 +334,7 @@ def test_place_retains_held_state_when_release_fails(
     module._selected_grasp = PoseStamped(frame_id="world")
     module._holding_object = True
 
-    def settle(read: Any, target: float, config: Any) -> GripperSettle:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
         return GripperSettle(True, 0.5, True, 0.1)
 
     monkeypatch.setattr("dimos.manipulation.pick_and_place_module.await_gripper_settle", settle)
