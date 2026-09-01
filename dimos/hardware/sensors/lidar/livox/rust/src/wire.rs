@@ -27,15 +27,10 @@ pub const LIDAR_CMD_PORT: u16 = 56100;
 pub const LIDAR_PUSH_MSG_PORT: u16 = 56200;
 pub const LIDAR_POINT_PORT: u16 = 56300;
 pub const LIDAR_IMU_PORT: u16 = 56400;
-pub const LIDAR_LOG_PORT: u16 = 56500;
 pub const HOST_CMD_PORT: u16 = 56101;
 pub const HOST_PUSH_MSG_PORT: u16 = 56201;
 pub const HOST_POINT_PORT: u16 = 56301;
 pub const HOST_IMU_PORT: u16 = 56401;
-pub const HOST_LOG_PORT: u16 = 56501;
-
-/// Livox default multicast group the SDK joins for point/IMU data.
-pub const DATA_MULTICAST_GROUP: &str = "224.1.1.5";
 
 // ---- control plane (LivoxLidarCmdPacket) ----
 pub const SOF: u8 = 0xAA;
@@ -62,11 +57,8 @@ pub mod cmd_id {
 
 /// Parameter keys (SDK2 `ParamKeyName`).
 pub mod param_key {
-    pub const STATE_INFO_HOST_IP_CFG: u16 = 0x0005;
     pub const POINT_DATA_HOST_IP_CFG: u16 = 0x0006;
     pub const IMU_HOST_IP_CFG: u16 = 0x0007;
-    pub const CTL_HOST_IP_CFG: u16 = 0x0008;
-    pub const LOG_HOST_IP_CFG: u16 = 0x0009;
     pub const WORK_MODE: u16 = 0x001A;
     pub const IMU_DATA_EN: u16 = 0x001C;
     pub const FW_TYPE: u16 = 0x8010;

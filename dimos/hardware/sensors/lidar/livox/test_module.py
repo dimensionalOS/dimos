@@ -19,7 +19,7 @@ from pathlib import Path
 
 import tomllib
 
-from dimos.core.native_module import NativeModuleConfig
+from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.hardware.sensors.lidar.livox.module import Mid360, Mid360Config
 
 _RUST_MANIFEST = Path(__file__).parent / "rust" / "Cargo.toml"
@@ -39,7 +39,7 @@ def test_config_dict_is_the_wire_config() -> None:
     assert wire["pcap"] is None
     assert wire["replay_rate"] is None
     assert wire["multicast_ip"] is None
-    json.dumps(wire)
+    assert json.loads(json.dumps(wire)) == wire
 
 
 def test_rust_struct_has_every_config_key() -> None:
@@ -51,6 +51,24 @@ def test_rust_struct_has_every_config_key() -> None:
         if ": " in line and not line.strip().startswith("//")
     }
     assert declared == _wire_fields()
+
+
+def test_pcap_mode_skips_host_ip_resolution(monkeypatch) -> None:
+    resolved = []
+    monkeypatch.setattr(
+        "dimos.hardware.sensors.lidar.livox.module.resolve_host_ip",
+        lambda *args, **kwargs: resolved.append(args) or "10.0.0.1",
+    )
+    monkeypatch.setattr(NativeModule, "start", lambda self: None)
+
+    module = object.__new__(Mid360)
+    module.config = Mid360Config(pcap="capture.pcap")
+    Mid360.start(module)
+    assert not resolved
+
+    module.config = Mid360Config(host_ip="10.0.0.1")
+    Mid360.start(module)
+    assert resolved
 
 
 def test_ports_match_registry() -> None:

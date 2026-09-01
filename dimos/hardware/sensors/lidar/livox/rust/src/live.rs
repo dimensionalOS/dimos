@@ -31,36 +31,16 @@ use std::sync::mpsc;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-/// The SDK2 port pair set, defaulting to the standard Mid-360 assignment.
+/// The ports the live source speaks on: command plane plus the two data
+/// streams, each as a device/host pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ports {
     pub cmd_data: u16,
-    pub push_msg: u16,
     pub point_data: u16,
     pub imu_data: u16,
-    pub log_data: u16,
     pub host_cmd_data: u16,
-    pub host_push_msg: u16,
     pub host_point_data: u16,
     pub host_imu_data: u16,
-    pub host_log_data: u16,
-}
-
-impl Default for Ports {
-    fn default() -> Self {
-        Ports {
-            cmd_data: wire::LIDAR_CMD_PORT,
-            push_msg: wire::LIDAR_PUSH_MSG_PORT,
-            point_data: wire::LIDAR_POINT_PORT,
-            imu_data: wire::LIDAR_IMU_PORT,
-            log_data: wire::LIDAR_LOG_PORT,
-            host_cmd_data: wire::HOST_CMD_PORT,
-            host_push_msg: wire::HOST_PUSH_MSG_PORT,
-            host_point_data: wire::HOST_POINT_PORT,
-            host_imu_data: wire::HOST_IMU_PORT,
-            host_log_data: wire::HOST_LOG_PORT,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -357,15 +337,11 @@ mod tests {
     fn test_ports(base: u16) -> Ports {
         Ports {
             cmd_data: base,
-            push_msg: base + 1,
-            point_data: base + 2,
-            imu_data: base + 3,
-            log_data: base + 4,
-            host_cmd_data: base + 5,
-            host_push_msg: base + 6,
-            host_point_data: base + 7,
-            host_imu_data: base + 8,
-            host_log_data: base + 9,
+            point_data: base + 1,
+            imu_data: base + 2,
+            host_cmd_data: base + 3,
+            host_point_data: base + 4,
+            host_imu_data: base + 5,
         }
     }
 

@@ -29,11 +29,24 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 
 /// Python's `None`, sent as a JSON null under a key that is always present.
-/// native_config forbids `Option` so an absent key can't pass as None; a null
-/// under a present key is what the wrapper guarantees.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// native_config forbids `Option` so an absent key can't pass as None. The
+/// hand-written deserializer keeps a missing key an error, where anything
+/// `Option`-shaped would silently read it as None.
+#[derive(Debug, Clone, Serialize)]
 #[serde(transparent)]
 pub struct Nullable<T>(Option<T>);
+
+impl<'de, T: serde::de::DeserializeOwned> Deserialize<'de> for Nullable<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if value.is_null() {
+            return Ok(Nullable(None));
+        }
+        serde_json::from_value(value)
+            .map(|inner| Nullable(Some(inner)))
+            .map_err(serde::de::Error::custom)
+    }
+}
 
 #[native_config]
 #[derive(Clone)]
@@ -43,7 +56,7 @@ pub struct Config {
     #[validate(range(exclusive_min = 0.0))]
     frequency: f64,
     enable_imu: bool,
-    point_format: String,
+    point_format: PointFormat,
     frame_id: String,
     imu_frame_id: String,
     /// Replay this capture instead of a live sensor.
@@ -55,15 +68,11 @@ pub struct Config {
     /// only, the loopback/virtual arrangement.
     multicast_ip: Nullable<String>,
     cmd_data_port: u16,
-    push_msg_port: u16,
     point_data_port: u16,
     imu_data_port: u16,
-    log_data_port: u16,
     host_cmd_data_port: u16,
-    host_push_msg_port: u16,
     host_point_data_port: u16,
     host_imu_data_port: u16,
-    host_log_data_port: u16,
 }
 
 fn positive_replay_rate(rate: &Nullable<f64>) -> Result<(), validator::ValidationError> {
@@ -79,7 +88,8 @@ fn positive_replay_rate(rate: &Nullable<f64>) -> Result<(), validator::Validatio
 //   minimal x,y,z,offset_time                    - 16 B (default)
 //   full    x,y,z,intensity,offset_time,tag,line - 22 B
 //   legacy  x,y,z,intensity                      - 16 B
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
 enum PointFormat {
     Full,
     Minimal,
@@ -87,15 +97,6 @@ enum PointFormat {
 }
 
 impl PointFormat {
-    fn parse(name: &str) -> PointFormat {
-        match name {
-            "full" => PointFormat::Full,
-            "minimal" => PointFormat::Minimal,
-            "legacy" => PointFormat::Legacy,
-            other => panic!("point_format must be full, minimal or legacy, got '{other}'"),
-        }
-    }
-
     fn point_step(self) -> i32 {
         match self {
             PointFormat::Full => 22,
@@ -108,15 +109,11 @@ impl Config {
     fn ports(&self) -> Ports {
         Ports {
             cmd_data: self.cmd_data_port,
-            push_msg: self.push_msg_port,
             point_data: self.point_data_port,
             imu_data: self.imu_data_port,
-            log_data: self.log_data_port,
             host_cmd_data: self.host_cmd_data_port,
-            host_push_msg: self.host_push_msg_port,
             host_point_data: self.host_point_data_port,
             host_imu_data: self.host_imu_data_port,
-            host_log_data: self.host_log_data_port,
         }
     }
 }
@@ -139,7 +136,6 @@ pub struct Mid360 {
 
 impl Mid360 {
     async fn start(&mut self) {
-        let format = PointFormat::parse(&self.config.point_format);
         let source = self.build_source();
         let handle = Handle::current();
         let lidar = self.lidar.clone();
@@ -147,7 +143,7 @@ impl Mid360 {
         let config = self.config.clone();
         let stop = self.stop.clone();
         self.threads.push(std::thread::spawn(move || {
-            run_pipeline(source, &config, format, &handle, &lidar, &imu, &stop);
+            run_pipeline(source, &config, &handle, &lidar, &imu, &stop);
         }));
     }
 
@@ -207,12 +203,12 @@ impl Mid360 {
 fn run_pipeline(
     mut source: Box<dyn PacketSource + Send>,
     config: &Config,
-    format: PointFormat,
     handle: &Handle,
     lidar: &Output<PointCloud2>,
     imu: &Output<Imu>,
     stop: &AtomicBool,
 ) {
+    let format = config.point_format;
     let mut assembler = crate::pipeline::FrameAssembler::new(config.frequency);
     let mut buf = [0u8; 4096];
     while !stop.load(Ordering::Relaxed) {
@@ -447,9 +443,42 @@ mod tests {
         assert_eq!(msg.linear_acceleration.z, 9.8);
     }
 
+    fn config_json() -> serde_json::Value {
+        serde_json::json!({
+            "host_ip": null,
+            "lidar_ip": "192.168.1.155",
+            "frequency": 10.0,
+            "enable_imu": true,
+            "point_format": "minimal",
+            "frame_id": "lidar_link",
+            "imu_frame_id": "imu_link",
+            "pcap": "x.pcap",
+            "replay_rate": null,
+            "multicast_ip": null,
+            "cmd_data_port": 56100,
+            "point_data_port": 56300,
+            "imu_data_port": 56400,
+            "host_cmd_data_port": 56101,
+            "host_point_data_port": 56301,
+            "host_imu_data_port": 56401
+        })
+    }
+
     #[test]
-    #[should_panic(expected = "point_format")]
-    fn bad_point_format_panics() {
-        PointFormat::parse("wat");
+    fn config_accepts_null_but_not_missing_nullable_keys() {
+        let full = config_json();
+        assert!(serde_json::from_value::<Config>(full.clone()).is_ok());
+        // The wrapper always sends the key. An absent key is a bug, not a None.
+        let mut missing = full;
+        missing.as_object_mut().unwrap().remove("host_ip");
+        assert!(serde_json::from_value::<Config>(missing).is_err());
+    }
+
+    #[test]
+    fn config_rejects_unknown_point_format() {
+        let mut bad = config_json();
+        bad["point_format"] = "wat".into();
+        let err = serde_json::from_value::<Config>(bad).unwrap_err();
+        assert!(err.to_string().contains("unknown variant"), "{err}");
     }
 }

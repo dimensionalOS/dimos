@@ -34,11 +34,13 @@ pub trait PacketSource {
     }
 }
 
-/// A source over an in-memory packet list, for tests and fixtures.
+/// A source over an in-memory packet list.
+#[cfg(test)]
 pub struct VecSource {
     packets: std::vec::IntoIter<Vec<u8>>,
 }
 
+#[cfg(test)]
 impl VecSource {
     pub fn new(packets: Vec<Vec<u8>>) -> Self {
         VecSource {
@@ -47,6 +49,7 @@ impl VecSource {
     }
 }
 
+#[cfg(test)]
 impl PacketSource for VecSource {
     fn recv(&mut self, buf: &mut [u8]) -> Option<usize> {
         let packet = self.packets.next()?;

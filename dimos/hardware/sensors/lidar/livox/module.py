@@ -42,13 +42,9 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_CMD_DATA_PORT,
     SDK_HOST_CMD_DATA_PORT,
     SDK_HOST_IMU_DATA_PORT,
-    SDK_HOST_LOG_DATA_PORT,
     SDK_HOST_POINT_DATA_PORT,
-    SDK_HOST_PUSH_MSG_PORT,
     SDK_IMU_DATA_PORT,
-    SDK_LOG_DATA_PORT,
     SDK_POINT_DATA_PORT,
-    SDK_PUSH_MSG_PORT,
 )
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -89,15 +85,11 @@ class Mid360Config(NativeModuleConfig):
 
     # SDK port configuration (see livox/ports.py for defaults)
     cmd_data_port: int = SDK_CMD_DATA_PORT
-    push_msg_port: int = SDK_PUSH_MSG_PORT
     point_data_port: int = SDK_POINT_DATA_PORT
     imu_data_port: int = SDK_IMU_DATA_PORT
-    log_data_port: int = SDK_LOG_DATA_PORT
     host_cmd_data_port: int = SDK_HOST_CMD_DATA_PORT
-    host_push_msg_port: int = SDK_HOST_PUSH_MSG_PORT
     host_point_data_port: int = SDK_HOST_POINT_DATA_PORT
     host_imu_data_port: int = SDK_HOST_IMU_DATA_PORT
-    host_log_data_port: int = SDK_HOST_LOG_DATA_PORT
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()

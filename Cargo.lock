@@ -578,6 +578,7 @@ dependencies = [
  "dimos-module",
  "lcm-msgs",
  "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",
