@@ -18,7 +18,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.core import rpc
-from dimos.core.isolated_python_module import (
+from dimos.experimental.isolated_python.module import (
     IsolatedPythonModule,
     IsolatedPythonModuleConfig,
 )
@@ -36,7 +36,9 @@ class Contract(IsolatedPythonModule):
 def test_sibling_project_is_required(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = tmp_path / "contract.py"
     source.touch()
-    monkeypatch.setattr("dimos.core.isolated_python_module.inspect.getfile", lambda _: str(source))
+    monkeypatch.setattr(
+        "dimos.experimental.isolated_python.module.inspect.getfile", lambda _: str(source)
+    )
     module = Contract()
     try:
         with pytest.raises(FileNotFoundError, match="sibling 'python/'"):
@@ -55,8 +57,10 @@ def test_uv_lock_enables_frozen_commands(tmp_path: Path, monkeypatch: pytest.Mon
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     (checkout / "pyproject.toml").touch()
-    monkeypatch.setattr("dimos.core.isolated_python_module.inspect.getfile", lambda _: str(source))
-    monkeypatch.setattr("dimos.core.isolated_python_module.DIMOS_PROJECT_ROOT", checkout)
+    monkeypatch.setattr(
+        "dimos.experimental.isolated_python.module.inspect.getfile", lambda _: str(source)
+    )
+    monkeypatch.setattr("dimos.experimental.isolated_python.module.DIMOS_PROJECT_ROOT", checkout)
     module = Contract()
     try:
         command = module._launch_command(7)
@@ -84,8 +88,12 @@ def test_installed_host_uses_unversioned_dimos(
     (project / "pyproject.toml").touch()
     installed_root = tmp_path / "site-packages"
     installed_root.mkdir()
-    monkeypatch.setattr("dimos.core.isolated_python_module.inspect.getfile", lambda _: str(source))
-    monkeypatch.setattr("dimos.core.isolated_python_module.DIMOS_PROJECT_ROOT", installed_root)
+    monkeypatch.setattr(
+        "dimos.experimental.isolated_python.module.inspect.getfile", lambda _: str(source)
+    )
+    monkeypatch.setattr(
+        "dimos.experimental.isolated_python.module.DIMOS_PROJECT_ROOT", installed_root
+    )
     module = Contract()
     try:
         command = module._launch_command(7)
@@ -105,7 +113,9 @@ def test_pixi_supplies_uv_when_manifest_exists(
     project.mkdir()
     (project / "pyproject.toml").touch()
     (project / "pixi.toml").touch()
-    monkeypatch.setattr("dimos.core.isolated_python_module.inspect.getfile", lambda _: str(source))
+    monkeypatch.setattr(
+        "dimos.experimental.isolated_python.module.inspect.getfile", lambda _: str(source)
+    )
     module = Contract()
     try:
         assert module._prepare_command() == ["pixi", "run", "--executable", "uv", "sync"]

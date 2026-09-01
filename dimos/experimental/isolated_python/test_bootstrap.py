@@ -16,8 +16,8 @@ import pytest
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.isolated_python_bootstrap import load_class, validate_runtime
-from dimos.core.isolated_python_module import (
+from dimos.experimental.isolated_python.bootstrap import load_class, validate_runtime
+from dimos.experimental.isolated_python.module import (
     IsolatedPythonModule,
     IsolatedPythonModuleConfig,
 )
@@ -82,7 +82,8 @@ def test_valid_runtime_subclass_is_accepted() -> None:
 
 def test_load_class_resolves_entry_point_reference() -> None:
     assert (
-        load_class("dimos.core.isolated_python_module:IsolatedPythonModule") is IsolatedPythonModule
+        load_class("dimos.experimental.isolated_python.module:IsolatedPythonModule")
+        is IsolatedPythonModule
     )
 
 
@@ -93,7 +94,7 @@ def test_load_class_resolves_entry_point_reference() -> None:
         "Runtime",
         ":Runtime",
         "module:",
-        "dimos.core.isolated_python_module.IsolatedPythonModule",
+        "dimos.experimental.isolated_python.module.IsolatedPythonModule",
     ],
 )
 def test_load_class_rejects_invalid_reference(reference: str) -> None:
@@ -103,14 +104,14 @@ def test_load_class_rejects_invalid_reference(reference: str) -> None:
 
 def test_load_class_rejects_non_class_reference() -> None:
     with pytest.raises(TypeError, match="does not resolve to a class"):
-        load_class("dimos.core.isolated_python_bootstrap:load_class")
+        load_class("dimos.experimental.isolated_python.bootstrap:load_class")
 
 
 @pytest.mark.parametrize(
     ("reference", "error"),
     [
         ("missing_isolated_python_module:Runtime", ModuleNotFoundError),
-        ("dimos.core.isolated_python_module:MissingRuntime", AttributeError),
+        ("dimos.experimental.isolated_python.module:MissingRuntime", AttributeError),
     ],
 )
 def test_load_class_preserves_import_errors(reference: str, error: type[Exception]) -> None:

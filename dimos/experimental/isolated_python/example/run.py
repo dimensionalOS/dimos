@@ -14,8 +14,8 @@
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
-from examples.external_python_module.contract import ExampleExternal
-from examples.external_python_module.support import Offset
+from dimos.experimental.isolated_python.example.contract import ExampleExternal
+from dimos.experimental.isolated_python.example.support import Offset
 
 
 def run_example() -> None:
