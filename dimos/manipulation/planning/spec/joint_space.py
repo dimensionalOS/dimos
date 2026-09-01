@@ -43,6 +43,7 @@ _JOINT_COORDINATE_CONFIG = ConfigDict(extra="forbid", validate_default=True)
 _NonEmptyString = Annotated[str, Field(min_length=1)]
 _FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
 _PositiveFiniteFloat = Annotated[float, Field(gt=0.0, allow_inf_nan=False)]
+JointMechanismType = Literal["continuous", "prismatic", "revolute"]
 
 
 @pydantic_dataclass(frozen=True, config=_JOINT_COORDINATE_CONFIG)
@@ -50,7 +51,7 @@ class JointCoordinate:
     """Compiled semantics and motion limits for one scalar URDF joint."""
 
     name: _NonEmptyString
-    mechanism_type: Literal["continuous", "prismatic", "revolute"]
+    mechanism_type: JointMechanismType
     topology: CoordinateTopology
     lower: _FiniteFloat | None
     upper: _FiniteFloat | None

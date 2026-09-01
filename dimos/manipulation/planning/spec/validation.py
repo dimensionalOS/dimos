@@ -30,6 +30,7 @@ from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.joint_space import (
     CoordinateTopology,
     JointCoordinate,
+    JointMechanismType,
     JointSpace,
 )
 from dimos.robot.assets.model import JointDescription, LoadedRobotModel
@@ -159,16 +160,20 @@ def prepare_robot_model(config: RobotModelConfig) -> PreparedRobotModel:
 
 def _compile_joint(joint: JointDescription) -> JointCoordinate:
     lower, upper = joint.lower, joint.upper
+    mechanism_type: JointMechanismType
     if (lower is None) != (upper is None):
         raise ValueError(f"Joint '{joint.name}' must define both lower and upper limits or neither")
 
     if joint.type == "continuous":
+        mechanism_type = "continuous"
         if lower is not None:
             raise ValueError(f"Continuous joint '{joint.name}' must not define position limits")
         topology = CoordinateTopology.CIRCLE
     elif joint.type == "prismatic":
+        mechanism_type = "prismatic"
         topology = CoordinateTopology.LINE if lower is None else CoordinateTopology.INTERVAL
     elif joint.type == "revolute":
+        mechanism_type = "revolute"
         if lower is None:
             raise ValueError(
                 f"Revolute joint '{joint.name}' requires finite position limits; "
@@ -187,7 +192,7 @@ def _compile_joint(joint: JointDescription) -> JointCoordinate:
         )
     return JointCoordinate(
         name=joint.name,
-        mechanism_type=joint.type,
+        mechanism_type=mechanism_type,
         topology=topology,
         lower=lower,
         upper=upper,
