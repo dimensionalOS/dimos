@@ -330,9 +330,7 @@ class PinkIK(_PinkSolverCore):
 
     def _get_model_context(self, world: WorldSpec, frame_name: str) -> _PinkRobotContext:
         if self._model_context is None:
-            self._model_context = self._build_robot_context(
-                world.get_prepared_model(), frame_name
-            )
+            self._model_context = self._build_robot_context(world.get_prepared_model(), frame_name)
             return self._model_context
         if self._model_context.frame_name == frame_name:
             return self._model_context
