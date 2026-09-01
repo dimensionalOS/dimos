@@ -37,7 +37,7 @@ from typing import Any, Protocol
 
 from dimos.cli.cloud import api_key
 from dimos.cloud import codecs
-from dimos.cloud.cloud_transport import CloudTransport, HttpCloudTransport
+from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
 from dimos.constants import DOWNLOADS_DIR, RECORDINGS_DIR
 from dimos.core.global_config import global_config
 
@@ -65,8 +65,8 @@ class DataApi:
 
     PREFIX = "/v1/data"
 
-    def __init__(self, transport: CloudTransport) -> None:
-        self.t = transport
+    def __init__(self, request: CloudRequest) -> None:
+        self.t = request
 
     def create(self, **spec: Any) -> dict[str, Any]:
         return self.t.request("POST", f"{self.PREFIX}/uploads", spec)
@@ -221,11 +221,11 @@ class CloudData:
             key = global_config.dimos_api_key or api_key()
             if not key:
                 raise RuntimeError("not logged in — run `dimos login`")
-            transport = HttpCloudTransport(
+            request = HttpCloudRequest(
                 global_config.dimos_cloud_url, key, global_config.dimos_http_timeout
             )
             backend = BACKENDS[global_config.dimos_cloud_backend](
-                DataApi(transport),
+                DataApi(request),
                 global_config.dimos_upload_codec,
                 global_config.dimos_staging_dir,
                 global_config.dimos_upload_retries,

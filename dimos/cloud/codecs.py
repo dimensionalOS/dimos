@@ -21,11 +21,12 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 import shutil
+from typing import Any
 
 from dimos.constants import CODEC_LIBS
 
 
-def _lib(codec_id: str):  # type: ignore[no-untyped-def]
+def _lib(codec_id: str) -> Any:
     libs = CODEC_LIBS
     if codec_id not in libs:
         raise ValueError(f"unknown codec {codec_id!r}; known: {sorted(libs)}")

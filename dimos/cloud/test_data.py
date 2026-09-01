@@ -273,7 +273,7 @@ def test_pull_with_cross_filesystem_staging(
     )
 
 
-@pytest.mark.parametrize("algo", ["lz4", "gzip", "xz"])
+@pytest.mark.parametrize("algo", ["lz4", "gzip", "bz2", "xz"])
 def test_codecs_interchangeable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, algo: str) -> None:
     t = FakeTransport()
     monkeypatch.setattr(cd, "RECORDINGS_DIR", tmp_path)
@@ -344,9 +344,9 @@ def test_transport_maps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     import urllib.error
     import urllib.request
 
-    from dimos.cloud.cloud_transport import HttpCloudTransport
+    from dimos.cloud.cloud_request import HttpCloudRequest
 
-    t = HttpCloudTransport("https://api.test", "dimos_sk_x", timeout=1)
+    t = HttpCloudRequest("https://api.test", "dimos_sk_x", timeout=1)
 
     def raise_http(code: int) -> Callable[..., Any]:
         def opener(req: Any, timeout: float) -> Any:
