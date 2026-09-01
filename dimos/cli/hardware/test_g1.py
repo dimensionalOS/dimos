@@ -152,6 +152,15 @@ def test_status_discovers_sonic_lifecycle_task(mocker) -> None:
             **_state(armed=True, dry_run=False),
             "control_state": "control",
             "reference_source": "planner",
+            "stream_active": True,
+            "stream_backlog_frames": 3,
+            "policy_timing": {
+                "start_interval_ms": {
+                    "samples": 250,
+                    "mean": 25.0,
+                    "p99": 30.0,
+                }
+            },
             "webxr_teleop": {
                 "mode": "pose_transition",
                 "sonic_pipeline": "sonic-v1.1",
@@ -173,6 +182,8 @@ def test_status_discovers_sonic_lifecycle_task(mocker) -> None:
     assert result.exit_code == 0, result.output
     assert "controller:  sonic_teleop" in result.output
     assert "control:     control" in result.output
+    assert "stream_lag:  3 frames (60 ms)" in result.output
+    assert "policy_rate: 40.0 Hz (mean 25.00 ms, p99 30.00 ms)" in result.output
     assert "webxr:       pose_transition" in result.output
     assert "pipeline:    sonic-v1.1" in result.output
     assert "pose_buffer: 7/10 (waiting)" in result.output

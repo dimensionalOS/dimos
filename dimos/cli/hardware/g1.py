@@ -257,6 +257,20 @@ def status() -> None:
             typer.echo(f"control:     {state['control_state']}")
         if "reference_source" in state:
             typer.echo(f"reference:   {state['reference_source']}")
+        if state.get("stream_active"):
+            backlog = int(state.get("stream_backlog_frames", 0))
+            typer.echo(f"stream_lag:  {backlog} frames ({backlog * 20} ms)")
+        policy_timing = state.get("policy_timing")
+        if isinstance(policy_timing, dict):
+            interval = policy_timing.get("start_interval_ms")
+            if isinstance(interval, dict) and int(interval.get("samples", 0)) > 0:
+                mean_ms = float(interval.get("mean", 0.0))
+                p99_ms = float(interval.get("p99", 0.0))
+                effective_hz = 1000.0 / mean_ms if mean_ms > 0.0 else 0.0
+                typer.echo(
+                    f"policy_rate: {effective_hz:.1f} Hz "
+                    f"(mean {mean_ms:.2f} ms, p99 {p99_ms:.2f} ms)"
+                )
         webxr = state.get("webxr_teleop")
         if isinstance(webxr, dict):
             typer.echo(f"webxr:       {webxr.get('mode', 'unknown')}")

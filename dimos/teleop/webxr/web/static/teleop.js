@@ -6,6 +6,7 @@ window.onerror = (msg, url, line, col, error) => {
 
 import { geometry_msgs, std_msgs, sensor_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
 import { captureBody } from "./webxr_body.mjs";
+import { scheduleTrackingFrame } from "./tracking_timing.mjs";
 
 // WebSocket and WebXR state
 let ws = null;
@@ -14,8 +15,7 @@ let xrRefSpace = null;
 let xrBodyRefSpace = null;
 let xrBodyRefSpaceType = null;
 let gl = null;
-let lastSendTime = 0;
-const sendInterval = 1000 / 80; // ~80Hz target
+let nextTrackingDeadline = null;
 let webXRClientConfig = null;
 const sessionModeSupport = new Map();
 const handSelectActive = new Map();
@@ -486,11 +486,13 @@ function sendJoy(handedness, axes, buttons) {
 
 // Send raw controller and wrist tracking data (no processing - done in Python)
 function processTracking(time, frame) {
-    // Rate limit tracking data
-    if (time - lastSendTime < sendInterval) {
-        return;
-    }
-    lastSendTime = time;
+    const schedule = scheduleTrackingFrame(time, nextTrackingDeadline);
+    nextTrackingDeadline = schedule.nextDeadline;
+    if (!schedule.send) return;
+
+    // Tracking is latest-state data. If the previous batch is still queued,
+    // skip this complete batch instead of replaying stale control later.
+    if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 0) return;
 
     // Process controller and hand input sources.
     for (const inputSource of frame.session.inputSources) {
@@ -633,7 +635,7 @@ async function startWebXRSession(clientConfig) {
 
         xrSession = session;
         hudPlaced = false;
-        lastSendTime = 0;
+        nextTrackingDeadline = null;
 
         // Setup WebGL layer
         const glLayer = new XRWebGLLayer(session, gl);

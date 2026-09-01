@@ -998,6 +998,11 @@ class SonicPipeline:
             "catchup": res.did_catchup_reset,
         }
 
+    def set_pose_window(self, fields: dict[str, NDArray[Any]]) -> dict[str, Any]:
+        """Replace the live pose reference with one complete rolling window."""
+        self._merger.reset()
+        return self.apply_pose_message(fields)
+
     def reset(self) -> None:
         self._his_ang_vel[:] = 0.0
         self._his_joint_pos[:] = 0.0
@@ -1564,6 +1569,11 @@ class SonicPipeline:
     def snapshot(self) -> dict[str, Any]:
         speed = math.hypot(self._vx, self._vy)
         mode = self._mode_override if self._mode_override is not None else self._auto_mode(speed)
+        stream_backlog_frames = (
+            max(self._streamed.timesteps - self._streamed_frame - 1, 0)
+            if self._streamed is not None
+            else 0
+        )
         return {
             "sonic_pipeline": self._profile.name,
             "encoder_obs_dim": self._profile.encoder_obs_dim,
@@ -1580,6 +1590,7 @@ class SonicPipeline:
             "stream_active": self._use_stream,
             "stream_frames": self._streamed.timesteps if self._streamed else 0,
             "stream_frame": self._streamed_frame,
+            "stream_backlog_frames": stream_backlog_frames,
             "stream_encode_mode": self._streamed.encode_mode if self._streamed else -1,
             "reference_transition_active": self.reference_transition_active,
             "reference_transition_progress": self.reference_transition_progress,

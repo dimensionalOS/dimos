@@ -460,19 +460,28 @@ def test_go2_malformed_joy_clears_stale_state_and_publishes_zero_velocity(
         module.stop()
 
 
-def test_webxr_body_reader_is_served_as_javascript(
+@pytest.mark.parametrize(
+    ("asset", "marker"),
+    [
+        ("webxr_body.mjs", "export function captureBody"),
+        ("tracking_timing.mjs", "export function scheduleTrackingFrame"),
+    ],
+)
+def test_webxr_support_modules_are_served_as_javascript(
     mocker: pytest_mock.MockerFixture,
+    asset: str,
+    marker: str,
 ) -> None:
     module = WebXRTeleopModule()
     app = _setup_test_app(module, mocker)
 
     try:
         with TestClient(app) as client:
-            response = client.get("/static/webxr_body.mjs")
+            response = client.get(f"/static/{asset}")
 
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/javascript")
-        assert "export function captureBody" in response.text
+        assert marker in response.text
     finally:
         module.stop()
 
