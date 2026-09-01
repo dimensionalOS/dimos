@@ -12,25 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-TASK_FACTORIES = {
-    "gripper": "dimos.control.tasks.gripper_task.gripper_task:create_task",
-}
+"""Source-tree traversal shared by repository checks."""
 
-# The stream carries normalized opening; native and per-joint targets arrive
-# through TASK_EXPOSES via task_invoke.
-TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
-    "gripper": {
-        "gripper_command": ("on_gripper_command", "broadcast"),
-    },
-}
+from collections.abc import Iterator
+from pathlib import Path
 
-TASK_EXPOSES: dict[str, list[str]] = {
-    "gripper": [
-        "activate",
-        "deactivate",
-        "set_position",
-        "set_normalized",
-        "get_position",
-        "get_normalized",
-    ],
-}
+VIRTUAL_ENVIRONMENT_DIRECTORIES = frozenset({".venv", "venv"})
+
+
+def python_source_files(root: Path) -> Iterator[Path]:
+    """Yield Python source files while excluding generated virtual environments."""
+    for path in root.rglob("*.py"):
+        if not VIRTUAL_ENVIRONMENT_DIRECTORIES.intersection(path.parts):
+            yield path
