@@ -86,7 +86,7 @@ def make_openyam_model_config(
         package_paths=OPENYAM_PACKAGE_PATHS,
     ).with_renamed_joints(dict(zip(joint_names(OPENYAM_DOF), model_joint_names, strict=True)))
     return RobotModelConfig(
-        model=model,
+        model=model.with_default_joint_acceleration_limit(2.0),
         joint_names=model_joint_names,
         base_link="base",
         planning_groups=[

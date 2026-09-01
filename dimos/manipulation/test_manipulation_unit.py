@@ -43,12 +43,18 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType, PlanningStatus
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
 from dimos.manipulation.planning.spec.models import (
     GeneratedPlan,
     IKResult,
     Obstacle,
     PlanningResult,
 )
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.trajectory_generator.config import (
     SimpleTrapezoidParametrizationConfig,
 )
@@ -64,7 +70,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 def _control_coordinator(
@@ -95,8 +101,6 @@ def robot_config():
                 tip_link="link_tcp",
             )
         ],
-        max_velocity=1.0,
-        max_acceleration=2.0,
     )
 
 
@@ -194,6 +198,28 @@ def _make_trajectory(*points: tuple[float, list[float]]) -> JointTrajectory:
 def _enable_simple_parametrization(module: ManipulationModule) -> None:
     module._trajectory_parametrizer = SimpleTrapezoidParametrizer(
         SimpleTrapezoidParametrizationConfig()
+    )
+
+
+def _prepared_model(config: RobotModelConfig) -> PreparedRobotModel:
+    return PreparedRobotModel(
+        config=config,
+        description=LoadedRobotModel("<robot/>", Path("/robot.urdf"), {}),
+        joint_space=JointSpace(
+            tuple(
+                JointCoordinate(
+                    name=name,
+                    mechanism_type="revolute",
+                    topology=CoordinateTopology.INTERVAL,
+                    lower=-1.0,
+                    upper=1.0,
+                    max_velocity=1.0,
+                    max_acceleration=2.0,
+                )
+                for name in config.joint_names
+            )
+        ),
+        planning_groups=(),
     )
 
 
@@ -577,8 +603,10 @@ class TestPlanningInitialization:
         module.config.model = robot_config
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.world.get_model_config.return_value = robot_config
-        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
+        module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
+        module._world_monitor.planning_groups = PlanningGroupRegistry(
+            robot_config.planning_groups
+        )
         current = JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])
         current_model_state = JointState(
             name=["joint1", "joint2", "joint3"],
@@ -641,8 +669,10 @@ class TestPlanningInitialization:
         module.config.model = robot_config
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.world.get_model_config.return_value = robot_config
-        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
+        module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
+        module._world_monitor.planning_groups = PlanningGroupRegistry(
+            robot_config.planning_groups
+        )
         module._world_monitor.current_model_joint_state.return_value = None
         explicit_seed = JointState(name=robot_config.joint_names, position=[0.2, 0.1, 0.0])
         expected = IKResult(status=IKStatus.SUCCESS, joint_state=explicit_seed)
@@ -683,7 +713,7 @@ class TestPlanningGroupApis:
         _enable_simple_parametrization(module)
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.world.get_model_config.return_value = robot_config
+        module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
         module._world_monitor.planning_groups = registry
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=["joint1", "joint2", "joint3"],
@@ -751,7 +781,7 @@ class TestPlanningGroupApis:
         _enable_simple_parametrization(module)
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.world.get_model_config.return_value = robot_config
+        module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
         module._world_monitor.planning_groups = registry
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=["joint1", "joint2", "joint3"],

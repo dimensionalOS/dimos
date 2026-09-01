@@ -57,12 +57,18 @@ from dimos.manipulation.planning.kinematics.pink_solver import (
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
 from dimos.manipulation.planning.spec.models import IKResult
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, PlanarBaseDefinition, RobotModel
 from dimos.utils.transform_utils import matrix_to_pose
 
 _TRACKING_ERROR_RAD = np.deg2rad(10.0)
@@ -404,6 +410,33 @@ def _robot_config() -> RobotModelConfig:
     )
 
 
+def _test_joint_space() -> JointSpace:
+    return JointSpace(
+        tuple(
+            JointCoordinate(
+                name=name,
+                mechanism_type="revolute",
+                topology=CoordinateTopology.INTERVAL,
+                lower=-1.0,
+                upper=1.0,
+                max_velocity=1.0,
+                max_acceleration=2.0,
+            )
+            for name in _robot_config().joint_names
+        )
+    )
+
+
+def _prepared_test_model() -> PreparedRobotModel:
+    config = _robot_config()
+    return PreparedRobotModel(
+        config=config,
+        description=LoadedRobotModel("<robot/>", Path("/tmp/fake.urdf"), {}),
+        joint_space=_test_joint_space(),
+        planning_groups=(),
+    )
+
+
 def _streaming_ik(mocker: MockerFixture, converge: bool = True) -> _StreamingTestPinkIK:
     _install_fake_modules(mocker, converge=converge)
     return _StreamingTestPinkIK(PinkIKConfig(max_iterations=3))
@@ -416,13 +449,15 @@ def _pink_ik(mocker: MockerFixture, converge: bool = True) -> PinkIK:
 
 def _context() -> _PinkRobotContext:
     model = _FakeModel()
-    mapping = _build_joint_mapping(model, _robot_config())
+    joint_space = _test_joint_space()
+    mapping = _build_joint_mapping(model, joint_space)
     return _PinkRobotContext(
         model=model,
         data=model.createData(),
         frame_id=1,
         frame_name="tool",
         mapping=mapping,
+        joint_space=joint_space,
     )
 
 
@@ -433,7 +468,8 @@ def _controlled_context(frame_name: str, controlled_joints: list[str]) -> _PinkR
         data=model.createData(),
         frame_id=model.getFrameId(frame_name),
         frame_name=frame_name,
-        mapping=_build_joint_mapping(model, _robot_config(), controlled_joints),
+        mapping=_build_joint_mapping(model, _test_joint_space(), controlled_joints),
+        joint_space=_test_joint_space().select(tuple(controlled_joints)),
     )
 
 
@@ -449,6 +485,7 @@ def _combined_control_context(
             frame_id=robot.model.getFrameId(frame_name),
             frame_name=frame_name,
             mapping=robot.mapping,
+            joint_space=robot.joint_space,
         )
     return _PinkControlContext(robot=robot, frames=MappingProxyType(frames))
 
@@ -458,6 +495,7 @@ class _FakeWorld:
 
     def __init__(self, collision_free: bool = True) -> None:
         self.config = _robot_config()
+        self.prepared = _prepared_test_model()
         self.collision_free = collision_free
         self.joint_state_calls = 0
         self.groups = {
@@ -481,8 +519,8 @@ class _FakeWorld:
             ),
         }
 
-    def get_model_config(self) -> RobotModelConfig:
-        return self.config
+    def get_prepared_model(self) -> PreparedRobotModel:
+        return self.prepared
 
     def scratch_context(self) -> nullcontext[None]:
         return nullcontext(None)
@@ -576,7 +614,7 @@ def test_pink_ik_config_overrides_are_applied(mocker: MockerFixture) -> None:
 
 
 def test_joint_order_mapping_uses_names_not_positions() -> None:
-    mapping = _build_joint_mapping(_FakeModel(), _robot_config())
+    mapping = _build_joint_mapping(_FakeModel(), _test_joint_space())
     seed = JointState(name=["joint_b", "joint_c", "joint_a"], position=[20.0, 30.0, 10.0])
 
     assert mapping.idx_q == [1, 0, 2]
@@ -589,12 +627,20 @@ def test_planar_mapping_converts_continuous_yaw_to_public_scalar() -> None:
         velocity_limits=(1.0, 1.0, 2.0),
         acceleration_limits=(2.0, 2.0, 4.0),
     )
-    config = RobotModelConfig(
-        model=RobotModel.from_file(Path("/tmp/planar.urdf")).with_planar_base(planar),
-        joint_names=list(planar.joint_names),
-        base_link=planar.root_link,
+    joint_space = JointSpace(
+        (
+            JointCoordinate(
+                planar.joint_names[0], "prismatic", CoordinateTopology.LINE, None, None, 1.0, 2.0
+            ),
+            JointCoordinate(
+                planar.joint_names[1], "prismatic", CoordinateTopology.LINE, None, None, 1.0, 2.0
+            ),
+            JointCoordinate(
+                planar.joint_names[2], "continuous", CoordinateTopology.CIRCLE, None, None, 2.0, 4.0
+            ),
+        )
     )
-    mapping = _build_joint_mapping(cast("Any", _FakePlanarModel()), config)
+    mapping = _build_joint_mapping(cast("Any", _FakePlanarModel()), joint_space)
     q = np.zeros(4)
 
     for index, value in enumerate((10.0, -4.0, np.pi + 0.2)):
@@ -613,15 +659,21 @@ def test_planar_retry_sampling_uses_finite_expanding_translation_window() -> Non
         velocity_limits=(1.0, 1.0, 2.0),
         acceleration_limits=(2.0, 2.0, 4.0),
     )
-    config = RobotModelConfig(
-        model=RobotModel.from_file(Path("/tmp/planar.urdf")).with_planar_base(planar),
-        joint_names=list(planar.joint_names),
-        base_link=planar.root_link,
+    joint_space = JointSpace(
+        (
+            JointCoordinate(
+                planar.joint_names[0], "prismatic", CoordinateTopology.LINE, None, None, 1.0, 2.0
+            ),
+            JointCoordinate(
+                planar.joint_names[1], "prismatic", CoordinateTopology.LINE, None, None, 1.0, 2.0
+            ),
+            JointCoordinate(
+                planar.joint_names[2], "continuous", CoordinateTopology.CIRCLE, None, None, 2.0, 4.0
+            ),
+        )
     )
-    mapping = _build_joint_mapping(cast("Any", _FakePlanarModel()), config)
-
     lower, upper = _finite_retry_limits(
-        mapping,
+        joint_space,
         np.array([100.0, -50.0, 0.0]),
         np.full(3, -np.inf),
         np.full(3, np.inf),
@@ -1154,6 +1206,16 @@ def test_step_frame_targets_rejects_unknown_frame(mocker: MockerFixture, tmp_pat
     model_path = tmp_path / "fake.urdf"
     model_path.write_text("<robot/>")
     config.model = RobotModel.from_file(model_path)
+    mocker.patch.object(
+        pose_target_ik,
+        "prepare_robot_model",
+        return_value=PreparedRobotModel(
+            config=config,
+            description=config.model.load(),
+            joint_space=_test_joint_space(),
+            planning_groups=(),
+        ),
+    )
 
     with pytest.raises(ValueError, match="missing_frame"):
         _StreamingTestPinkIK(PinkIKConfig()).step_frame_targets(
@@ -1170,8 +1232,8 @@ def test_mapping_failure_for_missing_joint() -> None:
     config = _robot_config()
     config.joint_names = ["joint_a", "missing", "joint_c"]
 
-    with pytest.raises(ValueError, match="missing"):
-        _build_joint_mapping(_FakeModel(), config)
+    with pytest.raises(KeyError, match="missing"):
+        _build_joint_mapping(_FakeModel(), _test_joint_space().select(tuple(config.joint_names)))
 
 
 def test_solve_targets_returns_successful_ik_result(mocker: MockerFixture) -> None:
@@ -1422,7 +1484,15 @@ def test_build_robot_context_rejects_base_link_not_model_root(
     config.model = RobotModel.from_file(model_path)
 
     with pytest.raises(ValueError, match="base_link 'base'.*model root"):
-        PinkIK(PinkIKConfig(max_iterations=1))._build_robot_context(config, "tool")
+        PinkIK(PinkIKConfig(max_iterations=1))._build_robot_context(
+            PreparedRobotModel(
+                config=config,
+                description=config.model.load(),
+                joint_space=_test_joint_space(),
+                planning_groups=(),
+            ),
+            "tool",
+        )
 
 
 def test_solve_pose_targets_uses_group_tip_and_filters_group_joints(

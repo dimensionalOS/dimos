@@ -35,6 +35,8 @@ except ImportError as exc:
 
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.joint_space import CoordinateTopology, JointSpace
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -64,6 +66,7 @@ class _PinkRobotContext:
     frame_id: int
     frame_name: str
     mapping: _JointMapping
+    joint_space: JointSpace
 
 
 _CURRENT_POSTURE_TASK = "posture/current"
@@ -243,16 +246,17 @@ class _PinkSolverCore:
 
     def _build_robot_context(
         self,
-        config: RobotModelConfig,
+        prepared: PreparedRobotModel,
         frame_name: str,
         controlled_joints: Sequence[str] | None = None,
     ) -> _PinkRobotContext:
-        description = prepare_urdf_for_drake(config.model.load(), convert_meshes=False)
+        config = prepared.config
+        description = prepare_urdf_for_drake(prepared.description, convert_meshes=False)
         model = pinocchio.buildModelFromXML(description.xml)
 
-        planar = config.model.planar_base
-        if planar is not None:
-            for joint_name in planar.joint_names[:2]:
+        for coordinate in prepared.joint_space.coordinates:
+            if coordinate.topology is CoordinateTopology.LINE:
+                joint_name = coordinate.name
                 joint = model.joints[_get_joint_id(model, joint_name)]
                 model.lowerPositionLimit[int(joint.idx_q)] = -np.inf
                 model.upperPositionLimit[int(joint.idx_q)] = np.inf
@@ -260,13 +264,14 @@ class _PinkSolverCore:
         data = model.createData()
         _assert_base_link_is_model_root(model, config.base_link)
         frame_id = _get_frame_id(model, frame_name)
-        mapping = _build_joint_mapping(model, config, controlled_joints)
+        mapping = _build_joint_mapping(model, prepared.joint_space, controlled_joints)
         return _PinkRobotContext(
             model=model,
             data=data,
             frame_id=frame_id,
             frame_name=frame_name,
             mapping=mapping,
+            joint_space=prepared.joint_space.select(tuple(mapping.dimos_joint_names)),
         )
 
     def _q_from_dimos_positions(
@@ -318,16 +323,13 @@ class _PinkSolverCore:
 
 def _build_joint_mapping(
     model: pinocchio.Model,
-    config: RobotModelConfig,
+    joint_space: JointSpace,
     controlled_joints: Sequence[str] | None = None,
 ) -> _JointMapping:
     idx_q: list[int] = []
     idx_v: list[int] = []
     model_joint_names: list[str] = []
-    dimos_joint_names = list(controlled_joints or config.joint_names)
-    planar = config.model.planar_base
-    yaw_name = planar.joint_names[2] if planar is not None else None
-    translation_names = set(planar.joint_names[:2]) if planar is not None else set()
+    dimos_joint_names = list(controlled_joints or joint_space.names)
     periodic_indices: list[int] = []
     translation_indices: list[int] = []
 
@@ -336,7 +338,8 @@ def _build_joint_mapping(
         joint_id = _get_joint_id(model, model_joint_name)
         joint = model.joints[joint_id]
         nq = int(getattr(joint, "nq", 1))
-        is_periodic = dimos_name == yaw_name
+        topology = joint_space.coordinate(dimos_name).topology
+        is_periodic = topology is CoordinateTopology.CIRCLE
         if nq != (2 if is_periodic else 1):
             raise ValueError(
                 f"PinkIK joint '{model_joint_name}' has nq={nq}; expected {2 if is_periodic else 1}"
@@ -353,7 +356,7 @@ def _build_joint_mapping(
         local_index = len(idx_q) - 1
         if is_periodic:
             periodic_indices.append(local_index)
-        if dimos_name in translation_names:
+        if topology is CoordinateTopology.LINE:
             translation_indices.append(local_index)
 
     return _JointMapping(

@@ -109,7 +109,9 @@ def make_a750_model_config() -> RobotModelConfig:
     dof = 6
     model_joint_names = joint_names(dof)
     return RobotModelConfig(
-        model=RobotModel.from_file(A750_MODEL_PATH, package_paths=A750_PACKAGE_PATHS),
+        model=RobotModel.from_file(
+            A750_MODEL_PATH, package_paths=A750_PACKAGE_PATHS
+        ).with_default_joint_acceleration_limit(2.0),
         joint_names=model_joint_names,
         base_link="base_link",
         planning_groups=[

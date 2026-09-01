@@ -35,8 +35,8 @@ from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle, PlanningGroupID
 from dimos.manipulation.planning.spec.protocols import VisualizationSpec, WorldSpec
 from dimos.manipulation.planning.spec.validation import (
+    PreparedRobotModel,
     validate_obstacle,
-    validate_robot_model_config,
 )
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.robot.assets.model import LoadedRobotModel
@@ -100,13 +100,17 @@ logger = setup_logger()
 class _RobotData:
     """Internal data for tracking a robot in the world."""
 
-    config: RobotModelConfig
+    prepared: PreparedRobotModel
     model_instance: Any  # ModelInstanceIndex
     joint_indices: list[int]  # Indices into plant's position vector
     ee_frame: Any  # BodyFrame for end-effector
     base_frame: Any  # BodyFrame for base
     preview_model_instance: Any = None  # ModelInstanceIndex for preview (yellow) robot
     preview_joint_indices: list[int] = field(default_factory=list)
+
+    @property
+    def config(self) -> RobotModelConfig:
+        return self.prepared.config
 
 
 @dataclass
@@ -210,7 +214,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         # Obstacle source for dynamic obstacles
         self._obstacle_source_id: Any = None
 
-    def load_model(self, config: RobotModelConfig) -> None:
+    def load_model(self, prepared: PreparedRobotModel) -> None:
         """Load the one logical robot model."""
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
@@ -218,10 +222,10 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         with self._lock:
             if self._model is not None:
                 raise ValueError("A model is already loaded")
-            validate_robot_model_config(config)
+            config = prepared.config
             self._validate_planning_group_config(config)
 
-            model_instance = self._load_model(config)
+            model_instance = self._load_model(prepared)
             self._weld_base_if_needed(config, model_instance)
 
             self._validate_joints(config, model_instance)
@@ -241,11 +245,11 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             # Preview (yellow ghost) — always a separate instance per robot
             preview_model_instance = None
             if self._enable_viz:
-                preview_model_instance = self._load_model(config)
+                preview_model_instance = self._load_model(prepared)
                 self._weld_base_if_needed(config, preview_model_instance)
 
             self._model = _RobotData(
-                config=config,
+                prepared=prepared,
                 model_instance=model_instance,
                 joint_indices=[],
                 ee_frame=ee_frame,
@@ -253,10 +257,11 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
                 preview_model_instance=preview_model_instance,
             )
 
-    def _load_model(self, config: RobotModelConfig) -> Any:
+    def _load_model(self, prepared: PreparedRobotModel) -> Any:
         """Load the configured in-memory robot model."""
+        config = prepared.config
         description = prepare_urdf_for_drake(
-            config.model.load(),
+            prepared.description,
             convert_meshes=config.auto_convert_meshes,
         )
         description = self._strip_world_base_joint(description, config)
@@ -340,9 +345,9 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
             except RuntimeError:
                 raise ValueError(f"Joint '{joint_name}' not found in URDF")
 
-    def get_model_config(self) -> RobotModelConfig:
-        """Get the logical robot model configuration."""
-        return self._require_model().config
+    def get_prepared_model(self) -> PreparedRobotModel:
+        """Get the immutable prepared robot model."""
+        return self._require_model().prepared
 
     def get_body_frame(self, link_name: str) -> Any:
         """Return a configured model link frame for Drake-native planning backends."""
@@ -393,56 +398,6 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         if len(pose_groups) > 1:
             raise ValueError("Model has multiple pose groups")
         return pose_groups[0].name
-
-    def get_joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Get lower and upper limits in each joint's native coordinate."""
-        robot_data = self._require_model()
-        config = robot_data.config
-
-        planar_names = (
-            set(config.model.planar_base.joint_names) if config.model.planar_base else set()
-        )
-
-        if config.joint_limits_lower is not None and config.joint_limits_upper is not None:
-            lower = np.array(config.joint_limits_lower, dtype=np.float64)
-            upper = np.array(config.joint_limits_upper, dtype=np.float64)
-            for index, name in enumerate(config.joint_names):
-                if name in planar_names:
-                    lower[index], upper[index] = -np.inf, np.inf
-            return lower, upper
-
-        # Query Drake plant if finalized (limits from URDF/MJCF)
-        if self._finalized:
-            lower_values: list[float] = []
-            upper_values: list[float] = []
-            for joint_name in config.joint_names:
-                joint = self._plant.GetJointByName(joint_name, robot_data.model_instance)
-                lower_val = joint.position_lower_limits()[0]
-                upper_val = joint.position_upper_limits()[0]
-                if joint_name in planar_names:
-                    lower_val, upper_val = -np.inf, np.inf
-                elif not np.isfinite(lower_val) or not np.isfinite(upper_val):
-                    logger.warning(
-                        "Joint '%s' has no limits in model; falling back to ±π", joint_name
-                    )
-                    lower_val = -np.pi if not np.isfinite(lower_val) else lower_val
-                    upper_val = np.pi if not np.isfinite(upper_val) else upper_val
-                lower_values.append(lower_val)
-                upper_values.append(upper_val)
-            return (np.array(lower_values), np.array(upper_values))
-
-        # Pre-finalization fallback
-        n_joints = len(config.joint_names)
-        lower = np.full(n_joints, -np.pi)
-        upper = np.full(n_joints, np.pi)
-        for index, name in enumerate(config.joint_names):
-            if name in planar_names:
-                lower[index], upper[index] = -np.inf, np.inf
-        return lower, upper
-
-    def get_joint_velocity_limits(self) -> NDArray[np.float64]:
-        """Get positive velocity limits in canonical joint order."""
-        return np.asarray(self._require_model().config.canonical_velocity_limits())
 
     # Obstacle Management
 
