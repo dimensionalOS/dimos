@@ -30,6 +30,11 @@
   {{ super() }}
   <script>
     document.addEventListener("click", (event) => {
+      const clip = event.target.closest('.md-code__button[data-md-type="copy"]');
+      if (clip) {
+        clip.classList.add("dim-copied");
+        setTimeout(() => clip.classList.remove("dim-copied"), 1600);
+      }
       const menu = document.querySelector(".dim-markdown");
       if (event.target.closest(".dim-markdown__toggle")) {
         menu.classList.toggle("dim-markdown--open");
