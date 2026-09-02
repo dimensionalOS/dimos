@@ -249,6 +249,8 @@ pub struct Stage {
     pub post: Option<Vec<String>>,
     /// A failure is one `!!` line carrying the child's last output line: never a stop, never a human.
     pub warn_only: bool,
+    /// Successful actions proved health but changed nothing, so the log says `checked`, not `applied`.
+    pub check: bool,
 }
 
 impl Stage {
@@ -260,6 +262,7 @@ impl Stage {
             actions: Vec::new(),
             post: None,
             warn_only: false,
+            check: false,
         }
     }
 
@@ -288,6 +291,11 @@ impl Stage {
 
     pub fn warn_only(mut self) -> Stage {
         self.warn_only = true;
+        self
+    }
+
+    pub fn check(mut self) -> Stage {
+        self.check = true;
         self
     }
 
@@ -343,6 +351,7 @@ impl Mode {
 #[serde(rename_all = "snake_case")]
 pub enum Outcome {
     Applied,
+    Checked,
     Already,
     DryRun,
     Skipped(String),
@@ -353,12 +362,16 @@ pub enum Outcome {
 impl Outcome {
     /// The machine is where the stage wanted it, or a dry run said what would get it there.
     pub fn done(&self) -> bool {
-        matches!(self, Outcome::Applied | Outcome::Already | Outcome::DryRun)
+        matches!(
+            self,
+            Outcome::Applied | Outcome::Checked | Outcome::Already | Outcome::DryRun
+        )
     }
 
     pub fn label(&self) -> &'static str {
         match self {
             Outcome::Applied => "applied",
+            Outcome::Checked => "checked",
             Outcome::Already => "already",
             Outcome::DryRun => "dry_run",
             Outcome::Skipped(_) => "skipped",
@@ -533,6 +546,7 @@ struct StageView<'a> {
     name: &'a str,
     critical: bool,
     consent: bool,
+    check: bool,
     actions: Vec<ActionView<'a>>,
     post: Option<&'a [String]>,
 }
@@ -555,6 +569,7 @@ impl<'a> PlanView<'a> {
                     name: s.name,
                     critical: s.critical,
                     consent: s.consent,
+                    check: s.check,
                     actions: s.actions.iter().map(Action::view).collect(),
                     post: s.post.as_deref(),
                 })
@@ -671,6 +686,7 @@ fn decide(stage: &Stage, ctx: &mut Ctx, command: &str) -> Outcome {
         return stopped;
     }
     match apply(stage, ctx, command) {
+        Ok(()) if stage.check => Outcome::Checked,
         Ok(()) => Outcome::Applied,
         Err(e) if stage.warn_only => Outcome::Skipped(format!("{}: {}", stage.name, last_line(&e))),
         Err(e) if stage.critical => Outcome::Failed(format!("{}: {e:#}", stage.name)),
@@ -756,6 +772,7 @@ fn apply(stage: &Stage, ctx: &Ctx, command: &str) -> Result<()> {
         let started = Instant::now();
         let result = exec_action(action, ctx);
         let outcome = match &result {
+            Ok(_) if stage.check => Outcome::Checked,
             Ok(_) => Outcome::Applied,
             Err(e) => Outcome::Failed(format!("{e:#}")),
         };
@@ -988,29 +1005,38 @@ pub(crate) fn wait_until(child: &mut Child, deadline: Duration) -> Result<Option
 
 /// Drains both pipes so a chatty child never blocks on a full buffer, keeping the last lines.
 struct Tail {
-    lines: Arc<Mutex<VecDeque<String>>>,
+    stdout: Arc<Mutex<VecDeque<String>>>,
+    stderr: Arc<Mutex<VecDeque<String>>>,
     threads: Vec<JoinHandle<()>>,
 }
 
 impl Tail {
     fn attach(child: &mut Child, verbose: bool) -> Tail {
-        let lines = Arc::new(Mutex::new(VecDeque::with_capacity(TAIL_LINES)));
+        let stdout = Arc::new(Mutex::new(VecDeque::with_capacity(TAIL_LINES)));
+        let stderr = Arc::new(Mutex::new(VecDeque::with_capacity(TAIL_LINES)));
         let mut threads = Vec::new();
         if let Some(out) = child.stdout.take() {
-            threads.push(drain(out, Arc::clone(&lines), verbose));
+            threads.push(drain(out, Arc::clone(&stdout), verbose));
         }
         if let Some(err) = child.stderr.take() {
-            threads.push(drain(err, Arc::clone(&lines), verbose));
+            threads.push(drain(err, Arc::clone(&stderr), verbose));
         }
-        Tail { lines, threads }
+        Tail {
+            stdout,
+            stderr,
+            threads,
+        }
     }
 
     fn join(self) -> String {
         for thread in self.threads {
             let _ = thread.join();
         }
-        let lines = self.lines.lock().unwrap_or_else(|e| e.into_inner());
-        lines
+        let stdout = self.stdout.lock().unwrap_or_else(|e| e.into_inner());
+        let stderr = self.stderr.lock().unwrap_or_else(|e| e.into_inner());
+        // Diagnostics conventionally use stderr, so its final line must win the warning summary.
+        let lines: Vec<&String> = stdout.iter().chain(stderr.iter()).collect();
+        lines[lines.len().saturating_sub(TAIL_LINES)..]
             .iter()
             .map(|l| format!("    {l}"))
             .collect::<Vec<_>>()
@@ -1067,7 +1093,7 @@ fn open_shell() {
 
 fn report_stage(name: &str, outcome: &Outcome) {
     match outcome {
-        Outcome::Applied => say::ok(name),
+        Outcome::Applied | Outcome::Checked => say::ok(name),
         Outcome::Already => say::ok(&format!("{name} already")),
         Outcome::DryRun => say::info(&format!("{name} (dry run)")),
         Outcome::Skipped(why) | Outcome::NeedsHuman(why) => say::warn(why),
@@ -1281,8 +1307,13 @@ mod tests {
     }
 
     #[test]
-    fn only_applied_already_and_dry_run_count_as_done() {
-        assert!(Outcome::Applied.done() && Outcome::Already.done() && Outcome::DryRun.done());
+    fn applied_checked_already_and_dry_run_count_as_done() {
+        assert!(
+            Outcome::Applied.done()
+                && Outcome::Checked.done()
+                && Outcome::Already.done()
+                && Outcome::DryRun.done()
+        );
         assert!(!Outcome::Skipped("s".into()).done());
         assert!(!Outcome::NeedsHuman("h".into()).done());
         assert!(!Outcome::Failed("f".into()).done());
@@ -1304,6 +1335,23 @@ mod tests {
             Outcome::Skipped("verify-torch: fix: export LD_PRELOAD=x".to_string())
         );
         assert_eq!(report.exit_code(), 0);
+    }
+
+    #[test]
+    fn a_check_runs_but_never_logs_applied() {
+        let home = TmpDir::new("plan-check");
+        let plan = plan_of(
+            "setup",
+            vec![Stage::new("verify", true).run(&["true"], 10).check()],
+        );
+        let mut c = ctx(home.path(), false);
+        let report = run(&plan, &mut c).unwrap();
+        assert_eq!(report.stages[0].1, Outcome::Checked);
+        let log = fs::read_to_string(c.log.path()).unwrap();
+        assert!(
+            log.lines().all(|line| line.contains("\"checked\"")),
+            "{log}"
+        );
     }
 
     #[test]
@@ -1489,6 +1537,7 @@ mod tests {
         let table = [
             (Outcome::Already, 0),
             (Outcome::Applied, 0),
+            (Outcome::Checked, 0),
             (Outcome::DryRun, 0),
             (Outcome::Skipped("s".into()), 0),
             (Outcome::NeedsHuman("h".into()), 2),

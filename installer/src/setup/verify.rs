@@ -69,6 +69,7 @@ fn verify_stage(target: &Target, venv: &Path, dir: &Path, blueprint: Option<&str
                 CHECK_TIMEOUT_S,
             ))
         })
+        .check()
 }
 
 /// Non-critical: a login shell that missed the rc block earns a `!!`, not a dead install.
@@ -77,7 +78,9 @@ fn login_shell_stage(cyclonedds_home: &Path) -> Stage {
         "test \"$CYCLONEDDS_HOME\" = {}",
         shq(&cyclonedds_home.to_string_lossy())
     );
-    Stage::new("verify-shell", false).push(Action::run(&["bash", "-lc", &script], CHECK_TIMEOUT_S))
+    Stage::new("verify-shell", false)
+        .push(Action::run(&["bash", "-lc", &script], CHECK_TIMEOUT_S))
+        .check()
 }
 
 /// Warn-only: torch absent, or broken by static TLS, is one `!!` line with the fix, never a failure.
@@ -87,6 +90,7 @@ fn torch_stage(venv: &Path) -> Stage {
             &["bash", "-lc", &py(venv, &torch_code())],
             CHECK_TIMEOUT_S,
         ))
+        .check()
         .warn_only()
 }
 
