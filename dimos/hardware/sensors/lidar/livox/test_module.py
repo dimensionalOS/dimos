@@ -17,6 +17,8 @@
 import json
 from pathlib import Path
 
+from pydantic import ValidationError
+import pytest
 import tomllib
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -51,6 +53,11 @@ def test_rust_struct_has_every_config_key() -> None:
         if ": " in line and not line.strip().startswith("//")
     }
     assert declared == _wire_fields()
+
+
+def test_empty_pcap_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="DIMOS_MID360_PCAP"):
+        Mid360Config(pcap="")
 
 
 def test_pcap_mode_skips_host_ip_resolution(monkeypatch) -> None:

@@ -25,10 +25,7 @@ mid360 = autoconnect(
 
 # Replays the capture named by DIMOS_MID360_PCAP (required) through the
 # same driver pipeline as the live sensor.
-mid360_pcap_replay = autoconnect(
-    Mid360.blueprint(
-        pcap=os.environ.get("DIMOS_MID360_PCAP", ""),
-        multicast_ip=None,
-    ),
+demo_mid360_pcap_replay = autoconnect(
+    Mid360.blueprint(pcap=os.environ.get("DIMOS_MID360_PCAP", "")),
     vis_module("rerun"),
 ).global_config(n_workers=2, robot_model="mid360_pcap_replay")

@@ -156,7 +156,7 @@ impl Mid360 {
         if let Nullable(Some(path)) = &config.pcap {
             assert!(
                 !path.is_empty(),
-                "pcap replay selected but the path is empty; set DIMOS_MID360_PCAP or config.pcap"
+                "pcap replay selected but the path is empty"
             );
             let source = PcapSource::from_file(
                 path,

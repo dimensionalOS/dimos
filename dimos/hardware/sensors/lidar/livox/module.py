@@ -31,7 +31,7 @@ import os
 import sys
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
@@ -90,6 +90,13 @@ class Mid360Config(NativeModuleConfig):
     host_cmd_data_port: int = SDK_HOST_CMD_DATA_PORT
     host_point_data_port: int = SDK_HOST_POINT_DATA_PORT
     host_imu_data_port: int = SDK_HOST_IMU_DATA_PORT
+
+    @field_validator("pcap")
+    @classmethod
+    def _pcap_path_present(cls, value: str | None) -> str | None:
+        if value == "":
+            raise ValueError("pcap is empty; set DIMOS_MID360_PCAP or pass a path")
+        return value
 
     def to_config_dict(self) -> dict[str, Any]:
         config = super().to_config_dict()
