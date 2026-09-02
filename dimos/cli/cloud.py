@@ -47,7 +47,9 @@ def _base() -> str:
 
 def _post(path: str, **params: str | int) -> dict[str, Any]:
     url = f"{_base()}{path}?" + urllib.parse.urlencode(params)
-    with urllib.request.urlopen(urllib.request.Request(url, method="POST")) as r:
+    with urllib.request.urlopen(
+        urllib.request.Request(url, method="POST"), timeout=global_config.dimos_http_timeout
+    ) as r:
         return cast("dict[str, Any]", json.load(r))
 
 
@@ -143,7 +145,7 @@ def whoami() -> None:
         f"{_base()}/auth/whoami", headers={"Authorization": f"Bearer {key}"}
     )
     try:
-        with urllib.request.urlopen(req) as r:
+        with urllib.request.urlopen(req, timeout=global_config.dimos_http_timeout) as r:
             who = json.load(r)
     except urllib.error.HTTPError as e:
         typer.echo(
