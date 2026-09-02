@@ -8,8 +8,8 @@ use anyhow::{bail, Result};
 
 use crate::cli::InstallMode;
 use crate::install_record;
-use crate::pkgs::{self, DIMOS_VERSION};
 use crate::plan::{text, Action, Stage};
+use crate::platforms::{self, DIMOS_VERSION};
 
 const REPO_URL: &str = "https://github.com/dimensionalOS/dimos";
 const PYTHON_VERSION: &str = "3.12";
@@ -103,7 +103,7 @@ fn library_actions(dir: &Path, extras: &[String], with_nix: bool, uv: &Path) -> 
             "install".into(),
             "--python".into(),
             text(&install_record::venv_python(dir)),
-            pkgs::pip_spec(extras),
+            platforms::pip_spec(extras),
         ],
     );
     vec![
@@ -169,7 +169,7 @@ fn clone_action(branch: &str, dir: &Path) -> Action {
 /// `--inexact` leaves packages the lockfile does not name, so a hand-installed SDK survives.
 fn sync_action(dir: &Path, extras: &[String], with_nix: bool, uv: &Path) -> Action {
     let mut argv = vec![text(uv), "sync".into(), "--inexact".into()];
-    argv.extend(pkgs::sync_args(extras));
+    argv.extend(platforms::sync_args(extras));
     Action::run_owned(
         nix_wrap(with_nix, dir, argv),
         false,

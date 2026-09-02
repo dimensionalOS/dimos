@@ -4,8 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::install_record;
-use crate::pkgs::{self, Platforms};
 use crate::plan::{owned, text, Action, Stage};
+use crate::platforms::{self, Platforms};
 use crate::probe::{PkgManager, Probes, Tools};
 
 const APT_UPDATE_TIMEOUT_S: u64 = 600;
@@ -19,8 +19,8 @@ const NIX_INSTALLER_URL: &str = "https://nixos.org/nix/install";
 
 fn missing_packages(wanted: &[String], pm: PkgManager, tools: &Tools) -> Vec<String> {
     match pm {
-        PkgManager::Apt => pkgs::missing_apt(wanted, &tools.dpkg_status),
-        PkgManager::Brew => pkgs::missing_brew(wanted, &tools.brew_list),
+        PkgManager::Apt => platforms::missing_apt(wanted, &tools.dpkg_status),
+        PkgManager::Brew => platforms::missing_brew(wanted, &tools.brew_list),
         PkgManager::None => Vec::new(),
     }
 }
@@ -62,7 +62,7 @@ fn install_action(pm: PkgManager, missing: &[String]) -> Option<Action> {
 /// The list refresh and the install, both empty when nothing is missing.
 pub fn packages_stages(extras: &[String], probes: &Probes, cfg: &Platforms) -> Vec<Stage> {
     let pm = probes.platform.pkg;
-    let wanted = pkgs::system_packages(extras, pm, cfg);
+    let wanted = platforms::system_packages(extras, pm, cfg);
     let missing = missing_packages(&wanted, pm, &probes.tools);
     vec![apt_update_stage(pm, &missing), packages_stage(pm, &missing)]
 }
@@ -216,7 +216,7 @@ mod tests {
     }
 
     fn every_package_installed() -> String {
-        pkgs::system_packages(&["base".to_string()], PkgManager::Apt, &Platforms::load())
+        platforms::system_packages(&["base".to_string()], PkgManager::Apt, &Platforms::load())
             .iter()
             .map(|p| format!("{p} install ok installed\n"))
             .collect()

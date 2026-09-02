@@ -1,6 +1,6 @@
 //! `dimos update` is doctor and update in one (brief decision 19): swap the binary, update DimOS in
 //! the recorded directory, re-apply the machine config, then verify. `--dry-run` is the read-only
-//! report — every probe runs, nothing is applied. `observe` is the only I/O outside `plan::run`.
+//! report — every probe runs, nothing is applied. `observe` is the only I/O outside `run::run`.
 
 use std::path::{Path, PathBuf};
 
@@ -8,12 +8,12 @@ use anyhow::{bail, Result};
 
 use crate::cli::{HardwareSetupArgs, InstallMode, UpdateArgs};
 use crate::install_record::{self, Installed};
-use crate::pkgs::{self, Platforms, DIMOS_VERSION};
 use crate::plan::{text, Action, Outcome, Plan, Stage};
+use crate::platforms::{self, Platforms, DIMOS_VERSION};
 use crate::probe::{capture, Probes};
 use crate::run::{self, Ctx, Report};
 use crate::say;
-use crate::setup::{deps, install, sysconfig, verify};
+use crate::setup::{dimos_venv, system_config, system_packages, verify};
 use crate::wizards::nvidia::jetson;
 use crate::wizards::unitree::g1::{self, G1Observed};
 use crate::wizards::Robot;
@@ -302,7 +302,7 @@ fn pip_action(installed: &Installed, uv: &Path) -> Action {
         "install".to_string(),
         "--python".to_string(),
         text(&installed.venv_python()),
-        pkgs::pip_spec(&installed.extras),
+        platforms::pip_spec(&installed.extras),
     ];
     Action::run_owned(argv, false, Some(&installed.dir), &[], PIP_TIMEOUT_S)
 }
@@ -328,7 +328,7 @@ fn pull_action(installed: &Installed) -> Action {
 /// `--inexact` leaves packages the lockfile does not name, so a hand-installed SDK survives.
 fn sync_action(installed: &Installed, uv: &Path) -> Action {
     let mut argv = vec![text(uv), "sync".to_string(), "--inexact".to_string()];
-    argv.extend(pkgs::sync_args(&installed.extras));
+    argv.extend(platforms::sync_args(&installed.extras));
     Action::run_owned(
         argv,
         false,
@@ -349,9 +349,9 @@ fn machine_stages(
     if let (Some(args), Some((sdk, g1_obs))) = (g1_record(installed), &obs.g1) {
         return g1::stages(&args, probes, cfg, installed, g1_obs, sdk, dimos_runs);
     }
-    let mut stages = deps::packages_stages(&installed.extras, probes, cfg);
+    let mut stages = system_packages::packages_stages(&installed.extras, probes, cfg);
     stages.extend([
-        sysconfig::stage(&probes.platform, &probes.kernel, cfg),
+        system_config::stage(&probes.platform, &probes.kernel, cfg),
         jetson::stage(&probes.platform, &probes.kernel),
     ]);
     stages
@@ -382,7 +382,7 @@ fn notes(installed: &Installed, probes: &Probes, skipped: Option<String>) -> Vec
         g1_note(installed),
         jetson::static_tls_note(&probes.platform),
         jetson::thermal_note(&probes.kernel),
-        sysconfig::no_systemd_note(&probes.platform),
+        system_config::no_systemd_note(&probes.platform),
     ]
     .into_iter()
     .flatten()
@@ -397,7 +397,7 @@ pub fn plan(
     obs: &Observed,
     home: &Path,
 ) -> Plan {
-    let uv = deps::uv_bin(&probes.tools, home);
+    let uv = system_packages::uv_bin(&probes.tools, home);
     let (self_update, skipped) = self_update_or_note(args, obs, probes, home);
     let dimos = dimos_stage(installed, &uv, obs, args.force);
     let dimos_runs = !dimos.actions.is_empty();
@@ -435,7 +435,7 @@ fn record(installed: &Installed, obs: &Observed, report: &Report, home: &Path) -
         return Ok(());
     }
     let mut out = installed.clone();
-    out.dimos_version = install::dimos_version_string(
+    out.dimos_version = dimos_venv::dimos_version_string(
         out.mode,
         out.branch.as_deref().unwrap_or_default(),
         obs.remote.as_deref(),
@@ -600,7 +600,7 @@ mod tests {
     fn configured(home: &Path) -> Probes {
         let mut probes = probes(home, install_record::installed_bin(home));
         probes.tools.dpkg_status =
-            pkgs::system_packages(&["base".to_string()], PkgManager::Apt, &Platforms::load())
+            platforms::system_packages(&["base".to_string()], PkgManager::Apt, &Platforms::load())
                 .iter()
                 .map(|p| format!("{p} install ok installed\n"))
                 .collect();
@@ -784,7 +784,7 @@ mod tests {
         let stage = dimos_stage(&inst, Path::new("/uv"), &Observed::default(), false);
         let argv = argv_of(&stage);
         assert_eq!(argv.len(), 1);
-        assert_eq!(argv[0].last().unwrap(), &pkgs::pip_spec(&inst.extras));
+        assert_eq!(argv[0].last().unwrap(), &platforms::pip_spec(&inst.extras));
     }
 
     #[test]

@@ -4,10 +4,10 @@ use anyhow::{bail, Result};
 
 use crate::cli::HardwareSetupArgs;
 use crate::install_record::{Installed, JETSON_CLOCKS_UNIT};
-use crate::pkgs::Platforms;
 use crate::plan::{Plan, Stage};
+use crate::platforms::Platforms;
 use crate::probe::{Kernel, Platform, Probes};
-use crate::setup::{sysconfig, verify};
+use crate::setup::{system_config, verify};
 use crate::wizards::{checks, notes, Robot};
 
 const STEP_TIMEOUT_S: u64 = 60;
@@ -75,7 +75,7 @@ fn clocks_unit_enabled(kernel: &Kernel) -> bool {
 }
 
 fn install_clocks_unit(stage: Stage) -> Stage {
-    sysconfig::unit_actions(JETSON_CLOCKS_UNIT, render_clocks_unit())
+    system_config::unit_actions(JETSON_CLOCKS_UNIT, render_clocks_unit())
         .into_iter()
         .fold(stage, Stage::push)
 }
@@ -96,7 +96,7 @@ pub fn plan(
 ) -> Plan {
     let mut stages = vec![
         stage(&probes.platform, &probes.kernel),
-        sysconfig::stage(&probes.platform, &probes.kernel, cfg),
+        system_config::stage(&probes.platform, &probes.kernel, cfg),
     ];
     stages.extend(checks(verify::Target::Jetson, installed, args));
     Plan {

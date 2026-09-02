@@ -9,8 +9,8 @@ use crate::action_log::action_log_path;
 use crate::install_record;
 use crate::plan::{self, Action, Plan, Stage};
 use crate::run::{self, Ctx};
-use crate::service;
 use crate::setup::self_install::PATH_MARKER;
+use crate::systemd_service;
 use crate::wizards::unitree::g1::CDDS_MARKER;
 
 /// systemctl and rm return immediately; the budget only bounds a hung sudo.
@@ -41,7 +41,7 @@ pub fn observe(home: &Path) -> Existing {
         json: install_record::installer_json(home).exists(),
         log: action_log_path(home).exists(),
         rc_files_with_blocks: rc_files_with_blocks(home),
-        units: service::installed_units(),
+        units: systemd_service::installed_units(),
         sysctl_conf: Path::new(install_record::SYSCTL_CONF).exists(),
         memlock_conf: Path::new(install_record::MEMLOCK_CONF).exists(),
     }

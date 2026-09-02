@@ -168,7 +168,7 @@ pub fn sync_args(extras: &[String]) -> Vec<String> {
 mod tests {
     use super::*;
 
-    include!("../build_support.rs"); // the same pyproject parser build.rs used, so the test is honest
+    include!("../pyproject.rs"); // the same pyproject parser build.rs used, so the test is honest
 
     const PYPROJECT: &str = include_str!("../../pyproject.toml");
 

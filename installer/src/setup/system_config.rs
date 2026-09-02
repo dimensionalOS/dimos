@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::install_record;
-use crate::pkgs::{self, Platforms};
 use crate::plan::{Action, Stage};
+use crate::platforms::{self, Platforms};
 use crate::probe::{Kernel, Os, Platform};
 
 /// sysctl, ip and systemctl all return immediately; the budget only bounds a hung sudo.
@@ -53,7 +53,7 @@ fn write_root(path: PathBuf, contents: String) -> Action {
 
 fn sysctl_actions(kernel: &Kernel, target: &BTreeMap<String, u64>) -> Vec<Action> {
     let conf = render_sysctl_conf(target);
-    let mut actions: Vec<Action> = pkgs::sysctl_updates(&kernel.sysctl, target)
+    let mut actions: Vec<Action> = platforms::sysctl_updates(&kernel.sysctl, target)
         .iter()
         .map(|(key, value)| {
             let setting = format!("{key}={value}");

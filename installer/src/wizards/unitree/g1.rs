@@ -8,10 +8,10 @@ use anyhow::{bail, Result};
 
 use crate::cli::HardwareSetupArgs;
 use crate::install_record::Installed;
-use crate::pkgs::Platforms;
 use crate::plan::{self, text, Action, Plan, Stage};
+use crate::platforms::Platforms;
 use crate::probe::{capture, Arch, Os, Probes, RcFile};
-use crate::setup::{deps, sysconfig, verify};
+use crate::setup::{system_config, system_packages, verify};
 use crate::wizards::nvidia::jetson;
 use crate::wizards::{checks, interface_ready, notes, setup_first, Robot};
 
@@ -362,11 +362,11 @@ pub fn stages(
     venv_changed: bool,
 ) -> Vec<Stage> {
     let home = &probes.platform.home;
-    let uv = deps::uv_bin(&probes.tools, home);
+    let uv = system_packages::uv_bin(&probes.tools, home);
     let python = installed.venv_python();
     let sdk_install = sdk_install_stage(&uv, &python, sdk, &cyclonedds_home(home), obs);
     let reinstalled = venv_changed || !sdk_install.actions.is_empty();
-    let mut stages = deps::packages_stages(&installed.extras, probes, cfg);
+    let mut stages = system_packages::packages_stages(&installed.extras, probes, cfg);
     stages.extend([
         cyclonedds_stage(home, obs),
         sdk_clone_stage(sdk, obs),
@@ -375,7 +375,7 @@ pub fn stages(
         rc_stage(&probes.rc),
         git_https_stage(obs),
         jetson::stage(&probes.platform, &probes.kernel),
-        sysconfig::stage(&probes.platform, &probes.kernel, cfg),
+        system_config::stage(&probes.platform, &probes.kernel, cfg),
         dotenv_stage(&installed.dir, obs, args),
     ]);
     stages

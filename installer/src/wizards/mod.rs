@@ -11,12 +11,12 @@ use anyhow::{bail, Result};
 
 use crate::cli::{HardwareSetupArgs, HardwareTarget, HardwareVerb};
 use crate::install_record::{self, HardwareRun, Installed};
-use crate::pkgs::{self, Platforms};
 use crate::plan::Stage;
+use crate::platforms::{self, Platforms};
 use crate::probe::Probes;
 use crate::run::{self, Ctx, Report};
 use crate::say;
-use crate::setup::{sysconfig, verify};
+use crate::setup::{system_config, verify};
 use crate::wizards::nvidia::jetson;
 use crate::wizards::unitree::g1;
 
@@ -87,7 +87,7 @@ pub fn preflight(
     cfg: &Platforms,
     installed: &Installed,
 ) -> Result<()> {
-    pkgs::validate_extras(&installed.extras, probes.platform.arch, cfg)?;
+    platforms::validate_extras(&installed.extras, probes.platform.arch, cfg)?;
     ready(
         robot,
         args,
@@ -159,7 +159,7 @@ pub(crate) fn notes(probes: &Probes) -> Vec<String> {
     [
         jetson::static_tls_note(&probes.platform),
         jetson::thermal_note(&probes.kernel),
-        sysconfig::no_systemd_note(&probes.platform),
+        system_config::no_systemd_note(&probes.platform),
     ]
     .into_iter()
     .flatten()
@@ -341,7 +341,7 @@ mod tests {
             multicast_route: true,
             memlock_conf_bytes: Some(cfg.linux.memlock_bytes),
             nvpmodel_maxn: Some(true),
-            sysctl_conf: Some(sysconfig::render_sysctl_conf(&cfg.linux.sysctl)),
+            sysctl_conf: Some(system_config::render_sysctl_conf(&cfg.linux.sysctl)),
             enabled_units: vec![
                 format!("{}.service", install_record::MULTICAST_UNIT),
                 format!("{}.service", install_record::JETSON_CLOCKS_UNIT),
@@ -350,7 +350,7 @@ mod tests {
     }
 
     fn every_package_installed(cfg: &Platforms) -> String {
-        pkgs::system_packages(&[UNITREE_EXTRA.to_string()], PkgManager::Apt, cfg)
+        platforms::system_packages(&[UNITREE_EXTRA.to_string()], PkgManager::Apt, cfg)
             .iter()
             .map(|p| format!("{p} install ok installed\n"))
             .collect()

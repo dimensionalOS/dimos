@@ -4,17 +4,17 @@
 
 pub mod action_log;
 pub mod cli;
-pub mod forward;
 pub mod install_record;
-pub mod pkgs;
 pub mod plan;
+pub mod platforms;
 pub mod probe;
-pub mod robot;
+pub mod robot_scan;
 pub mod run;
 pub mod say;
-pub mod service;
 pub mod setup;
 pub mod sudo;
+pub mod systemd_service;
 pub mod uninstall;
 pub mod update;
+pub mod venv_forward;
 pub mod wizards;

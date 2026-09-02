@@ -12,13 +12,15 @@ use dimos_installer::cli::{
     hardware_argv, Cli, Command, HardwareTarget, RobotAction, ServiceAction,
 };
 use dimos_installer::install_record::{self, LastRun};
-use dimos_installer::pkgs::Platforms;
 use dimos_installer::plan::{Action, Plan, Stage};
+use dimos_installer::platforms::Platforms;
 use dimos_installer::probe::Probes;
 use dimos_installer::run::{self, Ctx};
 use dimos_installer::say;
 use dimos_installer::wizards::unitree::g1;
-use dimos_installer::{forward, robot, service, setup, uninstall, update, wizards};
+use dimos_installer::{
+    robot_scan, setup, systemd_service, uninstall, update, venv_forward, wizards,
+};
 
 const SETUP_FIRST: &str = "no DimOS install recorded: run `dimos setup` first";
 
@@ -73,7 +75,7 @@ fn dispatch(
         Command::Hardware { target } => hardware_run(target, ctx, probes, cfg, home),
         Command::Robot {
             action: RobotAction::Scan(args),
-        } => robot::run(args, ctx, probes),
+        } => robot_scan::run(args, ctx, probes),
         Command::Uninstall => uninstall::run(ctx, home),
         Command::External(argv) => forward(argv, home),
     }
@@ -94,12 +96,12 @@ fn forwarded(command: &Command) -> Option<Vec<OsString>> {
 fn forward(argv: &[OsString], home: &Path) -> Result<i32> {
     let cwd = std::env::current_dir().context("no working directory: cd somewhere and re-run")?;
     let venv_env = std::env::var_os("VIRTUAL_ENV").map(PathBuf::from);
-    let Some(path) = forward::venv_dimos(install_record::load(home)?.as_ref(), venv_env, &cwd)
+    let Some(path) = venv_forward::venv_dimos(install_record::load(home)?.as_ref(), venv_env, &cwd)
     else {
-        say::fail(forward::NO_VENV_HINT);
+        say::fail(venv_forward::NO_VENV_HINT);
         return Ok(2);
     };
-    match forward::exec(&path, argv)? {}
+    match venv_forward::exec(&path, argv)? {}
 }
 
 /// `g1 setup` and `jetson setup` are ours; every other `hardware ...` verb is the Python CLI's.
@@ -122,7 +124,7 @@ fn service_run(action: &ServiceAction, ctx: &mut Ctx, probes: &Probes, home: &Pa
         say::fail(SETUP_FIRST);
         return Ok(2);
     };
-    let steps = service::plan(action, installed, &probes.platform, cdds_home(home))?;
+    let steps = systemd_service::plan(action, installed, &probes.platform, cdds_home(home))?;
     let report = run::run(&steps, ctx)?;
     report.print(ctx);
     Ok(report.exit_code())
@@ -253,7 +255,7 @@ mod tests {
         assert_eq!(cmd.get_name(), "dimos");
         assert_eq!(
             cmd.get_version(),
-            Some(dimos_installer::pkgs::DIMOS_VERSION)
+            Some(dimos_installer::platforms::DIMOS_VERSION)
         );
     }
 }
