@@ -208,7 +208,10 @@ def _usb_camera(name: str, device: str) -> Blueprint:
 
 
 class AlfredLiftTeleopConfig(ArmBaseTeleopConfig):
-    lift_speed_m_s: float = 0.01
+    # How far ahead of the live position the jog target rides. Large enough
+    # that the firmware never completes the move while the stick is held, so
+    # motion stays one continuous ramp instead of brake-chopped steps.
+    lift_jog_lookahead_m: float = 0.04
     lift_deadzone: float = 0.25
     lift_engage_center_tolerance: float = 0.15
     lift_command_hz: float = 5.0
@@ -242,9 +245,9 @@ class AlfredLiftTeleopModule(ArmBaseTeleopModule):
         self._lift_press_was_down = False
         self._lift_a_was_down = False
         self._lift_homing_requested = False
+        self._lift_jogging = False
         self._last_lift_rpc_t = 0.0
         self._last_lift_status_t = 0.0
-        self._last_drive_t: float | None = None
 
     def _handle_engage(self) -> None:
         if not self._lift_mode:
@@ -259,6 +262,7 @@ class AlfredLiftTeleopModule(ArmBaseTeleopModule):
         self._lift_homed = False
         self._lift_target = None
         self._lift_homing_requested = False
+        self._lift_jogging = False
         try:
             self._pillar.stop_motion()
         except Exception:
@@ -328,8 +332,6 @@ class AlfredLiftTeleopModule(ArmBaseTeleopModule):
         right: QuestControllerState | None,
     ) -> None:
         now = time.monotonic()
-        dt = 0.0 if self._last_drive_t is None else min(now - self._last_drive_t, 0.1)
-        self._last_drive_t = now
 
         press = bool(left.thumbstick_press) if left is not None else False
         rising = press and not self._lift_press_was_down
@@ -354,25 +356,42 @@ class AlfredLiftTeleopModule(ArmBaseTeleopModule):
         self._publish_safe_base_command()
         self._refresh_lift_status(now)
 
-        if not self._lift_homed:
-            if a_rising:
-                self._request_homing()
+        y = left.thumbstick.y if left is not None else 0.0
+        jogging = abs(y) >= self.config.lift_deadzone
+
+        if a_rising and not jogging:
+            self._request_homing()
             return
 
-        if left is None or self._lift_target is None:
+        if not self._lift_homed:
             return
-        y = left.thumbstick.y
-        if abs(y) < self.config.lift_deadzone:
+
+        was_jogging = self._lift_jogging
+        self._lift_jogging = jogging
+
+        if not jogging:
+            if was_jogging:
+                try:
+                    self._pillar.stop_motion()
+                    self._last_lift_status_t = 0.0
+                    self._refresh_lift_status(now)
+                except Exception:
+                    logger.exception("Pillar stop failed after jog")
             return
-        self._lift_target -= y * self.config.lift_speed_m_s * dt
-        self._lift_target = min(
-            max(self._lift_target, PILLAR_MIN_POSITION_M), PILLAR_MAX_POSITION_M
-        )
+
         if now - self._last_lift_rpc_t < 1.0 / self.config.lift_command_hz:
             return
         self._last_lift_rpc_t = now
         try:
-            self._pillar.set_position(self._lift_target)
+            status = self._pillar.get_status()
+            position = status.get("position_m")
+            if position is None:
+                return
+            direction = -1.0 if y > 0 else 1.0
+            target = position + direction * self.config.lift_jog_lookahead_m
+            target = min(max(target, PILLAR_MIN_POSITION_M), PILLAR_MAX_POSITION_M)
+            self._lift_target = target
+            self._pillar.set_position(target)
         except Exception:
             logger.exception("Pillar position command failed")
             self._exit_lift_mode()
