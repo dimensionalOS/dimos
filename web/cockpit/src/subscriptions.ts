@@ -13,6 +13,19 @@ import { getPanel } from "./panels/registry.tsx";
  * the subscription gate and the raw channel table. */
 export const cockpitDecoders = createDecoderRegistry();
 
+// chat.json.v1 rides the *.json.vN convention, but its entry number is the
+// bridge's, not the message's: a replayed transcript frame and the live
+// original carry the same `n` in the frame meta, and the panel dedupes on it.
+// Fold it into the value so chatFold sees one shaped record either way.
+cockpitDecoders.register("chat.json.v1", (payload, header) => {
+  const value: unknown = JSON.parse(new TextDecoder().decode(payload));
+  const n = header.meta?.n;
+  if (typeof value !== "object" || value === null || typeof n !== "number") {
+    return { value };
+  }
+  return { value: { ...(value as Record<string, unknown>), n } };
+});
+
 // Encodings whose subscription costs real encode CPU and bandwidth;
 // subscribed only when a panel this build can render binds them.
 const PANEL_ONLY_ENCODINGS = new Set(["jpeg.v1", "costmap.zlib.v1"]);

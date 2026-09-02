@@ -96,6 +96,16 @@ def test_control_hello_payload_is_the_datagram_encoding():
     assert decode_datagram(payload) == msg_from_dict(hello["message"])
 
 
+def test_control_subs_payload_is_the_datagram_encoding():
+    # The robot control carrier sends subs snapshots as @control frames with
+    # the same payload-reuses-datagram-encoding rule as control_hello.
+    control = next(v for v in DATA if v["name"] == "control_subs")
+    assert control["header"]["ch"] == CONTROL_CHANNEL
+    subs = next(v for v in DATAGRAMS if v["name"] == "subs_snapshot")
+    payload = base64.b64decode(control["payload_b64"])
+    assert decode_datagram(payload) == msg_from_dict(subs["message"])
+
+
 @pytest.mark.parametrize("vector", CONTROL, ids=[v["name"] for v in CONTROL])
 def test_control_frame_encode_matches_golden(vector):
     msg = msg_from_dict(vector["message"])

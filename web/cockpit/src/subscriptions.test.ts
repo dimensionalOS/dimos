@@ -8,6 +8,7 @@ import {
 } from "@dimos/sdk";
 import {
   channelSubscribable,
+  cockpitDecoders,
   installAutoSubscriptions,
   subscribableChannels,
 } from "./subscriptions.ts";
@@ -38,6 +39,38 @@ const costmap = spec({ ch: "global_costmap", encoding: "costmap.zlib.v1", delive
 const future = spec({ ch: "voxels", encoding: "voxels.bin.v9", delivery: "latest" });
 const videoPanel = panel({ id: "cam", kind: "video", channels: ["color_image"] });
 const mapPanel = panel({ id: "map", kind: "map2d", channels: ["global_costmap", "odom"] });
+
+describe("cockpitDecoders", () => {
+  const header = (meta?: Record<string, unknown>) => ({
+    ch: "agent",
+    seq: 1,
+    ts: 0,
+    delivery: "reliable" as const,
+    ...(meta === undefined ? {} : { meta }),
+  });
+  const decode = (value: unknown, meta?: Record<string, unknown>) =>
+    cockpitDecoders.get("chat.json.v1")!(
+      new TextEncoder().encode(JSON.stringify(value)),
+      header(meta),
+    ).value;
+
+  it("folds the bridge's entry number into the transcript record", () => {
+    // The number is the bridge's replay-log identity, not the message's, so
+    // it rides the frame meta; the panel dedupes a replayed frame against
+    // its live original on it.
+    expect(decode({ role: "ai", content: "quack" }, { n: 7 })).toEqual({
+      role: "ai",
+      content: "quack",
+      n: 7,
+    });
+  });
+
+  it("leaves a frame without a usable n alone rather than inventing one", () => {
+    expect(decode({ role: "ai", content: "quack" })).toEqual({ role: "ai", content: "quack" });
+    expect(decode({ role: "ai" }, { n: "3" })).toEqual({ role: "ai" });
+    expect(decode("not an object", { n: 7 })).toBe("not an object");
+  });
+});
 
 describe("subscribableChannels", () => {
   it("keeps only channels with a decoder (undecodable ones waste bandwidth)", () => {

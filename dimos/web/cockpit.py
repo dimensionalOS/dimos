@@ -36,10 +36,18 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence, Set as AbstractSet
 from dataclasses import dataclass, field, replace
+import json
 import math
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
 
-from dimos.web.relay_bridge.manifest import MANIFEST_VERSION, Dir, parse_manifest
+from dimos.web.relay_bridge.manifest import (
+    MANIFEST_VERSION,
+    MAX_MANIFEST_ID_LEN,
+    RESERVED_CHANNEL_PREFIX,
+    Delivery,
+    Dir,
+    parse_manifest,
+)
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint
@@ -57,6 +65,62 @@ def _check_rate(name: str, value: float) -> None:
         raise ValueError(f"{name} must be a positive finite number, got {value!r}")
 
 
+class _FrozenDict(dict[str, Any]):
+    """Read-only dict for Channel.params: a frozen dataclass must not leak a
+    mutable mapping whose edits would change what a later cockpit() emits.
+    A dict subclass (not mappingproxy) so it stays picklable and
+    json.dumps-able."""
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (_FrozenDict, (dict(self),))
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        raise TypeError("Channel params are immutable")
+
+    def __delitem__(self, key: str) -> None:
+        raise TypeError("Channel params are immutable")
+
+    # dict.__ior__ mutates at the C level (bypassing update()), so it must be
+    # blocked too; deliberately breaking the in-place contract is the whole
+    # point here, which typeshed's dict overloads cannot express.
+    def __ior__(self, other: Any) -> Self:  # type: ignore[override, misc]
+        raise TypeError("Channel params are immutable")
+
+    def clear(self) -> None:
+        raise TypeError("Channel params are immutable")
+
+    def pop(self, key: str, default: Any = None) -> Any:
+        raise TypeError("Channel params are immutable")
+
+    def popitem(self) -> tuple[str, Any]:
+        raise TypeError("Channel params are immutable")
+
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        raise TypeError("Channel params are immutable")
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("Channel params are immutable")
+
+
+def _freeze_params(value: Any) -> Any:
+    """Recursively immutable copy: dicts freeze, lists become tuples."""
+    if isinstance(value, Mapping):
+        return _FrozenDict({key: _freeze_params(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_params(item) for item in value)
+    return value
+
+
+def _thaw_params(value: Any) -> Any:
+    """Plain-JSON deep copy of frozen params (manifests and runtime specs
+    carry ordinary dicts/lists, and pinned manifests compare with ==)."""
+    if isinstance(value, Mapping):
+        return {key: _thaw_params(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_thaw_params(item) for item in value]
+    return value
+
+
 @dataclass(frozen=True)
 class ChannelRequest:
     """One stream a panel needs advertised.
@@ -71,6 +135,101 @@ class ChannelRequest:
     encoding: str
     max_hz: float
     params: Mapping[str, Any] = field(default_factory=dict)
+    delivery: Delivery = field(default="reliable", kw_only=True)
+
+
+@dataclass(frozen=True)
+class Channel:
+    """One explicitly exposed robot<->browser channel (Web SDK authoring).
+
+    Declares a stream for custom frontends without requiring a cockpit
+    panel; pass a sequence of these to cockpit(channels=[...]). A channel
+    naming a stream some panel also requests merges with it: dir, encoding,
+    delivery, and params must agree exactly, max_hz takes the max.
+
+    `encoding` names a codec: a registered @web_encoder (dimos.web.codecs)
+    whose message type must match `message_type`, or the generic "json.v1"
+    for JSON-shaped types and dataclasses. dir/publish/required_scope beyond
+    the rx defaults arrive with the publish ticket (W7).
+    """
+
+    stream: str
+    message_type: type[Any]
+    dir: Dir = field(default="rx", kw_only=True)
+    encoding: str = field(default="json.v1", kw_only=True)
+    delivery: Delivery = field(default="reliable", kw_only=True)
+    max_hz: float = field(default=10.0, kw_only=True)
+    params: Mapping[str, Any] | None = field(default=None, kw_only=True)
+    publish: Literal["none", "shared", "exclusive"] = field(default="none", kw_only=True)
+    required_scope: str | None = field(default=None, kw_only=True)
+    # Replay the newest message to a channel's first viewer, so a page opened
+    # mid-run shows current state instead of waiting for the next publish.
+    resend_on_subscribe: bool = field(default=False, kw_only=True)
+    # False = every message is encoded, maxHz notwithstanding: for an event
+    # stream (a chat turn, a mode flip) a skipped sample is lost data, not a
+    # dropped frame.
+    rate_gate: bool = field(default=True, kw_only=True)
+    # > 1 replays that many past messages to a first viewer (a transcript must
+    # survive a page reload) instead of only the newest. The bridge numbers
+    # the entries and ships the number as the frame's `n` meta.
+    replay_depth: int = field(default=1, kw_only=True)
+
+    def __post_init__(self) -> None:
+        _check_stream("stream", self.stream)
+        if len(self.stream) > MAX_MANIFEST_ID_LEN:
+            raise ValueError(
+                f"stream id {self.stream!r} is longer than {MAX_MANIFEST_ID_LEN} chars"
+            )
+        if self.stream.startswith(RESERVED_CHANNEL_PREFIX):
+            raise ValueError(
+                f"stream id {self.stream!r} is invalid: ids beginning with "
+                f"{RESERVED_CHANNEL_PREFIX!r} are reserved for protocol control"
+            )
+        if not isinstance(self.message_type, type):
+            raise TypeError(f"message_type must be a class, got {self.message_type!r}")
+        if self.dir not in ("rx", "tx"):
+            raise ValueError(f"dir must be 'rx' or 'tx', got {self.dir!r}")
+        if self.dir == "tx":
+            raise ValueError(
+                'dir="tx" channels are not available yet: generic browser-to-robot '
+                "publish is enabled by the publish ticket (W7)"
+            )
+        if not isinstance(self.encoding, str) or not 1 <= len(self.encoding) <= MAX_MANIFEST_ID_LEN:
+            raise ValueError(
+                f"encoding must be 1..{MAX_MANIFEST_ID_LEN} chars, got {self.encoding!r}"
+            )
+        if self.delivery not in ("latest", "reliable"):
+            raise ValueError(f"delivery must be 'latest' or 'reliable', got {self.delivery!r}")
+        _check_rate("max_hz", self.max_hz)
+        if self.publish not in ("none", "shared", "exclusive"):
+            raise ValueError(
+                f"publish must be 'none', 'shared', or 'exclusive', got {self.publish!r}"
+            )
+        if self.publish != "none":
+            raise ValueError("rx channels must use publish='none' (generic publish is tx-only, W7)")
+        if self.required_scope is not None:
+            raise ValueError(
+                "rx channels cannot set required_scope (reserved for tx publish channels, W7)"
+            )
+        if not isinstance(self.replay_depth, int) or isinstance(self.replay_depth, bool):
+            raise ValueError(f"replay_depth must be an int, got {self.replay_depth!r}")
+        if self.replay_depth < 1:
+            raise ValueError(f"replay_depth must be >= 1, got {self.replay_depth}")
+        if self.replay_depth > 1 and not self.resend_on_subscribe:
+            raise ValueError("replay_depth > 1 requires resend_on_subscribe=True")
+        if self.params is not None and not isinstance(self.params, Mapping):
+            raise ValueError(f"params must be a mapping or None, got {self.params!r}")
+        params = {} if self.params is None else dict(self.params)
+        if any(not isinstance(key, str) for key in params):
+            raise ValueError("params keys must be strings")
+        try:
+            # Params ride the manifest verbatim; non-JSON values (bytes,
+            # arrays) and non-finite numbers must fail at authoring, not at
+            # manifest parse or on the wire.
+            json.dumps(params, allow_nan=False)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"params must be JSON-shaped: {e}") from e
+        object.__setattr__(self, "params", _freeze_params(params))
 
 
 class Panel(ABC):
@@ -110,7 +269,14 @@ class Video(Panel):
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
         return (
-            ChannelRequest(self.stream, "rx", "jpeg.v1", self.max_hz, {"quality": self.quality}),
+            ChannelRequest(
+                self.stream,
+                "rx",
+                "jpeg.v1",
+                self.max_hz,
+                {"quality": self.quality},
+                delivery="latest",
+            ),
         )
 
 
@@ -133,7 +299,11 @@ class Map2D(Panel):
         _check_rate("pose_hz", self.pose_hz)
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
-        requests = [ChannelRequest(self.costmap, "rx", "costmap.zlib.v1", self.costmap_hz)]
+        requests = [
+            ChannelRequest(
+                self.costmap, "rx", "costmap.zlib.v1", self.costmap_hz, delivery="latest"
+            )
+        ]
         if self.pose is not None:
             requests.append(ChannelRequest(self.pose, "rx", "pose.json.v1", self.pose_hz))
         return tuple(requests)
@@ -179,6 +349,7 @@ class Teleop(Panel):
                     "boost": self.boost,
                     "watchdogMs": self.watchdog_ms,
                 },
+                delivery="latest",
             ),
         )
 
@@ -247,11 +418,11 @@ class NavMap(Panel):
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
         return (
-            ChannelRequest(self.costmap, "rx", "costmap.zlib.v1", 2.0),
+            ChannelRequest(self.costmap, "rx", "costmap.zlib.v1", 2.0, delivery="latest"),
             ChannelRequest(self.pose, "rx", "pose.json.v1", 10.0),
-            ChannelRequest(self.path, "rx", "path.json.v1", 5.0),
+            ChannelRequest(self.path, "rx", "path.json.v1", 5.0, delivery="latest"),
             ChannelRequest(self.places, "rx", "places.json.v1", 2.0),
-            ChannelRequest(self.nav_state, "rx", "navstate.json.v1", 10.0),
+            ChannelRequest(self.nav_state, "rx", "navstate.json.v1", 10.0, delivery="latest"),
             ChannelRequest(self.goal, "tx", "pose_goal.json.v1", 5.0),
             ChannelRequest(self.command, "tx", "command.json.v1", 10.0),
         )
@@ -289,8 +460,8 @@ class Control(Panel):
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
         return (
             ChannelRequest(self.mode, "rx", "mode.json.v1", 10.0),
-            ChannelRequest(self.policies, "rx", "policy.json.v1", 10.0),
-            ChannelRequest(self.nav_state, "rx", "navstate.json.v1", 10.0),
+            ChannelRequest(self.policies, "rx", "policy.json.v1", 10.0, delivery="latest"),
+            ChannelRequest(self.nav_state, "rx", "navstate.json.v1", 10.0, delivery="latest"),
             ChannelRequest(self.command, "tx", "command.json.v1", 10.0),
         )
 
@@ -351,34 +522,45 @@ def build_manifest_data(
     pages: Sequence[Panel],
     *,
     registry: Mapping[str, tuple[str, str]],
-    rx_streams: AbstractSet[str],
     tx_streams: AbstractSet[str],
     tx_registry: Mapping[str, tuple[str, str]] | None = None,
+    channels: Sequence[ChannelRequest] = (),
     extra_channels: Sequence[ChannelRequest] = (),
 ) -> dict[str, Any]:
-    """Compile a layout tree + pages into a plain manifest-v1 dict.
+    """Compile a layout tree + pages + explicit channels into a manifest-v1
+    dict.
 
     Shared by cockpit() and the bridge's availability-driven default
     manifest (default_manifest in relay_bridge_module.py). `registry` and
-    `tx_registry` map stream name -> (encoding, delivery) in advertisement
-    order (the bridge's CHANNELS/TX_CHANNELS tables); rx/tx_streams are the
-    module's typed In/Out names. Panel ids are p0..pN in tree order (layout
-    depth-first, then pages). Channels requested by several panels merge:
-    max_hz takes the max, any other disagreement raises. `extra_channels`
-    are advertised channel-only unless a panel already requested the stream.
+    `tx_registry` map built-in stream name -> (encoding, delivery) in
+    advertisement order (the bridge's BUILTIN_CHANNELS/TX_CHANNELS tables);
+    tx_streams are the module's typed Out names. Panel ids are p0..pN in
+    tree order (layout depth-first, then pages).
+
+    Panel requests and `channels` (cockpit(channels=...) declarations) run
+    through one merge: dir, encoding, delivery, and params must agree,
+    max_hz takes the max. An rx stream outside `registry` is legal only when
+    `channels` declares it (the caller resolves its codec and port type).
+    `extra_channels` are advertised channel-only unless something already
+    requested the stream.
+
+    Advertisement order: rx built-ins in registry order, then rx customs in
+    first-declaration order, then tx in tx_registry order - so manifests
+    without custom channels keep their historical channel order.
     """
     tx_registry = {} if tx_registry is None else tx_registry
-    channels: dict[str, ChannelRequest] = {}
+    merged: dict[str, ChannelRequest] = {}
     panels_out: list[dict[str, Any]] = []
 
     def merge(request: ChannelRequest) -> None:
-        previous = channels.get(request.stream)
+        previous = merged.get(request.stream)
         if previous is None:
-            channels[request.stream] = request
+            merged[request.stream] = request
             return
-        same = (previous.dir, previous.encoding, dict(previous.params)) == (
+        same = (previous.dir, previous.encoding, previous.delivery, dict(previous.params)) == (
             request.dir,
             request.encoding,
+            request.delivery,
             dict(request.params),
         )
         if not same:
@@ -387,7 +569,7 @@ def build_manifest_data(
                 f"{previous!r} vs {request!r}"
             )
         if request.max_hz > previous.max_hz:
-            channels[request.stream] = replace(previous, max_hz=request.max_hz)
+            merged[request.stream] = replace(previous, max_hz=request.max_hz)
 
     def add_panel(panel: Panel) -> str:
         panel_id = f"p{len(panels_out)}"
@@ -424,18 +606,27 @@ def build_manifest_data(
             raise ValueError(f"pages entries must be panels, got {page!r}")
         page_ids.append(add_panel(page))
 
-    for stream, request in channels.items():
+    for request in channels:
+        merge(request)
+
+    declared = {request.stream for request in channels}
+    for stream, request in merged.items():
         if request.dir == "rx":
-            if stream not in rx_streams or stream not in registry:
+            if stream in registry:
+                expected_encoding, expected_delivery = registry[stream]
+                if expected_encoding != request.encoding:
+                    raise ValueError(
+                        f"stream {stream!r} encodes {expected_encoding}, not {request.encoding} "
+                        f"(wrong panel type for this stream?)"
+                    )
+                if expected_delivery != request.delivery:
+                    raise ValueError(
+                        f"stream {stream!r} delivers {expected_delivery}, not {request.delivery}"
+                    )
+            elif stream not in declared:
                 raise ValueError(
                     f"unknown stream {stream!r}; this robot bridge supports: "
-                    f"{', '.join(sorted(registry))}"
-                )
-            expected_encoding = registry[stream][0]
-            if expected_encoding != request.encoding:
-                raise ValueError(
-                    f"stream {stream!r} encodes {expected_encoding}, not {request.encoding} "
-                    f"(wrong panel type for this stream?)"
+                    f"{', '.join(sorted(set(registry) | declared))}"
                 )
         else:
             if stream not in tx_streams:
@@ -454,19 +645,22 @@ def build_manifest_data(
                     f"stream {stream!r} encodes {expected[0]}, not {request.encoding} "
                     f"(wrong panel type for this stream?)"
                 )
+            if expected[1] != request.delivery:
+                raise ValueError(
+                    f"stream {stream!r} delivers {expected[1]}, not {request.delivery}"
+                )
 
     for request in extra_channels:
-        if request.stream not in channels:
-            channels[request.stream] = request
+        if request.stream not in merged:
+            merged[request.stream] = request
 
-    # Registry order, not first-request order: the advertisement order is the
-    # bridge's channel-table order (rx table, then tx table) however panels
-    # were nested.
-    ordered = [channels[stream] for stream in registry if stream in channels]
-    ordered += [channels[stream] for stream in tx_registry if stream in channels]
-    delivery = {
-        stream: pair[1] for table in (registry, tx_registry) for stream, pair in table.items()
-    }
+    ordered = [merged[stream] for stream in registry if stream in merged]
+    ordered += [
+        request
+        for stream, request in merged.items()
+        if request.dir == "rx" and stream not in registry
+    ]
+    ordered += [merged[stream] for stream in tx_registry if stream in merged]
     return {
         "version": MANIFEST_VERSION,
         "channels": [
@@ -474,7 +668,7 @@ def build_manifest_data(
                 "ch": request.stream,
                 "dir": request.dir,
                 "encoding": request.encoding,
-                "delivery": delivery[request.stream],
+                "delivery": request.delivery,
                 "maxHz": request.max_hz,
                 "params": dict(request.params),
             }
@@ -486,51 +680,123 @@ def build_manifest_data(
     }
 
 
-def _tx_registry(table: Sequence[Any]) -> dict[str, tuple[str, str]]:
-    """stream -> (encoding, delivery) from the bridge's tx channel table,
-    whose rows are `(ch, encoding, delivery)` tuples or channel-def objects
-    with `.ch/.encoding/.delivery` attributes."""
-    registry: dict[str, tuple[str, str]] = {}
-    for row in table:
-        if isinstance(row, tuple):
-            ch, encoding, delivery = row[0], row[1], row[2]
-        else:
-            ch, encoding, delivery = row.ch, row.encoding, row.delivery
-        registry[ch] = (encoding, delivery)
-    return registry
+def cockpit(
+    layout: Panel | Row | Col | None = None,
+    pages: Sequence[Panel] = (),
+    channels: Sequence[Channel] = (),
+) -> Blueprint:
+    """Cockpit blueprint for the given layout (default: `_default_preset`)
+    plus explicitly exposed channels.
 
+    Walks the tree, merges panel requests with the `channels` declarations,
+    compiles the manifest, validates it eagerly, resolves every rx channel's
+    codec, and returns a relay bridge blueprint carrying it all; compose
+    onto a robot with `autoconnect(robot_blueprint, cockpit(...))`. Channels
+    whose stream is not a built-in bridge port get a generated
+    RelayBridgeModule subclass with matching typed ports (autoconnected by
+    name + message type). Streams whose producer never publishes are still
+    advertised: their panels show "waiting for data" (no runtime stream
+    probing).
 
-def cockpit(layout: Panel | Row | Col | None = None, pages: Sequence[Panel] = ()) -> Blueprint:
-    """Cockpit blueprint for the given layout (default: `_default_preset`).
-
-    Walks the tree, compiles the manifest, validates it eagerly, and returns
-    a RelayBridgeModule blueprint carrying it; compose onto a robot with
-    `autoconnect(robot_blueprint, cockpit(...))`. Streams whose producer
-    never publishes are still advertised: their panels show "waiting for
-    data" (no runtime stream probing).
+    The default preset layout applies only when neither a layout nor
+    channels are given; cockpit(channels=[...]) alone compiles with no
+    panels and no layout.
     """
+    declared: dict[str, Channel] = {}
+    for entry in channels:
+        if not isinstance(entry, Channel):
+            raise ValueError(f"channels entries must be Channel, got {entry!r}")
+        if entry.stream in declared:
+            raise ValueError(f"duplicate channel declaration for stream {entry.stream!r}")
+        declared[entry.stream] = entry
     try:
+        from dimos.web.relay_bridge.dynamic import DynamicPortSpec, make_relay_bridge_class
         from dimos.web.relay_bridge.relay_bridge_module import (
-            CHANNELS,
+            BUILTIN_CHANNELS,
             TX_CHANNELS,
             RelayBridgeModule,
+            RuntimeChannelSpec,
         )
     except ImportError as e:
         raise RuntimeError(
             "the cockpit blueprint needs the web extra: `uv sync --extra web --inexact`"
         ) from e
     from dimos.core.coordination.blueprints import autoconnect
+    from dimos.web.codecs import resolve_encoder
 
     atom = RelayBridgeModule.blueprint().blueprints[0]
+    port_types = {s.name: s.type for s in atom.streams}
+    builtin_by_ch = {b.ch: b for b in BUILTIN_CHANNELS}
     data = build_manifest_data(
-        _default_preset() if layout is None else layout,
+        _default_preset() if layout is None and not declared else layout,
         tuple(pages),
-        registry={cd.ch: (cd.encoding, cd.delivery) for cd in CHANNELS},
-        rx_streams={s.name for s in atom.streams if s.direction == "in"},
+        registry={b.ch: (b.encoding, b.delivery) for b in BUILTIN_CHANNELS},
         tx_streams={s.name for s in atom.streams if s.direction == "out"},
-        tx_registry=_tx_registry(TX_CHANNELS),
+        tx_registry={ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS},
+        channels=tuple(
+            ChannelRequest(
+                c.stream,
+                c.dir,
+                c.encoding,
+                c.max_hz,
+                # Deep plain copy: the manifest and specs must not alias the
+                # (frozen) authoring record's nested values.
+                _thaw_params(c.params or {}),
+                delivery=c.delivery,
+            )
+            for c in declared.values()
+        ),
     )
     # The domain parser is the authority; authoring bugs must fail at
     # blueprint definition time, not at robot start.
     parse_manifest(data)
-    return autoconnect(RelayBridgeModule.blueprint(manifest=data))
+
+    specs: list[RuntimeChannelSpec] = []
+    ports: list[DynamicPortSpec] = []
+    for wire in data["channels"]:
+        if wire["dir"] != "rx":
+            continue
+        ch = wire["ch"]
+        explicit = declared.get(ch)
+        builtin = builtin_by_ch.get(ch)
+        if builtin is not None:
+            message_type = port_types[ch]
+            if explicit is not None and explicit.message_type is not message_type:
+                raise ValueError(
+                    f"channel {ch!r}: message type {explicit.message_type.__qualname__} "
+                    f"does not match the bridge port type {message_type.__qualname__}"
+                )
+        else:
+            assert explicit is not None  # build_manifest_data rejected the rest
+            message_type = explicit.message_type
+            ports.append(DynamicPortSpec(ch, message_type, "rx"))
+        try:
+            codec = resolve_encoder(wire["encoding"], message_type)
+            if codec.check_params is not None:
+                codec.check_params(wire["params"])
+        except ValueError as e:
+            raise ValueError(f"channel {ch!r}: {e}") from e
+        specs.append(
+            RuntimeChannelSpec(
+                ch=ch,
+                message_type=message_type,
+                dir="rx",
+                encoding=wire["encoding"],
+                delivery=wire["delivery"],
+                max_hz=float(wire["maxHz"]),
+                params=dict(wire["params"]),
+                encoder=codec.encode,
+                encoder_takes_params=codec.takes_params,
+                resend_on_subscribe=(
+                    builtin.resend_on_subscribe
+                    if builtin is not None
+                    else explicit is not None and explicit.resend_on_subscribe
+                ),
+                rate_gate=explicit.rate_gate if explicit is not None else True,
+                replay_depth=explicit.replay_depth if explicit is not None else 1,
+            )
+        )
+    # Generated classes carry only the custom ports; the built-ins are
+    # inherited. No custom streams means the plain static class.
+    module_class = make_relay_bridge_class(ports) if ports else RelayBridgeModule
+    return autoconnect(module_class.blueprint(manifest=data, channels=tuple(specs)))

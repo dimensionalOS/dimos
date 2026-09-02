@@ -38,6 +38,8 @@ from __future__ import annotations
 
 import os
 
+from langchain_core.messages.base import BaseMessage
+
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.ollama_agent import ollama_installed
@@ -46,7 +48,13 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.mapping.voxels.module import VoxelGridMapper
+from dimos.msgs.nav_msgs.Path import Path as NavPath
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+
+# Imported for the registration side effect: the cockpit blueprint resolves
+# these encoders by id when it compiles MICRODUCK_COCKPIT_CHANNELS.
+from dimos.robot.microduck import web_codecs  # noqa: F401
 from dimos.robot.microduck.control_module import DuckControlModule
 from dimos.robot.microduck.places import (
     FOUR_ROOM_XML,
@@ -55,7 +63,17 @@ from dimos.robot.microduck.places import (
 )
 from dimos.robot.microduck.sim_module import LIDAR_CAMERA_SPECS, MicroduckSimModule
 from dimos.robot.microduck.skills import MicroduckSkillContainer
-from dimos.web.cockpit import Chat, Col, Control, NavMap, Row, Teleop, Video, cockpit
+from dimos.web.cockpit import (
+    Channel,
+    Chat,
+    Col,
+    Control,
+    NavMap,
+    Row,
+    Teleop,
+    Video,
+    cockpit,
+)
 
 # Robot model + policy set; see policies.py for the two variants.
 _VARIANT = os.environ.get("MICRODUCK_VARIANT", "default")
@@ -77,6 +95,11 @@ _DUCK_STUCK_THRESHOLD = 0.15
 # command gain); faster teleop requests only saturate.
 _TELEOP_MAX_LINEAR = 0.15
 _TELEOP_MAX_ANGULAR = 0.6
+
+# Chase camera: the sim renders it at 12 fps, so capping the cockpit there
+# saves re-encoding frames nobody produced.
+_CHASE_CAM_HZ = 12.0
+_CHASE_CAM_QUALITY = 70
 
 MICRODUCK_COCKPIT_SYSTEM_PROMPT = """\
 You are the brain of Microduck, a tiny (25 cm tall) two-legged duck robot
@@ -114,7 +137,10 @@ actions finish.
 MICRODUCK_COCKPIT_LAYOUT = Col(
     Control(),
     Row(
-        Video("chase_image", title="Chase cam"),
+        # Rate/quality are pinned here and mirrored by the chase_image
+        # Channel below (a panel and a channel for one stream must agree on
+        # everything but max_hz); the sim renders the chase cam at 12 fps.
+        Video("chase_image", title="Chase cam", max_hz=_CHASE_CAM_HZ, quality=_CHASE_CAM_QUALITY),
         Col(
             NavMap(),
             Row(
@@ -130,6 +156,87 @@ MICRODUCK_COCKPIT_LAYOUT = Col(
         ),
         Chat(),
         shares=[5, 4, 3],
+    ),
+)
+
+# The streams the panels above need that no robot bridge has a built-in port
+# for. Declaring them here (rather than in the bridge) is what keeps duck
+# vocabulary out of dimos.web: cockpit() generates a typed port per entry and
+# resolves the encoder from web_codecs by id.
+#
+# All of them resend on subscribe - a cockpit opened mid-run must show the
+# duck's current mode, places and nav state instead of waiting for the next
+# publish - and the event-shaped ones skip the rate gate, because a missed
+# sample there is lost data, not a dropped frame.
+MICRODUCK_COCKPIT_CHANNELS = (
+    Channel(
+        "chase_image",
+        Image,
+        encoding="jpeg.v1",
+        delivery="latest",
+        max_hz=_CHASE_CAM_HZ,
+        params={"quality": _CHASE_CAM_QUALITY},
+        resend_on_subscribe=True,
+    ),
+    Channel(
+        "agent",
+        BaseMessage,
+        encoding="chat.json.v1",
+        max_hz=30.0,
+        resend_on_subscribe=True,
+        rate_gate=False,
+        # A reload must not lose the conversation so far.
+        replay_depth=200,
+    ),
+    Channel(
+        "agent_idle",
+        bool,
+        encoding="flag.json.v1",
+        max_hz=10.0,
+        resend_on_subscribe=True,
+        rate_gate=False,
+    ),
+    Channel(
+        "path",
+        NavPath,
+        encoding="path.json.v1",
+        delivery="latest",
+        max_hz=5.0,
+        resend_on_subscribe=True,
+    ),
+    Channel(
+        "nav_state",
+        str,
+        encoding="navstate.json.v1",
+        delivery="latest",
+        max_hz=10.0,
+        resend_on_subscribe=True,
+        rate_gate=False,
+    ),
+    Channel(
+        "mode",
+        str,
+        encoding="mode.json.v1",
+        max_hz=10.0,
+        resend_on_subscribe=True,
+        rate_gate=False,
+    ),
+    Channel(
+        "places",
+        str,
+        encoding="places.json.v1",
+        max_hz=2.0,
+        resend_on_subscribe=True,
+        rate_gate=False,
+    ),
+    Channel(
+        "policy_state",
+        str,
+        encoding="policy.json.v1",
+        delivery="latest",
+        max_hz=10.0,
+        resend_on_subscribe=True,
+        rate_gate=False,
     ),
 )
 
@@ -187,7 +294,7 @@ def _stack(mcp_client_kwargs: dict[str, object]):  # type: ignore[no-untyped-def
             ObserveSkill.blueprint(),
             McpServer.blueprint(),
             McpClient.blueprint(system_prompt=MICRODUCK_COCKPIT_SYSTEM_PROMPT, **mcp_client_kwargs),
-            cockpit(layout=MICRODUCK_COCKPIT_LAYOUT),
+            cockpit(layout=MICRODUCK_COCKPIT_LAYOUT, channels=MICRODUCK_COCKPIT_CHANNELS),
         )
         .remappings([(VoxelGridMapper, "lidar", "pointcloud")])
         # nerf_speed halves the planner's 0.55 m/s default; the sim module's

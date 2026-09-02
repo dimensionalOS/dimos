@@ -17,12 +17,18 @@
 from dataclasses import dataclass
 import json
 import pickle
+import struct
 import subprocess
 import sys
 
 import pytest
 
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.web.cockpit import (
+    Channel,
     ChannelRequest,
     Chat,
     Col,
@@ -33,10 +39,10 @@ from dimos.web.cockpit import (
     Row,
     Teleop,
     Video,
-    _tx_registry,
     build_manifest_data,
     cockpit,
 )
+from dimos.web.codecs import EncodedPayload, encode_json_v1, web_encoder
 from dimos.web.relay_bridge.locate import find_web_dir
 from dimos.web.relay_bridge.manifest import parse_manifest
 from dimos.web.relay_bridge.protocol import (
@@ -46,7 +52,7 @@ from dimos.web.relay_bridge.protocol import (
     RobotInfo,
     encode_datagram,
 )
-from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
+from dimos.web.relay_bridge.relay_bridge_module import TX_CHANNELS, RelayBridgeModule
 
 # The frozen-contract example (see the plan/spec): what the go2 cockpit
 # blueprint authors. Golden below is exact; edits here are manifest changes
@@ -260,6 +266,284 @@ def test_go2_hello_fits_the_control_payload_cap() -> None:
     assert size <= MAX_CONTROL_PAYLOAD_BYTES, f"go2 hello grew to {size} B"
 
 
+@dataclass(frozen=True)
+class _OpsNote:
+    text: str
+    priority: int
+
+
+@web_encoder("path.ck.v1")
+def _encode_path_xy(msg: Path) -> EncodedPayload:
+    payload = b"".join(struct.pack("<ff", p.position.x, p.position.y) for p in msg.poses)
+    return EncodedPayload(payload, {"n": len(msg.poses)})
+
+
+def test_channel_tx_rejected_until_publish_ticket() -> None:
+    with pytest.raises(ValueError, match="publish ticket"):
+        Channel("goal", dict, dir="tx")
+
+
+def test_channel_rx_publish_policy() -> None:
+    with pytest.raises(ValueError, match="publish='none'"):
+        Channel("note", dict, publish="shared")
+    with pytest.raises(ValueError, match="publish='none'"):
+        Channel("note", dict, publish="exclusive")
+    with pytest.raises(ValueError, match="required_scope"):
+        Channel("note", dict, required_scope="chat:send")
+
+
+def test_channel_message_type_must_be_a_class() -> None:
+    with pytest.raises(TypeError, match="message_type must be a class"):
+        Channel("note", "str")
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Channel("", dict),
+        lambda: Channel("x" * 65, dict),
+        lambda: Channel("@note", dict),
+        lambda: Channel("note", dict, dir="sideways"),
+        lambda: Channel("note", dict, encoding=""),
+        lambda: Channel("note", dict, encoding="x" * 65),
+        lambda: Channel("note", dict, delivery="mostly"),
+        lambda: Channel("note", dict, max_hz=0),
+        lambda: Channel("note", dict, max_hz=True),
+        lambda: Channel("note", dict, publish="all"),
+        lambda: Channel("note", dict, params=[("a", 1)]),
+    ],
+    ids=[
+        "empty_stream",
+        "long_stream",
+        "reserved_stream",
+        "bad_dir",
+        "empty_encoding",
+        "long_encoding",
+        "bad_delivery",
+        "zero_rate",
+        "bool_rate",
+        "bad_publish",
+        "params_not_mapping",
+    ],
+)
+def test_channel_validation_errors(build) -> None:
+    with pytest.raises(ValueError):
+        build()
+
+
+def test_channel_params_are_copied() -> None:
+    params = {"scale": 2, "nested": {"a": [1, 2]}}
+    channel = Channel("note", dict, params=params)
+    params["scale"] = 99
+    params["nested"]["a"].append(3)
+    assert channel.params == {"scale": 2, "nested": {"a": (1, 2)}}
+
+
+def test_channel_params_are_immutable() -> None:
+    channel = Channel("note", dict, params={"scale": 2, "nested": {"a": [1, 2]}})
+    with pytest.raises(TypeError, match="immutable"):
+        channel.params["scale"] = 10
+    with pytest.raises(TypeError, match="immutable"):
+        del channel.params["scale"]
+    with pytest.raises(TypeError, match="immutable"):
+        channel.params.update({"scale": 10})
+    with pytest.raises(TypeError, match="immutable"):
+        channel.params["nested"]["a"] = []
+    # Nested sequences freeze to tuples: no append surface at all.
+    assert channel.params["nested"]["a"] == (1, 2)
+    restored = pickle.loads(pickle.dumps(channel))
+    assert restored.params == channel.params
+    with pytest.raises(TypeError, match="immutable"):
+        restored.params["scale"] = 10
+
+
+def test_channel_params_must_be_json_shaped() -> None:
+    with pytest.raises(ValueError, match="params keys must be strings"):
+        Channel("note", dict, params={1: "x"})
+    with pytest.raises(ValueError, match="JSON-shaped"):
+        Channel("note", dict, params={"blob": b"\x00"})
+    with pytest.raises(ValueError, match="JSON-shaped"):
+        Channel("note", dict, params={"n": float("nan")})
+
+
+def test_channel_nested_params_emit_plain_json_in_the_manifest() -> None:
+    blueprint = cockpit(
+        channels=[Channel("cfg", dict, params={"tags": ["a", "b"], "nested": {"n": 1}})]
+    )
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    (channel,) = manifest["channels"]
+    # The frozen authoring form (tuples/_FrozenDict) must not leak into the
+    # manifest: pinned manifests compare with == and json round-trips must
+    # be idempotent.
+    assert channel["params"] == {"tags": ["a", "b"], "nested": {"n": 1}}
+    assert isinstance(channel["params"]["tags"], list)
+    assert type(channel["params"]["nested"]) is dict
+    assert parse_manifest(manifest).model_dump() == manifest
+    (spec,) = atom.kwargs["channels"]
+    assert isinstance(spec.params["tags"], list)
+
+
+def test_channels_only_blueprint() -> None:
+    blueprint = cockpit(
+        channels=[
+            Channel("nav_path", Path, encoding="path.ck.v1", delivery="reliable", max_hz=20.0),
+            Channel("ops_note", _OpsNote),
+        ]
+    )
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    assert [c["ch"] for c in manifest["channels"]] == ["nav_path", "ops_note"]
+    assert manifest["channels"][0]["encoding"] == "path.ck.v1"
+    assert manifest["panels"] == [] and manifest["layout"] is None and manifest["pages"] == []
+    assert parse_manifest(manifest).model_dump() == manifest
+    # Custom streams ride a generated RelayBridgeModule subclass with real
+    # typed ports.
+    assert atom.module is not RelayBridgeModule
+    assert issubclass(atom.module, RelayBridgeModule)
+    assert any(
+        s.name == "nav_path" and s.type is Path and s.direction == "in" for s in atom.streams
+    )
+    specs = atom.kwargs["channels"]
+    assert [s.ch for s in specs] == ["nav_path", "ops_note"]
+    assert specs[0].encoder is _encode_path_xy and specs[0].message_type is Path
+    assert specs[0].encoder_takes_params is False
+    assert specs[1].encoder is encode_json_v1 and specs[1].message_type is _OpsNote
+    # Blueprint kwargs cross the forkserver Pipe: class identity and the
+    # by-reference encoder must survive pickling.
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert ratom.module is atom.module
+    assert ratom.kwargs["channels"][0].encoder is _encode_path_xy
+    assert ratom.kwargs["manifest"] == manifest
+
+
+def test_default_path_channels_kwarg_matches_manifest() -> None:
+    (atom,) = cockpit().blueprints
+    assert atom.module is RelayBridgeModule
+    specs = atom.kwargs["channels"]
+    rx = [c["ch"] for c in GO2_MANIFEST["channels"] if c["dir"] == "rx"]
+    assert [s.ch for s in specs] == rx
+    assert all(s.encoder is not None for s in specs)
+    costmap = next(s for s in specs if s.ch == "global_costmap")
+    assert costmap.resend_on_subscribe
+
+
+def test_pages_only_still_gets_the_default_preset() -> None:
+    manifest = manifest_of(cockpit(pages=[Video("color_image", max_hz=12.0)]))
+    # The preset grid keeps ids p0..p2; the page panel follows as p3.
+    assert [p["id"] for p in manifest["panels"]] == ["p0", "p1", "p2", "p3"]
+    assert manifest["pages"] == ["p3"]
+
+
+def test_explicit_channel_merges_with_panel_request() -> None:
+    blueprint = cockpit(
+        layout=Video("front_cam", quality=60, max_hz=12.0),
+        channels=[
+            Channel(
+                "front_cam",
+                Image,
+                encoding="jpeg.v1",
+                delivery="latest",
+                max_hz=24.0,
+                params={"quality": 60},
+            )
+        ],
+    )
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    (channel,) = manifest["channels"]
+    assert channel["ch"] == "front_cam" and channel["maxHz"] == 24.0
+    assert manifest["panels"][0]["channels"] == ["front_cam"]
+    assert any(s.name == "front_cam" and s.type is Image for s in atom.streams)
+
+
+@pytest.mark.parametrize(
+    "channel",
+    [
+        Channel("front_cam", Image, encoding="jpeg.v1", delivery="latest", params={"quality": 90}),
+        Channel("front_cam", Image),
+        Channel(
+            "front_cam", Image, encoding="jpeg.v1", delivery="reliable", params={"quality": 60}
+        ),
+    ],
+    ids=["params_conflict", "encoding_conflict", "delivery_conflict"],
+)
+def test_explicit_channel_conflicts_with_panel_raise(channel: Channel) -> None:
+    with pytest.raises(ValueError, match="conflicting requirements for stream 'front_cam'"):
+        cockpit(layout=Video("front_cam", quality=60), channels=[channel])
+
+
+def test_builtin_stream_type_and_table_mismatches() -> None:
+    with pytest.raises(ValueError, match="does not match the bridge port type PoseStamped"):
+        cockpit(channels=[Channel("odom", Twist, encoding="pose.json.v1")])
+    with pytest.raises(ValueError, match="'odom' encodes pose.json.v1, not json.v1"):
+        cockpit(channels=[Channel("odom", PoseStamped)])
+    with pytest.raises(ValueError, match="'odom' delivers reliable, not latest"):
+        cockpit(channels=[Channel("odom", PoseStamped, encoding="pose.json.v1", delivery="latest")])
+
+
+def test_json_v1_requires_explicit_codec_for_large_types() -> None:
+    # A mistaken image declaration must fail at authoring, not serialize a
+    # pixel buffer per frame.
+    with pytest.raises(
+        ValueError, match=r"'snapshot'.*Image.*not supported by json\.v1.*@web_encoder"
+    ):
+        cockpit(channels=[Channel("snapshot", Image)])
+
+
+def test_unregistered_custom_encoding_names_the_decorator() -> None:
+    with pytest.raises(
+        ValueError, match=r"'blob'.*no encoder registered.*@web_encoder\('blob\.bin\.v9'\)"
+    ):
+        cockpit(channels=[Channel("blob", dict, encoding="blob.bin.v9")])
+
+
+def test_panel_on_undeclared_custom_stream_still_raises_unknown() -> None:
+    # The typo guard survives channels=: panels alone cannot mint streams,
+    # and the error lists the declared ones next to the built-ins.
+    with pytest.raises(ValueError, match="unknown stream 'lidr'.*nav_path"):
+        cockpit(
+            layout=Video("lidr"),
+            channels=[Channel("nav_path", Path, encoding="path.ck.v1", delivery="reliable")],
+        )
+
+
+def test_duplicate_channel_declaration_raises() -> None:
+    with pytest.raises(ValueError, match="duplicate channel declaration for stream 'note'"):
+        cockpit(channels=[Channel("note", dict), Channel("note", dict)])
+
+
+def test_non_channel_entry_raises() -> None:
+    with pytest.raises(ValueError, match="channels entries must be Channel"):
+        cockpit(channels=[Video("color_image")])
+
+
+@pytest.mark.parametrize("stream", ["encoded", "ref", "class"])
+def test_reserved_stream_names_rejected(stream: str) -> None:
+    with pytest.raises(ValueError):
+        cockpit(channels=[Channel(stream, dict)])
+
+
+def test_channel_ordering_builtins_then_customs() -> None:
+    blueprint = cockpit(
+        layout=GO2_LAYOUT,
+        channels=[
+            Channel("target_pose", PoseStamped, encoding="pose.json.v1", max_hz=5.0),
+            Channel("ops_note", _OpsNote),
+        ],
+    )
+    (atom,) = blueprint.blueprints
+    assert [c["ch"] for c in atom.kwargs["manifest"]["channels"]] == [
+        "color_image",
+        "odom",
+        "global_costmap",
+        "target_pose",
+        "ops_note",
+        "tele_cmd_vel",
+    ]
+
+
 def test_import_stays_light() -> None:
     # The authoring surface must be importable without the [web] extra:
     # neither the bridge module nor aioquic may load until cockpit() runs.
@@ -441,7 +725,6 @@ MICRODUCK_MANIFEST = {
 def build_microduck(layout, pages=(), **overrides) -> dict:
     kwargs = dict(
         registry=MICRODUCK_RX_REGISTRY,
-        rx_streams=set(MICRODUCK_RX_REGISTRY),
         tx_streams=set(MICRODUCK_TX_REGISTRY),
         tx_registry=MICRODUCK_TX_REGISTRY,
     )
@@ -509,7 +792,9 @@ def test_microduck_duplicate_panels_merge_to_max_rate() -> None:
     class SlowControl(Control):
         def _channel_requests(self):
             return tuple(
-                ChannelRequest(r.stream, r.dir, r.encoding, r.max_hz / 2, r.params)
+                ChannelRequest(
+                    r.stream, r.dir, r.encoding, r.max_hz / 2, r.params, delivery=r.delivery
+                )
                 for r in super()._channel_requests()
             )
 
@@ -597,24 +882,14 @@ def test_microduck_manifest_pickles() -> None:
     assert pickle.loads(pickle.dumps(MICRODUCK_LAYOUT)).children[0] == Control()
 
 
-def test_tx_registry_accepts_tuples_and_channel_defs() -> None:
-    # cockpit() reads the bridge's TX_CHANNELS table, which is a tuple table
-    # today and a table of channel-def objects (ch/encoding/delivery + tx
-    # model fields) once the bridge grows more tx channels.
-    @dataclass(frozen=True)
-    class TxDef:
-        ch: str
-        encoding: str
-        delivery: str
-        min_interval_s: float = 0.0
-
-    assert _tx_registry(
-        [
-            ("tele_cmd_vel", "twist.json.v1", "latest"),
-            TxDef("ui_command", "command.json.v1", "reliable", 0.05),
-        ]
-    ) == {
+def test_tx_channel_defs_unpack_as_wire_triples() -> None:
+    # cockpit() and the bridge's manifest check both read TX_CHANNELS by
+    # unpacking each row as (ch, encoding, delivery). The rows carry the tx
+    # model and rate floor too, so that unpacking is what keeps the richer
+    # table compatible with both readers.
+    assert {ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS} == {
         "tele_cmd_vel": ("twist.json.v1", "latest"),
+        "human_input": ("text.json.v1", "reliable"),
+        "goal_request": ("pose_goal.json.v1", "reliable"),
         "ui_command": ("command.json.v1", "reliable"),
     }
-    assert _tx_registry(()) == {}

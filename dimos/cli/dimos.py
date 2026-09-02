@@ -52,6 +52,7 @@ from dimos.cli.cloud import login as cloud_login, logout as cloud_logout, whoami
 from dimos.cli.commands.apriltag import apriltag
 from dimos.cli.commands.bake import bake
 from dimos.cli.commands.cameracalibrate import cameracalibrate
+from dimos.cli.commands.data import data_app
 from dimos.cli.commands.dataprep import dataprep_app
 from dimos.cli.commands.docs import docs
 from dimos.cli.commands.global_options import create_dynamic_callback
@@ -102,6 +103,7 @@ def cli_main() -> None:
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 hardware_app.add_typer(can_app, name="can")
 main.add_typer(hardware_app, name="hardware")
+main.add_typer(data_app, name="data")
 main.add_typer(go2tool_app, name="go2tool")
 main.command()(shell)
 main.add_typer(cache_app, name="cache")

@@ -101,8 +101,14 @@ back up; the chip shows the reason.
 - `assets/room_scene.xml` — a 4 x 3 m walled room with four colored objects.
   World geometry is geom group 0; the lidar only raycasts group 0, so the
   robot (groups 2/3) never sees itself.
-- `blueprints/` — `microduck-sim` (sim + nav + explorer) and
-  `microduck-agentic-sim[-ollama]` (adds McpServer/McpClient + skills).
+- `web_codecs.py` — the cockpit's own `@web_encoder`s (the transcript, the
+  planner path, the JSON-string state streams). The blueprint declares the
+  matching streams as `Channel(...)` and `cockpit()` generates a relay-bridge
+  subclass with a typed port for each, so none of this robot's vocabulary -
+  or its langchain dependency - lands in `dimos.web`.
+- `blueprints/` — `microduck-sim` (sim + nav + explorer),
+  `microduck-agentic-sim[-ollama]` (adds McpServer/McpClient + skills) and
+  `microduck-cockpit-sim[-ollama]` (the web cockpit above).
 
 ## Quirks worth knowing
 

@@ -233,6 +233,13 @@ const dataFrames: Record<string, { header: FrameHeader; payload: Uint8Array }> =
     header: { ch: CONTROL_CHANNEL, seq: 1, ts: 1752576000.5, delivery: "reliable" },
     payload: encodeDatagram(controlMsgs.hello_robot),
   },
+  // Robot-bound subs snapshot as the relay's control carrier sends it: an
+  // @control frame on the relay-opened reliable uni stream, same
+  // payload-reuses-datagram-encoding rule as control_hello.
+  control_subs: {
+    header: { ch: CONTROL_CHANNEL, seq: 2, ts: 1752576000.75, delivery: "reliable" },
+    payload: encodeDatagram(controlMsgs.subs_snapshot),
+  },
 };
 
 // Manifest vectors: valid cases pin normalization, invalid cases pin the
