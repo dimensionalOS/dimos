@@ -8,7 +8,7 @@ use anyhow::{bail, Result};
 
 use crate::cli::InstallMode;
 use crate::pkgs::{self, DIMOS_VERSION};
-use crate::plan::{Action, Stage};
+use crate::plan::{text, Action, Stage};
 use crate::state;
 
 const REPO_URL: &str = "https://github.com/dimensionalOS/dimos";
@@ -74,7 +74,7 @@ pub fn dimos_version_string(mode: InstallMode, branch: &str, git_rev: Option<&st
     }
 }
 
-/// The critical install stage; its post-condition is that the new venv can import dimos.
+/// The critical install stage; the verify stage, with its own budget, proves the import.
 pub fn dimos_stage(
     mode: InstallMode,
     dir: &Path,
@@ -88,11 +88,9 @@ pub fn dimos_stage(
         InstallMode::Library => library_actions(dir, extras, with_nix, uv),
         InstallMode::Dev => dev_actions(dir, extras, branch, with_nix, uv, state)?,
     };
-    let python = text(&state::venv_python(dir));
-    let stage = actions
+    Ok(actions
         .into_iter()
-        .fold(Stage::new("dimos", true), Stage::push);
-    Ok(stage.post(&[&python, "-c", "import dimos"]))
+        .fold(Stage::new("dimos", true), Stage::push))
 }
 
 fn library_actions(dir: &Path, extras: &[String], with_nix: bool, uv: &Path) -> Vec<Action> {
@@ -110,8 +108,8 @@ fn library_actions(dir: &Path, extras: &[String], with_nix: bool, uv: &Path) -> 
     );
     vec![
         Action::run(&["mkdir", "-p", &text(dir)], MKDIR_TIMEOUT_S),
-        run_in(venv_argv(uv, dir), None, &[], VENV_TIMEOUT_S),
-        run_in(install, Some(dir), &[], INSTALL_TIMEOUT_S),
+        Action::run_owned(venv_argv(uv, dir), false, None, &[], VENV_TIMEOUT_S),
+        Action::run_owned(install, false, Some(dir), &[], INSTALL_TIMEOUT_S),
     ]
 }
 
@@ -143,24 +141,14 @@ fn dev_actions(
     }
     let mut actions = Vec::new();
     if *state == DirState::Absent {
-        actions.push(run_in(
-            clone_argv(branch, dir),
-            None,
-            &[("GIT_LFS_SKIP_SMUDGE", "1")],
-            CLONE_TIMEOUT_S,
-        ));
+        actions.push(clone_action(branch, dir));
     }
-    actions.push(run_in(
-        nix_wrap(with_nix, dir, sync_argv(uv, extras)),
-        Some(dir),
-        &[("GIT_LFS_SKIP_SMUDGE", "1"), ("UV_PYTHON", PYTHON_VERSION)],
-        INSTALL_TIMEOUT_S,
-    ));
+    actions.push(sync_action(dir, extras, with_nix, uv));
     Ok(actions)
 }
 
-fn clone_argv(branch: &str, dir: &Path) -> Vec<String> {
-    vec![
+fn clone_action(branch: &str, dir: &Path) -> Action {
+    let argv = vec![
         "git".into(),
         "clone".into(),
         "-b".into(),
@@ -168,14 +156,27 @@ fn clone_argv(branch: &str, dir: &Path) -> Vec<String> {
         "--single-branch".into(),
         REPO_URL.into(),
         text(dir),
-    ]
+    ];
+    Action::run_owned(
+        argv,
+        false,
+        None,
+        &[("GIT_LFS_SKIP_SMUDGE", "1")],
+        CLONE_TIMEOUT_S,
+    )
 }
 
 /// `--inexact` leaves packages the lockfile does not name, so a hand-installed SDK survives.
-fn sync_argv(uv: &Path, extras: &[String]) -> Vec<String> {
+fn sync_action(dir: &Path, extras: &[String], with_nix: bool, uv: &Path) -> Action {
     let mut argv = vec![text(uv), "sync".into(), "--inexact".into()];
     argv.extend(pkgs::sync_args(extras));
-    argv
+    Action::run_owned(
+        nix_wrap(with_nix, dir, argv),
+        false,
+        Some(dir),
+        &[("GIT_LFS_SKIP_SMUDGE", "1"), ("UV_PYTHON", PYTHON_VERSION)],
+        INSTALL_TIMEOUT_S,
+    )
 }
 
 /// `nix develop` supplies the system libraries (libGL, mesa) the wheels link against.
@@ -191,15 +192,6 @@ fn nix_wrap(with_nix: bool, dir: &Path, argv: Vec<String>) -> Vec<String> {
     ];
     wrapped.extend(argv);
     wrapped
-}
-
-fn run_in(argv: Vec<String>, cwd: Option<&Path>, env: &[(&str, &str)], timeout_s: u64) -> Action {
-    let borrowed: Vec<&str> = argv.iter().map(String::as_str).collect();
-    Action::run_in(&borrowed, cwd, env, timeout_s)
-}
-
-fn text(path: &Path) -> String {
-    path.display().to_string()
 }
 
 #[cfg(test)]
@@ -348,17 +340,10 @@ mod tests {
     }
 
     #[test]
-    fn the_stage_is_critical_and_post_conditions_on_importing_dimos() {
+    fn the_stage_is_critical_and_leaves_the_import_check_to_the_verify_stage() {
         let stage = stage(InstallMode::Library, &DirState::Absent, false);
         assert!(stage.critical);
-        assert_eq!(
-            stage.post,
-            Some(vec![
-                "/home/u/dimos-app/.venv/bin/python".to_string(),
-                "-c".to_string(),
-                "import dimos".to_string()
-            ])
-        );
+        assert_eq!(stage.post, None);
     }
 
     #[test]

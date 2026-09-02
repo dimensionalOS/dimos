@@ -29,14 +29,16 @@ pub fn observe(home: &Path, venv_python: &Path, dir: &Path) -> Observed;   // th
 pub fn <thing>_stage(home: &Path, obs: &Observed) -> Stage;                // one per stage
 ```
 
-`observe` is read-only, so it runs under `--dry-run` too. Everything else is a pure function of its
-result: same probes in, same plan out, and an empty `Stage.actions` means "already there".
+`observe` is read-only, so it runs under `--dry-run` too, and every command it runs goes through
+`probe::capture(program, args, env, timeout_s)` so a wedged robot cannot hang it. Everything else
+is a pure function of its result: same probes in, same plan out, and an empty `Stage.actions`
+means "already there".
 
 ---
 
 ## 2. The contract
 
-### `Action` — `src/plan.rs:28`
+### `Action` — `src/plan.rs:29`
 
 ```rust
 pub enum Action {
@@ -53,6 +55,8 @@ pub enum Action {
 }
 
 impl Action {
+    /// The one Run constructor; `run`, `sudo` and `run_in` are its borrowed spellings.
+    pub fn run_owned(argv: Vec<String>, sudo: bool, cwd: Option<&Path>, env: &[(&str, &str)], timeout_s: u64) -> Action;
     pub fn run(argv: &[&str], timeout_s: u64) -> Action;
     pub fn sudo(argv: &[&str], timeout_s: u64) -> Action;
     /// A Run with a working directory and environment; never sudo, which would drop the env.
@@ -60,13 +64,16 @@ impl Action {
     pub fn display(&self) -> String;            // the `--dry-run` line and the consent prompt
     pub fn view(&self) -> state::ActionView<'_>; // the redacted shape the action log gets
 }
+
+pub fn owned(argv: &[&str]) -> Vec<String>;   // the one way to build an owned argv
+pub fn text(path: &Path) -> String;           // the one spelling of a path as an argv word
 ```
 
 A sudo action that needs an environment carries it in argv (`["env", "K=V", "cmd", ...]`) — see the
 rules. A systemd unit is `sysconfig::unit_actions(name, contents)`: write as root, `daemon-reload`,
 `enable --now`.
 
-### `Stage` and `Plan` — `src/plan.rs:200`, `src/plan.rs:258`
+### `Stage` and `Plan` — `src/plan.rs:241`, `src/plan.rs:319`
 
 ```rust
 pub struct Stage {
@@ -78,6 +85,8 @@ pub struct Stage {
     pub actions: Vec<Action>,
     /// argv that must exit 0 after the actions; the post-condition, not the verify stage.
     pub post: Option<Vec<String>>,
+    /// A failure is one `!!` line carrying the child's last output line: never a stop, never a human.
+    pub warn_only: bool,
 }
 
 impl Stage {
@@ -87,16 +96,20 @@ impl Stage {
     pub fn sudo(self, argv: &[&str], timeout_s: u64) -> Stage;
     pub fn post(self, argv: &[&str]) -> Stage;
     pub fn consent(self) -> Stage;
+    pub fn warn_only(self) -> Stage;
     pub fn needs_sudo(&self) -> bool;
 }
 
 pub struct Plan { pub command: String, pub stages: Vec<Stage>, pub notes: Vec<String> }
 ```
 
-`notes` is the only way a stage builder reaches the operator with something it did not plan — a
-warning, a manual step, a reason a stage is empty. Push them in `<robot>_plan`, not in the stage.
+A critical stage that fails, is declined, or cannot get root stops the plan. A `warn_only` stage
+(the torch import, `apt-get update`) prints `!! <stage>: <the child's last line>` and the plan goes
+on with exit 0, so write the check so its last line is the operator's fix. `notes` is the only way
+a stage builder reaches the operator with something it did not plan — a warning, a manual step, a
+reason a stage is empty. Push them in `<robot>_plan`, not in the stage.
 
-### Probes — `src/probe.rs:115`
+### Probes — `src/probe.rs:123`
 
 ```rust
 pub struct Probes {
@@ -105,29 +118,36 @@ pub struct Probes {
                               // nvpmodel_maxn, sysctl_conf, enabled_units
     pub tools: Tools,         // uv, git, curl, nix, login_path_has_local_bin, dpkg_status, brew_list
     pub installed: Option<state::Installed>,
+    /// The rc files the user's login shell reads, as they stand, so a block is planned once.
     pub rc: Vec<RcFile>,
     pub ifaces: Vec<(String, Ipv4Addr)>,
-    pub dotenv: Option<String>,
     pub current_exe: PathBuf,
 }
 impl Probes { pub fn detect(sysctl_keys: &[&str], home: &Path) -> Result<Probes>; }
+
+/// The one bounded read-only spawn: trimmed stdout on exit 0, None on failure or at the deadline.
+pub fn capture(program: &str, args: &[&str], env: &[(&str, &str)], timeout_s: u64) -> Option<String>;
 ```
 
 `Probes::detect` runs once in `main`. If your robot needs a fact nobody probes yet, add a parse
-function to `probe.rs` (pure, fixture-tested) — never a `Command` inside a stage builder.
+function to `probe.rs` (pure, fixture-tested) and read the machine through `capture` in your
+`observe` — never a `Command` inside a stage builder, never a spawn without a deadline.
 
-### Verify — `src/setup/verify.rs:12`
+### Verify — `src/setup/verify.rs:16`
 
 ```rust
-pub enum Target { Host, G1 { cyclonedds_home: PathBuf }, Jetson }
+pub enum Target { Host, G1 { cyclonedds_home: PathBuf, interface: String }, Jetson }
 pub fn stages(target: &Target, venv: &Path, dir: &Path, blueprint: Option<&str>) -> Vec<Stage>;
+pub fn is_check(name: &str) -> bool;   // `update --dry-run` reports these as not run, not pending
 ```
 
 Every check is one `Action::Run` of `bash -lc '<venv>/bin/python -c "..."'`, so what it proves is
-what a user's own login shell gets — the PATH and `CYCLONEDDS_HOME` rc blocks included. Reuse a
-variant when the checks match; add one when your robot has its own stack to prove.
+what a user's own login shell gets — the PATH and `CYCLONEDDS_HOME` rc blocks included. The G1
+target ends with a live `rt/lowstate` read on `interface`, so a green verify means a robot answered.
+Reuse a variant when the checks match; add one when your robot has its own stack to prove, and
+give it a live check too: a plan that only proves imports is the "green install, dead robot" bug.
 
-### Sudo — `src/sudo.rs:42`
+### Sudo — `src/sudo.rs:49`
 
 ```rust
 pub enum Sudo { Root, Passwordless, Askpass(PathBuf), Stdin(Secret), Tty, Unavailable(String) }
@@ -142,7 +162,7 @@ impl Sudo {
 You never call this. Set `sudo: true` on the action; `plan::run` wraps it and stops the stage with
 an exit-2 `NeedsHuman` carrying `human_fix()` when root is not reachable.
 
-### Output — `src/plan.rs:437`
+### Output — `src/plan.rs:503`
 
 ```rust
 pub mod say { pub fn info(msg: &str); pub fn ok(msg: &str); pub fn warn(msg: &str); pub fn fail(msg: &str) }
@@ -155,9 +175,10 @@ file prints or prompts.
 
 ## 3. The rules
 
-- **A probe per stage.** A second run must plan nothing. If a stage cannot answer "is this already
-  done?", it is not a stage yet.
-- **`--dry-run` renders the whole plan and touches nothing.** Only `observe` may read.
+- **A probe per stage.** A second run must plan nothing but the checks. If a stage cannot answer
+  "is this already done?", it is not a stage yet.
+- **`--dry-run` renders the whole plan and touches nothing.** Only `observe` may read, and only
+  through `probe::capture`, which has a deadline.
 - **A critical verify is last.** `verify::stages(...)` appended after everything, and the run fails
   when it fails — a green install with a dead robot is the bug this exists to stop.
 - **sudo only through the action's `sudo: true`.** Never `sudo` inside an argv, never a sudo clone
@@ -212,7 +233,10 @@ pub fn demo_plan(args: &HardwareSetupArgs, probes: &Probes, cfg: &Platforms, ins
 ```
 
 `Robot` is matched exhaustively in `key`, `run`, `ready` and `setup_first`, so the compiler names
-every place the new variant has to be handled.
+every place the new variant has to be handled. `run` answers exit 2 with `setup_first` when there
+is no `installer.json`, before `preflight`. The G1 keeps its stage list in a `pub fn g1_stages`
+because `update` rebuilds it from the `installer.json` record; do the same when `update` must be
+able to repair your robot.
 
 **3. `src/setup/mod.rs`** — `pub mod demo;`.
 
@@ -238,26 +262,28 @@ that state the invariant, fixture strings not real I/O.
 In `src/setup/<robot>.rs`:
 
 - `a_fresh_<robot>_plans_every_build_stage` — default `Observed`, assert the stage names in order.
-- `a_configured_<robot>_plans_nothing` — the `Observed` a finished machine produces, assert
-  `stage.actions.is_empty()` for every stage that can be a no-op.
+- `a_configured_<robot>_plans_nothing` — the `Observed` a finished machine produces, assert the
+  planned stage names are `[]` (`g1.rs` is the model).
 - one test per non-obvious action: the exact argv, the file mode, the rendered unit text.
 
 In `src/hardware.rs`:
 
 - `<robot>_preflight_refuses_<the wrong machine>_naming_the_setup_command` — the error text is what
   the operator does next, so assert on it.
+- `a_configured_<robot>_plans_nothing_but_the_checks` — planned names are the verify stages only.
 - `<robot>_plan_ends_with_the_critical_verify` — name is `"verify"`, `critical` is true.
 - `no_hardware_plan_asks_sudo_to_carry_an_environment_it_would_drop` already covers your plan once
   it is in the loop; add it to the array.
 
-Fixtures: build `Platform`/`Kernel`/`Tools` literals (copy them from `hardware.rs`'s test module).
-`state::TmpDir` is the throwaway `HOME` when a test genuinely needs one — do not write a second one.
+Fixtures: build `Platform`/`Kernel`/`Tools`/`RcFile` literals (copy them from `hardware.rs`'s test
+module; a G1 fixture needs `ifaces` to hold its `--interface`). `state::TmpDir` is the throwaway
+`HOME` when a test genuinely needs one — do not write a second one.
 
 ---
 
 ## 6. Worked example: `src/setup/jetson.rs`
 
-The smallest complete wizard in the crate: 73 lines of runtime code, and every decision a bigger one
+The smallest complete wizard in the crate: 76 lines of runtime code, and every decision a bigger one
 makes.
 
 **`:1`** — one-line module docstring naming who calls it: `setup`, `hardware jetson setup`, and
@@ -266,40 +292,42 @@ makes.
 **`:3-6`** — imports only from `plan`, `probe`, `state` and the shared `sysconfig`. A stage file
 never imports `cli` or another robot's module.
 
-**`:8`** — `STEP_TIMEOUT_S = 60`. Units in the name; a bare `60` in an argv is unreviewable.
+**`:8-11`** — `STEP_TIMEOUT_S = 60` and `LD_PRELOAD_FIX`. Units in the name; a bare `60` in an
+argv is unreviewable. The fix text lives here once and `verify.rs` imports it, so the note and the
+check can never disagree.
 
-**`:11`** — `pub fn stage(platform: &Platform, kernel: &Kernel) -> Stage`. Pure, two probe structs
+**`:14`** — `pub fn stage(platform: &Platform, kernel: &Kernel) -> Stage`. Pure, two probe structs
 in, one `Stage` out. There is no `home`, no `Ctx`, no `&mut` anything.
 
-**`:12`** — `Stage::new("jetson perf", false)` — non-critical. Performance mode is a tuning step;
+**`:15`** — `Stage::new("jetson perf", false)` — non-critical. Performance mode is a tuning step;
 a machine without `nvpmodel` still runs DimOS, so it must not stop the run.
 
-**`:13-15`** — the platform guard. Off a Jetson the stage is empty, which the runner reports as
+**`:16-18`** — the platform guard. Off a Jetson the stage is empty, which the runner reports as
 `ok already`. This is why `setup` and `update` can call it unconditionally.
 
-**`:16-19`** — the first probe-gated action. `needs_maxn` is `kernel.nvpmodel_maxn == Some(false)`,
+**`:19-22`** — the first probe-gated action. `needs_maxn` is `kernel.nvpmodel_maxn == Some(false)`,
 so `None` (no `nvpmodel` binary) plans nothing rather than guessing. The one-line comment carries
 the WHY that naming cannot: mode 0 is MAXN on every Orin SKU and it survives a reboot.
 
-**`:20-22`** — the second, gated on `platform.systemd` as well: the unit is the persistence
+**`:23-25`** — the second, gated on `platform.systemd` as well: the unit is the persistence
 mechanism, so without systemd there is nothing to install.
 
-**`:27-40`** — `render_clocks_unit()` returns the unit text as a `String`, which makes it a pure
+**`:30-43`** — `render_clocks_unit()` returns the unit text as a `String`, which makes it a pure
 function a test asserts on directly. `jetson_clocks` resets every boot, so it runs from a oneshot
 unit rather than once at install time.
 
-**`:43-56`** — `static_tls_note` and `thermal_note`. Both return `Option<String>` and neither plans
+**`:46-59`** — `static_tls_note` and `thermal_note`. Both return `Option<String>` and neither plans
 an action: they are facts the operator needs that no command can fix. `hardware.rs::notes` collects
 them into `Plan.notes`.
 
-**`:58-67`** — the two predicates, each one expression. `clocks_unit_enabled` trims `.service`
+**`:61-70`** — the two predicates, each one expression. `clocks_unit_enabled` trims `.service`
 because `probe::parse_unit_files` keeps the suffix `systemctl list-unit-files` prints.
 
-**`:69-73`** — `install_clocks_unit` folds `sysconfig::unit_actions` into the stage: write the unit
+**`:72-76`** — `install_clocks_unit` folds `sysconfig::unit_actions` into the stage: write the unit
 as root, `daemon-reload`, `enable --now`. The same three actions the multicast unit uses, so a unit
 is installed one way in the crate.
 
-**`:75+`** — the tests. Two `nvpmodel -q` fixture strings (JetPack 6 MAXN, JetPack 5.1.1 at 15 W)
+**`:78+`** — the tests. Two `nvpmodel -q` fixture strings (JetPack 6 MAXN, JetPack 5.1.1 at 15 W)
 parsed by the same `probe::nvpmodel_is_maxn` the runtime uses, so the test and the binary cannot
 disagree about what the output means.
 
@@ -336,5 +364,7 @@ than the last.
 - No shell strings. `Action::Run` takes an argv vector.
 - No `unwrap()`/`expect()` on an I/O path.
 - No TODO, no FIXME, no compat shim for a caller that does not exist.
-- No `std::process::Command` outside `plan.rs` and a stage file's `observe`.
-- No second definition of a computation. Grep before adding a helper.
+- No `std::process::Command` outside `plan.rs`, `sudo.rs` and `probe::capture`; an `observe` calls
+  `capture`, so every probe has a deadline.
+- No second definition of a computation. Grep before adding a helper: `plan::text`, `plan::owned`,
+  `Action::run_owned` and `probe::capture` already exist.

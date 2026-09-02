@@ -55,6 +55,8 @@ def installer(tmp_path, mocker):
         ["service", "setup", "--env", "A=1"],
         ["uninstall"],
         ["robot", "scan", "--lan", "--timeout", "5"],
+        ["hardware", "g1", "setup", "--robot-ip", "192.168.123.161", "--interface", "eth0"],
+        ["hardware", "jetson", "setup", "--dry-run"],
     ],
 )
 def test_each_forwarded_verb_execs_the_installer_with_the_same_argv(argv, installer, mocker):

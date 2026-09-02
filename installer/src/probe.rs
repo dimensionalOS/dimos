@@ -1,15 +1,18 @@
-//! Read-only detection. The I/O lives in a few `read_*` helpers; every parser is pure over
-//! a `&str` so a fixture tests it without the machine it came from.
+//! Read-only detection. Every spawn goes through `capture`, bounded by a deadline; every parser
+//! is pure over a `&str` so a fixture tests it without the machine it came from.
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Read;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 
+use crate::plan;
 use crate::state::{self, Installed, PlatformSummary};
 
 /// L4T release prefix -> JetPack, from NVIDIA's L4T archive; a longer prefix must come first.
@@ -22,6 +25,11 @@ const JETPACK: [(&str, &str); 4] = [
 
 /// torch's TLS block needs glibc's static-TLS surplus, raised to 4 slots only in 2.34.
 const STATIC_TLS_GLIBC: (u32, u32) = (2, 34);
+
+/// A machine probe answers in milliseconds; a hung one (dead NFS home, wedged dpkg lock) must not hang the run.
+const PROBE_TIMEOUT_S: u64 = 20;
+/// A login shell sources every rc file the user has (nvm, conda), which can take a while.
+const LOGIN_SHELL_TIMEOUT_S: u64 = 60;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum Os {
@@ -117,11 +125,38 @@ pub struct Probes {
     pub kernel: Kernel,
     pub tools: Tools,
     pub installed: Option<Installed>,
+    /// The rc files the user's login shell reads, as they stand, so a block is planned once.
     pub rc: Vec<RcFile>,
     pub ifaces: Vec<(String, Ipv4Addr)>,
-    /// `<dir>/.env` when a DimOS install is recorded, so the g1 stage plans nothing twice.
-    pub dotenv: Option<String>,
     pub current_exe: PathBuf,
+}
+
+/// The one bounded read-only spawn: trimmed stdout on exit 0, None on failure or at the deadline.
+pub fn capture(
+    program: &str,
+    args: &[&str],
+    env: &[(&str, &str)],
+    timeout_s: u64,
+) -> Option<String> {
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
+    let mut child = cmd.spawn().ok()?;
+    let mut pipe = child.stdout.take()?;
+    // Drained on its own thread so a child writing more than the pipe holds never blocks the poll.
+    let reader = std::thread::spawn(move || {
+        let mut out = String::new();
+        let _ = pipe.read_to_string(&mut out);
+        out
+    });
+    let status = plan::wait_until(&mut child, Duration::from_secs(timeout_s)).ok()??;
+    let out = reader.join().ok()?;
+    status.success().then(|| out.trim().to_string())
 }
 
 pub fn parse_os_release(text: &str) -> (String, String) {
@@ -283,18 +318,14 @@ fn passwd_shell(passwd: &str, user: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// A fresh login shell tests what the rc files actually do, instead of parsing them.
-pub fn login_shell_path(shell: &Path) -> Option<String> {
-    let out = Command::new(shell)
-        .args(["-l", "-c", "echo $PATH"])
-        .env("PATH", "/usr/bin:/bin")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+/// A fresh login shell under `home` tests what the rc files actually do, instead of parsing them.
+pub fn login_shell_path(shell: &Path, home: &Path) -> Option<String> {
+    capture(
+        &plan::text(shell),
+        &["-l", "-c", "echo $PATH"],
+        &[("PATH", "/usr/bin:/bin"), ("HOME", &plan::text(home))],
+        LOGIN_SHELL_TIMEOUT_S,
+    )
 }
 
 pub fn user_shell(user: &str) -> PathBuf {
@@ -305,9 +336,11 @@ pub fn user_shell(user: &str) -> PathBuf {
 }
 
 fn dscl_shell(user: &str) -> Option<String> {
-    let out = run_text_opt(
+    let out = capture(
         "dscl",
         &[".", "-read", &format!("/Users/{user}"), "UserShell"],
+        &[],
+        PROBE_TIMEOUT_S,
     )?;
     out.split_whitespace().nth(1).map(str::to_string)
 }
@@ -389,7 +422,8 @@ impl Kernel {
                 &fs::read_to_string(state::MEMLOCK_CONF).unwrap_or_default(),
                 user,
             ),
-            nvpmodel_maxn: run_text_opt("nvpmodel", &["-q"]).map(|t| nvpmodel_is_maxn(&t)),
+            nvpmodel_maxn: capture("nvpmodel", &["-q"], &[], PROBE_TIMEOUT_S)
+                .map(|t| nvpmodel_is_maxn(&t)),
             sysctl_conf: fs::read_to_string(state::SYSCTL_CONF).ok(),
             enabled_units: parse_unit_files(&run_text(
                 "systemctl",
@@ -409,7 +443,7 @@ impl Tools {
             git: which::which("git").is_ok(),
             curl: which::which("curl").is_ok(),
             nix: which::which("nix").is_ok(),
-            login_path_has_local_bin: login_shell_path(shell)
+            login_path_has_local_bin: login_shell_path(shell, home)
                 .is_some_and(|path| path_lists_dir(&path, &home.join(".local/bin"))),
             dpkg_status: match pkg {
                 PkgManager::Apt => run_text("dpkg-query", &["-W", "-f=${Package} ${Status}\n"]),
@@ -430,11 +464,8 @@ impl Probes {
         Ok(Probes {
             kernel: Kernel::detect(sysctl_keys, &platform.user),
             tools: Tools::detect(home, &platform.shell, platform.pkg),
-            rc: read_rc(home),
+            rc: read_rc(home, &platform.shell),
             ifaces: parse_iface_ipv4(&read_ifaces(&platform.os), &platform.os),
-            dotenv: installed
-                .as_ref()
-                .and_then(|i| fs::read_to_string(i.dir.join(".env")).ok()),
             current_exe: std::env::current_exe().unwrap_or_default(),
             platform,
             installed,
@@ -466,7 +497,7 @@ fn read_glibc(os: &Os) -> Option<(u32, u32)> {
     if matches!(os, Os::MacOs { .. }) || musl_loader_present() {
         return None;
     }
-    let out = run_text_opt("ldd", &["--version"])?;
+    let out = capture("ldd", &["--version"], &[], PROBE_TIMEOUT_S)?;
     parse_glibc(out.lines().next()?)
 }
 
@@ -490,7 +521,7 @@ fn read_jetson() -> Option<Jetson> {
 }
 
 fn read_nvidia_smi() -> Option<String> {
-    run_text_opt("nvidia-smi", &[])
+    capture("nvidia-smi", &[], &[], PROBE_TIMEOUT_S)
 }
 
 fn read_user() -> String {
@@ -502,14 +533,15 @@ fn read_user() -> String {
 fn read_sysctl(keys: &[&str]) -> BTreeMap<String, u64> {
     keys.iter()
         .filter_map(|key| {
-            let text = run_text_opt("sysctl", &["-n", key])?;
+            let text = capture("sysctl", &["-n", key], &[], PROBE_TIMEOUT_S)?;
             Some(((*key).to_string(), parse_sysctl_value(&text)?))
         })
         .collect()
 }
 
-fn read_rc(home: &Path) -> Vec<RcFile> {
-    state::rc_files(home)
+/// An absent rc file reads as empty, so the block that creates it is still planned once.
+fn read_rc(home: &Path, shell: &Path) -> Vec<RcFile> {
+    state::rc_files(home, shell)
         .into_iter()
         .map(|path| {
             let text = fs::read_to_string(&path).unwrap_or_default();
@@ -526,19 +558,7 @@ fn read_ifaces(os: &Os) -> String {
 }
 
 fn run_text(program: &str, args: &[&str]) -> String {
-    run_text_opt(program, args).unwrap_or_default()
-}
-
-fn run_text_opt(program: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    capture(program, args, &[], PROBE_TIMEOUT_S).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -785,5 +805,47 @@ mod tests {
             parse_device_tree_model("NVIDIA Jetson Orin NX Engineering Reference\0"),
             "NVIDIA Jetson Orin NX Engineering Reference"
         );
+    }
+
+    #[test]
+    fn capture_returns_stdout_on_success_and_none_on_failure_or_at_the_deadline() {
+        assert_eq!(capture("echo", &["hi"], &[], 5).as_deref(), Some("hi"));
+        assert_eq!(capture("false", &[], &[], 5), None);
+        assert_eq!(capture("sleep", &["5"], &[], 1), None);
+        assert_eq!(capture("/nonexistent/dimos-probe", &[], &[], 1), None);
+    }
+
+    #[test]
+    fn capture_drains_more_output_than_a_pipe_holds() {
+        let big = capture("yes", &["0123456789abcdef"], &[], 1);
+        assert!(
+            big.is_none(),
+            "yes never exits, so the deadline must kill it"
+        );
+        let text = capture("sh", &["-c", "yes 0123456789 | head -c 200000"], &[], 10)
+            .expect("200 KB of stdout is read, not deadlocked on");
+        assert!(text.len() > 190_000, "got {} bytes", text.len());
+    }
+
+    /// The rc files `state::rc_files` picks are the ones the same shell reads in login mode.
+    #[test]
+    fn rc_files_and_the_login_shell_probe_agree() {
+        for shell in ["/bin/bash", "/bin/zsh"].map(Path::new) {
+            if !shell.exists() {
+                continue;
+            }
+            let home = state::TmpDir::new("probe-rc");
+            let lines = ["export PATH=\"$HOME/.local/bin:$PATH\"".to_string()];
+            for file in state::rc_files(home.path(), shell) {
+                let (text, _) = plan::ensure_block("", "path", &lines);
+                fs::write(&file, text).expect("write rc fixture");
+            }
+            let path = login_shell_path(shell, home.path()).expect("the login shell runs");
+            assert!(
+                path_lists_dir(&path, &home.path().join(".local/bin")),
+                "{}: {path}",
+                shell.display()
+            );
+        }
     }
 }

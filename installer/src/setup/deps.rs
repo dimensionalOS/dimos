@@ -4,8 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::pkgs::{self, Platforms};
-use crate::plan::{Action, Stage};
+use crate::plan::{owned, text, Action, Stage};
 use crate::probe::{PkgManager, Probes, Tools};
+use crate::state;
 
 const APT_UPDATE_TIMEOUT_S: u64 = 600;
 const PKG_INSTALL_TIMEOUT_S: u64 = 1800;
@@ -15,19 +16,6 @@ const UV_INSTALL_TIMEOUT_S: u64 = 600;
 const NIX_INSTALL_TIMEOUT_S: u64 = 1800;
 const UV_INSTALLER_URL: &str = "https://astral.sh/uv/install.sh";
 const NIX_INSTALLER_URL: &str = "https://nixos.org/nix/install";
-
-fn spawn(argv: &[String], sudo: bool, timeout_s: u64) -> Action {
-    let borrowed: Vec<&str> = argv.iter().map(String::as_str).collect();
-    if sudo {
-        Action::sudo(&borrowed, timeout_s)
-    } else {
-        Action::run(&borrowed, timeout_s)
-    }
-}
-
-fn owned(argv: &[&str]) -> Vec<String> {
-    argv.iter().map(|a| (*a).to_string()).collect()
-}
 
 fn missing_packages(wanted: &[String], pm: PkgManager, tools: &Tools) -> Vec<String> {
     match pm {
@@ -51,44 +39,60 @@ fn apt_argv(tail: &[&str], missing: &[String]) -> Vec<String> {
     argv
 }
 
-/// (argv, sudo, timeout_s) per manager; apt refreshes its lists first, brew refuses to run as root.
-fn package_commands(pm: PkgManager, missing: &[String]) -> Vec<(Vec<String>, bool, u64)> {
-    match pm {
-        PkgManager::Apt => vec![
-            (
-                apt_argv(&["update", "-qq"], &[]),
-                true,
-                APT_UPDATE_TIMEOUT_S,
-            ),
-            (
-                apt_argv(&["install", "-y", "-qq"], missing),
-                true,
-                PKG_INSTALL_TIMEOUT_S,
-            ),
-        ],
+/// The install per manager: apt as root, brew as the user because it refuses to run as root.
+fn install_action(pm: PkgManager, missing: &[String]) -> Option<Action> {
+    let (argv, sudo) = match pm {
+        PkgManager::Apt => (apt_argv(&["install", "-y", "-qq"], missing), true),
         PkgManager::Brew => {
             let mut argv = owned(&["brew", "install"]);
             argv.extend_from_slice(missing);
-            vec![(argv, false, PKG_INSTALL_TIMEOUT_S)]
+            (argv, false)
         }
-        PkgManager::None => Vec::new(),
-    }
+        PkgManager::None => return None,
+    };
+    Some(Action::run_owned(
+        argv,
+        sudo,
+        None,
+        &[],
+        PKG_INSTALL_TIMEOUT_S,
+    ))
 }
 
-/// Installs only the packages this machine is missing; consent-gated because it changes the system.
-pub fn packages_stage(extras: &[String], probes: &Probes, cfg: &Platforms) -> Stage {
+/// The list refresh and the install, both empty when nothing is missing.
+pub fn packages_stages(extras: &[String], probes: &Probes, cfg: &Platforms) -> Vec<Stage> {
     let pm = probes.platform.pkg;
     let wanted = pkgs::system_packages(extras, pm, cfg);
     let missing = missing_packages(&wanted, pm, &probes.tools);
+    vec![apt_update_stage(pm, &missing), packages_stage(pm, &missing)]
+}
+
+/// Best effort: a dead source (the expired ROS key on 20.04 Jetson images exits 100) is a `!!`,
+/// and the install still tries the lists apt already has.
+fn apt_update_stage(pm: PkgManager, missing: &[String]) -> Stage {
+    let stage = Stage::new("apt update", false).warn_only();
+    if pm != PkgManager::Apt || missing.is_empty() {
+        return stage;
+    }
+    stage.push(Action::run_owned(
+        apt_argv(&["update", "-qq"], &[]),
+        true,
+        None,
+        &[],
+        APT_UPDATE_TIMEOUT_S,
+    ))
+}
+
+/// Installs only the packages this machine is missing; consent-gated because it changes the system.
+fn packages_stage(pm: PkgManager, missing: &[String]) -> Stage {
     let stage = Stage::new("packages", true);
     if missing.is_empty() {
         return stage;
     }
-    package_commands(pm, &missing)
-        .iter()
-        .fold(stage.consent(), |stage, (argv, sudo, timeout_s)| {
-            stage.push(spawn(argv, *sudo, *timeout_s))
-        })
+    match install_action(pm, missing) {
+        Some(install) => stage.consent().push(install),
+        None => stage,
+    }
 }
 
 /// Where uv is, or where `uv_stage` will put it; a planned absolute path, never a PATH lookup at exec.
@@ -99,30 +103,47 @@ pub fn uv_bin(tools: &Tools, home: &Path) -> PathBuf {
         .unwrap_or_else(|| home.join(".local/bin/uv"))
 }
 
+/// A downloaded installer lives under the user's own state dir, never a shared /tmp name a
+/// neighbour could plant, and is removed once it has run.
+fn script_path(home: &Path, name: &str) -> PathBuf {
+    state::state_dir(home).join(name)
+}
+
+/// curl to a path; nix's own instructions pin TLS 1.2 and https, astral's do not.
+fn download(url: &str, to: &Path, strict_tls: bool) -> Action {
+    let mut argv = owned(&["curl"]);
+    if strict_tls {
+        argv.extend(owned(&["--proto", "=https", "--tlsv1.2"]));
+    }
+    argv.extend(owned(&["-fsSL", url, "-o", &text(to)]));
+    Action::run_owned(argv, false, None, &[], DOWNLOAD_TIMEOUT_S)
+}
+
+fn remove(path: PathBuf) -> Action {
+    Action::Remove { path, sudo: false }
+}
+
 /// Downloads astral's installer and runs it into ~/.local/bin; empty when uv is already there.
 pub fn uv_stage(tools: &Tools, home: &Path) -> Stage {
     let stage = Stage::new("uv", true);
     if tools.uv.is_some() {
         return stage;
     }
-    let script = std::env::temp_dir().join("uv-install.sh");
-    let script_path = script.display().to_string();
+    let script = script_path(home, "uv-install.sh");
     let uv = uv_bin(tools, home);
-    let local_bin = home.join(".local/bin").display().to_string();
+    let local_bin = text(&home.join(".local/bin"));
     // UV_NO_MODIFY_PATH because the rc block is ours; astral's would be a second, unguarded edit.
     let env = [("UV_NO_MODIFY_PATH", "1"), ("UV_INSTALL_DIR", &local_bin)];
     stage
-        .run(
-            &["curl", "-fsSL", UV_INSTALLER_URL, "-o", &script_path],
-            DOWNLOAD_TIMEOUT_S,
-        )
+        .push(download(UV_INSTALLER_URL, &script, false))
         .push(Action::run_in(
-            &["sh", &script_path],
+            &["sh", &text(&script)],
             None,
             &env,
             UV_INSTALL_TIMEOUT_S,
         ))
-        .post(&[&uv.display().to_string(), "--version"])
+        .push(remove(script))
+        .post(&[&text(&uv), "--version"])
 }
 
 /// Opt-in only (`--with-nix`); non-critical because DimOS installs from system packages without it.
@@ -131,24 +152,11 @@ pub fn nix_stage(tools: &Tools, home: &Path, with_nix: bool) -> Stage {
     if !with_nix || tools.nix {
         return stage;
     }
-    let script = std::env::temp_dir().join("nix-install.sh");
-    let script_path = script.display().to_string();
+    let script = script_path(home, "nix-install.sh");
     stage
-        .run(
-            &[
-                "curl",
-                "--proto",
-                "=https",
-                "--tlsv1.2",
-                "-fsSL",
-                NIX_INSTALLER_URL,
-                "-o",
-                &script_path,
-            ],
-            DOWNLOAD_TIMEOUT_S,
-        )
+        .push(download(NIX_INSTALLER_URL, &script, true))
         .sudo(
-            &["sh", &script_path, "--daemon", "--yes"],
+            &["sh", &text(&script), "--daemon", "--yes"],
             NIX_INSTALL_TIMEOUT_S,
         )
         .push(Action::EnsureBlock {
@@ -156,6 +164,7 @@ pub fn nix_stage(tools: &Tools, home: &Path, with_nix: bool) -> Stage {
             marker: "nix".to_string(),
             lines: vec!["experimental-features = nix-command flakes".to_string()],
         })
+        .push(remove(script))
 }
 
 #[cfg(test)]
@@ -195,7 +204,6 @@ mod tests {
             installed: None,
             rc: Vec::new(),
             ifaces: Vec::new(),
-            dotenv: None,
             current_exe: PathBuf::from("/usr/local/bin/dimos"),
         }
     }
@@ -214,35 +222,36 @@ mod tests {
             .collect()
     }
 
+    /// `[apt update, packages]`, in that order.
+    fn planned(pm: PkgManager, dpkg_status: &str, brew_list: &str) -> Vec<Stage> {
+        packages_stages(
+            &["base".to_string()],
+            &probes(pm, dpkg_status, brew_list),
+            &Platforms::load(),
+        )
+    }
+
     #[test]
     fn packages_stage_lists_only_missing_packages_and_is_empty_when_none() {
-        let cfg = Platforms::load();
-        let extras = ["base".to_string()];
-        let complete = probes(PkgManager::Apt, &every_package_installed(), "");
-        assert!(packages_stage(&extras, &complete, &cfg).actions.is_empty());
+        let complete = planned(PkgManager::Apt, &every_package_installed(), "");
+        assert!(complete.iter().all(|s| s.actions.is_empty()));
 
-        let partial = probes(
+        let partial = planned(
             PkgManager::Apt,
             &every_package_installed().replace("git-lfs install ok installed\n", ""),
             "",
         );
-        let stage = packages_stage(&extras, &partial, &cfg);
-        let install = argv_of(&stage, 1);
+        let install = argv_of(&partial[1], 0);
         assert!(install.contains(&"git-lfs".to_string()), "{install:?}");
         assert!(!install.contains(&"curl".to_string()), "{install:?}");
     }
 
     #[test]
     fn apt_sets_debian_frontend_in_argv_because_sudo_resets_env() {
-        let cfg = Platforms::load();
-        let stage = packages_stage(
-            &["base".to_string()],
-            &probes(PkgManager::Apt, "", ""),
-            &cfg,
-        );
-        assert!(stage.critical && stage.consent && stage.needs_sudo());
+        let stages = planned(PkgManager::Apt, "", "");
+        assert!(stages[1].critical && stages[1].consent && stages[1].needs_sudo());
         assert_eq!(
-            argv_of(&stage, 0),
+            argv_of(&stages[0], 0),
             [
                 "env",
                 "DEBIAN_FRONTEND=noninteractive",
@@ -253,7 +262,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            &argv_of(&stage, 1)[..7],
+            &argv_of(&stages[1], 0)[..7],
             [
                 "env",
                 "DEBIAN_FRONTEND=noninteractive",
@@ -266,22 +275,26 @@ mod tests {
         );
         let plan = crate::plan::Plan {
             command: "setup".to_string(),
-            stages: vec![stage],
+            stages,
             notes: Vec::new(),
         };
         assert!(sudo_env_violations(&plan).is_empty());
     }
 
     #[test]
+    fn apt_update_is_best_effort_so_a_dead_source_does_not_block_the_install() {
+        let apt = planned(PkgManager::Apt, "", "");
+        assert_eq!(apt[0].name, "apt update");
+        assert!(apt[0].warn_only && !apt[0].critical && apt[0].needs_sudo());
+        assert!(!apt[0].consent);
+        assert!(planned(PkgManager::Brew, "", "")[0].actions.is_empty());
+    }
+
+    #[test]
     fn brew_stage_has_no_sudo_but_needs_consent() {
-        let cfg = Platforms::load();
-        let stage = packages_stage(
-            &["base".to_string()],
-            &probes(PkgManager::Brew, "", "git-lfs 3.5.1\n"),
-            &cfg,
-        );
+        let stage = &planned(PkgManager::Brew, "", "git-lfs 3.5.1\n")[1];
         assert!(stage.consent && !stage.needs_sudo());
-        let argv = argv_of(&stage, 0);
+        let argv = argv_of(stage, 0);
         assert_eq!(&argv[..2], ["brew", "install"]);
         assert!(!argv.contains(&"git-lfs".to_string()), "{argv:?}");
         assert!(argv.contains(&"portaudio".to_string()), "{argv:?}");
@@ -324,6 +337,32 @@ mod tests {
     }
 
     #[test]
+    fn a_downloaded_installer_lives_under_the_users_state_dir_and_is_removed_after_it_runs() {
+        let home = Path::new("/home/u");
+        for stage in [
+            uv_stage(&Tools::default(), home),
+            nix_stage(&Tools::default(), home, true),
+        ] {
+            let Action::Run { argv, .. } = &stage.actions[0] else {
+                panic!("the first action downloads the script")
+            };
+            let script = PathBuf::from(argv.last().expect("curl -o <script>"));
+            assert!(
+                script.starts_with(state::state_dir(home)),
+                "{}",
+                script.display()
+            );
+            assert_eq!(
+                stage.actions.last(),
+                Some(&Action::Remove {
+                    path: script,
+                    sudo: false
+                })
+            );
+        }
+    }
+
+    #[test]
     fn nix_stage_empty_unless_with_nix() {
         let home = Path::new("/home/u");
         let absent = Tools::default();
@@ -337,12 +376,12 @@ mod tests {
         let stage = nix_stage(&absent, home, true);
         assert!(!stage.critical && stage.needs_sudo());
         assert_eq!(
-            stage.actions.last(),
-            Some(&Action::EnsureBlock {
+            stage.actions[2],
+            Action::EnsureBlock {
                 file: PathBuf::from("/home/u/.config/nix/nix.conf"),
                 marker: "nix".to_string(),
                 lines: vec!["experimental-features = nix-command flakes".to_string()],
-            })
+            }
         );
     }
 }

@@ -4,16 +4,21 @@
 use std::path::{Path, PathBuf};
 
 use crate::plan::{Action, Stage};
+use crate::setup::jetson::LD_PRELOAD_FIX;
 
 /// A cold `import dimos` on an Orin NX is minutes, not seconds.
 const CHECK_TIMEOUT_S: u64 = 300;
+/// A live G1 publishes LowState every 2 ms; five silent seconds is a dead link or a wrong NIC.
+const LOWSTATE_WAIT_S: u32 = 5;
+const STAGE_NAMES: [&str; 3] = ["verify-shell", "verify-torch", "verify"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
     Host,
-    /// The G1 is a Jetson, so its checks are the Jetson ones plus the DDS stack.
+    /// The G1 is a Jetson, so its checks are the Jetson ones plus the DDS stack and a live read.
     G1 {
         cyclonedds_home: PathBuf,
+        interface: String,
     },
     Jetson,
 }
@@ -26,11 +31,22 @@ pub fn default_blueprint(target: &Target) -> Option<&'static str> {
     }
 }
 
+/// A stage this file built; `update --dry-run` reports them as not run rather than as pending.
+pub fn is_check(name: &str) -> bool {
+    STAGE_NAMES.contains(&name)
+}
+
 /// The verify stages for a target; the critical one is always last.
 pub fn stages(target: &Target, venv: &Path, dir: &Path, blueprint: Option<&str>) -> Vec<Stage> {
     let mut out = Vec::new();
-    if let Target::G1 { cyclonedds_home } = target {
+    if let Target::G1 {
+        cyclonedds_home, ..
+    } = target
+    {
         out.push(login_shell_stage(cyclonedds_home));
+    }
+    if !matches!(target, Target::Host) {
+        out.push(torch_stage(venv));
     }
     out.push(verify_stage(target, venv, dir, blueprint));
     out
@@ -64,44 +80,62 @@ fn login_shell_stage(cyclonedds_home: &Path) -> Stage {
     Stage::new("verify-shell", false).push(Action::run(&["bash", "-lc", &script], CHECK_TIMEOUT_S))
 }
 
+/// Warn-only: torch absent, or broken by static TLS, is one `!!` line with the fix, never a failure.
+fn torch_stage(venv: &Path) -> Stage {
+    Stage::new("verify-torch", false)
+        .push(Action::run(
+            &["bash", "-lc", &py(venv, &torch_code())],
+            CHECK_TIMEOUT_S,
+        ))
+        .warn_only()
+}
+
+/// The last line python prints is what the runner shows, so the fix goes there.
+fn torch_code() -> String {
+    format!(
+        "import importlib.util, sys\n\
+         if importlib.util.find_spec(\"torch\") is None:\n\
+         \x20   sys.exit(\"torch: not installed, skipped\")\n\
+         try:\n\
+         \x20   import torch\n\
+         except OSError as e:\n\
+         \x20   fix = \"; fix: {LD_PRELOAD_FIX}\" if \"static TLS\" in str(e) else \"\"\n\
+         \x20   sys.exit(f\"torch: {{e}}{{fix}}\")"
+    )
+}
+
 fn checks(target: &Target, venv: &Path, dir: &Path, blueprint: Option<&str>) -> Vec<String> {
     let mut out = vec![py(venv, "import dimos"), blueprint_check(venv, blueprint)];
     match target {
         Target::Host => {}
-        Target::Jetson => out.extend(jetson_checks(venv)),
-        Target::G1 { .. } => {
-            out.extend(jetson_checks(venv));
-            out.extend(g1_checks(venv, dir));
+        Target::Jetson => out.push(tegra_check()),
+        Target::G1 { interface, .. } => {
+            out.push(tegra_check());
+            out.extend(g1_checks(venv, dir, interface));
         }
     }
     out
 }
 
 /// `grep -qx` on the two-space list line (info.py:40), so `unitree-g1-basic` cannot pass for
-/// `unitree-g1`; pipefail so a dead `dimos` is a failure and not an empty grep.
+/// `unitree-g1`; the list is captured first, so grep's early exit never breaks the writer's pipe.
 fn blueprint_check(venv: &Path, blueprint: Option<&str>) -> String {
     let list = format!("{} list", bin(venv, "dimos"));
     match blueprint {
         Some(name) => format!(
-            "set -o pipefail; {list} | grep -qx {}",
+            "out=$({list}) && grep -qx {} <<<\"$out\"",
             shq(&format!("  {name}"))
         ),
         None => format!("{list} > /dev/null"),
     }
 }
 
-fn jetson_checks(venv: &Path) -> Vec<String> {
-    vec![
-        // probe::parse_nv_tegra_release owns the real parse; this only re-asserts the shape.
-        "grep -q REVISION: /etc/nv_tegra_release".to_string(),
-        format!(
-            "{} || echo 'torch: not importable (absent, or the static TLS error named in the plan notes)'",
-            py(venv, "import torch")
-        ),
-    ]
+/// probe::parse_nv_tegra_release owns the real parse; this only re-asserts the shape.
+fn tegra_check() -> String {
+    "grep -q REVISION: /etc/nv_tegra_release".to_string()
 }
 
-fn g1_checks(venv: &Path, dir: &Path) -> Vec<String> {
+fn g1_checks(venv: &Path, dir: &Path, interface: &str) -> Vec<String> {
     vec![
         py(venv, "import cyclonedds, unitree_sdk2py"),
         py(
@@ -112,13 +146,29 @@ fn g1_checks(venv: &Path, dir: &Path) -> Vec<String> {
             "grep -q '^ROBOT_IP=' {}",
             shq(&dir.join(".env").to_string_lossy())
         ),
+        py(venv, &lowstate_code(interface)),
     ]
+}
+
+/// wholebody_connection.py's subscriber held for one sample: DDS, the NIC and a powered robot at once.
+fn lowstate_code(interface: &str) -> String {
+    format!(
+        "import sys; \
+         from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber; \
+         from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_; \
+         ChannelFactoryInitialize(0, \"{interface}\"); \
+         s = ChannelSubscriber(\"rt/lowstate\", LowState_); s.Init(None, 0); \
+         sys.exit(0 if s.Read({LOWSTATE_WAIT_S}) else \
+         \"no rt/lowstate on {interface} in {LOWSTATE_WAIT_S} s: robot off, or wrong --interface\")"
+    )
 }
 
 /// Belt for the rc block's braces: `import cyclonedds` needs CYCLONEDDS_HOME to find libddsc.
 fn cyclonedds_home(target: &Target) -> Option<String> {
     match target {
-        Target::G1 { cyclonedds_home } => Some(cyclonedds_home.to_string_lossy().into_owned()),
+        Target::G1 {
+            cyclonedds_home, ..
+        } => Some(cyclonedds_home.to_string_lossy().into_owned()),
         Target::Host | Target::Jetson => None,
     }
 }
@@ -151,6 +201,7 @@ mod tests {
     fn g1() -> Target {
         Target::G1 {
             cyclonedds_home: PathBuf::from("/home/unitree/cyclonedds/install"),
+            interface: "eth0".to_string(),
         }
     }
 
@@ -163,6 +214,10 @@ mod tests {
                 other => panic!("verify plans only Run actions, got {other:?}"),
             })
             .collect()
+    }
+
+    fn names(stages: &[Stage]) -> Vec<&str> {
+        stages.iter().map(|s| s.name).collect()
     }
 
     #[test]
@@ -183,37 +238,48 @@ mod tests {
     fn g1_snippets_render_the_exact_python_one_liners() {
         let stages = stages(&g1(), &venv(), &dir(), None);
         assert_eq!(
-            scripts(&stages[1]),
+            scripts(&stages[2]),
             vec![
                 "'/home/unitree/dimos/.venv/bin/python' -c 'import dimos'",
-                "set -o pipefail; '/home/unitree/dimos/.venv/bin/dimos' list | grep -qx '  unitree-g1'",
+                "out=$('/home/unitree/dimos/.venv/bin/dimos' list) && grep -qx '  unitree-g1' <<<\"$out\"",
                 "grep -q REVISION: /etc/nv_tegra_release",
-                "'/home/unitree/dimos/.venv/bin/python' -c 'import torch' || echo 'torch: not importable (absent, or the static TLS error named in the plan notes)'",
                 "'/home/unitree/dimos/.venv/bin/python' -c 'import cyclonedds, unitree_sdk2py'",
                 "'/home/unitree/dimos/.venv/bin/python' -c 'import numpy, sys; sys.exit(int(numpy.__version__.split(\".\")[0]) >= 2)'",
                 "grep -q '^ROBOT_IP=' '/home/unitree/dimos/.env'",
+                &py(&venv(), &lowstate_code("eth0")),
             ]
         );
     }
 
     #[test]
-    fn g1_adds_a_non_critical_login_shell_stage_before_the_critical_verify() {
+    fn g1_stages_are_shell_then_torch_then_the_critical_verify() {
         let stages = stages(&g1(), &venv(), &dir(), None);
-        assert_eq!(stages.len(), 2);
-        assert_eq!(stages[0].name, "verify-shell");
-        assert!(!stages[0].critical);
+        assert_eq!(names(&stages), ["verify-shell", "verify-torch", "verify"]);
+        assert!(!stages[0].critical && !stages[1].critical && stages[2].critical);
         assert_eq!(
             scripts(&stages[0]),
             vec!["test \"$CYCLONEDDS_HOME\" = '/home/unitree/cyclonedds/install'".to_string()]
         );
-        assert_eq!(stages[1].name, "verify");
-        assert!(stages[1].critical);
+    }
+
+    #[test]
+    fn a_g1_verify_ends_with_a_live_lowstate_read_on_the_given_interface() {
+        let last = scripts(&stages(&g1(), &venv(), &dir(), None)[2])
+            .pop()
+            .expect("a last check");
+        assert!(
+            last.contains("ChannelFactoryInitialize(0, \"eth0\")"),
+            "{last}"
+        );
+        assert!(last.contains("\"rt/lowstate\""), "{last}");
+        assert!(last.contains("s.Read(5)"), "{last}");
+        assert!(last.contains("wrong --interface"), "{last}");
     }
 
     #[test]
     fn every_g1_check_carries_cyclonedds_home_so_the_rc_block_is_only_a_belt() {
         let stages = stages(&g1(), &venv(), &dir(), None);
-        for action in &stages[1].actions {
+        for action in &stages[2].actions {
             let Action::Run { env, .. } = action else {
                 panic!("verify plans only Run actions");
             };
@@ -230,11 +296,13 @@ mod tests {
     #[test]
     fn host_and_jetson_checks_carry_no_env() {
         for target in [Target::Host, Target::Jetson] {
-            for action in &stages(&target, &venv(), &dir(), None)[0].actions {
-                let Action::Run { env, .. } = action else {
-                    panic!("verify plans only Run actions");
-                };
-                assert!(env.is_empty());
+            for stage in stages(&target, &venv(), &dir(), None) {
+                for action in &stage.actions {
+                    let Action::Run { env, .. } = action else {
+                        panic!("verify plans only Run actions");
+                    };
+                    assert!(env.is_empty());
+                }
             }
         }
     }
@@ -264,28 +332,49 @@ mod tests {
     #[test]
     fn an_explicit_blueprint_overrides_the_target_default() {
         let stages = stages(&g1(), &venv(), &dir(), Some("unitree-g1-basic"));
-        assert!(scripts(&stages[1])[1].ends_with("| grep -qx '  unitree-g1-basic'"));
+        assert!(scripts(&stages[2])[1].contains("grep -qx '  unitree-g1-basic' <<<"));
     }
 
     #[test]
-    fn blueprint_check_matches_a_whole_line_so_a_longer_name_cannot_satisfy_it() {
+    fn blueprint_check_captures_the_list_before_grep_so_no_writer_sees_a_closed_pipe() {
         let script = blueprint_check(&venv(), Some("unitree-g1"));
-        assert!(script.contains("grep -qx '  unitree-g1'"));
-        assert!(script.starts_with("set -o pipefail; "));
+        assert!(script.starts_with("out=$("), "{script}");
+        assert!(
+            script.contains(") && grep -qx '  unitree-g1' <<<\"$out\""),
+            "{script}"
+        );
+        assert!(!script.contains('|'), "{script}");
     }
 
     #[test]
-    fn the_torch_check_swallows_its_own_failure_so_static_tls_never_fails_verify() {
-        let torch = &jetson_checks(&venv())[1];
-        assert!(torch.contains("-c 'import torch' || echo "));
+    fn torch_is_its_own_warn_only_stage_whose_last_line_is_the_ld_preload_fix() {
+        let stages = stages(&Target::Jetson, &venv(), &dir(), None);
+        let torch = &stages[0];
+        assert_eq!(torch.name, "verify-torch");
+        assert!(torch.warn_only && !torch.critical);
+        let script = &scripts(torch)[0];
+        assert!(script.contains("find_spec(\"torch\")"), "{script}");
+        assert!(script.contains("\"static TLS\" in str(e)"), "{script}");
+        assert!(script.contains(LD_PRELOAD_FIX), "{script}");
+        assert!(script.contains("not installed, skipped"), "{script}");
     }
 
     #[test]
-    fn jetson_target_checks_nv_tegra_release_and_torch_but_not_the_dds_stack() {
-        let scripts = scripts(&stages(&Target::Jetson, &venv(), &dir(), None)[0]);
-        assert_eq!(scripts.len(), 4);
+    fn jetson_target_checks_nv_tegra_release_but_not_the_dds_stack() {
+        let stages = stages(&Target::Jetson, &venv(), &dir(), None);
+        assert_eq!(names(&stages), ["verify-torch", "verify"]);
+        let scripts = scripts(&stages[1]);
+        assert_eq!(scripts.len(), 3);
         assert!(scripts.iter().any(|s| s.contains("/etc/nv_tegra_release")));
         assert!(!scripts.iter().any(|s| s.contains("cyclonedds")));
+    }
+
+    #[test]
+    fn is_check_names_exactly_the_stages_this_file_builds() {
+        for stage in stages(&g1(), &venv(), &dir(), None) {
+            assert!(is_check(stage.name), "{}", stage.name);
+        }
+        assert!(!is_check("dimos") && !is_check("packages"));
     }
 
     #[test]

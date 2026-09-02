@@ -6,6 +6,9 @@ use crate::setup::sysconfig;
 use crate::state::JETSON_CLOCKS_UNIT;
 
 const STEP_TIMEOUT_S: u64 = 60;
+/// Preloading the two libraries claims their TLS slots before torch's late dlopen asks for them.
+pub const LD_PRELOAD_FIX: &str = "export LD_PRELOAD=/lib/aarch64-linux-gnu/libGLdispatch.so.0:\
+                                  /usr/lib/aarch64-linux-gnu/libgomp.so.1";
 
 /// nvpmodel + a jetson_clocks unit; empty off a Jetson and empty once both are in place.
 pub fn stage(platform: &Platform, kernel: &Kernel) -> Stage {
@@ -42,10 +45,10 @@ pub fn render_clocks_unit() -> String {
 /// aarch64 glibc below 2.34 has too few static-TLS slots for a late `dlopen` of libgomp.
 pub fn static_tls_note(platform: &Platform) -> Option<String> {
     platform.static_tls_risk().then(|| {
-        "torch may fail with 'cannot allocate memory in static TLS block' on this glibc; \
-         the fix is export LD_PRELOAD=/lib/aarch64-linux-gnu/libGLdispatch.so.0:\
-         /usr/lib/aarch64-linux-gnu/libgomp.so.1"
-            .to_string()
+        format!(
+            "torch may fail with 'cannot allocate memory in static TLS block' on this glibc; \
+             the fix is {LD_PRELOAD_FIX}"
+        )
     })
 }
 

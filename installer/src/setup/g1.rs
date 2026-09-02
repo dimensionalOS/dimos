@@ -1,13 +1,13 @@
 //! On-robot G1 stages (brief decision 13): CycloneDDS built from source, the Unitree SDK into the
 //! venv, and the shell/git/.env edits it needs. `observe` is the only I/O; every stage is pure over
-//! its result, so a second run plans nothing but the two idempotent re-assertions.
+//! its result, so a configured robot plans nothing.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use crate::cli::HardwareSetupArgs;
-use crate::plan::{Action, Stage};
-use crate::state;
+use crate::plan::{self, text, Action, Stage};
+use crate::probe::{capture, RcFile};
+use crate::state::Installed;
 
 pub const CYCLONEDDS_REPO: &str = "https://github.com/eclipse-cyclonedds/cyclonedds";
 /// unitree_sdk2py's bindings only build against the 0.10 line; main is ABI-incompatible.
@@ -23,12 +23,16 @@ const GIT_INSTEADOF_KEY: &str = "url.https://github.com/.insteadOf";
 const GIT_SSH_URL: &str = "ssh://git@github.com/";
 /// Reads the dist metadata, not the extension, so it answers before CYCLONEDDS_HOME is set.
 const CDDS_VERSION_CODE: &str = "import importlib.metadata as m; print(m.version('cyclonedds'))";
+const NUMPY_CODE: &str = "import numpy; print(numpy.__version__)";
 const CLONE_TIMEOUT_S: u64 = 900;
 const CONFIGURE_TIMEOUT_S: u64 = 600;
 /// Both the C library and the cyclonedds wheel compile C on an Orin NX: minutes, not seconds.
 const BUILD_TIMEOUT_S: u64 = 1800;
 const PIP_TIMEOUT_S: u64 = 600;
 const GIT_CONFIG_TIMEOUT_S: u64 = 30;
+const PROBE_TIMEOUT_S: u64 = 20;
+/// A cold import of the SDK or numpy on an Orin NX reads a lot of shared objects off eMMC.
+const IMPORT_TIMEOUT_S: u64 = 120;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct G1Observed {
@@ -37,26 +41,59 @@ pub struct G1Observed {
     pub sdk_present: bool,
     pub sdk_imports: bool,
     pub cyclonedds_py_version: Option<String>,
+    pub numpy_major: Option<u32>,
     pub git_insteadof_set: bool,
     pub dotenv: String,
     pub nproc: usize,
 }
 
-/// The only I/O in this file; read-only, so `--dry-run` may call it.
+/// The only I/O in this file, all of it read-only through `capture`, so `--dry-run` may call it.
 pub fn observe(home: &Path, venv_python: &Path, sdk: &Path, dir: &Path) -> G1Observed {
-    let cdds_home = cyclonedds_home(home);
-    let cdds_env = [("CYCLONEDDS_HOME", arg(&cdds_home))];
+    let cdds = text(&cyclonedds_home(home));
+    let python = text(venv_python);
     G1Observed {
-        cyclonedds_lib: cdds_home.join("lib").join("libddsc.so").exists(),
-        cyclonedds_clone: home.join("cyclonedds").join(".git").exists(),
+        cyclonedds_lib: cyclonedds_home(home).join("lib/libddsc.so").exists(),
+        cyclonedds_clone: home.join("cyclonedds/.git").exists(),
         sdk_present: sdk.exists(),
-        sdk_imports: capture(venv_python, &["-c", "import unitree_sdk2py"], &cdds_env).is_some(),
-        cyclonedds_py_version: capture(venv_python, &["-c", CDDS_VERSION_CODE], &[])
+        sdk_imports: capture(
+            &python,
+            &["-c", "import unitree_sdk2py"],
+            &[("CYCLONEDDS_HOME", &cdds)],
+            IMPORT_TIMEOUT_S,
+        )
+        .is_some(),
+        cyclonedds_py_version: capture(&python, &["-c", CDDS_VERSION_CODE], &[], PROBE_TIMEOUT_S)
             .filter(|v| !v.is_empty()),
+        numpy_major: numpy_major(venv_python),
         git_insteadof_set: git_insteadof(),
         dotenv: std::fs::read_to_string(dir.join(".env")).unwrap_or_default(),
         nproc: std::thread::available_parallelism().map_or(4, |n| n.get()),
     }
+}
+
+/// Where the SDK is or goes, then what the robot already has; the one call `hardware` and `update` share.
+pub fn detect(
+    home: &Path,
+    installed: &Installed,
+    sdk_override: Option<PathBuf>,
+) -> (PathBuf, G1Observed) {
+    let sdk = sdk_path(sdk_override, Path::new(OPT_SDK).exists(), home);
+    let obs = observe(home, &installed.venv_python(), &sdk, &installed.dir);
+    (sdk, obs)
+}
+
+pub fn numpy_major(venv_python: &Path) -> Option<u32> {
+    parse_major(&capture(
+        &text(venv_python),
+        &["-c", NUMPY_CODE],
+        &[],
+        IMPORT_TIMEOUT_S,
+    )?)
+}
+
+/// `1.26.4` -> 1.
+pub fn parse_major(version: &str) -> Option<u32> {
+    version.trim().split('.').next()?.parse().ok()
 }
 
 pub fn cyclonedds_home(home: &Path) -> PathBuf {
@@ -78,8 +115,8 @@ pub fn cyclonedds_stage(home: &Path, obs: &G1Observed) -> Stage {
         return stage;
     }
     let dir = home.join("cyclonedds");
-    let (src, build) = (arg(&dir), arg(&dir.join("build")));
-    let prefix = format!("-DCMAKE_INSTALL_PREFIX={}", arg(&cyclonedds_home(home)));
+    let (src, build) = (text(&dir), text(&dir.join("build")));
+    let prefix = format!("-DCMAKE_INSTALL_PREFIX={}", text(&cyclonedds_home(home)));
     let jobs = format!("-j{}", obs.nproc);
     if !obs.cyclonedds_clone {
         stage = stage.push(clone(CYCLONEDDS_REPO, &src, Some(CYCLONEDDS_BRANCH)));
@@ -100,7 +137,7 @@ pub fn sdk_clone_stage(sdk: &Path, obs: &G1Observed) -> Stage {
     if obs.sdk_present {
         return stage;
     }
-    stage.push(clone(SDK_REPO, &arg(sdk), None))
+    stage.push(clone(SDK_REPO, &text(sdk), None))
 }
 
 /// Shallow: the robot pulls over wifi and neither checkout is ever used as a git history.
@@ -119,9 +156,9 @@ pub fn sdk_install_stage(
     obs: &G1Observed,
 ) -> Stage {
     let mut stage = Stage::new("unitree sdk install", true);
-    let cdds = arg(cdds_home);
+    let cdds = text(cdds_home);
     let env = [("CYCLONEDDS_HOME", cdds.as_str())];
-    let (uv, python, sdk) = (arg(uv), arg(venv_python), arg(sdk));
+    let (uv, python, sdk) = (text(uv), text(venv_python), text(sdk));
     if obs.cyclonedds_py_version.as_deref() != Some(pinned_version(CYCLONEDDS_PIP)) {
         stage = stage.push(uv_pip(
             &uv,
@@ -144,26 +181,35 @@ fn uv_pip(uv: &str, python: &str, rest: &[&str], env: &[(&str, &str)], timeout_s
     Action::run_in(&argv, None, env, timeout_s)
 }
 
-/// Unconditional: `uv sync` re-applies pyproject's `numpy>=2` override (pyproject.toml:547), so the
-/// pin has to be re-asserted after every DimOS install; `uv pip install` is a no-op once it holds.
-pub fn numpy_pin_stage(uv: &Path, venv_python: &Path) -> Stage {
-    let pin = uv_pip(
-        &arg(uv),
-        &arg(venv_python),
+/// `uv sync` and `uv pip` re-apply pyproject's `numpy>=2` override (pyproject.toml:547), so the pin
+/// is re-asserted after every install into the venv, and whenever the probe finds numpy 2.
+pub fn numpy_pin_stage(
+    uv: &Path,
+    venv_python: &Path,
+    numpy_major: Option<u32>,
+    venv_changed: bool,
+) -> Stage {
+    let stage = Stage::new("numpy pin", true);
+    if !venv_changed && numpy_major == Some(1) {
+        return stage;
+    }
+    stage.push(uv_pip(
+        &text(uv),
+        &text(venv_python),
         &[NUMPY_PIN],
         &[],
         PIP_TIMEOUT_S,
-    );
-    Stage::new("numpy pin", true).push(pin)
+    ))
 }
 
-pub fn rc_stage(home: &Path) -> Stage {
+/// Empty once every rc file the login shell reads already holds the block.
+pub fn rc_stage(rc: &[RcFile]) -> Stage {
     let lines = vec![format!("export CYCLONEDDS_HOME=\"$HOME/{CDDS_HOME_REL}\"")];
-    state::rc_files(home)
-        .into_iter()
+    rc.iter()
+        .filter(|file| plan::ensure_block(&file.text, CDDS_MARKER, &lines).1)
         .fold(Stage::new("cyclonedds env", false), |stage, file| {
             stage.push(Action::EnsureBlock {
-                file,
+                file: file.path.clone(),
                 marker: CDDS_MARKER.to_string(),
                 lines: lines.clone(),
             })
@@ -181,18 +227,24 @@ pub fn git_https_stage(obs: &G1Observed) -> Stage {
     )
 }
 
+/// Empty when `.env` already says exactly this, so a re-run plans nothing.
 pub fn dotenv_stage(dir: &Path, obs: &G1Observed, args: &HardwareSetupArgs) -> Stage {
     let mut kv = vec![
         ("ROBOT_IP", args.robot_ip.as_str()),
         ("ROBOT_INTERFACE", args.interface.as_str()),
     ];
-    if let Some(transport) = &args.transport {
-        kv.push(("DIMOS_TRANSPORT", transport.as_str()));
+    if let Some(transport) = args.transport {
+        kv.push(("DIMOS_TRANSPORT", transport.name()));
     }
-    Stage::new("robot .env", false).push(Action::WriteFile {
+    let stage = Stage::new("robot .env", false);
+    let contents = merge_dotenv(&obs.dotenv, &kv);
+    if contents == obs.dotenv {
+        return stage;
+    }
+    stage.push(Action::WriteFile {
         path: dir.join(".env"),
         mode: 0o600,
-        contents: merge_dotenv(&obs.dotenv, &kv),
+        contents,
         sudo: false,
     })
 }
@@ -230,37 +282,20 @@ fn pinned_version(spec: &str) -> &str {
     spec.split_once("==").map_or(spec, |(_, version)| version)
 }
 
-fn arg(path: &Path) -> String {
-    path.display().to_string()
-}
-
 fn git_insteadof() -> bool {
     capture(
-        Path::new("git"),
+        "git",
         &["config", "--global", "--get", GIT_INSTEADOF_KEY],
         &[],
+        PROBE_TIMEOUT_S,
     )
     .is_some_and(|value| value == GIT_SSH_URL)
-}
-
-fn capture(program: &Path, args: &[&str], env: &[(&str, String)]) -> Option<String> {
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null());
-    for (key, value) in env {
-        command.env(key, value);
-    }
-    let out = command.output().ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::Transport;
 
     const HOME: &str = "/home/unitree";
     const DIR: &str = "/home/unitree/dimos";
@@ -286,6 +321,7 @@ mod tests {
             sdk_present: true,
             sdk_imports: true,
             cyclonedds_py_version: Some("0.10.2".into()),
+            numpy_major: Some(1),
             git_insteadof_set: true,
             dotenv: "ROBOT_IP=192.168.123.161\nROBOT_INTERFACE=eth0\n".into(),
             nproc: 8,
@@ -302,6 +338,18 @@ mod tests {
         }
     }
 
+    fn rc(text: &str) -> Vec<RcFile> {
+        vec![RcFile {
+            path: home().join(".profile"),
+            text: text.to_string(),
+        }]
+    }
+
+    fn rc_with_block() -> Vec<RcFile> {
+        let lines = [format!("export CYCLONEDDS_HOME=\"$HOME/{CDDS_HOME_REL}\"")];
+        rc(&plan::ensure_block("", CDDS_MARKER, &lines).0)
+    }
+
     fn argvs(stage: &Stage) -> Vec<Vec<String>> {
         stage
             .actions
@@ -313,38 +361,45 @@ mod tests {
             .collect()
     }
 
-    fn every_stage(obs: &G1Observed) -> Vec<Stage> {
+    fn every_stage(obs: &G1Observed, rc: &[RcFile]) -> Vec<Stage> {
         let cdds = cyclonedds_home(&home());
+        let sdk_install =
+            sdk_install_stage(Path::new(UV), Path::new(PYTHON), Path::new(SDK), &cdds, obs);
+        let reinstalled = !sdk_install.actions.is_empty();
         vec![
             cyclonedds_stage(&home(), obs),
             sdk_clone_stage(Path::new(SDK), obs),
-            sdk_install_stage(Path::new(UV), Path::new(PYTHON), Path::new(SDK), &cdds, obs),
-            numpy_pin_stage(Path::new(UV), Path::new(PYTHON)),
-            rc_stage(&home()),
+            sdk_install,
+            numpy_pin_stage(
+                Path::new(UV),
+                Path::new(PYTHON),
+                obs.numpy_major,
+                reinstalled,
+            ),
+            rc_stage(rc),
             git_https_stage(obs),
             dotenv_stage(Path::new(DIR), obs, &args()),
         ]
     }
 
-    #[test]
-    fn a_configured_robot_plans_no_command_only_the_idempotent_block_and_pin() {
-        let planned: Vec<&str> = every_stage(&installed())
+    fn planned(stages: &[Stage]) -> Vec<&str> {
+        stages
             .iter()
             .filter(|s| !s.actions.is_empty())
             .map(|s| s.name)
-            .collect();
-        assert_eq!(planned, vec!["numpy pin", "cyclonedds env", "robot .env"]);
+            .collect()
+    }
+
+    #[test]
+    fn a_configured_robot_plans_nothing() {
+        let stages = every_stage(&installed(), &rc_with_block());
+        assert_eq!(planned(&stages), Vec::<&str>::new());
     }
 
     #[test]
     fn a_fresh_robot_plans_every_build_stage() {
-        let planned: Vec<&str> = every_stage(&fresh())
-            .iter()
-            .filter(|s| !s.actions.is_empty())
-            .map(|s| s.name)
-            .collect();
         assert_eq!(
-            planned,
+            planned(&every_stage(&fresh(), &rc(""))),
             vec![
                 "cyclonedds build",
                 "unitree sdk clone",
@@ -410,7 +465,9 @@ mod tests {
 
     #[test]
     fn no_g1_stage_asks_for_sudo() {
-        assert!(every_stage(&fresh()).iter().all(|s| !s.needs_sudo()));
+        assert!(every_stage(&fresh(), &rc(""))
+            .iter()
+            .all(|s| !s.needs_sudo()));
     }
 
     #[test]
@@ -475,10 +532,18 @@ mod tests {
     }
 
     #[test]
-    fn numpy_pin_is_unconditional_because_uv_sync_reapplies_the_pyproject_override() {
-        let planned = argvs(&numpy_pin_stage(Path::new(UV), Path::new(PYTHON)));
+    fn numpy_pin_is_planned_after_a_venv_change_or_at_numpy_2_and_skipped_at_numpy_1() {
+        let pin = |major, changed| {
+            argvs(&numpy_pin_stage(
+                Path::new(UV),
+                Path::new(PYTHON),
+                major,
+                changed,
+            ))
+        };
+        assert_eq!(pin(Some(1), false), Vec::<Vec<String>>::new());
         assert_eq!(
-            planned,
+            pin(Some(1), true),
             vec![vec![
                 UV,
                 "pip",
@@ -488,11 +553,20 @@ mod tests {
                 "numpy<2,>=1.26"
             ]]
         );
+        assert_eq!(pin(Some(2), false).len(), 1);
+        assert_eq!(pin(None, false).len(), 1);
+    }
+
+    #[test]
+    fn parse_major_reads_the_first_component() {
+        assert_eq!(parse_major("1.26.4\n"), Some(1));
+        assert_eq!(parse_major("2.1.0"), Some(2));
+        assert_eq!(parse_major(""), None);
     }
 
     #[test]
     fn no_action_mentions_opencv_python_or_the_unitree_sdk2_main_checkout() {
-        let text: String = every_stage(&fresh())
+        let text: String = every_stage(&fresh(), &rc(""))
             .iter()
             .flat_map(|s| s.actions.iter().map(Action::display))
             .collect();
@@ -502,7 +576,7 @@ mod tests {
 
     #[test]
     fn rc_block_exports_cyclonedds_home_through_the_shell_variable_not_a_baked_path() {
-        let stage = rc_stage(&home());
+        let stage = rc_stage(&rc(""));
         let Action::EnsureBlock {
             file,
             marker,
@@ -517,6 +591,12 @@ mod tests {
             lines,
             &vec!["export CYCLONEDDS_HOME=\"$HOME/cyclonedds/install\"".to_string()]
         );
+    }
+
+    #[test]
+    fn rc_stage_is_empty_when_every_rc_file_already_holds_the_block() {
+        assert!(rc_stage(&rc_with_block()).actions.is_empty());
+        assert_eq!(rc_stage(&rc("export A=1\n")).actions.len(), 1);
     }
 
     #[test]
@@ -553,7 +633,7 @@ mod tests {
             Path::new(DIR),
             &fresh(),
             &HardwareSetupArgs {
-                transport: Some("dds".into()),
+                transport: Some(Transport::Zenoh),
                 ..args()
             },
         );
@@ -567,7 +647,24 @@ mod tests {
         );
         assert_eq!(
             text(&with),
-            "ROBOT_IP=192.168.123.161\nROBOT_INTERFACE=eth0\nDIMOS_TRANSPORT=dds\n"
+            "ROBOT_IP=192.168.123.161\nROBOT_INTERFACE=eth0\nDIMOS_TRANSPORT=zenoh\n"
+        );
+    }
+
+    #[test]
+    fn dotenv_stage_is_empty_when_the_file_already_says_exactly_this() {
+        assert!(dotenv_stage(Path::new(DIR), &installed(), &args())
+            .actions
+            .is_empty());
+        let moved = HardwareSetupArgs {
+            robot_ip: "192.168.123.99".into(),
+            ..args()
+        };
+        assert_eq!(
+            dotenv_stage(Path::new(DIR), &installed(), &moved)
+                .actions
+                .len(),
+            1
         );
     }
 

@@ -1,8 +1,8 @@
 //! `dimos robot scan` — three read-only probes that print what is on the network. v1 saves
 //! nothing; the identity and the address are separate fields so v2 can key a registry by identity.
 
+use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
-use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -10,13 +10,19 @@ use serde::Serialize;
 use socket2::{Domain, Protocol, Socket, Type};
 
 use crate::cli::ScanArgs;
-use crate::plan::{say, Ctx, Mode};
-use crate::probe::{Os, Probes};
+use crate::plan::{say, text, Ctx, Mode};
+use crate::probe::{capture, Os, Probes};
 
 const GROUP: Ipv4Addr = Ipv4Addr::new(231, 1, 1, 1);
 const QUERY_PORT: u16 = 10131;
 const REPLY_PORT: u16 = 10134;
 const QUERY: &[u8] = br#"{"name": "unitree_dapengche"}"#;
+/// landiscovery.py re-sends every 2 s; a robot that finishes booting mid-window still answers.
+const RESEND_EVERY: Duration = Duration::from_secs(1);
+const PING_TIMEOUT_S: u64 = 5;
+const SSH_TIMEOUT_S: u64 = 10;
+/// The BLE scan's own `--timeout`, plus the Python CLI's start-up.
+const BLE_STARTUP_S: u64 = 60;
 
 /// VPN and container devices install a 224.0.0.0/4 route in a table that swallows the probe.
 const SKIP_IFACES: [&str; 8] = [
@@ -30,10 +36,14 @@ const SKIP_IFACES: [&str; 8] = [
     "Meta",
 ];
 
-/// The G1's Jetson and the Unitree control computer on the wired link.
-const WIRED_ADDRS: [Ipv4Addr; 2] = [
-    Ipv4Addr::new(192, 168, 123, 164),
-    Ipv4Addr::new(192, 168, 123, 161),
+/// The G1's Jetson and the Unitree control computer on the wired link; only the Jetson takes ssh.
+const WIRED_HOSTS: [(Ipv4Addr, &str, bool); 2] = [
+    (Ipv4Addr::new(192, 168, 123, 164), "jetson", true),
+    (
+        Ipv4Addr::new(192, 168, 123, 161),
+        "control computer (no ssh)",
+        false,
+    ),
 ];
 const WIRED_NET: [u8; 3] = [192, 168, 123];
 
@@ -167,15 +177,18 @@ fn collect_replies(sock: &UdpSocket, iface: &str, window: Duration) -> Vec<Found
     let mut buf = [0u8; 1024];
     loop {
         let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() || sock.set_read_timeout(Some(left)).is_err() {
+        if left.is_zero() || sock.set_read_timeout(Some(left.min(RESEND_EVERY))).is_err() {
             return found;
         }
-        let Ok((n, src)) = sock.recv_from(&mut buf) else {
-            return found;
-        };
-        let payload = String::from_utf8_lossy(&buf[..n]);
-        if let Some(robot) = parse_reply(&payload, &src.ip().to_string(), iface) {
-            found.push(robot);
+        match sock.recv_from(&mut buf) {
+            Ok((n, src)) => {
+                let payload = String::from_utf8_lossy(&buf[..n]);
+                found.extend(parse_reply(&payload, &src.ip().to_string(), iface));
+            }
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                let _ = sock.send_to(QUERY, SocketAddrV4::new(GROUP, QUERY_PORT));
+            }
+            Err(_) => return found,
         }
     }
 }
@@ -204,10 +217,10 @@ fn wired(ifaces: &[(String, Ipv4Addr)], os: &Os) -> Vec<Found> {
     let Some((name, _)) = wired_ifaces(ifaces).into_iter().next() else {
         return Vec::new();
     };
-    WIRED_ADDRS
+    WIRED_HOSTS
         .iter()
-        .filter(|addr| alive(os, **addr))
-        .map(|addr| wired_found(&name, *addr))
+        .filter(|(addr, _, _)| alive(os, *addr))
+        .map(|(addr, label, ssh)| wired_found(&name, *addr, label, *ssh))
         .collect()
 }
 
@@ -220,7 +233,12 @@ pub fn wired_ifaces(ifaces: &[(String, Ipv4Addr)]) -> Vec<(String, Ipv4Addr)> {
         .collect()
 }
 
-fn wired_found(iface: &str, addr: Ipv4Addr) -> Found {
+fn wired_found(iface: &str, addr: Ipv4Addr, label: &str, ssh: bool) -> Found {
+    let note = if ssh {
+        format!("{label}, {}", ssh_note(addr))
+    } else {
+        label.to_string()
+    };
     Found {
         kind: Kind::Wired,
         vendor: "unitree".to_string(),
@@ -228,18 +246,13 @@ fn wired_found(iface: &str, addr: Ipv4Addr) -> Found {
         identity: Identity::Unknown,
         addr: addr.to_string(),
         iface: iface.to_string(),
-        note: Some(ssh_note(addr).to_string()),
+        note: Some(note),
     }
 }
 
 fn alive(os: &Os, addr: Ipv4Addr) -> bool {
-    Command::new("ping")
-        .args(["-c", "1", "-W", ping_wait_arg(os), &addr.to_string()])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+    let args = ["-c", "1", "-W", ping_wait_arg(os), &addr.to_string()];
+    capture("ping", &args, &[], PING_TIMEOUT_S).is_some()
 }
 
 /// `-W` is whole seconds on iputils and milliseconds on macOS.
@@ -252,21 +265,15 @@ pub fn ping_wait_arg(os: &Os) -> &'static str {
 
 /// Reports reachability only; `true` is the whole remote command.
 fn ssh_note(addr: Ipv4Addr) -> &'static str {
-    let reached = Command::new("ssh")
-        .args([
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=3",
-            &format!("unitree@{addr}"),
-            "true",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success());
-    if reached {
+    let args = [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=3",
+        &format!("unitree@{addr}"),
+        "true",
+    ];
+    if capture("ssh", &args, &[], SSH_TIMEOUT_S).is_some() {
         "ssh: key ok"
     } else {
         "ssh: password needed"
@@ -284,23 +291,20 @@ fn ble(probes: &Probes, timeout_s: u64) -> Vec<Found> {
         say::warn("ble: install DimOS first (dimos setup)");
         return Vec::new();
     };
-    match go2tool_rows(&dimos, timeout_s) {
-        Ok(rows) => rows.lines().filter_map(parse_ble_row).collect(),
-        Err(e) => {
-            say::warn(&format!("ble: {} did not run: {e}", dimos.display()));
+    let args = [
+        "go2tool",
+        "discover",
+        "--ble",
+        "--timeout",
+        &timeout_s.to_string(),
+    ];
+    match capture(&text(&dimos), &args, &[], timeout_s + BLE_STARTUP_S) {
+        Some(rows) => rows.lines().filter_map(parse_ble_row).collect(),
+        None => {
+            say::warn(&format!("ble: {} did not run", dimos.display()));
             Vec::new()
         }
     }
-}
-
-fn go2tool_rows(dimos: &std::path::Path, timeout_s: u64) -> std::io::Result<String> {
-    let out = Command::new(dimos)
-        .args(["go2tool", "discover", "--ble", "--timeout"])
-        .arg(timeout_s.to_string())
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()?;
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// `dimos go2tool discover` prints `SOURCE NAME IP MAC SERIAL`; only its BLE rows are ours.
@@ -481,6 +485,20 @@ mod tests {
         );
         assert_eq!(parse_ble_row(""), None);
         assert_eq!(parse_ble_row("Stopped."), None);
+    }
+
+    #[test]
+    fn the_control_computer_is_labelled_and_never_probed_for_ssh() {
+        let found = wired_found(
+            "eth0",
+            Ipv4Addr::new(192, 168, 123, 161),
+            "control computer (no ssh)",
+            false,
+        );
+        assert_eq!(found.note.as_deref(), Some("control computer (no ssh)"));
+        assert_eq!(found.addr, "192.168.123.161");
+        assert_eq!(WIRED_HOSTS[0].1, "jetson");
+        assert!(WIRED_HOSTS[0].2 && !WIRED_HOSTS[1].2);
     }
 
     #[test]

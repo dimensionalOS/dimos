@@ -4,14 +4,21 @@ use std::fmt;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
-use crate::plan::Mode;
+use anyhow::{bail, Result};
+
+use crate::plan::{self, Mode};
+use crate::probe;
 
 const NO_SUDO: &str =
     "sudo is not installed: run as root, or install sudo (apt-get install -y sudo)";
 const NO_ROOT: &str =
     "root is needed and unavailable: no tty, no SUDO_ASKPASS, no DIMOS_SUDO_PASSWORD";
 const REJECTED: &str = "DIMOS_SUDO_PASSWORD rejected: `sudo -S -k -v` did not accept it";
+const PROBE_TIMEOUT_S: u64 = 10;
+/// PAM on a slow box can take seconds; a hung PAM must not hang the run.
+const VALIDATE_TIMEOUT_S: u64 = 30;
 
 /// A password. No `Serialize` impl exists, and Debug/Display print `<redacted>`.
 pub struct Secret(String);
@@ -51,16 +58,38 @@ pub enum Sudo {
 impl Sudo {
     /// Probe the machine once, then pick by the pure priority in `choose`.
     pub fn resolve(mode: Mode) -> Sudo {
-        match env_password() {
-            Err(why) => Sudo::Unavailable(why),
-            Ok(password) => Sudo::choose(
-                euid(),
-                which::which("sudo").is_ok(),
-                sudo_n_ok(),
-                askpass(),
-                password,
-                mode == Mode::Interactive && crate::plan::stdin_is_tty(),
-            ),
+        Sudo::pick(
+            euid(),
+            which::which("sudo").is_ok(),
+            sudo_n_ok(),
+            askpass(),
+            env_password(),
+            mode == Mode::Interactive && crate::plan::stdin_is_tty(),
+            validate,
+        )
+    }
+
+    /// `choose`, then test the password only when it is the way root would be obtained.
+    fn pick(
+        euid: u32,
+        sudo_installed: bool,
+        sudo_n_ok: bool,
+        askpass: Option<PathBuf>,
+        password: Option<Secret>,
+        interactive_tty: bool,
+        accepted: impl Fn(&Secret) -> bool,
+    ) -> Sudo {
+        let picked = Sudo::choose(
+            euid,
+            sudo_installed,
+            sudo_n_ok,
+            askpass,
+            password,
+            interactive_tty,
+        );
+        match picked {
+            Sudo::Stdin(secret) if !accepted(&secret) => Sudo::Unavailable(REJECTED.to_string()),
+            other => other,
         }
     }
 
@@ -97,6 +126,25 @@ impl Sudo {
         !matches!(self, Sudo::Unavailable(_))
     }
 
+    /// A terminal prompt happens here, on the human's clock, never inside an action's deadline.
+    pub fn refresh(&self) -> Result<()> {
+        if !matches!(self, Sudo::Tty) {
+            return Ok(());
+        }
+        let status = Command::new("sudo").arg("-v").status();
+        if status.is_ok_and(|s| s.success()) {
+            return Ok(());
+        }
+        bail!("sudo -v did not accept a password: re-run, or set DIMOS_SUDO_PASSWORD")
+    }
+
+    /// A `Tty` that cannot get a ticket becomes `Unavailable`, so every sudo stage is an exit 2.
+    pub fn refresh_or_demote(&mut self) {
+        if let Err(why) = self.refresh() {
+            *self = Sudo::Unavailable(format!("{why:#}"));
+        }
+    }
+
     /// The argv to spawn plus the bytes to feed its stdin; the password is only ever in those bytes.
     pub fn wrap(&self, argv: &[String]) -> (Vec<String>, Option<Vec<u8>>) {
         let prefix: &[&str] = match self {
@@ -120,7 +168,7 @@ impl Sudo {
         match self {
             Sudo::Unavailable(why) => format!(
                 "{why}\n  fix any one of:\n\
-                 \x20   export DIMOS_SUDO_PASSWORD='...'   (env only, never on the command line)\n\
+                 \x20   read -rs DIMOS_SUDO_PASSWORD && export DIMOS_SUDO_PASSWORD   (typed, never on a command line)\n\
                  \x20   export SUDO_ASKPASS=/path/to/askpass-helper\n\
                  \x20   re-run in a terminal, or add a sudoers NOPASSWD line for the commands above"
             ),
@@ -131,24 +179,13 @@ impl Sudo {
 
 /// `id -u` is the portable euid read without a libc dependency; unreadable means assume not root.
 fn euid() -> u32 {
-    Command::new("id")
-        .arg("-u")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
+    probe::capture("id", &["-u"], &[], PROBE_TIMEOUT_S)
+        .and_then(|out| out.parse().ok())
         .unwrap_or(1000)
 }
 
 fn sudo_n_ok() -> bool {
-    Command::new("sudo")
-        .args(["-n", "true"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    probe::capture("sudo", &["-n", "true"], &[], PROBE_TIMEOUT_S).is_some()
 }
 
 fn askpass() -> Option<PathBuf> {
@@ -158,18 +195,10 @@ fn askpass() -> Option<PathBuf> {
     (mode & 0o111 != 0).then_some(path)
 }
 
-/// `Err` when the var was set but sudo refused it, so a bad password never falls through to a prompt.
-fn env_password() -> Result<Option<Secret>, String> {
-    let Some(raw) = std::env::var_os("DIMOS_SUDO_PASSWORD") else {
-        return Ok(None);
-    };
+fn env_password() -> Option<Secret> {
+    let raw = std::env::var_os("DIMOS_SUDO_PASSWORD")?;
     std::env::remove_var("DIMOS_SUDO_PASSWORD"); // no child of ours may inherit it
-    let secret = Secret::new(raw.to_string_lossy().into_owned());
-    if validate(&secret) {
-        Ok(Some(secret))
-    } else {
-        Err(REJECTED.to_string())
-    }
+    Some(Secret::new(raw.to_string_lossy().into_owned()))
 }
 
 /// `-k` drops any cached ticket, so this tests the password and not a live sudo session.
@@ -186,7 +215,10 @@ fn validate(secret: &Secret) -> bool {
     if let Some(mut pipe) = child.stdin.take() {
         let _ = pipe.write_all(format!("{}\n", secret.expose()).as_bytes());
     }
-    child.wait().map(|s| s.success()).unwrap_or(false)
+    plan::wait_until(&mut child, Duration::from_secs(VALIDATE_TIMEOUT_S))
+        .ok()
+        .flatten()
+        .is_some_and(|s| s.success())
 }
 
 #[cfg(test)]
@@ -247,8 +279,52 @@ mod tests {
         let picked = Sudo::choose(1000, true, false, None, None, false);
         assert!(!picked.available());
         let fix = picked.human_fix();
-        assert!(fix.contains("DIMOS_SUDO_PASSWORD"), "{fix}");
+        assert!(fix.contains("read -rs DIMOS_SUDO_PASSWORD"), "{fix}");
         assert!(fix.contains("SUDO_ASKPASS"), "{fix}");
+    }
+
+    #[test]
+    fn a_stale_password_is_never_consulted_when_root_or_passwordless_sudo_is_there() {
+        let pw = || Some(Secret::new("stale".into()));
+        let never = |_: &Secret| panic!("the password was tested before the cheaper routes");
+        assert!(matches!(
+            Sudo::pick(0, true, false, None, pw(), false, never),
+            Sudo::Root
+        ));
+        assert!(matches!(
+            Sudo::pick(1000, true, true, None, pw(), false, never),
+            Sudo::Passwordless
+        ));
+        assert!(matches!(
+            Sudo::pick(1000, false, false, None, pw(), false, never),
+            Sudo::Unavailable(why) if why == NO_SUDO
+        ));
+    }
+
+    #[test]
+    fn a_rejected_password_is_unavailable_only_when_it_would_have_been_used() {
+        let pw = || Some(Secret::new("wrong".into()));
+        assert!(matches!(
+            Sudo::pick(1000, true, false, None, pw(), true, |_| false),
+            Sudo::Unavailable(why) if why == REJECTED
+        ));
+        assert!(matches!(
+            Sudo::pick(1000, true, false, None, pw(), true, |_| true),
+            Sudo::Stdin(_)
+        ));
+    }
+
+    #[test]
+    fn refresh_is_a_noop_for_every_route_but_the_terminal() {
+        for picked in [
+            Sudo::Root,
+            Sudo::Passwordless,
+            Sudo::Askpass(PathBuf::from("/a")),
+            Sudo::Stdin(Secret::new("p".into())),
+            Sudo::Unavailable("no".into()),
+        ] {
+            assert!(picked.refresh().is_ok(), "{picked:?}");
+        }
     }
 
     #[test]

@@ -18,7 +18,15 @@ pub const MEMLOCK_CONF: &str = "/etc/security/limits.d/99-dimos-memlock.conf";
 pub const MULTICAST_UNIT: &str = "dimos-multicast";
 pub const JETSON_CLOCKS_UNIT: &str = "dimos-jetson-clocks";
 
-const RC_CANDIDATES: [&str; 4] = [".profile", ".bashrc", ".zprofile", ".zshrc"];
+/// Every rc file a block may ever have landed in; `uninstall` sweeps them all.
+pub const RC_CANDIDATES: [&str; 6] = [
+    ".profile",
+    ".bash_profile",
+    ".bash_login",
+    ".bashrc",
+    ".zprofile",
+    ".zshrc",
+];
 
 /// What `dimos setup` recorded, so `update` and `hardware` re-run against the same install.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -126,17 +134,20 @@ pub fn unit_path(name: &str) -> PathBuf {
     PathBuf::from(UNIT_DIR).join(format!("{name}.service"))
 }
 
-/// Per-user rc files that exist; `~/.profile` when none do, so a PATH block always has a home.
-pub fn rc_files(home: &Path) -> Vec<PathBuf> {
-    let found: Vec<PathBuf> = RC_CANDIDATES
-        .iter()
-        .map(|n| home.join(n))
-        .filter(|p| p.exists())
-        .collect();
-    if found.is_empty() {
-        vec![home.join(".profile")]
-    } else {
-        found
+/// The rc files `shell` reads at login, by that shell's own lookup, so a block lands where it counts.
+pub fn rc_files(home: &Path, shell: &Path) -> Vec<PathBuf> {
+    match shell.file_name().and_then(|n| n.to_str()) {
+        Some("zsh") => vec![home.join(".zprofile")],
+        // bash -l reads the first of these three and no other; a plain terminal reads .bashrc.
+        Some("bash") => vec![
+            [".bash_profile", ".bash_login"]
+                .iter()
+                .map(|n| home.join(n))
+                .find(|p| p.exists())
+                .unwrap_or_else(|| home.join(".profile")),
+            home.join(".bashrc"),
+        ],
+        _ => vec![home.join(".profile")],
     }
 }
 
@@ -437,11 +448,26 @@ mod tests {
     }
 
     #[test]
-    fn rc_files_falls_back_to_profile_when_the_home_is_bare() {
+    fn rc_files_follow_the_login_shells_own_lookup() {
         let home = TmpDir::new("state-rc");
-        assert_eq!(rc_files(home.path()), [home.path().join(".profile")]);
-        fs::write(home.path().join(".zshrc"), "").unwrap();
-        assert_eq!(rc_files(home.path()), [home.path().join(".zshrc")]);
+        let at = |name: &str| home.path().join(name);
+        assert_eq!(
+            rc_files(home.path(), Path::new("/bin/zsh")),
+            [at(".zprofile")]
+        );
+        assert_eq!(
+            rc_files(home.path(), Path::new("/bin/bash")),
+            [at(".profile"), at(".bashrc")]
+        );
+        fs::write(at(".bash_profile"), "").unwrap();
+        assert_eq!(
+            rc_files(home.path(), Path::new("/usr/bin/bash")),
+            [at(".bash_profile"), at(".bashrc")]
+        );
+        assert_eq!(
+            rc_files(home.path(), Path::new("/bin/sh")),
+            [at(".profile")]
+        );
     }
 
     #[test]

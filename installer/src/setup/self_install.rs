@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use crate::plan::{Action, Stage};
-use crate::probe::Tools;
+use crate::plan::{text, Action, Stage};
+use crate::probe::{RcFile, Tools};
 use crate::state;
 
 pub const PATH_MARKER: &str = "path";
@@ -18,6 +18,7 @@ pub fn stage(
     current_exe: &Path,
     home: &Path,
     tools: &Tools,
+    rc: &[RcFile],
     installed_sha: Option<&str>,
     own_sha: &str,
 ) -> Stage {
@@ -27,15 +28,15 @@ pub fn stage(
         stage = stage.push(action);
     }
     if !tools.login_path_has_local_bin {
-        for file in state::rc_files(home) {
+        for file in rc {
             stage = stage.push(Action::EnsureBlock {
-                file,
+                file: file.path.clone(),
                 marker: PATH_MARKER.to_string(),
                 lines: path_lines(),
             });
         }
     }
-    stage.post(&[&dest.to_string_lossy(), "--version"])
+    stage.post(&[&text(&dest), "--version"])
 }
 
 /// Empty when the destination already holds this exact binary.
@@ -58,9 +59,13 @@ fn install_actions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::TmpDir;
-    use std::fs;
     use std::path::PathBuf;
+
+    const HOME: &str = "/home/u";
+
+    fn home() -> &'static Path {
+        Path::new(HOME)
+    }
 
     fn tools(login_path_has_local_bin: bool) -> Tools {
         Tools {
@@ -69,16 +74,29 @@ mod tests {
         }
     }
 
+    fn rc(name: &str) -> Vec<RcFile> {
+        vec![RcFile {
+            path: home().join(name),
+            text: String::new(),
+        }]
+    }
+
     #[test]
     fn same_binary_already_installed_is_empty_stage() {
-        let tmp = TmpDir::new("self-same");
-        let home = tmp.path();
-        let dest = state::installed_bin(home);
-        let by_path = stage(&dest, home, &tools(true), Some("aa"), "aa");
+        let dest = state::installed_bin(home());
+        let by_path = stage(
+            &dest,
+            home(),
+            &tools(true),
+            &rc(".bashrc"),
+            Some("aa"),
+            "aa",
+        );
         let by_sha = stage(
             Path::new("/tmp/dimos"),
-            home,
+            home(),
             &tools(true),
+            &rc(".bashrc"),
             Some("aa"),
             "aa",
         );
@@ -88,12 +106,11 @@ mod tests {
 
     #[test]
     fn different_sha_copies_with_mode_755() {
-        let tmp = TmpDir::new("self-copy");
-        let home = tmp.path();
         let s = stage(
             Path::new("/tmp/dimos"),
-            home,
+            home(),
             &tools(true),
+            &rc(".bashrc"),
             Some("old"),
             "new",
         );
@@ -101,7 +118,7 @@ mod tests {
             s.actions.last(),
             Some(&Action::Copy {
                 from: PathBuf::from("/tmp/dimos"),
-                to: state::installed_bin(home),
+                to: state::installed_bin(home()),
                 mode: 0o755,
             })
         );
@@ -109,17 +126,28 @@ mod tests {
 
     #[test]
     fn path_block_only_when_login_path_lacks_local_bin() {
-        let tmp = TmpDir::new("self-path");
-        let home = tmp.path();
-        fs::write(home.join(".bashrc"), "").expect("write rc fixture");
-        let installed = state::installed_bin(home);
-        let on_path = stage(&installed, home, &tools(true), Some("aa"), "aa");
-        let off_path = stage(&installed, home, &tools(false), Some("aa"), "aa");
+        let installed = state::installed_bin(home());
+        let on_path = stage(
+            &installed,
+            home(),
+            &tools(true),
+            &rc(".bashrc"),
+            Some("aa"),
+            "aa",
+        );
+        let off_path = stage(
+            &installed,
+            home(),
+            &tools(false),
+            &rc(".bashrc"),
+            Some("aa"),
+            "aa",
+        );
         assert!(on_path.actions.is_empty());
         assert_eq!(
             off_path.actions,
             vec![Action::EnsureBlock {
-                file: home.join(".bashrc"),
+                file: home().join(".bashrc"),
                 marker: PATH_MARKER.to_string(),
                 lines: path_lines(),
             }]
@@ -128,10 +156,14 @@ mod tests {
 
     #[test]
     fn actions_never_touch_etc() {
-        let tmp = TmpDir::new("self-etc");
-        let home = tmp.path();
-        fs::write(home.join(".zshrc"), "").expect("write rc fixture");
-        let s = stage(Path::new("/tmp/dimos"), home, &tools(false), None, "new");
+        let s = stage(
+            Path::new("/tmp/dimos"),
+            home(),
+            &tools(false),
+            &rc(".zprofile"),
+            None,
+            "new",
+        );
         assert!(!s.needs_sudo());
         for action in &s.actions {
             let written = match action {
@@ -139,19 +171,24 @@ mod tests {
                 Action::Copy { to, .. } => to.clone(),
                 other => panic!("unexpected action {}", other.display()),
             };
-            assert!(written.starts_with(home), "{}", written.display());
+            assert!(written.starts_with(home()), "{}", written.display());
         }
     }
 
     #[test]
     fn post_condition_runs_the_installed_binary() {
-        let tmp = TmpDir::new("self-post");
-        let home = tmp.path();
-        let s = stage(Path::new("/tmp/dimos"), home, &tools(true), None, "new");
+        let s = stage(
+            Path::new("/tmp/dimos"),
+            home(),
+            &tools(true),
+            &rc(".bashrc"),
+            None,
+            "new",
+        );
         assert_eq!(
             s.post,
             Some(vec![
-                state::installed_bin(home).display().to_string(),
+                state::installed_bin(home()).display().to_string(),
                 "--version".to_string(),
             ])
         );

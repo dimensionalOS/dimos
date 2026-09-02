@@ -130,16 +130,26 @@ pub fn plan(
     let (verb, blueprint) = verb_and_blueprint(action);
     validate_blueprint(blueprint)?;
     require_systemd(platform)?;
+    let stage = stage_for(action, blueprint, installed, platform, cdds_home.as_deref())?;
+    Ok(Plan {
+        command: format!("service {verb} {blueprint}"),
+        stages: vec![stage],
+        notes: Vec::new(),
+    })
+}
+
+fn stage_for(
+    action: &ServiceAction,
+    blueprint: &str,
+    installed: &Installed,
+    platform: &Platform,
+    cdds_home: Option<&Path>,
+) -> Result<Stage> {
     let unit = format!("{}.service", unit_name(blueprint));
-    let stage = match action {
-        ServiceAction::Setup { env, .. } => setup_stage(
-            &unit,
-            blueprint,
-            installed,
-            platform,
-            cdds_home.as_deref(),
-            env,
-        )?,
+    Ok(match action {
+        ServiceAction::Setup { env, .. } => {
+            setup_stage(&unit, blueprint, installed, platform, cdds_home, env)?
+        }
         ServiceAction::Start { .. } => control_stage("service-start", &unit, "start", true),
         ServiceAction::Stop { .. } => control_stage("service-stop", &unit, "stop", false),
         ServiceAction::Restart { .. } => control_stage("service-restart", &unit, "restart", true),
@@ -149,11 +159,6 @@ pub fn plan(
             let present = path.exists();
             remove_stage(&unit, &path, present)
         }
-    };
-    Ok(Plan {
-        command: format!("service {verb} {blueprint}"),
-        stages: vec![stage],
-        notes: Vec::new(),
     })
 }
 

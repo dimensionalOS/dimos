@@ -45,9 +45,11 @@ pub fn observe(home: &Path) -> Existing {
     }
 }
 
+/// Every candidate, not the current shell's: the block landed under whatever shell `setup` saw.
 fn rc_files_with_blocks(home: &Path) -> Vec<PathBuf> {
-    state::rc_files(home)
-        .into_iter()
+    state::RC_CANDIDATES
+        .iter()
+        .map(|name| home.join(name))
         .filter(|file| std::fs::read_to_string(file).is_ok_and(|text| has_block(&text)))
         .collect()
 }

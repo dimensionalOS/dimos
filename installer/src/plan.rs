@@ -1,5 +1,6 @@
-//! The plan-then-exec core: `run` is the only function in the crate that spawns a process,
-//! writes a file, or reads stdin. Everything else builds a `Plan` from probes.
+//! The plan-then-exec core: `run` is the only function in the crate that mutates the machine or
+//! reads stdin. Everything else builds a `Plan` from probes, which spawn read-only commands
+//! through `probe::capture`.
 
 use std::collections::VecDeque;
 use std::fs;
@@ -19,7 +20,7 @@ use crate::cli::Cli;
 use crate::state::{self, ActionLog, ActionRecord, ActionView};
 use crate::sudo::Sudo;
 
-/// A stage's post-condition argv gets a fixed budget; it is a check, never a build.
+/// The floor for a stage's post-condition; a stage with a slower action lends it that budget.
 const POST_TIMEOUT_S: u64 = 120;
 const TAIL_LINES: usize = 20;
 const HELP_URL: &str = "https://github.com/dimensionalOS/dimos/issues";
@@ -67,22 +68,32 @@ pub enum Action {
 }
 
 impl Action {
-    fn spawned(argv: &[&str], sudo: bool, timeout_s: u64) -> Action {
+    /// The one Run constructor; `run`, `sudo` and `run_in` are its borrowed spellings.
+    pub fn run_owned(
+        argv: Vec<String>,
+        sudo: bool,
+        cwd: Option<&Path>,
+        env: &[(&str, &str)],
+        timeout_s: u64,
+    ) -> Action {
         Action::Run {
-            argv: argv.iter().map(|a| (*a).to_string()).collect(),
+            argv,
             sudo,
-            cwd: None,
-            env: Vec::new(),
+            cwd: cwd.map(Path::to_path_buf),
+            env: env
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect(),
             timeout_s,
         }
     }
 
     pub fn run(argv: &[&str], timeout_s: u64) -> Action {
-        Action::spawned(argv, false, timeout_s)
+        Action::run_owned(owned(argv), false, None, &[], timeout_s)
     }
 
     pub fn sudo(argv: &[&str], timeout_s: u64) -> Action {
-        Action::spawned(argv, true, timeout_s)
+        Action::run_owned(owned(argv), true, None, &[], timeout_s)
     }
 
     /// A Run with a working directory and environment; never sudo, which would drop the env.
@@ -92,16 +103,7 @@ impl Action {
         env: &[(&str, &str)],
         timeout_s: u64,
     ) -> Action {
-        Action::Run {
-            argv: argv.iter().map(|a| (*a).to_string()).collect(),
-            sudo: false,
-            cwd: cwd.map(Path::to_path_buf),
-            env: env
-                .iter()
-                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-                .collect(),
-            timeout_s,
-        }
+        Action::run_owned(owned(argv), false, cwd, env, timeout_s)
     }
 
     /// The redacted shape written to the action log.
@@ -113,33 +115,18 @@ impl Action {
                 cwd,
                 env,
                 timeout_s,
-            } => ActionView::Run {
-                argv,
-                sudo: *sudo,
-                cwd: cwd.as_deref(),
-                env_keys: env.iter().map(|(k, _)| k.as_str()).collect(),
-                timeout_s: *timeout_s,
-            },
+            } => view_run(argv, *sudo, cwd.as_deref(), env, *timeout_s),
             Action::WriteFile {
                 path,
                 mode,
                 contents,
                 sudo,
-            } => ActionView::WriteFile {
-                path,
-                mode: *mode,
-                bytes: contents.len(),
-                sudo: *sudo,
-            },
+            } => view_write(path, *mode, contents.len(), *sudo),
             Action::EnsureBlock {
                 file,
                 marker,
                 lines,
-            } => ActionView::EnsureBlock {
-                file,
-                marker,
-                present: !lines.is_empty(),
-            },
+            } => view_block(file, marker, !lines.is_empty()),
             Action::Copy { from, to, .. } => ActionView::Copy { from, to },
             Action::Rename { from, to } => ActionView::Rename { from, to },
             Action::Remove { path, sudo } => ActionView::Remove { path, sudo: *sudo },
@@ -162,38 +149,92 @@ impl Action {
                 mode,
                 contents,
                 sudo,
-            } => format!(
-                "{}write {} ({} bytes, mode {mode:o})",
-                if *sudo { "sudo " } else { "" },
-                path.display(),
-                contents.len()
-            ),
+            } => display_write(path, *mode, contents.len(), *sudo),
             Action::EnsureBlock {
                 file,
                 marker,
                 lines,
-            } if lines.is_empty() => {
-                format!("remove the {marker} block from {}", file.display())
+            } => display_block(file, marker, lines.is_empty()),
+            Action::Copy { from, to, .. } => display_move("copy", from, to),
+            Action::Rename { from, to } => display_move("rename", from, to),
+            Action::Remove { path, sudo } => {
+                format!("{}remove {}", sudo_word(*sudo), path.display())
             }
-            Action::EnsureBlock { file, marker, .. } => {
-                format!("keep the {marker} block in {}", file.display())
-            }
-            Action::Copy { from, to, .. } => {
-                format!("copy {} -> {}", from.display(), to.display())
-            }
-            Action::Rename { from, to } => {
-                format!("rename {} -> {}", from.display(), to.display())
-            }
-            Action::Remove { path, sudo } => format!(
-                "{}remove {}",
-                if *sudo { "sudo " } else { "" },
-                path.display()
-            ),
             Action::VerifySha256 { file, sums_file } => {
                 format!("sha256 {} against {}", file.display(), sums_file.display())
             }
         }
     }
+}
+
+fn view_run<'a>(
+    argv: &'a [String],
+    sudo: bool,
+    cwd: Option<&'a Path>,
+    env: &'a [(String, String)],
+    timeout_s: u64,
+) -> ActionView<'a> {
+    ActionView::Run {
+        argv,
+        sudo,
+        cwd,
+        env_keys: env.iter().map(|(k, _)| k.as_str()).collect(),
+        timeout_s,
+    }
+}
+
+fn view_write(path: &Path, mode: u32, bytes: usize, sudo: bool) -> ActionView<'_> {
+    ActionView::WriteFile {
+        path,
+        mode,
+        bytes,
+        sudo,
+    }
+}
+
+fn view_block<'a>(file: &'a Path, marker: &'a str, present: bool) -> ActionView<'a> {
+    ActionView::EnsureBlock {
+        file,
+        marker,
+        present,
+    }
+}
+
+fn display_write(path: &Path, mode: u32, bytes: usize, sudo: bool) -> String {
+    format!(
+        "{}write {} ({bytes} bytes, mode {mode:o})",
+        sudo_word(sudo),
+        path.display()
+    )
+}
+
+fn display_block(file: &Path, marker: &str, removing: bool) -> String {
+    if removing {
+        format!("remove the {marker} block from {}", file.display())
+    } else {
+        format!("keep the {marker} block in {}", file.display())
+    }
+}
+
+fn display_move(verb: &str, from: &Path, to: &Path) -> String {
+    format!("{verb} {} -> {}", from.display(), to.display())
+}
+
+fn sudo_word(sudo: bool) -> &'static str {
+    if sudo {
+        "sudo "
+    } else {
+        ""
+    }
+}
+
+pub fn owned(argv: &[&str]) -> Vec<String> {
+    argv.iter().map(|a| (*a).to_string()).collect()
+}
+
+/// The one spelling of a path as an argv word.
+pub fn text(path: &Path) -> String {
+    path.display().to_string()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -206,6 +247,8 @@ pub struct Stage {
     pub actions: Vec<Action>,
     /// argv that must exit 0 after the actions; the post-condition, not the verify stage.
     pub post: Option<Vec<String>>,
+    /// A failure is one `!!` line carrying the child's last output line: never a stop, never a human.
+    pub warn_only: bool,
 }
 
 impl Stage {
@@ -216,6 +259,7 @@ impl Stage {
             consent: false,
             actions: Vec::new(),
             post: None,
+            warn_only: false,
         }
     }
 
@@ -233,13 +277,30 @@ impl Stage {
     }
 
     pub fn post(mut self, argv: &[&str]) -> Stage {
-        self.post = Some(argv.iter().map(|a| (*a).to_string()).collect());
+        self.post = Some(owned(argv));
         self
     }
 
     pub fn consent(mut self) -> Stage {
         self.consent = true;
         self
+    }
+
+    pub fn warn_only(mut self) -> Stage {
+        self.warn_only = true;
+        self
+    }
+
+    /// The slowest action's budget, so a post-condition is never killed before its own build.
+    fn post_timeout_s(&self) -> u64 {
+        self.actions
+            .iter()
+            .filter_map(|a| match a {
+                Action::Run { timeout_s, .. } => Some(*timeout_s),
+                _ => None,
+            })
+            .max()
+            .map_or(POST_TIMEOUT_S, |slowest| slowest.max(POST_TIMEOUT_S))
     }
 
     pub fn needs_sudo(&self) -> bool {
@@ -290,6 +351,11 @@ pub enum Outcome {
 }
 
 impl Outcome {
+    /// The machine is where the stage wanted it, or a dry run said what would get it there.
+    pub fn done(&self) -> bool {
+        matches!(self, Outcome::Applied | Outcome::Already | Outcome::DryRun)
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Outcome::Applied => "applied",
@@ -560,10 +626,13 @@ pub fn run(plan: &Plan, ctx: &mut Ctx) -> Result<Report> {
         );
     }
     print_plan(plan, ctx);
+    if !ctx.dry_run && plan.stages.iter().any(Stage::needs_sudo) {
+        ctx.sudo.refresh_or_demote();
+    }
     let mut stages = Vec::new();
     for stage in &plan.stages {
         let outcome = exec_stage(stage, ctx, &plan.command);
-        let stop = stage.critical && matches!(outcome, Outcome::Failed(_));
+        let stop = stage.critical && !outcome.done();
         stages.push((stage.name.to_string(), outcome));
         if stop {
             break;
@@ -603,9 +672,21 @@ fn decide(stage: &Stage, ctx: &mut Ctx, command: &str) -> Outcome {
     }
     match apply(stage, ctx, command) {
         Ok(()) => Outcome::Applied,
+        Err(e) if stage.warn_only => Outcome::Skipped(format!("{}: {}", stage.name, last_line(&e))),
         Err(e) if stage.critical => Outcome::Failed(format!("{}: {e:#}", stage.name)),
         Err(e) => recover(stage.name, e, ctx),
     }
+}
+
+/// The child's last output line, which a warn-only check writes as the operator's fix.
+fn last_line(err: &anyhow::Error) -> String {
+    let text = format!("{err:#}");
+    text.lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// Render every action, touch nothing; a consent-gated stage says what consent would cover.
@@ -691,7 +772,7 @@ fn apply(stage: &Stage, ctx: &Ctx, command: &str) -> Result<()> {
         result?;
     }
     match &stage.post {
-        Some(argv) => run_argv(argv, false, None, &[], POST_TIMEOUT_S, ctx).map(|_| ()),
+        Some(argv) => run_argv(argv, false, None, &[], stage.post_timeout_s(), ctx).map(|_| ()),
         None => Ok(()),
     }
 }
@@ -747,13 +828,15 @@ fn write_file(path: &Path, mode: u32, contents: &str, sudo: bool, ctx: &Ctx) -> 
     status.map(|_| ())
 }
 
+/// The rename lands on the real file, so a symlinked rc file (stow, chezmoi) keeps its link.
 fn write_atomic(path: &Path, mode: u32, contents: &str) -> Result<()> {
-    ensure_parent(path)?;
+    let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    ensure_parent(&path)?;
     let tmp = path.with_extension("dimos-tmp");
     fs::write(&tmp, contents).with_context(|| format!("write {}", tmp.display()))?;
     fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))
         .with_context(|| format!("chmod {mode:o} {}", tmp.display()))?;
-    fs::rename(&tmp, path)
+    fs::rename(&tmp, &path)
         .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))
 }
 
@@ -816,6 +899,7 @@ fn run_argv(
     ctx: &Ctx,
 ) -> Result<i32> {
     let (full, password) = if sudo {
+        ctx.sudo.refresh()?; // the human types before the deadline starts, not inside it
         ctx.sudo.wrap(argv)
     } else {
         (argv.to_vec(), None)
@@ -887,7 +971,7 @@ fn spawn(
 }
 
 /// Poll instead of blocking so a hung child is killed at its deadline instead of hanging the run.
-fn wait_until(child: &mut Child, deadline: Duration) -> Result<Option<ExitStatus>> {
+pub(crate) fn wait_until(child: &mut Child, deadline: Duration) -> Result<Option<ExitStatus>> {
     let started = Instant::now();
     loop {
         match child.try_wait().context("wait for the child process")? {
@@ -1176,6 +1260,79 @@ mod tests {
         let report = run(&plan, &mut ctx(home.path(), false)).unwrap();
         assert_eq!(report.stages.len(), 1);
         assert_eq!(report.exit_code(), 1);
+    }
+
+    #[test]
+    fn critical_needs_human_stops_the_plan() {
+        let home = TmpDir::new("plan-critical-human");
+        let plan = plan_of(
+            "setup",
+            vec![
+                Stage::new("first", true).sudo(&["true"], 10),
+                Stage::new("second", false).run(&["true"], 10),
+            ],
+        );
+        let mut c = ctx(home.path(), false);
+        c.sudo = Sudo::Unavailable("no tty".to_string());
+        let report = run(&plan, &mut c).unwrap();
+        assert_eq!(report.stages.len(), 1);
+        assert!(matches!(report.stages[0].1, Outcome::NeedsHuman(_)));
+        assert_eq!(report.exit_code(), 2);
+    }
+
+    #[test]
+    fn only_applied_already_and_dry_run_count_as_done() {
+        assert!(Outcome::Applied.done() && Outcome::Already.done() && Outcome::DryRun.done());
+        assert!(!Outcome::Skipped("s".into()).done());
+        assert!(!Outcome::NeedsHuman("h".into()).done());
+        assert!(!Outcome::Failed("f".into()).done());
+    }
+
+    #[test]
+    fn a_warn_only_failure_is_one_line_carrying_the_childs_last_output_and_exit_0() {
+        let home = TmpDir::new("plan-warn");
+        let script = "echo 'torch: static TLS'; echo 'fix: export LD_PRELOAD=x' >&2; exit 1";
+        let plan = plan_of(
+            "setup",
+            vec![Stage::new("verify-torch", false)
+                .run(&["sh", "-c", script], 10)
+                .warn_only()],
+        );
+        let report = run(&plan, &mut ctx(home.path(), false)).unwrap();
+        assert_eq!(
+            report.stages[0].1,
+            Outcome::Skipped("verify-torch: fix: export LD_PRELOAD=x".to_string())
+        );
+        assert_eq!(report.exit_code(), 0);
+    }
+
+    #[test]
+    fn a_post_condition_borrows_the_slowest_actions_budget_or_the_floor() {
+        assert_eq!(Stage::new("s", true).post_timeout_s(), POST_TIMEOUT_S);
+        assert_eq!(
+            Stage::new("s", true).run(&["true"], 10).post_timeout_s(),
+            POST_TIMEOUT_S
+        );
+        assert_eq!(
+            Stage::new("s", true).run(&["true"], 3600).post_timeout_s(),
+            3600
+        );
+    }
+
+    #[test]
+    fn a_symlinked_rc_file_keeps_its_link_when_a_block_is_written() {
+        let home = TmpDir::new("plan-symlink");
+        let real = home.path().join("dotfiles/zshrc");
+        fs::create_dir_all(real.parent().unwrap()).unwrap();
+        fs::write(&real, "export A=1\n").unwrap();
+        let link = home.path().join(".zshrc");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        ensure_block_file(&link, "path", &["export B=2".to_string()]).unwrap();
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(fs::read_to_string(&real).unwrap().contains("export B=2"));
     }
 
     #[test]

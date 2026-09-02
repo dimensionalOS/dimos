@@ -10,19 +10,19 @@ pub mod sysconfig;
 pub mod verify;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
 use crate::cli::{InstallMode, SetupArgs};
 use crate::pkgs::{self, Platforms, DIMOS_VERSION, EXTRAS};
-use crate::plan::{self, say, Ctx, Plan, Stage};
-use crate::probe::{Arch, Os, PkgManager, Platform, Probes};
+use crate::plan::{self, say, text, Ctx, Plan, Stage};
+use crate::probe::{self, Arch, Os, PkgManager, Platform, Probes};
 use crate::state::{self, Installed};
 
 const GIB: u64 = 1024 * 1024 * 1024;
 /// A dev install with the base extras unpacks ~10 GiB of wheels, torch included.
 pub const MIN_DISK_BYTES: u64 = 12 * GIB;
+const DF_TIMEOUT_S: u64 = 20;
 
 const DEFAULT_DIR: &str = "dimos-app";
 const DEFAULT_BRANCH: &str = "main";
@@ -137,8 +137,8 @@ fn disk_gate(free: Option<u64>, prior: Option<&Installed>, dir: &Path) -> Result
 /// The one probe in this file, and read-only: `df` on the nearest parent of `dir` that exists.
 fn free_bytes(dir: &Path) -> Option<u64> {
     let mount = dir.ancestors().find(|p| p.exists())?;
-    let out = Command::new("df").arg("-Pk").arg(mount).output().ok()?;
-    parse_df_kib(&String::from_utf8_lossy(&out.stdout)).map(|kib| kib * 1024)
+    let out = probe::capture("df", &["-Pk", &text(mount)], &[], DF_TIMEOUT_S)?;
+    parse_df_kib(&out).map(|kib| kib * 1024)
 }
 
 /// `df -P` guarantees one line per filesystem, with Available as the fourth field, in KiB.
@@ -165,15 +165,15 @@ fn stages(
     dir_state: &install::DirState,
 ) -> Result<Vec<Stage>> {
     let uv = deps::uv_bin(&probes.tools, home);
-    let mut out = vec![
-        self_install_stage(probes, home),
-        deps::packages_stage(&target.extras, probes, cfg),
+    let mut out = vec![self_install_stage(probes, home)];
+    out.extend(deps::packages_stages(&target.extras, probes, cfg));
+    out.extend([
         deps::uv_stage(&probes.tools, home),
         deps::nix_stage(&probes.tools, home, target.with_nix),
         install_stage(target, &uv, dir_state)?,
         sysconfig::stage(&probes.platform, &probes.kernel, cfg),
         jetson::stage(&probes.platform, &probes.kernel),
-    ];
+    ]);
     out.extend(verify::stages(
         &checks(probes),
         &state::venv(&target.dir),
@@ -191,6 +191,7 @@ fn self_install_stage(probes: &Probes, home: &Path) -> Stage {
         &probes.current_exe,
         home,
         &probes.tools,
+        &probes.rc,
         installed.as_deref(),
         &own,
     )
@@ -341,9 +342,15 @@ mod tests {
             installed: None,
             rc: Vec::new(),
             ifaces: Vec::new(),
-            dotenv: None,
             current_exe: PathBuf::from("/tmp/dimos"),
         }
+    }
+
+    fn stage_named<'a>(plan: &'a Plan, name: &str) -> &'a Stage {
+        plan.stages
+            .iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("{name} is in the plan"))
     }
 
     fn installed(dir: &Path) -> Installed {
@@ -482,6 +489,7 @@ mod tests {
             names(&linux),
             [
                 "self-install",
+                "apt update",
                 "packages",
                 "uv",
                 "nix",
@@ -501,7 +509,8 @@ mod tests {
         let macos =
             plan(&target(home.path()), &mac, &cfg, home.path()).expect("the macos fixture plans");
         assert_eq!(names(&macos), names(&linux));
-        assert!(macos.stages[5].actions.is_empty());
+        assert!(stage_named(&macos, "sysconfig").actions.is_empty());
+        assert!(stage_named(&macos, "apt update").actions.is_empty());
     }
 
     #[test]
@@ -569,7 +578,7 @@ mod tests {
             "{:?}",
             steps.notes
         );
-        assert!(steps.stages[1].actions.is_empty());
+        assert!(stage_named(&steps, "packages").actions.is_empty());
     }
 
     #[test]

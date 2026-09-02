@@ -4,11 +4,11 @@
 
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 
 use crate::cli::{HardwareSetupArgs, HardwareTarget, HardwareVerb};
 use crate::pkgs::{self, Platforms};
-use crate::plan::{self, Ctx, Plan, Report};
+use crate::plan::{self, say, Ctx, Plan, Report, Stage};
 use crate::probe::{Arch, Os, Probes};
 use crate::setup::{deps, g1, jetson, sysconfig, verify};
 use crate::state::{self, HardwareRun, Installed};
@@ -57,7 +57,11 @@ pub fn run(
     cfg: &Platforms,
     home: &Path,
 ) -> Result<i32> {
-    let installed = preflight(robot, probes, cfg)?;
+    let Some(installed) = probes.installed.clone() else {
+        say::fail(setup_first(robot));
+        return Ok(2);
+    };
+    preflight(robot, args, probes, cfg, &installed)?;
     let steps = match robot {
         Robot::G1 => g1_setup(args, probes, cfg, &installed, home),
         Robot::Jetson => jetson_plan(args, probes, cfg, &installed),
@@ -70,16 +74,32 @@ pub fn run(
     Ok(report.exit_code())
 }
 
-/// The install this target is brought up on top of, or the command that has to run first.
-pub fn preflight(robot: Robot, probes: &Probes, cfg: &Platforms) -> Result<Installed> {
-    let installed = probes.installed.clone().context(setup_first(robot))?;
+/// The refusals that must happen before a plan exists, each naming what the operator does next.
+pub fn preflight(
+    robot: Robot,
+    args: &HardwareSetupArgs,
+    probes: &Probes,
+    cfg: &Platforms,
+    installed: &Installed,
+) -> Result<()> {
     pkgs::validate_extras(&installed.extras, probes.platform.arch, cfg)?;
-    ready(robot, probes, &installed, installed.venv_python().is_file())?;
-    Ok(installed)
+    ready(
+        robot,
+        args,
+        probes,
+        installed,
+        installed.venv_python().is_file(),
+    )
 }
 
 /// Pure over `venv`, the one read `preflight` does, so every refusal is fixture-testable.
-fn ready(robot: Robot, probes: &Probes, installed: &Installed, venv: bool) -> Result<()> {
+fn ready(
+    robot: Robot,
+    args: &HardwareSetupArgs,
+    probes: &Probes,
+    installed: &Installed,
+    venv: bool,
+) -> Result<()> {
     if !venv {
         bail!(
             "no venv at {}: {}",
@@ -88,12 +108,12 @@ fn ready(robot: Robot, probes: &Probes, installed: &Installed, venv: bool) -> Re
         );
     }
     match robot {
-        Robot::G1 => g1_ready(probes, installed),
+        Robot::G1 => g1_ready(args, probes, installed),
         Robot::Jetson => jetson_ready(probes),
     }
 }
 
-fn g1_ready(probes: &Probes, installed: &Installed) -> Result<()> {
+fn g1_ready(args: &HardwareSetupArgs, probes: &Probes, installed: &Installed) -> Result<()> {
     let platform = &probes.platform;
     if !matches!(platform.os, Os::Linux { .. }) || platform.arch != Arch::Aarch64 {
         bail!(
@@ -108,7 +128,23 @@ fn g1_ready(probes: &Probes, installed: &Installed) -> Result<()> {
             setup_first(Robot::G1)
         );
     }
-    Ok(())
+    interface_ready(&args.interface, probes)
+}
+
+/// The verify stage reads DDS on this NIC, so a name this machine lacks is refused up front.
+fn interface_ready(interface: &str, probes: &Probes) -> Result<()> {
+    if probes.ifaces.iter().any(|(name, _)| name == interface) {
+        return Ok(());
+    }
+    let names: Vec<&str> = probes
+        .ifaces
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    bail!(
+        "no interface {interface} on this machine, got [{}]: pass --interface <one of them>",
+        names.join(", ")
+    )
 }
 
 fn jetson_ready(probes: &Probes) -> Result<()> {
@@ -133,13 +169,10 @@ fn g1_setup(
     installed: &Installed,
     home: &Path,
 ) -> Plan {
-    let sdk = g1::sdk_path(args.sdk_path.clone(), Path::new(g1::OPT_SDK).exists(), home);
-    let obs = g1::observe(home, &installed.venv_python(), &sdk, &installed.dir);
-    g1_plan(args, probes, cfg, installed, &obs, &sdk, home)
+    let (sdk, obs) = g1::detect(home, installed, args.sdk_path.clone());
+    g1_plan(args, probes, cfg, installed, &obs, &sdk)
 }
 
-/// The G1 bring-up (brief decision 13). The numpy pin follows the SDK install because every
-/// `uv pip`/`uv sync` before it re-applies pyproject's numpy>=2 override.
 pub fn g1_plan(
     args: &HardwareSetupArgs,
     probes: &Probes,
@@ -147,25 +180,10 @@ pub fn g1_plan(
     installed: &Installed,
     obs: &g1::G1Observed,
     sdk: &Path,
-    home: &Path,
 ) -> Plan {
-    let uv = deps::uv_bin(&probes.tools, home);
-    let python = installed.venv_python();
-    let cyclonedds_home = g1::cyclonedds_home(home);
-    let mut stages = vec![
-        deps::packages_stage(&installed.extras, probes, cfg),
-        g1::cyclonedds_stage(home, obs),
-        g1::sdk_clone_stage(sdk, obs),
-        g1::sdk_install_stage(&uv, &python, sdk, &cyclonedds_home, obs),
-        g1::numpy_pin_stage(&uv, &python),
-        g1::rc_stage(home),
-        g1::git_https_stage(obs),
-        jetson::stage(&probes.platform, &probes.kernel),
-        sysconfig::stage(&probes.platform, &probes.kernel, cfg),
-        g1::dotenv_stage(&installed.dir, obs, args),
-    ];
+    let mut stages = g1_stages(args, probes, cfg, installed, obs, sdk, false);
     stages.extend(checks(
-        verify::Target::G1 { cyclonedds_home },
+        g1_target(&probes.platform.home, args),
         installed,
         args,
     ));
@@ -173,6 +191,45 @@ pub fn g1_plan(
         command: Robot::G1.command(),
         stages,
         notes: notes(probes),
+    }
+}
+
+/// The G1 bring-up (brief decision 13), shared with `update`. The numpy pin follows the SDK
+/// install because every `uv pip`/`uv sync` before it re-applies pyproject's numpy>=2 override.
+pub fn g1_stages(
+    args: &HardwareSetupArgs,
+    probes: &Probes,
+    cfg: &Platforms,
+    installed: &Installed,
+    obs: &g1::G1Observed,
+    sdk: &Path,
+    venv_changed: bool,
+) -> Vec<Stage> {
+    let home = &probes.platform.home;
+    let uv = deps::uv_bin(&probes.tools, home);
+    let python = installed.venv_python();
+    let sdk_install = g1::sdk_install_stage(&uv, &python, sdk, &g1::cyclonedds_home(home), obs);
+    let reinstalled = venv_changed || !sdk_install.actions.is_empty();
+    let mut stages = deps::packages_stages(&installed.extras, probes, cfg);
+    stages.extend([
+        g1::cyclonedds_stage(home, obs),
+        g1::sdk_clone_stage(sdk, obs),
+        sdk_install,
+        g1::numpy_pin_stage(&uv, &python, obs.numpy_major, reinstalled),
+        g1::rc_stage(&probes.rc),
+        g1::git_https_stage(obs),
+        jetson::stage(&probes.platform, &probes.kernel),
+        sysconfig::stage(&probes.platform, &probes.kernel, cfg),
+        g1::dotenv_stage(&installed.dir, obs, args),
+    ]);
+    stages
+}
+
+/// What the G1 verify needs: where libddsc lives and which NIC the robot answers on.
+pub fn g1_target(home: &Path, args: &HardwareSetupArgs) -> verify::Target {
+    verify::Target::G1 {
+        cyclonedds_home: g1::cyclonedds_home(home),
+        interface: args.interface.clone(),
     }
 }
 
@@ -195,11 +252,7 @@ pub fn jetson_plan(
     }
 }
 
-fn checks(
-    target: verify::Target,
-    installed: &Installed,
-    args: &HardwareSetupArgs,
-) -> Vec<plan::Stage> {
+fn checks(target: verify::Target, installed: &Installed, args: &HardwareSetupArgs) -> Vec<Stage> {
     verify::stages(
         &target,
         &installed.venv(),
@@ -255,14 +308,16 @@ mod tests {
     use super::*;
 
     use std::collections::BTreeMap;
+    use std::net::Ipv4Addr;
     use std::path::PathBuf;
 
     use clap::Parser;
 
     use crate::cli::{Cli, Command, InstallMode};
-    use crate::plan::{Action, Outcome, Stage};
-    use crate::probe::{Gpu, Jetson, Kernel, PkgManager, Platform, Tools};
-    use crate::state::{PlatformSummary, SCHEMA};
+    use crate::plan::{Action, Mode, Outcome, Stage};
+    use crate::probe::{Gpu, Jetson, Kernel, PkgManager, Platform, RcFile, Tools};
+    use crate::state::{ActionLog, PlatformSummary, TmpDir, SCHEMA};
+    use crate::sudo::Sudo;
 
     const HOME: &str = "/home/unitree";
     const DIR: &str = "/home/unitree/dimos";
@@ -325,7 +380,14 @@ mod tests {
         }
     }
 
-    fn probes(platform: Platform, kernel: Kernel, dpkg_status: &str) -> Probes {
+    fn rc(text: &str) -> Vec<RcFile> {
+        vec![RcFile {
+            path: home().join(".profile"),
+            text: text.to_string(),
+        }]
+    }
+
+    fn probes(platform: Platform, kernel: Kernel, dpkg_status: &str, rc: Vec<RcFile>) -> Probes {
         Probes {
             platform,
             kernel,
@@ -335,15 +397,14 @@ mod tests {
                 ..Default::default()
             },
             installed: Some(installed(&[UNITREE_EXTRA])),
-            rc: Vec::new(),
-            ifaces: Vec::new(),
-            dotenv: None,
+            rc,
+            ifaces: vec![("eth0".to_string(), Ipv4Addr::new(192, 168, 123, 164))],
             current_exe: PathBuf::from("/home/unitree/.local/bin/dimos"),
         }
     }
 
     fn fresh_g1() -> Probes {
-        probes(orin(), Kernel::default(), "")
+        probes(orin(), Kernel::default(), "", rc(""))
     }
 
     fn args() -> HardwareSetupArgs {
@@ -370,6 +431,7 @@ mod tests {
             sdk_present: true,
             sdk_imports: true,
             cyclonedds_py_version: Some("0.10.2".into()),
+            numpy_major: Some(1),
             git_insteadof_set: true,
             dotenv: "ROBOT_IP=192.168.123.161\nROBOT_INTERFACE=eth0\n".into(),
             nproc: 8,
@@ -398,6 +460,16 @@ mod tests {
             .collect()
     }
 
+    fn configured_g1(cfg: &Platforms) -> Probes {
+        let lines = ["export CYCLONEDDS_HOME=\"$HOME/cyclonedds/install\"".to_string()];
+        probes(
+            orin(),
+            configured_kernel(cfg),
+            &every_package_installed(cfg),
+            rc(&plan::ensure_block("", g1::CDDS_MARKER, &lines).0),
+        )
+    }
+
     fn g1_plan_of(probes: &Probes, obs: &g1::G1Observed, cfg: &Platforms) -> Plan {
         g1_plan(
             &args(),
@@ -406,7 +478,6 @@ mod tests {
             &installed(&[UNITREE_EXTRA]),
             obs,
             Path::new(SDK),
-            &home(),
         )
     }
 
@@ -454,12 +525,19 @@ mod tests {
     #[test]
     fn g1_preflight_refuses_without_unitree_extra_or_venv_naming_the_setup_command() {
         let probes = fresh_g1();
-        let no_extra = ready(Robot::G1, &probes, &installed(&["base"]), true).unwrap_err();
+        let no_extra = ready(Robot::G1, &args(), &probes, &installed(&["base"]), true).unwrap_err();
         assert!(
             no_extra.to_string().contains("--extras unitree"),
             "{no_extra}"
         );
-        let no_venv = ready(Robot::G1, &probes, &installed(&[UNITREE_EXTRA]), false).unwrap_err();
+        let no_venv = ready(
+            Robot::G1,
+            &args(),
+            &probes,
+            &installed(&[UNITREE_EXTRA]),
+            false,
+        )
+        .unwrap_err();
         assert!(no_venv.to_string().contains(PYTHON), "{no_venv}");
         assert!(no_venv.to_string().contains("dimos setup"), "{no_venv}");
     }
@@ -470,16 +548,63 @@ mod tests {
             platform(Arch::X86_64, false, (2, 39)),
             Kernel::default(),
             "",
+            rc(""),
         );
-        let err = ready(Robot::G1, &laptop, &installed(&[UNITREE_EXTRA]), true).unwrap_err();
+        let err = ready(
+            Robot::G1,
+            &args(),
+            &laptop,
+            &installed(&[UNITREE_EXTRA]),
+            true,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("aarch64 Linux"), "{err}");
     }
 
     #[test]
+    fn g1_preflight_refuses_an_interface_this_machine_does_not_have() {
+        let wrong = HardwareSetupArgs {
+            interface: "enp0s3".into(),
+            ..args()
+        };
+        let err = ready(
+            Robot::G1,
+            &wrong,
+            &fresh_g1(),
+            &installed(&[UNITREE_EXTRA]),
+            true,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("no interface enp0s3"), "{err}");
+        assert!(err.to_string().contains("[eth0]"), "{err}");
+        assert!(ready(
+            Robot::G1,
+            &args(),
+            &fresh_g1(),
+            &installed(&[UNITREE_EXTRA]),
+            true
+        )
+        .is_ok());
+    }
+
+    #[test]
     fn g1_preflight_accepts_an_aarch64_linux_robot_with_the_unitree_extra() {
-        assert!(preflight(Robot::G1, &fresh_g1(), &cfg())
-            .is_err_and(|e| e.to_string().contains("no venv at")));
-        assert!(ready(Robot::G1, &fresh_g1(), &installed(&[UNITREE_EXTRA]), true).is_ok());
+        assert!(preflight(
+            Robot::G1,
+            &args(),
+            &fresh_g1(),
+            &cfg(),
+            &installed(&[UNITREE_EXTRA])
+        )
+        .is_err_and(|e| e.to_string().contains("no venv at")));
+        assert!(ready(
+            Robot::G1,
+            &args(),
+            &fresh_g1(),
+            &installed(&[UNITREE_EXTRA]),
+            true
+        )
+        .is_ok());
     }
 
     #[test]
@@ -488,24 +613,41 @@ mod tests {
             platform(Arch::X86_64, false, (2, 39)),
             Kernel::default(),
             "",
+            rc(""),
         );
-        let err = ready(Robot::Jetson, &host, &installed(&["base"]), true).unwrap_err();
+        let err = ready(Robot::Jetson, &args(), &host, &installed(&["base"]), true).unwrap_err();
         assert!(err.to_string().contains("/etc/nv_tegra_release"), "{err}");
 
-        let mut orin = fresh_g1();
-        orin.installed = Some(installed(&["cuda"]));
-        let cuda = preflight(Robot::Jetson, &orin, &cfg()).unwrap_err();
+        let cuda = preflight(
+            Robot::Jetson,
+            &args(),
+            &fresh_g1(),
+            &cfg(),
+            &installed(&["cuda"]),
+        )
+        .unwrap_err();
         assert!(cuda.to_string().contains("platform_machine"), "{cuda}");
     }
 
     #[test]
-    fn preflight_without_installer_json_names_the_setup_command_per_target() {
+    fn no_installer_json_is_exit_2_naming_the_setup_command_per_target() {
+        let tmp = TmpDir::new("hardware-bare");
+        let mut ctx = Ctx {
+            mode: Mode::NonInteractive,
+            dry_run: true,
+            verbose: false,
+            yes: true,
+            sudo: Sudo::Root,
+            log: ActionLog::open(tmp.path()).expect("open the action log"),
+            run_id: "test".to_string(),
+        };
         let mut bare = fresh_g1();
         bare.installed = None;
-        let g1 = preflight(Robot::G1, &bare, &cfg()).unwrap_err();
-        assert_eq!(g1.to_string(), setup_first(Robot::G1));
-        let jetson = preflight(Robot::Jetson, &bare, &cfg()).unwrap_err();
-        assert_eq!(jetson.to_string(), setup_first(Robot::Jetson));
+        for robot in [Robot::G1, Robot::Jetson] {
+            let code = run(robot, &args(), &mut ctx, &bare, &cfg(), tmp.path()).expect("exits");
+            assert_eq!(code, 2, "{robot:?}");
+        }
+        assert!(setup_first(Robot::G1).contains("--extras unitree"));
     }
 
     #[test]
@@ -514,6 +656,7 @@ mod tests {
         assert_eq!(
             planned(&g1_plan_of(&fresh_g1(), &fresh_obs(), &cfg)),
             vec![
+                "apt update",
                 "packages",
                 "cyclonedds build",
                 "unitree sdk clone",
@@ -525,28 +668,18 @@ mod tests {
                 "sysconfig",
                 "robot .env",
                 "verify-shell",
+                "verify-torch",
                 "verify",
             ]
         );
     }
 
     #[test]
-    fn a_configured_g1_plans_only_the_idempotent_re_assertions_and_the_checks() {
+    fn a_configured_g1_plans_nothing_but_the_checks() {
         let cfg = cfg();
-        let probes = probes(
-            orin(),
-            configured_kernel(&cfg),
-            &every_package_installed(&cfg),
-        );
         assert_eq!(
-            planned(&g1_plan_of(&probes, &built_obs(), &cfg)),
-            vec![
-                "numpy pin",
-                "cyclonedds env",
-                "robot .env",
-                "verify-shell",
-                "verify",
-            ]
+            planned(&g1_plan_of(&configured_g1(&cfg), &built_obs(), &cfg)),
+            vec!["verify-shell", "verify-torch", "verify"]
         );
     }
 
@@ -561,7 +694,42 @@ mod tests {
     }
 
     #[test]
-    fn g1_plan_ends_with_the_critical_verify_carrying_cyclonedds_home() {
+    fn a_venv_change_replans_the_numpy_pin_on_a_configured_g1() {
+        let cfg = cfg();
+        let probes = configured_g1(&cfg);
+        let inst = installed(&[UNITREE_EXTRA]);
+        let quiet = g1_stages(
+            &args(),
+            &probes,
+            &cfg,
+            &inst,
+            &built_obs(),
+            Path::new(SDK),
+            false,
+        );
+        let changed = g1_stages(
+            &args(),
+            &probes,
+            &cfg,
+            &inst,
+            &built_obs(),
+            Path::new(SDK),
+            true,
+        );
+        let pin = |stages: &[Stage]| {
+            stages
+                .iter()
+                .find(|s| s.name == "numpy pin")
+                .expect("numpy pin")
+                .actions
+                .len()
+        };
+        assert_eq!(pin(&quiet), 0);
+        assert_eq!(pin(&changed), 1);
+    }
+
+    #[test]
+    fn g1_plan_ends_with_the_critical_verify_carrying_cyclonedds_home_and_the_interface() {
         let cfg = cfg();
         let plan = g1_plan_of(&fresh_g1(), &fresh_obs(), &cfg);
         let last = plan.stages.last().expect("verify is last");
@@ -579,6 +747,11 @@ mod tests {
                 )]
             );
         }
+        let scripts = scripts(last);
+        assert!(
+            scripts.last().expect("a live check").contains("\"eth0\""),
+            "{scripts:?}"
+        );
     }
 
     #[test]
@@ -613,11 +786,14 @@ mod tests {
     }
 
     #[test]
-    fn jetson_plan_is_perf_then_machine_config_then_the_critical_verify() {
+    fn jetson_plan_is_perf_then_machine_config_then_the_checks() {
         let cfg = cfg();
         let plan = jetson_plan(&args(), &fresh_g1(), &cfg, &installed(&["base"]));
         assert_eq!(plan.command, "hardware jetson setup");
-        assert_eq!(planned(&plan), vec!["jetson perf", "sysconfig", "verify"]);
+        assert_eq!(
+            planned(&plan),
+            vec!["jetson perf", "sysconfig", "verify-torch", "verify"]
+        );
         assert!(plan.stages.last().expect("verify is last").critical);
     }
 
@@ -647,6 +823,7 @@ mod tests {
             platform(Arch::Aarch64, true, (2, 35)),
             Kernel::default(),
             "",
+            rc(""),
         );
         let plan = jetson_plan(&args(), &safe, &cfg, &installed(&["base"]));
         assert!(
@@ -666,6 +843,7 @@ mod tests {
                 ..Kernel::default()
             },
             "",
+            rc(""),
         );
         let plan = jetson_plan(&args(), &hot, &cfg, &installed(&["base"]));
         assert!(

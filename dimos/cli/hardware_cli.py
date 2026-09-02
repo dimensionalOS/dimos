@@ -16,7 +16,14 @@
 
 import typer
 
+from dimos.cli.forward import register as register_forwarders
 from dimos.cli.hardware.a1z import app as a1z_app
 
 app = typer.Typer(help="Diagnose and configure robot hardware", no_args_is_help=True)
 app.add_typer(a1z_app, name="a1z")
+
+# `hardware g1|jetson setup` is the Rust installer's; from an activated venv it must still reach it.
+for robot in ("g1", "jetson"):
+    robot_app = typer.Typer(help=f"Unitree {robot} bring-up (DimOS installer)", no_args_is_help=True)
+    register_forwarders(robot_app, "setup")
+    app.add_typer(robot_app, name=robot)

@@ -3,24 +3,24 @@
 //! report — every probe runs, nothing is applied. `observe` is the only I/O outside `plan::run`.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 use anyhow::{bail, Result};
 
-use crate::cli::{InstallMode, UpdateArgs};
-use crate::hardware::Robot;
+use crate::cli::{HardwareSetupArgs, InstallMode, UpdateArgs};
+use crate::hardware::{self, Robot};
 use crate::pkgs::{self, Platforms, DIMOS_VERSION};
-use crate::plan::{self, say, Action, Ctx, Outcome, Plan, Report, Stage};
-use crate::probe::Probes;
-use crate::setup::{deps, g1, jetson, sysconfig, verify};
+use crate::plan::{self, say, text, Action, Ctx, Outcome, Plan, Report, Stage};
+use crate::probe::{capture, Probes};
+use crate::setup::g1::G1Observed;
+use crate::setup::{deps, g1, install, jetson, sysconfig, verify};
 use crate::state::{self, Installed};
 
 pub const RELEASES: &str = "https://github.com/dimensionalOS/dimos/releases";
 /// The same override `scripts/install.sh` honors, so a LAN test serves both from one directory.
 const INSTALLER_URL_ENV: &str = "DIMOS_INSTALLER_URL";
-const NUMPY_CODE: &str = "import numpy; print(numpy.__version__)";
 /// A pre-release ranks below every marker, so a final release takes the highest rank.
 const FINAL: u8 = 3;
+const NOT_VERIFIED: &str = "verify not run in dry-run: a real `dimos update` runs the checks";
 
 const DOWNLOAD_TIMEOUT_S: u64 = 600;
 const SHA_TIMEOUT_S: u64 = 120;
@@ -29,6 +29,11 @@ const GIT_TIMEOUT_S: u64 = 600;
 /// A cold `uv sync` on an Orin NX builds wheels from source; the same budget `setup` gives it.
 const SYNC_TIMEOUT_S: u64 = 3600;
 const PIP_TIMEOUT_S: u64 = 1800;
+/// curl's own `--max-time 15`, plus process start-up.
+const LATEST_PROBE_TIMEOUT_S: u64 = 20;
+const GIT_PROBE_TIMEOUT_S: u64 = 10;
+/// A half-open network (the G1's wifi lease moved) hangs `ls-remote` until TCP gives up.
+const LS_REMOTE_TIMEOUT_S: u64 = 30;
 
 /// What the probes saw; `--dry-run` fills it exactly as a real run does.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -37,24 +42,34 @@ pub struct Observed {
     pub latest: Option<String>,
     pub head: Option<String>,
     pub remote: Option<String>,
-    pub numpy_major: Option<u32>,
+    /// The robot's state, and the SDK path it was found at, when installer.json records a G1.
+    pub g1: Option<(PathBuf, G1Observed)>,
 }
 
 /// The only I/O in this file, and all of it read-only, so `--dry-run` runs every probe.
-pub fn observe(installed: &Installed, args: &UpdateArgs, override_url: Option<&str>) -> Observed {
+pub fn observe(
+    installed: &Installed,
+    args: &UpdateArgs,
+    override_url: Option<&str>,
+    home: &Path,
+) -> Observed {
     let dev = installed.mode == InstallMode::Dev;
     let dir = text(&installed.dir);
     Observed {
         latest: candidate(args, override_url),
-        head: dev.then(|| git(&dir, &["rev-parse", "HEAD"])).flatten(),
+        head: dev
+            .then(|| git(&dir, &["rev-parse", "HEAD"], GIT_PROBE_TIMEOUT_S))
+            .flatten(),
         remote: dev
             .then(|| remote_head(&dir, installed.branch.as_deref()))
             .flatten(),
-        numpy_major: installed
-            .hardware
-            .contains_key(Robot::G1.key())
-            .then(|| numpy_major(installed))
-            .flatten(),
+        g1: g1_record(installed).map(|_| {
+            g1::detect(
+                home,
+                installed,
+                std::env::var_os("SDK2_PATH").map(PathBuf::from),
+            )
+        }),
     }
 }
 
@@ -80,36 +95,35 @@ fn latest_release() -> Option<String> {
         "15",
         &url,
     ];
-    parse_latest_tag(&capture("curl", &args, &[])?)
+    parse_latest_tag(&capture("curl", &args, &[], LATEST_PROBE_TIMEOUT_S)?)
 }
 
 fn remote_head(dir: &str, branch: Option<&str>) -> Option<String> {
     let refname = format!("refs/heads/{}", branch?);
-    parse_ls_remote(&git(dir, &["ls-remote", "origin", &refname])?)
+    parse_ls_remote(&git(
+        dir,
+        &["ls-remote", "origin", &refname],
+        LS_REMOTE_TIMEOUT_S,
+    )?)
 }
 
 /// GIT_TERMINAL_PROMPT=0 so a private remote fails instead of blocking on a credential prompt.
-fn git(dir: &str, args: &[&str]) -> Option<String> {
+fn git(dir: &str, args: &[&str], timeout_s: u64) -> Option<String> {
     let mut argv = vec!["-C", dir];
     argv.extend_from_slice(args);
-    capture("git", &argv, &[("GIT_TERMINAL_PROMPT", "0")])
+    capture("git", &argv, &[("GIT_TERMINAL_PROMPT", "0")], timeout_s)
 }
 
-fn numpy_major(installed: &Installed) -> Option<u32> {
-    let python = text(&installed.venv_python());
-    parse_major(&capture(&python, &["-c", NUMPY_CODE], &[])?)
-}
-
-fn capture(program: &str, args: &[&str], env: &[(&str, &str)]) -> Option<String> {
-    let mut cmd = Command::new(program);
-    cmd.args(args).stdin(Stdio::null());
-    for (key, value) in env {
-        cmd.env(key, value);
-    }
-    let out = cmd.output().ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+/// The G1 record with the address and NIC its stages are rebuilt from; None for an older record.
+fn g1_record(installed: &Installed) -> Option<HardwareSetupArgs> {
+    let rec = installed.hardware.get(Robot::G1.key())?;
+    Some(HardwareSetupArgs {
+        robot_ip: rec.robot_ip.clone()?,
+        interface: rec.interface.clone()?,
+        transport: None,
+        sdk_path: None,
+        blueprint: None,
+    })
 }
 
 /// `https://github.com/x/y/releases/tag/v0.0.15` -> `0.0.15`.
@@ -123,11 +137,6 @@ pub fn parse_latest_tag(url: &str) -> Option<String> {
 pub fn parse_ls_remote(text: &str) -> Option<String> {
     let sha = text.split_whitespace().next()?;
     (sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit())).then(|| sha.to_string())
-}
-
-/// `1.26.4` -> 1.
-pub fn parse_major(version: &str) -> Option<u32> {
-    version.trim().split('.').next()?.parse().ok()
 }
 
 fn normalize(tag: &str) -> String {
@@ -292,7 +301,7 @@ fn pip_action(installed: &Installed, uv: &Path) -> Action {
         text(&installed.venv_python()),
         pkgs::pip_spec(&installed.extras),
     ];
-    in_dir(argv, installed, &[], PIP_TIMEOUT_S)
+    Action::run_owned(argv, false, Some(&installed.dir), &[], PIP_TIMEOUT_S)
 }
 
 /// `--ff-only` so a checkout carrying local commits stops instead of being merged under its owner.
@@ -304,9 +313,10 @@ fn pull_action(installed: &Installed) -> Action {
         "pull".to_string(),
         "--ff-only".to_string(),
     ];
-    in_dir(
+    Action::run_owned(
         argv,
-        installed,
+        false,
+        Some(&installed.dir),
         &[("GIT_LFS_SKIP_SMUDGE", "1")],
         GIT_TIMEOUT_S,
     )
@@ -316,64 +326,57 @@ fn pull_action(installed: &Installed) -> Action {
 fn sync_action(installed: &Installed, uv: &Path) -> Action {
     let mut argv = vec![text(uv), "sync".to_string(), "--inexact".to_string()];
     argv.extend(pkgs::sync_args(&installed.extras));
-    in_dir(
+    Action::run_owned(
         argv,
-        installed,
+        false,
+        Some(&installed.dir),
         &[("GIT_LFS_SKIP_SMUDGE", "1")],
         SYNC_TIMEOUT_S,
     )
 }
 
-fn in_dir(
-    argv: Vec<String>,
+/// A recorded G1 gets its whole bring-up re-asserted (D2); any other machine, the host config.
+fn machine_stages(
     installed: &Installed,
-    env: &[(&str, &str)],
-    timeout_s: u64,
-) -> Action {
-    let borrowed: Vec<&str> = argv.iter().map(String::as_str).collect();
-    Action::run_in(&borrowed, Some(&installed.dir), env, timeout_s)
-}
-
-/// `uv sync` re-applies pyproject's numpy>=2 override (pyproject.toml:547), which breaks the G1's
-/// DDS bindings, so the pin is re-asserted whenever the DimOS stage runs or the venv has drifted.
-fn numpy_stages(installed: &Installed, uv: &Path, obs: &Observed, dimos_runs: bool) -> Vec<Stage> {
-    if !installed.hardware.contains_key(Robot::G1.key()) {
-        return Vec::new();
+    probes: &Probes,
+    cfg: &Platforms,
+    obs: &Observed,
+    dimos_runs: bool,
+) -> Vec<Stage> {
+    if let (Some(args), Some((sdk, g1_obs))) = (g1_record(installed), &obs.g1) {
+        return hardware::g1_stages(&args, probes, cfg, installed, g1_obs, sdk, dimos_runs);
     }
-    if !dimos_runs && obs.numpy_major == Some(1) {
-        return vec![Stage::new("numpy pin", true)];
-    }
-    vec![g1::numpy_pin_stage(uv, &installed.venv_python())]
-}
-
-fn machine_stages(installed: &Installed, probes: &Probes, cfg: &Platforms) -> Vec<Stage> {
-    vec![
-        deps::packages_stage(&installed.extras, probes, cfg),
+    let mut stages = deps::packages_stages(&installed.extras, probes, cfg);
+    stages.extend([
         sysconfig::stage(&probes.platform, &probes.kernel, cfg),
         jetson::stage(&probes.platform, &probes.kernel),
-    ]
+    ]);
+    stages
 }
 
 /// A recorded G1 is verified as a G1, so a broken DDS stack fails the run instead of passing quietly.
 fn target(installed: &Installed, probes: &Probes, home: &Path) -> verify::Target {
-    if installed.hardware.contains_key(Robot::G1.key()) {
-        return verify::Target::G1 {
-            cyclonedds_home: g1::cyclonedds_home(home),
-        };
+    match g1_record(installed) {
+        Some(args) => hardware::g1_target(home, &args),
+        None if probes.platform.is_jetson() => verify::Target::Jetson,
+        None => verify::Target::Host,
     }
-    if probes.platform.is_jetson() {
-        verify::Target::Jetson
-    } else {
-        verify::Target::Host
-    }
+}
+
+/// A G1 recorded before the address fields existed cannot be rebuilt from installer.json.
+fn g1_note(installed: &Installed) -> Option<String> {
+    (installed.hardware.contains_key(Robot::G1.key()) && g1_record(installed).is_none()).then(
+        || {
+            "the g1 record has no address: `dimos hardware g1 setup --robot-ip <ip>` repairs it"
+                .to_string()
+        },
+    )
 }
 
 fn notes(installed: &Installed, probes: &Probes, skipped: Option<String>) -> Vec<String> {
     [
         skipped,
-        installed.hardware.contains_key(Robot::G1.key()).then(|| {
-            "cyclonedds and the Unitree SDK are `dimos hardware g1 setup`, not update".to_string()
-        }),
+        g1_note(installed),
         jetson::static_tls_note(&probes.platform),
         jetson::thermal_note(&probes.kernel),
         sysconfig::no_systemd_note(&probes.platform),
@@ -396,11 +399,9 @@ pub fn plan(
     let dimos = dimos_stage(installed, &uv, obs, args.force);
     let dimos_runs = !dimos.actions.is_empty();
     let mut stages = vec![self_update, dimos];
-    stages.extend(numpy_stages(installed, &uv, obs, dimos_runs));
-    stages.extend(machine_stages(installed, probes, cfg));
-    let checks = target(installed, probes, home);
+    stages.extend(machine_stages(installed, probes, cfg, obs, dimos_runs));
     stages.extend(verify::stages(
-        &checks,
+        &target(installed, probes, home),
         &installed.venv(),
         &installed.dir,
         None,
@@ -412,9 +413,31 @@ pub fn plan(
     }
 }
 
-/// A dry run exits 0 only when the machine is already where it should be; a planned stage means no.
+/// Exit 0 only when every stage but the checks is already there; the checks did not run.
 pub fn dry_run_exit(report: &Report) -> i32 {
-    i32::from(!report.stages.iter().all(|(_, o)| *o == Outcome::Already))
+    let pending = report
+        .stages
+        .iter()
+        .any(|(name, o)| !verify::is_check(name) && *o != Outcome::Already);
+    i32::from(pending)
+}
+
+/// installer.json says what the venv holds now, so the next run's probe reads the truth.
+fn record(installed: &Installed, obs: &Observed, report: &Report, home: &Path) -> Result<()> {
+    let landed = report
+        .stages
+        .iter()
+        .any(|(name, o)| name == "dimos" && *o == Outcome::Applied);
+    if !landed {
+        return Ok(());
+    }
+    let mut out = installed.clone();
+    out.dimos_version = install::dimos_version_string(
+        out.mode,
+        out.branch.as_deref().unwrap_or_default(),
+        obs.remote.as_deref(),
+    );
+    state::save(home, &out)
 }
 
 /// Puts the kept `.bak` back through the same executor, so `--dry-run --rollback` prints the swap.
@@ -448,13 +471,15 @@ pub fn run(
         say::fail("no DimOS install recorded: run `dimos setup` first");
         return Ok(2);
     };
-    let obs = observe(&installed, args, override_url().as_deref());
+    let obs = observe(&installed, args, override_url().as_deref(), home);
     let steps = plan(&installed, args, probes, cfg, &obs, home);
     let report = plan::run(&steps, ctx)?;
     report.print(ctx);
     if ctx.dry_run {
+        say::warn(NOT_VERIFIED);
         return Ok(dry_run_exit(&report));
     }
+    record(&installed, &obs, &report, home)?;
     rollback_hint(&report, home);
     Ok(report.exit_code())
 }
@@ -471,18 +496,15 @@ fn override_url() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn text(path: &Path) -> String {
-    path.display().to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::cli::InstallMode;
-    use crate::probe::{Arch, Gpu, Kernel, Os, PkgManager, Platform, Tools};
+    use crate::probe::{Arch, Gpu, Kernel, Os, PkgManager, Platform, RcFile, Tools};
     use crate::state::{ActionLog, HardwareRun, PlatformSummary, TmpDir};
     use crate::sudo::Sudo;
     use std::collections::BTreeMap;
+    use std::net::Ipv4Addr;
 
     fn installed(mode: InstallMode, home: &Path) -> Installed {
         Installed {
@@ -507,16 +529,35 @@ mod tests {
     }
 
     fn with_g1(mut installed: Installed) -> Installed {
+        installed.extras = vec!["unitree".to_string()];
         installed.hardware.insert(
             Robot::G1.key().to_string(),
             HardwareRun {
                 at: "2026-09-01T00:00:00Z".to_string(),
                 result: "applied".to_string(),
-                robot_ip: None,
-                interface: None,
+                robot_ip: Some("192.168.123.161".to_string()),
+                interface: Some("eth0".to_string()),
             },
         );
         installed
+    }
+
+    fn g1_observed(home: &Path) -> Observed {
+        let obs = G1Observed {
+            cyclonedds_lib: true,
+            cyclonedds_clone: true,
+            sdk_present: true,
+            sdk_imports: true,
+            cyclonedds_py_version: Some("0.10.2".into()),
+            numpy_major: Some(1),
+            git_insteadof_set: true,
+            dotenv: "ROBOT_IP=192.168.123.161\nROBOT_INTERFACE=eth0\n".into(),
+            nproc: 8,
+        };
+        Observed {
+            g1: Some((home.join("unitree_sdk2_python"), obs)),
+            ..Observed::default()
+        }
     }
 
     fn probes(home: &Path, current_exe: PathBuf) -> Probes {
@@ -539,11 +580,24 @@ mod tests {
             kernel: Kernel::default(),
             tools: Tools::default(),
             installed: None,
-            rc: Vec::new(),
-            ifaces: Vec::new(),
-            dotenv: None,
+            rc: vec![RcFile {
+                path: home.join(".profile"),
+                text: String::new(),
+            }],
+            ifaces: vec![("eth0".to_string(), Ipv4Addr::new(192, 168, 123, 164))],
             current_exe,
         }
+    }
+
+    /// Every apt package present, so the machine-config stages of a host plan are empty.
+    fn configured(home: &Path) -> Probes {
+        let mut probes = probes(home, state::installed_bin(home));
+        probes.tools.dpkg_status =
+            pkgs::system_packages(&["base".to_string()], PkgManager::Apt, &Platforms::load())
+                .iter()
+                .map(|p| format!("{p} install ok installed\n"))
+                .collect();
+        probes
     }
 
     fn args() -> UpdateArgs {
@@ -551,6 +605,18 @@ mod tests {
             version: None,
             force: false,
             rollback: false,
+        }
+    }
+
+    fn ctx(home: &Path, dry_run: bool) -> Ctx {
+        Ctx {
+            mode: crate::plan::Mode::NonInteractive,
+            dry_run,
+            verbose: false,
+            yes: true,
+            sudo: Sudo::Root,
+            log: ActionLog::open(home).expect("open the action log"),
+            run_id: "test".to_string(),
         }
     }
 
@@ -570,6 +636,10 @@ mod tests {
             .iter()
             .find(|s| s.name == name)
             .expect("stage in plan")
+    }
+
+    fn names(plan: &Plan) -> Vec<&str> {
+        plan.stages.iter().map(|s| s.name).collect()
     }
 
     #[test]
@@ -625,13 +695,6 @@ mod tests {
             Some("9f8b2c1d0e4a6b7c8d9e0f1a2b3c4d5e6f708192".to_string())
         );
         assert_eq!(parse_ls_remote("fatal: could not read"), None);
-    }
-
-    #[test]
-    fn parse_major_reads_the_first_component() {
-        assert_eq!(parse_major("1.26.4\n"), Some(1));
-        assert_eq!(parse_major("2.1.0"), Some(2));
-        assert_eq!(parse_major(""), None);
     }
 
     #[test]
@@ -755,41 +818,6 @@ mod tests {
     }
 
     #[test]
-    fn numpy_pin_is_planned_whenever_the_dimos_stage_runs_on_a_recorded_g1() {
-        let home = TmpDir::new("update-numpy-run");
-        let inst = with_g1(installed(InstallMode::Dev, home.path()));
-        let obs = Observed {
-            numpy_major: Some(1),
-            ..Observed::default()
-        };
-        let stages = numpy_stages(&inst, Path::new("/uv"), &obs, true);
-        assert_eq!(argv_of(&stages[0]).len(), 1);
-    }
-
-    #[test]
-    fn numpy_pin_is_skipped_when_the_g1_venv_already_holds_numpy_1_and_nothing_syncs() {
-        let home = TmpDir::new("update-numpy-ok");
-        let inst = with_g1(installed(InstallMode::Dev, home.path()));
-        let obs = Observed {
-            numpy_major: Some(1),
-            ..Observed::default()
-        };
-        let stages = numpy_stages(&inst, Path::new("/uv"), &obs, false);
-        assert!(stages[0].actions.is_empty());
-    }
-
-    #[test]
-    fn numpy_pin_is_absent_off_a_recorded_g1() {
-        let home = TmpDir::new("update-numpy-host");
-        let inst = installed(InstallMode::Dev, home.path());
-        let obs = Observed {
-            numpy_major: None,
-            ..Observed::default()
-        };
-        assert!(numpy_stages(&inst, Path::new("/uv"), &obs, true).is_empty());
-    }
-
-    #[test]
     fn plan_ends_with_a_critical_verify_stage() {
         let home = TmpDir::new("update-plan");
         let inst = installed(InstallMode::Library, home.path());
@@ -809,9 +837,59 @@ mod tests {
     }
 
     #[test]
+    fn a_recorded_g1_rebuilds_every_g1_stage_from_its_record() {
+        let home = TmpDir::new("update-g1-stages");
+        let inst = with_g1(installed(InstallMode::Dev, home.path()));
+        let probes = probes(home.path(), state::installed_bin(home.path()));
+        let cfg = Platforms::load();
+        let steps = plan(
+            &inst,
+            &args(),
+            &probes,
+            &cfg,
+            &g1_observed(home.path()),
+            home.path(),
+        );
+        let got = names(&steps);
+        for name in [
+            "cyclonedds build",
+            "unitree sdk install",
+            "numpy pin",
+            "cyclonedds env",
+            "git https rewrite",
+            "robot .env",
+            "verify-shell",
+        ] {
+            assert!(got.contains(&name), "{name} missing from {got:?}");
+        }
+        assert!(steps.notes.iter().all(|n| !n.contains("g1 record")));
+    }
+
+    #[test]
     fn plan_orders_the_numpy_pin_after_the_dimos_stage_that_breaks_it() {
         let home = TmpDir::new("update-order");
         let inst = with_g1(installed(InstallMode::Dev, home.path()));
+        let probes = probes(home.path(), state::installed_bin(home.path()));
+        let cfg = Platforms::load();
+        let obs = Observed {
+            head: Some("abc".to_string()),
+            remote: Some("def".to_string()),
+            ..g1_observed(home.path())
+        };
+        let steps = plan(&inst, &args(), &probes, &cfg, &obs, home.path());
+        let names = names(&steps);
+        let dimos_at = names.iter().position(|n| *n == "dimos").expect("dimos");
+        let numpy_at = names.iter().position(|n| *n == "numpy pin").expect("numpy");
+        assert!(dimos_at < numpy_at);
+        assert_eq!(stage_named(&steps, "numpy pin").actions.len(), 1);
+        assert_eq!(stage_named(&steps, "self-update").actions.len(), 0);
+    }
+
+    #[test]
+    fn a_g1_record_without_an_address_gets_the_repair_note_not_the_stages() {
+        let home = TmpDir::new("update-g1-old");
+        let mut inst = with_g1(installed(InstallMode::Dev, home.path()));
+        inst.hardware.get_mut("g1").expect("g1").robot_ip = None;
         let probes = probes(home.path(), state::installed_bin(home.path()));
         let cfg = Platforms::load();
         let steps = plan(
@@ -822,56 +900,103 @@ mod tests {
             &Observed::default(),
             home.path(),
         );
-        let names: Vec<&str> = steps.stages.iter().map(|s| s.name).collect();
-        let dimos_at = names.iter().position(|n| *n == "dimos").expect("dimos");
-        let numpy_at = names.iter().position(|n| *n == "numpy pin").expect("numpy");
-        assert!(dimos_at < numpy_at);
-        assert_eq!(stage_named(&steps, "self-update").actions.len(), 0);
+        assert!(!names(&steps).contains(&"numpy pin"));
+        assert!(steps.notes.iter().any(|n| n.contains("--robot-ip")));
     }
 
     #[test]
-    fn a_recorded_g1_is_verified_as_a_g1() {
+    fn a_recorded_g1_is_verified_as_a_g1_on_its_recorded_interface() {
         let home = TmpDir::new("update-g1-target");
         let inst = with_g1(installed(InstallMode::Dev, home.path()));
         let probes = probes(home.path(), state::installed_bin(home.path()));
         assert_eq!(
             target(&inst, &probes, home.path()),
             verify::Target::G1 {
-                cyclonedds_home: g1::cyclonedds_home(home.path())
+                cyclonedds_home: g1::cyclonedds_home(home.path()),
+                interface: "eth0".to_string(),
             }
         );
     }
 
     #[test]
-    fn dry_run_exit_is_0_only_when_every_stage_is_already() {
-        let clean = Report {
+    fn dry_run_exit_is_0_when_every_stage_but_the_checks_is_already() {
+        let report = |stages: Vec<(&str, Outcome)>| Report {
             command: "update".to_string(),
-            stages: vec![("dimos".to_string(), Outcome::Already)],
+            stages: stages
+                .into_iter()
+                .map(|(n, o)| (n.to_string(), o))
+                .collect(),
         };
-        let pending = Report {
-            command: "update".to_string(),
-            stages: vec![
-                ("dimos".to_string(), Outcome::Already),
-                ("sysconfig".to_string(), Outcome::DryRun),
-            ],
-        };
+        let clean = report(vec![
+            ("dimos", Outcome::Already),
+            ("verify", Outcome::DryRun),
+        ]);
+        let pending = report(vec![
+            ("dimos", Outcome::Already),
+            ("sysconfig", Outcome::DryRun),
+            ("verify", Outcome::DryRun),
+        ]);
         assert_eq!(dry_run_exit(&clean), 0);
         assert_eq!(dry_run_exit(&pending), 1);
     }
 
     #[test]
+    fn a_configured_install_dry_runs_the_real_plan_to_exit_0() {
+        let home = TmpDir::new("update-dry-clean");
+        let inst = installed(InstallMode::Library, home.path());
+        let cfg = Platforms::load();
+        let steps = plan(
+            &inst,
+            &args(),
+            &configured(home.path()),
+            &cfg,
+            &Observed::default(),
+            home.path(),
+        );
+        let report = plan::run(&steps, &mut ctx(home.path(), true)).expect("dry run");
+        assert_eq!(dry_run_exit(&report), 0, "{:?}", report.stages);
+    }
+
+    #[test]
+    fn a_dimos_stage_that_landed_writes_the_new_version_into_installer_json() {
+        let home = TmpDir::new("update-record");
+        let mut inst = installed(InstallMode::Dev, home.path());
+        inst.dimos_version = "git:main@old".to_string();
+        state::save(home.path(), &inst).expect("save the prior record");
+        let obs = Observed {
+            remote: Some("9f8b2c1d".to_string()),
+            ..Observed::default()
+        };
+        let report = |o: Outcome| Report {
+            command: "update".to_string(),
+            stages: vec![("dimos".to_string(), o)],
+        };
+        record(&inst, &obs, &report(Outcome::Already), home.path()).expect("no write");
+        let untouched = state::load(home.path()).expect("load").expect("recorded");
+        assert_eq!(untouched.dimos_version, "git:main@old");
+        record(&inst, &obs, &report(Outcome::Applied), home.path()).expect("write");
+        let after = state::load(home.path()).expect("load").expect("recorded");
+        assert_eq!(after.dimos_version, "git:main@9f8b2c1d");
+    }
+
+    #[test]
+    fn a_library_update_records_this_binarys_version() {
+        let home = TmpDir::new("update-record-lib");
+        let mut inst = installed(InstallMode::Library, home.path());
+        inst.dimos_version = "0.0.1".to_string();
+        let report = Report {
+            command: "update".to_string(),
+            stages: vec![("dimos".to_string(), Outcome::Applied)],
+        };
+        record(&inst, &Observed::default(), &report, home.path()).expect("write");
+        let after = state::load(home.path()).expect("load").expect("recorded");
+        assert_eq!(after.dimos_version, DIMOS_VERSION);
+    }
+
+    #[test]
     fn rollback_without_a_backup_names_the_missing_file() {
         let home = TmpDir::new("update-rollback");
-        let mut ctx = Ctx {
-            mode: crate::plan::Mode::NonInteractive,
-            dry_run: true,
-            verbose: false,
-            yes: true,
-            sudo: Sudo::Root,
-            log: ActionLog::open(home.path()).unwrap(),
-            run_id: "test".to_string(),
-        };
-        let err = rollback(&mut ctx, home.path()).unwrap_err();
+        let err = rollback(&mut ctx(home.path(), true), home.path()).unwrap_err();
         assert!(format!("{err:#}").contains("dimos.bak"));
     }
 
@@ -886,7 +1011,7 @@ mod tests {
             &args(),
             &probes,
             &cfg,
-            &Observed::default(),
+            &g1_observed(home.path()),
             home.path(),
         );
         assert!(plan::sudo_env_violations(&steps).is_empty());

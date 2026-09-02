@@ -159,13 +159,30 @@ pub struct HardwareSetupArgs {
     pub robot_ip: String,
     #[arg(long, env = "ROBOT_INTERFACE", default_value = "eth0")]
     pub interface: String,
-    #[arg(long)]
-    pub transport: Option<String>,
+    /// Written to `.env` as DIMOS_TRANSPORT.
+    #[arg(long, value_enum)]
+    pub transport: Option<Transport>,
     #[arg(long, env = "SDK2_PATH")]
     pub sdk_path: Option<PathBuf>,
     /// The blueprint the verify stage must find in `dimos list`.
     #[arg(long)]
     pub blueprint: Option<String>,
+}
+
+/// The two values dimos/core/global_config.py accepts for DIMOS_TRANSPORT.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, ValueEnum)]
+pub enum Transport {
+    Lcm,
+    Zenoh,
+}
+
+impl Transport {
+    pub fn name(self) -> &'static str {
+        match self {
+            Transport::Lcm => "lcm",
+            Transport::Zenoh => "zenoh",
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -318,6 +335,25 @@ mod tests {
         assert_eq!(args.interface, "eth0");
         assert_eq!(args.transport, None);
         assert_eq!(args.blueprint, None);
+    }
+
+    #[test]
+    fn transport_is_lcm_or_zenoh_and_a_typo_is_refused_at_parse_time() {
+        let Command::Hardware {
+            target:
+                HardwareTarget::G1 {
+                    verb: HardwareVerb::Setup(args),
+                },
+        } = parse(&["dimos", "hardware", "g1", "setup", "--transport", "zenoh"]).command
+        else {
+            panic!("want g1 setup")
+        };
+        assert_eq!(args.transport, Some(Transport::Zenoh));
+        assert_eq!(Transport::Lcm.name(), "lcm");
+        assert!(
+            Cli::try_parse_from(["dimos", "hardware", "g1", "setup", "--transport", "dds"])
+                .is_err()
+        );
     }
 
     #[test]

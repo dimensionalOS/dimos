@@ -13,8 +13,8 @@ verbatim.
 
 ```
 installer/                 Rust crate `dimos-installer`, binary `dimos`, workspace member
-  src/plan.rs              Action / Stage / Plan; `run` is the ONLY fn that spawns, writes, prompts
-  src/probe.rs             read the machine once into Observed; every parser pure over &str
+  src/plan.rs              Action / Stage / Plan; `run` is the ONLY fn that mutates the machine or prompts
+  src/probe.rs             read the machine once into Probes; `capture` is the one bounded spawn; parsers pure over &str
   src/sudo.rs              Root | Passwordless | Askpass | Stdin(DIMOS_SUDO_PASSWORD) | Tty | Unavailable
   src/state.rs             ~/.config/dimos/installer.json + ~/.local/state/dimos/installer.jsonl
   src/pkgs.rs              platforms.toml + extras from pyproject (build.rs); cuda refused on aarch64
@@ -39,9 +39,18 @@ dimos/cli/forward.py       inside the venv, `dimos setup|update|service|uninstal
   "already done", so a re-run is a no-op and `--dry-run` prints the entire plan without touching disk.
 - **Verify is the last, critical stage** of `setup` and of every `hardware <t> setup`. It runs
   `bash -lc '<venv>/bin/python -c ...'` checks and fails the run. A green install that cannot start a
-  blueprint was the real G1 failure in August.
+  blueprint was the real G1 failure in August. The G1 verify ends with a 5 s `rt/lowstate` DDS read
+  on `--interface`, so it only passes with the robot powered and on that NIC. Torch is its own
+  warn-only `verify-torch` stage: absent or static-TLS-broken is one `!!` line with the LD_PRELOAD fix.
 - **No `doctor`.** `dimos update` is doctor and update in one: self-update → DimOS update →
-  re-run the machine-config stages (the repair) → verify. `update --dry-run` is the read-only report.
+  re-run the machine-config stages (the repair; on a recorded G1 that is the whole G1 stage list,
+  rebuilt from the record's robot_ip/interface) → verify. `update --dry-run` is the read-only report;
+  it does not run the verify checks (a dry run spawns nothing but probes) and says so with a `!!`.
+- **A critical stage that cannot run stops the plan** — failed, declined, or no root — not only one
+  that failed. `hardware`, `update` and `service` all exit 2 when there is no installer.json.
+- **Rc files follow the login shell's own lookup**: zsh → `.zprofile` (created when absent), bash →
+  `.bash_profile`/`.bash_login`/`.profile` plus `.bashrc`, else `.profile`; the same shell in `-l`
+  mode is the probe, and a symlinked rc file keeps its link.
 - **Plain terminal text in v1.** Prefixes `->` `ok` `!!` `xx`, `[y/N]` prompts, `NO_COLOR` honored.
   No TUI crate in the dependency list.
 - **v1 finds robots and installs. v2 remembers them. v3 is Go2 offboard + the reach wizard.**
@@ -159,17 +168,19 @@ export DIMOS_SUDO_PASSWORD=123            # sudo over ssh has no TTY; env → su
 export DIMOS_INSTALLER_URL=http://<mac-ip>:8000
 bash <(curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/aaryan/installer/scripts/install.sh) \
   --mode dev --branch aaryan/installer --extras unitree --dir /home/unitree/dimos
-# hardware commands are the Rust binary's; run them with the venv NOT activated (or by absolute path)
-~/.local/bin/dimos hardware g1 setup --robot-ip 192.168.123.161 --interface eth0
-#   stages: cmake · CycloneDDS releases/0.10.x source build (~10 min) · unitree_sdk2_python clone ·
-#           cyclonedds==0.10.2 · numpy<2 + sdk · CYCLONEDDS_HOME rc block · git insteadOf https ·
-#           .env ROBOT_IP · nvpmodel/jetson_clocks · sysctl/memlock · verify (imports, numpy<2, ROBOT_IP)
+# hardware g1|jetson setup is the Rust binary's; the venv's `dimos` forwards it, so either path works
+dimos hardware g1 setup --robot-ip 192.168.123.161 --interface eth0     # robot POWERED: verify reads rt/lowstate
+#   stages: apt update (best effort) · cmake · CycloneDDS releases/0.10.x source build (~10 min) ·
+#           unitree_sdk2_python clone · cyclonedds==0.10.2 · numpy<2 + sdk · CYCLONEDDS_HOME rc block ·
+#           git insteadOf https · nvpmodel/jetson_clocks · sysctl/memlock · .env ROBOT_IP ·
+#           verify-shell · verify-torch (warn only) · verify (imports, numpy<2, ROBOT_IP, 5 s rt/lowstate on eth0)
+#   --interface must be a NIC this machine has (`ip -o -4 addr`), or the plan is refused up front
 #   --robot-ip is the CONTROL computer (.161): G1Config.ip is what the WebRTC driver dials from the Jetson
 #   why the C-library build exists: PyPI has no manylinux aarch64 wheel for ANY cyclonedds version
 #   (checked 2026-09-01), so on the G1 the python package builds from sdist against CYCLONEDDS_HOME.
 #   That is also why `--extras unitree-dds` is refused on the G1 path: it would pull cyclonedds 11.x
 #   against the 0.10.x library. Use `--extras unitree` and let the wizard own the DDS stack.
-~/.local/bin/dimos hardware g1 setup --robot-ip 192.168.123.161 --interface eth0   # second run: all "ok already"
+dimos hardware g1 setup --robot-ip 192.168.123.161 --interface eth0   # second run: every stage "ok already", only the checks run
 cd ~/dimos && source .venv/bin/activate
 dimos --rerun-open none --rerun-host 0.0.0.0 run unitree-g1            # the human step; robot on a gantry, controller in hand
 ```
@@ -186,6 +197,17 @@ always `--rerun-open none`; MAXN mode runs hot, so keep the robot on the charger
 
 - Container harness and every hardware rung above: not run. First real run will find things; fix
   in the stage that owns them and keep the probe/plan pair in sync so idempotence holds.
+- `sudo nvpmodel -m 0` on an Orin NX may ask "reboot now? [Y/n]" when the mode changes the online
+  CPU count; with stdin null that answer is EOF. Unverified on our unit — check on the standalone
+  Orin first; if it prompts, feed `y` through the runner's stdin path and turn a `reboot required`
+  tail into a `!!` note.
+- `update --dry-run` does not run the verify checks (they spawn the venv's python), so it cannot see
+  a broken venv; it prints `!! verify not run in dry-run`. Running the read-only checks under
+  `--dry-run` is the next step if the doctor needs to see that.
+- The interactive sudo route (`Sudo::Tty`) runs `sudo -v` once before the first sudo stage and
+  again before each sudo action, so the password prompt never sits inside an action's deadline;
+  a ticket that expires during the 30-minute cyclonedds build re-prompts before `nvpmodel`, not
+  inside its 60 s budget. Untested on a terminal yet.
 - Library mode (`--mode library`) needs a PyPI release built from a branch that includes
   `dimos/cli/forward.py`; until then it is unit-tested only.
 - `installer/WIZARDS.md` was written but not yet proven by having a fresh agent follow it
@@ -232,3 +254,29 @@ the earlier PRD (Paul, Ivan, Jeff, Stash, Jetson Wu) are dispositioned in the kn
   at the preflight disk gate (8 GiB free, 12 GiB needed) — the gate working, not a defect; the dry-run
   plan itself is the CI smoke step and the container harness. Containers and hardware: not run from
   this seat.
+- 2026-09-01 — review fixes landed (`installer: review fixes`). Blocker: `update --dry-run` could
+  never exit 0 (the verify stages counted as pending) — the checks are excluded and named as not run.
+  Majors: the `dimos list | grep -q` SIGPIPE race (captured first now); a critical stage that is
+  NeedsHuman/declined now stops the plan; the `import dimos` post-condition is gone (verify owns it,
+  with its own budget) and a post borrows its stage's slowest timeout; `update` writes the new
+  `dimos_version` back; `write_atomic` canonicalizes so a symlinked rc file keeps its link; rc files
+  are picked by the login shell (zsh → `.zprofile`) and a test proves `rc_files` and the `-l` probe
+  agree; `Sudo::Tty` refreshes `sudo -v` outside every deadline; every probe spawns through
+  `probe::capture` with a deadline (dup `capture`/`text`/`run_in` copies deleted; `Action::run_owned`,
+  `plan::owned`, `plan::text` are the one home); `hardware g1|jetson setup` forward from the venv CLI;
+  torch is a warn-only `verify-torch` stage whose last line is the LD_PRELOAD fix; the numpy pin, rc
+  block and `.env` stages are probe-gated so a configured G1 plans nothing but the checks;
+  `apt-get update` is a best-effort warn-only stage; the G1 verify ends with a live `rt/lowstate` read
+  and refuses an `--interface` the machine lacks; `update` rebuilds the full G1 stage list from the
+  record (D2). Minors: installer scripts download under `~/.local/state/dimos` and are removed;
+  `hardware` without installer.json exits 2; `.161` is labelled `control computer (no ssh)` and the
+  LAN query re-sends every second; `--transport` is a `ValueEnum`; sudo evaluates root/passwordless
+  before the env password and the fix text uses `read -rs`; dead `Probes.dotenv` deleted; docs no
+  longer claim `plan::run` is the only spawn. Same gate re-run green on this Mac: fmt, clippy `-D
+  warnings`, 268 unit tests, `pytest dimos/cli/test_forward.py` 13 passed, `bash -n` + shellcheck,
+  `cargo build --release`. Smoke on this Mac: `setup --dry-run --non-interactive --mode dev --branch
+  aaryan/installer --extras base --dir /tmp/dimos-dryrun` still stops at the disk gate (7 GiB free,
+  12 needed) — the gate, not the plan; `update --dry-run` → exit 2 `run dimos setup first`;
+  `hardware jetson setup --dry-run` → exit 2 (was 1); `uninstall --dry-run` → exit 0, three stages.
+  The dry-run plan itself is proven by `a_configured_install_dry_runs_the_real_plan_to_exit_0` and
+  the container harness, which is still not run.

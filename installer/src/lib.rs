@@ -1,5 +1,6 @@
 //! The DimOS installer. Every command builds a `plan::Plan` from `probe::Probes`; `plan::run`
-//! is the only place that spawns a process, writes a file, or reads stdin.
+//! is the only place that mutates the machine or reads stdin. Probes spawn read-only commands
+//! through `probe::capture`, each with a deadline.
 
 pub mod cli;
 pub mod forward;
