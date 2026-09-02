@@ -1,0 +1,197 @@
+name: installer
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - installer/**
+      - scripts/install.sh
+      - .github/workflows/installer.yml
+      - pyproject.toml
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # A tag build publishes release assets, so only PR runs are cancellable.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions: {}
+
+jobs:
+  check:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Only main writes the cache, so a PR run cannot evict main's entry.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: cargo fmt
+        run: cargo fmt -p dimos-installer -- --check
+      - name: cargo clippy
+        run: cargo clippy -p dimos-installer --all-targets --locked -- -D warnings
+      - name: cargo test
+        run: cargo test -p dimos-installer --locked
+      - name: bash -n scripts/install.sh
+        run: bash -n scripts/install.sh
+      - name: shellcheck scripts/install.sh
+        run: shellcheck scripts/install.sh
+
+  build:
+    name: build ${{ matrix.asset }}
+    timeout-minutes: 30
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read # For checkout
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: dimos-x86_64-linux-musl
+            builder: cross
+            smoke: true
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            asset: dimos-aarch64-linux-musl
+            builder: cross
+            smoke: false # not the runner's arch; the containers job runs it under qemu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: dimos-aarch64-apple-darwin
+            builder: cargo
+            smoke: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install cross
+        if: matrix.builder == 'cross'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross@0.2.5
+      - name: Build
+        run: ${{ matrix.builder }} build --release --locked -p dimos-installer --target ${{ matrix.target }}
+      - name: Stage asset
+        env:
+          TARGET: ${{ matrix.target }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          mkdir -p dist
+          cp "target/$TARGET/release/dimos" "dist/$ASSET"
+          chmod +x "dist/$ASSET"
+      - name: Write and re-verify the sha256 install.sh will check
+        working-directory: dist
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: |
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$ASSET" > "$ASSET.sha256"
+            sha256sum -c "$ASSET.sha256"
+          else
+            shasum -a 256 "$ASSET" > "$ASSET.sha256"
+            shasum -a 256 -c "$ASSET.sha256"
+          fi
+      - name: Smoke
+        if: matrix.smoke
+        env:
+          ASSET: ${{ matrix.asset }}
+        run: |
+          "dist/$ASSET" --version
+          "dist/$ASSET" setup --dry-run --non-interactive --mode dev --extras base
+      - name: Upload asset
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  containers:
+    name: run ${{ matrix.platform }} on bare ubuntu:22.04
+    needs: build
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            asset: dimos-x86_64-linux-musl
+          - platform: linux/arm64
+            asset: dimos-aarch64-linux-musl
+
+    steps:
+      - name: Download asset
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.asset }}
+          path: dist
+      - name: Register qemu for the foreign arch
+        uses: docker/setup-qemu-action@v3
+      # No apt install: a bare image is what proves the musl build is actually static.
+      - name: Version and dry-run plan
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          chmod +x "dist/$ASSET"
+          docker run --rm --platform "$PLATFORM" -v "$PWD/dist:/dist:ro" ubuntu:22.04 \
+            "/dist/$ASSET" --version
+          docker run --rm --platform "$PLATFORM" -v "$PWD/dist:/dist:ro" ubuntu:22.04 \
+            "/dist/$ASSET" setup --dry-run --non-interactive --mode dev --extras base
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release upload
+
+    steps:
+      - name: Download assets
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: dimos-*
+          merge-multiple: true
+      - name: Wait for release.yml to create the release for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          for _ in $(seq 1 30); do
+            if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then exit 0; fi
+            sleep 20
+          done
+          echo "no release for $GITHUB_REF_NAME after 10 min; create it and re-run this job" >&2
+          exit 1
+      - name: Upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber
