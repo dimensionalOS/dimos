@@ -103,9 +103,10 @@ deno task build          # dist/ (what the relay serves at /)
 ```
 
 Panels are authored in Python (`dimos.web.cockpit`: `Video`, `Map2D`, `Teleop`, `Chat`, `Stats`) and
-compiled into the manifest; `cockpit(pages=[...])` panels render as full-page tabs. `Stats()` is
-dtop as a tab: the bridge re-encodes the resource monitor's `/resource_stats` dict as
-`stats.json.v1`, and the blueprint switches the monitor on (`GlobalConfig.dtop`) by itself.
+compiled into the manifest; `cockpit(pages=[...])` panels render as full-page tabs in the header,
+next to Overview and the panels/channels toggle. `Stats()` is dtop as a tab: the bridge re-encodes
+the resource monitor's `/resource_stats` dict as `stats.json.v1`, and the blueprint switches the
+monitor on (`GlobalConfig.dtop`) by itself.
 
 Dev workflow: run the relay (`deno task dev` in `web/`, or just `dimos run <bp> --local-relay`) and
 the vite server side by side. `localhost:5173` is a secure context; vite proxies `/api` to the relay
@@ -118,9 +119,10 @@ pre-built dists inside `_relay_dist` (built by the release workflow; see `setup.
 pip-installed dimos never builds or downloads npm packages.
 
 After changing cockpit or sdk dependencies run `deno install` in `web/` and commit the `deno.lock`
-update; CI validates it with `deno install --frozen`. If vitest ever misbehaves under a new Deno,
-the fallback ladder is `--no-file-parallelism`, then `--pool=threads`, then pinning a different
-vitest minor.
+update; CI validates it with `deno install --frozen`. The cockpit's fonts (Inter, JetBrains Mono)
+are npm packages (`@fontsource-variable/*`) bundled into `dist/` by vite, so nothing is fetched at
+runtime. If vitest ever misbehaves under a new Deno, the fallback ladder is `--no-file-parallelism`,
+then `--pool=threads`, then pinning a different vitest minor.
 
 The browser e2e (`dimos/e2e_tests/test_cockpit_browser.py` for the cockpit, `test_sdk_browser.py`
 for the SDK's zero-build/cross-origin/file: pages; marker `web_browser`) drives the whole stack
