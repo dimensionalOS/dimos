@@ -37,6 +37,7 @@ def test_wire_matches_the_client_golden(zenoh_defaults: None) -> None:
         scouting=False,
         scouting_interface="lo",
         multicast=True,
+        scout_addr="",
         gossip=False,
         connect_timeout=2.0,
     )
@@ -51,6 +52,7 @@ def test_wire_matches_the_router_golden(zenoh_defaults: None) -> None:
         scouting=False,
         scouting_interface="auto",
         multicast=False,
+        scout_addr="",
         gossip=True,
         connect_timeout=0.0,
     )

@@ -52,6 +52,9 @@ repos:
         exclude: ^misc/DimSim/public/sims/  # LFS-tracked
       - id: check-toml
       - id: check-yaml
+        # mkdocs-material configures extensions with !!python/name: tags,
+        # which pyyaml's safe loader refuses to construct.
+        exclude: ^mkdocs\.yml$
       - id: pretty-format-json
         name: format json
         args: [ --autofix, --no-sort-keys ]
@@ -101,6 +104,13 @@ repos:
         language: python
         additional_dependencies: ['tomli']
 
+      - id: emdash-check
+        name: No em dashes in docs
+        entry: bin/hooks/emdash_check
+        language: script
+        files: ^docs/.*\.mdx?$
+        exclude: ^docs/node_modules/
+
       - id: doclinks
         name: Doclinks
         always_run: true
@@ -147,7 +157,12 @@ repos:
             git ls-files "*Cargo.toml" | while read -r m; do
               cargo locate-project --manifest-path "$m" --workspace --message-format plain
             done | sort -u | while read -r root; do
-              cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
+              # A crate with its own flake carries system deps the root shell lacks.
+              if [ -f "$(dirname "$root")/flake.nix" ]; then
+                nix develop "path:$(dirname "$root")" -c cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
+              else
+                cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
+              fi
             done
           '
         language: system

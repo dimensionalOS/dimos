@@ -22,7 +22,7 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.core.transport import pLCMTransport
+from dimos.core.transport_factory import make_transport
 from dimos.spec.utils import Spec
 
 
@@ -73,7 +73,7 @@ class StartModule(Module):
 
 
 @pytest.fixture
-def start_module():
+def start_module(each_transport):
     blueprint = autoconnect(
         StartModule.blueprint(),
         ModuleA.blueprint(),
@@ -86,16 +86,16 @@ def start_module():
 
 
 @pytest.fixture
-def in_transport():
-    ret = pLCMTransport("/in_value")
+def in_transport(each_transport):
+    ret = make_transport("/in_value")
     ret.start()
     yield ret
     ret.stop()
 
 
 @pytest.fixture
-def out_transport():
-    ret = pLCMTransport("/out_value")
+def out_transport(each_transport):
+    ret = make_transport("/out_value")
     ret.start()
     yield ret
     ret.stop()

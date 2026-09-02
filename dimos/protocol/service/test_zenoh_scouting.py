@@ -22,6 +22,7 @@ from dimos.core.global_config import ZenohMode, global_config
 from dimos.protocol.service.zenohservice import (
     ALL_INTERFACES,
     LOOPBACK_INTERFACE,
+    LOOPBACK_LISTEN,
     ZenohConfig,
     ZenohService,
     endpoint_addresses,
@@ -65,6 +66,60 @@ def test_interface_separates_pooled_sessions(zenoh_defaults: None) -> None:
         ZenohConfig(scouting_interface="wlan0").session_key
         != ZenohConfig(scouting_interface="eth0").session_key
     )
+
+
+def test_unscouted_session_listens_only_on_loopback(zenoh_defaults: None) -> None:
+    assert ZenohConfig().listen_endpoints == [LOOPBACK_LISTEN]
+
+
+def test_scouting_on_restores_the_default_listener(
+    zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A peer the LAN can scout has to be a peer the LAN can link to."""
+    monkeypatch.setattr(global_config, "zenoh_scouting", True)
+    assert ZenohConfig().listen_endpoints == []
+
+
+def test_named_interface_restores_the_default_listener(
+    zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(global_config, "zenoh_interface", "wlan0")
+    assert ZenohConfig().listen_endpoints == []
+
+
+def test_explicit_listen_is_never_overridden(zenoh_defaults: None) -> None:
+    assert ZenohConfig(listen=["tcp/0.0.0.0:7447"]).listen_endpoints == ["tcp/0.0.0.0:7447"]
+
+
+def test_loopback_pin_reaches_the_wire(zenoh_defaults: None) -> None:
+    """Native modules read the same pinned listener off stdin."""
+    assert ZenohConfig().to_wire()["listen"] == [LOOPBACK_LISTEN]
+
+
+def test_dialing_a_robot_restores_the_default_listener(
+    zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Peers behind the robot's router learn this locator via gossip and dial it."""
+    monkeypatch.setattr(global_config, "robot_ip", "192.0.2.10")
+    config = ZenohConfig()
+    assert config.connect == ["tcp/192.0.2.10:7447"]
+    assert config.listen_endpoints == []
+
+
+def test_dialing_a_hub_restores_the_default_listener(
+    zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two peers on one hub mesh via gossip, which needs a reachable listener."""
+    monkeypatch.setattr(global_config, "zenoh_connect", "tcp/hub.example:7447")
+    assert ZenohConfig().listen_endpoints == []
+
+
+def test_pinned_and_unpinned_sessions_are_pooled_apart(
+    zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pinned = ZenohConfig().session_key
+    monkeypatch.setattr(global_config, "zenoh_scouting", True)
+    assert ZenohConfig().session_key != pinned
 
 
 def test_endpoint_addresses_keeps_literal_host_and_port() -> None:

@@ -18,7 +18,7 @@ from functools import lru_cache
 from pathlib import Path
 import shutil
 import tempfile
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 from hydra.utils import instantiate
 import numpy as np
@@ -113,6 +113,20 @@ def _build_model() -> "SAM2VideoPredictor":
     return predictor
 
 
+class BoxPromptImageSegmenter(Protocol):
+    """Lifecycle interface for segmenters that refine box detections."""
+
+    def segment(
+        self, detections: ImageDetections2D[Detection2DBBox]
+    ) -> ImageDetections2D[Detection2DSeg]: ...
+
+    def stop(self) -> None: ...
+
+
+class EdgeTAMImageSegmenterCompatible(BoxPromptImageSegmenter, Protocol):
+    """Backward-compatible name for EdgeTAM consumers."""
+
+
 class EdgeTAMImageSegmenter:
     """Box-prompted single-image segmentation using the EdgeTAM checkpoint."""
 
@@ -174,12 +188,14 @@ class EdgeTAMImageSegmenter:
         ]
         return ImageDetections2D(image, [det for det in detections if det.is_valid()])
 
-    def segment(self, detections: ImageDetections2D) -> ImageDetections2D:
+    def segment(
+        self, detections: ImageDetections2D[Detection2DBBox]
+    ) -> ImageDetections2D[Detection2DSeg]:
         """Refine box detections into mask detections (Detection2DSeg)."""
         import cv2
 
         if not len(detections):
-            return detections
+            return ImageDetections2D(detections.image, [])
 
         image = detections.image
         rgb = cv2.cvtColor(image.to_opencv(), cv2.COLOR_BGR2RGB)
@@ -196,7 +212,7 @@ class EdgeTAMImageSegmenter:
             masks, _, _ = self._predictor.predict(box=boxes, multimask_output=False)
 
         masks = masks.reshape(-1, *masks.shape[-2:])  # (N, H, W) regardless of batch dim
-        segmented: list[Detection2DBBox] = [
+        segmented: list[Detection2DSeg] = [
             Detection2DSeg.from_sam2_result(
                 mask,
                 det.track_id,
@@ -208,6 +224,9 @@ class EdgeTAMImageSegmenter:
             for det, mask in zip(detections, masks, strict=False)
         ]
         return ImageDetections2D(image, segmented)
+
+    def stop(self) -> None:
+        """Stop the segmenter; its image predictor owns no external lifecycle."""
 
 
 class EdgeTAMProcessor(Detector):

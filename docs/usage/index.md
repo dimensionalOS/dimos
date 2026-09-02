@@ -1,6 +1,4 @@
----
-title: "Core concepts"
----
+# Core concepts
 
 This page explains general dimOS concepts that you'd use to build applications: modules, streams, blueprints, RPC, skills, and agents.
 

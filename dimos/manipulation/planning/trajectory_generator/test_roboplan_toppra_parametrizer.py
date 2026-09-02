@@ -71,7 +71,7 @@ class _World(RoboPlanWorld):
 
 def _model(*, unbounded_acceleration: bool = False) -> RoboPlanModel:
     group = RoboPlanGroup(
-        group_ids=("left/arm", "right/arm"),
+        group_ids=("left_arm", "right_arm"),
         name="composite",
         native_names=("native_b", "native_a"),
         public_names=("right/b", "left/a"),
@@ -79,9 +79,8 @@ def _model(*, unbounded_acceleration: bool = False) -> RoboPlanModel:
     return RoboPlanModel(
         scene=_Scene(unbounded_acceleration=unbounded_acceleration),
         groups={frozenset(group.group_ids): group},
-        legacy_group_ids={},
-        native_joint_by_global={},
-        native_link_by_robot={},
+        native_joints={},
+        native_links={},
         all_group=group,
     )
 
@@ -95,19 +94,13 @@ def _selection_and_result(
     }
     groups_by_name = {
         "left/a": PlanningGroup(
-            id="left/arm",
-            robot_name="left",
-            group_name="arm",
+            id="left_arm",
             joint_names=("left/a",),
-            local_joint_names=("a",),
             base_link="base",
         ),
         "right/b": PlanningGroup(
-            id="right/arm",
-            robot_name="right",
-            group_name="arm",
+            id="right_arm",
             joint_names=("right/b",),
-            local_joint_names=("b",),
             base_link="base",
         ),
     }
@@ -268,7 +261,7 @@ def test_roboplan_parametrizer_reports_missing_generated_group() -> None:
 
     with pytest.raises(
         TrajectoryParametrizationError,
-        match=r"RoboPlan has no generated group for \['left/arm', 'right/arm'\]",
+        match=r"RoboPlan has no generated group for \['left_arm', 'right_arm'\]",
     ):
         RoboPlanTOPPRAParametrizer(RoboPlanTOPPRAParametrizationConfig()).materialize_plan(
             _World(model), selection, result

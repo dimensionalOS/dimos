@@ -1,6 +1,4 @@
----
-title: "Configuration"
----
+# Configuration
 
 Dimos provides a `Configurable` base class. See [`service/spec.py`](/dimos/protocol/service/spec.py#L22).
 
@@ -44,7 +42,7 @@ something
 https://errors.pydantic.dev/2.12/v/extra_forbidden
 ```
 
-# Configurable Modules
+## Configurable Modules
 
 [Modules](/docs/usage/modules.md) inherit from `Configurable`, so all of the above applies. Module configs should inherit from `ModuleConfig` ([`core/module.py`](/dimos/core/module.py#L40)), which includes shared configuration for all modules like transport protocols, frame IDs, etc.
 
@@ -75,22 +73,34 @@ myModule = MyModule(frame_id="frame_id_override", device="CPU")
 ```
 
 ```results
+00:32:58.268 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=True listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo
 Config(
-    rpc_transport=<class 'dimos.protocol.rpc.pubsubrpc.LCMRPC'>,
+    rpc_transport=<class 'dimos.protocol.rpc.zenohrpc.ZenohRPC'>,
     default_rpc_timeout=120.0,
     rpc_timeouts={'build': 86400.0, 'start': 1200.0},
     frame_id_prefix=None,
     frame_id='frame_id_override',
+    instance_name=None,
     g=GlobalConfig(
         robot_ip=None,
         robot_ips=None,
+        unitree_aes_128_key=None,
         xarm7_ip=None,
         xarm6_ip=None,
         can_port=None,
+        device_path=None,
         simulation='',
         replay=False,
         replay_db='go2_short',
         new_memory=False,
+        zenoh_mode='peer',
+        zenoh_connect='',
+        zenoh_scouting=False,
+        zenoh_interface='',
+        zenoh_multicast=True,
+        zenoh_scout_addr='',
+        zenoh_gossip=True,
+        zenoh_connect_timeout=1.0,
         viewer='rerun',
         rerun_open='native',
         rerun_web=False,
@@ -107,17 +117,24 @@ Config(
         mujoco_steps_per_frame=7,
         scene_package=None,
         robot_model=None,
+        robot_id=None,
         robot_width=0.3,
         robot_rotation_diameter=0.6,
         nerf_speed=1.0,
         mcp_port=9990,
+        transport='zenoh',
         build_native=False,
         dtop=False,
         obstacle_avoidance=True,
         detection_model='moondream',
         listen_host='127.0.0.1',
-        dimsim_scene='apt',
-        dimsim_port=8090
+        dimsim_scene='apartment',
+        dimsim_port=8090,
+        dimsim_headless=True,
+        local_relay=False,
+        relay_url=None,
+        dimos_cloud_url='https://api.dimensional.org',
+        dimos_api_key=None
     ),
     publish_interval=0,
     voxel_size=0.05,

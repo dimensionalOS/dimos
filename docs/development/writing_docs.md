@@ -1,6 +1,4 @@
----
-title: "Writing Docs"
----
+# Writing Docs
 
 1. Where to put your docs:
     - If it only matters to people who contribute to dimos (like this doc), put them in `docs/development`

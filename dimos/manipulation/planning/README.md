@@ -65,17 +65,22 @@ from dimos.manipulation.planning.spec import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 
 config = RobotModelConfig(
-    name="xarm7",
     model=RobotModel.from_file("/path/to/xarm7.urdf"),
     base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
     joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
-    end_effector_link="link7",
     base_link="link_base",
-    joint_name_mapping={"arm_joint1": "joint1", ...},  # coordinator <-> URDF
+    planning_groups=[
+        PlanningGroupDefinition(
+            name="arm",
+            joint_names=("joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"),
+            base_link="link_base",
+            tip_link="link7",
+        )
+    ],
 )
 
 module = ManipulationModule(
-    robots=[config],
+    model=config,
     planning_timeout=10.0,
     enable_viz=True,
     world_backend="drake",                # RoboPlan is the default
@@ -187,15 +192,13 @@ globally named per-joint overrides are future work.
 
 | Field | Description |
 |-------|-------------|
-| `name` | Robot identifier |
 | `model` | Lazy portable robot model |
 | `base_pose` | PoseStamped for robot base in world frame |
-| `joint_names` | Joint names in URDF |
-| `end_effector_link` | EE link name |
+| `joint_names` | Canonical joint names in the model |
 | `base_link` | Base link name |
+| `planning_groups` | Named planning subsets with canonical joints and frames |
 | `max_velocity` | Max joint velocity (rad/s) |
 | `max_acceleration` | Max acceleration (rad/s²) |
-| `joint_name_mapping` | Coordinator → URDF name mapping |
 
 ## Components
 

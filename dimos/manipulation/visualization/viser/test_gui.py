@@ -16,13 +16,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
 pytest.importorskip("viser", reason="Viser optional dependency is not installed")
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningSceneInfo
 from dimos.manipulation.visualization.operator import OperatorStatus, TargetEvaluationResult
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
@@ -39,6 +40,7 @@ from dimos.manipulation.visualization.viser.state import (
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.robot.assets.model import RobotModel
 
 
 class EmptyServer:
@@ -61,7 +63,7 @@ class FakeOperator:
     def status(self) -> OperatorStatus:
         return OperatorStatus(state="IDLE", error="", has_plan=False)
 
-    def get_init_joints(self, robot_name: str) -> None:
+    def get_init_joints(self) -> None:
         return None
 
     def cancel(self) -> bool:
@@ -150,12 +152,9 @@ class FakeRestartableOperationWorker(FakeOperationSubmitWorker):
         self.stop_calls.append(timeout)
 
 
-def planning_group(robot: str, name: str, joints: tuple[str, ...]) -> PlanningGroup:
+def planning_group(name: str, joints: tuple[str, ...]) -> PlanningGroup:
     return PlanningGroup(
-        f"{robot}/{name}",
-        robot,
         name,
-        tuple(f"{robot}/{joint}" for joint in joints),
         joints,
         "base",
         None,
@@ -166,9 +165,13 @@ def make_gui(module: FakeOperatorBackend | None = None) -> ViserPanelGui:
     module = module or FakeOperatorBackend()
     return ViserPanelGui(
         EmptyServer(),
-        PlanningSceneInfo(robots={}),
+        PlanningSceneInfo(
+            model=RobotModelConfig(
+                model=RobotModel.from_file(Path("/tmp/model.urdf")), joint_names=[]
+            )
+        ),
         FakeOperator(module),
-        {},
+        lambda: None,
         ViserVisualizationConfig(),
     )
 
@@ -233,22 +236,24 @@ def test_gui_feasibility_status_uses_exact_status_mapping(
     assert gui._feasibility_status(result, success, collision_free) == expected
 
 
-def test_group_status_composes_shared_panel_state_without_robot_dropdown() -> None:
+def test_group_status_composes_shared_panel_state_without_robot_dropdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     gui = make_gui()
     values: dict[str, str] = {}
-    gui.state.selected_group_ids = ("left/manipulator", "right/gripper")
+    gui.state.selected_group_ids = ("manipulator", "gripper")
     gui.state.error = "planner unavailable"
     gui.state.target_status = gui.state.target_status.FEASIBLE
     gui.state.plan_state.status = gui.state.plan_state.status.FRESH
-    gui._stale_robot_names = lambda _group_ids: ("right",)  # type: ignore[method-assign]
-    gui._set_handle_value = values.__setitem__  # type: ignore[method-assign]
+    monkeypatch.setattr(gui, "_stale_models", lambda _group_ids: ("model",))
+    monkeypatch.setattr(gui, "_set_handle_value", values.__setitem__)
 
     gui._update_status_text()
 
     assert "robot" not in gui._handles
     assert values == {
         "status": "### Status\n\n**State:** planner unavailable\n\n"
-        "Target: `feasible` · Plan: `fresh`\n\nState stale: `True (right)`",
+        "Target: `feasible` · Plan: `fresh`\n\nState stale: `True`",
         "target_summary": "Feasibility: `unknown`",
     }
 
@@ -292,7 +297,7 @@ def test_gui_preview_enters_previewing_before_worker_runs(
     gui.state.backend_status = BackendConnectionStatus.READY
     gui.state.target_status = TargetStatus.FEASIBLE
     gui.state.manipulation_state = "COMPLETED"
-    gui.state.selected_group_ids = ("arm/manipulator",)
+    gui.state.selected_group_ids = ("manipulator",)
     gui.state.plan_state.status = PlanStatus.FRESH
     gui.state.plan_state.group_ids = gui.state.selected_group_ids
     gui.state.plan_state.target_sequence_id = gui.state.latest_sequence_id
@@ -320,8 +325,8 @@ def test_gui_selection_change_clears_invalidated_preview(
     monkeypatch.setattr(gui, "_operation_worker", FakeOperationSubmitWorker(submissions))
     monkeypatch.setattr(gui, "refresh", lambda: None)
     groups = [
-        planning_group("arm", "manipulator", ("j1",)),
-        planning_group("arm", "gripper", ("j2",)),
+        planning_group("manipulator", ("j1",)),
+        planning_group("gripper", ("j2",)),
     ]
     monkeypatch.setattr(gui, "list_planning_groups", lambda: groups)
     monkeypatch.setattr(gui, "_build_joint_sliders", lambda: None)
@@ -356,8 +361,8 @@ def test_gui_selection_change_ignores_invalidated_preview_error(
     monkeypatch.setattr(gui, "_operation_worker", FakeOperationErrorWorker(errors))
     monkeypatch.setattr(gui, "refresh", lambda: None)
     groups = [
-        planning_group("arm", "manipulator", ("j1",)),
-        planning_group("arm", "gripper", ("j2",)),
+        planning_group("manipulator", ("j1",)),
+        planning_group("gripper", ("j2",)),
     ]
     monkeypatch.setattr(gui, "list_planning_groups", lambda: groups)
     monkeypatch.setattr(gui, "_build_joint_sliders", lambda: None)
@@ -451,7 +456,6 @@ def test_gui_guard_errors_keep_action_idle(
     monkeypatch.setattr(gui, "_operation_worker", FakeOperationSubmitWorker(submissions))
     gui.state.runtime = PanelRuntime.RUNNING
     gui.state.backend_status = BackendConnectionStatus.READY
-    gui.state.selected_robot = "arm"
     gui.state.action_status = ActionStatus.IDLE
 
     getattr(gui, submit)()
@@ -471,34 +475,3 @@ def test_gui_ignores_stale_timed_out_operation_finish() -> None:
 
     assert gui.state.action_status == ActionStatus.FAILED
     assert gui.state.error == "Operation timed out after 5.0s"
-
-
-def test_target_ghost_states_merge_groups_sharing_one_robot(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Two planning groups on one robot must both contribute to the ghost state."""
-    gui = make_gui()
-    left = planning_group("bot", "left_manipulator", ("j1",))
-    right = planning_group("bot", "right_manipulator", ("j2",))
-    gui.state.selected_group_ids = (str(left.id), str(right.id))
-
-    monkeypatch.setattr(gui, "_groups_by_id", lambda: {str(left.id): left, str(right.id): right})
-    monkeypatch.setattr(
-        gui,
-        "get_robot_config",
-        lambda _name: SimpleNamespace(joint_names=("j1", "j2")),
-    )
-    monkeypatch.setattr(
-        gui,
-        "get_current_joint_state",
-        lambda _name: JointState({"name": ["bot/j1", "bot/j2"], "position": [0.0, 0.0]}),
-    )
-
-    targets = {
-        str(left.id): JointState({"name": ["bot/j1"], "position": [0.5]}),
-        str(right.id): JointState({"name": ["bot/j2"], "position": [-0.5]}),
-    }
-    ghost_states = gui._target_ghost_states(targets)
-
-    assert list(ghost_states) == ["bot"]
-    assert list(ghost_states["bot"].position) == [0.5, -0.5]

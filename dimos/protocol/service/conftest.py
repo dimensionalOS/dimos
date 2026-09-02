@@ -26,6 +26,7 @@ def zenoh_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(global_config, "zenoh_mode", "peer")
     monkeypatch.setattr(global_config, "zenoh_connect", "")
     monkeypatch.setattr(global_config, "zenoh_scouting", False)
+    monkeypatch.setattr(global_config, "zenoh_scout_addr", "")
     monkeypatch.setattr(global_config, "zenoh_interface", "")
     monkeypatch.setattr(global_config, "zenoh_multicast", True)
     monkeypatch.setattr(global_config, "zenoh_gossip", None)

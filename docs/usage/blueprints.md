@@ -1,6 +1,4 @@
----
-title: "Blueprints"
----
+# Blueprints
 
 Blueprints (`BlueprintAtom`) are instructions for how to initialize a `Module`.
 

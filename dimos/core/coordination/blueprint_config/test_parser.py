@@ -152,11 +152,17 @@ def test_global_short_name_is_reserved_when_module_field_collides() -> None:
             "module-value",
             "--replay=false",
             "--no-obstacle-avoidance",
+            "--record",
+            "sqlite",
+            "--record-topics",
+            "lidar,odom",
         ],
         environ={},
     )
 
     assert parsed.global_config_values()["robot_ip"] == "192.0.2.10"
+    assert parsed.global_config_values()["record"] == "sqlite"
+    assert parsed.global_config_values()["record_topics"] == "lidar,odom"
     assert parsed.global_config_values()["replay"] is False
     assert parsed.global_config_values()["obstacle_avoidance"] is False
     assert parsed.module_kwargs("collisionmodule") == {"robot_ip": "module-value"}

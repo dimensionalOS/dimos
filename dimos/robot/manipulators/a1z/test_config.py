@@ -44,7 +44,7 @@ def test_gripper_model_contains_configured_end_effector_frame() -> None:
     assert joint.attrib == {"name": "gripper_eef_link_joint", "type": "fixed"}
     assert joint.find("parent").attrib == {"link": "arm_link6"}
     assert joint.find("child").attrib == {"link": "gripper_eef_link"}
-    assert joint.find("origin").attrib == {
-        "xyz": "0.0727 0.0 0.0",
-        "rpy": "0.0 0.0 0.0",
-    }
+    origin = joint.find("origin")
+    assert origin is not None
+    assert [float(value) for value in origin.attrib["xyz"].split()] == [0.0727, 0.0, 0.0]
+    assert [float(value) for value in origin.attrib["rpy"].split()] == [0.0, 0.0, 0.0]

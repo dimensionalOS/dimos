@@ -31,7 +31,7 @@ print(logs.summary())
 
 <!--Result:-->
 ```
-Stream("logs"): 3 items, 1970-01-01 00:00:01 — 1970-01-01 00:00:03 (2.0s)
+Stream("logs"): 3 items, 1970-01-01 00:00:01 to 1970-01-01 00:00:03 (2.0s)
 ```
 
 ## Filters

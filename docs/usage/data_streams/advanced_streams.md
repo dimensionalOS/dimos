@@ -1,6 +1,4 @@
----
-title: "Advanced Stream Handling"
----
+# Advanced Stream Handling
 
 > **Prerequisite:** Read [ReactiveX Fundamentals](/docs/usage/data_streams/reactivex.md) first for Observable basics.
 

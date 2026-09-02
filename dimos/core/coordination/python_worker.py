@@ -432,6 +432,17 @@ def _worker_loop(conn: Connection, state: _WorkerState) -> None:
             conn.send(response)
         except (BrokenPipeError, EOFError):
             break
+        except Exception as e:
+            # A result that cannot be pickled must not take the worker with it.
+            logger.error(
+                "Worker response could not be sent",
+                worker_id=state.worker_id,
+                error_repr=repr(e),
+            )
+            try:
+                conn.send(WorkerResponse(error=f"{e.__class__.__name__}: {e}"))
+            except (BrokenPipeError, EOFError):
+                break
 
         if state.should_stop:
             break

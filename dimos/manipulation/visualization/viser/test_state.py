@@ -32,8 +32,7 @@ from dimos.manipulation.visualization.viser.state import (
 
 def test_panel_cannot_plan_while_backend_reports_fault() -> None:
     state = PanelState(
-        selected_robot="arm",
-        selected_group_ids=(PlanningGroupID("arm/manipulator"),),
+        selected_group_ids=(PlanningGroupID("manipulator"),),
         runtime=PanelRuntime.RUNNING,
         backend_status=BackendConnectionStatus.READY,
         target_status=TargetStatus.FEASIBLE,
@@ -65,7 +64,7 @@ def test_sequence_change_marks_a_fresh_plan_stale() -> None:
 
 
 def test_selection_epoch_change_resets_plan_and_invalidates_sequence() -> None:
-    state = PanelState(selected_group_ids=(PlanningGroupID("arm/manipulator"),))
+    state = PanelState(selected_group_ids=(PlanningGroupID("manipulator"),))
     state.plan_state.status = PlanStatus.FRESH
 
     assert state.advance_selection_epoch() == 1

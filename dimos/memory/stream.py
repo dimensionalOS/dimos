@@ -538,7 +538,7 @@ class Stream(CompositeResource, Generic[T, O]):
         dt1 = datetime.fromtimestamp(t1, tz=timezone.utc).strftime(fmt)
         dur = t1 - t0
         hz = f", {(n - 1) / dur:.2f} Hz" if dur > 0 else ""
-        return f"{self}: {n} items, {dt0} — {dt1} ({dur:.1f}s{hz}{size})"
+        return f"{self}: {n} items, {dt0} to {dt1} ({dur:.1f}s{hz}{size})"
 
     def materialize(self) -> Stream[T, O]:
         """Materialize into memory and return a replayable stream.

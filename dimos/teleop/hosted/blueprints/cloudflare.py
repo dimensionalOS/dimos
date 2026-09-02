@@ -166,8 +166,8 @@ teleop_hosted_xarm6 = (
         HostedStatsModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
         coordinator_teleop_xarm6,
-        FrontCamera.blueprint(camera_name="front", enable_depth=False, enable_pointcloud=False),
-        WristCamera.blueprint(camera_name="wrist", enable_depth=False, enable_pointcloud=False),
+        FrontCamera.blueprint(frame_id="front", enable_depth=False, enable_pointcloud=False),
+        WristCamera.blueprint(frame_id="wrist", enable_depth=False, enable_pointcloud=False),
     )
     .remappings(
         [
@@ -198,8 +198,8 @@ teleop_hosted_xarm7 = (
         HostedStatsModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
         coordinator_teleop_xarm7,
-        FrontCamera.blueprint(camera_name="front", enable_depth=False, enable_pointcloud=False),
-        WristCamera.blueprint(camera_name="wrist", enable_depth=False, enable_pointcloud=False),
+        FrontCamera.blueprint(frame_id="front", enable_depth=False, enable_pointcloud=False),
+        WristCamera.blueprint(frame_id="wrist", enable_depth=False, enable_pointcloud=False),
     )
     .remappings(
         [

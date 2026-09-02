@@ -46,6 +46,7 @@ class PinkKinematicsConfig(BaseConfig):
     position_cost: float = 1.0
     orientation_cost: float = 1.0
     posture_cost: float = 1e-3
+    joint_limit_posture_margin: float = Field(default=0.0, ge=0.0)
     lm_damping: float = 1e-6
     gain: float = 0.5
     safety_break: bool = True

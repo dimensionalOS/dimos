@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<!-- Custom-decoder @dimos/sdk page: the browser half of the path.points.v1
+     example (Python half: @web_encoder + Channel, see the Decoders section
+     in web/README.md). Subscribes with no cockpit panel involved.
+     Run:  dimos run <blueprint> --local-relay --serve-dir web/examples/custom-path -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>DimOS custom path decoder</title>
+    <style>
+      body {
+        font-family: monospace;
+        margin: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>DimOS custom path decoder</h1>
+    <div id="status">status: connecting</div>
+    <div id="count">points: (no data)</div>
+    <pre id="points">(no data)</pre>
+    <script type="module">
+      import { connect, createDecoderRegistry } from "/sdk.js";
+
+      const decoders = createDecoderRegistry();
+      // path.points.v1: little-endian float32 (x, y) pairs; meta.n = count.
+      decoders.register("path.points.v1", (payload, header) => {
+        const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+        const points = [];
+        for (let i = 0; i + 8 <= payload.byteLength; i += 8) {
+          points.push({ x: view.getFloat32(i, true), y: view.getFloat32(i + 4, true) });
+        }
+        return { value: { n: header.meta?.n ?? points.length, points } };
+      });
+
+      const statusEl = document.querySelector("#status");
+      const countEl = document.querySelector("#count");
+      const pointsEl = document.querySelector("#points");
+
+      const session = connect({ decoders });
+
+      session.status.subscribe(() => {
+        statusEl.textContent = `status: ${session.status.get().transport.phase}`;
+      });
+
+      session.subscribe("nav_path", (snapshot) => {
+        const value = snapshot.slot?.value;
+        if (!value) return;
+        countEl.textContent = `points: ${value.n}`;
+        pointsEl.textContent = JSON.stringify(value.points, null, 2);
+      });
+    </script>
+  </body>
+</html>

@@ -16,20 +16,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
-from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper, local_bounds
+from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.transform import Transformer
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-    from numpy.typing import NDArray
 
     from dimos.memory.type.observation import Observation
 
@@ -48,7 +41,6 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         voxel_size: float = 0.1,
         max_range: float = 30.0,
         emit_every: int = 1,
-        region_percentile: float = 95.0,
         **mapper_kwargs: Any,
     ) -> None:
         if emit_every < 0:
@@ -56,46 +48,19 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         self.voxel_size = voxel_size
         self.max_range = max_range
         self.emit_every = emit_every
-        self.region_percentile = region_percentile
         self._mapper_kwargs = mapper_kwargs
-
-    def _local_bounds(
-        self,
-        mapper: VoxelRayMapper,
-        batch_points: list[NDArray[np.float32]],
-        batch_origins: list[tuple[float, float, float]],
-        last_obs: Observation[PointCloud2],
-    ) -> tuple[float, float, float, float, float]:
-        """Robot-centered cylinder sized to a percentile of the observed points.
-
-        An empty batch yields a zero-radius region at the robot.
-        """
-        if not batch_origins:
-            pose = last_obs.pose_tuple
-            assert pose is not None, "poseless obs are skipped upstream"
-            rx, ry, rz = pose[:3]
-            return rx, ry, 0.0, rz, rz
-
-        points = np.concatenate(batch_points, axis=0)
-        origins = np.asarray(batch_origins, dtype=np.float32)
-        margin = mapper.shadow_depth + mapper.voxel_size
-        return local_bounds(points, origins, self.region_percentile, margin)
 
     def _make_obs(
         self,
         mapper: VoxelRayMapper,
         last_obs: Observation[PointCloud2],
         count: int,
-        batch_points: list[NDArray[np.float32]],
-        batch_origins: list[tuple[float, float, float]],
     ) -> Observation[PointCloud2]:
         import open3d as o3d  # type: ignore[import-untyped]
         import open3d.core as o3c  # type: ignore[import-untyped]
 
         tags = {**last_obs.tags, "frame_count": count}
-        cx, cy, radius, z_min, z_max = self._local_bounds(
-            mapper, batch_points, batch_origins, last_obs
-        )
+        cx, cy, radius, z_min, z_max = mapper.take_local_bounds()
         positions = mapper.local_map((cx, cy, 0.0), radius, z_min, z_max)
         tags["region_bounds"] = (cx, cy, radius, z_min, z_max)
         pcd = o3d.t.geometry.PointCloud()
@@ -107,38 +72,28 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         self,
         upstream: Iterator[Observation[PointCloud2]],
     ) -> Iterator[Observation[PointCloud2]]:
+        # emit_every=1 turns on frame batching. This transformer consumes it
+        # with take_local_bounds on its own cadence.
         mapper = VoxelRayMapper(
-            voxel_size=self.voxel_size, max_range=self.max_range, **self._mapper_kwargs
+            voxel_size=self.voxel_size,
+            max_range=self.max_range,
+            emit_every=1,
+            **self._mapper_kwargs,
         )
         last_obs: Observation[PointCloud2] | None = None
         count = 0
-        batch_points: list[NDArray[np.float32]] = []
-        batch_origins: list[tuple[float, float, float]] = []
 
         for obs in upstream:
             if obs.pose_tuple is None:
-                logger.debug("RayTraceMap: obs %s has no pose; skipping", obs.id)
+                logger.warning("RayTraceMap: obs %s has no pose. dropped a cloud", obs.id)
                 continue
             x, y, z, qx, qy, qz, qw = obs.pose_tuple
-            # Sensor-frame cloud: register into the world by the odom pose.
-            # Apply it to the f32 array directly to skip an Open3D float64 round-trip.
-            mat = Transform(
-                translation=Vector3(x, y, z), rotation=Quaternion(qx, qy, qz, qw)
-            ).to_matrix()
-            rot = mat[:3, :3].astype(np.float32)
-            trans = mat[:3, 3].astype(np.float32)
-            pts = obs.data.points_f32() @ rot.T + trans
-            mapper.add_frame(pts, (x, y, z))
-            if pts.size:
-                batch_points.append(pts)
-                batch_origins.append((x, y, z))
+            mapper.add_frame(obs.data.points_f32(), (x, y, z), (qx, qy, qz, qw))
             last_obs = obs
             count += 1
 
             if self.emit_every > 0 and count % self.emit_every == 0:
-                yield self._make_obs(mapper, last_obs, count, batch_points, batch_origins)
-                batch_points = []
-                batch_origins = []
+                yield self._make_obs(mapper, last_obs, count)
 
         if last_obs is not None and (self.emit_every == 0 or count % self.emit_every != 0):
-            yield self._make_obs(mapper, last_obs, count, batch_points, batch_origins)
+            yield self._make_obs(mapper, last_obs, count)

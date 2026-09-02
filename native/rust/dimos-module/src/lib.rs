@@ -23,6 +23,7 @@ pub mod log;
 pub mod module;
 pub mod tf;
 pub mod transport;
+pub mod workers;
 pub mod zenoh;
 
 pub use dimos_module_macros::{native_config, Module};
@@ -31,6 +32,7 @@ pub use lcm::LcmTransport;
 pub use module::{run, Builder, Input, Io, Module, ModuleConfig, NativeConfig, NoConfig, Output};
 pub use tf::{Lookup, Tf, Transform};
 pub use transport::{SharedTransport, Transport};
+pub use workers::worker_pool;
 pub use zenoh::ZenohTransport;
 
 pub use nalgebra;

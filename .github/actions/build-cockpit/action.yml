@@ -1,8 +1,9 @@
 name: build-cockpit
 description: >-
-  Canonical Cockpit build for release artifacts: install the Deno version
-  pinned in dimos/utils/deno.py, validate the frozen lockfile, and build
-  web/cockpit/dist (shipped in the sdist and copied into wheels by setup.py).
+  Canonical web build for release artifacts: install the Deno version pinned
+  in dimos/utils/deno.py, validate the frozen lockfile, and build
+  web/sdk/dist and web/cockpit/dist (shipped in the sdist and copied into
+  wheels by setup.py).
 
 runs:
   using: composite
@@ -28,6 +29,10 @@ runs:
       shell: bash
       working-directory: web
       run: deno install --frozen
+    - name: Build sdk dist
+      shell: bash
+      working-directory: web/sdk
+      run: deno task build
     - name: Build cockpit dist
       shell: bash
       working-directory: web/cockpit

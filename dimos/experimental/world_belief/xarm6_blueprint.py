@@ -82,21 +82,18 @@ _hw.auto_enable = True
 xarm6_worldbelief = autoconnect(
     # Provides wrist-camera FK/TF.
     ManipulationModule.blueprint(
-        robots=[
-            make_xarm6_model_config(
-                name="arm",
-                add_gripper=False,
-                # Enables TF publication.
-                tf_extra_links=["link_base"],
-            ),
-        ],
+        model=make_xarm6_model_config(
+            add_gripper=False,
+            # Enables TF publication.
+            tf_extra_links=["link_base"],
+        ),
     ),
+    # TODO: tf tree is broken here; RealSenseCamera no longer publishes its mount
+    # edge, so camera_link needs a parent (e.g. from the arm) to resolve into world.
     RealSenseCamera.blueprint(
         width=640,
         height=480,
         fps=15,
-        base_frame_id="link6",
-        base_transform=XARM6_WORLDBELIEF_CAMERA_TRANSFORM,
     ),
     RerunBridgeModule.blueprint(
         blueprint=_rerun_blueprint,

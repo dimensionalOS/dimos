@@ -193,6 +193,26 @@ _UNITREE_COMMANDS = {
 }
 
 
+def _goal_pose(
+    current: PoseStamped, x: float, y: float, degrees: float | None, relative: bool
+) -> PoseStamped:
+    """Where move_to sends the robot, in the world frame."""
+    euler = current.orientation.to_euler()
+    if relative:
+        position = current.position + current.orientation.rotate_vector(Vector3(x, y, 0))
+        yaw = euler.yaw + math.radians(degrees or 0.0)
+    else:
+        position = Vector3(x, y, current.position.z)
+        yaw = euler.yaw if degrees is None else math.radians(degrees)
+    orientation = Quaternion.from_euler(Vector3(euler.roll, euler.pitch, yaw))
+    return PoseStamped(position=position, orientation=orientation, frame_id="world")
+
+
+def _pose_text(pose: PoseStamped) -> str:
+    yaw = math.degrees(pose.orientation.to_euler().yaw)
+    return f"x={pose.position.x:.2f} y={pose.position.y:.2f} heading={yaw:.0f}deg"
+
+
 class UnitreeSkillContainer(Module):
     """Container for Unitree Go2 robot skills using the new framework."""
 
@@ -206,65 +226,68 @@ class UnitreeSkillContainer(Module):
         super().stop()
 
     @skill
-    def relative_move(self, forward: float = 0.0, left: float = 0.0, degrees: float = 0.0) -> str:
-        """Move the robot relative to its current position.
+    def move_to(
+        self, x: float = 0.0, y: float = 0.0, degrees: float | None = None, relative: bool = False
+    ) -> str:
+        """Move to a position and wait until the robot arrives or gives up.
 
-        The `degrees` arguments refers to the rotation the robot should be at the end, relative to its current rotation.
+        By default x, y are world coordinates in meters: the frame odometry and the
+        lidar readouts use, +x east and +y north. degrees is the world heading to
+        face on arrival (0 = +x, 90 = +y).
+
+        With relative=True, x is forward and y is left in meters from where the
+        robot stands now, and degrees is a turn relative to its current heading.
 
         Example calls:
 
-            # Move to a point that's 2 meters forward and 1 to the right.
-            relative_move(forward=2, left=-1, degrees=0)
+            move_to(x=3.2, y=-0.5)                   # go to world (3.2, -0.5)
+            move_to(x=3.2, y=-0.5, degrees=90)       # ...and end up facing north
+            move_to(x=2, y=-1, relative=True)        # 2 m forward, 1 m right
+            move_to(x=-1, relative=True)             # back up 1 m
+            move_to(degrees=-90, relative=True)      # turn right 90 degrees in place
+            move_to(y=3, degrees=90, relative=True)  # 3 m left, and face that way
 
-            # Move back 1 meter, while still facing the same direction.
-            relative_move(forward=-1, left=0, degrees=0)
-
-            # Rotate 90 degrees to the right (in place)
-            relative_move(forward=0, left=0, degrees=-90)
-
-            # Move 3 meters left, and face that direction
-            relative_move(forward=0, left=3, degrees=90)
+        Returns the outcome and where the robot ended up, in world coordinates.
         """
-        forward, left, degrees = float(forward), float(left), float(degrees)
+        x, y = float(x), float(y)
+        degrees = None if degrees is None else float(degrees)
 
         tf = self.tfbuffer.get("world", "base_link")
         if tf is None:
             return "Failed to get the position of the robot."
 
+        goal = _goal_pose(tf.to_pose(), x, y, degrees, relative)
+        self._navigation.set_goal(goal)
+        outcome = self._wait_for_goal()
+
+        tf = self.tfbuffer.get("world", "base_link")
+        now = "unknown" if tf is None else _pose_text(tf.to_pose())
+        return f"{outcome}. Robot is at {now}; goal was {_pose_text(goal)}."
+
+    def _wait_for_goal(self, timeout: float = 100.0, settle: float = 2.0) -> str:
+        """Block until the planner arrives, gives up, or `timeout` passes.
+
+        The planner drops out of FOLLOWING_PATH for a moment every time it
+        replans, so a pause only counts as the end once it has lasted `settle`
+        seconds without the goal being reached.
+        """
         # TODO: Improve this. This is not a nice way to do it. I should
         # subscribe to arrival/cancellation events instead.
-
-        self._navigation.set_goal(self._generate_new_goal(tf.to_pose(), forward, left, degrees))
-
         time.sleep(1.0)
 
-        start_time = time.monotonic()
-        timeout = 100.0
-        while self._navigation.get_state() == NavigationState.FOLLOWING_PATH:
-            if time.monotonic() - start_time > timeout:
-                return "Navigation timed out"
+        deadline = time.monotonic() + timeout
+        idle_since: float | None = None
+        while time.monotonic() < deadline:
+            if self._navigation.is_goal_reached():
+                return "Navigation goal reached"
+            if self._navigation.get_state() == NavigationState.FOLLOWING_PATH:
+                idle_since = None
+            elif idle_since is None:
+                idle_since = time.monotonic()
+            elif time.monotonic() - idle_since > settle:
+                return "Navigation was cancelled or failed"
             time.sleep(0.1)
-
-        time.sleep(1.0)
-
-        if not self._navigation.is_goal_reached():
-            return "Navigation was cancelled or failed"
-        else:
-            return "Navigation goal reached"
-
-    def _generate_new_goal(
-        self, current_pose: PoseStamped, forward: float, left: float, degrees: float
-    ) -> PoseStamped:
-        local_offset = Vector3(forward, left, 0)
-        global_offset = current_pose.orientation.rotate_vector(local_offset)
-        goal_position = current_pose.position + global_offset
-
-        current_euler = current_pose.orientation.to_euler()
-        goal_yaw = current_euler.yaw + math.radians(degrees)
-        goal_euler = Vector3(current_euler.roll, current_euler.pitch, goal_yaw)
-        goal_orientation = Quaternion.from_euler(goal_euler)
-
-        return PoseStamped(position=goal_position, orientation=goal_orientation)
+        return "Navigation timed out"
 
     @skill
     def wait(self, seconds: float) -> str:

@@ -5,9 +5,8 @@
 
 import { useEffect, useRef } from "react";
 import { Badge, type DrawHealth, PanelFrame } from "../layout/PanelFrame.tsx";
-import { type CostmapValue, inflateCostmap } from "../session/decoders/costmap.ts";
-import { useChannel } from "../session/hooks.ts";
-import type { ChannelStore } from "../session/store.ts";
+import { type ChannelStore, type CostmapValue, inflateCostmap } from "@dimos/sdk";
+import { useStoreChannel } from "@dimos/sdk/react";
 import styles from "./MapPanel.module.css";
 import {
   drawPose,
@@ -194,7 +193,7 @@ function MapCanvas(
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const health = useRef<DrawHealth>({ lastDrawOkAtMs: Date.now(), failures: 0 }).current;
-  const { slot } = useChannel(store, costmapCh);
+  const { slot } = useStoreChannel(store, costmapCh);
 
   useEffect(() => {
     const canvas = canvasRef.current;

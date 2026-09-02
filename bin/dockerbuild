@@ -21,7 +21,7 @@ if [ ! -d "docker/$DOCKER_DIR" ]; then
 fi
 
 # Set image name based on directory
-IMAGE_NAME="ghcr.io/dimensionalos/$DOCKER_DIR"
+IMAGE_NAME="dimensional/$DOCKER_DIR"
 
 echo "Building image $IMAGE_NAME from docker/$DOCKER_DIR..."
 echo "Build context: $(pwd)"

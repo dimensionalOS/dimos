@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.constants import STATE_DIR
 from dimos.core.resource import CompositeResource
-from dimos.evals.types import EvalCase, EvalResult, InteractiveEval, Suite
+from dimos.evals.types import EvalCase, EvalResult, InteractiveEval, ResponseT, Suite
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.logging_config import setup_logger
 
@@ -253,6 +253,31 @@ class EvalRunner(Configurable, CompositeResource):
         message = HumanMessage(content=[*blocks, {"type": "text", "text": question}])
         response = self.model.invoke([SystemMessage(EVAL_SYSTEM_PROMPT), message])
         return str(response.text)
+
+    def ask_structured(
+        self,
+        context: Sequence[dict[str, Any]],
+        question: str,
+        schema: type[ResponseT],
+    ) -> ResponseT:
+        """Ask for a provider-native response validated against a Pydantic schema."""
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        blocks = list(context) if context else [BLIND_BLOCK]
+        message = HumanMessage(content=[*blocks, {"type": "text", "text": question}])
+        try:
+            structured_model = self.model.with_structured_output(schema)
+        except NotImplementedError as exc:
+            raise RuntimeError(
+                f"model {self.config.model!r} does not support structured output"
+            ) from exc
+        response = structured_model.invoke([SystemMessage(EVAL_SYSTEM_PROMPT), message])
+        if not isinstance(response, schema):
+            raise TypeError(
+                f"model {self.config.model!r} returned {type(response).__name__}, "
+                f"expected {schema.__name__}"
+            )
+        return response
 
     @property
     def model(self) -> BaseChatModel:

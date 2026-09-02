@@ -319,9 +319,11 @@ def test_raw_transport_pins_still_work() -> None:
     style used across existing blueprints) must survive config parsing and
     materialize unchanged — only spec-declared transports opt into the
     override flow."""
-    from dimos.core.transport import LCMTransport
+    from dimos.core.transport_factory import make_transport
 
-    raw = LCMTransport("/raw_topic", FakeLCMMsg)
+    # Pinned on the active backend: a plain LCM/Zenoh pin that does not match it
+    # is deliberately rebuilt by the backend switch, which is a different path.
+    raw = make_transport("/raw_topic", FakeLCMMsg)
     bp = Blueprint(blueprints=()).transports(
         {
             ("raw", FakeLCMMsg): raw,

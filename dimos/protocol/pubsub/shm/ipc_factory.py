@@ -15,7 +15,6 @@
 # frame_ipc.py
 # Python 3.9+
 from abc import ABC, abstractmethod
-from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 import os
 import threading
@@ -26,39 +25,11 @@ import numpy as np
 from numpy.typing import DTypeLike, NDArray
 
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.shm import ShmNotReadyError, attach_shm, create_or_attach_shm
 
 _UNLINK_ON_GC = os.getenv("DIMOS_IPC_UNLINK_ON_GC", "0").lower() not in ("0", "false", "no")
 
 logger = setup_logger()
-
-
-def _unregister(shm: SharedMemory) -> SharedMemory:
-    """Remove a SharedMemory segment from the resource tracker.
-
-    We manage lifecycle explicitly via close()/unlink(), so the resource
-    tracker must not attempt cleanup on process exit — that causes KeyError
-    spam when multiple processes share the same named segment.
-    """
-    try:
-        resource_tracker.unregister(shm._name, "shared_memory")  # type: ignore[attr-defined]
-    except Exception:
-        pass
-    return shm
-
-
-def _open_shm_with_retry(name: str) -> SharedMemory:
-    tries = int(os.getenv("DIMOS_IPC_ATTACH_RETRIES", "40"))  # ~40 tries
-    base_ms = float(os.getenv("DIMOS_IPC_ATTACH_BACKOFF_MS", "5"))  # 5 ms
-    cap_ms = float(os.getenv("DIMOS_IPC_ATTACH_BACKOFF_CAP_MS", "200"))  # 200 ms
-    last = None
-    for i in range(tries):
-        try:
-            return _unregister(SharedMemory(name=name))
-        except FileNotFoundError as e:
-            last = e
-            # exponential backoff, capped
-            time.sleep(min((base_ms * (2**i)), cap_ms) / 1000.0)
-    raise FileNotFoundError(f"SHM not found after {tries} retries: {name}") from last
 
 
 class FrameChannel(ABC):
@@ -144,16 +115,7 @@ def _safe_unlink(name: str) -> None:
 
 def _create_or_open(name: str, size: int) -> tuple[SharedMemory, bool]:
     """Create a named SHM segment (owner) or attach to an existing one (reader)."""
-    try:
-        # Owner: leave registered because unlink() will unregister, and
-        # the tracker serves as safety net if the process crashes.
-        shm = SharedMemory(create=True, size=size, name=name)
-        owner = True
-    except FileExistsError:
-        # Reader: unregister because we only close(), never unlink().
-        shm = _unregister(SharedMemory(name=name))
-        owner = False
-    return shm, owner
+    return create_or_attach_shm(name, size)
 
 
 class CpuShmChannel(FrameChannel):
@@ -272,12 +234,12 @@ class CpuShmChannel(FrameChannel):
         data_name = desc["data_name"]  # type: ignore[index]
         ctrl_name = desc["ctrl_name"]  # type: ignore[index]
         try:
-            obj._shm_data = _open_shm_with_retry(data_name)
-            obj._shm_ctrl = _open_shm_with_retry(ctrl_name)
-        except FileNotFoundError as e:
-            raise FileNotFoundError(
-                f"CPU IPC attach failed: control/data SHM not found "
-                f"(ctrl='{ctrl_name}', data='{data_name}'). "
+            obj._shm_data = attach_shm(data_name)
+            obj._shm_ctrl = attach_shm(ctrl_name)
+        except ShmNotReadyError as e:
+            raise ShmNotReadyError(
+                f"CPU IPC attach failed: control/data SHM never became ready "
+                f"(ctrl='{ctrl_name}', data='{data_name}'): {e}. "
                 f"Ensure the writer is running on the same host and the channel is alive."
             ) from e
         obj._ctrl = np.ndarray((3,), dtype=np.int64, buffer=obj._shm_ctrl.buf)
@@ -519,12 +481,12 @@ class CpuShmQueue(FrameChannel):
         data_name = desc["data_name"]
         ctrl_name = desc["ctrl_name"]
         try:
-            obj._shm_data = _open_shm_with_retry(data_name)
-            obj._shm_ctrl = _open_shm_with_retry(ctrl_name)
-        except FileNotFoundError as e:
-            raise FileNotFoundError(
-                f"CPU IPC queue attach failed: control/data SHM not found "
-                f"(ctrl='{ctrl_name}', data='{data_name}'). "
+            obj._shm_data = attach_shm(data_name)
+            obj._shm_ctrl = attach_shm(ctrl_name)
+        except ShmNotReadyError as e:
+            raise ShmNotReadyError(
+                f"CPU IPC queue attach failed: control/data SHM never became ready "
+                f"(ctrl='{ctrl_name}', data='{data_name}'): {e}. "
                 f"Ensure the writer is running on the same host and the channel is alive."
             ) from e
         obj._ctrl = np.ndarray((cls._CTRL_SLOTS,), dtype=np.int64, buffer=obj._shm_ctrl.buf)

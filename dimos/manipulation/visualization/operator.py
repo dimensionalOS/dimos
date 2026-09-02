@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, cast
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.planners.config import CartesianPathConfig
-from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID, RobotName
+from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -92,7 +92,7 @@ class ManipulationOperator:
     def status(self) -> OperatorStatus:
         """Return compact dynamic state without topology or joint telemetry."""
         return OperatorStatus(
-            state=self._module.get_state().operation_status.name,
+            state=self._module.get_operation_status().name,
             error=self._module.get_error(),
             has_plan=self._module.has_planned_path(),
         )
@@ -108,20 +108,20 @@ class ManipulationOperator:
         self._motion_speed = float(speed_scale)
         return True
 
-    def get_init_joints(self, robot_name: RobotName) -> JointState | None:
-        """Return the operator-authoritative init joint state for a robot."""
-        init = self._module.get_init_joints(robot_name)
+    def get_init_joints(self) -> JointState | None:
+        """Return the operator-authoritative initialization state."""
+        init = self._module.get_init_joints()
         return None if init is None else JointState(init)
 
     def evaluate_joint_target(self, request: JointTargetRequest) -> TargetEvaluationResult:
-        """Validate and evaluate a canonical global joint target."""
+        """Validate and evaluate a canonical joint target."""
         groups, validation = self._validate_joint_request(request)
         if validation is not None:
             return validation
         assert groups is not None
         complete = self._complete_states(groups, request.target)
         if complete is None:
-            return self._invalid(request.group_ids, "Incomplete robot target state")
+            return self._invalid(request.group_ids, "Incomplete model target state")
         return self._evaluate_global_target(groups, JointState(request.target), complete)
 
     def evaluate_pose_target(self, request: PoseTargetRequest) -> TargetEvaluationResult:
@@ -235,7 +235,7 @@ class ManipulationOperator:
             return None, self._invalid(request.group_ids, "Joint target contains duplicate joints")
         if names != expected:
             return None, self._invalid(
-                request.group_ids, "Joint target must use exact selected global joints in order"
+                request.group_ids, "Joint target must use exact selected canonical joints in order"
             )
         if any(not math.isfinite(value) for value in positions):
             return None, self._invalid(
@@ -278,9 +278,9 @@ class ManipulationOperator:
             ):
                 return group_ids, self._invalid(group_ids, "Malformed seed")
             expected = tuple(name for group in groups for name in group.joint_names)
-            if seed_names != expected or any("/" not in name for name in seed_names):
+            if seed_names != expected:
                 return group_ids, self._invalid(
-                    group_ids, "Seed must use exact selected global joints in order"
+                    group_ids, "Seed must use exact selected canonical joints in order"
                 )
             if any(not math.isfinite(float(value)) for value in request.seed.position):
                 return group_ids, self._invalid(group_ids, "Seed contains non-finite positions")
@@ -299,43 +299,34 @@ class ManipulationOperator:
 
     def _complete_states(
         self, groups: Sequence[PlanningGroup], target: JointState
-    ) -> dict[RobotName, JointState] | None:
+    ) -> JointState | None:
         values = {
             str(name): float(value)
             for name, value in zip(target.name, target.position, strict=True)
         }
-        complete: dict[RobotName, JointState] = {}
-        for robot_name in dict.fromkeys(group.robot_name for group in groups):
-            config = self._module.get_robot_config(robot_name)
-            robot_id = self._module.robot_id_for_name(robot_name)
-            baseline = (
-                None if robot_id is None else self._world_monitor.get_current_joint_state(robot_id)
-            )
-            if config is None or baseline is None or len(baseline.name) != len(baseline.position):
+        config = self._module.get_model_config()
+        baseline = self._world_monitor.get_current_joint_state()
+        if baseline is None or len(baseline.name) != len(baseline.position):
+            return None
+        baseline_values = {
+            str(name): float(value)
+            for name, value in zip(baseline.name, baseline.position, strict=True)
+        }
+        positions: list[float] = []
+        for name in config.joint_names:
+            value = values.get(name, baseline_values.get(name))
+            if value is None:
                 return None
-            baseline_values = {
-                str(name): float(value)
-                for name, value in zip(baseline.name, baseline.position, strict=True)
-            }
-            positions: list[float] = []
-            for local_name in config.joint_names:
-                global_name = f"{robot_name}/{local_name}"
-                value = values.get(global_name, baseline_values.get(local_name))
-                if value is None:
-                    return None
-                positions.append(value)
-            complete[robot_name] = JointState(
-                {"name": list(config.joint_names), "position": positions}
-            )
-        return complete
+            positions.append(value)
+        return JointState({"name": list(config.joint_names), "position": positions})
 
     def _evaluate_global_target(
         self,
         groups: Sequence[PlanningGroup],
         target: JointState,
-        complete_states: Mapping[RobotName, JointState] | None = None,
+        complete_state: JointState | None = None,
     ) -> TargetEvaluationResult:
-        complete = complete_states or self._complete_states(groups, target)
+        complete = complete_state or self._complete_states(groups, target)
         if complete is None:
             return self._invalid(
                 tuple(group.id for group in groups), "Incomplete robot target state"
@@ -343,26 +334,23 @@ class ManipulationOperator:
         diagnostics: dict[PlanningGroupID, str] = {}
         poses: dict[PlanningGroupID, PoseStamped | None] = {}
         valid = True
+        state_valid = self._world_monitor.is_state_valid(complete)
         for group in groups:
-            robot_id = self._module.robot_id_for_name(group.robot_name)
-            state = complete[group.robot_name]
-            group_valid = bool(
-                robot_id is not None and self._world_monitor.is_state_valid(robot_id, state)
-            )
+            group_valid = state_valid
             valid = valid and group_valid
             diagnostics[group.id] = (
-                "Target is collision-free for this robot"
+                "Target is collision-free"
                 if group_valid
                 else "Target is in collision or violates limits"
             )
             try:
-                poses[group.id] = self._world_monitor.get_group_ee_pose(group.id, state)
+                poses[group.id] = self._world_monitor.get_group_ee_pose(group.id, complete)
             except ValueError:
                 poses[group.id] = None
         return TargetEvaluationResult(
             success=valid,
             status="FEASIBLE" if valid else "COLLISION",
-            message="Target is collision-free for each robot" if valid else "Target is infeasible",
+            message="Target is collision-free" if valid else "Target is infeasible",
             collision_free=valid,
             group_ids=tuple(group.id for group in groups),
             target_joints=JointState(target),

@@ -281,7 +281,6 @@ class GO2Connection(Module, Camera, Pointcloud):
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()
     _camera_info_thread: Thread | None = None
-    _latest_video_frame: Image | None = None
     _latest_lowstate: LowStateMsg | None = None
 
     @classmethod
@@ -325,7 +324,6 @@ class GO2Connection(Module, Camera, Pointcloud):
         def onimage(image: Image) -> None:
             image.frame_id = _prefixed(self.config.frame_id_prefix, image.frame_id)
             self.color_image.publish(image)
-            self._latest_video_frame = image
 
         if self.config.lidar:
             self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
@@ -498,12 +496,3 @@ class GO2Connection(Module, Camera, Pointcloud):
             The result of the publish request
         """
         return self.connection.publish_request(topic, data)
-
-    @skill
-    def observe(self) -> Image | None:
-        """Returns the latest video frame from the robot camera. Use this skill for any visual world queries.
-
-        This skill provides the current camera view for perception tasks.
-        Returns None if no frame has been captured yet.
-        """
-        return self._latest_video_frame

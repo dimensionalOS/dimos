@@ -52,4 +52,4 @@ uv run dimos run unitree-go2-agentic
 
 1. `McpServer` in the blueprint starts a FastAPI server on port 9990
 2. Claude Code connects directly to `http://localhost:9990/mcp`
-3. Skills are exposed as MCP tools (e.g., `relative_move`, `navigate_with_text`)
+3. Skills are exposed as MCP tools (e.g., `move_to`, `navigate_with_text`)

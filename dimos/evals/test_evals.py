@@ -25,6 +25,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
 import pytest
 
 from dimos.evals.scorers import (
@@ -95,6 +96,11 @@ class FakeRig:
         self.calls.append("ask")
         return self.answer
 
+    def ask_structured(
+        self, context: Sequence[dict[str, Any]], question: str, schema: type[Any]
+    ) -> Any:
+        raise NotImplementedError
+
     def call_skill(self, name: str, args: Mapping[str, object]) -> str:
         self.calls.append(f"skill:{name}")
         return self.answer
@@ -119,6 +125,10 @@ class FakeRig:
         self, score: Callable[[Any], float], interval_s: float, timeout_s: float
     ) -> list[tuple[float, float]]:
         return self.series
+
+
+class _AnswerResponse(BaseModel):
+    answer: str
 
 
 # -- scorers ------------------------------------------------------------------------
@@ -148,6 +158,45 @@ def test_parsers() -> None:
     with pytest.raises(ValueError):
         yes_no("maybe")
     assert choice(" Chairs. ") == "chairs"
+
+
+def test_runner_uses_model_native_structured_output(tmp_path: Path) -> None:
+    from dimos.evals.runner import EvalRunner
+
+    seen: list[tuple[type[BaseModel], object]] = []
+
+    class StructuredModel:
+        def with_structured_output(self, schema: type[BaseModel]) -> StructuredModel:
+            seen.append((schema, None))
+            return self
+
+        def invoke(self, messages: object) -> BaseModel:
+            seen[-1] = (seen[-1][0], messages)
+            return _AnswerResponse(answer="yes")
+
+    runner = EvalRunner(chat_model=StructuredModel(), out_dir=tmp_path)
+
+    response = runner.ask_structured([], "Is there a chair?", _AnswerResponse)
+
+    assert response == _AnswerResponse(answer="yes")
+    assert seen[0][0] is _AnswerResponse
+    assert seen[0][1] is not None
+
+
+def test_runner_rejects_wrong_structured_response_type(tmp_path: Path) -> None:
+    from dimos.evals.runner import EvalRunner
+
+    class WrongTypeModel:
+        def with_structured_output(self, schema: type[BaseModel]) -> WrongTypeModel:
+            return self
+
+        def invoke(self, messages: object) -> dict[str, str]:
+            return {"answer": "yes"}
+
+    runner = EvalRunner(chat_model=WrongTypeModel(), out_dir=tmp_path)
+
+    with pytest.raises(TypeError, match="expected _AnswerResponse"):
+        runner.ask_structured([], "Is there a chair?", _AnswerResponse)
 
 
 # -- case dispatch ---------------------------------------------------------------------

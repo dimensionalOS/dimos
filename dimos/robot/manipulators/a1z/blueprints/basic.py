@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.a1z.config import (
     A1Z_G1Z_MODEL_PATH,
@@ -27,11 +27,21 @@ from dimos.robot.manipulators.common.blueprints import coordinator, planner, tra
 
 _a1z_planner_hw = a1z_hardware("arm")
 
+
+def _gripper_task() -> TaskConfig:
+    return TaskConfig(
+        name="arm_gripper",
+        type="gripper",
+        joint_names=["arm/gripper"],
+        priority=20,
+    )
+
+
 a1z_planner_coordinator = autoconnect(
-    planner(robots=[make_a1z_model_config(name="arm")]),
+    planner(model=make_a1z_model_config()),
     coordinator(
         hardware=[_a1z_planner_hw],
-        tasks=[trajectory_task(_a1z_planner_hw)],
+        tasks=[trajectory_task(_a1z_planner_hw), _gripper_task()],
     ),
 )
 
@@ -42,5 +52,5 @@ _coordinator_a1z_hw = a1z_hardware(
 
 coordinator_a1z = ControlCoordinator.blueprint(
     hardware=[_coordinator_a1z_hw],
-    tasks=[trajectory_task(_coordinator_a1z_hw)],
+    tasks=[trajectory_task(_coordinator_a1z_hw), _gripper_task()],
 )

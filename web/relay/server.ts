@@ -10,10 +10,6 @@ import { LATEST_STALE_MS } from "./forward.ts";
 import { Registry } from "./registry.ts";
 import { RobotSession, ViewerSession } from "./session.ts";
 
-// Subs snapshots ride lossy datagrams; this resend interval is the loss- and
-// reorder-healing mechanism (bridges ignore stale `n`).
-const SNAPSHOT_RESEND_MS = 2_000;
-
 export interface RelayOptions {
   /** TCP port for the HTTP side. Default 7780; 0 picks an ephemeral port. */
   port?: number;
@@ -24,6 +20,19 @@ export interface RelayOptions {
    * the relay has no UI (/ answers 404 with a build hint); only /api/* works.
    */
   cockpitDir?: string;
+  /** Built SDK bundle (web/sdk/dist): serves GET /sdk.js. */
+  sdkDir?: string;
+  /** User static root served at / instead of the cockpit (--serve-dir). */
+  serveDir?: string;
+  /**
+   * Explicit acknowledgment for binding a non-loopback host. This local
+   * relay trusts every origin that can reach it (wildcard CORS on the
+   * discovery endpoints, an unauthenticated WebTransport session, optional
+   * user-file serving), so startRelay refuses other hosts without this -
+   * only sensible behind the operator's own TLS and access control. A
+   * remote-capable relay is a separate, fail-closed mode (W10), not this.
+   */
+  unsafeNonLoopback?: boolean;
 }
 
 export interface RelayHandle {
@@ -37,12 +46,31 @@ export interface RelayHandle {
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
+  // Browsers enforce a JavaScript MIME type for module scripts, so .js and
+  // .mjs must both resolve to it or `<script type="module">` refuses them.
   ".js": "application/javascript",
+  ".mjs": "application/javascript",
   ".css": "text/css",
   ".json": "application/json",
   ".svg": "image/svg+xml",
   ".png": "image/png",
+  ".txt": "text/plain; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".wasm": "application/wasm",
 };
+
+// Deliberate LOCAL-relay policy: this relay binds loopback (enforced in
+// startRelay unless unsafeNonLoopback overrides it) and trusts local browser
+// applications, so any local origin (e.g. a Vite dev server) may read the
+// discovery endpoints and import served JavaScript modules. A remotely
+// reachable relay (W10) is fail-closed and must NOT inherit this wildcard.
+const LOCAL_CORS = { "access-control-allow-origin": "*" };
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 
 function resolveDirUrl(dir: string, label: string): URL {
   // Canonical (realPath) so serveFrom compares symlink-free paths (macOS /tmp
@@ -114,10 +142,23 @@ export function installUnhandledRejectionGuard(): void {
 export async function startRelay(options: RelayOptions = {}): Promise<RelayHandle> {
   installUnhandledRejectionGuard();
   const host = options.host ?? "127.0.0.1";
+  if (!LOOPBACK_HOSTS.has(host) && options.unsafeNonLoopback !== true) {
+    throw new Error(
+      `host ${host} is not loopback: the local relay serves wildcard CORS, an ` +
+        "unauthenticated WebTransport session, and optional --serve-dir files to every " +
+        "origin that can reach it. Bind 127.0.0.1, or pass --unsafe-non-loopback " +
+        "(RelayOptions.unsafeNonLoopback) only behind your own TLS and access control",
+    );
+  }
 
-  // Resolve the served root before binding anything so a bad path fails
+  // Resolve the served roots before binding anything so a bad path fails
   // fast, without a QUIC endpoint or timer left behind.
   const cockpitRoot = options.cockpitDir ? resolveDirUrl(options.cockpitDir, "cockpitDir") : null;
+  const sdkRoot = options.sdkDir ? resolveDirUrl(options.sdkDir, "sdkDir") : null;
+  const serveRoot = options.serveDir ? resolveDirUrl(options.serveDir, "serveDir") : null;
+  // A user directory replaces the cockpit at /; /api/* and /sdk.js keep
+  // precedence over it in handleHttp.
+  const staticRoot = serveRoot ?? cockpitRoot;
 
   const cert = await makeEphemeralCert();
 
@@ -146,13 +187,11 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     wt.closed.catch(() => {}).finally(() => sessions.delete(wt));
   }
 
-  const resendTimer = setInterval(() => registry.resendSnapshots(), SNAPSHOT_RESEND_MS);
-  // A pending resend must not keep the Deno process alive after shutdown().
-  Deno.unrefTimer(resendTimer);
   // Offers reap stale latest streams opportunistically, but an idle input
   // stops offering; this interval bounds an idle stream's lifetime to just
   // under 2x the stale window.
   const reapTimer = setInterval(() => registry.reapAll(Date.now()), LATEST_STALE_MS);
+  // A pending reap must not keep the Deno process alive after shutdown().
   Deno.unrefTimer(reapTimer);
 
   (async () => {
@@ -182,12 +221,29 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
         wtUrl: `${wtUrl}/viewer`,
         certHash: cert.certHashB64,
         v: PROTOCOL_VERSION,
-      });
+      }, { headers: LOCAL_CORS });
     }
     if (url.pathname === "/api/stats") {
-      return Response.json(registry.stats());
+      return Response.json(registry.stats(), { headers: LOCAL_CORS });
     }
-    if (cockpitRoot === null) {
+    if (url.pathname === "/sdk.js") {
+      // Never falls through to a static root: a missing bundle must yield the
+      // hint, not HTML (an HTML body imported as a module is a baffling
+      // syntax error in the consumer page). The fixed name cannot traverse,
+      // so serveFrom only returns 200 or null here.
+      const found = sdkRoot === null ? null : await serveFrom(sdkRoot, "sdk.js");
+      const res = found ?? new Response(
+        "sdk bundle not built (dimos run --local-relay builds it; " +
+          "or run `deno task build` in web/sdk)",
+        { status: 404 },
+      );
+      // Also on the 404: a cross-origin page must be able to read the hint.
+      res.headers.set("access-control-allow-origin", "*");
+      // A rebuilt bundle must not be pinned by a stale browser cache.
+      res.headers.set("cache-control", "no-cache");
+      return res;
+    }
+    if (staticRoot === null) {
       return new Response(
         "cockpit dist not built (dimos run --local-relay builds it; " +
           "or run `deno task build` in web/cockpit)",
@@ -195,7 +251,15 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
       );
     }
     const name = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
-    return await serveFrom(cockpitRoot, name) ?? new Response("not found", { status: 404 });
+    const res = await serveFrom(staticRoot, name);
+    if (res === null) return new Response("not found", { status: 404 });
+    if (res.headers.get("content-type") === "application/javascript") {
+      // ES modules are fetched with CORS semantics: a page on another local
+      // origin importing a module served from this root needs the header
+      // (same local trust policy as /sdk.js).
+      res.headers.set("access-control-allow-origin", "*");
+    }
+    return res;
   }
 
   const httpServer = Deno.serve(
@@ -210,7 +274,6 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     wtUrl,
     certHash: cert.certHashB64,
     async shutdown(): Promise<void> {
-      clearInterval(resendTimer);
       clearInterval(reapTimer);
       for (const wt of sessions) {
         try {

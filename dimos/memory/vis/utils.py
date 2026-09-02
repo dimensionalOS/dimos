@@ -25,6 +25,14 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
+# Rerun voxel render size at each replay tool's default voxel size.
+DEFAULT_RENDER_VOXEL = 0.05
+
+
+def default_render_voxel(voxel_size: float, default_voxel_size: float) -> float:
+    """Rerun voxel render size, scaled with the configured voxel size."""
+    return DEFAULT_RENDER_VOXEL * (voxel_size / default_voxel_size)
+
 
 def mosaic(
     frames: Iterable[Image | Detection2D | Observation[Any]],

@@ -1174,6 +1174,21 @@
           "npm:@peculiar/x509@2",
           "npm:reflect-metadata@0.2"
         ]
+      },
+      "sdk": {
+        "packageJson": {
+          "dependencies": [
+            "npm:@types/node@^24.10.1",
+            "npm:@types/react-dom@^19.2.0",
+            "npm:@types/react@^19.2.0",
+            "npm:happy-dom@^20.11.1",
+            "npm:react-dom@^19.2.0",
+            "npm:react@^19.2.0",
+            "npm:typescript@~5.9.2",
+            "npm:vite@^7.1.0",
+            "npm:vitest@^3.2.4"
+          ]
+        }
       }
     }
   }

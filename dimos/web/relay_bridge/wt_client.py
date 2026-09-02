@@ -30,6 +30,8 @@ from aioquic.asyncio.client import connect as aioquic_connect
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge._wt_session import SessionProtocol, make_quic_configuration
 from dimos.web.relay_bridge.protocol import (
+    CONTROL_CHANNEL,
+    MAX_CONTROL_PAYLOAD_BYTES,
     PROTOCOL_VERSION,
     DataFrame,
     Delivery,
@@ -52,7 +54,8 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 # 1200 B (no PMTUD) and _write_application retries _datagrams_pending[0]
 # forever, so a datagram that cannot fit one packet (~1165 B encoded) wedges
 # every datagram queued behind it - hello resends, pings, all send_control.
-# Refuse to queue one; 1100 keeps margin under the real cliff.
+# Refuse to queue one; 1100 keeps margin under the real cliff. Robot hellos
+# left datagrams in v5; this guards the (tiny) viewer hello.
 _HELLO_DATAGRAM_MAX_BYTES = 1100
 
 
@@ -124,6 +127,11 @@ class RelayClient:
             create_protocol=SessionProtocol,
         )
         session = cast("SessionProtocol", await ctx.__aenter__())
+        # The robot leg's only incoming uni stream is the relay-opened control
+        # carrier: corruption, reset, or an end of it must fail the whole
+        # session (the bridge reconnects) instead of leaving it alive without
+        # control. Viewer legs keep per-stream poisoning and routine ends.
+        session.incoming_is_carrier = role == "robot"
         try:
             session.open_session(f"{host}:{port}", path)
             await asyncio.wait_for(session.session_ready.wait(), timeout)
@@ -166,34 +174,71 @@ class RelayClient:
         robot: RobotInfo | None = None,
         manifest: RobotManifest | None = None,
     ) -> None:
-        """Send hello datagrams until the relay's welcome arrives.
+        """Register with the relay; returns once its welcome datagram arrives.
 
-        Robot sessions carry their identity and channel manifest in the hello
-        (the relay registers the robot from it). Datagrams are lossy, so the
-        hello is repeated every 200 ms. Raises ProtocolError if the encoded
-        hello exceeds the datagram budget or the relay answers with an error
-        (version mismatch, missing robot id), TimeoutError if nothing answers
-        within `timeout`.
+        A robot hello carries identity and channel manifest as one @control
+        data frame on a fresh one-shot bidi stream (v5); a viewer hello rides
+        datagrams (the test viewer's control plane). The welcome datagram is
+        lossy either way, so the hello repeats every 200 ms; a robot resend
+        first retires the previous hello stream if it is still in flight.
+        Raises ProtocolError if the encoded hello exceeds its transport
+        budget, RelayRejectedError if the relay answers with an error
+        (version mismatch, missing robot id, ...), TimeoutError if nothing
+        answers within `timeout`.
         """
         msg = Hello(v=PROTOCOL_VERSION, role=self.role, robot=robot, manifest=manifest)
-        size = len(encode_datagram(msg))
-        if size > _HELLO_DATAGRAM_MAX_BYTES:
-            raise ProtocolError(
-                f"hello datagram is {size} B (limit {_HELLO_DATAGRAM_MAX_BYTES}); an "
-                "oversized datagram wedges aioquic's whole datagram queue - trim the manifest"
-            )
+        control_payload: bytes | None = None
+        if self.role == "robot":
+            control_payload = encode_datagram(msg)
+            if len(control_payload) > MAX_CONTROL_PAYLOAD_BYTES:
+                raise ProtocolError(
+                    f"hello control payload is {len(control_payload)} B "
+                    f"(limit {MAX_CONTROL_PAYLOAD_BYTES}); trim the manifest"
+                )
+        else:
+            size = len(encode_datagram(msg))
+            if size > _HELLO_DATAGRAM_MAX_BYTES:
+                raise ProtocolError(
+                    f"hello datagram is {size} B (limit {_HELLO_DATAGRAM_MAX_BYTES}); an "
+                    "oversized datagram wedges aioquic's whole datagram queue"
+                )
         deadline = time.monotonic() + timeout
-        while True:
-            self._session.send_msg(msg)
-            with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._session.welcomed.wait(), 0.2)
-            if self._session.relay_error is not None:
-                err = self._session.relay_error
-                raise RelayRejectedError(err.code, err.message)
-            if self._session.welcomed.is_set():
-                return
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"no welcome from relay within {timeout} s")
+        hello_stream: int | None = None
+
+        def retire_hello_stream() -> None:
+            # In-flight check and reset in the same event-loop turn (the
+            # aioquic-safe reset rule, web/README.md bug 9); a delivered
+            # stream is left alone so a reset cannot destroy a hello the
+            # relay has yet to read.
+            if hello_stream is not None and self._session.stream_in_flight(hello_stream):
+                self._session.reset_if_in_flight(hello_stream)
+
+        try:
+            while True:
+                if control_payload is None:
+                    self._session.send_msg(msg)
+                else:
+                    retire_hello_stream()
+                    hello_stream = self.send_frame(CONTROL_CHANNEL, control_payload)
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self._session.welcomed.wait(), 0.2)
+                if self._session.relay_error is not None:
+                    err = self._session.relay_error
+                    raise RelayRejectedError(err.code, err.message)
+                if self._session.welcomed.is_set():
+                    return
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"no welcome from relay within {timeout} s - possible protocol-version "
+                        f"mismatch (this client speaks v{PROTOCOL_VERSION}; an older relay "
+                        "ignores @control stream hellos); check the relay version"
+                    )
+        finally:
+            # Every exit - welcome, rejection, timeout, cancellation - retires
+            # a still-in-flight hello stream: hello() may run again on a live
+            # client, and an abandoned stream would pin its buffered bytes and
+            # stream state until the connection closes.
+            retire_hello_stream()
 
     def send_control(self, msg: Msg) -> None:
         """Send one control message to the relay (datagram: lossy, ordered-less)."""
@@ -278,9 +323,11 @@ class RelayClient:
     async def control_messages(self) -> AsyncIterator[Msg]:
         """Control messages pushed by the relay (subs snapshots, robots, ...).
 
-        Same contract as :meth:`frames`: buffered messages drain before the
-        close is honored, and cancelling the consumer never orphans the queue
-        getter. Ends when the session closes.
+        Fed by relay datagrams and, on the robot leg, by @control frames from
+        the relay-opened control carrier. Same contract as :meth:`frames`:
+        buffered messages drain before the close is honored, and cancelling
+        the consumer never orphans the queue getter. Ends when the session
+        closes.
         """
         closed = asyncio.ensure_future(self._session.wait_closed())
         try:

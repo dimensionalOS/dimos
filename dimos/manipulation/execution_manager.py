@@ -16,17 +16,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import field
+from collections.abc import Sequence
 import math
 import threading
 import time
-from types import MappingProxyType
-from typing import Annotated
-
-from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field, model_validator
-from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import Self
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
@@ -35,93 +28,12 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.manipulation.manipulation_spec import ExecutionResult, ExecutionStatus
-from dimos.manipulation.planning.spec.models import GeneratedPlan, RobotName
+from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-
-def _to_model_joint_names(value: Sequence[str]) -> tuple[str, ...]:
-    return tuple(value)
-
-
-def _to_immutable_joint_mapping(value: Mapping[str, str]) -> Mapping[str, str]:
-    return MappingProxyType(dict(value))
-
-
-@pydantic_dataclass(
-    frozen=True,
-    config=ConfigDict(extra="forbid", validate_default=True),
-)
-class ExecutionTarget:
-    """Immutable coordinator joint mapping for one robot."""
-
-    robot_name: Annotated[RobotName, Field(min_length=1)]
-    model_joint_names: Annotated[
-        tuple[str, ...],
-        BeforeValidator(_to_model_joint_names),
-    ]
-    model_to_coordinator: Annotated[
-        Mapping[str, str],
-        AfterValidator(_to_immutable_joint_mapping),
-    ] = field(repr=False)
-
-    @model_validator(mode="after")
-    def _validate_target(self) -> Self:
-        if not self.model_joint_names or any(
-            not name or "/" in name for name in self.model_joint_names
-        ):
-            raise ValueError(f"Execution target '{self.robot_name}' has invalid local model joints")
-        if len(set(self.model_joint_names)) != len(self.model_joint_names):
-            raise ValueError(
-                f"Execution target '{self.robot_name}' has duplicate local model joints"
-            )
-        if set(self.model_to_coordinator) != set(self.model_joint_names):
-            raise ValueError(f"Execution target '{self.robot_name}' must resolve every model joint")
-        resolved_names = list(self.model_to_coordinator.values())
-        if any(not name for name in resolved_names) or len(set(resolved_names)) != len(
-            resolved_names
-        ):
-            raise ValueError(
-                f"Execution target '{self.robot_name}' has ambiguous coordinator joints"
-            )
-        return self
-
-    @classmethod
-    def from_coordinator_mapping(
-        cls,
-        *,
-        robot_name: RobotName,
-        model_joint_names: Sequence[str],
-        # TODO: unify coordinator joint name with planner
-        coordinator_to_model: Mapping[str, str],
-    ) -> ExecutionTarget:
-        """Validate and invert a coordinator-to-model joint mapping."""
-        local_names = tuple(model_joint_names)
-        known = set(local_names)
-        reverse: dict[str, str] = {}
-        for coordinator_name, model_name in coordinator_to_model.items():
-            if model_name not in known:
-                raise ValueError(
-                    f"Coordinator joint '{coordinator_name}' maps to unknown model joint "
-                    f"'{model_name}' for '{robot_name}'"
-                )
-            if model_name in reverse:
-                raise ValueError(
-                    f"Multiple coordinator joints map to model joint '{model_name}' "
-                    f"for '{robot_name}'"
-                )
-            reverse[model_name] = coordinator_name
-
-        return cls(
-            robot_name=robot_name,
-            model_joint_names=local_names,
-            model_to_coordinator={
-                model_name: reverse.get(model_name, model_name) for model_name in local_names
-            },
-        )
 
 
 class _PlanRejectedError(Exception):
@@ -134,17 +46,14 @@ class PlanExecutionManager:
     def __init__(
         self,
         *,
-        targets: Iterable[ExecutionTarget],
+        joint_names: Sequence[str],
         coordinator: ControlCoordinator,
         default_timeout: float,
         poll_interval: float = 0.1,
     ) -> None:
-        target_items = tuple(targets)
-        target_names = [target.robot_name for target in target_items]
-        if len(set(target_names)) != len(target_names):
-            raise ValueError("Execution targets must have unique robot names")
-
-        self._targets = {target.robot_name: target for target in target_items}
+        self._joint_names = frozenset(joint_names)
+        if not self._joint_names or len(self._joint_names) != len(joint_names):
+            raise ValueError("Execution joint names must be non-empty and unique")
         self._coordinator = coordinator
         self._operation_lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -345,33 +254,10 @@ class PlanExecutionManager:
         if not plan.is_success():
             raise _PlanRejectedError("Generated plan status is not successful")
 
-        coordinator_names: list[str] = []
-        for global_name in plan.trajectory.joint_names:
-            parts = global_name.split("/")
-            if len(parts) != 2 or not parts[0] or not parts[1]:
-                raise _PlanRejectedError(
-                    f"Generated trajectory joint '{global_name}' is not globally named"
-                )
-            robot_name, local_name = parts
-            target = self._targets.get(robot_name)
-            if target is None:
-                raise _PlanRejectedError(
-                    f"Generated plan references unknown execution robot '{robot_name}'"
-                )
-            coordinator_name = target.model_to_coordinator.get(local_name)
-            if coordinator_name is None:
-                raise _PlanRejectedError(
-                    f"Generated trajectory joint '{global_name}' is not configured"
-                )
-            coordinator_names.append(coordinator_name)
-
-        if len(set(coordinator_names)) != len(coordinator_names):
-            raise _PlanRejectedError(
-                "Generated trajectory resolves to duplicate coordinator joints"
-            )
-
-        return JointTrajectory(
-            joint_names=coordinator_names,
-            points=plan.trajectory.points,
-            timestamp=plan.trajectory.timestamp,
-        )
+        names = plan.trajectory.joint_names
+        unknown = [name for name in names if name not in self._joint_names]
+        if unknown:
+            raise _PlanRejectedError(f"Generated trajectory has unknown joints: {unknown}")
+        if len(set(names)) != len(names):
+            raise _PlanRejectedError("Generated trajectory has duplicate joints")
+        return plan.trajectory

@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -38,20 +38,11 @@ if TYPE_CHECKING:
     from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
-RobotName: TypeAlias = str
-"""User-facing robot name (e.g., 'left_arm', 'right_arm')"""
-
-WorldRobotID: TypeAlias = str
-"""Internal Drake world robot ID"""
-
 PlanningGroupID: TypeAlias = str
-"""Public planning group ID of the form {robot_name}/{group_name}."""
+"""Stable public planning-group name."""
 
-LocalModelJointName: TypeAlias = str
-"""Joint name as it appears in URDF/SRDF before world binding."""
-
-GlobalJointName: TypeAlias = str
-"""Public joint name of the form {robot_name}/{local_joint_name}."""
+JointName: TypeAlias = str
+"""Canonical joint name used by model, planning, state, and execution."""
 
 JointPath: TypeAlias = "list[JointState]"
 """List of joint states forming a path (each waypoint has names + positions)"""
@@ -72,8 +63,8 @@ class PlanningSceneInfo:
     backend handles, mutable world contexts, GUI state, or execution state.
     """
 
-    robots: Mapping[WorldRobotID, RobotModelConfig]
-    """Robot model configurations keyed by world robot ID."""
+    model: RobotModelConfig
+    """The configured logical robot model."""
 
     planning_groups: tuple[PlanningGroup, ...] = ()
     """Resolved immutable planning groups for the initialized scene."""
@@ -92,7 +83,7 @@ class VisualizationSession:
 class VisualizationStateFrame:
     """Pushed current joint states for visualization backends."""
 
-    joint_states: Mapping[WorldRobotID, JointState]
+    joint_state: JointState | None
 
 
 Jacobian: TypeAlias = "NDArray[np.float64]"
@@ -109,7 +100,7 @@ class Obstacle:
 
     Attributes:
         name: Unique name for the obstacle
-        obstacle_type: Type of geometry (BOX, SPHERE, CYLINDER, MESH)
+        obstacle_type: Type of geometry (BOX, SPHERE, CYLINDER, MESH, OCTREE)
         pose: Pose of the obstacle in world frame
         dimensions: Type-specific dimensions:
             - BOX: (width, height, depth)
@@ -118,6 +109,8 @@ class Obstacle:
             - MESH: Not used
         color: RGBA color tuple (0-1 range)
         mesh_path: Path to mesh file (for MESH type)
+        points: Occupied cell centers in the obstacle's frame (for OCTREE type)
+        octree_resolution: Edge length of an OCTREE cell (meters)
     """
 
     name: str
@@ -126,6 +119,10 @@ class Obstacle:
     dimensions: tuple[float, ...] = ()
     color: tuple[float, float, float, float] = DEFAULT_OBSTACLE_RGBA
     mesh_path: str | None = None
+    # Plain tuples rather than an array: obstacles are deepcopied, compared and
+    # pickled across worker RPC, and an ndarray field breaks all three.
+    points: tuple[tuple[float, float, float], ...] = ()
+    octree_resolution: float | None = None
 
 
 @dataclass

@@ -1,4 +1,4 @@
-ARG FROM_IMAGE=ghcr.io/dimensionalos/ros-python:dev
+ARG FROM_IMAGE=dimensional/ros-python:latest
 FROM ${FROM_IMAGE}
 
 ARG GIT_COMMIT=unknown

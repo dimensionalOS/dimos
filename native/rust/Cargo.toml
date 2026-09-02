@@ -1,3 +1,0 @@
-[workspace]
-members = ["dimos-module", "dimos-module-macros"]
-resolver = "2"

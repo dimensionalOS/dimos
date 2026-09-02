@@ -60,8 +60,6 @@ class ImageEmbeddingProvider:
 
         self._initialize_model()  # type: ignore[no-untyped-call]
 
-        logger.info(f"ImageEmbeddingProvider initialized with model {model_name}")
-
     def _initialize_model(self):  # type: ignore[no-untyped-def]
         """Initialize the specified embedding model."""
         try:
@@ -88,9 +86,7 @@ class ImageEmbeddingProvider:
 
                 self.model = ort.InferenceSession(str(model_id), providers=providers)
 
-                actual_providers = self.model.get_providers()  # type: ignore[attr-defined]
                 self.processor = CLIPProcessor.from_pretrained(processor_id)
-                logger.info(f"Loaded CLIP model: {model_id} with providers: {actual_providers}")
             elif self.model_name == "resnet":
                 model_id = "microsoft/resnet-50"  # type: ignore[assignment]
                 self.model = AutoModel.from_pretrained(model_id)
@@ -175,7 +171,6 @@ class ImageEmbeddingProvider:
             # Normalize and ensure correct dimensions
             embedding = embedding / np.linalg.norm(embedding)
 
-            logger.debug(f"Generated embedding with shape {embedding.shape}")
             return embedding
 
         except Exception as e:
@@ -241,9 +236,6 @@ class ImageEmbeddingProvider:
                 )
                 text_embedding = text_embedding[0]  # shape: (512,)
 
-            logger.debug(
-                f"Generated text embedding with shape {text_embedding.shape} for text: '{text}'"
-            )
             return text_embedding
 
         except Exception as e:

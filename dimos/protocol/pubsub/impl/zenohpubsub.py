@@ -144,6 +144,27 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         self._subscriber_lock = threading.Lock()
         self._stopped = False
 
+    def __getstate__(self):  # type: ignore[no-untyped-def]
+        """Drop the live publishers, subscribers and locks on top of the session."""
+        state = super().__getstate__()  # type: ignore[no-untyped-call]
+        for key in (
+            "_publishers",
+            "_publisher_lock",
+            "_subscribers",
+            "_drain_stops",
+            "_subscriber_lock",
+        ):
+            state.pop(key, None)
+        return state
+
+    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
+        super().__setstate__(state)
+        self._publishers = {}
+        self._publisher_lock = threading.Lock()
+        self._subscribers = []
+        self._drain_stops = []
+        self._subscriber_lock = threading.Lock()
+
     def _get_publisher(self, key_expr: str, qos: ZenohQoS | None) -> zenoh.Publisher:
         """Get or declare the cached publisher for a key expression.
 

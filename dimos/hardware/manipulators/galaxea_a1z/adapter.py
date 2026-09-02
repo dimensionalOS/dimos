@@ -55,9 +55,9 @@ from dimos.hardware.manipulators.galaxea_a1z.config import A1ZConfig
 from dimos.hardware.manipulators.galaxea_a1z.gs_usb_bus import gs_usb_can_bus
 from dimos.hardware.manipulators.spec import (
     ControlMode,
-    JointLimits,
     ManipulatorInfo,
 )
+from dimos.hardware.spec import JointLimits
 
 # Joint limits from a1z/robots/get_robot.py (_JOINT_LIMITS)
 _POSITION_LOWER = [-2.094, 0.0, -3.142, -1.484, -1.484, -2.007]
@@ -139,10 +139,18 @@ class GalaxeaA1ZAdapter:
         address: str = "a1zcan",
         *,
         config: A1ZConfig | None = None,
+        dof: int = _A1Z_DOF,
     ) -> None:
         if not address:
             raise ValueError("A1Z CAN interface must not be empty")
         self._config = config or A1ZConfig()
+        expected_dof = _A1Z_DOF + int(self._config.gripper is not None)
+        if dof != expected_dof:
+            raise ValueError(
+                f"A1Z joint count must match its device configuration (got {dof}, expected {expected_dof})"
+            )
+        self._dof = dof
+        self._gripper_dof = dof - _A1Z_DOF
         self._can_channel = address
         self._transport: Literal["gs_usb", "socketcan"] = (
             "gs_usb" if platform.system() == "Darwin" else "socketcan"
@@ -237,18 +245,20 @@ class GalaxeaA1ZAdapter:
 
     def get_info(self) -> ManipulatorInfo:
         """Get manipulator info."""
-        return ManipulatorInfo(vendor="Galaxea", model="A1Z", dof=_A1Z_DOF)
+        return ManipulatorInfo(vendor="Galaxea", model="A1Z", dof=self._dof)
 
     def get_dof(self) -> int:
-        """Get degrees of freedom."""
-        return _A1Z_DOF
+        """Total joints owned by this adapter."""
+        return self._dof
 
     def get_limits(self) -> JointLimits:
-        """Get joint limits."""
+        """Arm limits in radians, then the gripper's jaw opening in metres."""
+        gripper = self._config.gripper
+        gripper_upper = [gripper.max_opening_m] if self._gripper_dof and gripper else []
         return JointLimits(
-            position_lower=list(_POSITION_LOWER),
-            position_upper=list(_POSITION_UPPER),
-            velocity_max=list(_VELOCITY_MAX),
+            position_lower=list(_POSITION_LOWER) + [0.0] * self._gripper_dof,
+            position_upper=list(_POSITION_UPPER) + gripper_upper,
+            velocity_max=list(_VELOCITY_MAX) + [0.0] * self._gripper_dof,
         )
 
     def set_control_mode(self, mode: ControlMode) -> bool:
@@ -267,16 +277,21 @@ class GalaxeaA1ZAdapter:
         return self._control_mode
 
     def read_joint_positions(self) -> list[float]:
-        """Read current joint positions (radians)."""
-        return cast("list[float]", self._joint_state()["pos"].tolist())
+        """Arm positions in radians, then the gripper opening in metres."""
+        positions = cast("list[float]", self._joint_state()["pos"].tolist())
+        if self._gripper_dof:
+            positions.append(self._read_gripper())
+        return positions
 
     def read_joint_velocities(self) -> list[float]:
-        """Read current joint velocities (rad/s)."""
-        return cast("list[float]", self._joint_state()["vel"].tolist())
+        """Arm velocities in rad/s; the gripper reports 0.0 (no feedback)."""
+        values = cast("list[float]", self._joint_state()["vel"].tolist())
+        return values + [0.0] * self._gripper_dof
 
     def read_joint_efforts(self) -> list[float]:
-        """Read current joint efforts (Nm)."""
-        return cast("list[float]", self._joint_state()["eff"].tolist())
+        """Arm efforts in Nm; the gripper reports 0.0 (no feedback)."""
+        values = cast("list[float]", self._joint_state()["eff"].tolist())
+        return values + [0.0] * self._gripper_dof
 
     def read_state(self) -> dict[str, int]:
         """Read robot state (0=idle, 1=running, 2=error/estopped)."""
@@ -325,13 +340,20 @@ class GalaxeaA1ZAdapter:
         SERVO_POSITION mode: single streamed position target.
 
         Args:
-            positions: Target positions in radians
+            positions: Target positions, arm in radians then gripper in metres
             velocity: Speed as fraction of max planned speed (0-1)
         """
         if not self._connected or not self._robot.is_running or self._robot.is_estopped:
             return False
+        if len(positions) != self._dof:
+            return False
 
-        target = np.asarray(positions, dtype=float)
+        arm = positions[:_A1Z_DOF]
+        grip = positions[_A1Z_DOF:]
+        if grip:
+            self._write_gripper(grip[0])
+
+        target = np.asarray(arm, dtype=float)
 
         if self._control_mode == ControlMode.SERVO_POSITION:
             self._robot.command_joint_pos(target)
@@ -473,26 +495,22 @@ class GalaxeaA1ZAdapter:
         """Not supported - cartesian targets go through the planning stack."""
         return False
 
-    def read_gripper_position(self) -> float | None:
-        """Read gripper opening (meters). None if no gripper attached.
-
-        Uses the SDK gripper's normalized motor-feedback position
-        (0.0=closed, 1.0=open). Requires a configured gripper.
-        """
+    def _read_gripper(self) -> float:
+        """Read the gripper opening in metres (SDK reports a 0-1 fraction)."""
         gripper = self._config.gripper
         if not self._connected or gripper is None:
-            return None
+            return 0.0
 
         try:
             fraction = self._robot.gripper.get_feedback_norm()
         except Exception:
-            return None
+            return 0.0
         if fraction is None:
-            return None
+            return 0.0
         return float(fraction) * gripper.max_opening_m
 
-    def write_gripper_position(self, position: float) -> bool:
-        """Command gripper opening (meters). False if no gripper attached."""
+    def _write_gripper(self, position: float) -> bool:
+        """Command the gripper opening in metres."""
         gripper = self._config.gripper
         if (
             not self._connected
@@ -743,7 +761,8 @@ def create_galaxea_a1z_adapter(
     *,
     address: str | None = None,
     config: A1ZConfig | None = None,
+    dof: int = _A1Z_DOF,
     **_: object,
 ) -> GalaxeaA1ZAdapter:
     """Create the fixed six-axis A1Z adapter from coordinator metadata."""
-    return GalaxeaA1ZAdapter(address=address or "a1zcan", config=config)
+    return GalaxeaA1ZAdapter(address=address or "a1zcan", config=config, dof=dof)

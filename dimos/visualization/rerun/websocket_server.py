@@ -15,9 +15,11 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import threading
+import time
 from typing import Any, Literal, TypedDict, Union
 
 import websockets
@@ -77,10 +79,14 @@ class RerunWebSocketServer(Module):
     clicked_point: Out[PointStamped]
     tele_cmd_vel: Out[Twist]
 
+    _STARTUP_TIMEOUT = 10.0
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stop_event: asyncio.Event | None = None
         self._server_ready = threading.Event()
+        self._serve_future: concurrent.futures.Future[None] | None = None
+        self._bound_port: int | None = None
         # Set on the first WebSocket client connection. Tests use this to verify
         # an external client (e.g. dimos-viewer --connect) actually connected.
         self.client_connected = threading.Event()
@@ -93,21 +99,53 @@ class RerunWebSocketServer(Module):
     def port(self) -> int:
         return self.config.g.rerun_websocket_server_port
 
+    @property
+    def bound_port(self) -> int:
+        """Actual listening port (differs from `port` when configured as 0)."""
+        assert self._bound_port is not None, "server not started"
+        return self._bound_port
+
     @rpc
     def start(self) -> None:
+        if self._loop is None:
+            # A Module's loop dies with stop(); a stopped server cannot come back.
+            raise RuntimeError("RerunWebSocketServer cannot be restarted; construct a new one")
         super().start()
-        assert self._loop is not None
-        asyncio.run_coroutine_threadsafe(self._serve(), self._loop)
-        self._server_ready.wait()
+        self._serve_future = asyncio.run_coroutine_threadsafe(self._serve(), self._loop)
+        deadline = time.monotonic() + self._STARTUP_TIMEOUT
+        while not self._server_ready.wait(timeout=0.05):
+            if self._serve_future.done():
+                self._serve_future.result()  # surfaces bind failures loudly
+                raise RuntimeError("RerunWebSocketServer exited before becoming ready")
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"RerunWebSocketServer did not become ready on "
+                    f"{self.host}:{self.port} within {self._STARTUP_TIMEOUT}s"
+                )
 
     @rpc
     def stop(self) -> None:
-        if not self._server_ready.is_set():
-            super().stop()
-            return
-        if self._loop is not None and not self._loop.is_closed() and self._stop_event is not None:
+        future = self._serve_future
+        self._serve_future = None
+        if (
+            future is not None
+            and not future.done()
+            and self._loop is not None
+            and not self._loop.is_closed()
+            and self._stop_event is not None
+        ):
             self._loop.call_soon_threadsafe(self._stop_event.set)
+            try:
+                # Wait for the serve coroutine to finish so the listening
+                # socket is actually closed (and the port free) before the
+                # module loop is torn down.
+                future.result(timeout=5.0)
+            except Exception:
+                logger.warning("RerunWebSocketServer: serve task did not shut down cleanly")
         super().stop()
+        self._server_ready.clear()
+        self._bound_port = None
+        self.client_connected.clear()
 
     async def _serve(self) -> None:
         self._stop_event = asyncio.Event()
@@ -122,7 +160,8 @@ class RerunWebSocketServer(Module):
             ping_interval=30,
             ping_timeout=30,
             logger=ws_logger,
-        ):
+        ) as server:
+            self._bound_port = next(iter(server.sockets)).getsockname()[1]
             self._server_ready.set()
             await self._stop_event.wait()
 

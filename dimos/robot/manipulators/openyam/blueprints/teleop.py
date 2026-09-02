@@ -33,13 +33,15 @@ from dimos.robot.manipulators.common.topics import (
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_ARM_JOINTS,
     OPENYAM_GRIPPER_JOINT,
+    OPENYAM_HARDWARE_ID,
+    OPENYAM_JOINTS,
     make_openyam_model_config,
     openyam_hardware,
 )
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _openyam_keyboard_hw = openyam_hardware()
-_openyam_model = make_openyam_model_config(name="arm")
+_openyam_model = make_openyam_model_config()
 
 
 def _eef_twist_task(*, priority: int = 10) -> TaskConfig:
@@ -48,21 +50,20 @@ def _eef_twist_task(*, priority: int = 10) -> TaskConfig:
         type="eef_twist",
         joint_names=list(OPENYAM_ARM_JOINTS),
         priority=priority,
-        params={"control_ik": {"robot_model": _openyam_model}},
+        params={"robot_model": _openyam_model, "target_frame": "yam_hand_tcp"},
     )
 
 
 def _trajectory_task(*, priority: int = 10) -> TaskConfig:
-    return joint_trajectory_task(OPENYAM_ARM_JOINTS, priority=priority)
+    return joint_trajectory_task(OPENYAM_JOINTS, priority=priority)
 
 
 def _gripper_task() -> TaskConfig:
     return TaskConfig(
-        name="servo_gripper",
-        type="servo",
+        name=f"{OPENYAM_HARDWARE_ID}_gripper",
+        type="gripper",
         joint_names=[OPENYAM_GRIPPER_JOINT],
         priority=20,
-        params={"timeout": 0.0},
     )
 
 
@@ -77,7 +78,7 @@ keyboard_teleop_openyam = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_openyam_model],
+        model=_openyam_model,
         visualization={"backend": "viser"},
     ),
 )
@@ -86,7 +87,7 @@ _openyam_keyboard_planner_hw = openyam_hardware()
 
 keyboard_teleop_openyam_planner = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    planner(robots=[_openyam_model]),
+    planner(model=_openyam_model),
     coordinator(
         hardware=[_openyam_keyboard_planner_hw],
         tasks=[

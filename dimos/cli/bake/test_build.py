@@ -22,23 +22,32 @@ import subprocess
 import pytest
 
 from dimos.cli.bake import build
-from dimos.cli.bake.build import artifact_path, build_command, build_host, install, target_dir_name
+from dimos.cli.bake.build import (
+    TARGET_DIR,
+    artifact_path,
+    build_command,
+    build_host,
+    install,
+    target_dir_name,
+)
 from dimos.cli.bake.errors import BakeError
 
 
 def test_build_command_per_builder() -> None:
-    assert build_command("cargo") == ["cargo", "build", "--target-dir", "target", "--release"]
-    assert build_command("cargo", debug=True) == ["cargo", "build", "--target-dir", "target"]
-    assert build_command("cross", target="aarch64-unknown-linux-musl") == [
-        "cross",
+    assert build_command("cargo") == [
+        "cargo",
         "build",
         "--target-dir",
-        "target",
+        str(TARGET_DIR),
         "--release",
+    ]
+    assert "--release" not in build_command("cargo", debug=True)
+    assert build_command("cross", target="aarch64-unknown-linux-musl")[:2] == ["cross", "build"]
+    assert build_command("zigbuild")[:2] == ["cargo", "zigbuild"]
+    assert build_command("cargo", target="aarch64-unknown-linux-musl")[-2:] == [
         "--target",
         "aarch64-unknown-linux-musl",
     ]
-    assert build_command("zigbuild")[:2] == ["cargo", "zigbuild"]
     with pytest.raises(BakeError, match="unknown --builder"):
         build_command("make")
 
@@ -49,16 +58,15 @@ def test_target_dir_name_strips_the_zigbuild_glibc_suffix() -> None:
 
 
 def test_artifact_path_follows_profile_and_target() -> None:
-    crate = Path("/crate")
-    assert artifact_path(crate, "host") == crate / "target" / "release" / "host"
-    assert artifact_path(crate, "host", debug=True) == crate / "target" / "debug" / "host"
+    assert artifact_path("host") == TARGET_DIR / "release" / "host"
+    assert artifact_path("host", debug=True) == TARGET_DIR / "debug" / "host"
     assert (
-        artifact_path(crate, "host", target="aarch64-unknown-linux-musl")
-        == crate / "target" / "aarch64-unknown-linux-musl" / "release" / "host"
+        artifact_path("host", target="aarch64-unknown-linux-musl")
+        == TARGET_DIR / "aarch64-unknown-linux-musl" / "release" / "host"
     )
     assert (
-        artifact_path(crate, "host", target="aarch64-unknown-linux-gnu.2.31")
-        == crate / "target" / "aarch64-unknown-linux-gnu" / "release" / "host"
+        artifact_path("host", target="aarch64-unknown-linux-gnu.2.31")
+        == TARGET_DIR / "aarch64-unknown-linux-gnu" / "release" / "host"
     )
 
 

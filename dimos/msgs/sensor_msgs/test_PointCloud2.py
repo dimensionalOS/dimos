@@ -225,3 +225,33 @@ def test_bounding_box_intersects() -> None:
     except Exception:
         # If it raises an exception, that's also acceptable for empty clouds
         pass
+
+
+def test_to_rerun_points_mode_is_screen_space() -> None:
+    """ "points" must be flat screen-space dots, not the world-space spheres branch."""
+    cloud = PointCloud2.from_numpy(np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]))
+
+    points = cloud.to_rerun(mode="points", voxel_size=0.05, ui_radius=1.5)
+    spheres = cloud.to_rerun(mode="spheres", voxel_size=0.05)
+
+    # Negative radii are UI points in rerun; positive ones are world-space.
+    assert points.radii.as_arrow_array().to_pylist() == pytest.approx([-1.5])
+    assert spheres.radii.as_arrow_array().to_pylist() == pytest.approx([0.025])
+
+
+def test_to_rerun_keeps_the_clouds_own_rgb() -> None:
+    """An RGBD cloud renders in its own colors; rgb=False falls back to the height ramp."""
+    import open3d as o3d
+
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]))
+    pcd.colors = o3d.utility.Vector3dVector(np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]))
+    cloud = PointCloud2(pointcloud=pcd)
+
+    colored = cloud.to_rerun(mode="points")
+    assert colored.colors is not None
+    assert colored.class_ids is None
+
+    ramp = cloud.to_rerun(mode="points", rgb=False)
+    assert ramp.colors is None
+    assert ramp.class_ids is not None
