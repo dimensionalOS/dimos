@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import DepthCameraConfig
@@ -35,9 +36,9 @@ from dimos.spec import perception
 
 class RealSenseCameraConfig(NativeModuleConfig, DepthCameraConfig):
     cwd: str | None = "rust"
-    executable: str = "target/release/realsense_native"
-    # Own flake: librealsense2 isn't in the root shell.
-    build_command: str | None = "nix develop path:. -c cargo build --release"
+    # The crate is a workspace member, so cargo builds into the repo-root target dir.
+    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "realsense_native")
+    build_command: str | None = "cargo build --release"
     stdin_config: bool = True
     # The frame stem and its namespace cross to rust like any other field.
     base_fields: frozenset[str] = frozenset({"frame_id", "frame_id_prefix"})

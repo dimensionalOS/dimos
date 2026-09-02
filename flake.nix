@@ -17,6 +17,17 @@
       let
         pkgs = import nixpkgs { inherit system; };
 
+        # librealsense's postInstall references Linux-only v4l-utils, which
+        # breaks darwin evaluation. Keep only the cmake fixup there.
+        librealsense =
+          if pkgs.stdenv.isLinux then pkgs.librealsense
+          else pkgs.librealsense.overrideAttrs (old: {
+            postInstall = ''
+              substituteInPlace $out/lib/cmake/realsense2/realsense2Targets.cmake \
+                --replace-fail "\''${_IMPORT_PREFIX}/include" "$dev/include"
+            '';
+          });
+
         # ------------------------------------------------------------
         # 1. Shared package list (tool-chain + project deps)
         # ------------------------------------------------------------
@@ -82,6 +93,8 @@
 
           ### Runtime deps
           { vals.pkg=pkgs.portaudio;                 flags={ldLibraryGroup=true; packageConfGroup=true;}; }
+          { vals.pkg=librealsense;                   flags.ldLibraryGroup=true; }
+          { vals.pkg=librealsense.dev;               flags.packageConfGroup=true; }
           { vals.pkg=pkgs.ffmpeg_6;                  flags={}; }
           { vals.pkg=pkgs.ffmpeg_6.dev;              flags={}; }
 

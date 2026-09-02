@@ -2,9 +2,8 @@
 """Build every nix-backed native module, or decide whether CI needs to.
 
 Walks the whole `dimos` package for any `NativeModuleConfig` subclass whose
-`build_command` is a `nix build` (a `nix develop -c cargo build` leaves no
-store path to publish, so it stays outside the gate). Discovery is pure AST (stdlib only, no dimos import),
-so this script runs on a bare `python3` with nothing installed.
+`build_command` is a `nix build`. Discovery is pure AST (stdlib only, no
+dimos import), so this script runs on a bare `python3` with nothing installed.
 
 Modes:
 

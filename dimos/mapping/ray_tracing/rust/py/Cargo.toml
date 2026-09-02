@@ -11,6 +11,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 dimos-voxel-ray-tracing = { path = ".." }
-numpy = "0.25"
-pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
-validator = { version = "0.21", features = ["derive"] }
+numpy.workspace = true
+pyo3.workspace = true
+validator.workspace = true

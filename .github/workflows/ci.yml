@@ -217,6 +217,13 @@ jobs:
           # Only main writes the cache, so a PR run cannot evict main's entry
           # from the repo's 10GB budget. PR runs still restore from it.
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install system deps
+        # realsense-sys links the system librealsense2. portaudio is for pyaudio.
+        run: |
+          curl -sSf --retry 3 https://librealsense.realsenseai.com/Debian/librealsenseai.asc | gpg --dearmor | sudo tee /etc/apt/keyrings/librealsenseai.gpg > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/librealsenseai.gpg] https://librealsense.realsenseai.com/Debian/apt-repo $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/librealsense.list
+          sudo apt-get update
+          sudo apt-get install -y librealsense2-dev portaudio19-dev
       - name: cargo fmt
         run: cargo fmt --all -- --check
       - name: cargo clippy
@@ -227,10 +234,6 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
-      - name: Install dependency for pyaudio
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
       - name: Build and test PyO3 bindings
         # PyO3 extension modules (cdylib + `extension-module`) are the one case
         # that still needs a plain build: pytest imports the compiled .so.

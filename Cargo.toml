@@ -7,9 +7,25 @@ members = [
     "dimos/mapping/ray_tracing/rust/py",
     "dimos/navigation/nav_3d/mls_planner/rust",
     "dimos/navigation/nav_3d/mls_planner/rust/py",
+    "dimos/hardware/sensors/camera/realsense/rust",
     "dimos/hardware/sensors/lidar/virtual_mid360",
     "examples/native-modules/rust",
 ]
+
+[workspace.dependencies]
+ahash = "0.8"
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+dimos-module = { path = "native/rust/dimos-module" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+nalgebra = "0.35.0"
+numpy = "0.25"
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
+rayon = "1"
+serde = { version = "1", features = ["derive"] }
+tokio = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+validator = { version = "0.21", features = ["derive"] }
 
 [profile.release]
 lto = "thin"
