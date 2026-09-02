@@ -510,7 +510,7 @@ tests-self-hosted = [
     "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
-    "dim-odom>=0.1.6",
+    "dim-odom>=0.4.1",
 ]
 docs = [
     "mkdocs-awesome-nav>=3.3.0",

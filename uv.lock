@@ -29,7 +29,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-08-26T20:41:27.371988Z"
+exclude-newer = "2026-08-26T21:30:08.001826Z"
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
@@ -1704,7 +1704,7 @@ wheels = [
 
 [[package]]
 name = "dim-odom"
-version = "0.1.6"
+version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "nvidia-cublas", marker = "sys_platform == 'linux'" },
@@ -1713,10 +1713,10 @@ dependencies = [
     { name = "nvidia-cusparse", marker = "sys_platform == 'linux'" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/a5/c330fe947784e161825de816fb4ad04e936a3735fbae497818352eebe00e/dim_odom-0.1.6-cp310-abi3-macosx_13_0_arm64.whl", hash = "sha256:5f2a0e540498f214518ad39e52f8feb7c10137986e6725a3a93583e33948f2dc", size = 6972273, upload-time = "2026-08-31T01:27:35.292Z" },
-    { url = "https://files.pythonhosted.org/packages/64/75/3bdf84fdd781cc13aa33bb49c62f0c8a80f72551f8ce8c2b848e2afefee7/dim_odom-0.1.6-cp310-abi3-manylinux_2_35_aarch64.whl", hash = "sha256:a4cbf0c8492391cc5ecc3bfc3e56d778f822e5e5360c8bec3b5265be16e44928", size = 86697925, upload-time = "2026-08-31T01:25:30.483Z" },
-    { url = "https://files.pythonhosted.org/packages/fe/e6/6da555e583bc0265423f46c7d0330c43969ee376f4bc4b73fb573d0caf1c/dim_odom-0.1.6-cp310-abi3-manylinux_2_35_x86_64.whl", hash = "sha256:bed5b6321389bdf62efcdff7f23bdc042da79827c784847c4c6e83c158fb671e", size = 85495781, upload-time = "2026-08-31T01:27:24.446Z" },
-    { url = "https://files.pythonhosted.org/packages/e1/26/87467a550f24886ba79ad08026fef9c01dafbb2f7cb6a90097e6a96f8ac7/dim_odom-0.1.6-py3-none-any.whl", hash = "sha256:6a751daf77a8cc6f17eb4b36368446859d33f9831c95cc80ca4d60ff7ab8573a", size = 1412, upload-time = "2026-09-02T20:40:11.761Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/fd/7e4f24f8f6989fced595f95165e431f32f724ab7bfc3225646dfe05dce1a/dim_odom-0.4.1-cp310-abi3-macosx_13_0_arm64.whl", hash = "sha256:dcc4d877147c0cc9f5dfc37435478b20bf602cd409b13a09ca0c49a59c04bab1", size = 6974856, upload-time = "2026-09-02T21:29:14.014Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/6a/35fb6f6596222f2c3d35b561d6f1f4ea952728d2ca426f7fe83b9b446c26/dim_odom-0.4.1-cp310-abi3-manylinux_2_35_aarch64.whl", hash = "sha256:d95aef4ebf184b1304afe826ebc0897d5bff37836ff87ef36e4adef8274e6f5a", size = 86695321, upload-time = "2026-09-02T21:28:11.583Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/90/1c07b7b07c88aa11875cf24a0ce89ea9be4b4570fcd18a1ae25bc9c3911a/dim_odom-0.4.1-cp310-abi3-manylinux_2_35_x86_64.whl", hash = "sha256:931c397f497256d92c44a26d9637139b9dc710ece29a10db1ddebd9ce5ce56d2", size = 85493366, upload-time = "2026-09-02T21:29:02.237Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/10/70139307b3303f120afd41cae7615bf8f55008c7fa0c8628f861657ba4f8/dim_odom-0.4.1-py3-none-any.whl", hash = "sha256:417cfc94351fdb730e4745c3fad3d2051a85b77a2fd0c271a19ced85096b20d6", size = 1412, upload-time = "2026-09-02T21:27:38.713Z" },
 ]
 
 [[package]]
@@ -2553,7 +2553,7 @@ tests-self-hosted = [
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "coacd", specifier = ">=1.0.0" },
     { name = "coverage", specifier = ">=7.0" },
-    { name = "dim-odom", specifier = ">=0.1.6" },
+    { name = "dim-odom", specifier = ">=0.4.1" },
     { name = "dimos", extras = ["agents", "perception", "manipulation", "sim", "unitree", "misc"] },
     { name = "dimos", extras = ["apriltag", "mapping", "drone", "cpu", "learning"] },
     { name = "dimos", extras = ["web", "visualization", "webrtc"] },
