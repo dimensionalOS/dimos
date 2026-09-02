@@ -80,7 +80,7 @@ user_phase() {
   run_check missing_systemd_is_a_note_not_a_failure
   run_check the_venv_imports_dimos
   record second "$BIN" setup --non-interactive --yes --agent
-  run_check second_run_applies_nothing_but_the_sync_stage
+  run_check second_run_applies_nothing
   run_check forwarding_reaches_the_venv_dimos
   run_check the_venv_dimos_forwards_setup_back_to_the_installer
   run_check service_setup_without_systemd_exits_1
@@ -166,15 +166,13 @@ the_venv_imports_dimos() {
   "$DIR/.venv/bin/python" -c "import dimos" </dev/null
 }
 
-# `uv sync` runs on every dev setup and the verify checks run on every run, so `dimos` and
-# `verify` are the two stages allowed to report applied twice.
-second_run_applies_nothing_but_the_sync_stage() {
+second_run_applies_nothing() {
   [ "$(rc_of second)" -eq 0 ] || {
     tail -20 "$WORK/second.err"
     return 1
   }
   tail -1 "$WORK/second.out" | grep -o '\["[a-z_ -]*","applied"\]' |
-    grep -v -e '^\["dimos","applied"\]$' -e '^\["verify","applied"\]$' >"$WORK/applied.txt"
+    head -20 >"$WORK/applied.txt"
   [ ! -s "$WORK/applied.txt" ] || {
     cat "$WORK/applied.txt"
     return 1

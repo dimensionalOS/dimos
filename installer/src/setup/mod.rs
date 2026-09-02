@@ -170,7 +170,7 @@ fn stages(
     out.extend([
         deps::uv_stage(&probes.tools, home),
         deps::nix_stage(&probes.tools, home, target.with_nix),
-        install_stage(target, &uv, dir_state)?,
+        install_stage(target, &uv, dir_state, probes.installed.as_ref())?,
         sysconfig::stage(&probes.platform, &probes.kernel, cfg),
         jetson::stage(&probes.platform, &probes.kernel),
     ]);
@@ -197,7 +197,15 @@ fn self_install_stage(probes: &Probes, home: &Path) -> Stage {
     )
 }
 
-fn install_stage(target: &Target, uv: &Path, dir_state: &install::DirState) -> Result<Stage> {
+fn install_stage(
+    target: &Target,
+    uv: &Path,
+    dir_state: &install::DirState,
+    prior: Option<&Installed>,
+) -> Result<Stage> {
+    if install_is_current(target, dir_state, prior) {
+        return Ok(Stage::new("dimos", true));
+    }
     install::dimos_stage(
         target.mode,
         &target.dir,
@@ -207,6 +215,32 @@ fn install_stage(target: &Target, uv: &Path, dir_state: &install::DirState) -> R
         uv,
         dir_state,
     )
+}
+
+fn install_is_current(
+    target: &Target,
+    dir_state: &install::DirState,
+    prior: Option<&Installed>,
+) -> bool {
+    let Some(prior) = prior else {
+        return false;
+    };
+    let branch_matches = match target.mode {
+        InstallMode::Library => prior.branch.is_none(),
+        InstallMode::Dev => {
+            prior.branch.as_deref() == Some(&target.branch)
+                && matches!(
+                    dir_state,
+                    install::DirState::Clone { branch: Some(branch) } if branch == &target.branch
+                )
+        }
+    };
+    prior.mode == target.mode
+        && prior.dir == target.dir
+        && prior.extras == target.extras
+        && branch_matches
+        && state::venv_python(&target.dir).is_file()
+        && state::venv(&target.dir).join("bin/dimos").is_file()
 }
 
 /// `setup` verifies the host it runs on; the G1's DDS stack is `dimos hardware g1 setup`.
@@ -547,23 +581,32 @@ mod tests {
     }
 
     #[test]
-    fn installed_fixture_second_run_plans_only_the_sync_and_the_verify() {
+    fn installed_fixture_second_run_plans_only_the_verify() {
         let home = TmpDir::new("setup-second");
         let cfg = Platforms::load();
-        let steps = plan(
-            &target(home.path()),
-            &configured(home.path(), &cfg),
-            &cfg,
-            home.path(),
-        )
-        .expect("a configured machine plans");
+        let dir = target(home.path()).dir;
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::create_dir_all(state::venv(&dir).join("bin")).unwrap();
+        std::fs::write(state::venv_python(&dir), "").unwrap();
+        std::fs::write(state::venv(&dir).join("bin/dimos"), "").unwrap();
+        let mut probes = configured(home.path(), &cfg);
+        probes.installed = Some(Installed {
+            mode: InstallMode::Dev,
+            dir: dir.clone(),
+            branch: Some("main".to_string()),
+            extras: vec!["base".to_string()],
+            ..installed(&dir)
+        });
+        let steps = plan(&target(home.path()), &probes, &cfg, home.path())
+            .expect("a configured machine plans");
         let busy: Vec<&str> = steps
             .stages
             .iter()
             .filter(|s| !s.actions.is_empty())
             .map(|s| s.name)
             .collect();
-        assert_eq!(busy, ["dimos", "verify"]);
+        assert_eq!(busy, ["verify"]);
     }
 
     #[test]
