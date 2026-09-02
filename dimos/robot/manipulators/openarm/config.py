@@ -24,7 +24,6 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
-from dimos.robot.manipulators._modeling import base_pose
 
 OPENARM_DESCRIPTION_URL = "https://github.com/enactic/openarm_description"
 OPENARM_DESCRIPTION_REF = "1fba2cbc05001f05b4514120b70130b4ac06f409"
@@ -141,7 +140,6 @@ def openarm_bimanual_model_config() -> RobotModelConfig:
     canonical_joint_names = [*openarm_urdf_joints("left"), *openarm_urdf_joints("right")]
     return RobotModelConfig(
         model=OPENARM_BIMANUAL_MODEL,
-        base_pose=base_pose(),
         joint_names=canonical_joint_names,
         base_link="openarm_body_link0",
         planning_groups=[

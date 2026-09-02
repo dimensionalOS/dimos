@@ -13,6 +13,7 @@ import {
   type RobotManifest,
   type SubsMsg,
 } from "@dimos/shared";
+import type { CarrierStats } from "./carrier.ts";
 import {
   type ChannelPolicy,
   type FrameSend,
@@ -86,7 +87,10 @@ class FakeRobot implements RobotPeer {
   info: RobotInfo | null;
   channels: ChannelSpec[];
   manifest: RobotManifest | null;
+  /** Datagram control (welcome/error/pong/teleop). */
   msgs: Msg[] = [];
+  /** Robot control carrier messages (subs snapshots). */
+  control: Msg[] = [];
   closed: string | null = null;
 
   constructor(id: string, channels: ChannelSpec[] = [], manifest: RobotManifest | null = null) {
@@ -99,8 +103,16 @@ class FakeRobot implements RobotPeer {
     this.msgs.push(msg);
   }
 
+  sendControl(msg: Msg): void {
+    this.control.push(msg);
+  }
+
+  carrierStats(): CarrierStats {
+    return { queued: 0, queuedBytes: 0, sent: this.control.length, bytesOut: 0 };
+  }
+
   subs(): SubsMsg[] {
-    return this.msgs.filter((m): m is SubsMsg => m.t === "subs");
+    return this.control.filter((m): m is SubsMsg => m.t === "subs");
   }
 
   lastSubs(): SubsMsg {
@@ -443,6 +455,34 @@ Deno.test("a robot that declared no manifest accepts any sub", () => {
   assertEquals(viewer.replies.filter((m) => m.t === "error"), []);
 });
 
+Deno.test("sub to a reserved @-channel is rejected even without a manifest", () => {
+  // @-ids are protocol control; they must never enter subs or snapshots.
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", []);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  const before = robot.subs().length;
+  send(reg, viewer, { t: "sub", ch: "@control" });
+  assertEquals((viewer.replies.at(-1) as { code: string }).code, "unknown_channel");
+  assertEquals(viewer.subs.size, 0);
+  assertEquals(robot.subs().length, before); // no new snapshot went out
+});
+
+Deno.test("sub with an over-long channel id is rejected even without a manifest", () => {
+  // Manifest ids are length-bounded; undeclared subs get the same cap so a
+  // manifest-less robot's snapshot cannot outgrow the @control payload cap
+  // (which would fail its carrier and kill the session).
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", []);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  const before = robot.subs().length;
+  send(reg, viewer, { t: "sub", ch: "x".repeat(65) });
+  assertEquals((viewer.replies.at(-1) as { code: string }).code, "unknown_channel");
+  assertEquals(viewer.subs.size, 0);
+  assertEquals(robot.subs().length, before); // no new snapshot went out
+});
+
 Deno.test("sub while the watched robot is offline is rejected", () => {
   const reg = new Registry();
   const robot = new FakeRobot("r1", SPECS);
@@ -469,7 +509,7 @@ Deno.test("reconnect-stale sub is filtered from snapshots, frames fall back to h
   reg.robotClosed(first);
   reg.registerRobot(second);
   // The surviving sub is no longer in the manifest: snapshots must not carry
-  // it (an out-of-manifest union could outgrow the datagram budget) ...
+  // it (the bridge has no input to activate for it) ...
   assertEquals(second.lastSubs().chs, []);
   // ... but if the robot still sends the channel, routing falls back to the
   // frame header's delivery.
@@ -489,16 +529,6 @@ Deno.test("invalid and unregistered frames are dropped and counted", () => {
   const stats = reg.stats() as { framesDropped: number; framesFromUnregistered: number };
   assertEquals(stats.framesDropped, 1);
   assertEquals(stats.framesFromUnregistered, 1);
-});
-
-Deno.test("resendSnapshots repeats the last set with a fresh n", () => {
-  const reg = new Registry();
-  const robot = new FakeRobot("r1", SPECS);
-  reg.registerRobot(robot);
-  attach(reg, "r1", ["odom"]);
-  const last = robot.lastSubs();
-  reg.resendSnapshots();
-  assertEquals(robot.lastSubs(), { t: "subs", chs: last.chs, n: last.n + 1 });
 });
 
 Deno.test("reapAll resets stale accepted latest streams", async () => {
@@ -530,12 +560,25 @@ Deno.test("stats project exact per-channel key sets with counters and rates", as
 
   const stats = reg.stats() as {
     perRobot: Record<string, {
+      carrier: Record<string, unknown>;
       channels: Record<string, Record<string, unknown>>;
       undeclared: Record<string, unknown>;
     }>;
     perViewer: { channels: Record<string, Record<string, unknown>> }[];
   };
-  assertEquals(Object.keys(stats.perRobot.r1).sort(), ["channels", "subs", "teleop", "undeclared"]);
+  assertEquals(Object.keys(stats.perRobot.r1).sort(), [
+    "carrier",
+    "channels",
+    "subs",
+    "teleop",
+    "undeclared",
+  ]);
+  assertEquals(Object.keys(stats.perRobot.r1.carrier).sort(), [
+    "bytesOut",
+    "queued",
+    "queuedBytes",
+    "sent",
+  ]);
   const inKeys = Object.keys(stats.perRobot.r1.channels.color_image).sort();
   assertEquals(inKeys, ["bps", "bytesIn", "delivery", "fps", "framesIn"]);
   // Declared-only traffic leaves the aggregate bucket zeroed.
