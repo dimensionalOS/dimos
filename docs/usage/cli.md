@@ -459,7 +459,7 @@ agentspy
 
 ### `dtop`
 
-Live resource monitor TUI: CPU, memory, and process stats. Can also be activated during a run with `--dtop`:
+Live resource monitor TUI: CPU, memory, and process stats. The cockpit shows the same data on its Stats tab (`Stats()` in `cockpit(pages=[...])`), which switches the monitor on by itself. Can also be activated during a run with `--dtop`:
 
 ```bash
 dimos --dtop run unitree-go2

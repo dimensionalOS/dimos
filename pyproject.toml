@@ -755,4 +755,6 @@ ignore = [
     "dimos/manipulation/test_roboplan.py",
     "misc/DimSim/scenes/apartment/objects/manifest.json",
     "misc/DimSim/src/engine.js",
+    # Generated golden vectors (web/shared/fixtures/gen.ts); grows per panel kind.
+    "web/shared/fixtures/manifests.json",
 ]

@@ -1,0 +1,114 @@
+.page {
+  background: #14171a;
+  height: 100%;
+  overflow: auto;
+  transition: opacity 0.3s;
+  width: 100%;
+}
+
+.page[data-stale] {
+  opacity: 0.45;
+}
+
+.hint {
+  color: #8b949e;
+  display: block;
+  padding: 0.75rem;
+}
+
+.error {
+  color: #f85149;
+  font-size: 12px;
+  padding: 0.3rem 0.75rem;
+}
+
+.table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.table th {
+  border-bottom: 1px solid #30363d;
+  color: #8b949e;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 0.3rem 0.75rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table td {
+  border-bottom: 1px solid #21262d;
+  padding: 0.25rem 0.75rem;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.table tbody tr:hover td {
+  background: #1b1f24;
+}
+
+.table .num,
+.table .cpu {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.table .cpu {
+  font-weight: 600;
+}
+
+.name {
+  font-weight: 600;
+}
+
+.pid {
+  color: #8b949e;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  margin-left: 0.4rem;
+}
+
+.chip,
+.chipDead {
+  border: 1px solid #30363d;
+  border-radius: 999px;
+  color: #8b949e;
+  font-size: 11px;
+  font-weight: 400;
+  margin-left: 0.4rem;
+  padding: 0 0.45rem;
+  vertical-align: 1px;
+}
+
+.chipDead {
+  border-color: #f85149;
+  color: #f85149;
+}
+
+.child .name {
+  color: #8b949e;
+  font-weight: 400;
+  padding-left: 1.6rem;
+}
+
+.dead .name {
+  color: #f85149;
+}
+
+.dead td {
+  color: #8b949e;
+}
+
+.modules {
+  color: #8b949e;
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spark {
+  display: block;
+  height: 20px;
+  width: 96px;
+}
