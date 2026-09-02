@@ -39,6 +39,50 @@ loopback-only peer discovery is broken on your machine; run everything with
 `--zenoh-scouting` (and `ZENOH_SCOUTING=true humancli`), or put
 `zenoh_scouting=true` in your `.env`.
 
+## Web cockpit (`microduck-cockpit-sim`)
+
+A four-room flat (kitchen = "space A", living = "space B", bedroom =
+"space C", office = "space D", around an open hub) driven from the browser:
+WASDQE teleop, one button per RL policy, a teleop/agent switch, the agent's
+humancli transcript, and click-to-goal on the costmap through the standard
+`ReplanningAStarPlanner`.
+
+```bash
+# OPENAI_API_KEY must be in the environment (the ollama variant needs no key):
+dimos --viewer none run microduck-cockpit-sim --local-relay
+dimos --viewer none run microduck-cockpit-sim-ollama --local-relay
+# then open http://127.0.0.1:7780 (localhost only; the URL is also logged)
+
+MICRODUCK_VARIANT=rollers dimos --viewer none run microduck-cockpit-sim --local-relay
+```
+
+Stop any other microduck blueprint first - they share topic names on the
+zenoh router. On macOS with Tailscale, add `--zenoh-scouting` as above.
+
+Panels:
+
+- **Control strip** - `Teleop` / `Agent` mode, one button per policy
+  (`walk`, `stand`, `roller*`, `sitstand`, `kick_left/right`, `roulade`,
+  `ground_pick`; greyed with a reason when the variant or the asset lacks
+  it), the nav state chip and its cancel (✕).
+- **Nav map** - costmap, rooms, landmark objects, remembered places, the
+  planner's path and goal. Click anywhere to send a goal, click a room label
+  to go to that room's target, `Esc` (map focused) or ✕ to cancel.
+- **Teleop (WASDQE)** - W/S forward-back, A/D strafe, Q/E yaw; only acts in
+  teleop mode, and only while the tab is in the foreground (browsers
+  throttle background tabs; the deadman then zeroes the twist).
+- **Chat** - the agent transcript (tool calls and results included) with an
+  input box, live in agent mode. Try `go to space A`, `go to the kitchen`,
+  `walk to the blue box`, `remember this place as fridge`, `what do you
+  see?`, `do a roulade`.
+- **Chase cam / Head cam** - decoded only while the tab is visible.
+
+In teleop mode the planner's `nav_cmd_vel` is muted (a click still plans
+and draws the path); switching to agent mode hands `cmd_vel` to the planner
+and enables the chat. Navigation is locked (and any active goal cancelled)
+while a one-shot policy runs, while the duck is seated, fallen or standing
+back up; the chip shows the reason.
+
 ## What's in the box
 
 - `sim_module.py` — `MicroduckSimModule(MujocoSimModule)`: composes the room
