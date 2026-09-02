@@ -688,13 +688,13 @@ def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
     radius = 1.5
     grade = grade_rooms(radius)
 
-    def written(db: Path, points: list[tuple[float, float]]) -> Path:
-        store = _open_store(db)
+    def written(db_path: Path, points: list[tuple[float, float]]) -> Path:
+        store = _open_store(db_path)
         stream = store.stream("odom", PoseStamped)
         for i, (x, y) in enumerate(points):
             stream.append(_pose(x, y), ts=1000.0 + i)
         store.stop()
-        return db
+        return db_path
 
     def score(db: Path, answer: str) -> float:
         outcome = Outcome(trajectory=_trajectory(answer, tmp_path), artifacts={"recording": db})
