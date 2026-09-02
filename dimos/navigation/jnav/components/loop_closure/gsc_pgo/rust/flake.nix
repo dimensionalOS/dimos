@@ -19,14 +19,9 @@
       url = "github:jeff-hykin/gtsam-extended/f4572a80b6339181693aee6029ca28153e59a993";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # The crate's module binary depends on the in-repo `dimos-module` crate by
-    # path, which lives outside this flake dir. Reach it via a relative git+file
-    # ref (same approach as dimos/mapping/ray_tracing/rust/flake.nix). This will
-    # be deprecated (nix#12281) but there's no viable alternative today.
-    dimos-repo = { url = "git+file:../../../../../../..?ref=main"; flake = false; };
   };
 
-  outputs = { self, nixpkgs, flake-utils, gtsam-extended, dimos-repo, ... }:
+  outputs = { self, nixpkgs, flake-utils, gtsam-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -68,8 +63,8 @@
           cp ${./build.rs} "$out/${crateSubdir}/build.rs"
 
           mkdir -p "$out/native/rust"
-          cp -r ${dimos-repo}/native/rust/dimos-module "$out/native/rust/dimos-module"
-          cp -r ${dimos-repo}/native/rust/dimos-module-macros "$out/native/rust/dimos-module-macros"
+          cp -r ${../../../../../../../native/rust/dimos-module} "$out/native/rust/dimos-module"
+          cp -r ${../../../../../../../native/rust/dimos-module-macros} "$out/native/rust/dimos-module-macros"
         '';
       in {
         devShells.default = pkgs.mkShell {
@@ -88,7 +83,7 @@
           inherit src;
           cargoRoot = crateSubdir;
           buildAndTestSubdir = crateSubdir;
-          cargoHash = "sha256-MBD2EdZaw0rHaPlAgLjaDF0F6wwBKKEoEpRTJAbOLGk=";
+          cargoHash = "sha256-OcoRRTsYQBjxNJ4p4l4Nr93Z4NSMcr3JYTXKPnsew3M=";
 
           nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [ gtsam pkgs.eigen pkgs.boost pkgs.tbb ];
