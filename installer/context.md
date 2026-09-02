@@ -361,3 +361,15 @@ the earlier PRD (Paul, Ivan, Jeff, Stash, Jetson Wu) are dispositioned in the kn
   executor then logs that action, so a 2-line log survives (2 of the 17 above). Mac `10.0.0.167`:
   ssh refused the supplied password, not run. Review Desktop on this box needs `chrome-sandbox`
   root-owned (Ubuntu 24.04 restricts unprivileged user namespaces).
+- 2026-09-02 — layout, on `aaryan/installer-layout` stacked on this branch: files named by what they
+  hold. `plan.rs` → `plan.rs` (types) + `run.rs` (executor, gates, `Report`, `Ctx`) + `say.rs`;
+  `state.rs` → `install_record.rs` + `action_log.rs`; `pkgs.rs` → `platforms.rs`;
+  `setup/{deps,install,sysconfig}.rs` → `setup/{system_packages,dimos_venv,system_config}.rs`;
+  `hardware.rs` + `setup/{g1,jetson}.rs` → `wizards/mod.rs` (registry) + `wizards/unitree/g1.rs` +
+  `wizards/nvidia/jetson.rs`; `service.rs` → `systemd_service.rs`; `robot.rs` → `robot_scan.rs`;
+  `forward.rs` → `venv_forward.rs`; `build_support.rs` → `pyproject.rs`; `dimos/cli/forward.py` →
+  `installer_cli.py`. Moves only: 15 recorded as renames, no re-exports; the command surface, terminal
+  output, exit codes and both state files are unchanged. Gates green (269 + 4 + 3 tests, clippy, fmt,
+  16 pytest). The layout binary re-ran `setup` on `dimensional-67oe` against the install the previous
+  binary made: only self-install applied, every other stage already, verify passed, the record read
+  back. `update --dry-run` exits 1 from both binaries alike, because that clone sits one commit behind.
