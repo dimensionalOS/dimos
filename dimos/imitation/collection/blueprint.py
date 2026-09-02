@@ -35,6 +35,7 @@ from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule, CameraModuleConfig
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.camera.webcam import Webcam
@@ -48,7 +49,6 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.diy.alfred.pillar_connection import (
     PILLAR_HARDWARE_ID,
@@ -353,56 +353,60 @@ def _openarm_cameras_if_real() -> tuple[Blueprint, ...]:
     )
 
 
-learning_collect_quest_openarm = autoconnect(
-    OpenArmCollectionRecorder.blueprint(
-        db_path=_session_db("openarm"),
-        poseless_streams=[
-            "color_image",
-            "left_wrist_image",
-            "right_wrist_image",
-            "chest_image",
-            "coordinator_joint_state",
-            "coordinator_joint_targets",
-            "left_cartesian_command",
-            "right_cartesian_command",
-            "teleop_buttons",
-            "twist_command",
-            "camera_info",
-            "left_wrist_camera_info",
-            "right_wrist_camera_info",
-            "chest_camera_info",
-            "pointlio_odometry",
-            "status",
-        ],
-        record_tf=False,
-    ),
-    EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
-    OpenArmHomingModule.blueprint(),  # right thumbstick click, deadman released
-    teleop_quest_openarm_blueprint(
-        publish_joint_targets=True,
-        enable_base=True,
-        enable_pillar=True,
-        teleop_module_cls=AlfredLiftTeleopModule,
-    ),
-    PillarConnection.blueprint(),
-    # The D455 mounts upside down for cable routing; the recorder reads the
-    # flipped stream while raw color_image stays on the bus for diagnosis.
-    ImageFlipModule.blueprint(instance_name="scene_flip").remappings(
-        [
-            ("scene_flip", "image_in", "color_image"),
-            ("scene_flip", "image_out", "scene_image"),
-        ]
-    ),
-    *_openarm_cameras_if_real(),
-).remappings([(OpenArmCollectionRecorder, "color_image", "scene_image")]).transports(
-    {
-        ("motor_command", MotorCommandArray): LCMTransport.spec(
-            f"/{PILLAR_HARDWARE_ID}/motor_command", MotorCommandArray
+learning_collect_quest_openarm = (
+    autoconnect(
+        OpenArmCollectionRecorder.blueprint(
+            db_path=_session_db("openarm"),
+            poseless_streams=[
+                "color_image",
+                "left_wrist_image",
+                "right_wrist_image",
+                "chest_image",
+                "coordinator_joint_state",
+                "coordinator_joint_targets",
+                "left_cartesian_command",
+                "right_cartesian_command",
+                "teleop_buttons",
+                "twist_command",
+                "camera_info",
+                "left_wrist_camera_info",
+                "right_wrist_camera_info",
+                "chest_camera_info",
+                "pointlio_odometry",
+                "status",
+            ],
+            record_tf=False,
         ),
-        ("motor_states", JointState): LCMTransport.spec(
-            f"/{PILLAR_HARDWARE_ID}/motor_states", JointState
+        EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
+        OpenArmHomingModule.blueprint(),  # right thumbstick click, deadman released
+        teleop_quest_openarm_blueprint(
+            publish_joint_targets=True,
+            enable_base=True,
+            enable_pillar=True,
+            teleop_module_cls=AlfredLiftTeleopModule,
         ),
-    }
+        PillarConnection.blueprint(),
+        # The D455 mounts upside down for cable routing; the recorder reads the
+        # flipped stream while raw color_image stays on the bus for diagnosis.
+        ImageFlipModule.blueprint(instance_name="scene_flip").remappings(
+            [
+                ("scene_flip", "image_in", "color_image"),
+                ("scene_flip", "image_out", "scene_image"),
+            ]
+        ),
+        *_openarm_cameras_if_real(),
+    )
+    .remappings([(OpenArmCollectionRecorder, "color_image", "scene_image")])
+    .transports(
+        {
+            ("motor_command", MotorCommandArray): LCMTransport.spec(
+                f"/{PILLAR_HARDWARE_ID}/motor_command", MotorCommandArray
+            ),
+            ("motor_states", JointState): LCMTransport.spec(
+                f"/{PILLAR_HARDWARE_ID}/motor_states", JointState
+            ),
+        }
+    )
 )
 
 

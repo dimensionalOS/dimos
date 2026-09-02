@@ -28,7 +28,7 @@ from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.openarm.blueprints.teleop import OpenArmTeleopCoordinator
-from dimos.teleop.quest.quest_extensions import ArmBaseTeleopModule, ArmTeleopModule
+from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 AGGREGATE = "coordinator_joint_state"
 
