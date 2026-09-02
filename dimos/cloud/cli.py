@@ -94,6 +94,8 @@ def ls() -> None:
     from rich.filesize import decimal
     from rich.table import Table
 
+    tz_now = datetime.now().astimezone().tzname()
+
     def local(ts: str) -> str:
         try:
             d = datetime.fromisoformat(ts)
@@ -101,7 +103,10 @@ def ls() -> None:
             return ts[:16].replace("T", " ")
         if d.tzinfo is None:
             d = d.replace(tzinfo=timezone.utc)
-        return d.astimezone().strftime("%Y-%m-%d %H:%M")
+        d = d.astimezone()
+        # A row across a DST boundary carries its own label (PST vs the PDT header).
+        suffix = "" if d.tzname() == tz_now else f" {d.tzname()}"
+        return d.strftime("%Y-%m-%d %H:%M") + suffix
 
     rows = CloudData().ls()
     org = any(u.get("uploader_email") for u in rows)
