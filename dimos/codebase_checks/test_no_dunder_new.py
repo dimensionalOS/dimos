@@ -15,7 +15,6 @@
 import ast
 from pathlib import Path
 
-from dimos.codebase_checks.source_files import python_source_files
 from dimos.constants import DIMOS_PROJECT_ROOT
 
 # Calls that match but are legitimate. Last resort — construct the object
@@ -38,7 +37,7 @@ def find_dunder_new_calls() -> list[tuple[Path, int, str]]:
     """Return (file, line_number, line_text) for every `__new__` call in test files."""
     dimos_dir = DIMOS_PROJECT_ROOT / "dimos"
     hits: list[tuple[Path, int, str]] = []
-    for path in sorted(python_source_files(dimos_dir)):
+    for path in sorted(dimos_dir.rglob("*.py")):
         if not (path.name.startswith("test_") or path.name == "conftest.py"):
             continue
         source = path.read_text(encoding="utf-8")

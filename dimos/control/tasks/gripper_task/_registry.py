@@ -26,8 +26,6 @@ TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
 
 TASK_EXPOSES: dict[str, list[str]] = {
     "gripper": [
-        "activate",
-        "deactivate",
         "set_position",
         "set_normalized",
         "get_position",
