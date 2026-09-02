@@ -24,11 +24,15 @@ from __future__ import annotations
 from datetime import datetime
 from functools import partial
 
+import numpy as np
+from reactivex.disposable import Disposable
+
 from dimos.constants import STATE_DIR
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
-from dimos.core.stream import In
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.hardware.sensors.camera.module import CameraModule, CameraModuleConfig
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.hardware.sensors.camera.webcam import Webcam
@@ -152,6 +156,32 @@ class WristCameraModule(CameraModule):
         super().start()
 
 
+class ImageFlipModule(Module):
+    """Republish a camera stream rotated 180 degrees.
+
+    For cameras that mount upside down for cable routing; the flipped
+    stream is what the recorder and any consumer should read.
+    """
+
+    image_in: In[Image]
+    image_out: Out[Image]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.register_disposable(Disposable(self.image_in.subscribe(self._flip)))
+
+    def _flip(self, msg: Image) -> None:
+        self.image_out.publish(
+            Image(
+                data=np.ascontiguousarray(msg.data[::-1, ::-1]),
+                format=msg.format,
+                frame_id=msg.frame_id,
+                ts=msg.ts,
+            )
+        )
+
+
 def _usb_camera(name: str, device: str) -> Blueprint:
     instance = f"{name}_camera"
     return WristCameraModule.blueprint(instance_name=instance, device=device).remappings(
@@ -227,8 +257,16 @@ learning_collect_quest_openarm = autoconnect(
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     OpenArmHomingModule.blueprint(),  # right thumbstick click, deadman released
     teleop_quest_openarm_blueprint(publish_joint_targets=True, enable_base=True),
+    # The D455 mounts upside down for cable routing; the recorder reads the
+    # flipped stream while raw color_image stays on the bus for diagnosis.
+    ImageFlipModule.blueprint(instance_name="scene_flip").remappings(
+        [
+            ("scene_flip", "image_in", "color_image"),
+            ("scene_flip", "image_out", "scene_image"),
+        ]
+    ),
     *_openarm_cameras_if_real(),
-)
+).remappings([(OpenArmCollectionRecorder, "color_image", "scene_image")])
 
 
 # Mobile manipulation variant: the lidar odometry stack joins, so the
