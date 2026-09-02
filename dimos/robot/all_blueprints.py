@@ -296,8 +296,6 @@ all_modules = {
     "point-cloud-self-filter": "dimos.manipulation.planning.utils.point_cloud_self_filter.PointCloudSelfFilter",
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
-    "policy-rollout-supervisor": "dimos.imitation.policy.rollout_supervisor.PolicyRolloutSupervisor",
-    "quest-action-bindings-module": "dimos.teleop.quest.action_bindings.QuestActionBindingsModule",
     "quest-teleop-module": "dimos.teleop.quest.quest_teleop_module.QuestTeleopModule",
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
     "ray-tracing-voxel-map": "dimos.mapping.ray_tracing.module.RayTracingVoxelMap",

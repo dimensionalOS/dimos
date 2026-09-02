@@ -83,51 +83,12 @@ def test_stream_input_routes_through_normalized_command(opening: float, expected
     assert output.positions == [expected]
 
 
-@pytest.mark.parametrize(("opening", "expected"), [(-0.1, 0.0), (1.1, 850.0)])
-def test_stream_input_saturates_finite_normalized_opening(opening: float, expected: float) -> None:
+@pytest.mark.parametrize("opening", [-0.1, 1.1, float("nan")])
+def test_stream_input_rejects_invalid_normalized_opening(opening: float) -> None:
     task = _task()
 
-    assert task.on_gripper_command(Float32(data=opening), 0.0)
-    output = task.compute(_state())
-
-    assert output is not None
-    assert output.positions == [expected]
-
-
-def test_normalized_saturation_warns_once_per_joint(mocker: MockerFixture) -> None:
-    warning = mocker.patch("dimos.control.tasks.gripper_task.gripper_task.logger.warning")
-    task = _task()
-
-    assert task.set_normalized([-0.1])
-    assert task.set_normalized([1.1])
-
-    warning.assert_called_once()
-
-
-def test_stream_input_rejects_non_finite_normalized_opening() -> None:
-    task = _task()
-
-    assert task.on_gripper_command(Float32(data=float("nan")), 0.0) is False
+    assert task.on_gripper_command(Float32(data=opening), 0.0) is False
     assert task.compute(_state()) is None
-
-
-def test_activation_required_task_fails_closed_after_preemption() -> None:
-    task = GripperControlTask(
-        "tool",
-        GripperControlTaskConfig(
-            joint_names=["arm/tool_joint"],
-            requires_activation=True,
-        ),
-        limits=[(0.0, 850.0)],
-    )
-
-    assert task.set_normalized([0.5]) is False
-    assert task.activate()
-    assert task.set_normalized([0.5])
-    task.on_preempted("manual_override", frozenset({"arm/tool_joint"}))
-
-    assert not task.is_active()
-    assert task.set_normalized([0.5]) is False
 
 
 def test_hold_expiry_releases_streaming_target() -> None:

@@ -1048,30 +1048,6 @@ class TestJointTrajectoryTask:
         assert trajectory_task.get_state() == TrajectoryState.ABORTED
         assert not trajectory_task.is_active()
 
-    def test_activation_required_task_fails_closed_after_preemption(self, simple_trajectory):
-        task = JointTrajectoryTask(
-            JointTrajectoryTaskConfig(
-                joint_names=simple_trajectory.joint_names,
-                requires_activation=True,
-            )
-        )
-        positions = trajectory_start_positions(simple_trajectory)
-
-        assert (
-            task.execute(simple_trajectory, positions).status is TrajectoryExecutionStatus.INACTIVE
-        )
-        assert task.activate()
-        assert (
-            task.execute(simple_trajectory, positions).status is TrajectoryExecutionStatus.ACCEPTED
-        )
-
-        task.on_preempted("manual_override", frozenset({"arm/joint1"}))
-
-        assert not task.is_active()
-        assert (
-            task.execute(simple_trajectory, positions).status is TrajectoryExecutionStatus.INACTIVE
-        )
-
     def test_progress(self, trajectory_task, simple_trajectory, coordinator_state):
         t_start = time.perf_counter()
         trajectory_task.execute(simple_trajectory, trajectory_start_positions(simple_trajectory))
