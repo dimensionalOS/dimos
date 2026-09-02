@@ -192,6 +192,38 @@ def test_on_twist_command_sets_velocity_command(task: G1GrootWBCTask) -> None:
     assert task._last_cmd_time == 100.0
 
 
+def test_nonfinite_twist_command_is_replaced_with_zero(task: G1GrootWBCTask) -> None:
+    task.on_twist_command(
+        Twist(linear=[float("nan"), 0.25, 0.0], angular=[0.0, 0.0, 0.3]),
+        t_now=100.0,
+    )
+
+    assert list(task._cmd) == [0.0, 0.0, 0.0]
+    assert task._last_cmd_time == 100.0
+
+
+def test_state_snapshot_exposes_received_command_age_timeout_and_policy(
+    task: G1GrootWBCTask,
+    joints_29: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task.start()
+    task.set_velocity_command(0.5, 0.0, 0.3, t_now=100.0)
+    for _ in range(10):
+        task.compute(_state_at(100.25, joints_29))
+    monkeypatch.setattr(g1_groot_wbc_task.time, "perf_counter", lambda: 100.25)
+
+    snapshot = task.state_snapshot()
+
+    assert snapshot["velocity_command"] == pytest.approx([0.5, 0.0, 0.3])
+    assert snapshot["velocity_command_age_s"] == pytest.approx(0.25)
+    assert snapshot["velocity_command_timed_out"] is False
+    assert snapshot["selected_policy"] == "walk"
+
+    monkeypatch.setattr(g1_groot_wbc_task.time, "perf_counter", lambda: 101.1)
+    assert task.state_snapshot()["velocity_command_timed_out"] is True
+
+
 def test_observation_layout_matches_policy_contract(task: G1GrootWBCTask) -> None:
     cmd = np.array([1.0, 0.5, 0.25], dtype=np.float32)
     gyro = np.array([0.1, 0.2, 0.3], dtype=np.float32)

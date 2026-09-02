@@ -35,7 +35,7 @@ def _get_data_dir() -> epath.Path:
     return epath.Path(str(get_data("mujoco_sim")))
 
 
-def get_assets() -> dict[str, bytes]:
+def get_assets(meshdir: str | Path | None = None) -> dict[str, bytes]:
     data_dir = _get_data_dir()
     assets: dict[str, bytes] = {}
 
@@ -51,6 +51,9 @@ def get_assets() -> dict[str, bytes]:
     person_dir = epath.Path(str(get_data("person")))
     mjx_env.update_assets(assets, person_dir, "*.obj")
     mjx_env.update_assets(assets, person_dir, "*.png")
+
+    if meshdir is not None:
+        mjx_env.update_assets(assets, epath.Path(str(meshdir)))
 
     return assets
 

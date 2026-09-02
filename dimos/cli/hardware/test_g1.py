@@ -25,9 +25,15 @@ runner = CliRunner()
 
 
 class _Client:
-    def __init__(self, coordinator: Mock, manipulation: Mock | None = None) -> None:
+    def __init__(
+        self,
+        coordinator: Mock,
+        manipulation: Mock | None = None,
+        quest: Mock | None = None,
+    ) -> None:
         self.coordinator = coordinator
         self.manipulation = manipulation
+        self.quest = quest
         self.stopped = False
 
     def get_module(self, name: str) -> Mock:
@@ -35,6 +41,8 @@ class _Client:
             return self.coordinator
         if name == "G1Manipulation" and self.manipulation is not None:
             return self.manipulation
+        if name == "G1QuestTeleopModule" and self.quest is not None:
+            return self.quest
         raise KeyError(name)
 
     def stop(self) -> None:
@@ -70,6 +78,41 @@ def test_status_rejects_coordinator_without_required_rpcs(mocker) -> None:
     assert result.exit_code == 1
     assert "required G1 coordinator RPCs" in result.output
     assert client.stopped
+
+
+def test_status_shows_quest_producer_and_groot_consumer_state(mocker) -> None:
+    coordinator = Mock()
+    coordinator.task_invoke.side_effect = [
+        {
+            **_state(armed=True, dry_run=True),
+            "velocity_command": [0.1, 0.0, -0.2],
+            "velocity_command_age_s": 0.02,
+            "velocity_command_timed_out": False,
+            "selected_policy": "walk",
+        },
+        {"active": False},
+    ]
+    quest = Mock()
+    quest.state_snapshot.return_value = {
+        "drive_ready": True,
+        "left_stick_y": -0.5,
+        "right_stick_x": 0.4,
+        "left_input_age_s": 0.01,
+        "right_input_age_s": 0.03,
+        "command": [0.1, 0.0, -0.2],
+    }
+    client = _Client(coordinator, quest=quest)
+    mocker.patch.object(g1_cli.Dimos, "connect", return_value=client)
+
+    result = runner.invoke(g1_cli.app, ["status"])
+
+    assert result.exit_code == 0, result.output
+    assert "quest_drive_ready: True" in result.output
+    assert "quest_axes:        left_y=-0.500 right_x=0.400" in result.output
+    assert "quest_command:     (0.100, 0.000, -0.200)" in result.output
+    assert "groot_command:     (0.100, 0.000, -0.200)" in result.output
+    assert "groot_timed_out:   False" in result.output
+    assert "groot_policy:      walk" in result.output
 
 
 def test_arm_forces_dry_run_before_activation_and_waits_for_armed(mocker) -> None:

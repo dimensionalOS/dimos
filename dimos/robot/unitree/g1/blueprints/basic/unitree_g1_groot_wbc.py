@@ -198,6 +198,7 @@ if global_config.simulation == "mujoco":
             dof=_G1_NUM_MOTORS,
             **_mujoco_lidar_kwargs(_MUJOCO_LIDAR_CAMERA, _MUJOCO_LIDAR_CAMERAS),
             inject_legacy_assets=True,
+            robot_meshdir=_ROBOT_MESHDIR,
             robot_sim_spec=_g1_sim_spec,
         )
 
