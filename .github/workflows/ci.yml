@@ -490,7 +490,8 @@ jobs:
           dimos/e2e_tests/test_sdk_browser.py
           dimos/e2e_tests/test_custom_channel_browser.py
           dimos/e2e_tests/test_publish_browser.py
-          dimos/e2e_tests/test_voice_browser.py --no-cov
+          dimos/e2e_tests/test_voice_browser.py
+          dimos/e2e_tests/test_stats_browser.py --no-cov
 
   tests:
     if: |
