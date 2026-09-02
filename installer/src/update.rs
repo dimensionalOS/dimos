@@ -7,15 +7,16 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Result};
 
 use crate::cli::{HardwareSetupArgs, InstallMode, UpdateArgs};
-use crate::hardware::{self, Robot};
 use crate::install_record::{self, Installed};
 use crate::pkgs::{self, Platforms, DIMOS_VERSION};
 use crate::plan::{text, Action, Outcome, Plan, Stage};
 use crate::probe::{capture, Probes};
 use crate::run::{self, Ctx, Report};
 use crate::say;
-use crate::setup::g1::G1Observed;
-use crate::setup::{deps, g1, install, jetson, sysconfig, verify};
+use crate::setup::{deps, install, sysconfig, verify};
+use crate::wizards::nvidia::jetson;
+use crate::wizards::unitree::g1::{self, G1Observed};
+use crate::wizards::Robot;
 
 pub const RELEASES: &str = "https://github.com/dimensionalOS/dimos/releases";
 /// The same override `scripts/install.sh` honors, so a LAN test serves both from one directory.
@@ -346,7 +347,7 @@ fn machine_stages(
     dimos_runs: bool,
 ) -> Vec<Stage> {
     if let (Some(args), Some((sdk, g1_obs))) = (g1_record(installed), &obs.g1) {
-        return hardware::g1_stages(&args, probes, cfg, installed, g1_obs, sdk, dimos_runs);
+        return g1::stages(&args, probes, cfg, installed, g1_obs, sdk, dimos_runs);
     }
     let mut stages = deps::packages_stages(&installed.extras, probes, cfg);
     stages.extend([
@@ -359,7 +360,7 @@ fn machine_stages(
 /// A recorded G1 is verified as a G1, so a broken DDS stack fails the run instead of passing quietly.
 fn target(installed: &Installed, probes: &Probes, home: &Path) -> verify::Target {
     match g1_record(installed) {
-        Some(args) => hardware::g1_target(home, &args),
+        Some(args) => g1::target(home, &args),
         None if probes.platform.is_jetson() => verify::Target::Jetson,
         None => verify::Target::Host,
     }

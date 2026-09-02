@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::plan::{Action, Stage};
-use crate::setup::jetson::LD_PRELOAD_FIX;
+use crate::wizards::nvidia::jetson::LD_PRELOAD_FIX;
 
 /// A cold `import dimos` on an Orin NX is minutes, not seconds.
 const CHECK_TIMEOUT_S: u64 = 300;

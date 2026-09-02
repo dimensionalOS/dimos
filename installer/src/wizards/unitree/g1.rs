@@ -1,14 +1,21 @@
-//! On-robot G1 stages (brief decision 13): CycloneDDS built from source, the Unitree SDK into the
+//! The Unitree G1 wizard (brief decision 13): CycloneDDS built from source, the Unitree SDK into the
 //! venv, and the shell/git/.env edits it needs. `observe` is the only I/O; every stage is pure over
 //! its result, so a configured robot plans nothing.
 
 use std::path::{Path, PathBuf};
 
+use anyhow::{bail, Result};
+
 use crate::cli::HardwareSetupArgs;
 use crate::install_record::Installed;
-use crate::plan::{self, text, Action, Stage};
-use crate::probe::{capture, RcFile};
+use crate::pkgs::Platforms;
+use crate::plan::{self, text, Action, Plan, Stage};
+use crate::probe::{capture, Arch, Os, Probes, RcFile};
+use crate::setup::{deps, sysconfig, verify};
+use crate::wizards::nvidia::jetson;
+use crate::wizards::{checks, interface_ready, notes, setup_first, Robot};
 
+pub const UNITREE_EXTRA: &str = "unitree";
 pub const CYCLONEDDS_REPO: &str = "https://github.com/eclipse-cyclonedds/cyclonedds";
 /// unitree_sdk2py's bindings only build against the 0.10 line; main is ABI-incompatible.
 pub const CYCLONEDDS_BRANCH: &str = "releases/0.10.x";
@@ -290,6 +297,96 @@ fn git_insteadof() -> bool {
         PROBE_TIMEOUT_S,
     )
     .is_some_and(|value| value == GIT_SSH_URL)
+}
+
+pub(crate) fn ready(
+    args: &HardwareSetupArgs,
+    probes: &Probes,
+    installed: &Installed,
+) -> Result<()> {
+    let platform = &probes.platform;
+    if !matches!(platform.os, Os::Linux { .. }) || platform.arch != Arch::Aarch64 {
+        bail!(
+            "`hardware g1 setup` runs on the robot's Jetson (aarch64 Linux), not this {} host",
+            platform.arch.name()
+        );
+    }
+    if !installed.extras.iter().any(|e| e == UNITREE_EXTRA) {
+        bail!(
+            "this install has extras [{}], not `{UNITREE_EXTRA}`: {}",
+            installed.extras.join(", "),
+            setup_first(Robot::G1)
+        );
+    }
+    interface_ready(&args.interface, probes)
+}
+
+/// The one I/O step `plan` cannot do: read the robot for what is already built.
+pub(crate) fn setup(
+    args: &HardwareSetupArgs,
+    probes: &Probes,
+    cfg: &Platforms,
+    installed: &Installed,
+    home: &Path,
+) -> Plan {
+    let (sdk, obs) = detect(home, installed, args.sdk_path.clone());
+    plan(args, probes, cfg, installed, &obs, &sdk)
+}
+
+pub fn plan(
+    args: &HardwareSetupArgs,
+    probes: &Probes,
+    cfg: &Platforms,
+    installed: &Installed,
+    obs: &G1Observed,
+    sdk: &Path,
+) -> Plan {
+    let mut stages = stages(args, probes, cfg, installed, obs, sdk, false);
+    stages.extend(checks(target(&probes.platform.home, args), installed, args));
+    Plan {
+        command: Robot::G1.command(),
+        stages,
+        notes: notes(probes),
+    }
+}
+
+/// The G1 bring-up (brief decision 13), shared with `update`. The numpy pin follows the SDK
+/// install because every `uv pip`/`uv sync` before it re-applies pyproject's numpy>=2 override.
+pub fn stages(
+    args: &HardwareSetupArgs,
+    probes: &Probes,
+    cfg: &Platforms,
+    installed: &Installed,
+    obs: &G1Observed,
+    sdk: &Path,
+    venv_changed: bool,
+) -> Vec<Stage> {
+    let home = &probes.platform.home;
+    let uv = deps::uv_bin(&probes.tools, home);
+    let python = installed.venv_python();
+    let sdk_install = sdk_install_stage(&uv, &python, sdk, &cyclonedds_home(home), obs);
+    let reinstalled = venv_changed || !sdk_install.actions.is_empty();
+    let mut stages = deps::packages_stages(&installed.extras, probes, cfg);
+    stages.extend([
+        cyclonedds_stage(home, obs),
+        sdk_clone_stage(sdk, obs),
+        sdk_install,
+        numpy_pin_stage(&uv, &python, obs.numpy_major, reinstalled),
+        rc_stage(&probes.rc),
+        git_https_stage(obs),
+        jetson::stage(&probes.platform, &probes.kernel),
+        sysconfig::stage(&probes.platform, &probes.kernel, cfg),
+        dotenv_stage(&installed.dir, obs, args),
+    ]);
+    stages
+}
+
+/// What the G1 verify needs: where libddsc lives and which NIC the robot answers on.
+pub fn target(home: &Path, args: &HardwareSetupArgs) -> verify::Target {
+    verify::Target::G1 {
+        cyclonedds_home: cyclonedds_home(home),
+        interface: args.interface.clone(),
+    }
 }
 
 #[cfg(test)]

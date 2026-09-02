@@ -2,9 +2,7 @@
 //! build the ordered stage list, run it, and record what landed.
 
 pub mod deps;
-pub mod g1;
 pub mod install;
-pub mod jetson;
 pub mod self_install;
 pub mod sysconfig;
 pub mod verify;
@@ -20,6 +18,7 @@ use crate::plan::{text, Plan, Stage};
 use crate::probe::{self, Arch, Os, PkgManager, Platform, Probes};
 use crate::run::{self, Ctx};
 use crate::say;
+use crate::wizards::nvidia::jetson;
 
 const GIB: u64 = 1024 * 1024 * 1024;
 /// A dev install with the base extras unpacks ~10 GiB of wheels, torch included.

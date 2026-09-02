@@ -1,9 +1,14 @@
-//! Jetson performance stage, shared by `setup` and `hardware jetson|g1 setup`.
+//! The NVIDIA Jetson wizard: nvpmodel and jetson_clocks; its `stage` is shared by `setup` and the G1.
 
-use crate::install_record::JETSON_CLOCKS_UNIT;
-use crate::plan::Stage;
-use crate::probe::{Kernel, Platform};
-use crate::setup::sysconfig;
+use anyhow::{bail, Result};
+
+use crate::cli::HardwareSetupArgs;
+use crate::install_record::{Installed, JETSON_CLOCKS_UNIT};
+use crate::pkgs::Platforms;
+use crate::plan::{Plan, Stage};
+use crate::probe::{Kernel, Platform, Probes};
+use crate::setup::{sysconfig, verify};
+use crate::wizards::{checks, notes, Robot};
 
 const STEP_TIMEOUT_S: u64 = 60;
 /// Preloading the two libraries claims their TLS slots before torch's late dlopen asks for them.
@@ -73,6 +78,32 @@ fn install_clocks_unit(stage: Stage) -> Stage {
     sysconfig::unit_actions(JETSON_CLOCKS_UNIT, render_clocks_unit())
         .into_iter()
         .fold(stage, Stage::push)
+}
+
+pub(crate) fn ready(probes: &Probes) -> Result<()> {
+    if probes.platform.is_jetson() {
+        return Ok(());
+    }
+    bail!("not a Jetson: /etc/nv_tegra_release is missing; a plain Linux host needs `dimos setup`")
+}
+
+/// The standalone Orin (brief decision 14): performance mode and machine config, then verify.
+pub fn plan(
+    args: &HardwareSetupArgs,
+    probes: &Probes,
+    cfg: &Platforms,
+    installed: &Installed,
+) -> Plan {
+    let mut stages = vec![
+        stage(&probes.platform, &probes.kernel),
+        sysconfig::stage(&probes.platform, &probes.kernel, cfg),
+    ];
+    stages.extend(checks(verify::Target::Jetson, installed, args));
+    Plan {
+        command: Robot::Jetson.command(),
+        stages,
+        notes: notes(probes),
+    }
 }
 
 #[cfg(test)]

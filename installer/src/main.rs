@@ -17,8 +17,8 @@ use dimos_installer::plan::{Action, Plan, Stage};
 use dimos_installer::probe::Probes;
 use dimos_installer::run::{self, Ctx};
 use dimos_installer::say;
-use dimos_installer::setup::g1;
-use dimos_installer::{forward, hardware, robot, service, setup, uninstall, update};
+use dimos_installer::wizards::unitree::g1;
+use dimos_installer::{forward, robot, service, setup, uninstall, update, wizards};
 
 const SETUP_FIRST: &str = "no DimOS install recorded: run `dimos setup` first";
 
@@ -83,7 +83,7 @@ fn dispatch(
 fn forwarded(command: &Command) -> Option<Vec<OsString>> {
     match command {
         Command::External(argv) => Some(argv.clone()),
-        Command::Hardware { target } if hardware::owned(target).is_none() => {
+        Command::Hardware { target } if wizards::owned(target).is_none() => {
             Some(hardware_argv(target))
         }
         _ => None,
@@ -110,8 +110,8 @@ fn hardware_run(
     cfg: &Platforms,
     home: &Path,
 ) -> Result<i32> {
-    match hardware::owned(target) {
-        Some((robot, args)) => hardware::run(robot, args, ctx, probes, cfg, home),
+    match wizards::owned(target) {
+        Some((robot, args)) => wizards::run(robot, args, ctx, probes, cfg, home),
         None => forward(&hardware_argv(target), home),
     }
 }

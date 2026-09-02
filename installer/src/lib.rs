@@ -5,7 +5,6 @@
 pub mod action_log;
 pub mod cli;
 pub mod forward;
-pub mod hardware;
 pub mod install_record;
 pub mod pkgs;
 pub mod plan;
@@ -18,3 +17,4 @@ pub mod setup;
 pub mod sudo;
 pub mod uninstall;
 pub mod update;
+pub mod wizards;

@@ -10,8 +10,8 @@ use crate::install_record;
 use crate::plan::{self, Action, Plan, Stage};
 use crate::run::{self, Ctx};
 use crate::service;
-use crate::setup::g1::CDDS_MARKER;
 use crate::setup::self_install::PATH_MARKER;
+use crate::wizards::unitree::g1::CDDS_MARKER;
 
 /// systemctl and rm return immediately; the budget only bounds a hung sudo.
 const REMOVE_TIMEOUT_S: u64 = 30;
