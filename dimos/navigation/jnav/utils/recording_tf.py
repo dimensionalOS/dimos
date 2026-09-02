@@ -145,6 +145,7 @@ class RecordingTF(StreamTF):
         time_tolerance: float | None = None,
         *,
         forward_tolerance: float = 0.0,
+        warn: bool = True,
     ) -> Transform:
         transform = super().get(
             parent_frame,
@@ -152,6 +153,7 @@ class RecordingTF(StreamTF):
             time_point,
             time_tolerance,
             forward_tolerance=forward_tolerance,
+            warn=warn,
         )
         if transform is None:
             edges = ", ".join(sorted(f"{parent}->{child}" for parent, child in self.buffers))
