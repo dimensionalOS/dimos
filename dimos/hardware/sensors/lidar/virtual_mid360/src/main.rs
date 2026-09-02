@@ -29,22 +29,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const CMD_PORT: u16 = wire::LIDAR_CMD_PORT;
-const DISCOVERY_PORT: u16 = wire::DISCOVERY_PORT;
-// data plane: lidar source port -> host destination port
-const PORT_POINT: u16 = wire::LIDAR_POINT_PORT;
-const PORT_IMU: u16 = wire::LIDAR_IMU_PORT;
-const PORT_STATUS: u16 = wire::LIDAR_PUSH_MSG_PORT;
-const DST_POINT: u16 = wire::HOST_POINT_PORT;
-const DST_IMU: u16 = wire::HOST_IMU_PORT;
-const DST_STATUS: u16 = wire::HOST_PUSH_MSG_PORT;
-// cmd_id whose ACK means the host finished configuring -> start streaming
-const CMD_WORKMODE: u16 = wire::cmd_id::PARAM_SET;
-
-// native_config: every field required + supplied by the Python wrapper over
-// stdin (no Rust-side serde defaults / Option). VirtualMid360Config sends all of
-// these, so each is unconditionally present. Injects the
-// Deserialize/Serialize/Validate derives + deny_unknown_fields + impl NativeConfig.
 #[native_config]
 struct Config {
     /// Recorded Mid-360 pcap (point/IMU/status UDP). Read fully into RAM.
@@ -90,7 +74,7 @@ fn ensure_interface(cfg: &Config) -> Result<Ipv4Addr, String> {
         .map_err(|_| format!("invalid lidar_ip '{}'", cfg.lidar_ip))?;
     // If we can't bind the control port on lidar_ip, the veth/netns isn't set up
     // (or we're in the wrong namespace).
-    let probe = UdpSocket::bind(SocketAddrV4::new(lidar_ip, CMD_PORT));
+    let probe = UdpSocket::bind(SocketAddrV4::new(lidar_ip, wire::LIDAR_CMD_PORT));
     if probe.is_err() {
         let lidar_addr = &cfg.lidar_ip;
         let host_addr = &cfg.host_ip;
@@ -119,7 +103,8 @@ fn ensure_interface(cfg: &Config) -> Result<Ipv4Addr, String> {
             )
         };
         return Err(format!(
-            "cannot bind {lidar_addr}:{CMD_PORT} — the virtual NIC isn't set up.\n{how}"
+            "cannot bind {lidar_addr}:{port} — the virtual NIC isn't set up.\n{how}",
+            port = wire::LIDAR_CMD_PORT
         ));
     }
     Ok(lidar_ip)
@@ -207,10 +192,13 @@ fn spawn_discovery(lidar_ip: Ipv4Addr, host_ip: Ipv4Addr, stop: Arc<AtomicBool>)
         // specific source IP lets this coexist with the consumer SDK's own
         // :56000 sockets in a shared namespace, and makes our packets arrive
         // *from* lidar_ip:56000 (which is how the SDK identifies the device).
-        let socket = match reuse_bind(SocketAddrV4::new(lidar_ip, DISCOVERY_PORT)) {
+        let socket = match reuse_bind(SocketAddrV4::new(lidar_ip, wire::DISCOVERY_PORT)) {
             Ok(socket) => socket,
             Err(err) => {
-                tracing::error!("discovery bind {lidar_ip}:{DISCOVERY_PORT} failed: {err}");
+                tracing::error!(
+                    "discovery bind {lidar_ip}:{} failed: {err}",
+                    wire::DISCOVERY_PORT
+                );
                 return;
             }
         };
@@ -223,7 +211,7 @@ fn spawn_discovery(lidar_ip: Ipv4Addr, host_ip: Ipv4Addr, stop: Arc<AtomicBool>)
         // unsolicited detection response (it matches no request seq — none is
         // required for cmd 0x0000) and registers the device. Harmless on Linux,
         // where the broadcast path also works.
-        let host_detect = SocketAddrV4::new(host_ip, DISCOVERY_PORT);
+        let host_detect = SocketAddrV4::new(host_ip, wire::DISCOVERY_PORT);
         let announce = build_ack(wire::cmd_id::SEARCH, 0, &discovery_ack_payload(lidar_ip));
         let mut buffer = [0u8; 2048];
         while !stop.load(Ordering::Relaxed) {
@@ -250,10 +238,13 @@ fn spawn_discovery(lidar_ip: Ipv4Addr, host_ip: Ipv4Addr, stop: Arc<AtomicBool>)
 
 fn spawn_control(lidar_ip: Ipv4Addr, armed: Arc<AtomicBool>, stop: Arc<AtomicBool>) {
     std::thread::spawn(move || {
-        let socket = match UdpSocket::bind(SocketAddrV4::new(lidar_ip, CMD_PORT)) {
+        let socket = match UdpSocket::bind(SocketAddrV4::new(lidar_ip, wire::LIDAR_CMD_PORT)) {
             Ok(socket) => socket,
             Err(err) => {
-                tracing::error!("control bind {lidar_ip}:{CMD_PORT} failed: {err}");
+                tracing::error!(
+                    "control bind {lidar_ip}:{} failed: {err}",
+                    wire::LIDAR_CMD_PORT
+                );
                 return;
             }
         };
@@ -279,7 +270,8 @@ fn spawn_control(lidar_ip: Ipv4Addr, armed: Arc<AtomicBool>, stop: Arc<AtomicBoo
                 seq,
                 "control REQ -> ACK"
             );
-            if cmd_id == CMD_WORKMODE {
+            // A param-set ack means the host finished configuring: start streaming.
+            if cmd_id == wire::cmd_id::PARAM_SET {
                 armed.store(true, Ordering::Relaxed);
                 tracing::info!("work-mode cmd 0x0100 acked -> arming data stream");
             }
@@ -303,9 +295,9 @@ fn spawn_stream(
             UdpSocket::bind(SocketAddrV4::new(lidar_ip, src_port))
         };
         let (point, imu, status) = match (
-            bind_port(PORT_POINT),
-            bind_port(PORT_IMU),
-            bind_port(PORT_STATUS),
+            bind_port(wire::LIDAR_POINT_PORT),
+            bind_port(wire::LIDAR_IMU_PORT),
+            bind_port(wire::LIDAR_PUSH_MSG_PORT),
         ) {
             (Ok(point_sock), Ok(imu_sock), Ok(status_sock)) => (point_sock, imu_sock, status_sock),
             _ => {
@@ -333,7 +325,7 @@ fn spawn_stream(
             .as_nanos() as u64;
         let first_orig = packets
             .iter()
-            .find(|pkt| matches!(pkt.src_port, PORT_POINT | PORT_IMU))
+            .find(|pkt| matches!(pkt.src_port, wire::LIDAR_POINT_PORT | wire::LIDAR_IMU_PORT))
             .map(|pkt| read_ts_ns(&pkt.payload))
             .unwrap_or(0);
         let ts_shift = now_ns.wrapping_sub(first_orig);
@@ -360,9 +352,9 @@ fn spawn_stream(
                 break;
             }
             let (socket, dest_ip, dest_port) = match pkt.src_port {
-                PORT_POINT => (&point, data_dest, DST_POINT),
-                PORT_IMU => (&imu, data_dest, DST_IMU),
-                PORT_STATUS => (&status, host_ip, DST_STATUS),
+                wire::LIDAR_POINT_PORT => (&point, data_dest, wire::HOST_POINT_PORT),
+                wire::LIDAR_IMU_PORT => (&imu, data_dest, wire::HOST_IMU_PORT),
+                wire::LIDAR_PUSH_MSG_PORT => (&status, host_ip, wire::HOST_PUSH_MSG_PORT),
                 _ => continue,
             };
             let t0 = *t_cap0.get_or_insert(pkt.ts);
@@ -372,7 +364,7 @@ fn spawn_stream(
                 std::thread::sleep(Duration::from_secs_f64(target - elapsed));
             }
             let mut out = pkt.payload.clone();
-            if matches!(pkt.src_port, PORT_POINT | PORT_IMU) {
+            if matches!(pkt.src_port, wire::LIDAR_POINT_PORT | wire::LIDAR_IMU_PORT) {
                 rewrite_ts(&mut out, ts_shift);
             }
             let _ = socket.send_to(&out, SocketAddrV4::new(dest_ip, dest_port));
@@ -395,7 +387,7 @@ fn discovery_ack_payload(lidar_ip: Ipv4Addr) -> Vec<u8> {
         dev_type: wire::DEVICE_TYPE_MID360,
         sn,
         lidar_ip,
-        cmd_port: CMD_PORT,
+        cmd_port: wire::LIDAR_CMD_PORT,
     }
     .build()
 }
@@ -449,7 +441,7 @@ mod tests {
         let detection = DetectionAck::parse(frame.data).unwrap();
         assert_eq!(detection.dev_type, wire::DEVICE_TYPE_MID360);
         assert_eq!(detection.lidar_ip, lidar_ip);
-        assert_eq!(detection.cmd_port, CMD_PORT);
+        assert_eq!(detection.cmd_port, wire::LIDAR_CMD_PORT);
         assert!(detection.sn.contains(&0), "sn must be NUL-terminated");
     }
 

@@ -15,8 +15,6 @@
 // Replay a Mid-360 pcap through PcapSource + FrameAssembler and print
 // stream statistics. Quick sanity check for any capture:
 //   cargo run --release -p dimos-livox --example pcap_stats -- <pcap>
-//
-// Everything is a running fold, so memory stays flat for any capture size.
 
 use dimos_livox::pipeline::{imu_records, Frame, FrameAssembler, PacketSource};
 use dimos_livox::wire::{self, DataPacket, DataType};
@@ -69,6 +67,7 @@ fn main() {
     )
     .expect("parse pcap");
 
+    // set up counters and such for the metrics
     let mut assembler = FrameAssembler::new(10.0);
     let mut buf = [0u8; 4096];
     let mut point_packets = 0u64;
