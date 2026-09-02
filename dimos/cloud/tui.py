@@ -147,7 +147,7 @@ class DataBrowser(App[None]):
                 Text((u.get("manifest") or {}).get("blueprint") or "—", style="magenta"),
                 Text(u.get("robot_id") or "—", style="magenta"),
                 Text("\n".join(topics))
-                if u["id"] in self._expanded
+                if topics and u["id"] in self._expanded
                 else Text(f"{len(topics)} topic" + "s" * (len(topics) != 1), style="dim"),
                 Text(decimal(u["size"]), justify="right"),
                 Text(state, style="green" if state == "complete" else "yellow"),

@@ -79,6 +79,25 @@ async def test_browser_lists_toggles_and_pulls(
     assert pulled[0].read_bytes() == blob
 
 
+async def test_expanding_zero_topic_row_keeps_layout(monkeypatch: pytest.MonkeyPatch) -> None:
+    cloud, _ = _seeded_cloud()
+    t = cloud.backend.api.t
+    assert isinstance(t, FakeTransport)
+    t.uploads["u1"] = dict(
+        t.uploads["u0"], filename="chunk.db.lz4", kind="blob", manifest=None, sha256="x"
+    )
+    app = DataBrowser(cloud)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        table = app.query_one(DataTable)
+        await pilot.press("down")  # onto the zero-topic row
+        await pilot.press("enter")
+        assert str(table.get_row_at(1)[7]) == "0 topics"
+        assert all(row.height >= 1 for row in table.rows.values())
+        assert str(table.get_row_at(0)[1]) == "session_go2_1.db"  # row above intact
+
+
 async def test_columns_reflow_with_terminal_width(monkeypatch: pytest.MonkeyPatch) -> None:
     cloud, _ = _seeded_cloud()
     wide = DataBrowser(cloud)
