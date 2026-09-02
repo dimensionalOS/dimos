@@ -1060,7 +1060,7 @@ def test_pi_skills_become_native_flags_and_preflight_checks_paths(
 def test_pi_prompt_is_composed_from_its_fields(
     dataset: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The suite's condition follows the agent's own contract; the built-in
+    """The run's instructions follow the agent's own contract; the built-in
     guidance can be switched off so a skill can carry it, while the robot's
     tool listing stays."""
     import dimos.evals.agents.pi as pi_mod

@@ -12,33 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Multi-step point-cloud eval: three Pi conditions on one live DimSim case.
+"""Map a live DimSim apartment and count its rooms.
 
-The same ``Pi`` agent maps an initially unmapped apartment and counts its rooms under
-three configurations that differ only in ``instructions`` / ``skills`` —
-identical case, stack, model settings, and grader::
-
-    # 1. agent_encode — spatial evidence only from PointCloud2.agent_encode()
-    #    (needs the point-cloud observability branch, PR #3415)
-    DIMOS_N_WORKERS=10 uv run dimos evals run dimos.evals.suites.dimsim_pointcloud_mapping \
-        --agent dimos.evals.agents.pi --set max_steps=30 --set instructions="$(uv run python -c \
-        'import dimos.evals.suites.dimsim_pointcloud_mapping as m; print(m.AGENT_ENCODE_CONDITION)')"
-
-    # 2. numpy control — raw point arrays, agent_encode forbidden
-    DIMOS_N_WORKERS=10 uv run dimos evals run dimos.evals.suites.dimsim_pointcloud_mapping \
-        --agent dimos.evals.agents.pi --set max_steps=30 --set instructions="$(uv run python -c \
-        'import dimos.evals.suites.dimsim_pointcloud_mapping as m; print(m.NUMPY_CONDITION)')"
-
-    # 3. spatial_skill — base prompt plus one explicit purpose-built harness skill
-    DIMOS_N_WORKERS=10 uv run dimos evals run dimos.evals.suites.dimsim_pointcloud_mapping \
-        --agent dimos.evals.agents.pi --set max_steps=30 \
-        --set skills='["/absolute/path/to/spatial-skill/SKILL.md"]'
-
-``DIMOS_N_WORKERS=10`` matches the composed ``unitree-go2`` blueprint that the
-stack below decomposes. The access contracts are prompt-enforced, not
-sandboxed: audit each run's ``trajectory.json`` and raw requests before
-comparing, and exclude (do not score) a violating run. Smoke-launch the stack
-once before any paid run.
+    uv run dimos evals run dimos.evals.suites.dimsim_pointcloud_mapping \
+        --agent <agent module>
 """
 
 from __future__ import annotations
@@ -60,16 +37,6 @@ STACK = (
     "movement-manager mcp-server unitree-skill-container"
 )
 
-# Ground truth measured once from the apartment scene geometry
-# (misc/DimSim/scenes/apartment/structure.glb wall meshes and
-# objects/manifest.json; world frame: x east, y north — the frame odometry
-# and the lidar readouts use). Interior x in (-6, 6), y in (-5, 5). A main
-# wall along y=0 (doorway at x=0) splits the apartment; a kitchen wall at
-# x=-2 (door at y~2.5) closes off the southwest; a bathroom wall at x=1
-# (door at y~-2.5) closes off the northeast. The walled front yard (y > 5,
-# reached through the entrance and sliding doors) is outdoors and not a room.
-# Rooms are wall-separated interior spaces, open plan counted once — the
-# living/dining space is one room.
 ROOMS: dict[str, tuple[float, float]] = {
     "living_dining": (2.0, 2.5),  # sectional, TV, dining table
     "kitchen": (-4.0, 2.5),  # fridge, gas range, sink
@@ -87,42 +54,6 @@ INSTRUCTION = (
     "history you need. When you are confident, answer with one integer and "
     "nothing else."
 )
-
-# Shared selection guidance: names the existing selectors so both controlled
-# conditions spend their steps on the task, without choosing a frame, window,
-# or fusion for the agent.
-SELECTION_GUIDANCE = (
-    "Choosing lidar history is your decision: a stream's .last() is the "
-    "newest frame, .range_time(t0, t1) and .from_timestamp(ts) select "
-    "windows, and a window fuses into one cloud with "
-    ".transform(VoxelMapTransformer(voxel_size=0.05, emit_every=0)).last() "
-    "(from dimos.mapping.voxels.module import VoxelMapTransformer)."
-)
-
-AGENT_ENCODE_CONTRACT = (
-    "Point-cloud access contract: You may use Python in bash to open the "
-    "provided recording, select any lidar frame or time window, and fuse "
-    "frames with the existing stream transforms. For spatial evidence, "
-    "inspect only PointCloud2.AGENT_ENCODE_LEGEND and values returned by "
-    "PointCloud2.agent_encode(). Do not access raw point arrays, "
-    "points_f32(), points(), NumPy/Open3D geometry, SQLite blobs, or the "
-    "implementation/source of PointCloud2. You may read odometry and "
-    "ordinary stream metadata for navigation. The implementation inside "
-    "agent_encode() and VoxelMapTransformer is allowed; the restriction is "
-    "on evidence your agent-authored analysis reads."
-)
-
-NUMPY_CONTRACT = (
-    "Point-cloud access contract: You may use Python in bash to open the "
-    "provided recording, select any lidar frame or time window, fuse frames "
-    "with the existing stream transforms, and analyze raw point arrays with "
-    "NumPy or other installed Python libraries. Do not call agent_encode(), "
-    "read AGENT_ENCODE_LEGEND, or inspect their implementation/source. You "
-    "may read odometry and ordinary stream metadata for navigation."
-)
-
-AGENT_ENCODE_CONDITION = f"{SELECTION_GUIDANCE}\n\n{AGENT_ENCODE_CONTRACT}"
-NUMPY_CONDITION = f"{SELECTION_GUIDANCE}\n\n{NUMPY_CONTRACT}"
 
 
 def grade_rooms(visit_radius_m: float = 1.5) -> Callable[[Outcome], float]:

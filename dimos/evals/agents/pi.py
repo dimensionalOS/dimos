@@ -44,8 +44,6 @@ from dimos.evals.types import (
 if TYPE_CHECKING:
     from dimos.memory.stream import Stream
 
-_PROVIDER = "dimos"  # the one provider in Pi's private config: the recording proxy
-
 
 def render_tools(tools: list[dict[str, Any]]) -> str:
     """One line per MCP tool: name, argument names, first line of the description."""
@@ -180,28 +178,28 @@ class Pi:
     """The Pi coding agent, headless (``pi --mode json``), with the run dir as
     its working directory. The case's artifacts and the recording are files
     named in the system prompt; a live robot is reached through ``dimos mcp
-    call`` from Pi's ``bash`` tool — Pi has no MCP client, and its authors say
-    to give it CLI tools instead, which dimos ships. Model traffic goes through
-    a local :class:`RecordingProxy`, so every call is captured whole under
-    ``run_dir/raw`` like any other agent's. OpenAI models only, for now.
+    call`` from Pi's ``bash`` tool. Model traffic goes through a local
+    :class:`RecordingProxy`, so every call is captured whole under ``run_dir/raw``.
 
-    The system prompt is composed from fields, in this order: ``system_prompt``
-    (the agent's own contract), ``instructions`` (a suite's condition, e.g. an
-    access contract; ``""`` for none), the file list, then — with
-    ``builtin_guidance`` — how to open the recording and how to call the
-    robot's tools, and the robot's tool listing whenever there is a robot.
-    Turn ``builtin_guidance`` off to hand that teaching to ``skills`` instead:
-    explicit skill files or directories for Pi's repeatable native ``--skill``
-    flag, resolved to absolute paths (Pi runs in the case dir); ambient skill
-    discovery stays off — ``--no-skills`` disables discovery only, explicit
-    paths still load. ``tools`` is Pi's native tool allowlist.
-    ``passthrough_env`` names the variables Pi's process inherits, on top of
-    every ``DIMOS_*`` one (the dimos CLI it calls needs them).
+    Settings:
 
-    ``max_steps`` and the case's time budget are enforced from outside: Pi is
-    killed when it has made that many model calls and still wants to act, or
-    when the budget runs out, and the steps made so far are kept. ``cli`` is
-    the ``pi`` executable.
+    - ``system_prompt``: the first thing Pi reads. Its default just tells Pi
+      to answer from the files and tools it is given.
+    - ``instructions``: any extra text you want in the prompt for this run,
+      added right after ``system_prompt``. Empty by default.
+    - ``builtin_guidance``: when True, the prompt also explains how to open
+      the recording in Python and how to call the robot's tools from bash.
+      Set it to False if a skill file teaches that instead.
+    - ``skills``: paths to skill files or directories that Pi loads with its
+      ``--skill`` flag. Give absolute paths, or they are made absolute here,
+      since Pi runs inside the case directory.
+    - ``tools``: which of Pi's own tools it may use (read, bash, edit, write).
+      ``bash`` is required whenever there is a robot.
+    - ``max_steps``: how many model calls Pi may make. When it hits the limit
+      and still wants to act, it is killed and the steps so far are kept. The
+      case's time budget is enforced the same way.
+    - ``passthrough_env``: environment variables Pi's process inherits, on
+      top of every ``DIMOS_*`` variable.
     """
 
     model: str = DEFAULT_MODEL
@@ -282,7 +280,7 @@ class Pi:
         # ambient discovery, explicit --skill paths still load.
         skills = [f for p in self.skills for f in ("--skill", str(Path(p).expanduser().resolve()))]
         return [
-            self.cli, "--mode", "json", "--model", f"{_PROVIDER}/{self.model}",
+            self.cli, "--mode", "json", "--model", f"dimos/{self.model}",
             "--thinking", self.thinking, "--session-dir", str(run_dir / "pi-session"),
             "--tools", ",".join(self.tools),
             "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
@@ -291,7 +289,8 @@ class Pi:
         ]  # fmt: skip
 
     def _write_agent_dir(self, run_dir: Path, proxy_url: str) -> None:
-        """A private Pi config dir: one provider, ``dimos``, which is the proxy."""
+        """A private Pi config dir with one provider, ``dimos``, which is the
+        proxy; ``_command`` names models as ``dimos/<model>``."""
         agent_dir = run_dir / ".pi-agent"
         agent_dir.mkdir(parents=True, exist_ok=True)
         model: dict[str, Any] = {"id": self.model, "reasoning": True}
@@ -304,7 +303,7 @@ class Pi:
             "models": [model],
         }
         (agent_dir / "models.json").write_text(
-            json.dumps({"providers": {_PROVIDER: provider}}, indent=2)
+            json.dumps({"providers": {"dimos": provider}}, indent=2)
         )
 
     def _env(self, run_dir: Path) -> dict[str, str]:

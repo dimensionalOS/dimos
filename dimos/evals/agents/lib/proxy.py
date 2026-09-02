@@ -27,8 +27,6 @@ import httpx
 
 from dimos.agents.llm_trace import tracing_http_client
 
-_NOT_FORWARDED = {"host", "content-length", "connection", "accept-encoding", "transfer-encoding"}
-
 
 class RecordingProxy:
     """``with RecordingProxy(raw_dir, upstream) as url:`` — a request to
@@ -50,7 +48,15 @@ class RecordingProxy:
         class Forward(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
                 body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-                headers = {k: v for k, v in self.headers.items() if k.lower() not in _NOT_FORWARDED}
+                # hop-by-hop headers belong to this connection, not the upstream one
+                skip = {
+                    "host",
+                    "content-length",
+                    "connection",
+                    "accept-encoding",
+                    "transfer-encoding",
+                }
+                headers = {k: v for k, v in self.headers.items() if k.lower() not in skip}
                 reply = client.request(
                     self.command, upstream + self.path, content=body, headers=headers
                 )
