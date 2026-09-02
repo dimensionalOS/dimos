@@ -51,10 +51,44 @@
           platforms = pkgs.lib.platforms.unix;
         };
       };
+      dimos-memory-replayer = pkgs.rustPlatform.buildRustPackage {
+        pname = "dimos-memory-replayer";
+        version = "0.1.0";
+        src = ../..;
+
+        cargoLock = {
+          lockFile = ../../Cargo.lock;
+          outputHashes = {
+            "dimos-lcm-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
+          };
+        };
+
+        cargoBuildFlags = ["-p" "dimos-memory-replayer"];
+        cargoTestFlags = ["-p" "dimos-memory-replayer"];
+        strictDeps = true;
+
+        nativeBuildInputs = [
+          pkgs.cmake
+          pkgs.nasm
+          pkgs.pkg-config
+        ];
+        buildInputs = [
+          pkgs.sqlite
+          pkgs.sqlite.dev
+        ] ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [pkgs.libiconv];
+
+        env.LIBSQLITE3_SYS_USE_PKG_CONFIG = "1";
+
+        meta = {
+          description = "Experimental native Memory2 SQLite replayer";
+          mainProgram = "dimos-memory-replayer";
+          platforms = pkgs.lib.platforms.unix;
+        };
+      };
     in {
       packages = {
         default = dimos-memory-recorder;
-        inherit dimos-memory-recorder;
+        inherit dimos-memory-recorder dimos-memory-replayer;
       };
     });
 }

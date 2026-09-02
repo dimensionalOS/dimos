@@ -255,6 +255,13 @@ class SqliteObservationStore(ObservationStore[T]):
 
     def _ensure_tables(self) -> None:
         """Create the metadata table and R*Tree index if they don't exist."""
+        table_existed = (
+            self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (self._name,),
+            ).fetchone()
+            is not None
+        )
         self._conn.execute(
             f'CREATE TABLE IF NOT EXISTS "{self._name}" ('
             "    id      INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -273,6 +280,8 @@ class SqliteObservationStore(ObservationStore[T]):
             "    z_min, z_max"
             ")"
         )
+        if not table_existed:
+            self._conn.execute(f'CREATE INDEX "{self._name}_ts_id" ON "{self._name}"(ts, id)')
         self._conn.commit()
 
     @property

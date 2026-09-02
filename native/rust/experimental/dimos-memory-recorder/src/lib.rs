@@ -695,6 +695,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(reception_index, 1);
+        let timestamp_index: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'samples_ts_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(timestamp_index, 1);
         assert_eq!(stats.written, 3);
     }
 

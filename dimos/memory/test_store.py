@@ -447,6 +447,8 @@ class TestStandaloneComponents:
             results = list(store.query(StreamQuery()))
             assert len(results) == 1
             assert results[0].ts == 1.0
+            indexes = store._conn.execute('PRAGMA index_info("events_ts_id")').fetchall()
+            assert [row[2] for row in indexes] == ["ts", "id"]
 
     def test_blob_store_standalone(self, tmp_path) -> None:
         from dimos.memory.blobstore.sqlite import SqliteBlobStore

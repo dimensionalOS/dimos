@@ -663,6 +663,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "dimos-memory-replayer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dimos-module",
+ "lcm-msgs",
+ "lz4_flex 0.14.0",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "turbojpeg",
+ "validator",
+]
+
+[[package]]
 name = "dimos-mls-planner"
 version = "0.1.0"
 dependencies = [

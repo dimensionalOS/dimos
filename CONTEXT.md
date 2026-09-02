@@ -69,3 +69,21 @@ _Avoid_: Generated URDF, copied URDF
 **Structural subtree selection**:
 A robot model view that retains an existing link and its descendants without reversing joints or changing their transforms.
 _Avoid_: Rerooting, kinematic rerooting
+
+## Recording replay
+
+**Recording**:
+A durable artifact containing timestamped observations from one or more typed streams.
+_Avoid_: Database, replay
+
+**Replay clock**:
+The shared mapping from recording timestamps to monotonic wall time for all selected replay streams.
+_Avoid_: Sensor clock, query timestamp
+
+**Replay lateness**:
+The elapsed time between an observation's scheduled replay deadline and its publication.
+_Avoid_: Recording delay, transport timestamp
+
+**Lossless catch-up**:
+Publishing every late observation in order without delay until publication reaches the replay clock.
+_Avoid_: Frame dropping, time skipping
