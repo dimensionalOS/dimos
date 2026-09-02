@@ -652,6 +652,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "socket2 0.5.10",
  "toml 1.1.4+spec-1.1.0",
  "which",
 ]
