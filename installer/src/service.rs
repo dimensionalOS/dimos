@@ -227,10 +227,13 @@ fn control_stage(name: &'static str, unit: &str, verb: &str, active_after: bool)
 
 /// Non-critical and unprivileged: `systemctl status` exits 3 for a stopped unit, which is an answer.
 fn status_stage(unit: &str) -> Stage {
-    Stage::new("service-status", false).run(
-        &["systemctl", "status", "--no-pager", unit],
-        SYSTEMCTL_TIMEOUT_S,
-    )
+    Stage::new("service-status", false)
+        .run(
+            &["systemctl", "status", "--no-pager", unit],
+            SYSTEMCTL_TIMEOUT_S,
+        )
+        .check()
+        .warn_only()
 }
 
 /// An absent unit plans nothing, so a second `service remove` reports `ok already`.
@@ -516,6 +519,7 @@ mod tests {
         let plan = plan(&action, &installed(), &platform(true), None).expect("plans");
         let stage = &plan.stages[0];
         assert!(!stage.critical);
+        assert!(stage.check && stage.warn_only);
         assert!(!stage.needs_sudo());
         assert_eq!(
             displays(stage),
