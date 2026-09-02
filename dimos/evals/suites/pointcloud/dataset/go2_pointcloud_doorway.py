@@ -34,7 +34,7 @@ substitute one for the other.
 
 Regenerate the context windows (needs the recording; keeps the labels)::
 
-    uv run python -m dimos.evals.suites.pointcloud.go2_pointcloud_doorway
+    uv run python -m dimos.evals.suites.pointcloud.dataset.go2_pointcloud_doorway
 """
 
 from __future__ import annotations

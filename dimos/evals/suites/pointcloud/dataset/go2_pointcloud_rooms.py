@@ -37,7 +37,7 @@ it must never be used for anything about floor height.
 
 Regenerate (needs both recordings; keeps the labels)::
 
-    uv run python -m dimos.evals.suites.pointcloud.go2_pointcloud_rooms
+    uv run python -m dimos.evals.suites.pointcloud.dataset.go2_pointcloud_rooms
 """
 
 from __future__ import annotations

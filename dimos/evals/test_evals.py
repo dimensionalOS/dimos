@@ -733,7 +733,11 @@ def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
     """Half credit for the exact room count, half for the fraction of room
     points the recorded odometry approached; an unparseable reply loses the
     count half but the world still scores."""
-    from dimos.evals.suites.dimsim_pointcloud_mapping import N_ROOMS, ROOMS, grade_rooms
+    from dimos.evals.suites.pointcloud.sim.dimsim_pointcloud_mapping import (
+        N_ROOMS,
+        ROOMS,
+        grade_rooms,
+    )
 
     radius = 1.5
     grade = grade_rooms(radius)
@@ -767,14 +771,8 @@ def test_suites_and_agents_importable() -> None:
     """Modules construct without data or network (lambdas stay lazy)."""
     from dimos.evals.cli import load_agent
     from dimos.evals.module import list_agents
-    from dimos.evals.suites import (
-        dimsim_house,
-        dimsim_pointcloud_mapping,
-        examples,
-        go2_smoke,
-        go2_vqa,
-    )
-    from dimos.evals.suites.pointcloud import (
+    from dimos.evals.suites import dimsim_house, examples, go2_smoke, go2_vqa
+    from dimos.evals.suites.pointcloud.dataset import (
         go2_pointcloud,
         go2_pointcloud_clearance,
         go2_pointcloud_doorway,
@@ -790,6 +788,7 @@ def test_suites_and_agents_importable() -> None:
         go2_pointcloud_route,
         go2_pointcloud_stairs,
     )
+    from dimos.evals.suites.pointcloud.sim import dimsim_pointcloud_mapping
 
     for module in (
         examples,

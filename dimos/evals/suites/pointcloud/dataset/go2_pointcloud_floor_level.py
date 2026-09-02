@@ -22,7 +22,7 @@ with a 0.15 m band on the offset, so finding the right place at the wrong
 height earns partial credit.
 
 This suite shares its six frames with
-:mod:`dimos.evals.suites.pointcloud.go2_pointcloud_stairs`, which asks a different
+:mod:`dimos.evals.suites.pointcloud.dataset.go2_pointcloud_stairs`, which asks a different
 question of them: not "is anything at a different level" but "are there
 steps". The gap between the two scores is the point — it separates an encoding
 that carries elevation from one that carries structure. Keep them separate so
@@ -35,7 +35,7 @@ the recording started, so it cannot be used for anything about floor height.
 
 Regenerate the context windows (needs the recording; keeps the labels)::
 
-    uv run python -m dimos.evals.suites.pointcloud.go2_pointcloud_floor_level
+    uv run python -m dimos.evals.suites.pointcloud.dataset.go2_pointcloud_floor_level
 """
 
 from __future__ import annotations
