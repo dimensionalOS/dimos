@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from functools import partial
+import threading
 import time
 from typing import Any
 
@@ -63,7 +64,7 @@ from dimos.teleop.quest.blueprints import (
     teleop_quest_xarm7,
 )
 from dimos.teleop.quest.quest_extensions import ArmBaseTeleopConfig, ArmBaseTeleopModule
-from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
+from dimos.teleop.quest.quest_types import Buttons, Hand, QuestControllerState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -214,13 +215,19 @@ class AlfredLiftTeleopConfig(ArmBaseTeleopConfig):
 
 
 class AlfredLiftTeleopModule(ArmBaseTeleopModule):
-    """Base driving plus a click-gated pillar lift mode on the left stick.
+    """Base driving plus an exclusive pillar lift mode on the left stick.
 
-    A left thumbstick click with both deadman grips released and both sticks
-    centered toggles lift mode. In lift mode the base is frozen (zero twist
-    every tick) and the left stick's vertical axis jogs the pillar slowly
-    through its position RPC. A second click, or grabbing either deadman,
-    exits the mode, stops the pillar, and drops every internal target.
+    A left thumbstick click with both arms disengaged and both sticks
+    centered enters lift mode, homed or not. In lift mode the base is
+    frozen to zero twist every tick and arm engagement is suppressed, so
+    X and A no longer engage teleop. If the pillar is not homed, pressing
+    A starts the firmware homing crawl; once status reports homed, the
+    left stick's vertical axis jogs the pillar slowly through its position
+    RPC. The second click is the only exit: it stops the pillar, clears
+    every lift target, and restores arm and base control.
+
+    Threading: every mode transition happens on the joy thread; the
+    control loop only reads the mode flag in ``_handle_engage``.
     """
 
     config: AlfredLiftTeleopConfig
@@ -230,19 +237,33 @@ class AlfredLiftTeleopModule(ArmBaseTeleopModule):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._lift_mode = False
+        self._lift_homed = False
         self._lift_target: float | None = None
         self._lift_press_was_down = False
+        self._lift_a_was_down = False
+        self._lift_homing_requested = False
         self._last_lift_rpc_t = 0.0
+        self._last_lift_status_t = 0.0
         self._last_drive_t: float | None = None
+
+    def _handle_engage(self) -> None:
+        if not self._lift_mode:
+            super()._handle_engage()
+            return
+        for hand in Hand:
+            if self._is_engaged[hand]:
+                self._disengage(hand)
 
     def _exit_lift_mode(self) -> None:
         self._lift_mode = False
+        self._lift_homed = False
         self._lift_target = None
+        self._lift_homing_requested = False
         try:
             self._pillar.stop_motion()
         except Exception:
             logger.exception("Pillar stop failed on lift mode exit")
-        logger.info("Lift mode off")
+        logger.info("Lift mode off, base and arm control restored")
 
     def _try_enter_lift_mode(
         self,
@@ -256,17 +277,50 @@ class AlfredLiftTeleopModule(ArmBaseTeleopModule):
         if any(abs(v) > tol for v in sticks):
             logger.warning("Ignoring lift mode click while a stick is deflected")
             return
+        self._lift_mode = True
+        self._lift_homed = False
+        self._lift_target = None
+        self._lift_homing_requested = False
+        self._last_lift_status_t = 0.0
+        self._refresh_lift_status(time.monotonic())
+        if self._lift_homed:
+            logger.info("Lift mode on at %.3f m", self._lift_target)
+        else:
+            logger.warning("Lift mode on, pillar not homed, press A to home")
+
+    def _refresh_lift_status(self, now: float) -> None:
+        if now - self._last_lift_status_t < 1.0:
+            return
+        self._last_lift_status_t = now
         try:
             status = self._pillar.get_status()
         except Exception:
-            logger.exception("Pillar status unavailable, staying out of lift mode")
+            logger.exception("Pillar status unavailable")
             return
-        if not status.get("homed") or status.get("position_m") is None:
-            logger.warning("Pillar is not homed, run PillarConnection.home() first")
+        homed = bool(status.get("homed")) and status.get("position_m") is not None
+        if homed and not self._lift_homed:
+            self._lift_target = float(status["position_m"])
+            self._lift_homing_requested = False
+            logger.info("Pillar homed, lift jog enabled at %.3f m", self._lift_target)
+        self._lift_homed = homed
+
+    def _request_homing(self) -> None:
+        if self._lift_homing_requested:
             return
-        self._lift_target = float(status["position_m"])
-        self._lift_mode = True
-        logger.info("Lift mode on at %.3f m", self._lift_target)
+        self._lift_homing_requested = True
+        logger.info("Pillar homing requested from the A button")
+
+        def _home() -> None:
+            try:
+                accepted = self._pillar.home()
+                if not accepted:
+                    logger.warning("Pillar refused to home, press A to retry")
+                    self._lift_homing_requested = False
+            except Exception:
+                logger.exception("Pillar homing call failed, press A to retry")
+                self._lift_homing_requested = False
+
+        threading.Thread(target=_home, name="pillar-home", daemon=True).start()
 
     def _handle_base_drive(
         self,
@@ -281,12 +335,15 @@ class AlfredLiftTeleopModule(ArmBaseTeleopModule):
         rising = press and not self._lift_press_was_down
         self._lift_press_was_down = press
 
-        deadman_held = any(self._is_engaged.values())
-        if self._lift_mode and deadman_held:
-            self._exit_lift_mode()
-        elif rising and not deadman_held:
+        a_down = bool(right.primary) if right is not None else False
+        a_rising = a_down and not self._lift_a_was_down
+        self._lift_a_was_down = a_down
+
+        if rising:
             if self._lift_mode:
                 self._exit_lift_mode()
+            elif any(self._is_engaged.values()):
+                logger.warning("Ignoring lift mode click while an arm is engaged")
             elif left is not None:
                 self._try_enter_lift_mode(left, right)
 
@@ -295,6 +352,13 @@ class AlfredLiftTeleopModule(ArmBaseTeleopModule):
             return
 
         self._publish_safe_base_command()
+        self._refresh_lift_status(now)
+
+        if not self._lift_homed:
+            if a_rising:
+                self._request_homing()
+            return
+
         if left is None or self._lift_target is None:
             return
         y = left.thumbstick.y
