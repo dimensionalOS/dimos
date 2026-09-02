@@ -1,7 +1,7 @@
 # DimOS installer — branch `aaryan/installer` — handoff
 
 Read this first. It has everything another window or machine needs to continue or test. Last
-updated 2026-09-01 (see the log at the bottom).
+updated 2026-09-02 (see the log at the bottom).
 
 ## What this branch is
 
@@ -328,3 +328,30 @@ the earlier PRD (Paul, Ivan, Jeff, Stash, Jetson Wu) are dispositioned in the kn
   tests also passed natively on the Mac. Final musl cross-builds were static and stripped: aarch64
   hash above; x86_64 SHA-256 `402219cd2ebf68213ae0aaffee477e2171d73494fc5a79e075dbdda531b80f8d`.
   The container harness remains unrun because the Linux test host has neither Docker nor Podman.
+- 2026-09-02 — re-run at `f367644a` from a fresh clone on `dimensional-67oe` (Ubuntu 24.04 x86_64),
+  yesterday's install left in place, target `/home/dimos/dimos-installer-acceptance-2`. `cargo build
+  --release -p dimos-installer` → `dimos 0.0.14b1`. Dry-run exit 0, nothing created; real setup exit 0
+  in 14 s (clone + `uv sync`, warm cache) and installer.json now names the new dir; second setup exit 0
+  with every mutating stage already and the applied count held at 32; `update --dry-run` 0; native
+  `dimos list` 130 lines; the venv's `dimos update --dry-run` 0; `robot scan --timeout 3` → no robots,
+  0. `service setup unitree-go2` exit 2 (no tty, no `DIMOS_SUDO_PASSWORD`; the unit must be rewritten
+  because the venv path moved) and `service status` warn-only 0. Gates: 269 + 4 + 3 tests, clippy
+  `-D warnings`, fmt, 16 pytest cases in the new venv. Cross-build from this Linux box works: nix
+  `rustup target add aarch64-unknown-linux-musl`, zig 0.16.0 + cargo-zigbuild 0.23.0 from the nix
+  store, `cargo zigbuild --release --target aarch64-unknown-linux-musl` in 17 s → static, stripped,
+  SHA-256 `70749c6a73f7c320825c40459ef5b08277424751298dbf7dba1ac024b53ed6d6`.
+- 2026-09-02 — Jetson `orin-nx-7837` FRESH at `f367644a` with that binary. Before: its checkout sat at
+  `92e0a03e`, five commits behind, so `update --dry-run` planned `git pull --ff-only` + `uv sync` and
+  exited 1 — `dry_run_exit` returns 1 whenever a non-check stage is pending (tested), which README's
+  exit-code line does not say. Then `uninstall --yes` removed both units, sysctl, memlock, binary and
+  config (exit 0) and the acceptance dir was removed by hand. The binary was staged with scp and served
+  as `DIMOS_INSTALLER_URL=file:///home/dimensional/dist` (curl accepts it; a LAN http server was not
+  available from this seat). Bootstrap dry-run exit 0, nothing created; real bootstrap exit 0 in 36 s,
+  10 stages, applied 17; second setup and `hardware jetson setup` ×2 all already, 17 held; `update
+  --dry-run` 0; `dimos list` 130; venv forward 0. After `sudo reboot`: MAXN_SUPER, both units enabled
+  and active, the four persisted file hashes unchanged, `update --dry-run` 0, applied still 17.
+  Seen, not fixed: a NeedsHuman stage prints its fix block twice (`report_stage`, then
+  `Report::print` re-warns `needs_human()`); uninstall's last action removes installer.jsonl and the
+  executor then logs that action, so a 2-line log survives (2 of the 17 above). Mac `10.0.0.167`:
+  ssh refused the supplied password, not run. Review Desktop on this box needs `chrome-sandbox`
+  root-owned (Ubuntu 24.04 restricts unprivileged user namespaces).
