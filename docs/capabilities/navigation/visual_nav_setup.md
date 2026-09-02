@@ -6,13 +6,13 @@ This guide helps you set up a camera-based navigation system.
 
 # ⚠️ What Works and What Does Not
 
-Let me be up front about what works and what does not. All camera-based systems are worse than a good 360 lidar, like the mid360. You can build production-quality navigation with cameras alone, but only if we do it carefully.
+Let me be up front about performance. As of 2026, for robots moving at human speeds indoors, effectively all camera-based systems are worse than a good 360 lidar. We can still build a production-quality navigation with cameras alone, but only if we do it carefully.
 
-A regular mono raspberry pi camera facing forward on a humanoid, with no data from the motors, is basically impossible to get to get a real time production-grade map out of as of 2026. A wheeled robot with motor encoders and a downward-facing RealSense depth camera can do some pretty cool stuff.
+A regular mono raspberry pi camera facing forward on a humanoid, with no data from the motors, is basically impossible to get to get a real time production-grade map out of. However a wheeled robot with motor encoders and a downward-facing RealSense depth camera can do some pretty cool stuff.
 
 Use these rules of thumb:
 
-- We need good odometry first.
+- We need to create good odometry first.
 - To make a good map, we need a depth camera and good odometry.
 - Calibration is the difference between incredible and useless. Some cameras, including RealSense cameras, arrive with intrinsics pre-calibrated. Look online for how to calibrate the intrinsics for you camera.
 - Make sure everything on your robot is stiff. Flexing and wobble between sensors can ruin performance.

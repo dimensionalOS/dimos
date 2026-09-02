@@ -511,10 +511,10 @@ tests-self-hosted = [
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
     # dim_slam's visual odometry, replayed in-process by test_dim_odom_replay.
-    # There is no sdist (proprietary source). 0.1.6 renamed the fusion key
-    # `constraint_twist_variances` to `per_dimension_error_variance`; 0.1.5 accepts the new
-    # name and silently drops it, so a ground robot's vz/roll/pitch pin never applies.
-    "dim-odom>=0.1.6; (sys_platform == 'linux' and (platform_machine == 'x86_64' or platform_machine == 'aarch64')) or (sys_platform == 'darwin' and platform_machine == 'arm64')",
+    # 0.1.6 renamed the fusion key `constraint_twist_variances` to
+    # `per_dimension_error_variance`; 0.1.5 accepts the new name and silently drops it, so a
+    # ground robot's vz/roll/pitch pin never applies.
+    "dim-odom>=0.1.6",
 ]
 docs = [
     "mkdocs-awesome-nav>=3.3.0",
