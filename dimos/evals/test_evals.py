@@ -48,12 +48,10 @@ from dimos.evals.environments.sim import Sim
 from dimos.evals.runner import EvalRunner
 from dimos.evals.scorers import (
     choice,
-    coord_list,
     exact,
     final,
     first_number,
     floor,
-    matched_set,
     mean,
     ramp,
     within,
@@ -244,23 +242,6 @@ def test_parsers() -> None:
     assert compass("north-east") == "northeast"  # not "east"
     with pytest.raises(ValueError):
         compass("no idea")
-    assert coord_list("9.0,4.1,+0.25\n(1, 2)") == [(9.0, 4.1, 0.25), (1.0, 2.0)]
-    assert coord_list("0 areas at all: none") == []  # one number a line is prose
-    assert coord_list("the floor is level") == []
-    with pytest.raises(ValueError):
-        coord_list("somewhere over there")
-
-
-def test_matched_set_is_f1_over_paired_points() -> None:
-    score = matched_set(0.5)
-    assert score([], []) == 1.0  # none, correctly
-    assert score([(0.0, 0.0)], []) == 0.0 and score([], [(0.0, 0.0)]) == 0.0
-    assert score([(0.0, 0.0), (5.0, 5.0)], [(0.1, 0.0), (5.0, 5.2)]) == 1.0
-    assert score([(0.0, 0.0), (5.0, 5.0)], [(0.1, 0.0)]) == pytest.approx(2 / 3)  # a miss
-    assert score([(0.0, 0.0)], [(0.1, 0.0), (9.0, 9.0)]) == pytest.approx(2 / 3)  # an extra
-    assert score([(0.0, 0.0)], [(0.0, 0.0), (0.1, 0.1)]) == pytest.approx(2 / 3), "no reuse"
-    valued = matched_set(0.5, value_band=1.0)
-    assert valued([(0.0, 0.0, 2.0)], [(0.0, 0.0, 2.5)]) == 0.5  # right place, half the rise
 
 
 def test_generated_rows_become_cases(dataset: str, tmp_path: Path) -> None:
@@ -270,7 +251,7 @@ def test_generated_rows_become_cases(dataset: str, tmp_path: Path) -> None:
     def row(**fields: Any) -> generate.Row:
         return {"id": fields["id"], "family": "f", "q": "?", "dataset": dataset, **fields}
 
-    numeric, mcq, coords = generate.cases(
+    numeric, mcq = generate.cases(
         [
             row(
                 id="n",
@@ -287,22 +268,20 @@ def test_generated_rows_become_cases(dataset: str, tmp_path: Path) -> None:
                 choices=["north", "south"],
                 context=[["odom", [0, 10]]],
             ),
-            row(id="c", type="coords", a=[[1.0, 2.0]], radius=0.5, context=[["odom", [0, 10]]]),
         ],
-        tags=frozenset({"pointcloud"}),
+        tags=frozenset({"odom"}),
     )
 
     def score(case: EvalCase, answer: str) -> float:
         return case.grade(Outcome(trajectory=_trajectory(answer, tmp_path), artifacts={}))
 
-    assert numeric.tags == {"pointcloud", "f", "numeric", "holdout"} and mcq.tags == {
-        "pointcloud",
-        "f",
-        "mcq",
-    }
+    assert numeric.tags == {"odom", "f", "numeric", "holdout"} and mcq.tags == {"odom", "f", "mcq"}
     assert score(numeric, "about 3.5") == 0.5 and score(numeric, "no idea") == 0.0
     assert score(mcq, "South, then north.") == 1.0 and score(mcq, "east") == 0.0
-    assert score(coords, "1.1, 2.0") == 1.0 and score(coords, "none") == 0.0
+    with pytest.raises(ValueError):
+        generate.cases([row(id="x", type="coords", a=[], context=[["odom", [0, 10]]])])
+    with pytest.raises(ValueError):
+        generate.cases([row(id="x", type="numeric", a=1, band=1, context=[["odom", [0, 1], {}]])])
     store = _open_store(Path(dataset))
     running = numeric.environment.start("")
     try:

@@ -44,7 +44,7 @@ import numpy as np
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
-from dimos.evals.suites.lib import generate
+from dimos.evals.suites.pointcloud.lib import generate
 from dimos.evals.types import Suite
 
 _JSON = Path(__file__).parent / "go2_pointcloud_gap_width.json"

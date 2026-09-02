@@ -36,8 +36,8 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.evals.suites.lib import generate
 from dimos.evals.suites.pointcloud import go2_pointcloud_free_range as fr
+from dimos.evals.suites.pointcloud.lib import generate
 from dimos.evals.types import Suite
 
 _JSON = Path(__file__).parent / "go2_pointcloud_free_range_holdout.json"
