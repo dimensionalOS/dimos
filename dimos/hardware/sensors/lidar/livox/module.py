@@ -44,6 +44,7 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_HOST_IMU_DATA_PORT,
     SDK_HOST_POINT_DATA_PORT,
     SDK_IMU_DATA_PORT,
+    SDK_MULTICAST_GROUP,
     SDK_POINT_DATA_PORT,
 )
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -71,7 +72,7 @@ class Mid360Config(NativeModuleConfig):
     # Multicast group the device streams to. None receives unicast only, which
     # loopback replay needs and macOS requires (see virtual_mid360).
     multicast_ip: str | None = Field(
-        default_factory=lambda: None if sys.platform == "darwin" else "224.1.1.5"
+        default_factory=lambda: None if sys.platform == "darwin" else SDK_MULTICAST_GROUP
     )
     # Wire layout per point:
     #   "minimal" x,y,z,offset_time                    - 16 B (default)

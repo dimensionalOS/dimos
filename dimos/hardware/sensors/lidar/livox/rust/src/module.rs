@@ -29,8 +29,7 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 
 /// Python's `None`, sent as a JSON null under a key that is always present.
-/// native_config forbids `Option` so an absent key can't pass as None. The
-/// hand-written deserializer keeps a missing key an error, where anything
+/// The hand-written deserializer keeps a missing key an error, where anything
 /// `Option`-shaped would silently read it as None.
 #[derive(Debug, Clone, Serialize)]
 #[serde(transparent)]

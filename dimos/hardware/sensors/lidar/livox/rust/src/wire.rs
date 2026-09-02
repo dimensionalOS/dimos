@@ -27,7 +27,6 @@ pub const LIDAR_CMD_PORT: u16 = 56100;
 pub const LIDAR_PUSH_MSG_PORT: u16 = 56200;
 pub const LIDAR_POINT_PORT: u16 = 56300;
 pub const LIDAR_IMU_PORT: u16 = 56400;
-pub const HOST_CMD_PORT: u16 = 56101;
 pub const HOST_PUSH_MSG_PORT: u16 = 56201;
 pub const HOST_POINT_PORT: u16 = 56301;
 pub const HOST_IMU_PORT: u16 = 56401;
@@ -573,19 +572,6 @@ pub fn build_points_high(points: &[PointHigh]) -> Vec<u8> {
     out
 }
 
-/// Serialize low-precision points into a data payload for `DataPacket::build`.
-pub fn build_points_low(points: &[PointLow]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(points.len() * POINT_LOW_LEN);
-    for p in points {
-        out.extend_from_slice(&p.x_cm.to_le_bytes());
-        out.extend_from_slice(&p.y_cm.to_le_bytes());
-        out.extend_from_slice(&p.z_cm.to_le_bytes());
-        out.push(p.reflectivity);
-        out.push(p.tag);
-    }
-    out
-}
-
 /// Serialize IMU samples into a data payload for `DataPacket::build`.
 pub fn build_imu_samples(samples: &[ImuSample]) -> Vec<u8> {
     let mut out = Vec::with_capacity(samples.len() * IMU_SAMPLE_LEN);
@@ -642,28 +628,6 @@ mod tests {
         shift_timestamp_ns(&mut bytes, 50);
         assert_eq!(read_timestamp_ns(&bytes), Some(packet.timestamp_ns + 50));
         assert!(DataPacket::parse(&bytes).is_ok());
-
-        let low = [PointLow {
-            x_cm: 150,
-            y_cm: -250,
-            z_cm: 30,
-            reflectivity: 128,
-            tag: 1,
-        }];
-        let low_payload = build_points_low(&low);
-        let low_bytes = DataPacket {
-            time_interval: 1000,
-            dot_num: 1,
-            udp_cnt: 0,
-            frame_cnt: 0,
-            data_type: DataType::CartesianLow,
-            time_type: 0,
-            timestamp_ns: 5,
-            payload: &low_payload,
-        }
-        .build();
-        let low_parsed = DataPacket::parse(&low_bytes).unwrap();
-        assert_eq!(low_parsed.points_low().collect::<Vec<_>>(), low);
 
         let samples = [ImuSample {
             gyro: [0.01, -0.02, 0.03],

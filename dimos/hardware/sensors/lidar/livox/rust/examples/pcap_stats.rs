@@ -15,10 +15,49 @@
 // Replay a Mid-360 pcap through PcapSource + FrameAssembler and print
 // stream statistics. Quick sanity check for any capture:
 //   cargo run --release -p dimos-livox --example pcap_stats -- <pcap>
+//
+// Everything is a running fold, so memory stays flat for any capture size.
 
-use dimos_livox::pipeline::{imu_records, FrameAssembler, PacketSource};
+use dimos_livox::pipeline::{imu_records, Frame, FrameAssembler, PacketSource};
 use dimos_livox::wire::{self, DataPacket, DataType};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+#[derive(Default)]
+struct FrameStats {
+    count: u64,
+    total_points: u64,
+    min_points: u64,
+    max_points: u64,
+    first_start_ns: u64,
+    last_start_ns: u64,
+    unsorted: u64,
+    max_offset_ns: u32,
+}
+
+impl FrameStats {
+    fn note(&mut self, frame: &Frame) {
+        let points = frame.points.len() as u64;
+        if self.count == 0 {
+            self.first_start_ns = frame.start_ns;
+            self.min_points = points;
+        }
+        self.count += 1;
+        self.total_points += points;
+        self.min_points = self.min_points.min(points);
+        self.max_points = self.max_points.max(points);
+        self.last_start_ns = frame.start_ns;
+        let sorted = frame
+            .points
+            .windows(2)
+            .all(|w| w[0].offset_ns <= w[1].offset_ns);
+        if !sorted {
+            self.unsorted += 1;
+        }
+        if let Some(max) = frame.points.iter().map(|p| p.offset_ns).max() {
+            self.max_offset_ns = self.max_offset_ns.max(max);
+        }
+    }
+}
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: pcap_stats <pcap>");
@@ -36,12 +75,14 @@ fn main() {
     let mut imu_packets = 0u64;
     let mut imu_samples = 0u64;
     let mut bad_packets = 0u64;
-    let mut frames = Vec::new();
     let mut first_imu = None;
     let mut last_imu = None;
+    let mut stats = FrameStats::default();
+    let mut frame_time_sum = 0f64;
+    let mut frame_time_max = Duration::ZERO;
+    let mut frame_times = 0u64;
     let started = Instant::now();
     let mut frame_started = started;
-    let mut frame_times = Vec::new();
 
     while let Some(len) = source.recv(&mut buf) {
         let packet = match DataPacket::parse(&buf[..len]) {
@@ -63,25 +104,22 @@ fn main() {
             _ => {
                 point_packets += 1;
                 if let Some(frame) = assembler.push(&packet) {
-                    frame_times.push(frame_started.elapsed());
+                    let elapsed = frame_started.elapsed();
+                    frame_time_sum += elapsed.as_secs_f64();
+                    frame_time_max = frame_time_max.max(elapsed);
+                    frame_times += 1;
                     frame_started = Instant::now();
-                    frames.push(frame);
+                    stats.note(&frame);
                 }
             }
         }
     }
-    frames.extend(assembler.flush());
+    if let Some(frame) = assembler.flush() {
+        stats.note(&frame);
+    }
     let total_time = started.elapsed();
 
-    let total_points: usize = frames.iter().map(|f| f.points.len()).sum();
-    let first = frames.first().map(|f| f.start_ns).unwrap_or(0);
-    let last = frames.last().map(|f| f.start_ns).unwrap_or(0);
-    let span_s = (last.saturating_sub(first)) as f64 / 1e9;
-    let monotonic = frames.iter().all(|f| {
-        f.points
-            .windows(2)
-            .all(|w| w[0].offset_ns <= w[1].offset_ns)
-    });
+    let span_s = (stats.last_start_ns.saturating_sub(stats.first_start_ns)) as f64 / 1e9;
 
     println!("point packets:   {point_packets}");
     println!("imu packets:     {imu_packets} ({imu_samples} samples)");
@@ -89,42 +127,38 @@ fn main() {
     println!(
         "processing:      {:.0} ms total, {:.2} M pts/s",
         total_time.as_secs_f64() * 1e3,
-        total_points as f64 / total_time.as_secs_f64() / 1e6
+        stats.total_points as f64 / total_time.as_secs_f64() / 1e6
     );
-    if !frame_times.is_empty() {
-        let sum: f64 = frame_times.iter().map(|t| t.as_secs_f64()).sum();
-        let max = frame_times.iter().max().unwrap();
+    if frame_times > 0 {
         println!(
             "frame process:   {:.3} ms avg, {:.3} ms max",
-            sum / frame_times.len() as f64 * 1e3,
-            max.as_secs_f64() * 1e3
+            frame_time_sum / frame_times as f64 * 1e3,
+            frame_time_max.as_secs_f64() * 1e3
         );
     }
     println!(
         "frames:          {} over {span_s:.1} s of sensor time",
-        frames.len()
+        stats.count
     );
-    if !frames.is_empty() {
-        if frames.len() > 1 && span_s > 0.0 {
+    if stats.count > 0 {
+        if stats.count > 1 && span_s > 0.0 {
             println!(
                 "frame rate:      {:.2} Hz (data time)",
-                (frames.len() - 1) as f64 / span_s
+                (stats.count - 1) as f64 / span_s
             );
         } else {
             println!("frame rate:      n/a (single frame)");
         }
         println!(
-            "points/frame:    {:.0} avg",
-            total_points as f64 / frames.len() as f64
+            "points/frame:    {:.0} avg ({}..{})",
+            stats.total_points as f64 / stats.count as f64,
+            stats.min_points,
+            stats.max_points
         );
-        println!("offsets sorted:  {monotonic}");
-        let f = &frames[frames.len() / 2];
-        let max_off = f.points.iter().map(|p| p.offset_ns).max().unwrap_or(0);
+        println!("offsets sorted:  {}", stats.unsorted == 0);
         println!(
-            "mid frame:       {} pts, start {:.3} s, max offset {:.1} ms",
-            f.points.len(),
-            f.start_ns as f64 / 1e9,
-            max_off as f64 / 1e6
+            "max offset:      {:.1} ms",
+            stats.max_offset_ns as f64 / 1e6
         );
     }
     if let (Some(a), Some(b)) = (first_imu, last_imu) {

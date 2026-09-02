@@ -17,8 +17,7 @@
 //!
 //! The lidar address comes from config, so there is no passive discovery
 //! phase: the handshake commands `lidar_ip:cmd_port` directly with retries,
-//! the same information the SDK2 search step would produce. Works unchanged
-//! against a real sensor on its subnet and against virtual_mid360 on loopback.
+//! the same information the SDK2 search step would produce.
 
 use crate::pipeline::PacketSource;
 use crate::wire::{

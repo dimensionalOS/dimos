@@ -38,6 +38,7 @@ from dimos.hardware.sensors.lidar.livox.module import Mid360Config
 from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_HOST_POINT_DATA_PORT,
     SDK_IMU_DATA_PORT,
+    SDK_MULTICAST_GROUP,
     SDK_POINT_DATA_PORT,
 )
 from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360Config
@@ -49,15 +50,21 @@ _RELEASE = DIMOS_PROJECT_ROOT / "target" / "release"
 
 GRAVITY_MS2 = 9.80665
 
+# Livox data-plane wire sizes, matching rust/src/wire.rs.
+POINT_SIZE = 14
+IMU_SAMPLE_SIZE = 24
+DATA_HEADER_SIZE = 36
+UDP_PROTOCOL = 17
+
 Spawn = Callable[[Path, dict[str, object]], "subprocess.Popen[bytes]"]
 
 
 def _data_packet(data_type: int, time_interval: int, ts_ns: int, payload: bytes) -> bytes:
-    count = len(payload) // (14 if data_type == 1 else 24)
+    count = len(payload) // (POINT_SIZE if data_type == 1 else IMU_SAMPLE_SIZE)
     header = struct.pack(
         "<BHHHHBBB12xIQ",
         0,  # version
-        36 + len(payload),
+        DATA_HEADER_SIZE + len(payload),
         time_interval,  # 0.1 us units
         count,
         0,  # udp_cnt
@@ -72,7 +79,7 @@ def _data_packet(data_type: int, time_interval: int, ts_ns: int, payload: bytes)
 
 def _udp_record(ts: float, src_port: int, payload: bytes) -> bytes:
     udp = struct.pack(">HHHH", src_port, SDK_HOST_POINT_DATA_PORT, 8 + len(payload), 0) + payload
-    ip = struct.pack(">BBHHHBBH", 0x45, 0, 20 + len(udp), 0, 0, 64, 17, 0) + bytes(8)
+    ip = struct.pack(">BBHHHBBH", 0x45, 0, 20 + len(udp), 0, 0, 64, UDP_PROTOCOL, 0) + bytes(8)
     frame = bytes(12) + b"\x08\x00" + ip + udp
     return struct.pack("<IIII", int(ts), int((ts % 1) * 1e6), len(frame), len(frame)) + frame
 
@@ -153,7 +160,9 @@ def spawn() -> Generator[Spawn]:
             process.kill()
 
 
-def _collect(topics: dict[str, type], seconds: float, enough: dict[str, int]) -> dict[str, list]:
+def _collect(
+    topics: dict[str, type[PointCloud2 | Imu]], seconds: float, enough: dict[str, int]
+) -> dict[str, list[PointCloud2 | Imu]]:
     """Decode each topic until every count in enough is met or time runs out."""
     raw: dict[str, list[bytes]] = {topic: [] for topic in topics}
     lc = lcm_module.LCM()
@@ -239,7 +248,7 @@ def test_live_loopback_handshake_and_stream(spawn: Spawn, synth_pcap: Path) -> N
         delay=1.0,
         lidar_ip="127.0.0.1",
         host_ip="127.0.0.1",
-        mcast_data="224.1.1.5",
+        mcast_data=SDK_MULTICAST_GROUP,
     )
     virtual_blob = {
         "topics": {},
