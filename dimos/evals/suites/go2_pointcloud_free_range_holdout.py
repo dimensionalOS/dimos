@@ -40,7 +40,7 @@ from dimos.evals.suites import go2_pointcloud_free_range as fr
 from dimos.evals.suites.lib import generate
 from dimos.evals.types import Suite
 
-_JSON = Path(__file__).parent / "go2_pointcloud_free_range_holdout_vqa.json"
+_JSON = Path(__file__).parent / "go2_pointcloud_free_range_holdout.json"
 
 SUITE: Suite = generate.cases(
     json.loads(_JSON.read_text()), tags=frozenset({"pointcloud", "holdout"})

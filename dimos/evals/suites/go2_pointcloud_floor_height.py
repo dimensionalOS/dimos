@@ -15,7 +15,7 @@
 
 """Off-level floor near the robot — VQA over the go2 replays.
 
-Rows (``go2_pointcloud_floor_height_vqa.json``) are pure data emitted by
+Rows (``go2_pointcloud_floor_height.json``) are pure data emitted by
 :func:`rows` — ground truth read off the full-resolution cloud, quizzing
 whatever lossy encoding the agent receives for a ``PointCloud2``.
 
@@ -49,7 +49,7 @@ from scipy import ndimage
 from dimos.evals.suites.lib import generate
 from dimos.evals.types import Suite
 
-_JSON = Path(__file__).parent / "go2_pointcloud_floor_height_vqa.json"
+_JSON = Path(__file__).parent / "go2_pointcloud_floor_height.json"
 
 SUITE: Suite = generate.cases(json.loads(_JSON.read_text()), tags=frozenset({"pointcloud"}))
 

@@ -43,7 +43,7 @@ from pathlib import Path
 from dimos.evals.suites.lib import generate
 from dimos.evals.types import Suite
 
-_JSON = Path(__file__).parent / "go2_pointcloud_stairs_vqa.json"
+_JSON = Path(__file__).parent / "go2_pointcloud_stairs.json"
 
 # Hand-authored rows, tagged holdout: for testing an encoding, never for tuning one.
 SUITE: Suite = generate.cases(
