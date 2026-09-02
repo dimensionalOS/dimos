@@ -134,6 +134,19 @@ function frameQueue(
   };
 }
 
+/** Robot control carrier messages: @control frames arriving back-to-back on
+ * the one relay-opened uni stream (payloads reuse the datagram encoding). */
+function robotControl(wt: WebTransport): () => Promise<Msg> {
+  const nextFrame = frameQueue(wt);
+  return async () => {
+    const { header, payload } = await nextFrame();
+    assertEquals(header.ch, CONTROL_CHANNEL);
+    const msg = decodeDatagram(payload);
+    assert(msg !== null, "undecodable @control payload");
+    return msg;
+  };
+}
+
 async function sendRobotFrame(robot: WebTransport, header: FrameHeader, payload: Uint8Array) {
   const stream = await robot.createBidirectionalStream();
   const writer = stream.writable.getWriter();
@@ -151,7 +164,7 @@ async function sendRobotHello(robot: WebTransport, msg: Msg) {
   );
 }
 
-/** Next datagram of type `t` (skips interleaved periodic subs resends). */
+/** Next message of type `t`, skipping interleaved messages of other types. */
 async function nextOfType(next: () => Promise<Msg>, t: Msg["t"], what: string): Promise<Msg> {
   let msg: Msg;
   do {
@@ -405,31 +418,31 @@ Deno.test({
   const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
   await within(robot.ready, "robot connect");
   const robotDatagrams = datagramQueue(robot.datagrams.readable);
+  const robotCtrl = robotControl(robot);
 
-  await t.step("robot hello (@control stream frame) -> welcome + baseline subs", async () => {
-    await sendRobotHello(robot, {
-      t: "hello",
-      v: PROTOCOL_VERSION,
-      role: "robot",
-      robot: ROBOT,
-      manifest: MANIFEST,
-    });
-    // Registration and welcome are separate datagrams, so their relative
-    // arrival is not a protocol guarantee.
-    const replies = [
-      await within(robotDatagrams(), "robot hello reply"),
-      await within(robotDatagrams(), "robot hello reply"),
-    ];
-    assertEquals(replies.find((msg) => msg.t === "welcome"), {
-      t: "welcome",
-      v: PROTOCOL_VERSION,
-    });
-    assertEquals(replies.find((msg) => msg.t === "subs"), {
-      t: "subs",
-      chs: [],
-      n: 1,
-    });
-  });
+  await t.step(
+    "robot hello (@control stream frame) -> welcome + carrier baseline subs",
+    async () => {
+      await sendRobotHello(robot, {
+        t: "hello",
+        v: PROTOCOL_VERSION,
+        role: "robot",
+        robot: ROBOT,
+        manifest: MANIFEST,
+      });
+      assertEquals(await within(robotDatagrams(), "robot welcome"), {
+        t: "welcome",
+        v: PROTOCOL_VERSION,
+      });
+      // Registration always forces a baseline snapshot (the empty set included)
+      // as the first frame of the relay-opened robot control carrier.
+      assertEquals(await within(robotCtrl(), "carrier baseline subs"), {
+        t: "subs",
+        chs: [],
+        n: 1,
+      });
+    },
+  );
 
   await t.step("a repeated identical hello re-sends welcome (lost-welcome healing)", async () => {
     await sendRobotHello(robot, {
@@ -464,10 +477,29 @@ Deno.test({
     // One snapshot per sub message; skip ahead to the full set.
     let subs: Msg;
     do {
-      subs = await within(robotDatagrams(), "subs snapshot");
+      subs = await within(robotCtrl(), "subs snapshot");
     } while (subs.t === "subs" && subs.chs.length < 2);
     assert(subs.t === "subs");
     assertEquals(subs.chs, ["color_image", "odom"]);
+  });
+
+  await t.step("rapid sub/unsub churn converges to the exact final set", async () => {
+    // Every message below flips the active set, so each produces exactly one
+    // snapshot; the ordered carrier must deliver all 12 with the final set
+    // last (nothing lost, nothing reordered).
+    for (let i = 0; i < 5; i++) {
+      await controlWriter.write(encodeControlFrame({ t: "unsub", ch: "odom" }));
+      await controlWriter.write(encodeControlFrame({ t: "sub", ch: "odom" }));
+    }
+    await controlWriter.write(encodeControlFrame({ t: "unsub", ch: "color_image" }));
+    await controlWriter.write(encodeControlFrame({ t: "sub", ch: "color_image" }));
+    let subs: Msg | null = null;
+    for (let i = 0; i < 12; i++) subs = await within(robotCtrl(), `churn snapshot ${i}`);
+    assert(subs !== null && subs.t === "subs");
+    assertEquals(subs.chs, ["color_image", "odom"]);
+    // The relay's own view agrees (lastChs feeds perRobot.subs).
+    const stats = await (await fetch(`${httpBase}/api/stats`)).json();
+    assertEquals(stats.perRobot[ROBOT.id].subs, ["color_image", "odom"]);
   });
 
   await t.step("robot frames fan out to the viewer on uni streams", async () => {
@@ -818,10 +850,14 @@ Deno.test({
     const wt = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
     await within(wt.ready, "fat connect");
     const datagrams = datagramQueue(wt.datagrams.readable);
+    const fatCtrl = robotControl(wt);
+    // Ids long enough that the full 40-channel subs snapshot also exceeds
+    // the old datagram budget, not just the hello.
+    const fatChs = Array.from({ length: 40 }, (_, i) => `ch_${i}_${"pad".repeat(8)}`);
     const fatManifest: RobotManifest = {
       version: 1,
-      channels: Array.from({ length: 40 }, (_, i) => ({
-        ch: `ch_${i}`,
+      channels: fatChs.map((ch, i) => ({
+        ch,
         encoding: "pose.json.v1",
         delivery: "reliable",
         maxHz: 10.5,
@@ -852,6 +888,20 @@ Deno.test({
       msg = await within(next(), "fat manifest reply");
     } while (msg.t !== "manifest");
     assertEquals(msg.manifest, fatManifest);
+
+    // Subscribing to every channel produces a snapshot far beyond the old
+    // datagram budget; the carrier must deliver it whole and exact.
+    for (const ch of fatChs) await writer.write(encodeControlFrame({ t: "sub", ch }));
+    let subs: Msg;
+    do {
+      subs = await within(fatCtrl(), "fat subs snapshot");
+    } while (subs.t === "subs" && subs.chs.length < fatChs.length);
+    assert(subs.t === "subs");
+    assertEquals(subs.chs, [...fatChs].sort());
+    assert(
+      encodeDatagram(subs).byteLength > 1200,
+      "fat snapshot must exceed the old datagram budget",
+    );
     fatViewer.close();
     wt.close();
   });

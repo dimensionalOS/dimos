@@ -222,8 +222,9 @@ class Unsub(_WireModel):
 class Subs(_WireModel):
     """Relay->robot: the full set of channels with >= 1 subscribed viewer.
 
-    A snapshot (not a delta) because it rides lossy datagrams: any single
-    delivery heals the state. `n` is monotonic per robot; receivers ignore
+    Sent as an @control frame on the reliable robot control carrier. Still a
+    snapshot (not a delta): any single delivery heals the state after a
+    reconnect. `n` is monotonic per robot registration; receivers ignore
     stale/reordered snapshots.
     """
 
