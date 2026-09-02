@@ -26,7 +26,7 @@ the cap — the clearing is the whole southern arc.
 
 Regenerate the context window (needs the recording; keeps the label)::
 
-    uv run python -m dimos.evals.suites.go2_pointcloud_free_range_holdout
+    uv run python -m dimos.evals.suites.pointcloud.go2_pointcloud_free_range_holdout
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ from pathlib import Path
 
 import numpy as np
 
-from dimos.evals.suites import go2_pointcloud_free_range as fr
 from dimos.evals.suites.lib import generate
+from dimos.evals.suites.pointcloud import go2_pointcloud_free_range as fr
 from dimos.evals.types import Suite
 
 _JSON = Path(__file__).parent / "go2_pointcloud_free_range_holdout.json"

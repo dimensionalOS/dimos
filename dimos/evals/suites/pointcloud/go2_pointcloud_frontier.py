@@ -29,7 +29,7 @@ says the spot is unmapped but never which kind it is.
 
 Regenerate (needs the recordings)::
 
-    uv run python -m dimos.evals.suites.go2_pointcloud_frontier
+    uv run python -m dimos.evals.suites.pointcloud.go2_pointcloud_frontier
 """
 
 from __future__ import annotations

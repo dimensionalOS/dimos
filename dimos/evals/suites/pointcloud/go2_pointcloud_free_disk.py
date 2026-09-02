@@ -32,7 +32,7 @@ Ten hand-picked rows, tagged ``train``.
 
 Regenerate (needs the three recordings)::
 
-    uv run python -m dimos.evals.suites.go2_pointcloud_free_disk
+    uv run python -m dimos.evals.suites.pointcloud.go2_pointcloud_free_disk
 """
 
 from __future__ import annotations

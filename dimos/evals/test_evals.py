@@ -792,6 +792,10 @@ def test_suites_and_agents_importable() -> None:
         dimsim_house,
         dimsim_pointcloud_mapping,
         examples,
+        go2_smoke,
+        go2_vqa,
+    )
+    from dimos.evals.suites.pointcloud import (
         go2_pointcloud,
         go2_pointcloud_clearance,
         go2_pointcloud_doorway,
@@ -806,8 +810,6 @@ def test_suites_and_agents_importable() -> None:
         go2_pointcloud_rooms,
         go2_pointcloud_route,
         go2_pointcloud_stairs,
-        go2_smoke,
-        go2_vqa,
     )
 
     for module in (

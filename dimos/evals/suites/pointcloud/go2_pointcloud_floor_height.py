@@ -34,7 +34,7 @@ Ten hand-picked rows, tagged ``train``: too few to slice.
 
 Regenerate (needs the recordings)::
 
-    uv run python -m dimos.evals.suites.go2_pointcloud_floor_height
+    uv run python -m dimos.evals.suites.pointcloud.go2_pointcloud_floor_height
 """
 
 from __future__ import annotations
