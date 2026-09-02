@@ -86,21 +86,26 @@ adapters:
 ```python
 from dimos.robot.assets.model import RobotModel
 
-model = RobotModel.from_file(
-    model_path,
-    package_paths=package_paths,
-    xacro_args={"limited": "true"},
-).with_fixed_frame(
-    name="tool_center_point",
-    parent="tool_flange",
-    xyz=(0.1, 0.0, 0.0),
+model = (
+    RobotModel.from_file(
+        model_path,
+        package_paths=package_paths,
+        xacro_args={"limited": "true"},
+    )
+    .with_fixed_joints("finger_joint")
+    .with_fixed_frame(
+        "tool_center_point",
+        "tool_flange",
+        xyz=(0.1, 0.0, 0.0),
+    )
 )
 ```
 
 `RobotModel` is lazy and pickle-safe. It expands Xacro, resolves package URIs,
 and applies model edits when a backend first calls `load()`. Chained fixed
-frames may use earlier additions as parents. Expanded XML stays in memory and
-is not sent across worker boundaries.
+frames may use earlier additions as parents. Fixed joints retain their links
+and geometry at the URDF zero pose without contributing a model degree of
+freedom. Expanded XML stays in memory and is not sent across worker boundaries.
 
 Keep consumer-specific processing outside this module. For example, Drake-specific
 cleanup and optional mesh conversion still belong in

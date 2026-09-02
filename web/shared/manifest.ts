@@ -71,6 +71,10 @@ export const MANIFEST_VERSION = 1;
 /** Bound for channel/panel ids, encodings, and panel kinds. */
 export const MAX_MANIFEST_ID_LEN = 64;
 
+/** Channel ids with this prefix belong to protocol control (e.g. @control)
+ * and can never be declared by a manifest. */
+export const RESERVED_CHANNEL_PREFIX = "@";
+
 export class ManifestError extends Error {
   constructor(readonly code: string, message: string) {
     super(`${code}: ${message}`);
@@ -222,6 +226,12 @@ export function parseManifest(value: unknown): Manifest {
         `channel id must be 1..${MAX_MANIFEST_ID_LEN} chars`,
       );
     }
+    if (spec.ch.startsWith(RESERVED_CHANNEL_PREFIX)) {
+      throw new ManifestError(
+        "reserved_channel_id",
+        `channel ids beginning with ${RESERVED_CHANNEL_PREFIX} are reserved for protocol control`,
+      );
+    }
     if (chIds.has(spec.ch)) {
       throw new ManifestError("duplicate_channel_id", `duplicate channel ${spec.ch}`);
     }
@@ -304,6 +314,21 @@ export function parseManifest(value: unknown): Manifest {
             `map2d panel ${panel.id} pose channel must be a pose.json.v1 rx channel`,
           );
         }
+      }
+    }
+    if (panel.kind === "teleop") {
+      if (panel.channels.length !== 1) {
+        throw new ManifestError(
+          "invalid_teleop_panel",
+          `teleop panel ${panel.id} must bind exactly one channel`,
+        );
+      }
+      const cmd = chIds.get(panel.channels[0])!;
+      if (cmd.encoding !== "twist.json.v1" || cmd.delivery !== "latest" || dirOf(cmd) !== "tx") {
+        throw new ManifestError(
+          "invalid_teleop_panel",
+          `teleop panel ${panel.id} needs a twist.json.v1 latest tx channel`,
+        );
       }
     }
   }

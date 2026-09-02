@@ -19,6 +19,7 @@ from __future__ import annotations
 import can_motor_control
 from can_motor_control import damiao
 
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.robot.assets.model import RobotModel
 from dimos.utils.data import LfsPath
@@ -29,15 +30,24 @@ class OpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
 
     bus_name = "openyam"
     arm_joints = {
-        "arm": tuple(f"arm/joint{index}" for index in range(1, 7)),
+        "arm": tuple(f"yam_joint{index}" for index in range(1, 7)),
     }
     gripper_joints = {"gripper": "arm/gripper"}
     bus_defaults = {bus_name: "can0"}
-    gravity_joint_names = tuple(f"yam_joint{index}" for index in range(1, 7))
+    kinematic_joint_names = tuple(f"yam_joint{index}" for index in range(1, 7))
+
+    def get_limits(self) -> JointLimits:
+        """Declare the calibrated gripper opening in its local 0-1 coordinate."""
+        unknown = [None] * len(self.kinematic_joint_names)
+        return JointLimits(
+            position_lower=[*unknown, 0.0],
+            position_upper=[*unknown, 1.0],
+            velocity_max=[None] * len(self.joint_names),
+        )
 
     @property
-    def gravity_model(self) -> RobotModel:
-        """Return the lazy gravity-compensation model."""
+    def kinematic_model(self) -> RobotModel:
+        """Return the lazy arm model."""
         return RobotModel.from_file(LfsPath("yam_description") / "urdf/yam_gripper_gravity.urdf")
 
     def _build_robot(self) -> can_motor_control.Robot:

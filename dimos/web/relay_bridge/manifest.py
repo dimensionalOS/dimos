@@ -19,7 +19,7 @@ from both pytest and deno test). The transport (protocol.py) carries the
 manifest as one opaque dict; this module is the single owner of its
 structure and domain rules: version gate, bounded unique ids, positive
 rates, panel/layout/pages references that resolve, and kind-specific panel
-rules (video, map2d).
+rules (video, map2d, teleop).
 
 Manifest v1 is frozen. Additive changes (new panel kinds, new params) ride
 the existing shape: unknown keys and kinds pass through validation.
@@ -43,6 +43,10 @@ MANIFEST_VERSION = 1
 
 # Bound for channel/panel ids, encodings, and panel kinds.
 MAX_MANIFEST_ID_LEN = 64
+
+# Channel ids with this prefix belong to protocol control (e.g. @control)
+# and can never be declared by a manifest.
+RESERVED_CHANNEL_PREFIX = "@"
 
 
 class ManifestError(ValueError):
@@ -196,6 +200,12 @@ def parse_manifest(data: Any) -> Manifest:
             raise ManifestError(
                 "invalid_channel_id", f"channel id must be 1..{MAX_MANIFEST_ID_LEN} chars"
             )
+        if spec.ch.startswith(RESERVED_CHANNEL_PREFIX):
+            raise ManifestError(
+                "reserved_channel_id",
+                f"channel ids beginning with {RESERVED_CHANNEL_PREFIX} are reserved "
+                "for protocol control",
+            )
         if spec.ch in ch_ids:
             raise ManifestError("duplicate_channel_id", f"duplicate channel {spec.ch}")
         ch_ids[spec.ch] = spec
@@ -262,6 +272,18 @@ def parse_manifest(data: Any) -> Manifest:
                         "invalid_map2d_panel",
                         f"map2d panel {panel.id} pose channel must be a pose.json.v1 rx channel",
                     )
+        if panel.kind == "teleop":
+            if len(panel.channels) != 1:
+                raise ManifestError(
+                    "invalid_teleop_panel",
+                    f"teleop panel {panel.id} must bind exactly one channel",
+                )
+            cmd = ch_ids[panel.channels[0]]
+            if cmd.encoding != "twist.json.v1" or cmd.delivery != "latest" or cmd.dir != "tx":
+                raise ManifestError(
+                    "invalid_teleop_panel",
+                    f"teleop panel {panel.id} needs a twist.json.v1 latest tx channel",
+                )
 
     seen: set[str] = set()
     if manifest.layout is not None:

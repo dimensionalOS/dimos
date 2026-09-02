@@ -97,6 +97,7 @@ class RobotModel:
     _package_paths: tuple[tuple[str, Path | str | os.PathLike[str]], ...] = ()
     _xacro_args: tuple[tuple[str, str], ...] = ()
     _fixed_frames: tuple[_FixedFrame, ...] = ()
+    _fixed_joints: tuple[str, ...] = ()
     _joint_position_limits: tuple[_JointPositionLimits, ...] = ()
 
     @classmethod
@@ -132,6 +133,12 @@ class RobotModel:
             self,
             _fixed_frames=(*self._fixed_frames, _FixedFrame(name, parent, xyz, rpy)),
         )
+
+    def with_fixed_joints(self, *names: str) -> RobotModel:
+        """Return a model with movable joints fixed at their URDF zero pose."""
+        if not names:
+            raise ValueError("At least one joint must be fixed")
+        return replace(self, _fixed_joints=(*self._fixed_joints, *names))
 
     def with_joint_position_limits(
         self,
@@ -173,6 +180,8 @@ class RobotModel:
         else:
             xml = source_path.read_text()
         xml = _resolve_package_uris(xml, package_paths)
+        if self._fixed_joints:
+            xml = _set_joints_fixed(xml, self._fixed_joints)
         if self._joint_position_limits:
             xml = _set_joint_position_limits(xml, self._joint_position_limits)
         if self._fixed_frames:
@@ -217,6 +226,37 @@ def _add_fixed_frames(xml: str, frames: tuple[_FixedFrame, ...]) -> str:
         ET.SubElement(joint, "child", {"link": frame.name})
         link_names.add(frame.name)
         joint_names.add(frame.joint_name)
+
+    return ET.tostring(root, encoding="unicode")
+
+
+def _set_joints_fixed(xml: str, names: tuple[str, ...]) -> str:
+    root = ET.fromstring(xml)
+    joints = {joint.get("name"): joint for joint in root.findall("joint")}
+    seen: set[str] = set()
+    movable_elements = {
+        "axis",
+        "calibration",
+        "dynamics",
+        "limit",
+        "mimic",
+        "safety_controller",
+    }
+
+    for name in names:
+        if name in seen:
+            raise ValueError(f"Joint already requested as fixed: {name}")
+        seen.add(name)
+        joint = joints.get(name)
+        if joint is None:
+            raise ValueError(f"Joint not found: {name}")
+        if joint.get("type") == "fixed":
+            raise ValueError(f"Joint is already fixed: {name}")
+
+        joint.set("type", "fixed")
+        for element in list(joint):
+            if element.tag in movable_elements:
+                joint.remove(element)
 
     return ET.tostring(root, encoding="unicode")
 

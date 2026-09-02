@@ -17,21 +17,21 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import math
 from pathlib import Path
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.global_config import global_config
 from dimos.hardware.manipulators.galaxea_a1z.config import (
     A1ZConfig,
     A1ZGripperConfig,
 )
+from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
-    base_pose,
-    coordinator_joint_mapping,
     joint_names,
 )
 
@@ -84,28 +84,32 @@ def a1z_hardware(
             resolved_config = replace(resolved_config, urdf_path=dynamics_urdf_path)
         adapter_kwargs["config"] = resolved_config
 
+    gripper_joints = [f"{hw_id}/gripper"] if has_gripper else []
+    limits: JointLimits | None = None
+    if adapter_type == "mock":
+        limits = JointLimits(
+            position_lower=[*([-math.pi] * A1Z_DOF), *([0.0] * len(gripper_joints))],
+            position_upper=[*([math.pi] * A1Z_DOF), *([0.1] * len(gripper_joints))],
+            velocity_max=[*([math.pi] * A1Z_DOF), *([0.0] * len(gripper_joints))],
+        )
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
-        joints=make_joints(hw_id, A1Z_DOF),
+        joints=[*joint_names(A1Z_DOF, prefix="arm_joint"), *gripper_joints],
         adapter_type=adapter_type,
         address=address,
         auto_enable=True,
-        gripper_joints=[f"{hw_id}/gripper"] if has_gripper else [],
-        gripper_open_position=0.1 if has_gripper else None,
-        gripper_closed_position=0.0 if has_gripper else None,
+        limits=limits,
         adapter_kwargs=adapter_kwargs,
     )
 
 
 def make_a1z_model_config(
-    name: str = "arm",
     *,
     has_gripper: bool = True,
-    joint_prefix: str | None = None,
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
-    local_joint_names = joint_names(A1Z_DOF, prefix="arm_joint")
+    model_joint_names = joint_names(A1Z_DOF, prefix="arm_joint")
     model = RobotModel.from_file(
         A1Z_G1Z_MODEL_PATH if has_gripper else A1Z_FLANGE_MODEL_PATH,
         package_paths=A1Z_PACKAGE_PATHS,
@@ -117,27 +121,19 @@ def make_a1z_model_config(
             xyz=(0.0727, 0.0, 0.0),
         )
     return RobotModelConfig(
-        name=name,
         model=model,
-        base_pose=base_pose(),
-        joint_names=local_joint_names,
+        joint_names=model_joint_names,
         base_link="base_link",
         planning_groups=[
             PlanningGroupDefinition(
                 name="manipulator",
-                joint_names=tuple(local_joint_names),
+                joint_names=tuple(model_joint_names),
                 base_link="base_link",
-                tip_link="gripper_eef_link" if has_gripper else "arm_link6",
+                tip_link=("gripper_eef_link" if has_gripper else "arm_link6"),
             )
         ],
         auto_convert_meshes=True,
         collision_exclusion_pairs=A1Z_COLLISION_EXCLUSIONS,
-        joint_name_mapping=coordinator_joint_mapping(
-            name,
-            A1Z_DOF,
-            joint_prefix=joint_prefix,
-            urdf_joint_prefix="arm_",
-        ),
-        gripper_hardware_id=name if has_gripper else None,
+        gripper_hardware_id="arm" if has_gripper else None,
         home_joints=home_joints or [0.0] * A1Z_DOF,
     )

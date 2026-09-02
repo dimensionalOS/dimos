@@ -20,26 +20,24 @@ from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.global_config import global_config
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import (
-    base_pose,
-    coordinator_joint_mapping,
     joint_names,
 )
 from dimos.utils.data import LfsPath
 
 OPENYAM_DOF = 6
 OPENYAM_HARDWARE_ID = "openyam"
-OPENYAM_ARM_JOINTS = [f"arm/joint{index}" for index in range(1, OPENYAM_DOF + 1)]
+OPENYAM_ARM_JOINTS = joint_names(OPENYAM_DOF, prefix="yam_joint")
 OPENYAM_GRIPPER_JOINT = "arm/gripper"
 OPENYAM_JOINTS = [*OPENYAM_ARM_JOINTS, OPENYAM_GRIPPER_JOINT]
 OPENYAM_PACKAGE = LfsPath("yam_description")
-OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
-OPENYAM_GRAVITY_MODEL_PATH = OPENYAM_PACKAGE / "urdf/yam_gripper_gravity.urdf"
+OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "urdf/yam_gripper.urdf.xacro"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
 
 
@@ -47,7 +45,14 @@ def openyam_hardware() -> HardwareComponent:
     """Select the physical or in-memory whole-body adapter for OpenYAM."""
     adapter_type = "mock_whole_body" if global_config.simulation else "openyam_damiao"
     adapter_kwargs: dict[str, object] = {}
-    if not global_config.simulation:
+    limits: JointLimits | None = None
+    if global_config.simulation:
+        limits = JointLimits(
+            position_lower=[*([None] * OPENYAM_DOF), 0.0],
+            position_upper=[*([None] * OPENYAM_DOF), 1.0],
+            velocity_max=[None] * len(OPENYAM_JOINTS),
+        )
+    else:
         adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
             bus_addresses={"openyam": global_config.can_port or "can0"},
             gravity_comp=True,
@@ -58,6 +63,7 @@ def openyam_hardware() -> HardwareComponent:
         joints=list(OPENYAM_JOINTS),
         adapter_type=adapter_type,
         auto_enable=True,
+        limits=limits,
         adapter_kwargs=adapter_kwargs,
         wb_config=WholeBodyConfig(
             kp=(80.0, 80.0, 80.0, 10.0, 10.0, 10.0, 0.0),
@@ -67,37 +73,25 @@ def openyam_hardware() -> HardwareComponent:
 
 
 def make_openyam_model_config(
-    name: str = "arm",
     *,
-    joint_prefix: str | None = None,
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
-    """Build the six-arm-joint planning model for OpenYAM."""
-    local_joint_names = joint_names(OPENYAM_DOF)
+    """Build a planning config for the gripper-equipped OpenYAM."""
+    model_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
     return RobotModelConfig(
-        name=name,
-        model=RobotModel.from_file(
-            OPENYAM_MODEL_PATH,
-            package_paths=OPENYAM_PACKAGE_PATHS,
-        ),
-        base_pose=base_pose(),
-        joint_names=local_joint_names,
-        base_link="base",
+        model=RobotModel.from_file(OPENYAM_MODEL_PATH, package_paths=OPENYAM_PACKAGE_PATHS),
+        joint_names=model_joint_names,
+        base_link="yam_base_link",
         planning_groups=[
             PlanningGroupDefinition(
                 name="manipulator",
-                joint_names=tuple(local_joint_names),
-                base_link="base",
-                tip_link="gripper_tip",
+                joint_names=tuple(model_joint_names),
+                base_link="yam_base_link",
+                tip_link="yam_hand_tcp",
             )
         ],
         auto_convert_meshes=True,
         collision_exclusion_pairs=[],
-        joint_name_mapping=coordinator_joint_mapping(
-            name,
-            OPENYAM_DOF,
-            joint_prefix=joint_prefix,
-            urdf_joint_prefix="",
-        ),
+        gripper_hardware_id="arm",
         home_joints=home_joints or [0.0] * OPENYAM_DOF,
     )

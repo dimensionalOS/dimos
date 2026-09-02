@@ -11,14 +11,19 @@
 import type { ComponentType } from "react";
 import type { PanelSpec } from "@dimos/shared";
 import { PanelFrame } from "../layout/PanelFrame.tsx";
-import type { ChannelStore } from "../session/store.ts";
+import type { ChannelStore } from "@dimos/sdk";
 import { MapPanel } from "./MapPanel.tsx";
 import styles from "./registry.module.css";
+import type { TeleopHooks } from "@dimos/sdk/internal/teleop";
+import { TeleopPanel } from "./TeleopPanel.tsx";
 import { VideoPanel } from "./VideoPanel.tsx";
 
 export interface PanelProps {
   spec: PanelSpec;
   store: ChannelStore;
+  /** Session send surface for tx panels (teleop); optional so rx-only
+   * panels and their tests need not care. */
+  teleop?: TeleopHooks;
 }
 
 const registry = new Map<string, ComponentType<PanelProps>>();
@@ -43,3 +48,4 @@ export function UnknownPanel({ spec }: PanelProps) {
 
 registerPanel("video", VideoPanel);
 registerPanel("map2d", MapPanel);
+registerPanel("teleop", TeleopPanel);

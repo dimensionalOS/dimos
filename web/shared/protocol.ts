@@ -10,6 +10,9 @@
 //   frames back to back on one persistent stream. Receivers count bytes and
 //   must never treat stream EOF as a message boundary (Deno 2.6.x delays FIN
 //   by up to ~1 s, and a persistent stream has no EOF between frames).
+//   Channel ids beginning with "@" are reserved for protocol control: the
+//   robot's hello rides an @control frame (datagram-encoded payload) on a
+//   one-shot bidi stream, and @-frames are never forwarded to viewers.
 //
 // Validation policy (mirrored in protocol.py): decoders validate shape
 // strictly, and receivers drop invalid or unknown messages -- a peer's bytes
@@ -21,13 +24,36 @@ import { type Delivery, MAX_MANIFEST_ID_LEN } from "./manifest.ts";
 // Channel/manifest domain types live in manifest.ts; re-exported so protocol
 // consumers keep a single import surface.
 export type { ChannelSpec, Delivery, Dir, PanelSpec } from "./manifest.ts";
+export { RESERVED_CHANNEL_PREFIX } from "./manifest.ts";
 
-// v3: the manifest travels as one opaque record nested in hello/manifest
-// messages (v2 carried flat channels/panels fields, which a v2 peer would
-// silently misread in both directions). v2: a reliable channel packs all its
-// frames onto one persistent stream. Bump on any change an old peer would
-// silently misparse.
-export const PROTOCOL_VERSION = 3;
+// v5: the robot hello leaves datagrams (and their ~1100 B budget) and rides
+// an @control data frame on a robot-opened one-shot bidi stream; channel ids
+// beginning with "@" are reserved for protocol control; a robot datagram
+// hello is rejected; subs snapshots ride @control frames on the reliable
+// robot control carrier (one relay-opened uni stream per robot session)
+// instead of datagrams. v4: the twist datagram gains vy (strafe) and the teleop
+// lease messages (teleop_start/teleop_started/teleop_stop) enter the control
+// plane; robot-bound twist/stop/teleop_start/teleop_stop carry the
+// relay-stamped lease generation `gen` (amended into v4 pre-release: an
+// older v4 peer without gen gets dead teleop, never unsafe motion). v3: the
+// manifest travels as one opaque record nested in hello/manifest messages
+// (v2 carried flat channels/panels fields, which a v2 peer would silently
+// misread in both directions). v2: a reliable channel packs all its frames
+// onto one persistent stream. Bump on any change an old peer would silently
+// misparse.
+export const PROTOCOL_VERSION = 5;
+
+// The reserved data-frame channel carrying robot-leg control messages (v5+:
+// the robot's hello upstream, subs snapshots downstream on the robot control
+// carrier; the relay never forwards @-prefixed frames to viewers). The
+// payload reuses the datagram encoding (raw UTF-8 JSON).
+export const CONTROL_CHANNEL = "@control";
+
+// Cap for an @control frame's payload, far below MAX_DATA_FRAME_BYTES: the
+// relay enforces it before buffering the payload (pre-authentication frames
+// must not allocate unbounded state) and the robot client refuses to send
+// beyond it.
+export const MAX_CONTROL_PAYLOAD_BYTES = 64 * 1024;
 
 // Reject absurd header lengths before allocating.
 export const MAX_HEADER_LEN = 65536;
@@ -113,35 +139,61 @@ export interface UnsubMsg {
   ch: string;
 }
 
-// Relay->robot: the full set of channels with >= 1 subscribed viewer. A
-// snapshot (not a delta) because it rides lossy datagrams: any single delivery
-// heals the state. `n` is monotonic per robot; receivers ignore stale/reordered
-// snapshots.
+// Relay->robot: the full set of channels with >= 1 subscribed viewer, sent as
+// an @control frame on the reliable robot control carrier. Still a snapshot
+// (not a delta): any single delivery heals the state after a reconnect. `n` is
+// monotonic per robot registration; receivers ignore stale/reordered snapshots.
 export interface SubsMsg {
   t: "subs";
   chs: string[];
   n: number;
 }
 
-// Teleop datagrams (carried from T6 on; declared here so the wire format is
-// pinned by fixtures from day one).
+// Teleop (T6). twist/stop ride datagrams viewer->relay->robot (loss-tolerant:
+// commands repeat and the bridge deadman covers silence). The lease messages
+// ride the viewer's control stream so they are ordered after watch:
+// teleop_start requests the per-robot exclusive lease (relay acks with
+// teleop_started, or replies error code "teleop_held"), teleop_stop releases
+// it. Robot-bound teleop messages are datagrams stamped with `gen`, the
+// relay-issued lease generation: teleop_start announces a granted lease,
+// teleop_stop means "the lease ended" (holder gone), twist/stop are the
+// forwarded holder commands. The bridge permanently rejects generations
+// below its floor, so a released holder's delayed datagrams cannot move the
+// robot after a stop. Viewer-authored messages never carry gen.
 export interface TwistMsg {
   t: "twist";
   vx: number;
+  vy: number;
   wz: number;
   seq: number;
   ts: number;
+  gen?: number;
 }
 
 export interface StopMsg {
   t: "stop";
   seq: number;
   ts: number;
+  gen?: number;
+}
+
+export interface TeleopStartMsg {
+  t: "teleop_start";
+  gen?: number;
+}
+
+export interface TeleopStartedMsg {
+  t: "teleop_started";
+}
+
+export interface TeleopStopMsg {
+  t: "teleop_stop";
+  gen?: number;
 }
 
 export type ControlMsg = HelloMsg | WelcomeMsg | PingMsg | PongMsg | ErrorMsg;
 export type SessionMsg = RobotsMsg | WatchMsg | ManifestMsg | SubMsg | UnsubMsg | SubsMsg;
-export type TeleopMsg = TwistMsg | StopMsg;
+export type TeleopMsg = TwistMsg | StopMsg | TeleopStartMsg | TeleopStartedMsg | TeleopStopMsg;
 export type Msg = ControlMsg | SessionMsg | TeleopMsg;
 
 // Data-plane frame header. `delivery` tells the relay how to forward frames
@@ -182,8 +234,11 @@ const MSG_FIELDS: Record<string, Record<string, "string" | "number">> = {
   sub: { ch: "string" },
   unsub: { ch: "string" },
   subs: { n: "number" },
-  twist: { vx: "number", wz: "number", seq: "number", ts: "number" },
+  twist: { vx: "number", vy: "number", wz: "number", seq: "number", ts: "number" },
   stop: { seq: "number", ts: "number" },
+  teleop_start: {},
+  teleop_started: {},
+  teleop_stop: {},
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -200,10 +255,12 @@ function isRobotInfo(value: unknown): value is RobotInfo {
 }
 
 // Structural checks for nested fields, run after the flat MSG_FIELDS pass.
-// Optional fields (hello.robot, hello/manifest.manifest) accept absent but
-// reject null: JSON encoders on both sides omit absent fields and never emit
-// null. The manifest is only checked for record-ness here -- its structure
-// belongs to parseManifest (see RobotManifest above).
+// Optional fields (hello.robot, hello/manifest.manifest, teleop gen) accept
+// absent but reject null: JSON encoders on both sides omit absent fields and
+// never emit null. The manifest is only checked for record-ness here -- its
+// structure belongs to parseManifest (see RobotManifest above).
+const genAbsentOrNumber = (v: Record<string, unknown>) =>
+  v.gen === undefined || typeof v.gen === "number";
 const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean> = {
   hello: (v) =>
     (v.robot === undefined || isRobotInfo(v.robot)) &&
@@ -211,6 +268,10 @@ const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean
   robots: (v) => Array.isArray(v.robots) && v.robots.every(isRobotInfo),
   manifest: (v) => v.manifest === undefined || isRecord(v.manifest),
   subs: (v) => Array.isArray(v.chs) && v.chs.every((c) => typeof c === "string"),
+  twist: genAbsentOrNumber,
+  stop: genAbsentOrNumber,
+  teleop_start: genAbsentOrNumber,
+  teleop_stop: genAbsentOrNumber,
 };
 
 /** Validated message from parsed JSON; null for unknown or malformed ones. */

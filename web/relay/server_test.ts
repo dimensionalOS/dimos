@@ -5,6 +5,7 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { fileURLToPath } from "node:url";
 import {
+  CONTROL_CHANNEL,
   ControlFrameReader,
   DataFrameStreamReader,
   decodeDatagram,
@@ -12,6 +13,7 @@ import {
   encodeDataFrame,
   encodeDatagram,
   type FrameHeader,
+  MAX_CONTROL_PAYLOAD_BYTES,
   type Msg,
   PROTOCOL_VERSION,
   type RobotInfo,
@@ -132,11 +134,43 @@ function frameQueue(
   };
 }
 
+/** Robot control carrier messages: @control frames arriving back-to-back on
+ * the one relay-opened uni stream (payloads reuse the datagram encoding). */
+function robotControl(wt: WebTransport): () => Promise<Msg> {
+  const nextFrame = frameQueue(wt);
+  return async () => {
+    const { header, payload } = await nextFrame();
+    assertEquals(header.ch, CONTROL_CHANNEL);
+    const msg = decodeDatagram(payload);
+    assert(msg !== null, "undecodable @control payload");
+    return msg;
+  };
+}
+
 async function sendRobotFrame(robot: WebTransport, header: FrameHeader, payload: Uint8Array) {
   const stream = await robot.createBidirectionalStream();
   const writer = stream.writable.getWriter();
   await writer.write(encodeDataFrame(header, payload));
   await writer.close(); // FIN is delayed by Deno (bug 2); the relay reads by byte count
+}
+
+/** v5 robot hello: an @control frame (datagram-encoded payload) on a fresh
+ * one-shot bidi stream; replies stay datagrams. */
+async function sendRobotHello(robot: WebTransport, msg: Msg) {
+  await sendRobotFrame(
+    robot,
+    { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "reliable" },
+    encodeDatagram(msg),
+  );
+}
+
+/** Next message of type `t`, skipping interleaved messages of other types. */
+async function nextOfType(next: () => Promise<Msg>, t: Msg["t"], what: string): Promise<Msg> {
+  let msg: Msg;
+  do {
+    msg = await within(next(), what);
+  } while (msg.t !== t);
+  return msg;
 }
 
 // Test that one suspended viewer must cost only itself. Its stale streams are
@@ -208,19 +242,16 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
     clients.push(robot);
     await within(robot.ready, "robot connect");
     const robotDatagrams = datagramQueue(robot.datagrams.readable);
-    const robotDgWriter = robot.datagrams.writable.getWriter();
-    await robotDgWriter.write(
-      encodeDatagram({
-        t: "hello",
-        v: PROTOCOL_VERSION,
-        role: "robot",
-        robot: ROBOT,
-        manifest: {
-          version: 1,
-          channels: [{ ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 100 }],
-        },
-      }),
-    );
+    await sendRobotHello(robot, {
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: ROBOT,
+      manifest: {
+        version: 1,
+        channels: [{ ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 100 }],
+      },
+    });
     await within(robotDatagrams(), "robot hello reply");
 
     const attachViewer = async (name: string): Promise<WebTransport> => {
@@ -387,32 +418,43 @@ Deno.test({
   const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
   await within(robot.ready, "robot connect");
   const robotDatagrams = datagramQueue(robot.datagrams.readable);
-  const robotDgWriter = robot.datagrams.writable.getWriter();
+  const robotCtrl = robotControl(robot);
 
-  await t.step("robot hello (identity + manifest) -> welcome + baseline subs", async () => {
-    await robotDgWriter.write(
-      encodeDatagram({
+  await t.step(
+    "robot hello (@control stream frame) -> welcome + carrier baseline subs",
+    async () => {
+      await sendRobotHello(robot, {
         t: "hello",
         v: PROTOCOL_VERSION,
         role: "robot",
         robot: ROBOT,
         manifest: MANIFEST,
-      }),
-    );
-    // Registration and welcome are separate datagrams, so their relative
-    // arrival is not a protocol guarantee.
-    const replies = [
-      await within(robotDatagrams(), "robot hello reply"),
-      await within(robotDatagrams(), "robot hello reply"),
-    ];
-    assertEquals(replies.find((msg) => msg.t === "welcome"), {
+      });
+      assertEquals(await within(robotDatagrams(), "robot welcome"), {
+        t: "welcome",
+        v: PROTOCOL_VERSION,
+      });
+      // Registration always forces a baseline snapshot (the empty set included)
+      // as the first frame of the relay-opened robot control carrier.
+      assertEquals(await within(robotCtrl(), "carrier baseline subs"), {
+        t: "subs",
+        chs: [],
+        n: 1,
+      });
+    },
+  );
+
+  await t.step("a repeated identical hello re-sends welcome (lost-welcome healing)", async () => {
+    await sendRobotHello(robot, {
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: ROBOT,
+      manifest: MANIFEST,
+    });
+    assertEquals(await nextOfType(robotDatagrams, "welcome", "second welcome"), {
       t: "welcome",
       v: PROTOCOL_VERSION,
-    });
-    assertEquals(replies.find((msg) => msg.t === "subs"), {
-      t: "subs",
-      chs: [],
-      n: 1,
     });
   });
 
@@ -435,10 +477,29 @@ Deno.test({
     // One snapshot per sub message; skip ahead to the full set.
     let subs: Msg;
     do {
-      subs = await within(robotDatagrams(), "subs snapshot");
+      subs = await within(robotCtrl(), "subs snapshot");
     } while (subs.t === "subs" && subs.chs.length < 2);
     assert(subs.t === "subs");
     assertEquals(subs.chs, ["color_image", "odom"]);
+  });
+
+  await t.step("rapid sub/unsub churn converges to the exact final set", async () => {
+    // Every message below flips the active set, so each produces exactly one
+    // snapshot; the ordered carrier must deliver all 12 with the final set
+    // last (nothing lost, nothing reordered).
+    for (let i = 0; i < 5; i++) {
+      await controlWriter.write(encodeControlFrame({ t: "unsub", ch: "odom" }));
+      await controlWriter.write(encodeControlFrame({ t: "sub", ch: "odom" }));
+    }
+    await controlWriter.write(encodeControlFrame({ t: "unsub", ch: "color_image" }));
+    await controlWriter.write(encodeControlFrame({ t: "sub", ch: "color_image" }));
+    let subs: Msg | null = null;
+    for (let i = 0; i < 12; i++) subs = await within(robotCtrl(), `churn snapshot ${i}`);
+    assert(subs !== null && subs.t === "subs");
+    assertEquals(subs.chs, ["color_image", "odom"]);
+    // The relay's own view agrees (lastChs feeds perRobot.subs).
+    const stats = await (await fetch(`${httpBase}/api/stats`)).json();
+    assertEquals(stats.perRobot[ROBOT.id].subs, ["color_image", "odom"]);
   });
 
   await t.step("robot frames fan out to the viewer on uni streams", async () => {
@@ -546,53 +607,126 @@ Deno.test({
     assertEquals(typeof stats.perRobot[ROBOT.id].channels.odom.bps, "number");
   });
 
-  await t.step("robot hello without robot{} -> missing_robot_id + close", async () => {
-    const bare = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
-    await within(bare.ready, "bare robot connect");
-    const bareDatagrams = datagramQueue(bare.datagrams.readable);
-    const bareWriter = bare.datagrams.writable.getWriter();
-    await bareWriter.write(encodeDatagram({ t: "hello", v: PROTOCOL_VERSION, role: "robot" }));
-    const err = await within(bareDatagrams(), "missing_robot_id error");
+  /** Expect one robot hello attempt to be rejected with `code` + close. */
+  async function expectRobotReject(
+    name: string,
+    code: string,
+    send: (wt: WebTransport) => Promise<void>,
+  ) {
+    const wt = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await within(wt.ready, `${name} connect`);
+    const datagrams = datagramQueue(wt.datagrams.readable);
+    await send(wt);
+    const err = await within(datagrams(), `${name} error`);
     assertEquals(err.t, "error");
-    assertEquals((err as { code: string }).code, "missing_robot_id");
-    await within(bare.closed.catch(() => {}), "bare robot session close");
+    assertEquals((err as { code: string }).code, code);
+    await within(wt.closed.catch(() => {}), `${name} close`);
+  }
+
+  await t.step("robot hello without robot{} -> missing_robot_id + close", async () => {
+    await expectRobotReject(
+      "bare",
+      "missing_robot_id",
+      (wt) => sendRobotHello(wt, { t: "hello", v: PROTOCOL_VERSION, role: "robot" }),
+    );
   });
 
   await t.step("robot hello with an invalid manifest -> invalid_manifest + close", async () => {
-    const dup = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
-    await within(dup.ready, "dup-manifest robot connect");
-    const dupDatagrams = datagramQueue(dup.datagrams.readable);
-    const dupWriter = dup.datagrams.writable.getWriter();
-    await dupWriter.write(encodeDatagram({
-      t: "hello",
-      v: PROTOCOL_VERSION,
-      role: "robot",
-      robot: { id: "dup-bot", name: "Dup Bot", model: "test" },
-      manifest: { version: 1, channels: [CHANNELS[0], CHANNELS[0]] },
-    }));
-    const err = await within(dupDatagrams(), "invalid_manifest error");
-    assertEquals(err.t, "error");
-    assertEquals((err as { code: string }).code, "invalid_manifest");
-    await within(dup.closed.catch(() => {}), "dup-manifest robot close");
+    await expectRobotReject("dup-manifest", "invalid_manifest", (wt) =>
+      sendRobotHello(wt, {
+        t: "hello",
+        v: PROTOCOL_VERSION,
+        role: "robot",
+        robot: { id: "dup-bot", name: "Dup Bot", model: "test" },
+        manifest: { version: 1, channels: [CHANNELS[0], CHANNELS[0]] },
+      }));
   });
 
-  await t.step("robot hello with the previous protocol version -> error + close", async () => {
-    // A v1 bridge would misread the v2 persistent reliable stream as one
-    // frame; the handshake must fail loudly instead.
-    const old = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
-    await within(old.ready, "old-version robot connect");
-    const oldDatagrams = datagramQueue(old.datagrams.readable);
-    const oldWriter = old.datagrams.writable.getWriter();
-    await oldWriter.write(encodeDatagram({
-      t: "hello",
-      v: 1,
-      role: "robot",
-      robot: { id: "old-bot", name: "Old Bot", model: "test" },
-    }));
-    const err = await within(oldDatagrams(), "old-version error");
-    assertEquals(err.t, "error");
-    assertEquals((err as { code: string }).code, "version_mismatch");
-    await within(old.closed.catch(() => {}), "old-version robot close");
+  await t.step("manifest with a reserved @-channel -> invalid_manifest + close", async () => {
+    await expectRobotReject("reserved-ch", "invalid_manifest", (wt) =>
+      sendRobotHello(wt, {
+        t: "hello",
+        v: PROTOCOL_VERSION,
+        role: "robot",
+        robot: { id: "reserved-bot", name: "Reserved Bot", model: "test" },
+        manifest: {
+          version: 1,
+          channels: [{ ch: "@sneaky", encoding: "jpeg.v1", delivery: "latest", maxHz: 15.5 }],
+        },
+      }));
+  });
+
+  await t.step("stream hello with the previous protocol version -> error + close", async () => {
+    // A v4 bridge would still hello over datagrams (covered below); this
+    // pins the version gate on the new @control path itself.
+    await expectRobotReject("old-version", "version_mismatch", (wt) =>
+      sendRobotHello(wt, {
+        t: "hello",
+        v: 1,
+        role: "robot",
+        robot: { id: "old-bot", name: "Old Bot", model: "test" },
+      }));
+  });
+
+  await t.step("robot datagram hello (any version) -> version_mismatch + close", async () => {
+    // v5 moved the robot hello onto @control stream frames; a datagram hello
+    // is how a v4-or-older bridge announces itself and must fail loudly.
+    for (const v of [1, PROTOCOL_VERSION]) {
+      await expectRobotReject(`datagram-hello-v${v}`, "version_mismatch", async (wt) => {
+        const writer = wt.datagrams.writable.getWriter();
+        await writer.write(encodeDatagram({
+          t: "hello",
+          v,
+          role: "robot",
+          robot: { id: "dg-bot", name: "Datagram Bot", model: "test" },
+        }));
+        writer.releaseLock();
+      });
+    }
+  });
+
+  await t.step("@control with an invalid header field -> invalid_control + close", async () => {
+    // The reserved-channel classification keys off the raw ch, so a control
+    // frame with a malformed header (even one carrying a valid hello
+    // payload) fails closed instead of passing as ordinary pre-hello data.
+    await expectRobotReject("bad-header-control", "invalid_control", (wt) =>
+      sendRobotFrame(
+        wt,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "bogus" } as unknown as FrameHeader,
+        encodeDatagram({
+          t: "hello",
+          v: PROTOCOL_VERSION,
+          role: "robot",
+          robot: { id: "bad-header-bot", name: "Bad Header Bot", model: "test" },
+        }),
+      ));
+  });
+
+  await t.step("garbage @control payload before hello -> invalid_control + close", async () => {
+    await expectRobotReject("garbage-control", "invalid_control", (wt) =>
+      sendRobotFrame(
+        wt,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "reliable" },
+        new TextEncoder().encode("{not json"),
+      ));
+  });
+
+  await t.step("unknown reserved channel before hello -> invalid_control + close", async () => {
+    await expectRobotReject("future-control", "invalid_control", (wt) =>
+      sendRobotFrame(
+        wt,
+        { ch: "@future", seq: 0, ts: 0.5, delivery: "reliable" },
+        encodeDatagram({ t: "ping", n: 1, ts: 1.5 }),
+      ));
+  });
+
+  await t.step("oversized @control payload -> control_too_large + close", async () => {
+    await expectRobotReject("oversized-control", "control_too_large", (wt) =>
+      sendRobotFrame(
+        wt,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "reliable" },
+        new Uint8Array(MAX_CONTROL_PAYLOAD_BYTES + 1),
+      ));
   });
 
   await t.step("hello with a wrong version -> error + close", async () => {
@@ -658,6 +792,120 @@ Deno.test({
     assertEquals(await within(nextControl(), "pong after junk"), { t: "pong", n: 7, ts: 77.5 });
   });
 
+  // The steps below register extra short-lived robots, whose robots pushes
+  // land in the main viewer's control queue; they run last so the queue- and
+  // stats-sensitive steps above stay deterministic.
+
+  await t.step("hello mutating identity or manifest -> hello_mismatch + close", async () => {
+    const wt = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await within(wt.ready, "mut connect");
+    const datagrams = datagramQueue(wt.datagrams.readable);
+    const hello: Msg = {
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: { id: "mut-bot", name: "Mut Bot", model: "test" },
+      manifest: MANIFEST,
+    };
+    await sendRobotHello(wt, hello);
+    await nextOfType(datagrams, "welcome", "mut welcome");
+    await sendRobotHello(wt, {
+      ...hello,
+      robot: { id: "mut-bot", name: "Renamed Bot", model: "test" },
+    });
+    const err = await nextOfType(datagrams, "error", "mut error");
+    assertEquals((err as { code: string }).code, "hello_mismatch");
+    await within(wt.closed.catch(() => {}), "mut close");
+  });
+
+  await t.step("data frames before hello are dropped and counted", async () => {
+    const wt = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await within(wt.ready, "late connect");
+    const datagrams = datagramQueue(wt.datagrams.readable);
+    const before = (await (await fetch(`${httpBase}/api/stats`)).json()).framesFromUnregistered ??
+      0;
+    await sendRobotFrame(
+      wt,
+      { ch: "odom", seq: 1, ts: 1.5, delivery: "reliable" },
+      new Uint8Array([1]),
+    );
+    let after = before;
+    for (let i = 0; i < 80 && after <= before; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      after = (await (await fetch(`${httpBase}/api/stats`)).json()).framesFromUnregistered;
+    }
+    assert(after > before, "pre-hello data frame was not counted");
+    // The session survived the stray frame: a hello still registers.
+    await sendRobotHello(wt, {
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: { id: "late-bot", name: "Late Bot", model: "test" },
+    });
+    await nextOfType(datagrams, "welcome", "late welcome");
+    wt.close();
+  });
+
+  await t.step("a manifest far beyond the old datagram budget registers", async () => {
+    const wt = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await within(wt.ready, "fat connect");
+    const datagrams = datagramQueue(wt.datagrams.readable);
+    const fatCtrl = robotControl(wt);
+    // Ids long enough that the full 40-channel subs snapshot also exceeds
+    // the old datagram budget, not just the hello.
+    const fatChs = Array.from({ length: 40 }, (_, i) => `ch_${i}_${"pad".repeat(8)}`);
+    const fatManifest: RobotManifest = {
+      version: 1,
+      channels: fatChs.map((ch, i) => ({
+        ch,
+        encoding: "pose.json.v1",
+        delivery: "reliable",
+        maxHz: 10.5,
+        params: { note: `padding for channel ${i} so the hello dwarfs a datagram` },
+      })),
+    };
+    const hello: Msg = {
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: { id: "fat-bot", name: "Fat Bot", model: "test" },
+      manifest: fatManifest,
+    };
+    assert(encodeDatagram(hello).byteLength > 1200, "fat hello must exceed the datagram budget");
+    await sendRobotHello(wt, hello);
+    await nextOfType(datagrams, "welcome", "fat welcome");
+
+    // A watching viewer receives the fat manifest verbatim.
+    const fatViewer = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
+    await within(fatViewer.ready, "fat viewer connect");
+    const stream = await fatViewer.createBidirectionalStream();
+    const writer = stream.writable.getWriter();
+    const next = controlQueue(stream.readable);
+    await writer.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
+    await writer.write(encodeControlFrame({ t: "watch", robotId: "fat-bot" }));
+    let msg: Msg;
+    do {
+      msg = await within(next(), "fat manifest reply");
+    } while (msg.t !== "manifest");
+    assertEquals(msg.manifest, fatManifest);
+
+    // Subscribing to every channel produces a snapshot far beyond the old
+    // datagram budget; the carrier must deliver it whole and exact.
+    for (const ch of fatChs) await writer.write(encodeControlFrame({ t: "sub", ch }));
+    let subs: Msg;
+    do {
+      subs = await within(fatCtrl(), "fat subs snapshot");
+    } while (subs.t === "subs" && subs.chs.length < fatChs.length);
+    assert(subs.t === "subs");
+    assertEquals(subs.chs, [...fatChs].sort());
+    assert(
+      encodeDatagram(subs).byteLength > 1200,
+      "fat snapshot must exceed the old datagram budget",
+    );
+    fatViewer.close();
+    wt.close();
+  });
+
   viewer.close();
   robot.close();
   await relay.shutdown();
@@ -706,6 +954,122 @@ Deno.test({
   }
 });
 
+Deno.test({
+  name: "relay serves /sdk.js with local CORS and no-cache",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const sdkDir = fileURLToPath(new URL("./testdata/fake_sdk_dist", import.meta.url));
+  const relay = await startRelay({ port: 0, sdkDir });
+  const httpBase = `http://127.0.0.1:${relay.httpPort}`;
+  try {
+    const sdk = await fetch(`${httpBase}/sdk.js`);
+    assertEquals(sdk.status, 200);
+    assertEquals(sdk.headers.get("content-type"), "application/javascript");
+    assertEquals(sdk.headers.get("access-control-allow-origin"), "*");
+    assertEquals(sdk.headers.get("cache-control"), "no-cache");
+    assert((await sdk.text()).includes("fake sdk bundle"));
+    // The discovery endpoints carry the local wildcard too, so a page on
+    // another loopback origin (Vite dev server) can bootstrap.
+    for (const path of ["/api/info", "/api/stats"]) {
+      const res = await fetch(`${httpBase}${path}`);
+      assertEquals(res.headers.get("access-control-allow-origin"), "*", path);
+      await res.body?.cancel();
+    }
+  } finally {
+    await relay.shutdown();
+  }
+});
+
+Deno.test({
+  name: "missing sdk bundle yields a build hint, never cockpit HTML",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const cockpitDir = fileURLToPath(new URL("./testdata/fake_cockpit", import.meta.url));
+  const relay = await startRelay({ port: 0, cockpitDir });
+  const httpBase = `http://127.0.0.1:${relay.httpPort}`;
+  try {
+    const sdk = await fetch(`${httpBase}/sdk.js`);
+    assertEquals(sdk.status, 404);
+    assertEquals(sdk.headers.get("access-control-allow-origin"), "*");
+    const body = await sdk.text();
+    assert(body.includes("sdk bundle not built"));
+    // An HTML fallback imported as a module would be a baffling syntax error
+    // in the consumer page; the hint must win over the static root.
+    assert(!body.includes("fake cockpit index"));
+  } finally {
+    await relay.shutdown();
+  }
+});
+
+Deno.test({
+  name: "serve-dir replaces the cockpit root; api and sdk keep precedence",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const cockpitDir = fileURLToPath(new URL("./testdata/fake_cockpit", import.meta.url));
+  const sdkDir = fileURLToPath(new URL("./testdata/fake_sdk_dist", import.meta.url));
+  const serveDir = fileURLToPath(new URL("./testdata/fake_user_dir", import.meta.url));
+  const relay = await startRelay({ port: 0, cockpitDir, sdkDir, serveDir });
+  const httpBase = `http://127.0.0.1:${relay.httpPort}`;
+  try {
+    const index = await (await fetch(`${httpBase}/`)).text();
+    assert(index.includes("fake user index"));
+    assert(!index.includes("fake cockpit index"));
+    // JavaScript from the user root is module-importable: the strict module
+    // MIME type (also for .mjs) plus the local CORS wildcard, so a page on
+    // another local origin can import it by absolute URL.
+    for (const path of ["/page.js", "/module.mjs"]) {
+      const mod = await fetch(`${httpBase}${path}`);
+      assertEquals(mod.status, 200, path);
+      assertEquals(mod.headers.get("content-type"), "application/javascript", path);
+      assertEquals(mod.headers.get("access-control-allow-origin"), "*", path);
+      await mod.body?.cancel();
+    }
+    // Decoy files in the user dir must not shadow the relay's own routes.
+    const info = await (await fetch(`${httpBase}/api/info`)).json();
+    assert(typeof info.wtUrl === "string");
+    const sdk = await (await fetch(`${httpBase}/sdk.js`)).text();
+    assert(sdk.includes("fake sdk bundle"));
+    assert(!sdk.includes("decoy"));
+    // The traversal and symlink-escape guards apply to the user root too.
+    const traverse = await fetch(`${httpBase}//etc/passwd`);
+    await traverse.body?.cancel();
+    assertEquals(traverse.status, 400);
+    const escape = await fetch(`${httpBase}/escape.txt`);
+    await escape.body?.cancel();
+    assertEquals(escape.status, 400);
+  } finally {
+    await relay.shutdown();
+  }
+});
+
+Deno.test("startRelay refuses a non-loopback host without the unsafe override", async () => {
+  // Before binding anything: the local trust model (wildcard CORS, no auth,
+  // optional user files) must not silently reach a LAN address.
+  await assertRejects(
+    () => startRelay({ host: "0.0.0.0" }),
+    Error,
+    "host 0.0.0.0 is not loopback",
+  );
+});
+
+Deno.test({
+  name: "the unsafe override binds a non-loopback host explicitly",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const relay = await startRelay({ host: "0.0.0.0", port: 0, unsafeNonLoopback: true });
+  try {
+    const res = await fetch(`http://127.0.0.1:${relay.httpPort}/api/info`);
+    assertEquals(res.status, 200);
+    await res.body?.cancel();
+  } finally {
+    await relay.shutdown();
+  }
+});
+
 Deno.test("startRelay rejects a bad served dir with a labeled error", async () => {
   // Before binding anything, so nothing leaks: a typo'd path names the
   // offending option, and a file (realpath-able, would 404 everything) is
@@ -719,5 +1083,20 @@ Deno.test("startRelay rejects a bad served dir with a labeled error", async () =
     () => startRelay({ cockpitDir: fileURLToPath(import.meta.url) }),
     Error,
     "cockpitDir is not a directory",
+  );
+  await assertRejects(
+    () => startRelay({ serveDir: "/no/such/dir" }),
+    Error,
+    "serveDir does not exist: /no/such/dir",
+  );
+  await assertRejects(
+    () => startRelay({ serveDir: fileURLToPath(import.meta.url) }),
+    Error,
+    "serveDir is not a directory",
+  );
+  await assertRejects(
+    () => startRelay({ sdkDir: "/no/such/dir" }),
+    Error,
+    "sdkDir does not exist: /no/such/dir",
   );
 });

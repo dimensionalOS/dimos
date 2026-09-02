@@ -19,7 +19,11 @@ import pytest
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
-from dimos.robot.manipulators.a1z.blueprints.teleop import coordinator_teleop_a1z
+from dimos.robot.manipulators.a1z.blueprints.basic import a1z_planner_coordinator
+from dimos.robot.manipulators.a1z.blueprints.teleop import (
+    coordinator_teleop_a1z,
+    keyboard_teleop_a1z,
+)
 from dimos.robot.manipulators.a1z.config import a1z_hardware
 from dimos.teleop.quest.blueprints import teleop_quest_a1z
 
@@ -32,25 +36,44 @@ def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
     )
 
 
+@pytest.mark.parametrize(
+    "blueprint",
+    [keyboard_teleop_a1z, coordinator_teleop_a1z, a1z_planner_coordinator],
+)
+def test_trajectory_accepts_gripper_and_gripper_has_dedicated_task(
+    blueprint: Blueprint,
+) -> None:
+    tasks = cast("list[TaskConfig]", _coordinator_kwargs(blueprint)["tasks"])
+    trajectory = next(task for task in tasks if task.type == "trajectory")
+    gripper = next(task for task in tasks if task.type == "gripper")
+
+    assert "arm/gripper" in trajectory.joint_names
+    assert (gripper.name, gripper.joint_names) == ("arm_gripper", ["arm/gripper"])
+
+
 def test_quest_teleop_uses_mock_a1z_hardware_and_gripper_by_default() -> None:
     kwargs = _coordinator_kwargs(coordinator_teleop_a1z)
     hardware = kwargs["hardware"][0]
     tasks = cast("list[TaskConfig]", kwargs["tasks"])
     teleop = next(task for task in tasks if task.name == "teleop_a1z")
+    gripper = next(task for task in tasks if task.type == "gripper")
 
     assert hardware.adapter_type == "mock"
     assert hardware.address is None
-    assert hardware.gripper_joints == ["arm/gripper"]
-    assert hardware.gripper_open_position == pytest.approx(0.1)
-    assert hardware.gripper_closed_position == pytest.approx(0.0)
-    assert teleop.params["gripper_joint"] == "arm/gripper"
-    assert teleop.params["gripper_open_pos"] == pytest.approx(1.0)
-    assert teleop.params["gripper_closed_pos"] == pytest.approx(0.0)
+    assert hardware.joints[-1] == "arm/gripper"
+    binding = teleop.params["bindings"][0]
+    assert binding == {
+        "hand": "left",
+        "target_frame": "gripper_eef_link",
+    }
+    assert teleop.params["max_joint_velocity_rad_s"] == pytest.approx(2.0)
+    assert gripper.stream_bind == {"gripper_command": "left_gripper_command"}
 
 
 def test_quest_left_controller_routes_to_a1z_teleop() -> None:
     assert teleop_quest_a1z.remapping_map == {
-        ("armteleopmodule", "left_controller_output"): "cartesian_command"
+        ("armteleopmodule", "left_controller_output"): "left_cartesian_command",
+        ("armteleopmodule", "left_gripper_command"): "left_gripper_command",
     }
 
 
@@ -62,8 +85,9 @@ def test_a1z_hardware_uses_mock_adapter_in_simulation(monkeypatch: pytest.Monkey
 
     assert hardware.adapter_type == "mock"
     assert hardware.address is None
-    assert hardware.adapter_kwargs == {}
-    assert hardware.gripper_joints == ["arm/gripper"]
+    assert hardware.limits is not None
+    assert hardware.limits.position_upper[-1] > 0.0
+    assert hardware.joints[-1] == "arm/gripper"
 
 
 def test_a1z_hardware_uses_real_adapter_when_can_port_is_selected(
@@ -76,4 +100,4 @@ def test_a1z_hardware_uses_real_adapter_when_can_port_is_selected(
 
     assert hardware.adapter_type == "galaxea_a1z"
     assert hardware.address == "a1zcan"
-    assert hardware.gripper_joints == ["arm/gripper"]
+    assert hardware.joints[-1] == "arm/gripper"

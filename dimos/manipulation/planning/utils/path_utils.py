@@ -37,7 +37,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from dimos.manipulation.planning.spec.models import JointPath, WorldRobotID
+    from dimos.manipulation.planning.spec.models import JointPath
     from dimos.manipulation.planning.spec.protocols import WorldSpec
 
 
@@ -59,7 +59,7 @@ def interpolate_path(
 
     Example:
         # After planning, interpolate for smoother execution
-        raw_path = planner.plan_joint_path(world, robot_id, start, goal).path
+        raw_path = planner.plan_joint_path(world, start, goal).path
         smooth_path = interpolate_path(raw_path, resolution=0.02)
     """
     if len(path) <= 1:
@@ -109,7 +109,7 @@ def interpolate_segment(
         # Check collision along a segment
         segment = interpolate_segment(start_state, end_state, step_size=0.02)
         for state in segment:
-            if not world.check_config_collision_free(robot_id, state):
+            if not world.check_config_collision_free(state):
                 return False
     """
     q_start = np.array(start.position, dtype=np.float64)
@@ -135,7 +135,6 @@ def interpolate_segment(
 
 def simplify_path(
     world: WorldSpec,
-    robot_id: WorldRobotID,
     path: JointPath,
     max_iterations: int = 100,
     collision_step_size: float = 0.02,
@@ -148,7 +147,6 @@ def simplify_path(
 
     Args:
         world: World for collision checking
-        robot_id: Which robot
         path: Original path (list of JointState waypoints)
         max_iterations: Maximum shortcutting attempts
         collision_step_size: Step size for collision checking along shortcuts
@@ -157,8 +155,8 @@ def simplify_path(
         Simplified path with fewer waypoints
 
     Example:
-        raw_path = planner.plan_joint_path(world, robot_id, start, goal).path
-        simplified = simplify_path(world, robot_id, raw_path)
+        raw_path = planner.plan_joint_path(world, start, goal).path
+        simplified = simplify_path(world, raw_path)
     """
     if len(path) <= 2:
         return list(path)
@@ -174,9 +172,7 @@ def simplify_path(
         j = np.random.randint(i + 2, len(simplified))
 
         # Check if direct connection is valid using context-free API
-        if world.check_edge_collision_free(
-            robot_id, simplified[i], simplified[j], collision_step_size
-        ):
+        if world.check_edge_collision_free(simplified[i], simplified[j], collision_step_size):
             # Remove intermediate waypoints
             simplified = simplified[: i + 1] + simplified[j:]
 

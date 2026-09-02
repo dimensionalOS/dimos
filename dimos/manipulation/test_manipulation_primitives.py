@@ -43,35 +43,29 @@ from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.assets.model import RobotModel
 
 
-def _robot(
-    name: str = "arm",
+def _model(
     *,
-    tip_link: str | None = "tcp",
+    groups: tuple[PlanningGroupDefinition, ...] = (
+        PlanningGroupDefinition("tool", ("j0",), "base", "tcp"),
+    ),
     gripper: bool = False,
     home: list[float] | None = None,
 ) -> RobotModelConfig:
+    joint_names = list(dict.fromkeys(name for group in groups for name in group.joint_names))
     return RobotModelConfig(
-        name=name,
         model=RobotModel.from_file(Path("/robot.urdf")),
-        joint_names=["j0"],
+        joint_names=joint_names,
         base_link="base",
         home_joints=home,
-        gripper_hardware_id="gripper" if gripper else None,
-        planning_groups=[
-            PlanningGroupDefinition(
-                name="tool",
-                joint_names=("j0",),
-                base_link="base",
-                tip_link=tip_link,
-            )
-        ],
+        gripper_hardware_id="arm" if gripper else None,
+        planning_groups=list(groups),
     )
 
 
 def _plan() -> GeneratedPlan:
-    names = ["arm/j0"]
+    names = ["j0"]
     return GeneratedPlan(
-        group_ids=("arm/tool",),
+        group_ids=("tool",),
         status=PlanningStatus.SUCCESS,
         trajectory=JointTrajectory(
             joint_names=names,
@@ -83,10 +77,10 @@ def _plan() -> GeneratedPlan:
     )
 
 
-def _set_groups(module, *robots: RobotModelConfig) -> None:
-    module._robots = {robot.name: (f"{robot.name}_id", robot) for robot in robots}
+def _set_groups(module, model: RobotModelConfig) -> None:
+    module.config.model = model
     module._world_monitor = MagicMock()
-    module._world_monitor.planning_groups = PlanningGroupRegistry(robots)
+    module._world_monitor.planning_groups = PlanningGroupRegistry((model,))
 
 
 def test_move_linear_uses_world_relative_target_and_default_speed(
@@ -94,8 +88,7 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
     mocker: MockerFixture,
 ) -> None:
     module = module_factory()
-    robot = _robot()
-    _set_groups(module, robot)
+    _set_groups(module, _model())
     generated = _plan()
     generate = mocker.patch.object(module, "generate_cartesian_plan", return_value=generated)
     execute = mocker.patch.object(
@@ -108,7 +101,7 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
 
     assert result.succeeded
     targets, config = generate.call_args.args
-    start, relative = targets["arm/tool"]
+    start, relative = targets["tool"]
     assert start == Transform.identity()
     assert relative.translation.x == pytest.approx(0.02)
     assert relative.translation.y == pytest.approx(0.0)
@@ -120,29 +113,64 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
 
 def test_get_state_returns_every_group_with_presets(module_factory) -> None:
     module = module_factory()
-    robot = _robot(gripper=True, home=[0.3])
-    _set_groups(module, robot)
-    module._init_joints = {"arm": JointState(name=["j0"], position=[-0.2])}
+    _set_groups(module, _model(gripper=True, home=[0.3]))
+    module._init_joints = JointState(name=["j0"], position=[-0.2])
     module._world_monitor.current_group_joint_state.return_value = JointState(
-        name=["arm/j0"], position=[0.1]
+        name=["j0"], position=[0.1]
     )
     module._world_monitor.get_group_ee_pose.return_value = None
-    module._control_coordinator.get_gripper_position.return_value = 0.04
+    module._control_coordinator.task_invoke.return_value = [0.04]
 
     snapshot = module.get_state()
 
-    group = snapshot.groups["arm/tool"]
-    assert group.joints == JointState(name=["arm/j0"], position=[0.1])
+    group = snapshot.groups["tool"]
+    assert group.joints == JointState(name=["j0"], position=[0.1])
     assert group.gripper_position == pytest.approx(0.04)
     assert group.joint_presets["home"].position == [0.3]
     assert group.joint_presets["init"].position == [-0.2]
+    module._control_coordinator.task_invoke.assert_called_once_with(
+        "arm_gripper", "get_normalized", {}
+    )
+
+
+def test_get_state_skips_gripper_telemetry_without_control_hardware(module_factory) -> None:
+    module = module_factory()
+    _set_groups(module, _model(gripper=False))
+    module._world_monitor.current_group_joint_state.return_value = JointState(
+        name=["j0"], position=[0.1]
+    )
+    module._world_monitor.get_group_ee_pose.return_value = None
+
+    snapshot = module.get_state()
+
+    assert snapshot.groups["tool"].gripper_position is None
+    module._control_coordinator.task_invoke.assert_not_called()
+
+
+def test_set_gripper_position_routes_normalized_command(module_factory) -> None:
+    module = module_factory()
+    _set_groups(module, _model(gripper=True))
+    module._control_coordinator.task_invoke.return_value = True
+
+    result = module.set_gripper_position(0.4, "tool")
+
+    assert result.succeeded
+    module._control_coordinator.task_invoke.assert_called_once_with(
+        "arm_gripper", "set_normalized", {"values": [0.4]}
+    )
 
 
 def test_move_linear_rejects_ambiguous_default_group(module_factory) -> None:
     module = module_factory()
-    left = _robot()
-    right = _robot("other")
-    _set_groups(module, left, right)
+    _set_groups(
+        module,
+        _model(
+            groups=(
+                PlanningGroupDefinition("left", ("j0",), "base", "left_tcp"),
+                PlanningGroupDefinition("right", ("j1",), "base", "right_tcp"),
+            )
+        ),
+    )
 
     result = module.move_linear(dx=0.01)
 
@@ -152,28 +180,28 @@ def test_move_linear_rejects_ambiguous_default_group(module_factory) -> None:
 
 def test_explicit_group_must_support_requested_capability(module_factory) -> None:
     module = module_factory()
-    robot = _robot(tip_link=None)
-    _set_groups(module, robot)
+    _set_groups(
+        module,
+        _model(groups=(PlanningGroupDefinition("tool", ("j0",), "base"),)),
+    )
 
-    pose_result = module._resolve_pose_group("arm/tool")
-    gripper_result = module._resolve_gripper_group("arm/tool")
+    pose_result = module._resolve_pose_group("tool")
+    gripper_result = module._resolve_gripper_group("tool")
 
     assert isinstance(pose_result, CommandResult)
-    assert pose_result.message == "Planning group 'arm/tool' is not pose-capable"
+    assert pose_result.message == "Planning group 'tool' is not pose-capable"
     assert isinstance(gripper_result, CommandResult)
-    assert gripper_result.message == "Planning group 'arm/tool' is not gripper-capable"
+    assert gripper_result.message == "Planning group 'tool' is not gripper-capable"
 
 
 def test_omitted_group_selects_unique_capable_group(module_factory) -> None:
     module = module_factory()
-    plain = _robot()
-    gripper = _robot("gripper_arm", gripper=True)
-    _set_groups(module, plain, gripper)
+    _set_groups(module, _model(gripper=True))
 
     result = module._resolve_gripper_group(None)
 
     assert not isinstance(result, CommandResult)
-    assert result.id == "gripper_arm/tool"
+    assert result.id == "tool"
 
 
 @pytest.fixture
@@ -189,7 +217,7 @@ def test_legacy_skill_adapter_delegates_to_primitive_rpcs(
 ) -> None:
     manipulation = mocker.Mock(spec=ManipulationSpec)
     manipulation.list_planning_groups.return_value = (
-        PlanningGroupInfo("arm/tool", ("arm/j0",), "base", "tcp", False),
+        PlanningGroupInfo("tool", ("j0",), "base", "tcp", False),
     )
     manipulation.plan_to_joints.return_value = PlanResult(PlanStatus.SUCCEEDED, plan=_plan())
     manipulation.execute.return_value = ExecutionResult(ExecutionStatus.COMPLETED)
@@ -198,7 +226,7 @@ def test_legacy_skill_adapter_delegates_to_primitive_rpcs(
     result = skills.move_to_joints("0.25")
 
     assert result.is_success()
-    target = manipulation.plan_to_joints.call_args.args[0]["arm/tool"]
-    assert target.name == ["arm/j0"]
+    target = manipulation.plan_to_joints.call_args.args[0]["tool"]
+    assert target.name == ["j0"]
     assert target.position == [0.25]
     manipulation.execute.assert_called_once_with(blocking=True)

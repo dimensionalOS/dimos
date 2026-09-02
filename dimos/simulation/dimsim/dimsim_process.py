@@ -37,10 +37,12 @@ class DimSimProcess:
         self.process: subprocess.Popen[bytes] | None = None
 
     def start(self) -> None:
+        scene = self.global_config.dimsim_scene
+        _check_lfs_stubs(scene)
+
         deno_path = ensure_deno()
         base_cmd = _deno_cmd(deno_path, _DIMSIM_DIR)
 
-        scene = self.global_config.dimsim_scene
         port = self.global_config.dimsim_port
         headless = self.global_config.dimsim_headless
 
@@ -114,3 +116,25 @@ class DimSimProcess:
 def _deno_cmd(deno_path: str, repo_dir: Path) -> list[str]:
     cli_ts = repo_dir / "cli" / "cli.ts"
     return [deno_path, "run", "--allow-all", "--unstable-net", str(cli_ts)]
+
+
+_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
+
+
+def _check_lfs_stubs(scene: str) -> None:
+    """Fail fast when DimSim assets are un-fetched Git LFS pointer stubs."""
+    stubs = []
+    for asset_dir in (_DIMSIM_DIR / "scenes" / scene, _DIMSIM_DIR / "public" / "embodiment"):
+        for pattern in ("*.glb", "*.gltf"):
+            for path in sorted(asset_dir.rglob(pattern)):
+                with open(path, "rb") as f:
+                    if f.read(len(_LFS_POINTER_PREFIX)) == _LFS_POINTER_PREFIX:
+                        stubs.append(path)
+    if stubs:
+        shown = "\n".join(f"  {p.relative_to(DIMOS_PROJECT_ROOT)}" for p in stubs[:5])
+        more = f"\n  ... and {len(stubs) - 5} more" if len(stubs) > 5 else ""
+        raise RuntimeError(
+            f"{len(stubs)} DimSim asset file(s) are Git LFS pointer stubs, not real content:\n"
+            f"{shown}{more}\n"
+            'Fetch them with: git lfs pull --include="misc/DimSim/**"'
+        )

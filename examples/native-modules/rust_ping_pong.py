@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -35,7 +36,8 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.protocol.service.zenohservice import ZenohConfig
 
 _RUST_DIR = Path(__file__).parent / "rust"
-_EXAMPLES = _RUST_DIR / "target" / "release"
+# The crate is a workspace member, so cargo builds into the repo-root target dir.
+_EXAMPLES = DIMOS_PROJECT_ROOT / "target" / "release"
 _BUILD = "cargo build --release"
 
 # Where pong listens when it runs as the router.

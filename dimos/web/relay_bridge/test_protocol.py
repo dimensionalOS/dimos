@@ -22,9 +22,12 @@ import pytest
 
 from dimos.web.relay_bridge.locate import find_web_dir
 from dimos.web.relay_bridge.protocol import (
+    CONTROL_CHANNEL,
+    MAX_CONTROL_PAYLOAD_BYTES,
     MAX_DATA_FRAME_BYTES,
     MAX_HEADER_LEN,
     PROTOCOL_VERSION,
+    RESERVED_CHANNEL_PREFIX,
     ControlFrameReader,
     DataFrameStreamError,
     DataFrameStreamReader,
@@ -35,6 +38,7 @@ from dimos.web.relay_bridge.protocol import (
     ProtocolError,
     RobotInfo,
     Robots,
+    TeleopStop,
     decode_data_frame,
     decode_datagram,
     encode_control_frame,
@@ -64,10 +68,34 @@ def _header(d):
 
 
 def test_protocol_version():
-    # v3: the manifest travels as one opaque record nested in hello/manifest
-    # messages (v2 carried flat channels/panels fields); a v2 peer must fail
-    # the handshake.
-    assert PROTOCOL_VERSION == 3
+    # v5: the robot hello rides an @control data frame on a one-shot bidi
+    # stream instead of a datagram, and @-prefixed channel ids are reserved;
+    # a v4 peer must fail the handshake.
+    assert PROTOCOL_VERSION == 5
+
+
+def test_control_hello_payload_is_the_datagram_encoding():
+    # @control payloads reuse the datagram encoding: the control_hello data
+    # frame's payload must decode to the hello_robot datagram vector's
+    # message. Also pins the reserved-channel constants against the mirror.
+    assert CONTROL_CHANNEL.startswith(RESERVED_CHANNEL_PREFIX)
+    assert MAX_CONTROL_PAYLOAD_BYTES == 64 * 1024
+    control = next(v for v in DATA if v["name"] == "control_hello")
+    assert control["header"]["ch"] == CONTROL_CHANNEL
+    hello = next(v for v in DATAGRAMS if v["name"] == "hello_robot")
+    payload = base64.b64decode(control["payload_b64"])
+    assert len(payload) <= MAX_CONTROL_PAYLOAD_BYTES
+    assert decode_datagram(payload) == msg_from_dict(hello["message"])
+
+
+def test_control_subs_payload_is_the_datagram_encoding():
+    # The robot control carrier sends subs snapshots as @control frames with
+    # the same payload-reuses-datagram-encoding rule as control_hello.
+    control = next(v for v in DATA if v["name"] == "control_subs")
+    assert control["header"]["ch"] == CONTROL_CHANNEL
+    subs = next(v for v in DATAGRAMS if v["name"] == "subs_snapshot")
+    payload = base64.b64decode(control["payload_b64"])
+    assert decode_datagram(payload) == msg_from_dict(subs["message"])
 
 
 @pytest.mark.parametrize("vector", CONTROL, ids=[v["name"] for v in CONTROL])
@@ -241,6 +269,9 @@ def test_msg_from_dict_validates_types():
         msg_from_dict({"t": "bogus"})  # unknown type
     with pytest.raises(ProtocolError):
         msg_from_dict({"t": "ping", "n": True, "ts": 2.5})  # bool is not a number
+    with pytest.raises(ProtocolError):
+        # v3-era twist without vy: an old peer must fail loudly, not default.
+        msg_from_dict({"t": "twist", "vx": 0.5, "wz": -0.25, "seq": 12, "ts": 2.5})
     # Mirrored-validator parity: protocol.ts must also reject prototype-chain
     # keys instead of resolving them through Object.prototype (protocol_test.ts
     # asserts the same three).
@@ -293,6 +324,11 @@ def test_msg_from_dict_validates_nested_session_shapes():
         {"t": "watch"},
         {"t": "subs", "chs": ["a", 5], "n": 1},
         {"t": "subs", "chs": ["a"]},
+        # Teleop gen mirrors hello.robot: absent ok, null/non-number rejected.
+        {"t": "twist", "vx": 0.5, "vy": 0.0, "wz": 0.0, "seq": 1, "ts": 2.5, "gen": None},
+        {"t": "twist", "vx": 0.5, "vy": 0.0, "wz": 0.0, "seq": 1, "ts": 2.5, "gen": "1"},
+        {"t": "twist", "vx": 0.5, "vy": 0.0, "wz": 0.0, "seq": 1, "ts": 2.5, "gen": True},
+        {"t": "teleop_stop", "gen": None},
     ]
     for data in bad:
         with pytest.raises(ProtocolError):
@@ -314,6 +350,8 @@ def test_encode_omits_absent_optional_fields():
     # A viewer hello must stay byte-identical to its T1 wire form: no
     # "robot":null / "manifest":null keys (JSON.stringify omits undefined).
     assert encode_datagram(Hello(v=1, role="viewer")) == b'{"t":"hello","v":1,"role":"viewer"}'
+    # Same for teleop gen: viewer-authored messages carry no "gen":null key.
+    assert encode_datagram(TeleopStop()) == b'{"t":"teleop_stop"}'
 
 
 def test_nested_roundtrip_returns_models():
