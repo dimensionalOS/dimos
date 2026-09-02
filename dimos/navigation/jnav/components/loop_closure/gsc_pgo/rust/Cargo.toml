@@ -37,7 +37,7 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 tracing = { version = "0.1", optional = true }
-validator = { version = "0.20", features = ["derive"], optional = true }
+validator = { version = "0.21", features = ["derive"], optional = true }
 
 [build-dependencies]
 cc = "1"

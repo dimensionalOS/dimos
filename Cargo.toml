@@ -10,6 +10,8 @@ members = [
     "dimos/hardware/sensors/lidar/virtual_mid360",
     "examples/native-modules/rust",
 ]
+# Links against gtsam, so it builds only through its own flake and own lock.
+exclude = ["dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust"]
 
 [profile.release]
 lto = "thin"
