@@ -288,3 +288,43 @@ the earlier PRD (Paul, Ivan, Jeff, Stash, Jetson Wu) are dispositioned in the kn
   files; merge rather than rebase so the branch never needs a force-push) and pushed to
   `origin/aaryan/installer`. Hand-off point: nothing has run on Linux, the G1,
   or the Jetson yet — start at "Getting a binary onto a test machine" above.
+- 2026-09-01 — REAL Ubuntu 24.04 x86_64 install on `dimensional-67oe`. The existing dirty
+  `~/dimos` was left untouched; source was `/home/dimos/dimos-installer` and the install target was
+  `/home/dimos/dimos-installer-acceptance`. `cargo build --release -p dimos-installer` produced
+  `dimos 0.0.14b1`. Setup dry-run exited 0 and created neither target, binary nor config; the real
+  setup installed the venv, sysctl, memlock and multicast service and passed `import dimos` plus
+  `dimos list`. The corrected second setup exited 0 with every mutating stage already and the
+  applied count unchanged at 21. `update --dry-run`, native `dimos list`, the venv-forwarded update,
+  and `robot scan --timeout 3` all exited 0. `service setup unitree-go2` enabled the unit; status
+  reported `inactive (dead)` and, after the status-stage fix, exited 0 instead of asking for a human.
+- 2026-09-01 — REAL macOS 26.3.1 arm64 install on `Mac-1304` at `10.0.0.167`. The dirty existing
+  checkout was left untouched; `/Users/aaryan/dimos-installer-work` built the release binary and
+  `/Users/aaryan/dimos-installer-acceptance-mac` was the install target. The first fresh checkout
+  proved `GIT_LFS_SKIP_SMUDGE=1` still fails when a configured LFS process cannot find `git-lfs`, so
+  the clone stage now disables both LFS filters. After that fix, dry-run exited 0 and created no
+  target, binary or config; real setup installed `uv` and the base venv and passed both verify
+  actions, and the second setup exited 0 with applied count unchanged at 9. Both update dry-runs
+  and venv forwarding exited 0; `dimos list` printed 130 lines and robot scan exited 0. Homebrew
+  was absent, so setup printed its existing
+  install-Homebrew note; the base venv still verified. The machine had 67 GiB free for the run.
+- 2026-09-01 — REAL Jetson Orin NX `orin-nx-7837` at `10.0.0.52`: Ubuntu 22.04 aarch64, JetPack
+  6.2 / L4T R36.4.3. The fixed aarch64 musl binary was `statically linked, stripped`, SHA-256
+  `adb88a2389f24b97f6fe652b89a3946817b9b82df7dfba745362ce1bdceadd21`. The existing `~/dimos`
+  was left untouched and `/home/dimensional/dimos-installer-acceptance` was used. Dry-run exited 0,
+  created no target/binary/config and logged zero applied actions. Real setup installed the one
+  missing package (`portaudio19-dev`), synced the base venv, persisted sysctl/memlock, enabled
+  multicast and Jetson clocks, and passed torch, import, list and L4T checks. The second setup held
+  applied count at 19. Two `hardware jetson setup` runs also held it at 19 and passed every check.
+  After `sudo reboot`, MAXN_SUPER returned, both services were enabled and active, the four persisted
+  file hashes matched the pre-reboot snapshot, and `update --dry-run` exited 0 with nothing pending.
+  The documented `DIMOS_INSTALLER_URL=http://10.0.0.73:8000` curl bootstrap downloaded the same
+  binary and checksum, exited 0, and again held applied count at 19.
+- 2026-09-01 — fresh-run fixes at code rev `902c642d`: a matching installer record plus venv and
+  branch probes makes setup skip `uv sync`; read-only health stages record `checked`, not `applied`;
+  stderr wins the diagnostic tail deterministically; inactive service status is warn-only exit 0;
+  and a dev clone no longer requires `git-lfs`. Final gates on Linux: `cargo test -p
+  dimos-installer` 269 + 4 + 3 passed, clippy with `-D warnings`, fmt, release build, `bash -n`,
+  ShellCheck, `git diff --check`, and the 16 forwarding/startup pytest cases all passed. The 276 Rust
+  tests also passed natively on the Mac. Final musl cross-builds were static and stripped: aarch64
+  hash above; x86_64 SHA-256 `402219cd2ebf68213ae0aaffee477e2171d73494fc5a79e075dbdda531b80f8d`.
+  The container harness remains unrun because the Linux test host has neither Docker nor Podman.
