@@ -280,3 +280,10 @@ the earlier PRD (Paul, Ivan, Jeff, Stash, Jetson Wu) are dispositioned in the kn
   `hardware jetson setup --dry-run` → exit 2 (was 1); `uninstall --dry-run` → exit 0, three stages.
   The dry-run plan itself is proven by `a_configured_install_dry_runs_the_real_plan_to_exit_0` and
   the container harness, which is still not run.
+- 2026-09-01 — orchestrator re-ran every gate independently after the review fixes, all green:
+  `cargo test` 268 + 4 + 3 passed, `cargo clippy --all-targets -- -D warnings` clean, `cargo fmt
+  --check` clean, `cargo build --release` → `dimos 0.0.14b1`, `pytest dimos/cli/test_forward.py
+  dimos/cli/test_cli_startup.py` 16 passed, `cargo zigbuild` for aarch64 and x86_64 musl both
+  `statically linked, stripped`. Rebased on `origin/main` (3 new commits there, no overlapping
+  files) and pushed to `origin/aaryan/installer`. Hand-off point: nothing has run on Linux, the G1,
+  or the Jetson yet — start at "Getting a binary onto a test machine" above.
