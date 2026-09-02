@@ -16,4 +16,4 @@ RestartSec=3
 TimeoutStopSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=multi-user.target localization.service
