@@ -65,8 +65,9 @@ loopback-only peer discovery is broken on your machine; run everything with
 - **Command shaping** (`sim_module.py`): the policy tracks its velocity
   command with a ~2.5x undershoot, so requested twists are multiplied up
   (`cmd_gain_linear/angular`), and it has a yaw deadband — pure-turn
-  commands below ~1.0 rad/s barely rotate it (~1 deg/s at 0.73 vs 22 deg/s
-  at 1.0) — so turn commands are bumped to `min_effective_wz`.
+  commands below the top of its range barely rotate it (~3-9 deg/s at
+  1.0 rad/s vs 25-31 deg/s at 1.5) — so turn commands are bumped to
+  `min_effective_wz` (1.5, the range maximum).
 - **Falls**: only the plain walking policy is published (no fall recovery),
   and the walk-optimized model has no trunk collision geoms. When the trunk
   stays tilted > ~55 degrees for 2 s the module stands the duck back up,

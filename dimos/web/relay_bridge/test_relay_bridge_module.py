@@ -29,11 +29,26 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
+import textwrap
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any
 import zlib
 
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    ChatMessage,
+    FunctionMessage,
+    HumanMessage,
+    HumanMessageChunk,
+    SystemMessage,
+    SystemMessageChunk,
+    ToolMessage,
+    ToolMessageChunk,
+)
 import numpy as np
 from pydantic import ValidationError
 import pytest
@@ -43,9 +58,11 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.simulation.mujoco.constants import VIDEO_FPS
 from dimos.web.relay_bridge import relay_bridge_module
@@ -58,9 +75,11 @@ from dimos.web.relay_bridge.protocol import (
     TeleopStart as WireTeleopStart,
     TeleopStop as WireTeleopStop,
     Twist as WireTwist,
+    Tx,
 )
 from dimos.web.relay_bridge.relay_bridge_module import (
     CHANNELS,
+    TX_CHANNELS,
     RelayBridgeConfig,
     RelayBridgeModule,
     default_manifest,
@@ -649,6 +668,51 @@ def test_bridge_import_does_not_pull_matplotlib() -> None:
         "assert 'matplotlib' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_bridge_imports_without_langchain() -> None:
+    # langchain-core is the `agents` extra, not a bridge dependency: a web-only
+    # install (`uv sync --extra web`) must still build every existing cockpit
+    # and run `--local-relay`. A None entry in sys.modules makes the import
+    # raise exactly like a missing package; the stand-in base keeps the agent
+    # stream declared and the chat encoder is duck-typed.
+    code = textwrap.dedent(
+        """
+        import json, sys
+        from types import SimpleNamespace
+        sys.modules["langchain_core"] = None
+        from dimos.web.relay_bridge import relay_bridge_module as m
+        from dimos.web.cockpit import cockpit
+        assert not any(
+            name.split(".")[0].startswith("langchain") and mod is not None
+            for name, mod in sys.modules.items()
+        )
+        cockpit()  # the default preset (go2-style cockpits) still compiles
+        atom = m.RelayBridgeModule.blueprint().blueprints[0]
+        agent = next(s for s in atom.streams if s.name == "agent")
+        assert (agent.direction, agent.type) == ("in", m.BaseMessage)
+        msg = SimpleNamespace(
+            type="ai", content="hi", name=None, id="r1",
+            tool_calls=[{"id": "c1", "name": "look", "args": {"at": "ball"}}],
+        )
+        payload, meta = m._encode_chat(None, m._LogEntry(msg, 0.0, 7))
+        entry = json.loads(payload)
+        assert meta is None and entry["n"] == 7, entry
+        assert (entry["role"], entry["content"], entry["id"]) == ("ai", "hi", "r1"), entry
+        assert entry["tool_calls"] == [{"id": "c1", "name": "look", "args": {"at": "ball"}}]
+        """
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_agent_stream_is_typed_by_langchain_base_message() -> None:
+    # With the agents extra installed the stream type must be langchain's own
+    # class: autoconnect keys transports on (name, type), so anything else
+    # would silently never wire McpClient.agent (Out[BaseMessage]).
+    assert relay_bridge_module.BaseMessage is BaseMessage
+    atom = RelayBridgeModule.blueprint().blueprints[0]
+    agent = next(s for s in atom.streams if s.name == "agent")
+    assert (agent.direction, agent.type) == ("in", BaseMessage)
 
 
 def test_manifest_omits_pose_binding_when_odom_unwired(monkeypatch) -> None:
@@ -1535,6 +1599,710 @@ def test_default_manifest_teleop_degradations() -> None:
     with_video = default_manifest(config, ("color_image", "tele_cmd_vel"))
     assert [p["kind"] for p in with_video["panels"]] == ["video", "teleop"]
     assert with_video["layout"] == {"row": ["p0", "p1"], "shares": [2, 1]}
+
+
+# --- Microduck cockpit channels: generic tx commands and the new rx encoders.
+
+MICRODUCK_RX = (
+    "chase_image",
+    "agent",
+    "agent_idle",
+    "path",
+    "nav_state",
+    "mode",
+    "places",
+    "policy_state",
+)
+MICRODUCK_TX = ("human_input", "goal_request", "ui_command")
+
+
+def channel_def(ch: str) -> relay_bridge_module.ChannelDef:
+    return next(cd for cd in CHANNELS if cd.ch == ch)
+
+
+def microduck_manifest(
+    rx: tuple[str, ...] = MICRODUCK_RX, tx: tuple[str, ...] = MICRODUCK_TX
+) -> dict[str, Any]:
+    """Channel-only manifest for the Microduck streams (no panels: the
+    bridge validates channels against its tables, not panel bindings)."""
+    by_tx = {td.ch: td for td in TX_CHANNELS}
+    channels: list[dict[str, Any]] = [
+        {
+            "ch": ch,
+            "dir": "rx",
+            "encoding": channel_def(ch).encoding,
+            "delivery": channel_def(ch).delivery,
+            "maxHz": channel_def(ch).max_hz(RelayBridgeConfig()),
+        }
+        for ch in rx
+    ]
+    channels += [
+        {
+            "ch": ch,
+            "dir": "tx",
+            "encoding": by_tx[ch].encoding,
+            "delivery": by_tx[ch].delivery,
+            "maxHz": 5.0,
+        }
+        for ch in tx
+    ]
+    return {"version": 1, "channels": channels}
+
+
+def transport_of(module: RelayBridgeModule, ch: str) -> FakeTransport:
+    transport = getattr(module, ch).transport
+    assert isinstance(transport, FakeTransport)
+    return transport
+
+
+def frames_on(client: FakeClient, ch: str) -> list[dict[str, Any]]:
+    """Decoded reliable frames sent on `ch`, in order."""
+    return [json.loads(payload) for c, payload, _delivery, _meta in client.frames if c == ch]
+
+
+def test_microduck_manifest_starts_with_every_channel(monkeypatch) -> None:
+    module, clients = _make_bridge(monkeypatch, wire=MICRODUCK_RX, manifest=microduck_manifest())
+    try:
+        _, hello_manifest = clients[0].hello_args
+        assert [c["ch"] for c in hello_manifest["channels"]] == [*MICRODUCK_RX, *MICRODUCK_TX]
+        # Every tx channel but the twist goes through the generic Tx path.
+        assert set(module._tx_defs) == set(MICRODUCK_TX)
+        assert module._teleop_params is None
+        # All the new rx channels replay on subscribe: one always-on raw
+        # cache subscription each, nothing encoding yet.
+        for ch in MICRODUCK_RX:
+            assert len(transport_of(module, ch).subscribers) == 1, ch
+        assert all(module.encoded[ch] == 0 for ch in MICRODUCK_RX)
+        assert module._min_interval["agent"] == pytest.approx(1.0 / 30.0)
+    finally:
+        stop_module(module)
+
+
+def test_cockpit_microduck_layout_starts(monkeypatch) -> None:
+    # The authored Microduck cockpit (Control bar, chase camera, Chat, NavMap)
+    # compiles to a manifest this bridge accepts end to end: every panel
+    # binding has an encoder/handler with the matching encoding+delivery.
+    from dimos.web.cockpit import Chat, Col, Control, NavMap, Row, Video, cockpit
+
+    (atom,) = cockpit(
+        layout=Col(Control(), Row(Video("chase_image"), Chat(), NavMap()), shares=[1, 12])
+    ).blueprints
+    module, clients = _make_bridge(monkeypatch, wire=(), manifest=atom.kwargs["manifest"])
+    try:
+        assert clients[0].hello_args is not None
+        assert set(module._tx_defs) == set(MICRODUCK_TX)
+        assert {cd.ch for cd in module._channel_defs} >= {"chase_image", "agent", "path", "mode"}
+    finally:
+        stop_module(module)
+
+
+def test_microduck_manifest_rejects_mismatches(monkeypatch) -> None:
+    async def fake_connect(url: str, role: str, **kwargs: Any) -> FakeClient:
+        raise AssertionError("must not reach the relay with an invalid manifest")
+
+    monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fake_connect)
+
+    def start_with(manifest: dict[str, Any]) -> None:
+        module = RelayBridgeModule(
+            relay_url="https://127.0.0.1:1", robot_id="unit-bot", manifest=manifest
+        )
+        try:
+            module.start()
+        finally:
+            stop_module(module)
+
+    def with_channel(ch: str, **overrides: Any) -> dict[str, Any]:
+        base = microduck_manifest(rx=("agent",), tx=("human_input",))
+        for channel in base["channels"]:
+            if channel["ch"] == ch:
+                channel.update(overrides)
+        return base
+
+    with pytest.raises(RuntimeError, match="no matching encoder"):
+        start_with(with_channel("agent", encoding="flag.json.v1"))
+    with pytest.raises(RuntimeError, match="no matching encoder"):
+        start_with(with_channel("agent", delivery="latest"))
+    with pytest.raises(RuntimeError, match="no matching handler"):
+        start_with(with_channel("human_input", encoding="pose_goal.json.v1"))
+    with pytest.raises(RuntimeError, match="no matching handler"):
+        start_with(with_channel("human_input", delivery="latest"))
+    unknown = microduck_manifest(rx=(), tx=())
+    unknown["channels"].append(
+        {
+            "ch": "mystery",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 1.0,
+        }
+    )
+    with pytest.raises(RuntimeError, match="no matching handler"):
+        start_with(unknown)
+
+
+def test_default_manifest_advertises_microduck_channels_channel_only() -> None:
+    config = RelayBridgeConfig(image_max_hz=25.0)
+    manifest = default_manifest(config, ("chase_image", "agent", "policy_state"))
+    assert [(c["ch"], c["dir"], c["encoding"], c["maxHz"]) for c in manifest["channels"]] == [
+        ("chase_image", "rx", "jpeg.v1", 25.0),
+        ("agent", "rx", "chat.json.v1", 30.0),
+        ("policy_state", "rx", "policy.json.v1", 10.0),
+    ]
+    assert manifest["panels"] == []
+    # And the parser accepts the auto-mode output for them too.
+    parse_manifest(manifest)
+
+
+def tx(ch: str, seq: int, **data: Any) -> Tx:
+    return Tx(ch=ch, seq=seq, data=data)
+
+
+@pytest.fixture
+def tx_bridge(monkeypatch):
+    module, clients = _make_bridge(monkeypatch, wire=(), manifest=microduck_manifest(rx=()))
+    texts: list[str] = []
+    goals: list[PoseStamped] = []
+    commands: list[str] = []
+    module.human_input.subscribe(texts.append)
+    module.goal_request.subscribe(goals.append)
+    module.ui_command.subscribe(commands.append)
+    try:
+        yield module, clients, texts, goals, commands
+    finally:
+        stop_module(module)
+
+
+def unthrottle(module: RelayBridgeModule, ch: str) -> None:
+    """Lift a channel's rate floor so a test can exercise the other gates
+    with back-to-back sends."""
+    module._tx_defs[ch] = replace(module._tx_defs[ch], min_interval_s=0.0)
+
+
+def test_tx_human_input_publishes_stripped_text(tx_bridge) -> None:
+    module, clients, texts, goals, commands = tx_bridge
+    push(module, clients[0], tx("human_input", 1, text="  go to the kitchen \n"))
+    assert wait_until(lambda: texts == ["go to the kitchen"])
+    assert goals == [] and commands == []
+
+
+def test_tx_goal_request_publishes_pose_stamped(tx_bridge) -> None:
+    module, clients, texts, goals, commands = tx_bridge
+    t0 = time.time()
+    push(module, clients[0], tx("goal_request", 1, x=1.5, y=-2, yaw=1.2, frame="map"))
+    assert wait_until(lambda: len(goals) == 1)
+    goal = goals[0]
+    assert isinstance(goal, PoseStamped)
+    assert goal.frame_id == "map"
+    assert (goal.position.x, goal.position.y, goal.position.z) == (1.5, -2.0, 0.0)
+    assert goal.yaw == pytest.approx(1.2)
+    assert goal.orientation == Quaternion.from_euler(Vector3(0.0, 0.0, 1.2))
+    assert t0 <= goal.ts <= time.time()
+    # yaw and frame default; an int coordinate is a number too.
+    time.sleep(0.25)  # the goal channel's rate floor
+    push(module, clients[0], tx("goal_request", 2, x=0, y=3))
+    assert wait_until(lambda: len(goals) == 2)
+    assert goals[1].frame_id == "world"
+    assert goals[1].yaw == pytest.approx(0.0)
+    assert (goals[1].position.x, goals[1].position.y) == (0.0, 3.0)
+
+
+def test_tx_ui_command_publishes_compact_json(tx_bridge) -> None:
+    module, clients, texts, goals, commands = tx_bridge
+    push(module, clients[0], tx("ui_command", 1, name="set_mode", args={"mode": "agent"}))
+    assert wait_until(lambda: len(commands) == 1)
+    assert commands[0] == '{"name":"set_mode","args":{"mode":"agent"}}'
+    time.sleep(0.06)  # the command channel's rate floor
+    push(module, clients[0], tx("ui_command", 2, name="cancel_nav"))
+    assert wait_until(lambda: len(commands) == 2)
+    assert json.loads(commands[1]) == {"name": "cancel_nav", "args": {}}
+
+
+def test_tx_stale_seq_dropped_while_channel_busy(tx_bridge) -> None:
+    module, clients, texts, goals, commands = tx_bridge
+    unthrottle(module, "human_input")
+    push(module, clients[0], tx("human_input", 5, text="five"))
+    push(module, clients[0], tx("human_input", 4, text="four"))  # reordered: dropped
+    push(module, clients[0], tx("human_input", 5, text="five again"))  # duplicated: dropped
+    push(module, clients[0], tx("human_input", 6, text="six"))
+    assert wait_until(lambda: len(texts) == 2)
+    settle(module)
+    assert texts == ["five", "six"]
+
+
+def test_tx_seq_rebaselines_after_silence(tx_bridge, monkeypatch) -> None:
+    # A reloaded page (or a second tab) restarts its counter at 1; without
+    # a lease generation the only tell is time, so a quiet channel accepts
+    # any seq again.
+    module, clients, texts, goals, commands = tx_bridge
+    unthrottle(module, "human_input")
+    monkeypatch.setattr(relay_bridge_module, "_TX_SEQ_WINDOW_S", 0.05)
+    push(module, clients[0], tx("human_input", 50, text="old tab"))
+    assert wait_until(lambda: texts == ["old tab"])
+    time.sleep(0.1)
+    push(module, clients[0], tx("human_input", 1, text="new tab"))
+    assert wait_until(lambda: texts == ["old tab", "new tab"])
+    # The high-water mark followed the rebaseline: 2 is fresh now.
+    push(module, clients[0], tx("human_input", 2, text="next"))
+    assert wait_until(lambda: texts == ["old tab", "new tab", "next"])
+
+
+def test_tx_rate_floor_drops_bursts(tx_bridge) -> None:
+    module, clients, texts, goals, commands = tx_bridge
+    push(module, clients[0], tx("ui_command", 1, name="policy", args={"policy": "kick_left"}))
+    push(module, clients[0], tx("ui_command", 2, name="policy", args={"policy": "kick_right"}))
+    assert wait_until(lambda: len(commands) == 1)
+    settle(module)
+    assert json.loads(commands[0])["args"] == {"policy": "kick_left"}
+    time.sleep(0.06)
+    push(module, clients[0], tx("ui_command", 3, name="cancel_nav"))
+    assert wait_until(lambda: len(commands) == 2)
+
+
+@pytest.mark.parametrize(
+    ("ch", "data"),
+    [
+        ("human_input", {"text": "   "}),
+        ("human_input", {"text": ""}),
+        ("human_input", {"text": 5}),
+        ("human_input", {}),
+        ("goal_request", {"x": 100.0, "y": 0.0}),
+        ("goal_request", {"x": 0.0, "y": -50.5}),
+        ("goal_request", {"x": "1", "y": 0.0}),
+        ("goal_request", {"x": 1.0}),
+        ("goal_request", {"x": 1.0, "y": 1.0, "yaw": "north"}),
+        ("goal_request", {"x": 1.0, "y": 1.0, "frame": ""}),
+        ("ui_command", {"name": "explode"}),
+        ("ui_command", {"name": "policy", "args": []}),
+        ("ui_command", {"args": {}}),
+    ],
+)
+def test_tx_invalid_record_dropped(tx_bridge, ch: str, data: dict[str, Any]) -> None:
+    module, clients, texts, goals, commands = tx_bridge
+    unthrottle(module, ch)
+    push(module, clients[0], Tx(ch=ch, seq=1, data=data))
+    settle(module)
+    assert (texts, goals, commands) == ([], [], [])
+    # An invalid record consumes neither the seq nor the rate slot: the
+    # viewer's corrected resend at the same seq goes through.
+    valid = {
+        "human_input": {"text": "ok"},
+        "goal_request": {"x": 1.0, "y": 1.0},
+        "ui_command": {"name": "cancel_nav"},
+    }[ch]
+    push(module, clients[0], Tx(ch=ch, seq=1, data=valid))
+    assert wait_until(lambda: len(texts) + len(goals) + len(commands) == 1)
+    assert len(clients) == 1  # supervisor alive
+
+
+def test_tx_unhandled_channel_dropped(tx_bridge) -> None:
+    module, clients, texts, goals, commands = tx_bridge
+    twists: list[Twist] = []
+    module.tele_cmd_vel.subscribe(twists.append)
+    # A Tx on the twist channel is not a twist (no lease, no params) and an
+    # unknown channel has no Out: both dropped, the supervisor unharmed.
+    push(module, clients[0], tx("tele_cmd_vel", 1, vx=1.0, vy=0.0, wz=0.0))
+    push(module, clients[0], tx("mystery", 1, text="hi"))
+    push(module, clients[0], tx("human_input", 1, text="still works"))
+    assert wait_until(lambda: texts == ["still works"])
+    settle(module)
+    assert twists == [] and goals == [] and commands == []
+    assert len(clients) == 1
+
+
+def test_tx_ignored_without_tx_channels(bridge) -> None:
+    module, clients = bridge
+    texts: list[str] = []
+    module.human_input.subscribe(texts.append)
+    push(module, clients[0], tx("human_input", 1, text="hi"))
+    settle(module)
+    assert texts == []
+    assert len(clients) == 1
+
+
+def test_tx_seq_state_resets_with_the_session(tx_bridge) -> None:
+    module, clients, texts, goals, commands = tx_bridge
+    unthrottle(module, "human_input")
+    push(module, clients[0], tx("human_input", 9, text="first session"))
+    assert wait_until(lambda: texts == ["first session"])
+    kill_session(module, clients[0])
+    assert wait_until(lambda: len(clients) == 2)
+    # New session, new viewers, counters from 1 - immediately, no window wait.
+    push(module, clients[1], tx("human_input", 1, text="second session"))
+    assert wait_until(lambda: texts == ["first session", "second session"])
+
+
+def test_tx_twist_path_untouched_alongside_generic_tx(monkeypatch) -> None:
+    manifest = teleop_manifest()
+    manifest["channels"] += microduck_manifest(rx=())["channels"]
+    module, clients = _make_bridge(monkeypatch, manifest=manifest)
+    twists: list[Twist] = []
+    texts: list[str] = []
+    module.tele_cmd_vel.subscribe(twists.append)
+    module.human_input.subscribe(texts.append)
+    try:
+        assert module._teleop_params is not None
+        assert set(module._tx_defs) == set(MICRODUCK_TX)
+        push(module, clients[0], wire_twist(0.4, 0.0, 0.0, seq=1))
+        push(module, clients[0], tx("human_input", 1, text="hello"))
+        assert wait_until(lambda: len(twists) == 1 and texts == ["hello"])
+        assert twists[0].linear.x == pytest.approx(0.4)
+    finally:
+        stop_module(module)
+
+
+def encode_chat(module: RelayBridgeModule, msg: Any) -> dict[str, Any]:
+    encoded = relay_bridge_module._encode_chat(module, msg)
+    assert encoded is not None
+    payload, meta = encoded
+    assert meta is None
+    assert b": " not in payload and b", " not in payload  # compact
+    return json.loads(payload)
+
+
+def test_encode_chat_shapes(bridge) -> None:
+    module, _clients = bridge
+    t0 = time.time()
+    human = encode_chat(module, HumanMessage(content="hi there"))
+    assert human == {
+        "n": human["n"],
+        "role": "human",
+        "content": "hi there",
+        "name": None,
+        "tool_calls": [],
+        "tool_call_id": None,
+        "id": None,
+        "t": human["t"],
+    }
+    assert isinstance(human["n"], int) and t0 <= human["t"] <= time.time()
+
+    ai = encode_chat(
+        module,
+        AIMessage(
+            content=[
+                {"type": "text", "text": "Looking."},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}},
+                {"type": "text", "text": "Found it."},
+            ],
+            tool_calls=[{"name": "navigate_to", "args": {"place": "kitchen"}, "id": "c1"}],
+            id="run-1",
+        ),
+    )
+    assert ai["role"] == "ai"
+    assert ai["content"] == "Looking.\n[image]\nFound it."
+    assert ai["tool_calls"] == [{"id": "c1", "name": "navigate_to", "args": {"place": "kitchen"}}]
+    assert ai["tool_call_id"] is None and ai["id"] == "run-1"
+
+    tool = encode_chat(module, ToolMessage(content="ok", tool_call_id="c1", name="navigate_to"))
+    assert (tool["role"], tool["content"], tool["tool_call_id"], tool["name"]) == (
+        "tool",
+        "ok",
+        "c1",
+        "navigate_to",
+    )
+    assert tool["tool_calls"] == []
+
+    system = encode_chat(module, SystemMessage(content="You are a duck."))
+    assert (system["role"], system["content"]) == ("system", "You are a duck.")
+
+    # n: bridge-process monotonic entry numbers.
+    assert human["n"] < ai["n"] < tool["n"] < system["n"]
+
+
+def test_encode_chat_caps_content(bridge) -> None:
+    module, _clients = bridge
+    cap = relay_bridge_module._CHAT_CONTENT_MAX_CHARS
+    entry = encode_chat(module, ToolMessage(content="x" * (cap + 5000), tool_call_id="c1"))
+    assert entry["content"] == "x" * cap + "\n[truncated]"
+    exact = encode_chat(module, HumanMessage(content="y" * cap))
+    assert exact["content"] == "y" * cap
+
+
+@pytest.mark.parametrize(
+    ("msg", "role"),
+    [
+        (HumanMessageChunk(content="h"), "human"),
+        (AIMessageChunk(content="a"), "ai"),
+        (ToolMessageChunk(content="t", tool_call_id="c1"), "tool"),
+        (SystemMessageChunk(content="s"), "system"),
+        (ChatMessage(content="c", role="narrator"), "system"),
+        (FunctionMessage(content="f", name="fn"), "system"),
+        # The encoder reads the message's own `type` tag, nothing langchain
+        # specific: any object shaped like a message encodes.
+        (SimpleNamespace(type="human", content="duck"), "human"),
+        (SimpleNamespace(type="mystery", content=["a", "b"]), "system"),
+    ],
+    ids=lambda v: v if isinstance(v, str) else type(v).__name__,
+)
+def test_encode_chat_role_from_message_type(bridge, msg: Any, role: str) -> None:
+    module, _clients = bridge
+    entry = encode_chat(module, msg)
+    assert entry["role"] == role
+    assert entry["tool_calls"] == [] and entry["tool_call_id"] == getattr(msg, "tool_call_id", None)
+    assert isinstance(entry["n"], int) and isinstance(entry["t"], float)
+
+
+def test_encode_chat_uses_the_log_entry_number(bridge) -> None:
+    # A message that went through a replay log carries its number with it;
+    # a bare message (a hypothetical replay_depth 1 chat channel) is
+    # numbered on the way through, after every number handed out so far.
+    module, _clients = bridge
+    logged = encode_chat(module, relay_bridge_module._LogEntry(HumanMessage(content="x"), 1.0, 41))
+    assert logged["n"] == 41 and logged["content"] == "x"
+    bare = encode_chat(module, HumanMessage(content="y"))
+    assert bare["n"] >= 1
+    assert encode_chat(module, HumanMessage(content="z"))["n"] == bare["n"] + 1
+
+
+def test_encode_flag_and_path(bridge) -> None:
+    module, _clients = bridge
+    payload, meta = relay_bridge_module._encode_flag(module, True)
+    flag = json.loads(payload)
+    assert meta is None and flag["value"] is True and isinstance(flag["t"], float)
+
+    def pose(i: int) -> PoseStamped:
+        return PoseStamped(ts=1.0, frame_id="map", position=Vector3(float(i), -0.5 * i, 0.0))
+
+    short = NavPath(ts=1.0, frame_id="map", poses=[pose(i) for i in range(3)])
+    payload, meta = relay_bridge_module._encode_path(module, short)
+    path = json.loads(payload)
+    assert meta is None
+    assert path["frame"] == "map"
+    assert path["points"] == [[0.0, 0.0], [1.0, -0.5], [2.0, -1.0]]
+    assert isinstance(path["t"], float)
+
+    cap = relay_bridge_module._PATH_MAX_POINTS
+    long = NavPath(ts=1.0, frame_id="map", poses=[pose(i) for i in range(1000)])
+    payload, _ = relay_bridge_module._encode_path(module, long)
+    points = json.loads(payload)["points"]
+    # Uniform decimation keeps both endpoints and the order.
+    assert len(points) == cap
+    assert points[0] == [0.0, 0.0] and points[-1] == [999.0, -499.5]
+    assert points == sorted(points)
+
+
+@pytest.mark.parametrize("ch", ["nav_state", "mode", "places", "policy_state"])
+def test_passthrough_encoders_validate_json(bridge, ch: str) -> None:
+    module, _clients = bridge
+    encode = channel_def(ch).encode
+    assert encode(module, "not json") is None
+    assert encode(module, "[1, 2]") is None
+    assert encode(module, '"a string"') is None
+    encoded = encode(module, '{"state": "idle", "goal": null, "t": 12.5}')
+    assert encoded is not None
+    payload, meta = encoded
+    assert meta is None
+    # Re-dumped compactly, the producer's own "t" kept.
+    assert payload == b'{"state":"idle","goal":null,"t":12.5}'
+    # A producer that forgot "t" gets the bridge clock.
+    payload, _ = encode(module, '{"mode": "agent"}')
+    record = json.loads(payload)
+    assert record["mode"] == "agent" and isinstance(record["t"], float)
+
+
+def test_passthrough_drop_is_not_a_frame(monkeypatch) -> None:
+    module, clients = _make_bridge(
+        monkeypatch, wire=("nav_state",), manifest=microduck_manifest(rx=("nav_state",), tx=())
+    )
+    try:
+        client = clients[0]
+        push(module, client, Subs(chs=["nav_state"], n=1))
+        assert wait_until(lambda: len(transport_of(module, "nav_state").subscribers) == 2)
+        transport_of(module, "nav_state").publish("garbage")
+        transport_of(module, "nav_state").publish('{"state":"navigating","t":1.0}')
+        assert wait_until(lambda: client.writers["nav_state"].offers)
+        assert module.encoded["nav_state"] == 1
+        assert client.writers["nav_state"].offers == [(b'{"state":"navigating","t":1.0}', None)]
+    finally:
+        stop_module(module)
+
+
+@pytest.fixture
+def agent_bridge(monkeypatch):
+    module, clients = _make_bridge(
+        monkeypatch,
+        wire=("agent", "agent_idle"),
+        manifest=microduck_manifest(rx=("agent", "agent_idle"), tx=()),
+    )
+    try:
+        yield module, clients
+    finally:
+        stop_module(module)
+
+
+def test_agent_log_replays_in_order_and_caps(agent_bridge) -> None:
+    module, clients = agent_bridge
+    client = clients[0]
+    depth = channel_def("agent").replay_depth
+    assert depth == 200
+    # A transcript that grew before any viewer attached (cold start): only
+    # the newest `depth` entries are kept.
+    for i in range(depth + 5):
+        transport_of(module, "agent").publish(HumanMessage(content=f"m{i}"))
+    assert module.encoded["agent"] == 0
+    assert len(transport_of(module, "agent").subscribers) == 1
+
+    push(module, client, Subs(chs=["agent"], n=1))
+    assert wait_until(lambda: len(frames_on(client, "agent")) == depth)
+    flush_loop(module)
+    entries = frames_on(client, "agent")
+    assert [e["content"] for e in entries] == [f"m{i}" for i in range(5, depth + 5)]
+    assert all(e["role"] == "human" for e in entries)
+    ns = [e["n"] for e in entries]
+    assert ns == list(range(ns[0], ns[0] + depth))  # in order, gapless
+    assert module.encoded["agent"] == 0  # replays are not live encodes
+    assert all(delivery == "reliable" for _, _, delivery, _ in client.frames)
+    # Live frames are fed from the log subscription: no second subscription.
+    assert len(transport_of(module, "agent").subscribers) == 1
+
+
+def test_agent_live_and_replayed_entries_share_n(agent_bridge) -> None:
+    module, clients = agent_bridge
+    client = clients[0]
+    push(module, client, Subs(chs=["agent"], n=1))
+    assert wait_until(lambda: "agent" in (module._session.unsubs if module._session else {}))
+    transport_of(module, "agent").publish(HumanMessage(content="hello"))
+    transport_of(module, "agent").publish(AIMessage(content="hi!"))
+    assert wait_until(lambda: len(frames_on(client, "agent")) == 2)
+    live = frames_on(client, "agent")
+    assert module.encoded["agent"] == 2
+
+    push(module, client, Subs(chs=[], n=2))
+    assert wait_until(lambda: module._session is not None and "agent" not in module._session.unsubs)
+    transport_of(module, "agent").publish(ToolMessage(content="done", tool_call_id="c1"))
+    flush_loop(module)
+    assert len(frames_on(client, "agent")) == 2  # nobody watching: no encode
+    assert module.encoded["agent"] == 2
+
+    push(module, client, Subs(chs=["agent"], n=3))
+    assert wait_until(lambda: len(frames_on(client, "agent")) == 5)
+    replayed = frames_on(client, "agent")[2:]
+    # The two entries seen live come back with the same n (the viewer's
+    # dedupe key), followed by the one published while unwatched.
+    assert [(e["n"], e["content"]) for e in replayed[:2]] == [(e["n"], e["content"]) for e in live]
+    assert replayed[2]["content"] == "done" and replayed[2]["n"] == live[1]["n"] + 1
+    assert module.encoded["agent"] == 2
+
+
+def test_agent_log_entry_keeps_its_number_after_eviction(agent_bridge) -> None:
+    # _replay snapshots the log and encodes afterwards; an entry the
+    # transcript pushes out in between must still go out under the number
+    # the live viewers saw, never as a fresh, newer-looking one.
+    module, _clients = agent_bridge
+    depth = channel_def("agent").replay_depth
+    transport_of(module, "agent").publish(HumanMessage(content="first"))
+    (snapshot,) = module._replay_log["agent"]
+    first_n = snapshot.n
+    for i in range(depth):
+        transport_of(module, "agent").publish(HumanMessage(content=f"m{i}"))
+    log = module._replay_log["agent"]
+    assert len(log) == depth and snapshot not in log
+    replayed = encode_chat(module, snapshot)
+    assert (replayed["n"], replayed["content"]) == (first_n, "first")
+    assert [entry.n for entry in log] == list(range(first_n + 1, first_n + depth + 1))
+
+
+def test_channel_def_rejects_unreplayable_logs() -> None:
+    # A log is fed by the always-on cache subscription, which only
+    # resend_on_subscribe channels get: the table refuses a row that would
+    # never deliver a live frame.
+    with pytest.raises(ValueError, match="requires resend_on_subscribe"):
+        replace(channel_def("agent"), resend_on_subscribe=False)
+    with pytest.raises(ValueError, match="replay_depth must be >= 1"):
+        replace(channel_def("odom"), replay_depth=0)
+    replace(channel_def("odom"), replay_depth=1)  # a plain channel is fine
+
+
+def test_tx_channel_def_unpacks_as_a_triple() -> None:
+    # TX_CHANNELS rows used to be (ch, encoding, delivery) tuples; consumers
+    # that still unpack them that way (dimos/web/cockpit.py before its
+    # _tx_registry) must keep working.
+    rows = [(ch, encoding, delivery) for ch, encoding, delivery in TX_CHANNELS]
+    assert rows == [(td.ch, td.encoding, td.delivery) for td in TX_CHANNELS]
+    assert rows[0] == ("tele_cmd_vel", "twist.json.v1", "latest")
+
+
+def test_agent_no_rate_gate(agent_bridge) -> None:
+    module, clients = agent_bridge
+    client = clients[0]
+    push(module, client, Subs(chs=["agent", "agent_idle"], n=1))
+    assert wait_until(lambda: len(transport_of(module, "agent_idle").subscribers) == 2)
+    # Back-to-back publishes, far inside the advertised maxHz intervals
+    # (30 Hz / 10 Hz): every one is a frame - these are events, not samples.
+    for i in range(5):
+        transport_of(module, "agent").publish(HumanMessage(content=f"burst{i}"))
+    transport_of(module, "agent_idle").publish(False)
+    transport_of(module, "agent_idle").publish(True)
+    assert wait_until(lambda: len(frames_on(client, "agent")) == 5)
+    assert wait_until(lambda: len(frames_on(client, "agent_idle")) == 2)
+    assert [e["content"] for e in frames_on(client, "agent")] == [f"burst{i}" for i in range(5)]
+    assert [e["value"] for e in frames_on(client, "agent_idle")] == [False, True]
+
+
+def test_agent_idle_replays_newest_flag(agent_bridge) -> None:
+    module, clients = agent_bridge
+    client = clients[0]
+    transport_of(module, "agent_idle").publish(False)
+    transport_of(module, "agent_idle").publish(True)
+    push(module, client, Subs(chs=["agent_idle"], n=1))
+    assert wait_until(lambda: frames_on(client, "agent_idle"))
+    flush_loop(module)
+    assert [e["value"] for e in frames_on(client, "agent_idle")] == [True]
+    assert module.encoded["agent_idle"] == 0
+
+
+def test_agent_log_survives_reconnect(agent_bridge) -> None:
+    module, clients = agent_bridge
+    push(module, clients[0], Subs(chs=["agent"], n=1))
+    assert wait_until(lambda: "agent" in (module._session.unsubs if module._session else {}))
+    transport_of(module, "agent").publish(HumanMessage(content="before"))
+    assert wait_until(lambda: len(frames_on(clients[0], "agent")) == 1)
+    kill_session(module, clients[0])
+    assert wait_until(lambda: len(clients) == 2)
+    # The retired session is detached from the log; the new one replays it.
+    assert module._log_live["agent"] == ()
+    push(module, clients[1], Subs(chs=["agent"], n=1))
+    assert wait_until(lambda: len(frames_on(clients[1], "agent")) == 1)
+    assert frames_on(clients[1], "agent")[0]["n"] == frames_on(clients[0], "agent")[0]["n"]
+
+
+def test_chase_image_uses_its_own_quality(monkeypatch) -> None:
+    manifest = microduck_manifest(rx=("chase_image",), tx=())
+    manifest["channels"][0]["params"] = {"quality": 60}
+    manifest["channels"].append(
+        {
+            "ch": "color_image",
+            "dir": "rx",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 4.0,
+            "params": {"quality": 33},
+        }
+    )
+    module, clients = _make_bridge(
+        monkeypatch, wire=("chase_image", "color_image"), manifest=manifest
+    )
+    try:
+        assert module._jpeg_quality_for("chase_image") == 60
+        assert module._jpeg_quality_for("color_image") == 33
+        qualities: list[int] = []
+        real = Image.to_jpeg_bytes
+
+        def spy(self: Image, quality: int = 75) -> bytes:
+            qualities.append(quality)
+            return real(self, quality=quality)
+
+        monkeypatch.setattr(Image, "to_jpeg_bytes", spy)
+        client = clients[0]
+        push(module, client, Subs(chs=["chase_image"], n=1))
+        assert wait_until(lambda: len(transport_of(module, "chase_image").subscribers) == 2)
+        transport_of(module, "chase_image").publish(
+            Image.from_numpy(np.zeros((8, 12, 3), dtype=np.uint8))
+        )
+        assert wait_until(lambda: qualities == [60])
+        assert wait_until(lambda: client.writers["chase_image"].offers)
+        assert client.writers["chase_image"].offers[0][1] == {"w": 12, "h": 8}
+    finally:
+        stop_module(module)
 
 
 # Composition helpers live at module level: under PEP 563 (`from __future__

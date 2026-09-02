@@ -38,7 +38,8 @@ export { RESERVED_CHANNEL_PREFIX } from "./manifest.ts";
 // (v2 carried flat channels/panels fields, which a v2 peer would silently
 // misread in both directions). v2: a reliable channel packs all its frames
 // onto one persistent stream. Bump on any change an old peer would silently
-// misparse.
+// misparse. The generic tx command (TxMsg) is additive within v5: a peer
+// without it drops the unknown message type, which is safe (no motion).
 export const PROTOCOL_VERSION = 5;
 
 // The reserved data-frame channel carrying robot-leg control messages (v5+:
@@ -188,9 +189,50 @@ export interface TeleopStopMsg {
   gen?: number;
 }
 
+// Generic command (T7): one small JSON record addressed to a manifest tx
+// channel other than the twist channel (chat text, a navigation goal, a UI
+// command). It rides the viewer's control stream (ordered after watch) and
+// the relay forwards it to the robot only when the watched robot's manifest
+// declares `ch` as a non-twist tx channel; no teleop lease is required.
+// `seq` is per-channel monotonic from the viewer, so the bridge can drop
+// stale or replayed commands. The whole message is bounded: `ch` is a
+// manifest channel id (TX_CH_MAX_LEN), `data` encodes to at most
+// TX_DATA_MAX_BYTES, and no other keys are allowed (an extra key would
+// smuggle bytes past the data cap), so an encoded tx never exceeds
+// MAX_TX_MSG_BYTES and always fits a datagram budget.
+export interface TxMsg {
+  t: "tx";
+  ch: string;
+  seq: number;
+  data: Record<string, unknown>;
+}
+
+// Cap on the compact JSON encoding of TxMsg.data, in UTF-8 bytes (the
+// Python mirror measures json.dumps(data, separators=(",", ":"),
+// ensure_ascii=False)).
+export const TX_DATA_MAX_BYTES = 900;
+
+// TxMsg.ch names a manifest channel, so it shares the manifest id bound.
+export const TX_CH_MAX_LEN = MAX_MANIFEST_ID_LEN;
+
+// TxMsg.ch shape: a bridge stream name (lower snake_case), which also keeps
+// reserved "@" ids out.
+export const TX_CH_PATTERN = /^[a-z][a-z0-9_]*$/;
+
+// Upper bound for one encoded tx message (t + 64-char ch + 16-digit seq +
+// 900 B data + punctuation is ~1010 B); the relay and SDK refuse anything
+// larger before it reaches a datagram budget.
+export const MAX_TX_MSG_BYTES = 1100;
+
 export type ControlMsg = HelloMsg | WelcomeMsg | PingMsg | PongMsg | ErrorMsg;
 export type SessionMsg = RobotsMsg | WatchMsg | ManifestMsg | SubMsg | UnsubMsg | SubsMsg;
-export type TeleopMsg = TwistMsg | StopMsg | TeleopStartMsg | TeleopStartedMsg | TeleopStopMsg;
+export type TeleopMsg =
+  | TwistMsg
+  | StopMsg
+  | TeleopStartMsg
+  | TeleopStartedMsg
+  | TeleopStopMsg
+  | TxMsg;
 export type Msg = ControlMsg | SessionMsg | TeleopMsg;
 
 // Data-plane frame header. `delivery` tells the relay how to forward frames
@@ -236,10 +278,38 @@ const MSG_FIELDS: Record<string, Record<string, "string" | "number">> = {
   teleop_start: {},
   teleop_started: {},
   teleop_stop: {},
+  tx: { ch: "string", seq: "number" },
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Whether `ch` can address a tx channel (TX_CH_PATTERN, <= TX_CH_MAX_LEN). */
+export function isValidTxCh(ch: string): boolean {
+  return ch.length <= TX_CH_MAX_LEN && TX_CH_PATTERN.test(ch);
+}
+
+/** UTF-8 byte length of the compact JSON encoding of a TxMsg.data record. */
+export function txDataBytes(data: Record<string, unknown>): number {
+  return enc.encode(JSON.stringify(data)).length;
+}
+
+// Every TxMsg key: extra keys are rejected (not ignored like elsewhere) so
+// the data cap bounds the whole message. seq is a safe integer on both
+// sides: Python parses larger JSON integers exactly while JSON.parse
+// rounds them, so the mirrors could otherwise disagree on the value.
+const TX_KEYS = new Set(["t", "ch", "seq", "data"]);
+function isTxMsg(v: Record<string, unknown>): boolean {
+  if (!isValidTxCh(v.ch as string)) return false;
+  if (!Number.isSafeInteger(v.seq) || (v.seq as number) < 0) return false;
+  if (!isRecord(v.data)) return false;
+  for (const key of Object.keys(v)) if (!TX_KEYS.has(key)) return false;
+  try {
+    return txDataBytes(v.data) <= TX_DATA_MAX_BYTES;
+  } catch {
+    return false; // unserializable locally-built data (cycles, BigInt)
+  }
 }
 
 function isRobotInfo(value: unknown): value is RobotInfo {
@@ -269,6 +339,7 @@ const MSG_VALIDATORS: Record<string, (value: Record<string, unknown>) => boolean
   stop: genAbsentOrNumber,
   teleop_start: genAbsentOrNumber,
   teleop_stop: genAbsentOrNumber,
+  tx: isTxMsg,
 };
 
 /** Validated message from parsed JSON; null for unknown or malformed ones. */

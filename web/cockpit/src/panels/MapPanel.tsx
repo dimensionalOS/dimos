@@ -14,6 +14,7 @@ import {
   gridBlit,
   type GridPlacement,
   gridToImageData,
+  type MapTransform,
   type Pose2d,
 } from "./mapRenderer.ts";
 import type { PanelProps } from "./registry.tsx";
@@ -29,6 +30,9 @@ export interface MapSinkDeps {
   hidden?: () => boolean;
   /** Calls back on element size changes; returns the disposer. */
   observeResize?: (el: Element, cb: () => void) => () => void;
+  /** Reports the fitted transform (device pixels) on every draw, so an
+   * overlay (NavMapPanel) can place world features on the same canvas. */
+  onTransform?: (t: MapTransform, place: GridPlacement) => void;
 }
 
 function isCostmapValue(v: unknown): v is CostmapValue {
@@ -98,6 +102,7 @@ export function startMapSink(
     }
     ctx.clearRect(0, 0, w, h);
     const t = fitTransform(place, w, h);
+    deps.onTransform?.(t, place);
     ctx.imageSmoothingEnabled = false; // crisp cells when zoomed in
     const { ax, ay, rot, dw, dh } = gridBlit(t, place);
     ctx.save();

@@ -19,7 +19,7 @@ from both pytest and deno test). The transport (protocol.py) carries the
 manifest as one opaque dict; this module is the single owner of its
 structure and domain rules: version gate, bounded unique ids, positive
 rates, panel/layout/pages references that resolve, and kind-specific panel
-rules (video, map2d, teleop).
+rules (video, map2d, teleop, chat, navmap, control).
 
 Manifest v1 is frozen. Additive changes (new panel kinds, new params) ride
 the existing shape: unknown keys and kinds pass through validation.
@@ -110,6 +110,48 @@ class Manifest(_ManifestModel):
 
 
 _MANIFEST_TA: TypeAdapter[Manifest] = TypeAdapter(Manifest)
+
+# Panel kinds with a fixed channel slot table (the cockpit panels authored by
+# dimos/web/cockpit.py Chat/NavMap/Control): the panel must bind exactly
+# these slots, in this order, each with the listed dir + encoding. Delivery
+# is deliberately not checked (it is the bridge's per-channel choice) and the
+# role->channel mapping the panel also carries in `params` is informational.
+# Mirrored by SLOT_KINDS in manifest.ts (same codes, same slot order).
+_SLOT_KINDS: dict[str, tuple[str, tuple[tuple[Dir, str], ...]]] = {
+    # chat, idle flag, mode, then the text input.
+    "chat": (
+        "invalid_chat_panel",
+        (
+            ("rx", "chat.json.v1"),
+            ("rx", "flag.json.v1"),
+            ("rx", "mode.json.v1"),
+            ("tx", "text.json.v1"),
+        ),
+    ),
+    # costmap, pose, path, places, nav state, then goal + command outputs.
+    "navmap": (
+        "invalid_navmap_panel",
+        (
+            ("rx", "costmap.zlib.v1"),
+            ("rx", "pose.json.v1"),
+            ("rx", "path.json.v1"),
+            ("rx", "places.json.v1"),
+            ("rx", "navstate.json.v1"),
+            ("tx", "pose_goal.json.v1"),
+            ("tx", "command.json.v1"),
+        ),
+    ),
+    # mode, policy state, nav state, then the command output.
+    "control": (
+        "invalid_control_panel",
+        (
+            ("rx", "mode.json.v1"),
+            ("rx", "policy.json.v1"),
+            ("rx", "navstate.json.v1"),
+            ("tx", "command.json.v1"),
+        ),
+    ),
+}
 
 
 def _bounded_id(s: str) -> bool:
@@ -284,6 +326,20 @@ def parse_manifest(data: Any) -> Manifest:
                     "invalid_teleop_panel",
                     f"teleop panel {panel.id} needs a twist.json.v1 latest tx channel",
                 )
+        if panel.kind in _SLOT_KINDS:
+            code, slots = _SLOT_KINDS[panel.kind]
+            if len(panel.channels) != len(slots):
+                raise ManifestError(
+                    code, f"{panel.kind} panel {panel.id} must bind exactly {len(slots)} channels"
+                )
+            for i, (dir_, encoding) in enumerate(slots):
+                bound = ch_ids[panel.channels[i]]
+                if bound.encoding != encoding or bound.dir != dir_:
+                    raise ManifestError(
+                        code,
+                        f"{panel.kind} panel {panel.id} channel {i} must be a {encoding} "
+                        f"{dir_} channel",
+                    )
 
     seen: set[str] = set()
     if manifest.layout is not None:

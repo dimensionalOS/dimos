@@ -70,6 +70,20 @@ describe("LayoutTree", () => {
     expect(cells().map((el) => el.style.flexGrow)).toEqual(["1", "1"]);
   });
 
+  it("sizes strip kinds to content: no share, the rest goes to the other cells", () => {
+    const bar = panel("bar", "control", ["mode", "policy_state", "nav_state", "ui_command"]);
+    render(
+      manifest({
+        channels: [spec("odom")],
+        panels: [bar, CAM],
+        layout: { col: ["bar", "cam"], shares: [1, 11] },
+      }),
+    );
+    expect(container.querySelector('[data-testid="panel-bar"]')).not.toBeNull();
+    // Only the readout cell carries a flex-grow; the strip cell has none.
+    expect(cells().map((el) => el.style.flexGrow)).toEqual(["11"]);
+  });
+
   it("renders nested rows/cols and every referenced panel", () => {
     render(
       manifest({

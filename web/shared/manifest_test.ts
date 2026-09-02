@@ -24,6 +24,19 @@ Deno.test("invalid manifests are rejected with the pinned code", () => {
   }
 });
 
+Deno.test("slot-kind rules are pinned by valid and invalid golden vectors", () => {
+  // Guards against a slot kind silently losing its fixture coverage (the
+  // Python mirror is pinned by the same vectors): each needs at least one
+  // accepted manifest and one rejected with its own invalid_<kind>_panel code.
+  for (const kind of ["chat", "navmap", "control"]) {
+    const ofKind = vectors.filter((v) => v.name.startsWith(`${kind}_panel_`));
+    assertEquals(ofKind.some((v) => v.manifest !== undefined), true, `${kind}: valid`);
+    assertEquals(ofKind.some((v) => v.error === `invalid_${kind}_panel`), true, `${kind}: invalid`);
+  }
+  // The whole microduck cockpit layout parses.
+  assertEquals(vectors.find((v) => v.name === "cockpit_microduck")?.manifest !== undefined, true);
+});
+
 Deno.test("maxHz beyond float64 is rejected", () => {
   // Not a golden vector: gen.ts cannot emit a number beyond float64
   // (JSON.stringify(Infinity) is null). JSON.parse turns such a literal into

@@ -58,6 +58,7 @@ describe("App session states", () => {
       datagram: () => {},
       onMsg: () => () => {},
       status,
+      tx: () => ({ ok: false as const, reason: "disconnected" as const }),
     });
     act(() => root.render(<App session={session} />));
   });

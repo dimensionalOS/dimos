@@ -20,7 +20,11 @@ import {
   encodeDatagram,
   type FrameHeader,
   type Msg,
+  msgFromUnknown,
   PROTOCOL_VERSION,
+  TX_CH_MAX_LEN,
+  TX_DATA_MAX_BYTES,
+  type TxMsg,
 } from "../protocol.ts";
 import { ManifestError, parseManifest } from "../manifest.ts";
 
@@ -29,6 +33,22 @@ function b64(bytes: Uint8Array): string {
   for (const b of bytes) s += String.fromCharCode(b);
   return btoa(s);
 }
+
+const txMsgs: Record<string, TxMsg> = {
+  tx_chat: { t: "tx", ch: "human_input", seq: 1, data: { text: "Du-te în bucătărie" } },
+  tx_goal: {
+    t: "tx",
+    ch: "goal_request",
+    seq: 2,
+    data: { x: 1.25, y: -0.5, yaw: 1.5, frame: "world" },
+  },
+  tx_command: {
+    t: "tx",
+    ch: "ui_command",
+    seq: 3,
+    data: { name: "set_mode", args: { mode: "agent" } },
+  },
+};
 
 const controlMsgs: Record<string, Msg> = {
   hello_robot: {
@@ -105,6 +125,12 @@ const controlMsgs: Record<string, Msg> = {
   teleop_start: { t: "teleop_start" },
   teleop_started: { t: "teleop_started" },
   teleop_stop: { t: "teleop_stop" },
+  // Generic tx commands (viewer control stream; relay forwards them to the
+  // robot unchanged): chat text, a navigation goal, a UI command. The data
+  // shapes are what the cockpit's chat/navmap/control panels send.
+  tx_chat: txMsgs.tx_chat,
+  tx_goal: txMsgs.tx_goal,
+  tx_command: txMsgs.tx_command,
 };
 
 const teleopMsgs: Record<string, Msg> = {
@@ -115,6 +141,71 @@ const teleopMsgs: Record<string, Msg> = {
   stop_gen: { t: "stop", seq: 13, ts: 1752576000.5, gen: 3 },
   teleop_start_gen: { t: "teleop_start", gen: 3 },
   teleop_stop_gen: { t: "teleop_stop", gen: 3 },
+};
+
+// Tx validation vectors: `valid` is declared here (the expectation), and
+// both msgFromUnknown and msg_from_dict must agree with it. Valid vectors
+// also pin their datagram bytes. The cap cases pin byte (not character)
+// counting: 447 "é" is 455 characters but 902 bytes.
+const dataAtCap = { text: "x".repeat(TX_DATA_MAX_BYTES - '{"text":""}'.length) };
+const txCases: Record<string, { message: unknown; valid: boolean }> = {
+  tx_chat: { message: txMsgs.tx_chat, valid: true },
+  tx_goal: { message: txMsgs.tx_goal, valid: true },
+  tx_command: { message: txMsgs.tx_command, valid: true },
+  tx_minimal: { message: { t: "tx", ch: "a", seq: 0, data: {} }, valid: true },
+  tx_ch_max_len: {
+    message: { t: "tx", ch: "c".repeat(TX_CH_MAX_LEN), seq: 1, data: {} },
+    valid: true,
+  },
+  tx_data_at_cap: { message: { t: "tx", ch: "a", seq: 1, data: dataAtCap }, valid: true },
+  tx_data_at_cap_utf8: {
+    message: { t: "tx", ch: "a", seq: 1, data: { t: "é".repeat(446) } },
+    valid: true,
+  },
+  tx_data_nested_null: {
+    message: { t: "tx", ch: "a", seq: 1, data: { a: null, b: [1.5, null], c: { d: "é" } } },
+    valid: true,
+  },
+  tx_seq_max_safe: {
+    message: { t: "tx", ch: "a", seq: Number.MAX_SAFE_INTEGER, data: {} },
+    valid: true,
+  },
+  tx_bad_data_oversize: {
+    message: { t: "tx", ch: "a", seq: 1, data: { text: dataAtCap.text + "x" } },
+    valid: false,
+  },
+  tx_bad_data_oversize_utf8: {
+    message: { t: "tx", ch: "a", seq: 1, data: { t: "é".repeat(447) } },
+    valid: false,
+  },
+  tx_bad_ch_too_long: {
+    message: { t: "tx", ch: "c".repeat(TX_CH_MAX_LEN + 1), seq: 1, data: {} },
+    valid: false,
+  },
+  tx_bad_ch_empty: { message: { t: "tx", ch: "", seq: 1, data: {} }, valid: false },
+  tx_bad_ch_upper: { message: { t: "tx", ch: "Human_input", seq: 1, data: {} }, valid: false },
+  tx_bad_ch_leading_digit: { message: { t: "tx", ch: "1ch", seq: 1, data: {} }, valid: false },
+  tx_bad_ch_hyphen: { message: { t: "tx", ch: "human-input", seq: 1, data: {} }, valid: false },
+  tx_bad_ch_reserved: { message: { t: "tx", ch: CONTROL_CHANNEL, seq: 1, data: {} }, valid: false },
+  tx_bad_ch_type: { message: { t: "tx", ch: 5, seq: 1, data: {} }, valid: false },
+  tx_bad_ch_missing: { message: { t: "tx", seq: 1, data: {} }, valid: false },
+  tx_bad_seq_negative: { message: { t: "tx", ch: "a", seq: -1, data: {} }, valid: false },
+  tx_bad_seq_fraction: { message: { t: "tx", ch: "a", seq: 1.5, data: {} }, valid: false },
+  tx_bad_seq_string: { message: { t: "tx", ch: "a", seq: "1", data: {} }, valid: false },
+  tx_bad_seq_bool: { message: { t: "tx", ch: "a", seq: true, data: {} }, valid: false },
+  tx_bad_seq_beyond_safe: {
+    message: { t: "tx", ch: "a", seq: Number.MAX_SAFE_INTEGER + 1, data: {} },
+    valid: false,
+  },
+  tx_bad_seq_missing: { message: { t: "tx", ch: "a", data: {} }, valid: false },
+  tx_bad_data_array: { message: { t: "tx", ch: "a", seq: 1, data: [] }, valid: false },
+  tx_bad_data_null: { message: { t: "tx", ch: "a", seq: 1, data: null }, valid: false },
+  tx_bad_data_string: { message: { t: "tx", ch: "a", seq: 1, data: "x" }, valid: false },
+  tx_bad_data_missing: { message: { t: "tx", ch: "a", seq: 1 }, valid: false },
+  // Extra keys are rejected on tx (elsewhere they are ignored): they would
+  // carry bytes past the data cap. gen in particular: a tx is never stamped.
+  tx_bad_extra_gen: { message: { ...txMsgs.tx_chat, gen: 3 }, valid: false },
+  tx_bad_extra_key: { message: { ...txMsgs.tx_chat, later: 1.5 }, valid: false },
 };
 
 const dataFrames: Record<string, { header: FrameHeader; payload: Uint8Array }> = {
@@ -176,6 +267,86 @@ const chTwist = {
 const pCamera = { id: "camera", kind: "video", channels: ["color_image"] };
 const pPose = { id: "pose", kind: "readout", channels: ["odom"] };
 const longId = "x".repeat(65);
+// Slot-table kinds (chat/navmap/control): the channels the microduck
+// cockpit's bridge advertises, and the panels as dimos/web/cockpit.py emits
+// them (role->channel mapping in params). Delivery is not part of the kind
+// rules, so the values here are only representative.
+const chChase = { ch: "chase_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 12.5 };
+const chAgent = { ch: "agent", encoding: "chat.json.v1", delivery: "reliable", maxHz: 30.5 };
+const chAgentIdle = {
+  ch: "agent_idle",
+  encoding: "flag.json.v1",
+  delivery: "reliable",
+  maxHz: 10.5,
+};
+const chMode = { ch: "mode", encoding: "mode.json.v1", delivery: "reliable", maxHz: 10.5 };
+const chHumanInput = {
+  ch: "human_input",
+  dir: "tx",
+  encoding: "text.json.v1",
+  delivery: "reliable",
+  maxHz: 2.5,
+};
+const chPath = { ch: "path", encoding: "path.json.v1", delivery: "latest", maxHz: 5.5 };
+const chPlaces = { ch: "places", encoding: "places.json.v1", delivery: "reliable", maxHz: 2.5 };
+const chNavState = {
+  ch: "nav_state",
+  encoding: "navstate.json.v1",
+  delivery: "latest",
+  maxHz: 10.5,
+};
+const chGoal = {
+  ch: "goal_request",
+  dir: "tx",
+  encoding: "pose_goal.json.v1",
+  delivery: "reliable",
+  maxHz: 5.5,
+};
+const chCommand = {
+  ch: "ui_command",
+  dir: "tx",
+  encoding: "command.json.v1",
+  delivery: "reliable",
+  maxHz: 10.5,
+};
+const chPolicyState = {
+  ch: "policy_state",
+  encoding: "policy.json.v1",
+  delivery: "latest",
+  maxHz: 10.5,
+};
+const chatChannels = [chAgent, chAgentIdle, chMode, chHumanInput];
+const pChat = {
+  id: "chat",
+  kind: "chat",
+  title: "Agent",
+  channels: ["agent", "agent_idle", "mode", "human_input"],
+  params: { chat: "agent", idle: "agent_idle", mode: "mode", input: "human_input" },
+};
+const navmapChannels = [chCostmap, chOdom, chPath, chPlaces, chNavState, chGoal, chCommand];
+const pNavMap = {
+  id: "navmap",
+  kind: "navmap",
+  title: "Nav map",
+  channels: ["global_costmap", "odom", "path", "places", "nav_state", "goal_request", "ui_command"],
+  params: {
+    costmap: "global_costmap",
+    pose: "odom",
+    path: "path",
+    places: "places",
+    navState: "nav_state",
+    goal: "goal_request",
+    command: "ui_command",
+  },
+};
+const controlChannels = [chMode, chPolicyState, chNavState, chCommand];
+const pControl = {
+  id: "control",
+  kind: "control",
+  title: "Control",
+  channels: ["mode", "policy_state", "nav_state", "ui_command"],
+  params: { mode: "mode", policies: "policy_state", navState: "nav_state", command: "ui_command" },
+};
 const manifestCases: Record<string, unknown> = {
   channels_only: { version: 1, channels: [chImage, chOdom] },
   empty: { version: 1, channels: [] },
@@ -363,6 +534,164 @@ const manifestCases: Record<string, unknown> = {
     channels: [{ ...chTwist, delivery: "reliable" }],
     panels: [{ id: "drive", kind: "teleop", channels: ["tele_cmd_vel"] }],
   },
+  // chat: [chat.json.v1 rx, flag.json.v1 rx, mode.json.v1 rx, text.json.v1 tx]
+  chat_panel_valid: { version: 1, channels: chatChannels, panels: [pChat] },
+  chat_panel_three_channels: {
+    version: 1,
+    channels: chatChannels,
+    panels: [{ ...pChat, channels: ["agent", "agent_idle", "mode"] }],
+  },
+  chat_panel_five_channels: {
+    version: 1,
+    channels: [...chatChannels, chOdom],
+    panels: [{ ...pChat, channels: [...pChat.channels, "odom"] }],
+  },
+  chat_panel_wrong_encoding: {
+    version: 1,
+    channels: [...chatChannels, chOdom],
+    panels: [{ ...pChat, channels: ["odom", "agent_idle", "mode", "human_input"] }],
+  },
+  chat_panel_slots_swapped: {
+    version: 1,
+    channels: chatChannels,
+    panels: [{ ...pChat, channels: ["agent", "mode", "agent_idle", "human_input"] }],
+  },
+  chat_panel_input_rx: {
+    version: 1,
+    channels: [chAgent, chAgentIdle, chMode, { ...chHumanInput, dir: "rx" }],
+    panels: [pChat],
+  },
+  chat_panel_chat_tx: {
+    version: 1,
+    channels: [{ ...chAgent, dir: "tx" }, chAgentIdle, chMode, chHumanInput],
+    panels: [pChat],
+  },
+  // Slot rules pin encoding + dir only; delivery is the bridge's choice.
+  chat_panel_any_delivery: {
+    version: 1,
+    channels: [chAgent, chAgentIdle, chMode, { ...chHumanInput, delivery: "latest" }],
+    panels: [pChat],
+  },
+  // An undeclared channel is reported before the kind rule runs.
+  chat_panel_unknown_channel_first: {
+    version: 1,
+    channels: [chAgent, chAgentIdle, chMode],
+    panels: [pChat],
+  },
+  // navmap: [costmap.zlib.v1 rx, pose.json.v1 rx, path.json.v1 rx,
+  //          places.json.v1 rx, navstate.json.v1 rx, pose_goal.json.v1 tx,
+  //          command.json.v1 tx]
+  navmap_panel_valid: { version: 1, channels: navmapChannels, panels: [pNavMap] },
+  navmap_panel_six_channels: {
+    version: 1,
+    channels: navmapChannels,
+    panels: [{ ...pNavMap, channels: pNavMap.channels.slice(0, 6) }],
+  },
+  navmap_panel_wrong_costmap: {
+    version: 1,
+    channels: navmapChannels,
+    panels: [{ ...pNavMap, channels: ["odom", ...pNavMap.channels.slice(1)] }],
+  },
+  navmap_panel_goal_rx: {
+    version: 1,
+    channels: [
+      chCostmap,
+      chOdom,
+      chPath,
+      chPlaces,
+      chNavState,
+      { ...chGoal, dir: "rx" },
+      chCommand,
+    ],
+    panels: [pNavMap],
+  },
+  navmap_panel_path_tx: {
+    version: 1,
+    channels: [
+      chCostmap,
+      chOdom,
+      { ...chPath, dir: "tx" },
+      chPlaces,
+      chNavState,
+      chGoal,
+      chCommand,
+    ],
+    panels: [pNavMap],
+  },
+  navmap_panel_outputs_swapped: {
+    version: 1,
+    channels: navmapChannels,
+    panels: [{
+      ...pNavMap,
+      channels: [...pNavMap.channels.slice(0, 5), "ui_command", "goal_request"],
+    }],
+  },
+  // control: [mode.json.v1 rx, policy.json.v1 rx, navstate.json.v1 rx, command.json.v1 tx]
+  control_panel_valid: { version: 1, channels: controlChannels, panels: [pControl] },
+  control_panel_no_channel: {
+    version: 1,
+    channels: controlChannels,
+    panels: [{ ...pControl, channels: [] }],
+  },
+  control_panel_wrong_policy: {
+    version: 1,
+    channels: controlChannels,
+    panels: [{ ...pControl, channels: ["mode", "nav_state", "nav_state", "ui_command"] }],
+  },
+  control_panel_command_rx: {
+    version: 1,
+    channels: [chMode, chPolicyState, chNavState, { ...chCommand, dir: "rx" }],
+    panels: [pControl],
+  },
+  control_panel_mode_tx: {
+    version: 1,
+    channels: [{ ...chMode, dir: "tx" }, chPolicyState, chNavState, chCommand],
+    panels: [pControl],
+  },
+  // The whole microduck cockpit (MICRODUCK_COCKPIT_LAYOUT): shared channels
+  // (mode, nav_state, ui_command, odom) declared once, bound by several panels.
+  cockpit_microduck: {
+    version: 1,
+    channels: [
+      chMode,
+      chPolicyState,
+      chNavState,
+      chCommand,
+      chChase,
+      chCostmap,
+      chOdom,
+      chPath,
+      chPlaces,
+      chGoal,
+      chImage,
+      chTwist,
+      chAgent,
+      chAgentIdle,
+      chHumanInput,
+    ],
+    panels: [
+      { ...pControl, id: "p0" },
+      { id: "p1", kind: "video", title: "Chase cam", channels: ["chase_image"] },
+      { ...pNavMap, id: "p2" },
+      { id: "p3", kind: "video", title: "Head cam", channels: ["color_image"] },
+      { id: "p4", kind: "teleop", channels: ["tele_cmd_vel"] },
+      { ...pChat, id: "p5" },
+    ],
+    layout: {
+      col: [
+        "p0",
+        {
+          row: [
+            "p1",
+            { col: ["p2", { row: ["p3", "p4"], shares: [1.5, 1.5] }], shares: [3.5, 2.5] },
+            "p5",
+          ],
+          shares: [5.5, 4.5, 3.5],
+        },
+      ],
+      shares: [1.5, 11.5],
+    },
+  },
   layout_single_panel: { version: 1, channels: [chOdom], panels: [pPose], layout: "pose" },
   layout_row_shares: {
     version: 1,
@@ -537,6 +866,20 @@ const manifests = {
   }),
 };
 
+// Generic tx commands: `valid` pins whether msgFromUnknown accepts the
+// message; valid vectors also carry the byte-exact datagram encoding.
+const txMessages = {
+  vectors: Object.entries(txCases).map(([name, { message, valid }]) => {
+    const parsed = msgFromUnknown(message);
+    if ((parsed !== null) !== valid) {
+      throw new Error(`tx fixture ${name}: expected valid=${valid}, got ${parsed !== null}`);
+    }
+    return valid
+      ? { name, message, valid, b64: b64(encodeDatagram(parsed as TxMsg)) }
+      : { name, message, valid };
+  }),
+};
+
 const dir = new URL(".", import.meta.url);
 for (
   const [file, obj] of [
@@ -544,6 +887,7 @@ for (
     ["datagrams.json", datagrams],
     ["data_frames.json", data],
     ["manifests.json", manifests],
+    ["tx_messages.json", txMessages],
   ] as const
 ) {
   await Deno.writeTextFile(new URL(file, dir), JSON.stringify(obj, null, 2) + "\n");

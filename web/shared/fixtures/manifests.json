@@ -1549,6 +1549,1961 @@
       "error": "invalid_teleop_panel"
     },
     {
+      "name": "chat_panel_valid",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 30.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "flag.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "title": "Agent",
+            "channels": [
+              "agent",
+              "agent_idle",
+              "mode",
+              "human_input"
+            ],
+            "params": {
+              "chat": "agent",
+              "idle": "agent_idle",
+              "mode": "mode",
+              "input": "human_input"
+            }
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "agent",
+            "dir": "rx",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 30.5,
+            "params": {}
+          },
+          {
+            "ch": "agent_idle",
+            "dir": "rx",
+            "encoding": "flag.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5,
+            "params": {}
+          },
+          {
+            "ch": "mode",
+            "dir": "rx",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5,
+            "params": {}
+          },
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "params": {}
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "title": "Agent",
+            "channels": [
+              "agent",
+              "agent_idle",
+              "mode",
+              "human_input"
+            ],
+            "params": {
+              "chat": "agent",
+              "idle": "agent_idle",
+              "mode": "mode",
+              "input": "human_input"
+            }
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "chat_panel_three_channels",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 30.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "flag.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "title": "Agent",
+            "channels": [
+              "agent",
+              "agent_idle",
+              "mode"
+            ],
+            "params": {
+              "chat": "agent",
+              "idle": "agent_idle",
+              "mode": "mode",
+              "input": "human_input"
+            }
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_five_channels",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 30.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "flag.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "title": "Agent",
+            "channels": [
+              "agent",
+              "agent_idle",
+              "mode",
+              "human_input",
+              "odom"
+            ],
+            "params": {
+              "chat": "agent",
+              "idle": "agent_idle",
+              "mode": "mode",
+              "input": "human_input"
+            }
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_wrong_encoding",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 30.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "flag.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "title": "Agent",
+            "channels": [
+              "odom",
+              "agent_idle",
+              "mode",
+              "human_input"
+            ],
+            "params": {
+              "chat": "agent",
+              "idle": "agent_idle",
+              "mode": "mode",
+              "input": "human_input"
+            }
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_slots_swapped",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 30.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "flag.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "title": "Agent",
+            "channels": [
+              "agent",
+              "mode",
+              "agent_idle",
+              "human_input"
+            ],
+            "params": {
+              "chat": "agent",
+              "idle": "agent_idle",
+              "mode": "mode",
+              "input": "human_input"
+            }
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_input_rx",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 30.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "flag.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "human_input",
+            "dir": "rx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "title": "Agent",
+            "channels": [
+              "agent",
+              "agent_idle",
+              "mode",
+              "human_input"
+            ],
+            "params": {
+              "chat": "agent",
+              "idle": "agent_idle",
+              "mode": "mode",
+              "input": "human_input"
+            }
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_chat_tx",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 30.5,
+            "dir": "tx"
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "flag.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "title": "Agent",
+            "channels": [
+              "agent",
+              "agent_idle",
+              "mode",
+              "human_input"
+            ],
+            "params": {
+              "chat": "agent",
+              "idle": "agent_idle",
+              "mode": "mode",
+              "input": "human_input"
+            }
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_any_delivery",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 30.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "flag.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "latest",
+            "maxHz": 2.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "title": "Agent",
+            "channels": [
+              "agent",
+              "agent_idle",
+              "mode",
+              "human_input"
+            ],
+            "params": {
+              "chat": "agent",
+              "idle": "agent_idle",
+              "mode": "mode",
+              "input": "human_input"
+            }
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "agent",
+            "dir": "rx",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 30.5,
+            "params": {}
+          },
+          {
+            "ch": "agent_idle",
+            "dir": "rx",
+            "encoding": "flag.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5,
+            "params": {}
+          },
+          {
+            "ch": "mode",
+            "dir": "rx",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5,
+            "params": {}
+          },
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "latest",
+            "maxHz": 2.5,
+            "params": {}
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "title": "Agent",
+            "channels": [
+              "agent",
+              "agent_idle",
+              "mode",
+              "human_input"
+            ],
+            "params": {
+              "chat": "agent",
+              "idle": "agent_idle",
+              "mode": "mode",
+              "input": "human_input"
+            }
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "chat_panel_unknown_channel_first",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 30.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "flag.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "title": "Agent",
+            "channels": [
+              "agent",
+              "agent_idle",
+              "mode",
+              "human_input"
+            ],
+            "params": {
+              "chat": "agent",
+              "idle": "agent_idle",
+              "mode": "mode",
+              "input": "human_input"
+            }
+          }
+        ]
+      },
+      "error": "unknown_panel_channel"
+    },
+    {
+      "name": "navmap_panel_valid",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "path",
+            "encoding": "path.json.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "places",
+            "encoding": "places.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          },
+          {
+            "ch": "nav_state",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "pose_goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "ui_command",
+            "dir": "tx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "navmap",
+            "kind": "navmap",
+            "title": "Nav map",
+            "channels": [
+              "global_costmap",
+              "odom",
+              "path",
+              "places",
+              "nav_state",
+              "goal_request",
+              "ui_command"
+            ],
+            "params": {
+              "costmap": "global_costmap",
+              "pose": "odom",
+              "path": "path",
+              "places": "places",
+              "navState": "nav_state",
+              "goal": "goal_request",
+              "command": "ui_command"
+            }
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "dir": "rx",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5,
+            "params": {}
+          },
+          {
+            "ch": "odom",
+            "dir": "rx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {}
+          },
+          {
+            "ch": "path",
+            "dir": "rx",
+            "encoding": "path.json.v1",
+            "delivery": "latest",
+            "maxHz": 5.5,
+            "params": {}
+          },
+          {
+            "ch": "places",
+            "dir": "rx",
+            "encoding": "places.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "params": {}
+          },
+          {
+            "ch": "nav_state",
+            "dir": "rx",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5,
+            "params": {}
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "pose_goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5,
+            "params": {}
+          },
+          {
+            "ch": "ui_command",
+            "dir": "tx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5,
+            "params": {}
+          }
+        ],
+        "panels": [
+          {
+            "id": "navmap",
+            "kind": "navmap",
+            "title": "Nav map",
+            "channels": [
+              "global_costmap",
+              "odom",
+              "path",
+              "places",
+              "nav_state",
+              "goal_request",
+              "ui_command"
+            ],
+            "params": {
+              "costmap": "global_costmap",
+              "pose": "odom",
+              "path": "path",
+              "places": "places",
+              "navState": "nav_state",
+              "goal": "goal_request",
+              "command": "ui_command"
+            }
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "navmap_panel_six_channels",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "path",
+            "encoding": "path.json.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "places",
+            "encoding": "places.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          },
+          {
+            "ch": "nav_state",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "pose_goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "ui_command",
+            "dir": "tx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "navmap",
+            "kind": "navmap",
+            "title": "Nav map",
+            "channels": [
+              "global_costmap",
+              "odom",
+              "path",
+              "places",
+              "nav_state",
+              "goal_request"
+            ],
+            "params": {
+              "costmap": "global_costmap",
+              "pose": "odom",
+              "path": "path",
+              "places": "places",
+              "navState": "nav_state",
+              "goal": "goal_request",
+              "command": "ui_command"
+            }
+          }
+        ]
+      },
+      "error": "invalid_navmap_panel"
+    },
+    {
+      "name": "navmap_panel_wrong_costmap",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "path",
+            "encoding": "path.json.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "places",
+            "encoding": "places.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          },
+          {
+            "ch": "nav_state",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "pose_goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "ui_command",
+            "dir": "tx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "navmap",
+            "kind": "navmap",
+            "title": "Nav map",
+            "channels": [
+              "odom",
+              "odom",
+              "path",
+              "places",
+              "nav_state",
+              "goal_request",
+              "ui_command"
+            ],
+            "params": {
+              "costmap": "global_costmap",
+              "pose": "odom",
+              "path": "path",
+              "places": "places",
+              "navState": "nav_state",
+              "goal": "goal_request",
+              "command": "ui_command"
+            }
+          }
+        ]
+      },
+      "error": "invalid_navmap_panel"
+    },
+    {
+      "name": "navmap_panel_goal_rx",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "path",
+            "encoding": "path.json.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "places",
+            "encoding": "places.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          },
+          {
+            "ch": "nav_state",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "goal_request",
+            "dir": "rx",
+            "encoding": "pose_goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "ui_command",
+            "dir": "tx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "navmap",
+            "kind": "navmap",
+            "title": "Nav map",
+            "channels": [
+              "global_costmap",
+              "odom",
+              "path",
+              "places",
+              "nav_state",
+              "goal_request",
+              "ui_command"
+            ],
+            "params": {
+              "costmap": "global_costmap",
+              "pose": "odom",
+              "path": "path",
+              "places": "places",
+              "navState": "nav_state",
+              "goal": "goal_request",
+              "command": "ui_command"
+            }
+          }
+        ]
+      },
+      "error": "invalid_navmap_panel"
+    },
+    {
+      "name": "navmap_panel_path_tx",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "path",
+            "encoding": "path.json.v1",
+            "delivery": "latest",
+            "maxHz": 5.5,
+            "dir": "tx"
+          },
+          {
+            "ch": "places",
+            "encoding": "places.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          },
+          {
+            "ch": "nav_state",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "pose_goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "ui_command",
+            "dir": "tx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "navmap",
+            "kind": "navmap",
+            "title": "Nav map",
+            "channels": [
+              "global_costmap",
+              "odom",
+              "path",
+              "places",
+              "nav_state",
+              "goal_request",
+              "ui_command"
+            ],
+            "params": {
+              "costmap": "global_costmap",
+              "pose": "odom",
+              "path": "path",
+              "places": "places",
+              "navState": "nav_state",
+              "goal": "goal_request",
+              "command": "ui_command"
+            }
+          }
+        ]
+      },
+      "error": "invalid_navmap_panel"
+    },
+    {
+      "name": "navmap_panel_outputs_swapped",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "path",
+            "encoding": "path.json.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "places",
+            "encoding": "places.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          },
+          {
+            "ch": "nav_state",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "pose_goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "ui_command",
+            "dir": "tx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "navmap",
+            "kind": "navmap",
+            "title": "Nav map",
+            "channels": [
+              "global_costmap",
+              "odom",
+              "path",
+              "places",
+              "nav_state",
+              "ui_command",
+              "goal_request"
+            ],
+            "params": {
+              "costmap": "global_costmap",
+              "pose": "odom",
+              "path": "path",
+              "places": "places",
+              "navState": "nav_state",
+              "goal": "goal_request",
+              "command": "ui_command"
+            }
+          }
+        ]
+      },
+      "error": "invalid_navmap_panel"
+    },
+    {
+      "name": "control_panel_valid",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "policy_state",
+            "encoding": "policy.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "nav_state",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "ui_command",
+            "dir": "tx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "control",
+            "kind": "control",
+            "title": "Control",
+            "channels": [
+              "mode",
+              "policy_state",
+              "nav_state",
+              "ui_command"
+            ],
+            "params": {
+              "mode": "mode",
+              "policies": "policy_state",
+              "navState": "nav_state",
+              "command": "ui_command"
+            }
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "mode",
+            "dir": "rx",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5,
+            "params": {}
+          },
+          {
+            "ch": "policy_state",
+            "dir": "rx",
+            "encoding": "policy.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5,
+            "params": {}
+          },
+          {
+            "ch": "nav_state",
+            "dir": "rx",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5,
+            "params": {}
+          },
+          {
+            "ch": "ui_command",
+            "dir": "tx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5,
+            "params": {}
+          }
+        ],
+        "panels": [
+          {
+            "id": "control",
+            "kind": "control",
+            "title": "Control",
+            "channels": [
+              "mode",
+              "policy_state",
+              "nav_state",
+              "ui_command"
+            ],
+            "params": {
+              "mode": "mode",
+              "policies": "policy_state",
+              "navState": "nav_state",
+              "command": "ui_command"
+            }
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "control_panel_no_channel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "policy_state",
+            "encoding": "policy.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "nav_state",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "ui_command",
+            "dir": "tx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "control",
+            "kind": "control",
+            "title": "Control",
+            "channels": [],
+            "params": {
+              "mode": "mode",
+              "policies": "policy_state",
+              "navState": "nav_state",
+              "command": "ui_command"
+            }
+          }
+        ]
+      },
+      "error": "invalid_control_panel"
+    },
+    {
+      "name": "control_panel_wrong_policy",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "policy_state",
+            "encoding": "policy.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "nav_state",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "ui_command",
+            "dir": "tx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "control",
+            "kind": "control",
+            "title": "Control",
+            "channels": [
+              "mode",
+              "nav_state",
+              "nav_state",
+              "ui_command"
+            ],
+            "params": {
+              "mode": "mode",
+              "policies": "policy_state",
+              "navState": "nav_state",
+              "command": "ui_command"
+            }
+          }
+        ]
+      },
+      "error": "invalid_control_panel"
+    },
+    {
+      "name": "control_panel_command_rx",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "policy_state",
+            "encoding": "policy.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "nav_state",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "ui_command",
+            "dir": "rx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "control",
+            "kind": "control",
+            "title": "Control",
+            "channels": [
+              "mode",
+              "policy_state",
+              "nav_state",
+              "ui_command"
+            ],
+            "params": {
+              "mode": "mode",
+              "policies": "policy_state",
+              "navState": "nav_state",
+              "command": "ui_command"
+            }
+          }
+        ]
+      },
+      "error": "invalid_control_panel"
+    },
+    {
+      "name": "control_panel_mode_tx",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5,
+            "dir": "tx"
+          },
+          {
+            "ch": "policy_state",
+            "encoding": "policy.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "nav_state",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "ui_command",
+            "dir": "tx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "control",
+            "kind": "control",
+            "title": "Control",
+            "channels": [
+              "mode",
+              "policy_state",
+              "nav_state",
+              "ui_command"
+            ],
+            "params": {
+              "mode": "mode",
+              "policies": "policy_state",
+              "navState": "nav_state",
+              "command": "ui_command"
+            }
+          }
+        ]
+      },
+      "error": "invalid_control_panel"
+    },
+    {
+      "name": "cockpit_microduck",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "mode",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "policy_state",
+            "encoding": "policy.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "nav_state",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "ui_command",
+            "dir": "tx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "chase_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 12.5
+          },
+          {
+            "ch": "global_costmap",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "path",
+            "encoding": "path.json.v1",
+            "delivery": "latest",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "places",
+            "encoding": "places.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "pose_goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5
+          },
+          {
+            "ch": "color_image",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5
+          },
+          {
+            "ch": "tele_cmd_vel",
+            "dir": "tx",
+            "encoding": "twist.json.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "params": {
+              "maxLinear": 0.85,
+              "maxAngular": 1.5,
+              "boost": 2.5,
+              "watchdogMs": 300.5
+            }
+          },
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 30.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "flag.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5
+          },
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "p0",
+            "kind": "control",
+            "title": "Control",
+            "channels": [
+              "mode",
+              "policy_state",
+              "nav_state",
+              "ui_command"
+            ],
+            "params": {
+              "mode": "mode",
+              "policies": "policy_state",
+              "navState": "nav_state",
+              "command": "ui_command"
+            }
+          },
+          {
+            "id": "p1",
+            "kind": "video",
+            "title": "Chase cam",
+            "channels": [
+              "chase_image"
+            ]
+          },
+          {
+            "id": "p2",
+            "kind": "navmap",
+            "title": "Nav map",
+            "channels": [
+              "global_costmap",
+              "odom",
+              "path",
+              "places",
+              "nav_state",
+              "goal_request",
+              "ui_command"
+            ],
+            "params": {
+              "costmap": "global_costmap",
+              "pose": "odom",
+              "path": "path",
+              "places": "places",
+              "navState": "nav_state",
+              "goal": "goal_request",
+              "command": "ui_command"
+            }
+          },
+          {
+            "id": "p3",
+            "kind": "video",
+            "title": "Head cam",
+            "channels": [
+              "color_image"
+            ]
+          },
+          {
+            "id": "p4",
+            "kind": "teleop",
+            "channels": [
+              "tele_cmd_vel"
+            ]
+          },
+          {
+            "id": "p5",
+            "kind": "chat",
+            "title": "Agent",
+            "channels": [
+              "agent",
+              "agent_idle",
+              "mode",
+              "human_input"
+            ],
+            "params": {
+              "chat": "agent",
+              "idle": "agent_idle",
+              "mode": "mode",
+              "input": "human_input"
+            }
+          }
+        ],
+        "layout": {
+          "col": [
+            "p0",
+            {
+              "row": [
+                "p1",
+                {
+                  "col": [
+                    "p2",
+                    {
+                      "row": [
+                        "p3",
+                        "p4"
+                      ],
+                      "shares": [
+                        1.5,
+                        1.5
+                      ]
+                    }
+                  ],
+                  "shares": [
+                    3.5,
+                    2.5
+                  ]
+                },
+                "p5"
+              ],
+              "shares": [
+                5.5,
+                4.5,
+                3.5
+              ]
+            }
+          ],
+          "shares": [
+            1.5,
+            11.5
+          ]
+        }
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "mode",
+            "dir": "rx",
+            "encoding": "mode.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5,
+            "params": {}
+          },
+          {
+            "ch": "policy_state",
+            "dir": "rx",
+            "encoding": "policy.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5,
+            "params": {}
+          },
+          {
+            "ch": "nav_state",
+            "dir": "rx",
+            "encoding": "navstate.json.v1",
+            "delivery": "latest",
+            "maxHz": 10.5,
+            "params": {}
+          },
+          {
+            "ch": "ui_command",
+            "dir": "tx",
+            "encoding": "command.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5,
+            "params": {}
+          },
+          {
+            "ch": "chase_image",
+            "dir": "rx",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 12.5,
+            "params": {}
+          },
+          {
+            "ch": "global_costmap",
+            "dir": "rx",
+            "encoding": "costmap.zlib.v1",
+            "delivery": "latest",
+            "maxHz": 5.5,
+            "params": {}
+          },
+          {
+            "ch": "odom",
+            "dir": "rx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {}
+          },
+          {
+            "ch": "path",
+            "dir": "rx",
+            "encoding": "path.json.v1",
+            "delivery": "latest",
+            "maxHz": 5.5,
+            "params": {}
+          },
+          {
+            "ch": "places",
+            "dir": "rx",
+            "encoding": "places.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "params": {}
+          },
+          {
+            "ch": "goal_request",
+            "dir": "tx",
+            "encoding": "pose_goal.json.v1",
+            "delivery": "reliable",
+            "maxHz": 5.5,
+            "params": {}
+          },
+          {
+            "ch": "color_image",
+            "dir": "rx",
+            "encoding": "jpeg.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "params": {}
+          },
+          {
+            "ch": "tele_cmd_vel",
+            "dir": "tx",
+            "encoding": "twist.json.v1",
+            "delivery": "latest",
+            "maxHz": 15.5,
+            "params": {
+              "maxLinear": 0.85,
+              "maxAngular": 1.5,
+              "boost": 2.5,
+              "watchdogMs": 300.5
+            }
+          },
+          {
+            "ch": "agent",
+            "dir": "rx",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 30.5,
+            "params": {}
+          },
+          {
+            "ch": "agent_idle",
+            "dir": "rx",
+            "encoding": "flag.json.v1",
+            "delivery": "reliable",
+            "maxHz": 10.5,
+            "params": {}
+          },
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "params": {}
+          }
+        ],
+        "panels": [
+          {
+            "id": "p0",
+            "kind": "control",
+            "title": "Control",
+            "channels": [
+              "mode",
+              "policy_state",
+              "nav_state",
+              "ui_command"
+            ],
+            "params": {
+              "mode": "mode",
+              "policies": "policy_state",
+              "navState": "nav_state",
+              "command": "ui_command"
+            }
+          },
+          {
+            "id": "p1",
+            "kind": "video",
+            "title": "Chase cam",
+            "channels": [
+              "chase_image"
+            ],
+            "params": {}
+          },
+          {
+            "id": "p2",
+            "kind": "navmap",
+            "title": "Nav map",
+            "channels": [
+              "global_costmap",
+              "odom",
+              "path",
+              "places",
+              "nav_state",
+              "goal_request",
+              "ui_command"
+            ],
+            "params": {
+              "costmap": "global_costmap",
+              "pose": "odom",
+              "path": "path",
+              "places": "places",
+              "navState": "nav_state",
+              "goal": "goal_request",
+              "command": "ui_command"
+            }
+          },
+          {
+            "id": "p3",
+            "kind": "video",
+            "title": "Head cam",
+            "channels": [
+              "color_image"
+            ],
+            "params": {}
+          },
+          {
+            "id": "p4",
+            "kind": "teleop",
+            "title": "",
+            "channels": [
+              "tele_cmd_vel"
+            ],
+            "params": {}
+          },
+          {
+            "id": "p5",
+            "kind": "chat",
+            "title": "Agent",
+            "channels": [
+              "agent",
+              "agent_idle",
+              "mode",
+              "human_input"
+            ],
+            "params": {
+              "chat": "agent",
+              "idle": "agent_idle",
+              "mode": "mode",
+              "input": "human_input"
+            }
+          }
+        ],
+        "layout": {
+          "col": [
+            "p0",
+            {
+              "row": [
+                "p1",
+                {
+                  "col": [
+                    "p2",
+                    {
+                      "row": [
+                        "p3",
+                        "p4"
+                      ],
+                      "shares": [
+                        1.5,
+                        1.5
+                      ]
+                    }
+                  ],
+                  "shares": [
+                    3.5,
+                    2.5
+                  ]
+                },
+                "p5"
+              ],
+              "shares": [
+                5.5,
+                4.5,
+                3.5
+              ]
+            }
+          ],
+          "shares": [
+            1.5,
+            11.5
+          ]
+        },
+        "pages": []
+      }
+    },
+    {
       "name": "layout_single_panel",
       "data": {
         "version": 1,

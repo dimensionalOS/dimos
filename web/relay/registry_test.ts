@@ -5,13 +5,17 @@ import { assert, assertEquals } from "@std/assert";
 import {
   type ChannelSpec,
   encodeDataFrame,
+  encodeDatagram,
   type FrameHeader,
   type ManifestMsg,
+  MAX_TX_MSG_BYTES,
   type Msg,
   PROTOCOL_VERSION,
   type RobotInfo,
   type RobotManifest,
   type SubsMsg,
+  TX_DATA_MAX_BYTES,
+  type TxMsg,
 } from "@dimos/shared";
 import {
   type ChannelPolicy,
@@ -796,4 +800,174 @@ Deno.test("stats expose the lease holder", () => {
   send(reg, holder, { t: "teleop_start" });
   stats = reg.stats() as typeof stats;
   assertEquals(stats.perRobot.r1.teleop, holder.id);
+});
+
+// --- Generic tx command ---
+
+const TX_SPECS: ChannelSpec[] = [
+  ...SPECS,
+  {
+    ch: "tele_cmd_vel",
+    dir: "tx",
+    encoding: "twist.json.v1",
+    delivery: "latest",
+    maxHz: 15,
+    params: {},
+  },
+  {
+    ch: "human_input",
+    dir: "tx",
+    encoding: "text.json.v1",
+    delivery: "reliable",
+    maxHz: 2,
+    params: {},
+  },
+  {
+    ch: "goal_request",
+    dir: "tx",
+    encoding: "pose_goal.json.v1",
+    delivery: "reliable",
+    maxHz: 5,
+    params: {},
+  },
+];
+
+const TX_CHAT: TxMsg = { t: "tx", ch: "human_input", seq: 1, data: { text: "go to the kitchen" } };
+
+function txMsgs(robot: FakeRobot): Msg[] {
+  return robot.msgs.filter((m) => m.t === "tx");
+}
+
+function txStats(reg: Registry): { forwarded: number; dropped: number } {
+  const stats = reg.stats() as { txForwarded: number; txDropped: number };
+  return { forwarded: stats.txForwarded, dropped: stats.txDropped };
+}
+
+Deno.test("tx to a declared non-twist tx channel is forwarded verbatim, no lease needed", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", TX_SPECS);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []); // never sent teleop_start
+  assert(send(reg, viewer, TX_CHAT));
+  const goal: TxMsg = {
+    t: "tx",
+    ch: "goal_request",
+    seq: 1,
+    data: { x: 1.2, y: -0.5, frame: "world" },
+  };
+  assert(send(reg, viewer, goal));
+  assertEquals(txMsgs(robot), [TX_CHAT, goal]);
+  assertEquals(viewer.replies.filter((m) => m.t === "error"), []);
+  assertEquals(txStats(reg), { forwarded: 2, dropped: 0 });
+  // Not a teleop message: the lease counters and the lease itself stay untouched.
+  const stats = reg.stats() as {
+    teleopForwarded: number;
+    perRobot: Record<string, { teleop: number | null }>;
+  };
+  assertEquals(stats.teleopForwarded, 0);
+  assertEquals(stats.perRobot.r1.teleop, null);
+});
+
+Deno.test("tx still flows while another viewer holds the teleop lease", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", TX_SPECS);
+  reg.registerRobot(robot);
+  const holder = attach(reg, "r1", []);
+  send(reg, holder, { t: "teleop_start" });
+  const chatter = attach(reg, "r1", []);
+  send(reg, chatter, TX_CHAT);
+  assertEquals(txMsgs(robot), [TX_CHAT]);
+});
+
+Deno.test("tx to an undeclared channel is dropped silently and counted", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", TX_SPECS);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  assert(send(reg, viewer, { ...TX_CHAT, ch: "mystery" }));
+  // An rx channel is not a tx channel either.
+  assert(send(reg, viewer, { ...TX_CHAT, ch: "odom" }));
+  assertEquals(txMsgs(robot), []);
+  assertEquals(viewer.replies.filter((m) => m.t === "error"), []);
+  assertEquals(txStats(reg), { forwarded: 0, dropped: 2 });
+});
+
+Deno.test("tx to the twist channel is refused: motion stays lease-gated", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", TX_SPECS);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  send(reg, viewer, { t: "teleop_start" }); // even the lease holder
+  send(reg, viewer, { t: "tx", ch: "tele_cmd_vel", seq: 1, data: { vx: 1, vy: 0, wz: 0 } });
+  assertEquals(txMsgs(robot), []);
+  assertEquals(txStats(reg), { forwarded: 0, dropped: 1 });
+});
+
+Deno.test("oversized tx is refused before it reaches the robot leg", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", TX_SPECS);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  // Bypasses the wire decoder (fake peers hand Msg objects straight in), so
+  // the registry's own size gate is what refuses it.
+  const big: TxMsg = {
+    t: "tx",
+    ch: "human_input",
+    seq: 1,
+    data: { text: "x".repeat(2 * TX_DATA_MAX_BYTES) },
+  };
+  assert(encodeDatagram(big).byteLength > MAX_TX_MSG_BYTES);
+  send(reg, viewer, big);
+  assertEquals(txMsgs(robot), []);
+  assertEquals(txStats(reg), { forwarded: 0, dropped: 1 });
+  // At the cap it still goes through.
+  const atCap: TxMsg = {
+    t: "tx",
+    ch: "human_input",
+    seq: 2,
+    data: { text: "x".repeat(TX_DATA_MAX_BYTES - 11) },
+  };
+  assertEquals(encodeDatagram(atCap).byteLength <= MAX_TX_MSG_BYTES, true);
+  send(reg, viewer, atCap);
+  assertEquals(txMsgs(robot), [atCap]);
+});
+
+Deno.test("tx needs a watch on a live robot", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", TX_SPECS);
+  reg.registerRobot(robot);
+  const unwatched = new FakeViewer();
+  reg.addViewer(unwatched);
+  send(reg, unwatched, { t: "hello", v: PROTOCOL_VERSION, role: "viewer" });
+  assert(send(reg, unwatched, TX_CHAT)); // non-fatal
+  assertEquals(txMsgs(robot), []);
+
+  const watcher = attach(reg, "r1", []);
+  reg.robotClosed(robot);
+  assert(send(reg, watcher, TX_CHAT));
+  assertEquals(txMsgs(robot), []);
+  assertEquals(txStats(reg), { forwarded: 0, dropped: 2 });
+});
+
+Deno.test("tx is refused on a manifest-less robot (nothing to validate against)", () => {
+  // Subs pass through on such a robot; tx must not, or a viewer could name
+  // arbitrary robot streams.
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", []);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  send(reg, viewer, TX_CHAT);
+  assertEquals(txMsgs(robot), []);
+  assertEquals(txStats(reg), { forwarded: 0, dropped: 1 });
+});
+
+Deno.test("tx before hello is rejected like any viewer command", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", TX_SPECS);
+  reg.registerRobot(robot);
+  const viewer = new FakeViewer();
+  reg.addViewer(viewer);
+  assertEquals(send(reg, viewer, TX_CHAT), false);
+  assertEquals((viewer.replies[0] as { code: string }).code, "hello_required");
+  assertEquals(txMsgs(robot), []);
 });

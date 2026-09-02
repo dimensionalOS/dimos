@@ -37,6 +37,10 @@ logger = setup_logger()
 class ReplanningAStarPlannerConfig(ModuleConfig):
     robot_width: float | None = None
     robot_rotation_diameter: float | None = None
+    # Stuck detector overrides (seconds, metres); None keeps the planner's
+    # defaults, which assume a robot that covers well over 0.4 m in 8 s.
+    stuck_time_window: float | None = None
+    stuck_threshold: float | None = None
 
 
 class ReplanningAStarPlanner(Module, NavigationInterface):
@@ -71,7 +75,11 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         effective_global_config = (
             self.config.g.model_copy(update=overrides) if overrides else self.config.g
         )
-        self._planner = GlobalPlanner(effective_global_config)
+        self._planner = GlobalPlanner(
+            effective_global_config,
+            stuck_time_window=self.config.stuck_time_window,
+            stuck_threshold=self.config.stuck_threshold,
+        )
 
     @rpc
     def start(self) -> None:

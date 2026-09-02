@@ -14,6 +14,7 @@ import {
   type Delivery,
   encodeDatagram,
   type FrameHeader,
+  MAX_TX_MSG_BYTES,
   type Msg,
   PROTOCOL_VERSION,
   RESERVED_CHANNEL_PREFIX,
@@ -34,11 +35,16 @@ import {
 // overhead) until the reliable robot carrier lands (W4).
 const DATAGRAM_BUDGET_BYTES = 1200;
 
+// The one tx channel encoding that never rides the generic tx command: motion
+// goes through the lease-gated twist/stop path only.
+const TWIST_ENCODING = "twist.json.v1";
+
 /** What the registry needs from a robot session. */
 export interface RobotPeer {
   /** Set by the session once a valid robot hello arrived. */
   readonly info: RobotInfo | null;
-  /** Normalized channel specs (feeds the delivery map / sub validation). */
+  /** Normalized channel specs (feeds the delivery map / sub validation and
+   * the tx channel gate). */
   readonly channels: ChannelSpec[];
   /** Raw manifest as received; forwarded verbatim in watch replies (the
    * relay never normalizes it and stays layout-blind). */
@@ -81,6 +87,10 @@ interface RobotEntry {
   peer: RobotPeer;
   /** Manifest delivery per channel; frame-header delivery is the fallback. */
   delivery: Map<string, Delivery>;
+  /** Manifest channels the generic tx command may address: dir=tx and not
+   * the twist encoding. Empty for a manifest-less robot (nothing to validate
+   * against, so tx is refused outright - unlike subs). */
+  txChs: Set<string>;
   /** Viewer holding the exclusive teleop lease, or null. Dies with the
    * entry: a re-registered robot starts lease-free. */
   teleop: ViewerPeer | null;
@@ -108,6 +118,8 @@ export class Registry {
   #framesFromUnregistered = 0;
   #teleopForwarded = 0;
   #teleopDropped = 0;
+  #txForwarded = 0;
+  #txDropped = 0;
 
   addViewer(viewer: ViewerPeer): void {
     this.#viewers.add(viewer);
@@ -137,9 +149,13 @@ export class Registry {
       return false;
     }
     const delivery = new Map(peer.channels.map((c) => [c.ch, c.delivery]));
+    const txChs = new Set(
+      peer.channels.filter((c) => c.dir === "tx" && c.encoding !== TWIST_ENCODING).map((c) => c.ch),
+    );
     this.#robots.set(info.id, {
       peer,
       delivery,
+      txChs,
       teleop: null,
       teleopGen: 0,
       n: 0,
@@ -325,8 +341,45 @@ export class Registry {
         this.#teleopForwarded++;
         break;
       }
+      case "tx": {
+        // Generic command to a non-twist tx channel of the watched robot. No
+        // lease: chat text, goals and UI commands are not motion (twist/stop
+        // stay lease-gated). Manifest-gated so a viewer cannot invent robot
+        // stream names, and size-gated so the robot-ward datagram always
+        // fits. Dropped silently like a gated twist: the SDK runs the same
+        // checks before sending, so a drop here is a manifest race or a
+        // misbehaving client, and an error reply would only surface as a
+        // session-level banner.
+        const entry = viewer.watched === null ? undefined : this.#robots.get(viewer.watched);
+        if (entry === undefined) {
+          this.#dropTx(viewer, "not watching a live robot");
+          break;
+        }
+        if (!entry.txChs.has(msg.ch)) {
+          // msg.ch is already bounded (TX_CH_PATTERN, <= 64 chars) by the
+          // wire decoder, so it is safe to echo.
+          this.#dropTx(viewer, `no tx channel ${msg.ch} on ${viewer.watched}`);
+          break;
+        }
+        if (encodeDatagram(msg).byteLength > MAX_TX_MSG_BYTES) {
+          this.#dropTx(viewer, `tx on ${msg.ch} over ${MAX_TX_MSG_BYTES} B`);
+          break;
+        }
+        // Same lossy robot-ward leg as twist/stop (the relay never writes on
+        // robot-opened streams, see session.ts); the bridge's per-channel
+        // seq lets it discard a reordered command. Forwarded as-is: TxMsg
+        // admits no extra keys, so there is no relay stamp to add.
+        entry.peer.sendMsg(msg);
+        this.#txForwarded++;
+        break;
+      }
     }
     return true;
+  }
+
+  #dropTx(viewer: ViewerPeer, reason: string): void {
+    this.#txDropped++;
+    console.log(`[relay] dropping tx from viewer ${viewer.id}: ${reason}`);
   }
 
   /** Release `viewer`'s teleop lease on `robotId`, if held: the bridge gets
@@ -444,6 +497,8 @@ export class Registry {
       framesFromUnregistered: this.#framesFromUnregistered,
       teleopForwarded: this.#teleopForwarded,
       teleopDropped: this.#teleopDropped,
+      txForwarded: this.#txForwarded,
+      txDropped: this.#txDropped,
       perRobot: Object.fromEntries(
         [...this.#robots].map(([id, e]) => [id, {
           subs: e.lastChs,

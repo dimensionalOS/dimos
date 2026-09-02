@@ -183,6 +183,126 @@ class Teleop(Panel):
         )
 
 
+# The three panels below bind several streams each. Their role -> channel
+# mapping rides `params` (keyed by role) so the web panel looks channels up
+# by role instead of index-guessing; the channel slot order (request order)
+# is what manifest.py / manifest.ts validate per kind. Rates are fixed: the
+# bridge's channel table caps them anyway and none of these are tunable
+# from the cockpit today.
+
+
+@dataclass(frozen=True, kw_only=True)
+class Chat(Panel):
+    """Agent chat: the agent transcript, its idle flag and the control mode
+    in; typed human input out."""
+
+    kind: ClassVar[str] = "chat"
+    chat: str = "agent"
+    idle: str = "agent_idle"
+    mode: str = "mode"
+    input: str = "human_input"
+    title: str = "Agent"
+
+    def __post_init__(self) -> None:
+        _check_stream("chat", self.chat)
+        _check_stream("idle", self.idle)
+        _check_stream("mode", self.mode)
+        _check_stream("input", self.input)
+
+    def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        return (
+            ChannelRequest(self.chat, "rx", "chat.json.v1", 30.0),
+            ChannelRequest(self.idle, "rx", "flag.json.v1", 10.0),
+            ChannelRequest(self.mode, "rx", "mode.json.v1", 10.0),
+            ChannelRequest(self.input, "tx", "text.json.v1", 2.0),
+        )
+
+    def _panel_params(self) -> dict[str, Any]:
+        return {"chat": self.chat, "idle": self.idle, "mode": self.mode, "input": self.input}
+
+
+@dataclass(frozen=True, kw_only=True)
+class NavMap(Panel):
+    """Costmap with pose, planned path, named places and nav state overlays;
+    click-to-goal and cancel go out as goal poses / UI commands."""
+
+    kind: ClassVar[str] = "navmap"
+    costmap: str = "global_costmap"
+    pose: str = "odom"
+    path: str = "path"
+    places: str = "places"
+    nav_state: str = "nav_state"
+    goal: str = "goal_request"
+    command: str = "ui_command"
+    title: str = "Nav map"
+
+    def __post_init__(self) -> None:
+        _check_stream("costmap", self.costmap)
+        _check_stream("pose", self.pose)
+        _check_stream("path", self.path)
+        _check_stream("places", self.places)
+        _check_stream("nav_state", self.nav_state)
+        _check_stream("goal", self.goal)
+        _check_stream("command", self.command)
+
+    def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        return (
+            ChannelRequest(self.costmap, "rx", "costmap.zlib.v1", 2.0),
+            ChannelRequest(self.pose, "rx", "pose.json.v1", 10.0),
+            ChannelRequest(self.path, "rx", "path.json.v1", 5.0),
+            ChannelRequest(self.places, "rx", "places.json.v1", 2.0),
+            ChannelRequest(self.nav_state, "rx", "navstate.json.v1", 10.0),
+            ChannelRequest(self.goal, "tx", "pose_goal.json.v1", 5.0),
+            ChannelRequest(self.command, "tx", "command.json.v1", 10.0),
+        )
+
+    def _panel_params(self) -> dict[str, Any]:
+        return {
+            "costmap": self.costmap,
+            "pose": self.pose,
+            "path": self.path,
+            "places": self.places,
+            "navState": self.nav_state,
+            "goal": self.goal,
+            "command": self.command,
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class Control(Panel):
+    """Top bar: teleop/agent mode switch, policy buttons and nav status in;
+    UI commands (set_mode / policy / cancel_nav) out."""
+
+    kind: ClassVar[str] = "control"
+    mode: str = "mode"
+    policies: str = "policy_state"
+    nav_state: str = "nav_state"
+    command: str = "ui_command"
+    title: str = "Control"
+
+    def __post_init__(self) -> None:
+        _check_stream("mode", self.mode)
+        _check_stream("policies", self.policies)
+        _check_stream("nav_state", self.nav_state)
+        _check_stream("command", self.command)
+
+    def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        return (
+            ChannelRequest(self.mode, "rx", "mode.json.v1", 10.0),
+            ChannelRequest(self.policies, "rx", "policy.json.v1", 10.0),
+            ChannelRequest(self.nav_state, "rx", "navstate.json.v1", 10.0),
+            ChannelRequest(self.command, "tx", "command.json.v1", 10.0),
+        )
+
+    def _panel_params(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "policies": self.policies,
+            "navState": self.nav_state,
+            "command": self.command,
+        }
+
+
 class _Split:
     """Base for Row/Col: children plus optional flex shares."""
 
@@ -366,6 +486,20 @@ def build_manifest_data(
     }
 
 
+def _tx_registry(table: Sequence[Any]) -> dict[str, tuple[str, str]]:
+    """stream -> (encoding, delivery) from the bridge's tx channel table,
+    whose rows are `(ch, encoding, delivery)` tuples or channel-def objects
+    with `.ch/.encoding/.delivery` attributes."""
+    registry: dict[str, tuple[str, str]] = {}
+    for row in table:
+        if isinstance(row, tuple):
+            ch, encoding, delivery = row[0], row[1], row[2]
+        else:
+            ch, encoding, delivery = row.ch, row.encoding, row.delivery
+        registry[ch] = (encoding, delivery)
+    return registry
+
+
 def cockpit(layout: Panel | Row | Col | None = None, pages: Sequence[Panel] = ()) -> Blueprint:
     """Cockpit blueprint for the given layout (default: `_default_preset`).
 
@@ -394,7 +528,7 @@ def cockpit(layout: Panel | Row | Col | None = None, pages: Sequence[Panel] = ()
         registry={cd.ch: (cd.encoding, cd.delivery) for cd in CHANNELS},
         rx_streams={s.name for s in atom.streams if s.direction == "in"},
         tx_streams={s.name for s in atom.streams if s.direction == "out"},
-        tx_registry={ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS},
+        tx_registry=_tx_registry(TX_CHANNELS),
     )
     # The domain parser is the authority; authoring bugs must fail at
     # blueprint definition time, not at robot start.

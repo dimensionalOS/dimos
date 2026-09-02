@@ -21,13 +21,18 @@ import struct
 import pytest
 
 from dimos.web.relay_bridge.locate import find_web_dir
+from dimos.web.relay_bridge.manifest import MAX_MANIFEST_ID_LEN
 from dimos.web.relay_bridge.protocol import (
     CONTROL_CHANNEL,
     MAX_CONTROL_PAYLOAD_BYTES,
     MAX_DATA_FRAME_BYTES,
     MAX_HEADER_LEN,
+    MAX_TX_MSG_BYTES,
     PROTOCOL_VERSION,
     RESERVED_CHANNEL_PREFIX,
+    TX_CH_MAX_LEN,
+    TX_CH_PATTERN,
+    TX_DATA_MAX_BYTES,
     ControlFrameReader,
     DataFrameStreamError,
     DataFrameStreamReader,
@@ -39,6 +44,7 @@ from dimos.web.relay_bridge.protocol import (
     RobotInfo,
     Robots,
     TeleopStop,
+    Tx,
     decode_data_frame,
     decode_datagram,
     encode_control_frame,
@@ -46,6 +52,7 @@ from dimos.web.relay_bridge.protocol import (
     encode_datagram,
     msg_from_dict,
     peek_data_frame_lengths,
+    tx_data_bytes,
 )
 
 FIXTURES = find_web_dir() / "shared" / "fixtures"
@@ -59,6 +66,7 @@ def _vectors(name):
 CONTROL = _vectors("control_frames.json")
 DATAGRAMS = _vectors("datagrams.json")
 DATA = _vectors("data_frames.json")
+TX = _vectors("tx_messages.json")
 
 
 def _header(d):
@@ -392,6 +400,159 @@ def test_huge_int_is_a_valid_number():
     # pass (a math.isfinite check would raise OverflowError on them).
     msg = msg_from_dict({"t": "ping", "n": 10**400, "ts": 2.5})
     assert isinstance(msg, Ping) and msg.n == 10**400
+
+
+# ---------- generic tx commands (Tx; mirror of TxMsg in protocol.ts) ----------
+
+
+def _tx(**overrides):
+    base = {"t": "tx", "ch": "ui_command", "seq": 4, "data": {"name": "stop"}}
+    return {**base, **overrides}
+
+
+@pytest.mark.parametrize("vector", TX, ids=[v["name"] for v in TX])
+def test_tx_vector_parity(vector):
+    # `valid` pins acceptance on both sides; valid vectors also pin the
+    # byte-exact datagram encoding (and it always fits the tx budget).
+    raw_in = json.dumps(vector["message"], ensure_ascii=False).encode()
+    if not vector["valid"]:
+        with pytest.raises(ProtocolError):
+            msg_from_dict(vector["message"])
+        assert decode_datagram(raw_in) is None
+        return
+    msg = msg_from_dict(vector["message"])
+    assert isinstance(msg, Tx)
+    raw = base64.b64decode(vector["b64"])
+    assert encode_datagram(msg) == raw
+    assert decode_datagram(raw) == msg
+    assert decode_datagram(raw_in) == msg
+    assert len(raw) <= MAX_TX_MSG_BYTES
+
+
+def test_tx_vectors_cover_the_design_cases():
+    names = {v["name"] for v in TX}
+    assert {"tx_chat", "tx_goal", "tx_command"} <= names  # valid: chat text, goal, command
+    assert {"tx_bad_data_oversize", "tx_bad_ch_too_long", "tx_bad_extra_gen"} <= names
+    # The valid tx_* vectors also ride the shared datagram/control sets, so
+    # the generic golden tests exercise them too.
+    datagram_names = {v["name"] for v in DATAGRAMS}
+    assert {"tx_chat", "tx_goal", "tx_command"} <= datagram_names
+
+
+def test_tx_constants_pin_the_wire_budget():
+    assert TX_DATA_MAX_BYTES == 900
+    assert TX_CH_MAX_LEN == 64 == MAX_MANIFEST_ID_LEN
+    assert TX_CH_PATTERN == r"^[a-z][a-z0-9_]*$"
+    assert MAX_TX_MSG_BYTES == 1100
+    # Worst case: longest ch, largest seq, data at the cap. It must still fit
+    # MAX_TX_MSG_BYTES (the relay sizes datagram buffers off it).
+    data = {"k": "x" * (TX_DATA_MAX_BYTES - len('{"k":""}'))}
+    assert tx_data_bytes(data) == TX_DATA_MAX_BYTES
+    worst = Tx(ch="c" * TX_CH_MAX_LEN, seq=2**53 - 1, data=data)
+    assert len(encode_datagram(worst)) <= MAX_TX_MSG_BYTES
+    assert msg_from_dict(worst.model_dump()) == worst
+
+
+def test_tx_round_trips_and_keeps_nulls_inside_data():
+    # exclude_none strips absent optional *fields*; the opaque data record
+    # travels untouched (a null inside it is the command's business).
+    msg = Tx(ch="human_input", seq=7, data={"text": "salut", "reply_to": None, "tags": [None]})
+    raw = encode_datagram(msg)
+    expected = b'{"t":"tx","ch":"human_input","seq":7,"data":{"text":"salut","reply_to":null,"tags":[null]}}'
+    assert raw == expected
+    assert decode_datagram(raw) == msg
+    assert encode_control_frame(msg)[4:] == raw
+    assert msg_from_dict(_tx()) == Tx(ch="ui_command", seq=4, data={"name": "stop"})
+
+
+def test_tx_data_bytes_counts_compact_utf8():
+    # Same figure as TextEncoder(JSON.stringify(data)).length in protocol.ts:
+    # compact separators, raw (unescaped) non-ASCII.
+    assert tx_data_bytes({}) == 2
+    assert tx_data_bytes({"text": "é"}) == len('{"text":""}') + 2
+    assert tx_data_bytes({"a": None, "b": [1.5, "x"]}) == len('{"a":null,"b":[1.5,"x"]}')
+
+
+def test_tx_rejects_oversize_data():
+    at_cap = {"text": "x" * (TX_DATA_MAX_BYTES - len('{"text":""}'))}
+    assert tx_data_bytes(at_cap) == TX_DATA_MAX_BYTES
+    assert msg_from_dict(_tx(data=at_cap)).data == at_cap
+    over = {"text": at_cap["text"] + "x"}
+    with pytest.raises(ProtocolError):
+        msg_from_dict(_tx(data=over))
+    with pytest.raises(ValueError):
+        Tx(ch="a", seq=1, data=over)  # local construction fails fast too
+    # Bytes, not characters: 446 x "é" is 900 B and passes, 447 is 902 B.
+    assert msg_from_dict(_tx(data={"t": "é" * 446})).data == {"t": "é" * 446}
+    with pytest.raises(ProtocolError):
+        msg_from_dict(_tx(data={"t": "é" * 447}))
+
+
+@pytest.mark.parametrize(
+    "ch",
+    ["", "Human", "2cam", "_cam", "cam-left", "cam.left", "@control", "cam\n", "ĉam", "c" * 65],
+)
+def test_tx_rejects_bad_ch(ch):
+    with pytest.raises(ProtocolError):
+        msg_from_dict(_tx(ch=ch))
+    with pytest.raises(ValueError):
+        Tx(ch=ch, seq=1, data={})
+
+
+@pytest.mark.parametrize("ch", ["a", "human_input", "cam2_left", "c" * 64])
+def test_tx_accepts_stream_shaped_ch(ch):
+    assert msg_from_dict(_tx(ch=ch)).ch == ch
+
+
+def test_tx_rejects_extra_fields():
+    # Unlike the other messages (see test_nested_roundtrip_returns_models),
+    # tx rejects unknown keys: the data cap must bound the whole message.
+    with pytest.raises(ProtocolError):
+        msg_from_dict(_tx(gen=1))
+    with pytest.raises(ProtocolError):
+        msg_from_dict(_tx(later=1.5))
+    with pytest.raises(ValueError):
+        Tx(ch="a", seq=1, data={}, gen=1)
+    # ...and the strict/allow_inf_nan config is still inherited.
+    with pytest.raises(ProtocolError):
+        msg_from_dict(_tx(seq=1.0))
+
+
+@pytest.mark.parametrize("seq", [-1, 1.5, True, "1", 2**53, 10**400, None])
+def test_tx_rejects_bad_seq(seq):
+    with pytest.raises(ProtocolError):
+        msg_from_dict(_tx(seq=seq))
+
+
+def test_tx_seq_bounds_are_js_safe_integers():
+    assert msg_from_dict(_tx(seq=0)).seq == 0
+    assert msg_from_dict(_tx(seq=2**53 - 1)).seq == 2**53 - 1
+    with pytest.raises(ProtocolError):
+        msg_from_dict(_tx(seq=2**53))
+
+
+@pytest.mark.parametrize("data", [[], None, "x", 5])
+def test_tx_rejects_non_record_data(data):
+    with pytest.raises(ProtocolError):
+        msg_from_dict(_tx(data=data))
+
+
+def test_tx_rejects_missing_fields():
+    for key in ("ch", "seq", "data"):
+        d = _tx()
+        del d[key]
+        with pytest.raises(ProtocolError):
+            msg_from_dict(d)
+
+
+def test_tx_data_non_finite_rejected():
+    # Python's JSON parser accepts NaN inside the opaque data record where
+    # JSON.parse errors; the byte counter refuses it (allow_nan=False), and a
+    # local encode fails fast instead of emitting wire JSON the relay drops.
+    assert decode_datagram(b'{"t":"tx","ch":"a","seq":1,"data":{"x":NaN}}') is None
+    assert decode_datagram(b'{"t":"tx","ch":"a","seq":1,"data":{"x":1e999}}') is None
+    with pytest.raises(ValueError):
+        Tx(ch="a", seq=1, data={"x": float("nan")})
 
 
 def test_control_reader_drops_invalid_keeps_valid_neighbors():

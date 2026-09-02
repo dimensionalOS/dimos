@@ -267,6 +267,11 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
+    # Additional rendered MJCF cameras, name -> (width, height, fps). They
+    # are rendered by the engine alongside the primary camera (each blocks
+    # the sim thread while rendering); subclasses read them back with
+    # ``engine.read_camera(name)`` and publish them however they like.
+    extra_cameras: dict[str, tuple[int, int, float]] = Field(default_factory=dict)
     # Optional MuJoCo-native lidar: cast rays from one or more named cameras
     # and publish world-frame PointCloud2 points on ``pointcloud``.
     enable_mujoco_lidar: bool = False
@@ -466,6 +471,17 @@ class MujocoSimModule(
         )
         if primary_needed:
             add_camera(self.config.camera_name)
+
+        for extra_name, (extra_w, extra_h, extra_fps) in self.config.extra_cameras.items():
+            if not extra_name or extra_name in cameras_by_name:
+                continue
+            cameras_by_name[extra_name] = CameraConfig(
+                name=extra_name,
+                width=int(extra_w),
+                height=int(extra_h),
+                fps=float(extra_fps),
+                base_body_name=self.config.base_frame_id,
+            )
 
         if self.config.enable_pointcloud and self.config.enable_mujoco_lidar:
             for camera_name in self._mujoco_lidar_camera_names():

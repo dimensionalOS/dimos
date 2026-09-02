@@ -24,7 +24,14 @@ reports at least one viewer subscribed to that channel, so a robot with no
 open cockpit does no encode work. Channels with resend_on_subscribe
 additionally keep one always-on raw subscription (decode only, never encode)
 so the newest message can be replayed the moment a channel gains its first
-viewer, even when the producer went quiet before that.
+viewer, even when the producer went quiet before that; a replay_depth > 1
+channel (the agent transcript) keeps a bounded log instead and replays it in
+order.
+
+Viewer-to-robot commands arrive as control messages: teleop twists on their
+own lease-guarded path, everything else as generic Tx records routed by
+channel name through TX_CHANNELS (validated, rate-limited, published on the
+Out of the same name).
 
 Threading: input callbacks fire on the transport (LCM) thread, which gates on
 maxHz and encodes there (RerunBridge precedent, ~3 ms per JPEG), then hands
@@ -36,30 +43,51 @@ restarts (respawning the local child when it died).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Collection
+from collections import deque
+from collections.abc import AsyncIterator, Callable, Collection, Iterator
 from dataclasses import dataclass, field
 import functools
+import itertools
 import json
 import math
 from pathlib import Path
 import socket
 import threading
 import time
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 import webbrowser
 import zlib
 
 import numpy as np
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from reactivex.disposable import Disposable
+
+try:
+    # The agent transcript stream is typed by langchain's message base so
+    # autoconnect matches McpClient.agent exactly. langchain-core belongs to
+    # the `agents` extra, not to the bridge: without it the stand-in keeps
+    # the stream declared (nothing can produce it, so it stays unwired) and
+    # every existing cockpit blueprint still starts. The chat encoder is
+    # duck-typed for the same reason.
+    from langchain_core.messages import BaseMessage
+except ImportError:
+
+    class BaseMessage:  # type: ignore[no-redef]
+        """Stand-in for langchain_core.messages.BaseMessage (agents extra absent)."""
+
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
+
+# Aliased: this module already uses pathlib.Path for the serve dir. The
+# stream annotation resolves through get_type_hints, so the alias is safe.
+from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
@@ -87,6 +115,7 @@ from dimos.web.relay_bridge.protocol import (
     TeleopStart as WireTeleopStart,
     TeleopStop as WireTeleopStop,
     Twist as WireTwist,
+    Tx,
 )
 from dimos.web.relay_bridge.relay_process import RelayProcess, ensure_web_dist
 from dimos.web.relay_bridge.wt_client import (
@@ -117,6 +146,20 @@ _BUILD_CANCEL_WAIT_S = 8.0
 # Deadman poll granularity; small against the default 300 ms watchdog window
 # so the zero lands close to the deadline.
 _TELEOP_POLL_S = 0.05
+
+# Generic tx (non-twist) commands carry no lease generation, so the per-channel
+# seq high-water mark cannot tell a reordered datagram from a fresh viewer
+# whose counter restarted at 1 (page reload, second tab). Reordering and
+# duplication happen within milliseconds of the neighbouring datagrams, so a
+# lower/equal seq is stale only while the channel is busy; after this much
+# silence it rebaselines.
+_TX_SEQ_WINDOW_S = 1.0
+
+# Minimum spacing of drop-warnings per key (unknown tx channel, invalid data,
+# unparsable passthrough JSON): a misbehaving peer must not flood the log.
+_LOG_THROTTLE_S = 5.0
+
+_JSON_SEPARATORS = (",", ":")
 
 
 @dataclass(frozen=True)
@@ -225,14 +268,22 @@ class RelayBridgeConfig(ModuleConfig):
     those fields."""
 
 
-def _encode_image(module: RelayBridgeModule, msg: Image) -> tuple[bytes, dict[str, Any] | None]:
+def _encode_jpeg(module: RelayBridgeModule, ch: str, msg: Image) -> tuple[bytes, _FrameMeta]:
     # TurboJPEG via the message's own encoder (handles BGR/RGB/gray inputs).
     # Quality resolved at start from the manifest channel params (falling
     # back to config.jpeg_quality).
     return (
-        msg.to_jpeg_bytes(quality=module._jpeg_quality),
+        msg.to_jpeg_bytes(quality=module._jpeg_quality_for(ch)),
         {"w": msg.width, "h": msg.height},
     )
+
+
+def _encode_image(module: RelayBridgeModule, msg: Image) -> tuple[bytes, dict[str, Any] | None]:
+    return _encode_jpeg(module, "color_image", msg)
+
+
+def _encode_chase_image(module: RelayBridgeModule, msg: Image) -> tuple[bytes, _FrameMeta]:
+    return _encode_jpeg(module, "chase_image", msg)
 
 
 def _encode_odom(
@@ -245,7 +296,143 @@ def _encode_odom(
         "yaw": msg.yaw,
         "ts": msg.ts,
     }
-    return json.dumps(pose, separators=(",", ":")).encode(), None
+    return json.dumps(pose, separators=_JSON_SEPARATORS).encode(), None
+
+
+def _json_frame(record: dict[str, Any]) -> tuple[bytes, _FrameMeta]:
+    """Compact JSON payload. Every bridge-built JSON stream carries "t", the
+    bridge wall clock at encode time (a passthrough keeps the producer's)."""
+    record.setdefault("t", time.time())
+    return json.dumps(record, separators=_JSON_SEPARATORS, default=str).encode(), None
+
+
+# Transcript content cap (characters): a pathological tool result must not
+# turn one reliable frame into a megabyte for every viewer.
+_CHAT_CONTENT_MAX_CHARS = 16 * 1024
+
+
+def _chat_text(content: Any) -> str:
+    """Flatten langchain message content - a string or a list of provider
+    content blocks - into transcript text (images become "[image]")."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return str(content)
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict):
+            kind = block.get("type")
+            if kind == "text" and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+            elif kind in ("image", "image_url"):
+                parts.append("[image]")
+            elif kind:
+                parts.append(f"[{kind}]")
+        else:
+            parts.append(str(block))
+    return "\n".join(parts)
+
+
+def _chat_role(msg: Any) -> str:
+    """Transcript role from the message's own `type` tag ("human", "ai",
+    "tool", "system"; the streaming variants say "AIMessageChunk" and so on).
+    The exotic kinds the agent loop never emits (chat, function) read as
+    system notes."""
+    kind = str(getattr(msg, "type", "")).lower().removesuffix("messagechunk")
+    return kind if kind in ("human", "ai", "tool") else "system"
+
+
+@dataclass(frozen=True, slots=True)
+class _LogEntry:
+    """A replay-log record: the raw message, its arrival wall time (the
+    replayed frame's ts) and its entry number `n`, assigned once on append
+    so the live frame and every later replay of it agree. The encoder of a
+    replay_depth > 1 channel receives these instead of raw messages."""
+
+    msg: Any
+    recv_ts: float
+    n: int
+
+
+def _encode_chat(module: RelayBridgeModule, msg: Any) -> tuple[bytes, _FrameMeta]:
+    """chat.json.v1: one transcript entry per langchain message. `n` is the
+    bridge-process monotonic entry number (stable across replays: the viewer
+    dedupes on it). Duck-typed on the message's type/content/name/id and the
+    AIMessage tool_calls / ToolMessage tool_call_id attributes, so the
+    bridge needs no langchain import of its own."""
+    if isinstance(msg, _LogEntry):
+        n, msg = msg.n, msg.msg
+    else:
+        # Not via a log (a replay_depth 1 channel hands the raw message):
+        # numbered on the way through.
+        n = next(module._log_counter)
+    tool_calls = [
+        {"id": call.get("id"), "name": call.get("name"), "args": call.get("args")}
+        for call in (getattr(msg, "tool_calls", None) or [])
+    ]
+    content = _chat_text(getattr(msg, "content", ""))
+    if len(content) > _CHAT_CONTENT_MAX_CHARS:
+        content = content[:_CHAT_CONTENT_MAX_CHARS] + "\n[truncated]"
+    return _json_frame(
+        {
+            "n": n,
+            "role": _chat_role(msg),
+            "content": content,
+            "name": getattr(msg, "name", None),
+            "tool_calls": tool_calls,
+            "tool_call_id": getattr(msg, "tool_call_id", None),
+            "id": getattr(msg, "id", None),
+        }
+    )
+
+
+def _encode_flag(module: RelayBridgeModule, msg: bool) -> tuple[bytes, _FrameMeta]:
+    return _json_frame({"value": bool(msg)})
+
+
+# Path points per frame: enough for any room-scale plan; longer plans are
+# decimated uniformly (endpoints kept) so the viewer's polyline stays cheap.
+_PATH_MAX_POINTS = 256
+
+
+def _encode_path(module: RelayBridgeModule, msg: NavPath) -> tuple[bytes, _FrameMeta]:
+    poses = msg.poses
+    if len(poses) > _PATH_MAX_POINTS:
+        step = (len(poses) - 1) / (_PATH_MAX_POINTS - 1)
+        poses = [poses[round(i * step)] for i in range(_PATH_MAX_POINTS)]
+    return _json_frame(
+        {
+            "frame": msg.frame_id,
+            "points": [[p.position.x, p.position.y] for p in poses],
+        }
+    )
+
+
+def _passthrough_encoder(
+    ch: str,
+) -> Callable[[RelayBridgeModule, str], tuple[bytes, _FrameMeta] | None]:
+    """Encoder for JSON-string producers (DuckControl, PlacesMemory): the
+    payload is validated and re-dumped compactly; an unparsable or non-object
+    payload drops the frame rather than forwarding garbage to every viewer."""
+
+    def encode(module: RelayBridgeModule, msg: str) -> tuple[bytes, _FrameMeta] | None:
+        try:
+            record = json.loads(msg)
+        except (TypeError, ValueError) as e:
+            module._log_throttled(f"rx:{ch}", f"relay bridge: dropping unparsable {ch} frame ({e})")
+            return None
+        if not isinstance(record, dict):
+            module._log_throttled(
+                f"rx:{ch}",
+                f"relay bridge: dropping non-object {ch} frame ({type(record).__name__})",
+            )
+            return None
+        return _json_frame(record)
+
+    encode.__name__ = f"_encode_{ch}"
+    return encode
 
 
 # The historical costmap encoder's choice (websocket_vis/optimized_costmap.py);
@@ -299,6 +486,25 @@ class ChannelDef:
     # viewer: a new session must not wait for the next publish (the producer
     # may have gone quiet, possibly before the first viewer ever attached).
     resend_on_subscribe: bool = False
+    # False: every message reaches the encoder; maxHz stays advisory for the
+    # viewer. For event streams (transcript entries, flags) where a dropped
+    # frame is lost data, not a skipped sample.
+    rate_gate: bool = True
+    # Raw messages remembered for the 0->1 replay. 1 is the newest-message
+    # cache; more turns it into a bounded log replayed oldest first, and
+    # live frames are then fed from the same log so a replayed and a live
+    # copy of one message are identical (see _reconcile). The encoder of
+    # such a log channel receives _LogEntry records, not raw messages.
+    replay_depth: int = 1
+
+    def __post_init__(self) -> None:
+        if self.replay_depth < 1:
+            raise ValueError(f"channel {self.ch!r}: replay_depth must be >= 1")
+        if self.replay_depth > 1 and not self.resend_on_subscribe:
+            # The log is fed by the always-on cache subscription that only
+            # resend_on_subscribe channels get; without it a log channel
+            # would silently never deliver a live frame.
+            raise ValueError(f"channel {self.ch!r}: replay_depth > 1 requires resend_on_subscribe")
 
 
 def _passes_rate_gate(
@@ -337,13 +543,173 @@ CHANNELS: tuple[ChannelDef, ...] = (
         _encode_costmap,
         resend_on_subscribe=True,
     ),
+    # Microduck cockpit channels (design: web cockpit for the sim demo). All
+    # replay on subscribe: a page opened mid-run must show the current
+    # state, not wait for the next change.
+    ChannelDef(
+        "chase_image",
+        "jpeg.v1",
+        "latest",
+        lambda c: c.image_max_hz,
+        _encode_chase_image,
+        resend_on_subscribe=True,
+    ),
+    ChannelDef(
+        "agent",
+        "chat.json.v1",
+        "reliable",
+        lambda c: 30.0,
+        _encode_chat,
+        resend_on_subscribe=True,
+        rate_gate=False,
+        replay_depth=200,
+    ),
+    ChannelDef(
+        "agent_idle",
+        "flag.json.v1",
+        "reliable",
+        lambda c: 10.0,
+        _encode_flag,
+        resend_on_subscribe=True,
+        rate_gate=False,
+    ),
+    ChannelDef(
+        "path",
+        "path.json.v1",
+        "latest",
+        lambda c: 5.0,
+        _encode_path,
+        resend_on_subscribe=True,
+    ),
+    ChannelDef(
+        "nav_state",
+        "navstate.json.v1",
+        "latest",
+        lambda c: 10.0,
+        _passthrough_encoder("nav_state"),
+        resend_on_subscribe=True,
+        rate_gate=False,
+    ),
+    ChannelDef(
+        "mode",
+        "mode.json.v1",
+        "reliable",
+        lambda c: 10.0,
+        _passthrough_encoder("mode"),
+        resend_on_subscribe=True,
+        rate_gate=False,
+    ),
+    ChannelDef(
+        "places",
+        "places.json.v1",
+        "reliable",
+        lambda c: 2.0,
+        _passthrough_encoder("places"),
+        resend_on_subscribe=True,
+        rate_gate=False,
+    ),
+    ChannelDef(
+        "policy_state",
+        "policy.json.v1",
+        "latest",
+        lambda c: 10.0,
+        _passthrough_encoder("policy_state"),
+        resend_on_subscribe=True,
+        rate_gate=False,
+    ),
 )
 
-# The tx (viewer->robot) counterpart of CHANNELS: stream -> (encoding,
-# delivery). Every entry needs a matching `Out` on the module and a handler
-# in _supervise; it is also the delivery source for tx channels in authored
-# manifests (dimos/web/cockpit.py).
-TX_CHANNELS: tuple[tuple[str, str, Delivery], ...] = (("tele_cmd_vel", "twist.json.v1", "latest"),)
+
+class _TxIn(BaseModel):
+    """Base for generic tx data records: strict types (no coercion from the
+    wire), finite floats; unknown keys are ignored like the other wire
+    models (the Tx envelope already bounds the whole record)."""
+
+    model_config = ConfigDict(strict=True, allow_inf_nan=False)
+
+
+# Tx.data is capped at 900 bytes, so a longer text could never arrive anyway;
+# the cap here keeps the published string bounded by contract, not by accident.
+_CHAT_IN_MAX_CHARS = 900
+
+
+class _ChatIn(_TxIn):
+    text: str = Field(min_length=1, max_length=_CHAT_IN_MAX_CHARS)
+
+    @field_validator("text")
+    @classmethod
+    def _stripped_nonempty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("text must not be blank")
+        return value
+
+
+# Goal bound (m, either axis): room-scale scenes; a click far outside the map
+# is a viewer bug, not a plan.
+_GOAL_MAX_ABS_M = 50.0
+
+
+class _GoalIn(_TxIn):
+    x: float = Field(ge=-_GOAL_MAX_ABS_M, le=_GOAL_MAX_ABS_M)
+    y: float = Field(ge=-_GOAL_MAX_ABS_M, le=_GOAL_MAX_ABS_M)
+    yaw: float = 0.0
+    frame: str = Field(default="world", min_length=1, max_length=64)
+
+
+class _CommandIn(_TxIn):
+    name: Literal["set_mode", "policy", "cancel_nav"]
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
+def _build_chat(module: RelayBridgeModule, data: _ChatIn) -> str:
+    return data.text
+
+
+def _build_goal(module: RelayBridgeModule, data: _GoalIn) -> PoseStamped:
+    return PoseStamped(
+        ts=time.time(),
+        frame_id=data.frame,
+        position=Vector3(data.x, data.y, 0.0),
+        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, data.yaw)),
+    )
+
+
+def _build_command(module: RelayBridgeModule, data: _CommandIn) -> str:
+    # The consumer (DuckControl.ui_command) parses {"name", "args"}.
+    return json.dumps({"name": data.name, "args": data.args}, separators=_JSON_SEPARATORS)
+
+
+@dataclass(frozen=True)
+class TxChannelDef:
+    """A viewer->robot channel: wire identity plus, for generic Tx commands,
+    the data record model, the per-channel rate floor and the builder that
+    turns a validated record into the value published on the Out named
+    `ch`. Teleop twists keep their dedicated lease-guarded path (no model)."""
+
+    ch: str
+    encoding: str
+    delivery: Delivery
+    model: type[BaseModel] | None = None
+    min_interval_s: float = 0.0
+    build: Callable[[RelayBridgeModule, Any], Any] | None = None
+
+    def __iter__(self) -> Iterator[str]:
+        # TX_CHANNELS used to be `(ch, encoding, delivery)` tuples; consumers
+        # that still unpack rows that way keep working.
+        yield from (self.ch, self.encoding, self.delivery)
+
+
+# The tx (viewer->robot) counterpart of CHANNELS. Every entry needs a matching
+# `Out` on the module; twist has its handler in _supervise, the rest go
+# through _on_wire_tx. It is also the delivery source for tx channels in
+# authored manifests (dimos/web/cockpit.py).
+TX_CHANNELS: tuple[TxChannelDef, ...] = (
+    TxChannelDef("tele_cmd_vel", "twist.json.v1", "latest"),
+    TxChannelDef("human_input", "text.json.v1", "reliable", _ChatIn, 0.2, _build_chat),
+    TxChannelDef("goal_request", "pose_goal.json.v1", "reliable", _GoalIn, 0.2, _build_goal),
+    TxChannelDef("ui_command", "command.json.v1", "reliable", _CommandIn, 0.05, _build_command),
+)
 
 
 def default_manifest(config: RelayBridgeConfig, available: Collection[str]) -> dict[str, Any]:
@@ -381,7 +747,7 @@ def default_manifest(config: RelayBridgeConfig, available: Collection[str]) -> d
     else:
         layout = main if main is not None else side
     registry = {cd.ch: (cd.encoding, cd.delivery) for cd in CHANNELS}
-    tx_registry = {ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS}
+    tx_registry = {td.ch: (td.encoding, td.delivery) for td in TX_CHANNELS}
     return build_manifest_data(
         layout,
         (),
@@ -415,9 +781,24 @@ class RelayBridgeModule(Module):
     color_image: In[Image]
     odom: In[PoseStamped]
     global_costmap: In[OccupancyGrid]
+    # Microduck cockpit rx streams (sim chase camera, McpClient transcript
+    # and idle flag, planner path, DuckControl/PlacesMemory JSON strings).
+    chase_image: In[Image]
+    agent: In[BaseMessage]
+    agent_idle: In[bool]
+    path: In[NavPath]
+    nav_state: In[str]
+    mode: In[str]
+    places: In[str]
+    policy_state: In[str]
     # tx: cockpit teleop twists, autoconnected by name+type to
     # MovementManager.tele_cmd_vel (publish is a no-op while unwired).
     tele_cmd_vel: Out[Twist]
+    # tx: generic Tx commands, one Out per TX_CHANNELS entry (McpClient
+    # .human_input, the nav goal_request, DuckControl.ui_command).
+    human_input: Out[str]
+    goal_request: Out[PoseStamped]
+    ui_command: Out[str]
     # NEVER add handle_color_image/handle_odom methods here: _auto_bind_handlers
     # subscribes any handle_<input> eagerly at start(), defeating lazy encode.
 
@@ -440,8 +821,27 @@ class RelayBridgeModule(Module):
         # reconnect replays too. Pins the full grid (MBs, one per channel);
         # encoding stays lazy.
         self._last_msg: dict[str, tuple[Any, float]] = {}
-        # Resolved at start from the manifest's jpeg channel params.
+        # replay_depth > 1 channels: the bounded log behind _last_msg (oldest
+        # first; each record carries its entry number, the transcript's `n`,
+        # from the bridge-wide counter) and the sessions currently fed live
+        # from the log. The log is touched under _log_lock (transport thread
+        # appends, loop snapshots for replay).
+        self._replay_log: dict[str, deque[_LogEntry]] = {}
+        self._log_counter = itertools.count(1)
+        self._log_lock = threading.Lock()
+        self._log_live: dict[str, tuple[tuple[_Session, _Sender], ...]] = {}
+        # Last emission time per throttled-warning key (_log_throttled).
+        self._warn_last: dict[str, float] = {}
+        # Resolved at start from the manifest's jpeg channel params: the
+        # last explicit quality (the flat knob) and the per-channel values.
         self._jpeg_quality: int = self.config.jpeg_quality
+        self._jpeg_quality_by_ch: dict[str, int] = {}
+        # Generic tx state: the manifest's Tx-handled channels, and per
+        # channel the seq high-water mark and the monotonic time of the last
+        # accepted record (rate floor + stale-seq window). Loop only.
+        self._tx_defs: dict[str, TxChannelDef] = {}
+        self._tx_last_seq: dict[str, int] = {}
+        self._tx_last_rx: dict[str, float] = {}
         # Teleop state, all touched on the module loop only. None params =
         # the manifest advertises no teleop channel; every teleop message is
         # then ignored. `driving` implements the release-edge rule: publish
@@ -478,7 +878,7 @@ class RelayBridgeModule(Module):
                 # consumes it, so availability comes from the composition
                 # (with_relay_bridge scans the blueprint's consumers).
                 available += tuple(
-                    ch for ch, _, _ in TX_CHANNELS if allowed is not None and ch in allowed
+                    td.ch for td in TX_CHANNELS if allowed is not None and td.ch in allowed
                 )
                 manifest_data = default_manifest(self.config, available)
             # The domain parser is the authority: an invalid manifest fails
@@ -500,17 +900,25 @@ class RelayBridgeModule(Module):
             self._channel_defs = tuple(by_ch[spec.ch] for spec in rx_specs)
             self._min_interval = {spec.ch: 1.0 / spec.maxHz for spec in rx_specs}
             self._jpeg_quality = self._resolve_jpeg_quality(rx_specs)
-            by_tx = {ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS}
+            by_tx = {td.ch: td for td in TX_CHANNELS}
             for spec in manifest.channels:
                 if spec.dir != "tx":
                     continue
-                if by_tx.get(spec.ch) != (spec.encoding, spec.delivery):
+                handler = by_tx.get(spec.ch)
+                if handler is None or (handler.encoding, handler.delivery) != (
+                    spec.encoding,
+                    spec.delivery,
+                ):
                     raise RuntimeError(
                         f"manifest tx channel {spec.ch!r} ({spec.encoding}/{spec.delivery}) has "
                         f"no matching handler; this bridge supports: {sorted(by_tx)}"
                     )
                 if spec.ch == "tele_cmd_vel":
+                    # The teleop path: lease/gen/seq guarded, params-driven.
                     self._teleop_params = self._resolve_teleop_params(spec)
+                else:
+                    assert handler.model is not None and handler.build is not None
+                    self._tx_defs[spec.ch] = handler
             # No runtime stream probing: an authored channel whose input got
             # no transport stays advertised (its panel shows "waiting for
             # data"); _reconcile just never subscribes it.
@@ -616,13 +1024,16 @@ class RelayBridgeModule(Module):
         super()._close_module()
 
     def _resolve_jpeg_quality(self, rx_specs: list[ChannelSpec]) -> int:
-        # A single int is honest while CHANNELS has exactly one jpeg entry;
-        # revisit if a second camera channel ever appears.
+        """Per-channel jpeg quality from the manifest params (falling back
+        to config.jpeg_quality), recorded in _jpeg_quality_by_ch; returns the
+        last jpeg channel's value (the flat _jpeg_quality mirror, exact in the
+        single-camera case)."""
         quality = self.config.jpeg_quality
+        self._jpeg_quality_by_ch = {}
         for spec in rx_specs:
             if spec.encoding != "jpeg.v1":
                 continue
-            candidate = spec.params.get("quality", quality)
+            candidate = spec.params.get("quality", self.config.jpeg_quality)
             if (
                 isinstance(candidate, bool)
                 or not isinstance(candidate, int)
@@ -632,8 +1043,20 @@ class RelayBridgeModule(Module):
                     f"manifest channel {spec.ch!r} quality must be an int in 0..100, "
                     f"got {candidate!r}"
                 )
+            self._jpeg_quality_by_ch[spec.ch] = candidate
             quality = candidate
         return quality
+
+    def _jpeg_quality_for(self, ch: str) -> int:
+        return self._jpeg_quality_by_ch.get(ch, self._jpeg_quality)
+
+    def _log_throttled(self, key: str, message: str) -> None:
+        """Warn at most once per _LOG_THROTTLE_S per key (peer-driven drops)."""
+        now = time.monotonic()
+        if now - self._warn_last.get(key, -math.inf) < _LOG_THROTTLE_S:
+            return
+        self._warn_last[key] = now
+        logger.warning(message)
 
     def _spawn_relay(self, open_browser: bool, serve_dir: Path | None) -> str:
         """Start a fresh local relay child (blocking; run via to_thread)."""
@@ -704,6 +1127,8 @@ class RelayBridgeModule(Module):
                             self._on_wire_teleop_start(msg)
                         elif isinstance(msg, WireTeleopStop):
                             self._on_wire_teleop_stop(msg)
+                        elif isinstance(msg, Tx):
+                            self._on_wire_tx(msg)
                     # The iterator only ends when the session closed.
                 except Exception:
                     # An unguarded error here would silently end supervision while
@@ -840,6 +1265,59 @@ class RelayBridgeModule(Module):
         self._teleop_last_seq = -math.inf
         self._teleop_last_rx = 0.0
 
+    def _on_wire_tx(self, msg: Tx) -> None:
+        """A generic viewer command: route `data` to the Out named `ch`.
+
+        No lease: these are discrete requests (a chat line, a nav goal, a
+        UI command), not a motion stream. Drops, all silent to the viewer
+        (the SDK infers delivery from the robot's own echo): an unknown or
+        twist channel; a seq at or below the channel's high-water mark while
+        the channel is busy (a reordered/duplicated datagram - after
+        _TX_SEQ_WINDOW_S of silence any seq rebaselines, so a reloaded page
+        restarting at 1 is not locked out); a record inside the channel's
+        rate floor; a record the channel model rejects.
+        """
+        handler = self._tx_defs.get(msg.ch)
+        if handler is None:
+            self._log_throttled(
+                f"tx:{msg.ch}",
+                f"relay bridge: dropping tx on unhandled channel {msg.ch!r} "
+                f"(handled: {sorted(self._tx_defs)})",
+            )
+            return
+        now = time.monotonic()
+        last_rx = self._tx_last_rx.get(msg.ch, -math.inf)
+        if msg.seq <= self._tx_last_seq.get(msg.ch, -1) and now - last_rx < _TX_SEQ_WINDOW_S:
+            return
+        if now - last_rx < handler.min_interval_s:
+            return
+        assert handler.model is not None and handler.build is not None
+        try:
+            record = handler.model.model_validate(msg.data)
+        except ValidationError as e:
+            problems = "; ".join(
+                f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in e.errors()
+            )
+            self._log_throttled(
+                f"tx-invalid:{msg.ch}",
+                f"relay bridge: dropping invalid {msg.ch} record ({problems})",
+            )
+            return
+        self._tx_last_seq[msg.ch] = msg.seq
+        self._tx_last_rx[msg.ch] = now
+        try:
+            value = handler.build(self, record)
+        except Exception:
+            logger.exception(f"relay bridge: building {msg.ch} value failed")
+            return
+        getattr(self, msg.ch).publish(value)
+
+    def _tx_reset(self) -> None:
+        # Session teardown: datagrams are QUIC-session-scoped, and the next
+        # session's viewers start their counters afresh.
+        self._tx_last_seq.clear()
+        self._tx_last_rx.clear()
+
     def _teleop_zero(self, reason: str, *, force: bool = False) -> None:
         """Publish one zero twist; edge-gated unless `force` (e-stop)."""
         if not force and not self._teleop_driving:
@@ -904,8 +1382,15 @@ class RelayBridgeModule(Module):
                     # Advertised but unwired (manifest-authored): nothing to
                     # subscribe; the panel shows "waiting for data".
                     continue
-                cached = self._last_msg.get(cd.ch)
-                if cached is not None:
+                sender = session.senders[cd.ch]
+                if cd.replay_depth > 1:
+                    # Log channel: live frames come from the always-on log
+                    # subscription, attached before the replay so no entry
+                    # slips between the two (an entry seen by both carries
+                    # the same n, and the viewer dedupes on n).
+                    session.unsubs[cd.ch] = self._attach_log_sender(cd, session, sender)
+                    self._replay(session, cd, sender)
+                else:
                     # Replay precedes the subscribe: this offer runs
                     # synchronously on the loop, so a live frame - possible
                     # only once subscribed - always queues behind it and wins
@@ -913,19 +1398,10 @@ class RelayBridgeModule(Module):
                     # relay reports sub-set changes and stays cache-free, so
                     # an extra viewer on an already-active channel waits for
                     # the next publish (review issue 2, deferred).
-                    msg, recv_ts = cached
-                    try:
-                        encoded = cd.encode(self, msg)
-                    except Exception:
-                        logger.exception(f"relay bridge: replaying {cd.ch} failed")
-                        encoded = None
-                    if encoded is not None:
-                        # self.encoded counts live-path encodes only; the
-                        # arrival ts keeps a stale replay honest about its age.
-                        self._offer(session, session.senders[cd.ch], *encoded, recv_ts)
-                session.unsubs[cd.ch] = self.inputs[cd.ch].subscribe(
-                    functools.partial(self._on_input, session, cd, session.senders[cd.ch])
-                )
+                    self._replay(session, cd, sender)
+                    session.unsubs[cd.ch] = self.inputs[cd.ch].subscribe(
+                        functools.partial(self._on_input, session, cd, sender)
+                    )
                 logger.info(f"relay bridge: viewer subscribed to {cd.ch}; encoding started")
             elif active and not should:
                 unsubscribe = session.unsubs[cd.ch]
@@ -936,12 +1412,54 @@ class RelayBridgeModule(Module):
         if unknown:
             logger.debug(f"relay bridge: ignoring unknown channels {sorted(unknown)}")
 
+    def _replay(self, session: _Session, cd: ChannelDef, sender: _Sender) -> None:
+        """Offer the channel's cached message(s) - the log oldest first - to a
+        session whose channel just gained its first viewer. self.encoded
+        counts live-path encodes only; the arrival ts keeps a stale replay
+        honest about its age."""
+        items: list[tuple[Any, float]]
+        if cd.replay_depth > 1:
+            # The log's encoder takes the records themselves (their `n` was
+            # fixed on append, so an entry evicted between this snapshot
+            # and its encode still replays under its original number).
+            with self._log_lock:
+                items = [(entry, entry.recv_ts) for entry in self._replay_log.get(cd.ch, ())]
+        else:
+            cached = self._last_msg.get(cd.ch)
+            items = [] if cached is None else [cached]
+        for msg, recv_ts in items:
+            try:
+                encoded = cd.encode(self, msg)
+            except Exception:
+                logger.exception(f"relay bridge: replaying {cd.ch} failed")
+                continue
+            if encoded is not None:
+                self._offer(session, sender, *encoded, recv_ts)
+
+    def _attach_log_sender(
+        self, cd: ChannelDef, session: _Session, sender: _Sender
+    ) -> Callable[[], None]:
+        """Feed `session` live from the channel's log subscription; returns
+        the detach (the session.unsubs entry). Copy-on-write tuples: the
+        loop swaps, the transport thread iterates a snapshot."""
+        entry = (session, sender)
+        self._log_live[cd.ch] = (*self._log_live.get(cd.ch, ()), entry)
+
+        def detach() -> None:
+            self._log_live[cd.ch] = tuple(
+                live for live in self._log_live.get(cd.ch, ()) if live is not entry
+            )
+
+        return detach
+
     def _on_input(self, session: _Session, cd: ChannelDef, sender: _Sender, msg: Any) -> None:
         """Transport-thread callback: maxHz gate, encode, hand to the loop."""
         if session.retired.is_set():
             return
         now = time.monotonic()
-        if not _passes_rate_gate(self._last_input, cd.ch, now, self._min_interval[cd.ch]):
+        if cd.rate_gate and not _passes_rate_gate(
+            self._last_input, cd.ch, now, self._min_interval[cd.ch]
+        ):
             return
         try:
             encoded = cd.encode(self, msg)
@@ -958,8 +1476,21 @@ class RelayBridgeModule(Module):
 
     def _cache_input(self, cd: ChannelDef, msg: Any) -> None:
         """Transport-thread callback: remember the newest raw message so a
-        0->1 subscribe can replay it (its arrival time becomes the frame ts)."""
-        self._last_msg[cd.ch] = (msg, time.time())
+        0->1 subscribe can replay it (its arrival time becomes the frame ts).
+        A log channel also appends a numbered record to its bounded log and
+        feeds that record to the sessions attached to the log."""
+        recv_ts = time.time()
+        self._last_msg[cd.ch] = (msg, recv_ts)
+        if cd.replay_depth <= 1:
+            return
+        with self._log_lock:
+            log = self._replay_log.get(cd.ch)
+            if log is None:
+                log = self._replay_log[cd.ch] = deque(maxlen=cd.replay_depth)
+            entry = _LogEntry(msg, recv_ts, next(self._log_counter))
+            log.append(entry)
+        for session, sender in self._log_live.get(cd.ch, ()):
+            self._on_input(session, cd, sender, entry)
 
     def _offer(
         self,
@@ -991,6 +1522,7 @@ class RelayBridgeModule(Module):
         if self._teleop_params is not None:
             self._teleop_zero("relay session ended")
             self._teleop_reset()
+        self._tx_reset()
         for ch, unsubscribe in tuple(target.unsubs.items()):
             try:
                 unsubscribe()
@@ -1037,9 +1569,10 @@ def with_relay_bridge(blueprint: Blueprint) -> Blueprint:
         if (channel_type := bridge_input_types.get(channel.ch)) is not None
         and (channel.ch, channel_type) in producer_keys
     ) + tuple(
-        ch
-        for ch, _, _ in TX_CHANNELS
-        if (tx_type := bridge_output_types.get(ch)) is not None and (ch, tx_type) in consumer_keys
+        td.ch
+        for td in TX_CHANNELS
+        if (tx_type := bridge_output_types.get(td.ch)) is not None
+        and (td.ch, tx_type) in consumer_keys
     )
     return autoconnect(
         blueprint,

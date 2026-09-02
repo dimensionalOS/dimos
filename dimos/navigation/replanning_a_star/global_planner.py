@@ -74,7 +74,12 @@ class GlobalPlanner(Resource):
     _max_path_deviation: float = 0.9
     _replanning_enabled: bool = True
 
-    def __init__(self, global_config: GlobalConfig) -> None:
+    def __init__(
+        self,
+        global_config: GlobalConfig,
+        stuck_time_window: float | None = None,
+        stuck_threshold: float | None = None,
+    ) -> None:
         self.path = Subject()
         self.goal_reached = Subject()
 
@@ -85,9 +90,17 @@ class GlobalPlanner(Resource):
             self._global_config, self._navigation_map, self._goal_tolerance
         )
 
-        stuck_threshold = self._stuck_threshold
-        if global_config.simulation:
-            stuck_threshold = 1.0
+        # Stuck detection: the robot is stuck when every position over the
+        # last `stuck_time_window` seconds stays within `stuck_threshold` of
+        # their centroid. The defaults suit a ~0.5 m/s robot; slow platforms
+        # pass their own values so normal progress doesn't read as stuck.
+        if stuck_time_window is not None:
+            self._stuck_time_window = stuck_time_window
+        if stuck_threshold is None:
+            stuck_threshold = self._stuck_threshold
+            if global_config.simulation:
+                stuck_threshold = 1.0
+        self._stuck_threshold = stuck_threshold
 
         self._position_tracker = PositionTracker(self._stuck_time_window, stuck_threshold)
         self._replan_limiter = ReplanLimiter()

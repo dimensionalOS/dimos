@@ -12,17 +12,25 @@ import {
   encodeDatagram,
   type FrameHeader,
   frameHeaderFromUnknown,
+  isValidTxCh,
   MAX_DATA_FRAME_BYTES,
   MAX_HEADER_LEN,
+  MAX_TX_MSG_BYTES,
   type Msg,
   msgFromUnknown,
   peekDataFrameLengths,
   PROTOCOL_VERSION,
   RESERVED_CHANNEL_PREFIX,
+  TX_CH_MAX_LEN,
+  TX_DATA_MAX_BYTES,
+  txDataBytes,
+  type TxMsg,
 } from "./protocol.ts";
+import { MAX_MANIFEST_ID_LEN } from "./manifest.ts";
 import controlFixture from "./fixtures/control_frames.json" with { type: "json" };
 import datagramFixture from "./fixtures/datagrams.json" with { type: "json" };
 import dataFixture from "./fixtures/data_frames.json" with { type: "json" };
+import txFixture from "./fixtures/tx_messages.json" with { type: "json" };
 
 function fromB64(s: string): Uint8Array {
   return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
@@ -282,6 +290,91 @@ Deno.test("msgFromUnknown validates nested session-message shapes", () => {
   assertEquals(msgFromUnknown({ ...twist, gen: "1" }), null);
   assertEquals(msgFromUnknown({ t: "teleop_start", gen: 3 }) !== null, true);
   assertEquals(msgFromUnknown({ t: "teleop_stop", gen: null }), null);
+});
+
+// ---------- generic tx commands (TxMsg; mirror of Python's Tx) ----------
+
+Deno.test("tx vectors: msgFromUnknown accepts exactly the valid ones", () => {
+  for (const v of txFixture.vectors) {
+    const parsed = msgFromUnknown(v.message);
+    assertEquals(parsed !== null, v.valid, v.name);
+    if (v.valid) assertEquals(parsed, v.message as TxMsg, v.name);
+  }
+});
+
+Deno.test("tx vectors: valid ones encode byte-exactly and round-trip", () => {
+  let checked = 0;
+  for (const v of txFixture.vectors) {
+    if (!v.valid) continue;
+    const bytes = fromB64(v.b64!);
+    assertEquals(encodeDatagram(v.message as TxMsg), bytes, v.name);
+    assertEquals(decodeDatagram(bytes), v.message as TxMsg, v.name);
+    assert(bytes.length <= MAX_TX_MSG_BYTES, `${v.name}: ${bytes.length} > ${MAX_TX_MSG_BYTES}`);
+    checked++;
+  }
+  assert(checked >= 3, "expected the tx_chat/tx_goal/tx_command vectors at least");
+});
+
+Deno.test("tx constants pin the wire budget", () => {
+  assertEquals(TX_DATA_MAX_BYTES, 900);
+  assertEquals(TX_CH_MAX_LEN, 64);
+  assertEquals(TX_CH_MAX_LEN, MAX_MANIFEST_ID_LEN);
+  assertEquals(MAX_TX_MSG_BYTES, 1100);
+  // Worst case: longest ch, largest seq, data at the cap. It must still fit
+  // MAX_TX_MSG_BYTES with room to spare (the relay sizes buffers off it).
+  const worst: TxMsg = {
+    t: "tx",
+    ch: "c".repeat(TX_CH_MAX_LEN),
+    seq: Number.MAX_SAFE_INTEGER,
+    data: { k: "x".repeat(TX_DATA_MAX_BYTES - '{"k":""}'.length) },
+  };
+  assertEquals(txDataBytes(worst.data), TX_DATA_MAX_BYTES);
+  assert(msgFromUnknown(worst) !== null);
+  assert(encodeDatagram(worst).length <= MAX_TX_MSG_BYTES);
+});
+
+Deno.test("isValidTxCh and txDataBytes", () => {
+  assert(isValidTxCh("a"));
+  assert(isValidTxCh("human_input"));
+  assert(isValidTxCh("cam2_left"));
+  assert(isValidTxCh("c".repeat(TX_CH_MAX_LEN)));
+  assert(!isValidTxCh("c".repeat(TX_CH_MAX_LEN + 1)));
+  assert(!isValidTxCh(""));
+  assert(!isValidTxCh("Human"));
+  assert(!isValidTxCh("2cam"));
+  assert(!isValidTxCh("_cam"));
+  assert(!isValidTxCh("cam-left"));
+  assert(!isValidTxCh("cam.left"));
+  assert(!isValidTxCh(`${RESERVED_CHANNEL_PREFIX}control`));
+  assert(!isValidTxCh("cam\n")); // no multiline match
+  assert(!isValidTxCh("ĉam")); // ASCII only
+  // Bytes are UTF-8 of the compact encoding, not string length.
+  assertEquals(txDataBytes({}), 2);
+  assertEquals(txDataBytes({ text: "é" }), '{"text":""}'.length + 2);
+  assertEquals(txDataBytes({ a: null, b: [1.5, "x"] }), '{"a":null,"b":[1.5,"x"]}'.length);
+});
+
+Deno.test("tx rejects what the shared budget forbids", () => {
+  const ok: TxMsg = { t: "tx", ch: "ui_command", seq: 4, data: { name: "stop" } };
+  assertEquals(msgFromUnknown(ok), ok);
+  // Extra keys are rejected on tx (elsewhere they are ignored): they would
+  // otherwise dodge the size budget.
+  assertEquals(msgFromUnknown({ ...ok, gen: 1 }), null);
+  assertEquals(msgFromUnknown({ ...ok, ts: 2.5 }), null);
+  // seq: non-negative safe integer.
+  assertEquals(msgFromUnknown({ ...ok, seq: -1 }), null);
+  assertEquals(msgFromUnknown({ ...ok, seq: 1.5 }), null);
+  assertEquals(msgFromUnknown({ ...ok, seq: Number.MAX_SAFE_INTEGER + 1 }), null);
+  assertEquals(msgFromUnknown({ ...ok, seq: NaN }), null);
+  assertEquals(msgFromUnknown({ ...ok, seq: Infinity }), null);
+  // data: a record, nulls inside allowed, size capped.
+  assertEquals(msgFromUnknown({ ...ok, data: [] }), null);
+  assertEquals(msgFromUnknown({ ...ok, data: null }), null);
+  assertEquals(msgFromUnknown({ ...ok, data: { a: null } }) !== null, true);
+  const oversize = { text: "x".repeat(TX_DATA_MAX_BYTES) };
+  assertEquals(msgFromUnknown({ ...ok, data: oversize }), null);
+  // Unserializable data (BigInt) is rejected instead of throwing.
+  assertEquals(msgFromUnknown({ ...ok, data: { n: 1n } }), null);
 });
 
 Deno.test("frameHeaderFromUnknown validates the header shape", () => {

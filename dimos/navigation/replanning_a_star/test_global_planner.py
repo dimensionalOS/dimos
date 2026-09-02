@@ -44,3 +44,47 @@ def test_find_wide_path_with_start_inside_inflation() -> None:
 
     assert path is not None
     assert len(path.poses) > 0
+
+
+def test_stuck_detector_defaults_and_simulation_override() -> None:
+    planner = GlobalPlanner(GlobalConfig())
+    assert planner._position_tracker._time_window == 8.0
+    assert planner._position_tracker._threshold == 0.4
+
+    sim = GlobalPlanner(GlobalConfig(simulation="mujoco"))
+    assert sim._position_tracker._threshold == 1.0
+
+
+def test_stuck_detector_accepts_explicit_window_and_threshold() -> None:
+    """Slow robots (the microduck walks ~0.06 m/s) pass their own values so
+    normal progress does not trip the detector; explicit values also beat
+    the simulation override."""
+    planner = GlobalPlanner(
+        GlobalConfig(simulation="mujoco"), stuck_time_window=10.0, stuck_threshold=0.15
+    )
+    assert planner._stuck_time_window == 10.0
+    assert planner._position_tracker._time_window == 10.0
+    assert planner._position_tracker._threshold == 0.15
+
+    # Either value may be given on its own.
+    window_only = GlobalPlanner(GlobalConfig(), stuck_time_window=12.0)
+    assert window_only._position_tracker._time_window == 12.0
+    assert window_only._position_tracker._threshold == 0.4
+
+
+def test_module_config_threads_stuck_detector_into_global_planner() -> None:
+    from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+
+    module = ReplanningAStarPlanner(stuck_time_window=10.0, stuck_threshold=0.15)
+    try:
+        assert module._planner._position_tracker._time_window == 10.0
+        assert module._planner._position_tracker._threshold == 0.15
+    finally:
+        module._close_module()
+
+    default = ReplanningAStarPlanner()
+    try:
+        assert default._planner._position_tracker._time_window == 8.0
+        assert default._planner._position_tracker._threshold == 0.4
+    finally:
+        default._close_module()

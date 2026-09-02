@@ -1,0 +1,355 @@
+{
+  "vectors": [
+    {
+      "name": "tx_chat",
+      "message": {
+        "t": "tx",
+        "ch": "human_input",
+        "seq": 1,
+        "data": {
+          "text": "Du-te în bucătărie"
+        }
+      },
+      "valid": true,
+      "b64": "eyJ0IjoidHgiLCJjaCI6Imh1bWFuX2lucHV0Iiwic2VxIjoxLCJkYXRhIjp7InRleHQiOiJEdS10ZSDDrm4gYnVjxIN0xINyaWUifX0="
+    },
+    {
+      "name": "tx_goal",
+      "message": {
+        "t": "tx",
+        "ch": "goal_request",
+        "seq": 2,
+        "data": {
+          "x": 1.25,
+          "y": -0.5,
+          "yaw": 1.5,
+          "frame": "world"
+        }
+      },
+      "valid": true,
+      "b64": "eyJ0IjoidHgiLCJjaCI6ImdvYWxfcmVxdWVzdCIsInNlcSI6MiwiZGF0YSI6eyJ4IjoxLjI1LCJ5IjotMC41LCJ5YXciOjEuNSwiZnJhbWUiOiJ3b3JsZCJ9fQ=="
+    },
+    {
+      "name": "tx_command",
+      "message": {
+        "t": "tx",
+        "ch": "ui_command",
+        "seq": 3,
+        "data": {
+          "name": "set_mode",
+          "args": {
+            "mode": "agent"
+          }
+        }
+      },
+      "valid": true,
+      "b64": "eyJ0IjoidHgiLCJjaCI6InVpX2NvbW1hbmQiLCJzZXEiOjMsImRhdGEiOnsibmFtZSI6InNldF9tb2RlIiwiYXJncyI6eyJtb2RlIjoiYWdlbnQifX19"
+    },
+    {
+      "name": "tx_minimal",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": 0,
+        "data": {}
+      },
+      "valid": true,
+      "b64": "eyJ0IjoidHgiLCJjaCI6ImEiLCJzZXEiOjAsImRhdGEiOnt9fQ=="
+    },
+    {
+      "name": "tx_ch_max_len",
+      "message": {
+        "t": "tx",
+        "ch": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "seq": 1,
+        "data": {}
+      },
+      "valid": true,
+      "b64": "eyJ0IjoidHgiLCJjaCI6ImNjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2MiLCJzZXEiOjEsImRhdGEiOnt9fQ=="
+    },
+    {
+      "name": "tx_data_at_cap",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": 1,
+        "data": {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      },
+      "valid": true,
+      "b64": "eyJ0IjoidHgiLCJjaCI6ImEiLCJzZXEiOjEsImRhdGEiOnsidGV4dCI6Inh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHgifX0="
+    },
+    {
+      "name": "tx_data_at_cap_utf8",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": 1,
+        "data": {
+          "t": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+        }
+      },
+      "valid": true,
+      "b64": "eyJ0IjoidHgiLCJjaCI6ImEiLCJzZXEiOjEsImRhdGEiOnsidCI6IsOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6kifX0="
+    },
+    {
+      "name": "tx_data_nested_null",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": 1,
+        "data": {
+          "a": null,
+          "b": [
+            1.5,
+            null
+          ],
+          "c": {
+            "d": "é"
+          }
+        }
+      },
+      "valid": true,
+      "b64": "eyJ0IjoidHgiLCJjaCI6ImEiLCJzZXEiOjEsImRhdGEiOnsiYSI6bnVsbCwiYiI6WzEuNSxudWxsXSwiYyI6eyJkIjoiw6kifX19"
+    },
+    {
+      "name": "tx_seq_max_safe",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": 9007199254740991,
+        "data": {}
+      },
+      "valid": true,
+      "b64": "eyJ0IjoidHgiLCJjaCI6ImEiLCJzZXEiOjkwMDcxOTkyNTQ3NDA5OTEsImRhdGEiOnt9fQ=="
+    },
+    {
+      "name": "tx_bad_data_oversize",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": 1,
+        "data": {
+          "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_data_oversize_utf8",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": 1,
+        "data": {
+          "t": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+        }
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_ch_too_long",
+      "message": {
+        "t": "tx",
+        "ch": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "seq": 1,
+        "data": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_ch_empty",
+      "message": {
+        "t": "tx",
+        "ch": "",
+        "seq": 1,
+        "data": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_ch_upper",
+      "message": {
+        "t": "tx",
+        "ch": "Human_input",
+        "seq": 1,
+        "data": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_ch_leading_digit",
+      "message": {
+        "t": "tx",
+        "ch": "1ch",
+        "seq": 1,
+        "data": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_ch_hyphen",
+      "message": {
+        "t": "tx",
+        "ch": "human-input",
+        "seq": 1,
+        "data": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_ch_reserved",
+      "message": {
+        "t": "tx",
+        "ch": "@control",
+        "seq": 1,
+        "data": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_ch_type",
+      "message": {
+        "t": "tx",
+        "ch": 5,
+        "seq": 1,
+        "data": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_ch_missing",
+      "message": {
+        "t": "tx",
+        "seq": 1,
+        "data": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_seq_negative",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": -1,
+        "data": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_seq_fraction",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": 1.5,
+        "data": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_seq_string",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": "1",
+        "data": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_seq_bool",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": true,
+        "data": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_seq_beyond_safe",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": 9007199254740992,
+        "data": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_seq_missing",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "data": {}
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_data_array",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": 1,
+        "data": []
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_data_null",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": 1,
+        "data": null
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_data_string",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": 1,
+        "data": "x"
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_data_missing",
+      "message": {
+        "t": "tx",
+        "ch": "a",
+        "seq": 1
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_extra_gen",
+      "message": {
+        "t": "tx",
+        "ch": "human_input",
+        "seq": 1,
+        "data": {
+          "text": "Du-te în bucătărie"
+        },
+        "gen": 3
+      },
+      "valid": false
+    },
+    {
+      "name": "tx_bad_extra_key",
+      "message": {
+        "t": "tx",
+        "ch": "human_input",
+        "seq": 1,
+        "data": {
+          "text": "Du-te în bucătărie"
+        },
+        "later": 1.5
+      },
+      "valid": false
+    }
+  ]
+}

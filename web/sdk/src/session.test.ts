@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type Msg, PROTOCOL_VERSION, type RobotInfo } from "@dimos/shared";
+import {
+  type Msg,
+  PROTOCOL_VERSION,
+  type RobotInfo,
+  TX_DATA_MAX_BYTES,
+  txDataBytes,
+} from "@dimos/shared";
 import type { CostmapValue } from "./decoders/costmap.ts";
 import { teleopHooks } from "./internal/teleopMachine.ts";
 import {
@@ -701,5 +707,147 @@ describe("Session over a fake WebTransport", () => {
     relay.push({ t: "error", code: "unknown_channel", message: "no channel x" });
     await until(() => handle.status.get().lastError !== null, "lastError");
     expect(handle.status.get().lastError?.message).toContain("unknown_channel");
+  });
+
+  // --- Generic tx command (TeleopHooks.tx) ---
+
+  const TX_CHANNELS = [
+    spec(),
+    spec({ ch: "tele_cmd_vel", dir: "tx", encoding: "twist.json.v1", delivery: "latest" }),
+    spec({ ch: "human_input", dir: "tx", encoding: "text.json.v1", delivery: "reliable" }),
+    spec({ ch: "goal_request", dir: "tx", encoding: "pose_goal.json.v1", delivery: "reliable" }),
+  ];
+
+  function sentTx(relay: FakeRelayEnd): Msg[] {
+    return relay.sent.filter((m) => m.t === "tx");
+  }
+
+  it("tx sends {t, ch, seq, data} on the control stream once live", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle, ROBOT_A, TX_CHANNELS);
+    const data = { text: "go to the kitchen" };
+    expect(teleopHooks(handle).tx("human_input", data)).toEqual({ ok: true, seq: 1 });
+    await until(() => sentTx(relay).length === 1, "tx on stream");
+    // Decoded by the wire reader, which rejects a tx with any extra key.
+    const msg = sentTx(relay)[0];
+    expect(msg).toEqual({ t: "tx", ch: "human_input", seq: 1, data });
+    expect(Object.keys(msg)).toEqual(["t", "ch", "seq", "data"]);
+    expect(relay.sentDatagrams).toEqual([]); // never a datagram
+  });
+
+  it("tx seq counts up per channel from 1 and only on accepted sends", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle, ROBOT_A, TX_CHANNELS);
+    const teleop = teleopHooks(handle);
+    expect(teleop.tx("human_input", { text: "a" })).toEqual({ ok: true, seq: 1 });
+    expect(teleop.tx("human_input", { text: "b" })).toEqual({ ok: true, seq: 2 });
+    expect(teleop.tx("goal_request", { x: 1, y: 2 })).toEqual({ ok: true, seq: 1 });
+    // A refused send spends no seq on either channel.
+    expect(teleop.tx("human_input", { text: "x".repeat(TX_DATA_MAX_BYTES) }).ok).toBe(false);
+    expect(teleop.tx("human_input", { text: "c" })).toEqual({ ok: true, seq: 3 });
+    expect(teleop.tx("goal_request", { x: 3, y: 4 })).toEqual({ ok: true, seq: 2 });
+    await until(() => sentTx(relay).length === 5, "five tx");
+    expect(sentTx(relay).map((m) => (m.t === "tx" ? [m.ch, m.seq] : null))).toEqual([
+      ["human_input", 1],
+      ["human_input", 2],
+      ["goal_request", 1],
+      ["human_input", 3],
+      ["goal_request", 2],
+    ]);
+  });
+
+  it("tx is refused with disconnected before the relay's welcome", async () => {
+    const { relay, handle } = start();
+    await until(() => relay.sent.some((m) => m.t === "hello"), "hello");
+    expect(teleopHooks(handle).tx("human_input", { text: "hi" })).toEqual({
+      ok: false,
+      reason: "disconnected",
+    });
+    await settle();
+    expect(sentTx(relay)).toEqual([]);
+  });
+
+  it("tx is refused with no_manifest while connected but before adoption", async () => {
+    const { relay, handle } = start();
+    relay.push({ t: "welcome", v: PROTOCOL_VERSION });
+    relay.push({ t: "robots", robots: [ROBOT_A] });
+    await until(() => relay.watches("a") === 1, "watch");
+    expect(handle.status.get().transport.phase).toBe("connected");
+    expect(teleopHooks(handle).tx("human_input", { text: "hi" })).toEqual({
+      ok: false,
+      reason: "no_manifest",
+    });
+    await settle();
+    expect(sentTx(relay)).toEqual([]);
+  });
+
+  it("tx refuses a malformed channel name before consulting the manifest", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle, ROBOT_A, TX_CHANNELS);
+    const teleop = teleopHooks(handle);
+    for (const ch of ["Human_Input", "human-input", "1st", "", "x".repeat(65)]) {
+      expect(teleop.tx(ch, { text: "hi" })).toEqual({ ok: false, reason: "bad_channel" });
+    }
+    await settle();
+    expect(sentTx(relay)).toEqual([]);
+  });
+
+  it("tx to a channel the manifest lacks is unknown_channel", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle, ROBOT_A, TX_CHANNELS);
+    expect(teleopHooks(handle).tx("mystery", { text: "hi" })).toEqual({
+      ok: false,
+      reason: "unknown_channel",
+    });
+    await settle();
+    expect(sentTx(relay)).toEqual([]);
+  });
+
+  it("tx to an rx channel or the twist channel is not_tx", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle, ROBOT_A, TX_CHANNELS);
+    const teleop = teleopHooks(handle);
+    expect(teleop.tx("odom", { x: 0 })).toEqual({ ok: false, reason: "not_tx" });
+    expect(teleop.tx("tele_cmd_vel", { vx: 1, vy: 0, wz: 0 })).toEqual({
+      ok: false,
+      reason: "not_tx",
+    });
+    await settle();
+    expect(sentTx(relay)).toEqual([]);
+  });
+
+  it("tx enforces the shared data cap: over is too_large, at the cap goes", async () => {
+    const { relay, handle } = start();
+    await goLive(relay, handle, ROBOT_A, TX_CHANNELS);
+    const teleop = teleopHooks(handle);
+    // {"text":"..."} is 11 bytes of framing around the string.
+    const atCap = { text: "x".repeat(TX_DATA_MAX_BYTES - 11) };
+    const over = { text: "x".repeat(TX_DATA_MAX_BYTES - 10) };
+    expect(txDataBytes(atCap)).toBe(TX_DATA_MAX_BYTES);
+    expect(teleop.tx("human_input", over)).toEqual({ ok: false, reason: "too_large" });
+    expect(teleop.tx("human_input", atCap)).toEqual({ ok: true, seq: 1 });
+    await until(() => sentTx(relay).length === 1, "tx at cap");
+    expect(sentTx(relay)[0]).toEqual({ t: "tx", ch: "human_input", seq: 1, data: atCap });
+  });
+
+  it("tx seq survives a reconnect instead of restarting at 1", async () => {
+    const { relays, handle } = startReconnecting();
+    await until(() => relays.length === 1, "first connection");
+    await goLive(relays[0], handle, ROBOT_A, TX_CHANNELS);
+    const teleop = teleopHooks(handle);
+    expect(teleop.tx("human_input", { text: "a" })).toEqual({ ok: true, seq: 1 });
+    expect(teleop.tx("human_input", { text: "b" })).toEqual({ ok: true, seq: 2 });
+    await until(() => sentTx(relays[0]).length === 2, "two tx");
+
+    relays[0].wt.close();
+    await until(() => relays.length === 2, "second connection");
+    expect(teleop.tx("human_input", { text: "lost" })).toEqual({
+      ok: false,
+      reason: "disconnected",
+    });
+    await goLive(relays[1], handle, ROBOT_A, TX_CHANNELS);
+    expect(teleop.tx("human_input", { text: "c" })).toEqual({ ok: true, seq: 3 });
+    await until(() => sentTx(relays[1]).length === 1, "tx after reconnect");
+    expect(sentTx(relays[1])[0]).toMatchObject({ ch: "human_input", seq: 3 });
   });
 });

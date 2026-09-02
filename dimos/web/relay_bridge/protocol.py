@@ -71,7 +71,9 @@ logger = setup_logger()
 # v5: the robot hello leaves datagrams (and their ~1100 B budget) and rides
 # an @control data frame on a robot-opened one-shot bidi stream; channel ids
 # beginning with "@" are reserved for protocol control; a robot datagram
-# hello is rejected. v4: the twist datagram gains vy (strafe) and the teleop
+# hello is rejected. The generic tx command (Tx) is additive within v5: a
+# peer without it drops the unknown message type, which is safe (no
+# motion). v4: the twist datagram gains vy (strafe) and the teleop
 # lease messages (teleop_start/teleop_started/teleop_stop) enter the control
 # plane; robot-bound twist/stop/teleop_start/teleop_stop carry the
 # relay-stamped lease generation `gen` (amended into v4 pre-release: an
@@ -100,6 +102,22 @@ MAX_HEADER_LEN = 65536
 # Upper bound for a whole data frame; guards receivers against buffering a
 # hostile/corrupt payloadLen (same constant as the relay's ingress cap).
 MAX_DATA_FRAME_BYTES = 64 * 1024 * 1024
+
+# Generic tx command (Tx) budget, mirrored in protocol.ts. `data` encodes to
+# at most TX_DATA_MAX_BYTES of compact JSON (UTF-8 bytes: the same figure
+# JS measures with TextEncoder), `ch` is bounded like a manifest channel id
+# and shaped like a bridge stream name, and no other keys are allowed, so a
+# whole Tx datagram never exceeds MAX_TX_MSG_BYTES (the ~1100 B datagram
+# budget: 900 data + 64 ch + a 16-digit seq + framing).
+TX_DATA_MAX_BYTES = 900
+TX_CH_MAX_LEN = MAX_MANIFEST_ID_LEN
+TX_CH_PATTERN = r"^[a-z][a-z0-9_]*$"
+MAX_TX_MSG_BYTES = 1100
+
+# seq is a JS safe integer on both sides: Python parses larger JSON integers
+# exactly while JSON.parse rounds them, so the mirrors could otherwise
+# disagree on the value.
+_MAX_SAFE_INTEGER = 2**53 - 1
 
 Role = Literal["robot", "viewer"]
 
@@ -287,6 +305,47 @@ class TeleopStop(_WireModel):
     gen: _WireGen = None
 
 
+def tx_data_bytes(data: dict[str, Any]) -> int:
+    """UTF-8 byte length of the compact JSON encoding of a Tx.data record.
+
+    ensure_ascii=False so the count matches TextEncoder(JSON.stringify(data))
+    byte for byte; allow_nan=False refuses NaN/Infinity (JSON.parse never
+    produces them, and a mirror must not encode them).
+    """
+    return len(
+        json.dumps(data, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
+    )
+
+
+class Tx(_WireModel):
+    """Viewer->relay->robot generic command on a manifest tx channel.
+
+    The viewer sends it on its control stream; the relay forwards it to the
+    robot on the twist/stop leg (datagrams, hence the byte budget) once the
+    watched manifest declares `ch` as a non-twist tx channel. The bridge
+    routes `data` onto the stream bound to `ch` (chat text, nav goals, UI
+    commands). `seq` is the viewer's per-channel counter. Unlike the other
+    messages, extra keys are rejected instead of ignored: the data cap must
+    bound the whole message.
+    """
+
+    # Merged with _WireModel's strict/allow_inf_nan config.
+    model_config = ConfigDict(extra="forbid")
+
+    t: Literal["tx"] = "tx"
+    ch: str = Field(min_length=1, max_length=TX_CH_MAX_LEN, pattern=TX_CH_PATTERN)
+    seq: int = Field(ge=0, le=_MAX_SAFE_INTEGER)
+    data: dict[str, Any]
+
+    @field_validator("data")
+    @classmethod
+    def _bounded_data(cls, value: dict[str, Any]) -> dict[str, Any]:
+        n = tx_data_bytes(value)
+        if n > TX_DATA_MAX_BYTES:
+            raise ValueError(f"data encodes to {n} bytes (max {TX_DATA_MAX_BYTES})")
+        return value
+
+
 Msg = (
     Hello
     | Welcome
@@ -304,6 +363,7 @@ Msg = (
     | TeleopStart
     | TeleopStarted
     | TeleopStop
+    | Tx
 )
 
 # One pydantic-core pass takes raw peer bytes to a validated message: UTF-8

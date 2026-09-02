@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { Msg, PanelSpec } from "@dimos/shared";
 import type { Manifest } from "@dimos/shared/manifest";
 import { ChannelStore, StatusStore } from "@dimos/sdk";
-import type { TeleopHooks } from "@dimos/sdk/internal/teleop";
+import type { TeleopHooks, TxResult } from "@dimos/sdk/internal/teleop";
 import { TeleopPanel } from "./TeleopPanel.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,6 +41,10 @@ class FakeHooks implements TeleopHooks {
     this.cbs.add(cb);
     return () => this.cbs.delete(cb);
   };
+
+  tx(): TxResult {
+    return { ok: false, reason: "disconnected" };
+  }
 
   reply(msg: Msg): void {
     for (const cb of this.cbs) cb(msg);

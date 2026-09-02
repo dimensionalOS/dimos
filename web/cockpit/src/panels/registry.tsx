@@ -12,7 +12,10 @@ import type { ComponentType } from "react";
 import type { PanelSpec } from "@dimos/shared";
 import { PanelFrame } from "../layout/PanelFrame.tsx";
 import type { ChannelStore } from "@dimos/sdk";
+import { ChatPanel } from "./ChatPanel.tsx";
+import { ControlPanel } from "./ControlPanel.tsx";
 import { MapPanel } from "./MapPanel.tsx";
+import { NavMapPanel } from "./NavMapPanel.tsx";
 import styles from "./registry.module.css";
 import type { TeleopHooks } from "@dimos/sdk/internal/teleop";
 import { TeleopPanel } from "./TeleopPanel.tsx";
@@ -36,6 +39,10 @@ export function getPanel(kind: string): ComponentType<PanelProps> | undefined {
   return registry.get(kind);
 }
 
+/** Kinds laid out as a strip: as tall (or wide) as their content, taking no
+ * share of the parent row/col, which goes to the remaining cells. */
+export const STRIP_KINDS: ReadonlySet<string> = new Set(["control"]);
+
 /** Render-only fallback for manifest panel kinds this build does not know.
  * Binds no channels and causes no subscriptions (see getPanel above). */
 export function UnknownPanel({ spec }: PanelProps) {
@@ -49,3 +56,7 @@ export function UnknownPanel({ spec }: PanelProps) {
 registerPanel("video", VideoPanel);
 registerPanel("map2d", MapPanel);
 registerPanel("teleop", TeleopPanel);
+// Microduck cockpit: role -> channel bindings come from spec.params (§C.8).
+registerPanel("chat", ChatPanel);
+registerPanel("navmap", NavMapPanel);
+registerPanel("control", ControlPanel);

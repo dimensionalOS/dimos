@@ -230,6 +230,48 @@
       "b64": "eyJ0IjoidGVsZW9wX3N0b3AifQ=="
     },
     {
+      "name": "tx_chat",
+      "message": {
+        "t": "tx",
+        "ch": "human_input",
+        "seq": 1,
+        "data": {
+          "text": "Du-te în bucătărie"
+        }
+      },
+      "b64": "eyJ0IjoidHgiLCJjaCI6Imh1bWFuX2lucHV0Iiwic2VxIjoxLCJkYXRhIjp7InRleHQiOiJEdS10ZSDDrm4gYnVjxIN0xINyaWUifX0="
+    },
+    {
+      "name": "tx_goal",
+      "message": {
+        "t": "tx",
+        "ch": "goal_request",
+        "seq": 2,
+        "data": {
+          "x": 1.25,
+          "y": -0.5,
+          "yaw": 1.5,
+          "frame": "world"
+        }
+      },
+      "b64": "eyJ0IjoidHgiLCJjaCI6ImdvYWxfcmVxdWVzdCIsInNlcSI6MiwiZGF0YSI6eyJ4IjoxLjI1LCJ5IjotMC41LCJ5YXciOjEuNSwiZnJhbWUiOiJ3b3JsZCJ9fQ=="
+    },
+    {
+      "name": "tx_command",
+      "message": {
+        "t": "tx",
+        "ch": "ui_command",
+        "seq": 3,
+        "data": {
+          "name": "set_mode",
+          "args": {
+            "mode": "agent"
+          }
+        }
+      },
+      "b64": "eyJ0IjoidHgiLCJjaCI6InVpX2NvbW1hbmQiLCJzZXEiOjMsImRhdGEiOnsibmFtZSI6InNldF9tb2RlIiwiYXJncyI6eyJtb2RlIjoiYWdlbnQifX19"
+    },
+    {
       "name": "twist",
       "message": {
         "t": "twist",

@@ -6,7 +6,8 @@
 // The transport (protocol.ts) carries the manifest as one opaque record;
 // this module is the single owner of its structure and domain rules:
 // version gate, bounded unique ids, positive rates, panel/layout/pages
-// references that resolve, and kind-specific panel rules (video, map2d).
+// references that resolve, and kind-specific panel rules (video, map2d,
+// teleop, chat, navmap, control).
 //
 // Manifest v1 is frozen. Additive changes (new panel kinds, new params)
 // ride the existing shape: unknown keys and kinds pass through validation.
@@ -135,6 +136,48 @@ function boundedId(s: string): boolean {
 function dirOf(spec: RawChannelSpec): Dir {
   return spec.dir ?? "rx";
 }
+
+// Panel kinds with a fixed channel slot table (the cockpit panels authored
+// by dimos/web/cockpit.py Chat/NavMap/Control): the panel must bind exactly
+// these slots, in this order, each with the listed dir + encoding. Delivery
+// is deliberately not checked (it is the bridge's per-channel choice) and
+// the role->channel mapping the panel also carries in `params` is
+// informational. Mirrored by manifest.py (same codes, same slot order).
+const SLOT_KINDS: Record<string, { code: string; slots: readonly (readonly [Dir, string])[] }> = {
+  // chat, idle flag, mode, then the text input.
+  chat: {
+    code: "invalid_chat_panel",
+    slots: [
+      ["rx", "chat.json.v1"],
+      ["rx", "flag.json.v1"],
+      ["rx", "mode.json.v1"],
+      ["tx", "text.json.v1"],
+    ],
+  },
+  // costmap, pose, path, places, nav state, then goal + command outputs.
+  navmap: {
+    code: "invalid_navmap_panel",
+    slots: [
+      ["rx", "costmap.zlib.v1"],
+      ["rx", "pose.json.v1"],
+      ["rx", "path.json.v1"],
+      ["rx", "places.json.v1"],
+      ["rx", "navstate.json.v1"],
+      ["tx", "pose_goal.json.v1"],
+      ["tx", "command.json.v1"],
+    ],
+  },
+  // mode, policy state, nav state, then the command output.
+  control: {
+    code: "invalid_control_panel",
+    slots: [
+      ["rx", "mode.json.v1"],
+      ["rx", "policy.json.v1"],
+      ["rx", "navstate.json.v1"],
+      ["tx", "command.json.v1"],
+    ],
+  },
+};
 
 /**
  * Depth-first layout validation + rebuild. A node's own structure (row/col
@@ -330,6 +373,24 @@ export function parseManifest(value: unknown): Manifest {
           `teleop panel ${panel.id} needs a twist.json.v1 latest tx channel`,
         );
       }
+    }
+    const slotKind = Object.hasOwn(SLOT_KINDS, panel.kind) ? SLOT_KINDS[panel.kind] : undefined;
+    if (slotKind !== undefined) {
+      if (panel.channels.length !== slotKind.slots.length) {
+        throw new ManifestError(
+          slotKind.code,
+          `${panel.kind} panel ${panel.id} must bind exactly ${slotKind.slots.length} channels`,
+        );
+      }
+      slotKind.slots.forEach(([dir, encoding], i) => {
+        const bound = chIds.get(panel.channels[i])!;
+        if (bound.encoding !== encoding || dirOf(bound) !== dir) {
+          throw new ManifestError(
+            slotKind.code,
+            `${panel.kind} panel ${panel.id} channel ${i} must be a ${encoding} ${dir} channel`,
+          );
+        }
+      });
     }
   }
 
