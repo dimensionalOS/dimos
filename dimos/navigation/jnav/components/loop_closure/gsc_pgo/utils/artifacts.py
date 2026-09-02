@@ -360,7 +360,7 @@ def raycast_accumulate(
             float(transform.translation.z),
         )
         points = (raw_points @ rotation.T + np.asarray(origin)).astype(np.float32)
-        mapper.add_frame(points, origin)
+        mapper.add_frame_world(points, origin)
         last_ts = float(observation.ts)
         scan_count += 1
         if scan_count % SCAN_LOG_EVERY == 0:
