@@ -150,6 +150,12 @@ fn dev_actions(
 fn clone_action(branch: &str, dir: &Path) -> Action {
     let argv = vec![
         "git".into(),
+        "-c".into(),
+        "filter.lfs.process=".into(),
+        "-c".into(),
+        "filter.lfs.smudge=".into(),
+        "-c".into(),
+        "filter.lfs.required=false".into(),
         "clone".into(),
         "-b".into(),
         branch.into(),
@@ -157,13 +163,7 @@ fn clone_action(branch: &str, dir: &Path) -> Action {
         REPO_URL.into(),
         text(dir),
     ];
-    Action::run_owned(
-        argv,
-        false,
-        None,
-        &[("GIT_LFS_SKIP_SMUDGE", "1")],
-        CLONE_TIMEOUT_S,
-    )
+    Action::run_owned(argv, false, None, &[], CLONE_TIMEOUT_S)
 }
 
 /// `--inexact` leaves packages the lockfile does not name, so a hand-installed SDK survives.
@@ -259,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn dev_fresh_clone_uses_branch_single_branch_and_lfs_skip() {
+    fn dev_fresh_clone_uses_branch_single_branch_without_needing_git_lfs() {
         let stage = dimos_stage(
             InstallMode::Dev,
             Path::new("/home/u/dimos"),
@@ -277,6 +277,12 @@ mod tests {
             argv,
             &[
                 "git",
+                "-c",
+                "filter.lfs.process=",
+                "-c",
+                "filter.lfs.smudge=",
+                "-c",
+                "filter.lfs.required=false",
                 "clone",
                 "-b",
                 "aaryan/installer",
@@ -285,7 +291,7 @@ mod tests {
                 "/home/u/dimos"
             ]
         );
-        assert_eq!(env, &[("GIT_LFS_SKIP_SMUDGE".to_string(), "1".to_string())]);
+        assert!(env.is_empty());
     }
 
     #[test]
