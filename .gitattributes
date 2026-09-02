@@ -28,3 +28,8 @@ misc/DimSim/public/sims/*.json filter=lfs diff=lfs merge=lfs -text
 misc/DimSim/public/embodiment/*.glb filter=lfs diff=lfs merge=lfs -text
 misc/DimSim/scenes/**/*.glb filter=lfs diff=lfs merge=lfs -text
 misc/DimSim/scenes/**/*.gltf filter=lfs diff=lfs merge=lfs -text
+# Machine-generated, and reviewed as artifacts rather than as source: a lock file
+# is cargo's output, and motion's planner crate is what an autoresearch lab
+# emitted. Marking them keeps a diff about the code that was actually written.
+Cargo.lock linguist-generated=true
+dimos/navigation/motion/planner/rust/src/planner.rs linguist-generated=true

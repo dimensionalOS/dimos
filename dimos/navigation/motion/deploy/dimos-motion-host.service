@@ -1,0 +1,21 @@
+[Unit]
+Description=dimos baked motion host (planner, follower, cmd_vel mux, go2 tf)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/motion-host
+# DIMOS_TRANSPORT is the only setting the host reads from the environment. Its
+# whole config -- module blocks, wiring, and the zenoh `session` that makes it a
+# CLIENT of dimos-helper (the go2web bridge, the router on 7447) over loopback --
+# is baked into the binary from dimos.robot.unitree.go2.zenoh.motion_host.
+# A JSON line on stdin would deep-merge over it; here there is none.
+Environment=DIMOS_TRANSPORT=zenoh
+Environment=RUST_LOG=info
+ExecStart=/root/motion-host/motion-host
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

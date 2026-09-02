@@ -20,9 +20,17 @@ import inspect
 from typing import Any
 
 # Internal RPCs to hide from io() output
+# Every module has these; io() shows what a module adds.
 INTERNAL_RPCS = {
+    "build",
     "dynamic_skills",
+    "get_skills",
+    "peek_stream",
+    "set_module_ref",
+    "set_transport",
     "skills",
+    "start",
+    "stop",
     "_io_instance",
 }
 

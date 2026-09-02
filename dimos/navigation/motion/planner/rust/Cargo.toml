@@ -1,0 +1,21 @@
+[package]
+name = "dimos-motion2-target"
+version = "0.1.0"
+edition = "2021"
+description = "Rust port of the motion2 target planner (autoresearch candidate)"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_motion2_target"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+[features]
+# `Emb::fixture()`, a test body for this crate and its dependants.
+test-bodies = []
+
+[dev-dependencies]
+dimos-motion2-target = { path = ".", features = ["test-bodies"] }

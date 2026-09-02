@@ -7,6 +7,13 @@ members = [
     "dimos/mapping/ray_tracing/rust/py",
     "dimos/navigation/nav_3d/mls_planner/rust",
     "dimos/navigation/nav_3d/mls_planner/rust/py",
+    "dimos/navigation/motion/planner/rust",
+    "dimos/navigation/motion/planner/rust/py",
+    "dimos/navigation/motion/control/rust",
+    "dimos/navigation/motion/control/rust/py",
+    "dimos/navigation/motion/adapter/rust",
+    "dimos/navigation/movement_manager/rust",
+    "dimos/robot/unitree/go2/tf/rust",
     "dimos/hardware/sensors/lidar/virtual_mid360",
     "examples/native-modules/rust",
 ]

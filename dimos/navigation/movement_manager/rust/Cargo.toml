@@ -1,0 +1,43 @@
+[package]
+name = "dimos-cmd-vel-mux"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust teleop/nav velocity mux for dimos"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_cmd_vel_mux"
+path = "src/lib.rs"
+# rlib only: this crate has no numerics worth exposing to python, so there is no
+# pyo3 extension and a cdylib would be a shared object nobody loads. `dimos bake`
+# links the rlib.
+crate-type = ["rlib"]
+
+[[bin]]
+name = "cmd_vel_mux"
+path = "src/main.rs"
+
+# Registry entry read by `dimos bake` (graph + codegen) and cross-checked at
+# compile time by #[module(name = "cmd_vel_mux")].
+# threads = 1: the watchdog is a plain tokio interval, nothing blocks the runtime.
+[package.metadata.dimos.module.cmd_vel_mux]
+path = "dimos_cmd_vel_mux::module::CmdVelMux"
+python = "dimos.navigation.movement_manager.cmd_vel_mux_native:CmdVelMuxNative"
+threads = 1
+
+[package.metadata.dimos.module.cmd_vel_mux.inputs]
+nav_cmd_vel = "geometry_msgs.Twist"
+tele_cmd_vel = "geometry_msgs.Twist"
+
+[package.metadata.dimos.module.cmd_vel_mux.outputs]
+cmd_vel = "geometry_msgs.Twist"
+stop_movement = "std_msgs.Bool"
+
+[dependencies]
+dimos-module = { path = "../../../../native/rust/dimos-module" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+validator = { version = "0.20", features = ["derive"] }

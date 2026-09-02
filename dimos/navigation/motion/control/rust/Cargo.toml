@@ -1,0 +1,17 @@
+[package]
+name = "dimos-motion2-tc"
+version = "0.1.0"
+edition = "2021"
+description = "Rust port of the motion2 pursuit trajectory controller (onboard deployment)"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_motion2_tc"
+path = "src/lib.rs"
+
+[dependencies]
+# The body (`Emb`) the laws are parameterised from.
+dimos-motion2-target = { path = "../../planner/rust" }
+
+[dev-dependencies]
+dimos-motion2-target = { path = "../../planner/rust", features = ["test-bodies"] }

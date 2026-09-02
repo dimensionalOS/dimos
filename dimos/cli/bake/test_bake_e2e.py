@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""End-to-end: bake ray_tracing + mls_planner and run the binary for real.
+"""End-to-end: bake ray_tracing + mls_planner as a deployment and run the binary for real.
 
 Excluded from the default run because it builds rust. Run it with
 ``pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py``.
@@ -30,6 +30,7 @@ import time
 import numpy as np
 import pytest
 
+from dimos.cli.bake.deployment import Deployment
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -49,28 +50,6 @@ def free_port() -> int:
         return int(s.getsockname()[1])
 
 
-@pytest.fixture(scope="module")
-def baked(tmp_path_factory) -> tuple[Path, dict[str, object]]:
-    """The compiled host plus the stdin config bake emitted for it."""
-    out = tmp_path_factory.mktemp("bake") / "go2-nav"
-    config = out.parent / "go2-nav.json"
-    cmd = [
-        "dimos",
-        "bake",
-        "ray-tracing",
-        "mls-planner",
-        "-o",
-        str(out),
-        "--debug",
-        "--emit-config",
-        str(config),
-    ]
-    for topic in SUPPRESSED:
-        cmd += ["--suppress", topic]
-    subprocess.run(cmd, check=True)
-    return out, json.loads(config.read_text())
-
-
 def loopback_session(port: int) -> dict[str, object]:
     """A session reachable only over loopback, so the test never scouts the LAN."""
     return {
@@ -85,13 +64,31 @@ def loopback_session(port: int) -> dict[str, object]:
     }
 
 
-def spawn_host(binary: Path, config: dict[str, object], port: int) -> subprocess.Popen[bytes]:
+# The bake subprocess imports this module too; the env var keeps both on one port.
+PORT = int(os.environ.get("DIMOS_BAKE_E2E_PORT") or free_port())
+E2E = Deployment(("ray_tracing", "mls_planner"), session=loopback_session(PORT))
+
+
+@pytest.fixture(scope="module")
+def baked(tmp_path_factory) -> Path:
+    """The compiled host, the E2E deployment embedded."""
+    out = tmp_path_factory.mktemp("bake") / "go2-nav"
+    cmd = ["dimos", "bake", "-o", str(out), "--debug", "--deployment", f"{__name__}:E2E"]
+    for topic in SUPPRESSED:
+        cmd += ["--suppress", topic]
+    subprocess.run(cmd, check=True, env={**os.environ, "DIMOS_BAKE_E2E_PORT": str(PORT)})
+    return out
+
+
+def spawn_host(binary: Path, override: dict[str, object] | None = None) -> subprocess.Popen[bytes]:
+    """Run the host on its embedded config; `override` is the sparse stdin line."""
     env = {**os.environ, "DIMOS_TRANSPORT": "zenoh", "RUST_LOG": "warn"}
-    launch = {**config, "session": loopback_session(port)}
-    proc = subprocess.Popen([str(binary)], env=env, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-    assert proc.stdin is not None
-    proc.stdin.write(json.dumps(launch).encode() + b"\n")
-    proc.stdin.close()
+    stdin = subprocess.DEVNULL if override is None else subprocess.PIPE
+    proc = subprocess.Popen([str(binary)], env=env, stdin=stdin, stderr=subprocess.PIPE)
+    if override is not None:
+        assert proc.stdin is not None
+        proc.stdin.write(json.dumps(override).encode() + b"\n")
+        proc.stdin.close()
     return proc
 
 
@@ -133,11 +130,9 @@ def zenoh_to(monkeypatch):
 
 
 def test_the_host_publishes_its_outputs_and_hides_the_suppressed_hop(baked, zenoh_to):
-    binary, config = baked
-    port = free_port()
-    zenoh_to(port)
-    proc = spawn_host(binary, config, port)
-    await_listener(proc, port)
+    zenoh_to(PORT)
+    proc = spawn_host(baked)
+    await_listener(proc, PORT)
 
     seen: dict[str, int] = {}
     transports = []
@@ -188,20 +183,26 @@ def test_the_host_publishes_its_outputs_and_hides_the_suppressed_hop(baked, zeno
             transport.stop()
 
 
-def test_a_poisoned_config_kills_the_host(baked):
-    binary, config = baked
-    poisoned = json.loads(json.dumps(config))
-    poisoned["modules"]["ray_tracing"]["config"].pop("voxel_size")
-    proc = spawn_host(binary, poisoned, free_port())
+def test_a_stdin_override_moves_the_listener(baked):
+    port = free_port()
+    proc = spawn_host(baked, {"session": {"listen": [f"tcp/127.0.0.1:{port}"]}})
+    try:
+        await_listener(proc, port)
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+
+
+def test_an_override_with_a_key_the_struct_lacks_kills_the_host(baked):
+    proc = spawn_host(baked, {"modules": {"ray_tracing": {"config": {"voxel_sizes": 0.1}}}})
     assert proc.wait(timeout=30) == 1
-    assert b"voxel_size" in (proc.stderr.read() if proc.stderr else b"")
+    assert b"voxel_sizes" in (proc.stderr.read() if proc.stderr else b"")
 
 
-def test_a_config_baked_for_another_graph_is_refused(baked):
-    binary, config = baked
-    proc = spawn_host(binary, {**config, "graph": "0123456789abcdef"}, free_port())
+def test_an_override_stamped_for_another_graph_is_refused(baked):
+    proc = spawn_host(baked, {"graph": "0123456789abcdef"})
     assert proc.wait(timeout=30) == 1
     assert proc.stderr is not None
     stderr = proc.stderr.read()
     assert b"0123456789abcdef" in stderr
-    assert b"dimos bake --emit-config" in stderr
+    assert b"dimos bake" in stderr

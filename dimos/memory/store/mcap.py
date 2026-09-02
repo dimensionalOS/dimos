@@ -19,6 +19,11 @@ supplies ``codecs`` (DDS/wire topic -> codec that decodes a message's stored
 bytes) and an optional ``streams`` map (friendly stream name -> topic). See
 ``dimos.robot.unitree.go2.dds.store.Go2McapStore`` for the Go2 wiring.
 
+Channels published by dimos itself need neither: a dimos topic carries its
+message type in its own name, so it is decoded and named from the wire with no
+registry at all (``_dimos_wire``). An injected codec still wins where both
+apply.
+
 Read-only: no append, blobs, vectors, or embeddings. Payloads decode lazily on
 ``obs.data``; ts and counts are cheap (counts come from the mcap index).
 """
@@ -26,7 +31,7 @@ Read-only: no append, blobs, vectors, or embeddings. Payloads decode lazily on
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, Protocol, runtime_checkable
 
@@ -37,6 +42,7 @@ from dimos.memory.observationstore.base import ObservationStore, ObservationStor
 from dimos.memory.store.base import Store, StoreConfig
 from dimos.memory.type.filter import StreamQuery
 from dimos.memory.type.observation import Observation
+from dimos.protocol.pubsub.impl.rospubsub_conversion import get_dimos_type
 
 
 @runtime_checkable
@@ -61,12 +67,44 @@ class _BytesCodec:
 _BYTES_CODEC = _BytesCodec()
 
 
+@dataclass(frozen=True)
+class _DimosCodec:
+    """Decodes a dimos wire channel through its own message type."""
+
+    payload_type: type
+
+    def decode(self, data: bytes) -> Any:
+        return self.payload_type.lcm_decode(data)  # type: ignore[attr-defined]
+
+
+def _dimos_wire(topic: str) -> tuple[str, type] | None:
+    """Split a dimos wire topic into its port name and message type.
+
+    A dimos topic embeds the type in its last segment --
+    ``dimos/<port>/<msg_name>``, built by ``zenohpubsub.Topic.key_expr`` -- so
+    every dimos channel describes itself and no per-topic registry is needed.
+    None for anything that is not one, which leaves DDS and app channels to
+    the injected codecs.
+    """
+    prefix, _, rest = topic.partition("/")
+    port, _, msg_name = rest.rpartition("/")
+    if prefix != "dimos" or not port:
+        return None
+    msg_type = get_dimos_type(msg_name)
+    return (port, msg_type) if msg_type is not None else None
+
+
 def _slug(topic: str) -> str:
     """Auto stream name from a topic: drop the ``rt/`` prefix and ``/`` -> ``_``.
 
     ``rt/`` is the ROS2-over-DDS topic prefix; ``removeprefix`` only strips it
-    where present (e.g. app-level ``control_log`` is left alone).
+    where present (e.g. app-level ``control_log`` is left alone). A dimos topic
+    names itself by its port, dropping the type segment: the dot in
+    ``nav_msgs.Path`` is not attribute-addressable on ``store.streams``.
     """
+    wire = _dimos_wire(topic)
+    if wire is not None:
+        return wire[0].replace("/", "_")
     return topic.removeprefix("rt/").replace("/", "_")
 
 
@@ -171,7 +209,7 @@ class McapStore(Store):
                 name = name_of.get(ch.topic) or _slug(ch.topic)
                 self._stream_topic[name] = ch.topic
                 self._available[name] = count
-                if ch.topic not in self._codecs:
+                if ch.topic not in self._codecs and _dimos_wire(ch.topic) is None:
                     sch = summary.schemas.get(ch.schema_id)
                     self._raw[name] = sch.name if sch else None
 
@@ -195,7 +233,10 @@ class McapStore(Store):
         if name not in self._available:
             raise KeyError(f"No stream {name!r}. Available: {sorted(self._available)}")
         topic = self._stream_topic[name]
-        codec = self._codecs.get(topic) or _BYTES_CODEC  # no codec -> Stream[bytes]
+        # Injected codecs win; a dimos channel decodes itself; the rest stay bytes.
+        wire = _dimos_wire(topic)
+        fallback: StreamCodec = _DimosCodec(wire[1]) if wire is not None else _BYTES_CODEC
+        codec = self._codecs.get(topic) or fallback
         ptype = codec.payload_type
         obs = McapObservationStore(
             name=name, path=self.config.path, topic=topic, codec=codec, count=self._available[name]

@@ -1,0 +1,49 @@
+[package]
+name = "dimos-go2-tf"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust tf publisher for the Go2's mount tree and odometry edge"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_go2_tf"
+path = "src/lib.rs"
+# rlib only: no numerics worth exposing to python, so there is no pyo3
+# extension and a cdylib would be a shared object nobody loads. `dimos bake`
+# links the rlib.
+crate-type = ["rlib"]
+
+[[bin]]
+name = "go2_tf"
+path = "src/main.rs"
+
+# Registry entry read by `dimos bake` (graph + codegen) and cross-checked at
+# compile time by #[module(name = "go2_tf")].
+# threads = 1: one handler and one interval, nothing blocks the runtime.
+[package.metadata.dimos.module.go2_tf]
+path = "dimos_go2_tf::module::Go2Tf"
+python = "dimos.robot.unitree.go2.tf.go2_tf:Go2Tf"
+threads = 1
+
+[package.metadata.dimos.module.go2_tf.inputs]
+odometry = "nav_msgs.Odometry"
+
+# tf is an output here, unlike the motion modules that list it under `inputs`
+# behind `#[tf]`. This module is the one thing in the host that produces it, and
+# the graph should say so -- otherwise a bake of the robot stack reads as though
+# tf still arrives from off-robot, which is exactly the dependency being removed.
+[package.metadata.dimos.module.go2_tf.outputs]
+tf = "tf2_msgs.TFMessage"
+
+[dependencies]
+dimos-module = { path = "../../../../../../native/rust/dimos-module" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+validator = { version = "0.20", features = ["derive"] }
+
+[dev-dependencies]
+# Reads the parity fixture the python test writes; see src/tree.rs tests.
+serde_json = "1"

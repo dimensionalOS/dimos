@@ -53,7 +53,7 @@ class RegisteredModule:
     crate_name: str
     # Full rust path of the `#[derive(Module)]` struct, for the generated host.
     rust_path: str
-    # `pkg.mod:Class` of the python NativeModule wrapper, for `--emit-config`.
+    # `pkg.mod:Class` of the python NativeModule wrapper, for the embedded config.
     python_ref: str
     threads: int
     inputs: Mapping[str, str]

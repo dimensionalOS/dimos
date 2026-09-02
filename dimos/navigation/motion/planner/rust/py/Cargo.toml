@@ -1,0 +1,16 @@
+[package]
+name = "dimos-motion2-target-py"
+version = "0.1.0"
+edition = "2021"
+description = "Python bindings for the motion2 target planner"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_motion2_target_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+dimos-motion2-target = { path = ".." }
+numpy = "0.25"
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }

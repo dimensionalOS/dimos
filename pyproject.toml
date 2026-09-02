@@ -644,6 +644,8 @@ module = [
     "lz4",
     "lz4.*",
     "dimos_mls_planner",
+    "dimos_motion2_target",
+    "dimos_motion2_tc",
     "dimos_voxel_ray_tracing",
     "etils",
     "faster_whisper",
@@ -747,6 +749,8 @@ exclude_also = [
 max_size_kb = 75
 ignore = [
     "uv.lock",
+    # an evolved planner: one generated rust file, not hand-edited source
+    "dimos/navigation/motion/planner/rust/src/planner.rs",
     "*/package-lock.json",
     "Cargo.lock",
     "*/Cargo.lock",

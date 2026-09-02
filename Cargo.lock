@@ -546,6 +546,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "dimos-cmd-vel-mux"
+version = "0.1.0"
+dependencies = [
+ "dimos-module",
+ "lcm-msgs",
+ "serde",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "validator",
+]
+
+[[package]]
+name = "dimos-go2-tf"
+version = "0.1.0"
+dependencies = [
+ "dimos-module",
+ "lcm-msgs",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "validator",
+]
+
+[[package]]
 name = "dimos-lcm"
 version = "0.1.0"
 source = "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#04d78e8622500244123ba9cefa4c51b4cb454549"
@@ -609,6 +636,59 @@ dependencies = [
  "quote",
  "syn 3.0.4",
  "toml 1.1.4+spec-1.1.0",
+]
+
+[[package]]
+name = "dimos-motion-adapter"
+version = "0.1.0"
+dependencies = [
+ "dimos-module",
+ "dimos-motion2-target",
+ "dimos-motion2-tc",
+ "lcm-msgs",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "validator",
+]
+
+[[package]]
+name = "dimos-motion2-target"
+version = "0.1.0"
+dependencies = [
+ "dimos-motion2-target",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "dimos-motion2-target-py"
+version = "0.1.0"
+dependencies = [
+ "dimos-motion2-target",
+ "numpy",
+ "pyo3",
+ "serde_json",
+]
+
+[[package]]
+name = "dimos-motion2-tc"
+version = "0.1.0"
+dependencies = [
+ "dimos-motion2-target",
+]
+
+[[package]]
+name = "dimos-motion2-tc-py"
+version = "0.1.0"
+dependencies = [
+ "dimos-motion2-target",
+ "dimos-motion2-tc",
+ "numpy",
+ "pyo3",
+ "serde_json",
 ]
 
 [[package]]
