@@ -510,10 +510,6 @@ tests-self-hosted = [
     "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
-    # dim_slam's visual odometry, replayed in-process by test_dim_odom_replay.
-    # 0.1.6 renamed the fusion key `constraint_twist_variances` to
-    # `per_dimension_error_variance`; 0.1.5 accepts the new name and silently drops it, so a
-    # ground robot's vz/roll/pitch pin never applies.
     "dim-odom>=0.1.6",
 ]
 docs = [
