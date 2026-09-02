@@ -284,6 +284,7 @@ the earlier PRD (Paul, Ivan, Jeff, Stash, Jetson Wu) are dispositioned in the kn
   `cargo test` 268 + 4 + 3 passed, `cargo clippy --all-targets -- -D warnings` clean, `cargo fmt
   --check` clean, `cargo build --release` → `dimos 0.0.14b1`, `pytest dimos/cli/test_forward.py
   dimos/cli/test_cli_startup.py` 16 passed, `cargo zigbuild` for aarch64 and x86_64 musl both
-  `statically linked, stripped`. Rebased on `origin/main` (3 new commits there, no overlapping
-  files) and pushed to `origin/aaryan/installer`. Hand-off point: nothing has run on Linux, the G1,
+  `statically linked, stripped`. Merged `origin/main` in (3 new commits there, no overlapping
+  files; merge rather than rebase so the branch never needs a force-push) and pushed to
+  `origin/aaryan/installer`. Hand-off point: nothing has run on Linux, the G1,
   or the Jetson yet — start at "Getting a binary onto a test machine" above.
