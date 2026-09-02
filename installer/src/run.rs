@@ -14,10 +14,11 @@ use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+use crate::action_log::{self, ActionLog, ActionRecord, ActionView};
 use crate::cli::Cli;
+use crate::install_record;
 use crate::plan::{display_argv, ensure_block, Action, Outcome, Plan, Stage};
 use crate::say;
-use crate::state::{self, ActionLog, ActionRecord, ActionView};
 use crate::sudo::Sudo;
 
 const TAIL_LINES: usize = 20;
@@ -108,7 +109,7 @@ impl Ctx {
             yes: cli.yes,
             sudo: Sudo::resolve(mode),
             log: ActionLog::open(home)?,
-            run_id: state::run_id(),
+            run_id: action_log::run_id(),
         })
     }
 
@@ -741,7 +742,7 @@ fn log<'a>(
     took: Duration,
 ) {
     let record = ActionRecord {
-        ts: state::now_iso(),
+        ts: install_record::now_iso(),
         run: &ctx.run_id,
         command,
         stage,
@@ -777,7 +778,7 @@ pub fn parse_sha_file(text: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::TmpDir;
+    use crate::install_record::TmpDir;
 
     fn ctx(home: &Path, dry_run: bool) -> Ctx {
         Ctx {
@@ -819,7 +820,7 @@ mod tests {
         let report = run(&plan, &mut c).unwrap();
         assert_eq!(report.exit_code(), 0);
         assert!(!marked.exists() && !written.exists());
-        assert!(!state::installer_json(home.path()).exists());
+        assert!(!install_record::installer_json(home.path()).exists());
         let log = fs::read_to_string(c.log.path()).unwrap();
         assert!(log.lines().all(|l| l.contains("\"dry_run\"")), "{log}");
     }
@@ -1110,7 +1111,7 @@ mod tests {
     }
 
     #[test]
-    fn the_filesystem_is_mutated_only_from_run_rs_and_state_rs() {
+    fn the_filesystem_is_mutated_only_from_run_rs_install_record_rs_and_action_log_rs() {
         const WRITERS: [&str; 6] = [
             "fs::write",
             "fs::create_dir",
@@ -1119,12 +1120,16 @@ mod tests {
             "fs::copy",
             "fs::set_permissions",
         ];
+        const HOMES: [&str; 3] = ["run.rs", "install_record.rs", "action_log.rs"];
         let offenders: Vec<String> = sources()
             .iter()
-            .filter(|(name, _)| name != "run.rs" && name != "state.rs")
+            .filter(|(name, _)| !HOMES.contains(&name.as_str()))
             .filter(|(_, text)| WRITERS.iter().any(|w| runtime(text).contains(w)))
             .map(|(name, _)| name.clone())
             .collect();
-        assert!(offenders.is_empty(), "writes outside run.rs: {offenders:?}");
+        assert!(
+            offenders.is_empty(),
+            "writes outside {HOMES:?}: {offenders:?}"
+        );
     }
 }

@@ -12,9 +12,9 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 
+use crate::install_record::{self, Installed, PlatformSummary};
 use crate::plan;
 use crate::run;
-use crate::state::{self, Installed, PlatformSummary};
 
 /// L4T release prefix -> JetPack, from NVIDIA's L4T archive; a longer prefix must come first.
 const JETPACK: [(&str, &str); 4] = [
@@ -420,12 +420,12 @@ impl Kernel {
             lo_multicast,
             multicast_route,
             memlock_conf_bytes: memlock_conf_bytes(
-                &fs::read_to_string(state::MEMLOCK_CONF).unwrap_or_default(),
+                &fs::read_to_string(install_record::MEMLOCK_CONF).unwrap_or_default(),
                 user,
             ),
             nvpmodel_maxn: capture("nvpmodel", &["-q"], &[], PROBE_TIMEOUT_S)
                 .map(|t| nvpmodel_is_maxn(&t)),
-            sysctl_conf: fs::read_to_string(state::SYSCTL_CONF).ok(),
+            sysctl_conf: fs::read_to_string(install_record::SYSCTL_CONF).ok(),
             enabled_units: parse_unit_files(&run_text(
                 "systemctl",
                 &["list-unit-files", "--state=enabled", "--no-legend"],
@@ -461,7 +461,7 @@ impl Tools {
 impl Probes {
     pub fn detect(sysctl_keys: &[&str], home: &Path) -> Result<Probes> {
         let platform = Platform::detect()?;
-        let installed = state::load(home)?;
+        let installed = install_record::load(home)?;
         Ok(Probes {
             kernel: Kernel::detect(sysctl_keys, &platform.user),
             tools: Tools::detect(home, &platform.shell, platform.pkg),
@@ -542,7 +542,7 @@ fn read_sysctl(keys: &[&str]) -> BTreeMap<String, u64> {
 
 /// An absent rc file reads as empty, so the block that creates it is still planned once.
 fn read_rc(home: &Path, shell: &Path) -> Vec<RcFile> {
-    state::rc_files(home, shell)
+    install_record::rc_files(home, shell)
         .into_iter()
         .map(|path| {
             let text = fs::read_to_string(&path).unwrap_or_default();
@@ -828,16 +828,16 @@ mod tests {
         assert!(text.len() > 190_000, "got {} bytes", text.len());
     }
 
-    /// The rc files `state::rc_files` picks are the ones the same shell reads in login mode.
+    /// The rc files `install_record::rc_files` picks are the ones the same shell reads in login mode.
     #[test]
     fn rc_files_and_the_login_shell_probe_agree() {
         for shell in ["/bin/bash", "/bin/zsh"].map(Path::new) {
             if !shell.exists() {
                 continue;
             }
-            let home = state::TmpDir::new("probe-rc");
+            let home = install_record::TmpDir::new("probe-rc");
             let lines = ["export PATH=\"$HOME/.local/bin:$PATH\"".to_string()];
-            for file in state::rc_files(home.path(), shell) {
+            for file in install_record::rc_files(home.path(), shell) {
                 let (text, _) = plan::ensure_block("", "path", &lines);
                 fs::write(&file, text).expect("write rc fixture");
             }

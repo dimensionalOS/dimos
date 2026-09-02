@@ -4,10 +4,10 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use crate::install_record;
 use crate::pkgs::{self, Platforms};
 use crate::plan::{Action, Stage};
 use crate::probe::{Kernel, Os, Platform};
-use crate::state;
 
 /// sysctl, ip and systemctl all return immediately; the budget only bounds a hung sudo.
 const CONFIG_TIMEOUT_S: u64 = 30;
@@ -61,14 +61,14 @@ fn sysctl_actions(kernel: &Kernel, target: &BTreeMap<String, u64>) -> Vec<Action
         })
         .collect();
     if kernel.sysctl_conf.as_deref() != Some(conf.as_str()) {
-        actions.push(write_root(PathBuf::from(state::SYSCTL_CONF), conf));
+        actions.push(write_root(PathBuf::from(install_record::SYSCTL_CONF), conf));
     }
     actions
 }
 
 /// The unit persists across reboots; the two `ip` calls close the gap in the running kernel now.
 fn multicast_actions(kernel: &Kernel) -> Vec<Action> {
-    let unit = format!("{}.service", state::MULTICAST_UNIT);
+    let unit = format!("{}.service", install_record::MULTICAST_UNIT);
     let mut actions = Vec::new();
     if !kernel.lo_multicast {
         actions.push(Action::sudo(
@@ -83,7 +83,10 @@ fn multicast_actions(kernel: &Kernel) -> Vec<Action> {
         ));
     }
     if !kernel.enabled_units.contains(&unit) {
-        actions.extend(unit_actions(state::MULTICAST_UNIT, render_multicast_unit()));
+        actions.extend(unit_actions(
+            install_record::MULTICAST_UNIT,
+            render_multicast_unit(),
+        ));
     }
     actions
 }
@@ -91,7 +94,7 @@ fn multicast_actions(kernel: &Kernel) -> Vec<Action> {
 /// Write a unit as root, reload, `enable --now`: what every unit the installer owns needs.
 pub fn unit_actions(name: &str, contents: String) -> Vec<Action> {
     vec![
-        write_root(state::unit_path(name), contents),
+        write_root(install_record::unit_path(name), contents),
         Action::sudo(&["systemctl", "daemon-reload"], CONFIG_TIMEOUT_S),
         Action::sudo(&["systemctl", "enable", "--now", name], CONFIG_TIMEOUT_S),
     ]
@@ -103,7 +106,7 @@ fn memlock_actions(user: &str, kernel: &Kernel, bytes: u64) -> Vec<Action> {
         return Vec::new();
     }
     vec![write_root(
-        PathBuf::from(state::MEMLOCK_CONF),
+        PathBuf::from(install_record::MEMLOCK_CONF),
         render_memlock_conf(user, bytes),
     )]
 }
@@ -184,7 +187,7 @@ mod tests {
             memlock_conf_bytes: Some(cfg.linux.memlock_bytes),
             nvpmodel_maxn: None,
             sysctl_conf: Some(render_sysctl_conf(&cfg.linux.sysctl)),
-            enabled_units: vec![format!("{}.service", state::MULTICAST_UNIT)],
+            enabled_units: vec![format!("{}.service", install_record::MULTICAST_UNIT)],
         }
     }
 
@@ -226,7 +229,7 @@ mod tests {
             assert!(text.contains(&format!("sysctl -w {key}={value}")), "{text}");
         }
         assert!(
-            text.contains(&format!("write {}", state::SYSCTL_CONF)),
+            text.contains(&format!("write {}", install_record::SYSCTL_CONF)),
             "{text}"
         );
         let conf = render_sysctl_conf(&cfg.linux.sysctl);
@@ -241,7 +244,7 @@ mod tests {
             ..configured(&cfg)
         };
         let text = displays(&stage(&ubuntu(true), &low, &cfg));
-        assert!(!text.contains(state::SYSCTL_CONF), "{text}");
+        assert!(!text.contains(install_record::SYSCTL_CONF), "{text}");
         assert!(text.contains("sysctl -w"), "{text}");
     }
 
@@ -262,12 +265,15 @@ mod tests {
         );
         assert!(text.contains("systemctl daemon-reload"), "{text}");
         assert!(
-            text.contains(&format!("systemctl enable --now {}", state::MULTICAST_UNIT)),
+            text.contains(&format!(
+                "systemctl enable --now {}",
+                install_record::MULTICAST_UNIT
+            )),
             "{text}"
         );
         assert!(
             text.contains(
-                &state::unit_path(state::MULTICAST_UNIT)
+                &install_record::unit_path(install_record::MULTICAST_UNIT)
                     .display()
                     .to_string()
             ),
@@ -308,7 +314,7 @@ mod tests {
         };
         let text = displays(&stage(&ubuntu(true), &short, &cfg));
         assert!(
-            text.contains(&format!("sudo write {}", state::MEMLOCK_CONF)),
+            text.contains(&format!("sudo write {}", install_record::MEMLOCK_CONF)),
             "{text}"
         );
     }

@@ -9,7 +9,7 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
-use crate::state::Installed;
+use crate::install_record::Installed;
 
 /// Verbs the installer owns; `dimos/cli/forward.py` FORWARDED mirrors this literally.
 pub const RESERVED: &[&str] = &["setup", "update", "service", "uninstall", "robot"];
@@ -71,7 +71,7 @@ mod tests {
     use std::fs;
 
     use crate::cli::InstallMode;
-    use crate::state::{PlatformSummary, SCHEMA};
+    use crate::install_record::{PlatformSummary, SCHEMA};
 
     fn installed_at(dir: &str) -> Installed {
         Installed {

@@ -14,12 +14,12 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use crate::cli::{InstallMode, SetupArgs};
+use crate::install_record::{self, Installed};
 use crate::pkgs::{self, Platforms, DIMOS_VERSION, EXTRAS};
 use crate::plan::{text, Plan, Stage};
 use crate::probe::{self, Arch, Os, PkgManager, Platform, Probes};
 use crate::run::{self, Ctx};
 use crate::say;
-use crate::state::{self, Installed};
 
 const GIB: u64 = 1024 * 1024 * 1024;
 /// A dev install with the base extras unpacks ~10 GiB of wheels, torch included.
@@ -178,7 +178,7 @@ fn stages(
     ]);
     out.extend(verify::stages(
         &checks(probes),
-        &state::venv(&target.dir),
+        &install_record::venv(&target.dir),
         &target.dir,
         target.blueprint.as_deref(),
     ));
@@ -188,7 +188,7 @@ fn stages(
 /// An unreadable binary hashes to nothing, so the copy is planned rather than silently skipped.
 fn self_install_stage(probes: &Probes, home: &Path) -> Stage {
     let own = run::sha256_hex(&probes.current_exe).unwrap_or_default();
-    let installed = run::sha256_hex(&state::installed_bin(home)).ok();
+    let installed = run::sha256_hex(&install_record::installed_bin(home)).ok();
     self_install::stage(
         &probes.current_exe,
         home,
@@ -241,8 +241,10 @@ fn install_is_current(
         && prior.dir == target.dir
         && prior.extras == target.extras
         && branch_matches
-        && state::venv_python(&target.dir).is_file()
-        && state::venv(&target.dir).join("bin/dimos").is_file()
+        && install_record::venv_python(&target.dir).is_file()
+        && install_record::venv(&target.dir)
+            .join("bin/dimos")
+            .is_file()
 }
 
 /// `setup` verifies the host it runs on; the G1's DDS stack is `dimos hardware g1 setup`.
@@ -281,7 +283,7 @@ fn unmanaged_note(platform: &Platform) -> Option<String> {
 /// `hardware` and `last` are other commands' writes, so a re-run carries them over untouched.
 fn record(target: &Target, probes: &Probes, prior: Option<&Installed>) -> Installed {
     Installed {
-        schema: state::SCHEMA,
+        schema: install_record::SCHEMA,
         installer_version: DIMOS_VERSION.to_string(),
         dimos_version: install::dimos_version_string(target.mode, &target.branch, None),
         mode: target.mode,
@@ -317,7 +319,7 @@ pub fn run(
     let report = run::run(&steps, ctx)?;
     report.print(ctx);
     if !ctx.dry_run {
-        state::save(home, &record(&target, probes, prior))?;
+        install_record::save(home, &record(&target, probes, prior))?;
     }
     if report.exit_code() == 0 {
         next_steps(&target, probes);
@@ -328,9 +330,10 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::action_log::ActionLog;
+    use crate::install_record::{PlatformSummary, TmpDir};
     use crate::probe::{Gpu, Kernel, Tools};
     use crate::run::Mode;
-    use crate::state::{ActionLog, PlatformSummary, TmpDir};
     use crate::sudo::Sudo;
 
     fn ctx(home: &Path) -> Ctx {
@@ -391,7 +394,7 @@ mod tests {
 
     fn installed(dir: &Path) -> Installed {
         Installed {
-            schema: state::SCHEMA,
+            schema: install_record::SCHEMA,
             installer_version: DIMOS_VERSION.to_string(),
             dimos_version: DIMOS_VERSION.to_string(),
             mode: InstallMode::Dev,
@@ -425,7 +428,7 @@ mod tests {
     /// Every package the plan wants, reported by dpkg as already installed.
     fn configured(home: &Path, cfg: &Platforms) -> Probes {
         let mut probes = probes(home);
-        probes.current_exe = state::installed_bin(home);
+        probes.current_exe = install_record::installed_bin(home);
         probes.tools = Tools {
             uv: Some(home.join(".local/bin/uv")),
             login_path_has_local_bin: true,
@@ -441,7 +444,7 @@ mod tests {
             multicast_route: true,
             memlock_conf_bytes: Some(cfg.linux.memlock_bytes),
             sysctl_conf: Some(sysconfig::render_sysctl_conf(&cfg.linux.sysctl)),
-            enabled_units: vec![format!("{}.service", state::MULTICAST_UNIT)],
+            enabled_units: vec![format!("{}.service", install_record::MULTICAST_UNIT)],
             nvpmodel_maxn: None,
         };
         probes
@@ -589,9 +592,9 @@ mod tests {
         let dir = target(home.path()).dir;
         std::fs::create_dir_all(dir.join(".git")).unwrap();
         std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
-        std::fs::create_dir_all(state::venv(&dir).join("bin")).unwrap();
-        std::fs::write(state::venv_python(&dir), "").unwrap();
-        std::fs::write(state::venv(&dir).join("bin/dimos"), "").unwrap();
+        std::fs::create_dir_all(install_record::venv(&dir).join("bin")).unwrap();
+        std::fs::write(install_record::venv_python(&dir), "").unwrap();
+        std::fs::write(install_record::venv(&dir).join("bin/dimos"), "").unwrap();
         let mut probes = configured(home.path(), &cfg);
         probes.installed = Some(Installed {
             mode: InstallMode::Dev,
@@ -632,7 +635,7 @@ mod tests {
         let mut prior = installed(&home.path().join(DEFAULT_DIR));
         prior.hardware.insert(
             "g1".to_string(),
-            crate::state::HardwareRun {
+            crate::install_record::HardwareRun {
                 at: "2026-09-01T00:00:00Z".to_string(),
                 result: "applied".to_string(),
                 robot_ip: None,

@@ -8,6 +8,7 @@ use anyhow::{bail, Result};
 
 use crate::cli::{HardwareSetupArgs, InstallMode, UpdateArgs};
 use crate::hardware::{self, Robot};
+use crate::install_record::{self, Installed};
 use crate::pkgs::{self, Platforms, DIMOS_VERSION};
 use crate::plan::{text, Action, Outcome, Plan, Stage};
 use crate::probe::{capture, Probes};
@@ -15,7 +16,6 @@ use crate::run::{self, Ctx, Report};
 use crate::say;
 use crate::setup::g1::G1Observed;
 use crate::setup::{deps, g1, install, jetson, sysconfig, verify};
-use crate::state::{self, Installed};
 
 pub const RELEASES: &str = "https://github.com/dimensionalOS/dimos/releases";
 /// The same override `scripts/install.sh` honors, so a LAN test serves both from one directory.
@@ -181,7 +181,7 @@ pub fn artifact(target: &str) -> String {
 
 /// The swap renames a sibling file over the binary, so it only works on the installed copy.
 pub fn require_installed_exe(home: &Path, current_exe: &Path) -> Result<PathBuf> {
-    let installed = state::installed_bin(home);
+    let installed = install_record::installed_bin(home);
     if current_exe != installed {
         bail!(
             "running {}, not the installed copy: `{} update` updates the binary",
@@ -266,7 +266,7 @@ fn self_update_or_note(
     }
     let base = release_base(Some(candidate), override_url().as_deref());
     (
-        self_update_stage(&base, target, &bin, &state::backup_bin(home)),
+        self_update_stage(&base, target, &bin, &install_record::backup_bin(home)),
         None,
     )
 }
@@ -439,12 +439,15 @@ fn record(installed: &Installed, obs: &Observed, report: &Report, home: &Path) -
         out.branch.as_deref().unwrap_or_default(),
         obs.remote.as_deref(),
     );
-    state::save(home, &out)
+    install_record::save(home, &out)
 }
 
 /// Puts the kept `.bak` back through the same executor, so `--dry-run --rollback` prints the swap.
 pub fn rollback(ctx: &mut Ctx, home: &Path) -> Result<i32> {
-    let (bin, bak) = (state::installed_bin(home), state::backup_bin(home));
+    let (bin, bak) = (
+        install_record::installed_bin(home),
+        install_record::backup_bin(home),
+    );
     if !bak.exists() {
         bail!("nothing to roll back: {} does not exist", bak.display());
     }
@@ -469,7 +472,7 @@ pub fn run(
     if args.rollback {
         return rollback(ctx, home);
     }
-    let Some(installed) = state::load(home)? else {
+    let Some(installed) = install_record::load(home)? else {
         say::fail("no DimOS install recorded: run `dimos setup` first");
         return Ok(2);
     };
@@ -487,7 +490,7 @@ pub fn run(
 }
 
 fn rollback_hint(report: &Report, home: &Path) {
-    if report.exit_code() != 0 && state::backup_bin(home).exists() {
+    if report.exit_code() != 0 && install_record::backup_bin(home).exists() {
         say::info("rollback: dimos update --rollback");
     }
 }
@@ -501,16 +504,17 @@ fn override_url() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::action_log::ActionLog;
     use crate::cli::InstallMode;
+    use crate::install_record::{HardwareRun, PlatformSummary, TmpDir};
     use crate::probe::{Arch, Gpu, Kernel, Os, PkgManager, Platform, RcFile, Tools};
-    use crate::state::{ActionLog, HardwareRun, PlatformSummary, TmpDir};
     use crate::sudo::Sudo;
     use std::collections::BTreeMap;
     use std::net::Ipv4Addr;
 
     fn installed(mode: InstallMode, home: &Path) -> Installed {
         Installed {
-            schema: state::SCHEMA,
+            schema: install_record::SCHEMA,
             installer_version: DIMOS_VERSION.to_string(),
             dimos_version: DIMOS_VERSION.to_string(),
             mode,
@@ -593,7 +597,7 @@ mod tests {
 
     /// Every apt package present, so the machine-config stages of a host plan are empty.
     fn configured(home: &Path) -> Probes {
-        let mut probes = probes(home, state::installed_bin(home));
+        let mut probes = probes(home, install_record::installed_bin(home));
         probes.tools.dpkg_status =
             pkgs::system_packages(&["base".to_string()], PkgManager::Apt, &Platforms::load())
                 .iter()
@@ -754,7 +758,7 @@ mod tests {
     #[test]
     fn self_update_is_empty_when_the_latest_release_is_not_newer() {
         let home = TmpDir::new("update-same");
-        let probes = probes(home.path(), state::installed_bin(home.path()));
+        let probes = probes(home.path(), install_record::installed_bin(home.path()));
         let obs = Observed {
             latest: Some(DIMOS_VERSION.to_string()),
             ..Observed::default()
@@ -823,7 +827,7 @@ mod tests {
     fn plan_ends_with_a_critical_verify_stage() {
         let home = TmpDir::new("update-plan");
         let inst = installed(InstallMode::Library, home.path());
-        let probes = probes(home.path(), state::installed_bin(home.path()));
+        let probes = probes(home.path(), install_record::installed_bin(home.path()));
         let cfg = Platforms::load();
         let steps = plan(
             &inst,
@@ -842,7 +846,7 @@ mod tests {
     fn a_recorded_g1_rebuilds_every_g1_stage_from_its_record() {
         let home = TmpDir::new("update-g1-stages");
         let inst = with_g1(installed(InstallMode::Dev, home.path()));
-        let probes = probes(home.path(), state::installed_bin(home.path()));
+        let probes = probes(home.path(), install_record::installed_bin(home.path()));
         let cfg = Platforms::load();
         let steps = plan(
             &inst,
@@ -871,7 +875,7 @@ mod tests {
     fn plan_orders_the_numpy_pin_after_the_dimos_stage_that_breaks_it() {
         let home = TmpDir::new("update-order");
         let inst = with_g1(installed(InstallMode::Dev, home.path()));
-        let probes = probes(home.path(), state::installed_bin(home.path()));
+        let probes = probes(home.path(), install_record::installed_bin(home.path()));
         let cfg = Platforms::load();
         let obs = Observed {
             head: Some("abc".to_string()),
@@ -892,7 +896,7 @@ mod tests {
         let home = TmpDir::new("update-g1-old");
         let mut inst = with_g1(installed(InstallMode::Dev, home.path()));
         inst.hardware.get_mut("g1").expect("g1").robot_ip = None;
-        let probes = probes(home.path(), state::installed_bin(home.path()));
+        let probes = probes(home.path(), install_record::installed_bin(home.path()));
         let cfg = Platforms::load();
         let steps = plan(
             &inst,
@@ -910,7 +914,7 @@ mod tests {
     fn a_recorded_g1_is_verified_as_a_g1_on_its_recorded_interface() {
         let home = TmpDir::new("update-g1-target");
         let inst = with_g1(installed(InstallMode::Dev, home.path()));
-        let probes = probes(home.path(), state::installed_bin(home.path()));
+        let probes = probes(home.path(), install_record::installed_bin(home.path()));
         assert_eq!(
             target(&inst, &probes, home.path()),
             verify::Target::G1 {
@@ -964,7 +968,7 @@ mod tests {
         let home = TmpDir::new("update-record");
         let mut inst = installed(InstallMode::Dev, home.path());
         inst.dimos_version = "git:main@old".to_string();
-        state::save(home.path(), &inst).expect("save the prior record");
+        install_record::save(home.path(), &inst).expect("save the prior record");
         let obs = Observed {
             remote: Some("9f8b2c1d".to_string()),
             ..Observed::default()
@@ -974,10 +978,14 @@ mod tests {
             stages: vec![("dimos".to_string(), o)],
         };
         record(&inst, &obs, &report(Outcome::Already), home.path()).expect("no write");
-        let untouched = state::load(home.path()).expect("load").expect("recorded");
+        let untouched = install_record::load(home.path())
+            .expect("load")
+            .expect("recorded");
         assert_eq!(untouched.dimos_version, "git:main@old");
         record(&inst, &obs, &report(Outcome::Applied), home.path()).expect("write");
-        let after = state::load(home.path()).expect("load").expect("recorded");
+        let after = install_record::load(home.path())
+            .expect("load")
+            .expect("recorded");
         assert_eq!(after.dimos_version, "git:main@9f8b2c1d");
     }
 
@@ -991,7 +999,9 @@ mod tests {
             stages: vec![("dimos".to_string(), Outcome::Applied)],
         };
         record(&inst, &Observed::default(), &report, home.path()).expect("write");
-        let after = state::load(home.path()).expect("load").expect("recorded");
+        let after = install_record::load(home.path())
+            .expect("load")
+            .expect("recorded");
         assert_eq!(after.dimos_version, DIMOS_VERSION);
     }
 
@@ -1006,7 +1016,7 @@ mod tests {
     fn no_sudo_action_in_the_update_plan_carries_an_environment() {
         let home = TmpDir::new("update-sudo-env");
         let inst = with_g1(installed(InstallMode::Dev, home.path()));
-        let probes = probes(home.path(), state::installed_bin(home.path()));
+        let probes = probes(home.path(), install_record::installed_bin(home.path()));
         let cfg = Platforms::load();
         let steps = plan(
             &inst,

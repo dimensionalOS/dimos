@@ -7,13 +7,13 @@ use std::path::Path;
 use anyhow::{bail, Result};
 
 use crate::cli::{HardwareSetupArgs, HardwareTarget, HardwareVerb};
+use crate::install_record::{self, HardwareRun, Installed};
 use crate::pkgs::{self, Platforms};
 use crate::plan::{Plan, Stage};
 use crate::probe::{Arch, Os, Probes};
 use crate::run::{self, Ctx, Report};
 use crate::say;
 use crate::setup::{deps, g1, jetson, sysconfig, verify};
-use crate::state::{self, HardwareRun, Installed};
 
 const UNITREE_EXTRA: &str = "unitree";
 
@@ -71,7 +71,7 @@ pub fn run(
     let report = run::run(&steps, ctx)?;
     report.print(ctx);
     if !ctx.dry_run {
-        state::save(home, &recorded(robot, args, &installed, &report))?;
+        install_record::save(home, &recorded(robot, args, &installed, &report))?;
     }
     Ok(report.exit_code())
 }
@@ -287,7 +287,7 @@ fn recorded(
     out.hardware.insert(
         robot.key().to_string(),
         HardwareRun {
-            at: state::now_iso(),
+            at: install_record::now_iso(),
             result: outcome(report).to_string(),
             robot_ip: g1.then(|| args.robot_ip.clone()),
             interface: g1.then(|| args.interface.clone()),
@@ -315,11 +315,12 @@ mod tests {
 
     use clap::Parser;
 
+    use crate::action_log::ActionLog;
     use crate::cli::{Cli, Command, InstallMode};
+    use crate::install_record::{PlatformSummary, TmpDir, SCHEMA};
     use crate::plan::{self, Action, Outcome, Stage};
     use crate::probe::{Gpu, Jetson, Kernel, PkgManager, Platform, RcFile, Tools};
     use crate::run::Mode;
-    use crate::state::{ActionLog, PlatformSummary, TmpDir, SCHEMA};
     use crate::sudo::Sudo;
 
     const HOME: &str = "/home/unitree";
@@ -450,8 +451,8 @@ mod tests {
             nvpmodel_maxn: Some(true),
             sysctl_conf: Some(sysconfig::render_sysctl_conf(&cfg.linux.sysctl)),
             enabled_units: vec![
-                format!("{}.service", state::MULTICAST_UNIT),
-                format!("{}.service", state::JETSON_CLOCKS_UNIT),
+                format!("{}.service", install_record::MULTICAST_UNIT),
+                format!("{}.service", install_record::JETSON_CLOCKS_UNIT),
             ],
         }
     }

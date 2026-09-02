@@ -7,9 +7,9 @@ use std::path::Path;
 use anyhow::{bail, Result};
 
 use crate::cli::InstallMode;
+use crate::install_record;
 use crate::pkgs::{self, DIMOS_VERSION};
 use crate::plan::{text, Action, Stage};
-use crate::state;
 
 const REPO_URL: &str = "https://github.com/dimensionalOS/dimos";
 const PYTHON_VERSION: &str = "3.12";
@@ -102,7 +102,7 @@ fn library_actions(dir: &Path, extras: &[String], with_nix: bool, uv: &Path) -> 
             "pip".into(),
             "install".into(),
             "--python".into(),
-            text(&state::venv_python(dir)),
+            text(&install_record::venv_python(dir)),
             pkgs::pip_spec(extras),
         ],
     );
@@ -121,7 +121,7 @@ fn venv_argv(uv: &Path, dir: &Path) -> Vec<String> {
         "--python".into(),
         PYTHON_VERSION.into(),
         "--allow-existing".into(),
-        text(&state::venv(dir)),
+        text(&install_record::venv(dir)),
     ]
 }
 
@@ -197,7 +197,7 @@ fn nix_wrap(with_nix: bool, dir: &Path, argv: Vec<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::TmpDir;
+    use crate::install_record::TmpDir;
     use std::path::PathBuf;
 
     fn extras() -> Vec<String> {

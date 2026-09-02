@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::state::ActionView;
+use crate::action_log::ActionView;
 
 /// The floor for a stage's post-condition; a stage with a slower action lends it that budget.
 const POST_TIMEOUT_S: u64 = 120;

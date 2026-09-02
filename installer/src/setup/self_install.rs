@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
+use crate::install_record;
 use crate::plan::{text, Action, Stage};
 use crate::probe::{RcFile, Tools};
-use crate::state;
 
 pub const PATH_MARKER: &str = "path";
 
@@ -22,7 +22,7 @@ pub fn stage(
     installed_sha: Option<&str>,
     own_sha: &str,
 ) -> Stage {
-    let dest = state::installed_bin(home);
+    let dest = install_record::installed_bin(home);
     let mut stage = Stage::new("self-install", false);
     for action in install_actions(current_exe, &dest, installed_sha, own_sha) {
         stage = stage.push(action);
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn same_binary_already_installed_is_empty_stage() {
-        let dest = state::installed_bin(home());
+        let dest = install_record::installed_bin(home());
         let by_path = stage(
             &dest,
             home(),
@@ -118,7 +118,7 @@ mod tests {
             s.actions.last(),
             Some(&Action::Copy {
                 from: PathBuf::from("/tmp/dimos"),
-                to: state::installed_bin(home()),
+                to: install_record::installed_bin(home()),
                 mode: 0o755,
             })
         );
@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn path_block_only_when_login_path_lacks_local_bin() {
-        let installed = state::installed_bin(home());
+        let installed = install_record::installed_bin(home());
         let on_path = stage(
             &installed,
             home(),
@@ -188,7 +188,7 @@ mod tests {
         assert_eq!(
             s.post,
             Some(vec![
-                state::installed_bin(home()).display().to_string(),
+                install_record::installed_bin(home()).display().to_string(),
                 "--version".to_string(),
             ])
         );

@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use crate::cli::ServiceAction;
+use crate::install_record::{self, Installed};
 use crate::plan::{Action, Plan, Stage};
 use crate::probe::Platform;
-use crate::state::{self, Installed};
 
 /// systemctl returns as soon as the job is queued; the budget only bounds a hung sudo.
 const SYSTEMCTL_TIMEOUT_S: u64 = 60;
@@ -79,7 +79,7 @@ pub fn render_unit(
     }
     vars.extend_from_slice(env);
     let environment = render_environment(&vars)?;
-    let multicast = state::MULTICAST_UNIT;
+    let multicast = install_record::MULTICAST_UNIT;
     Ok(format!(
         "[Unit]\n\
          Description=DimOS blueprint {blueprint}\n\
@@ -155,7 +155,7 @@ fn stage_for(
         ServiceAction::Restart { .. } => control_stage("service-restart", &unit, "restart", true),
         ServiceAction::Status { .. } => status_stage(&unit),
         ServiceAction::Remove { .. } => {
-            let path = state::unit_path(&unit_name(blueprint));
+            let path = install_record::unit_path(&unit_name(blueprint));
             let present = path.exists();
             remove_stage(&unit, &path, present)
         }
@@ -206,7 +206,7 @@ fn setup_stage(
     )?;
     Ok(Stage::new("service-setup", true)
         .push(Action::WriteFile {
-            path: state::unit_path(&unit_name(blueprint)),
+            path: install_record::unit_path(&unit_name(blueprint)),
             mode: 0o644,
             contents,
             sudo: true,
@@ -256,7 +256,7 @@ fn remove_stage(unit: &str, path: &Path, present: bool) -> Stage {
 
 /// Every unit the installer may have written, for `uninstall` to disable and remove.
 pub fn installed_units() -> Vec<PathBuf> {
-    let mut units: Vec<PathBuf> = std::fs::read_dir(state::UNIT_DIR)
+    let mut units: Vec<PathBuf> = std::fs::read_dir(install_record::UNIT_DIR)
         .into_iter()
         .flatten()
         .flatten()
@@ -278,15 +278,15 @@ mod tests {
     use super::*;
 
     use crate::cli::InstallMode;
+    use crate::install_record::PlatformSummary;
     use crate::probe::{Arch, Gpu, Os, PkgManager};
-    use crate::state::PlatformSummary;
 
     const DIR: &str = "/home/unitree/dimos";
     const HOME: &str = "/home/unitree";
 
     fn installed() -> Installed {
         Installed {
-            schema: state::SCHEMA,
+            schema: install_record::SCHEMA,
             installer_version: "0.1.0".to_string(),
             dimos_version: "0.1.0".to_string(),
             mode: InstallMode::Dev,
@@ -529,7 +529,7 @@ mod tests {
 
     #[test]
     fn removing_an_absent_unit_plans_nothing_so_a_second_remove_is_already() {
-        let path = state::unit_path(&unit_name("unitree-g1"));
+        let path = install_record::unit_path(&unit_name("unitree-g1"));
         assert_eq!(
             remove_stage("dimos-unitree-g1.service", &path, false).actions,
             []
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn removing_an_installed_unit_disables_it_then_deletes_it_then_reloads() {
-        let path = state::unit_path(&unit_name("unitree-g1"));
+        let path = install_record::unit_path(&unit_name("unitree-g1"));
         assert_eq!(
             displays(&remove_stage("dimos-unitree-g1.service", &path, true)),
             argv(&[
@@ -562,8 +562,12 @@ mod tests {
 
     #[test]
     fn only_dimos_service_files_are_listed_for_uninstall() {
-        assert!(is_dimos_unit(&state::unit_path(state::MULTICAST_UNIT)));
-        assert!(is_dimos_unit(&state::unit_path(&unit_name("unitree-g1"))));
+        assert!(is_dimos_unit(&install_record::unit_path(
+            install_record::MULTICAST_UNIT
+        )));
+        assert!(is_dimos_unit(&install_record::unit_path(&unit_name(
+            "unitree-g1"
+        ))));
         for other in [
             "/etc/systemd/system/ssh.service",
             "/etc/systemd/system/dimos-g1.timer",

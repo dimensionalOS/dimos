@@ -11,13 +11,13 @@ use clap::Parser;
 use dimos_installer::cli::{
     hardware_argv, Cli, Command, HardwareTarget, RobotAction, ServiceAction,
 };
+use dimos_installer::install_record::{self, LastRun};
 use dimos_installer::pkgs::Platforms;
 use dimos_installer::plan::{Action, Plan, Stage};
 use dimos_installer::probe::Probes;
 use dimos_installer::run::{self, Ctx};
 use dimos_installer::say;
 use dimos_installer::setup::g1;
-use dimos_installer::state::{self, LastRun};
 use dimos_installer::{forward, hardware, robot, service, setup, uninstall, update};
 
 const SETUP_FIRST: &str = "no DimOS install recorded: run `dimos setup` first";
@@ -94,7 +94,8 @@ fn forwarded(command: &Command) -> Option<Vec<OsString>> {
 fn forward(argv: &[OsString], home: &Path) -> Result<i32> {
     let cwd = std::env::current_dir().context("no working directory: cd somewhere and re-run")?;
     let venv_env = std::env::var_os("VIRTUAL_ENV").map(PathBuf::from);
-    let Some(path) = forward::venv_dimos(state::load(home)?.as_ref(), venv_env, &cwd) else {
+    let Some(path) = forward::venv_dimos(install_record::load(home)?.as_ref(), venv_env, &cwd)
+    else {
         say::fail(forward::NO_VENV_HINT);
         return Ok(2);
     };
@@ -135,21 +136,21 @@ fn cdds_home(home: &Path) -> Option<PathBuf> {
 
 /// installer.json keeps the last result; there is nothing to write until `setup` has created it.
 fn record(home: &Path, command: &str, code: i32) -> Result<()> {
-    let Some(mut installed) = state::load(home)? else {
+    let Some(mut installed) = install_record::load(home)? else {
         return Ok(());
     };
     installed.last = Some(LastRun {
         command: command.to_string(),
         exit_code: code,
-        at: state::now_iso(),
+        at: install_record::now_iso(),
     });
-    state::save(home, &installed)
+    install_record::save(home, &installed)
 }
 
 /// The `update` that swapped the binary is still the old process image, so only a later clean run
 /// of another verb proves the new one; the removal goes through the executor like every mutation.
 fn clear_backup(ctx: &mut Ctx, home: &Path, command: &Command) -> Result<()> {
-    let bak = state::backup_bin(home);
+    let bak = install_record::backup_bin(home);
     if matches!(command, Command::Update(_)) || !bak.exists() {
         return Ok(());
     }

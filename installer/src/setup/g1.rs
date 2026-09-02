@@ -5,9 +5,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::cli::HardwareSetupArgs;
+use crate::install_record::Installed;
 use crate::plan::{self, text, Action, Stage};
 use crate::probe::{capture, RcFile};
-use crate::state::Installed;
 
 pub const CYCLONEDDS_REPO: &str = "https://github.com/eclipse-cyclonedds/cyclonedds";
 /// unitree_sdk2py's bindings only build against the 0.10 line; main is ABI-incompatible.

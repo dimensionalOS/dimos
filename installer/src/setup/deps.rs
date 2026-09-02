@@ -3,10 +3,10 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::install_record;
 use crate::pkgs::{self, Platforms};
 use crate::plan::{owned, text, Action, Stage};
 use crate::probe::{PkgManager, Probes, Tools};
-use crate::state;
 
 const APT_UPDATE_TIMEOUT_S: u64 = 600;
 const PKG_INSTALL_TIMEOUT_S: u64 = 1800;
@@ -106,7 +106,7 @@ pub fn uv_bin(tools: &Tools, home: &Path) -> PathBuf {
 /// A downloaded installer lives under the user's own state dir, never a shared /tmp name a
 /// neighbour could plant, and is removed once it has run.
 fn script_path(home: &Path, name: &str) -> PathBuf {
-    state::state_dir(home).join(name)
+    install_record::state_dir(home).join(name)
 }
 
 /// curl to a path; nix's own instructions pin TLS 1.2 and https, astral's do not.
@@ -348,7 +348,7 @@ mod tests {
             };
             let script = PathBuf::from(argv.last().expect("curl -o <script>"));
             assert!(
-                script.starts_with(state::state_dir(home)),
+                script.starts_with(install_record::state_dir(home)),
                 "{}",
                 script.display()
             );

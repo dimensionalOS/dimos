@@ -1,9 +1,9 @@
 //! Jetson performance stage, shared by `setup` and `hardware jetson|g1 setup`.
 
+use crate::install_record::JETSON_CLOCKS_UNIT;
 use crate::plan::Stage;
 use crate::probe::{Kernel, Platform};
 use crate::setup::sysconfig;
-use crate::state::JETSON_CLOCKS_UNIT;
 
 const STEP_TIMEOUT_S: u64 = 60;
 /// Preloading the two libraries claims their TLS slots before torch's late dlopen asks for them.
