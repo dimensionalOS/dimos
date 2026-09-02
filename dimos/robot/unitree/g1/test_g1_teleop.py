@@ -47,7 +47,7 @@ from dimos.robot.unitree.g1.manip_config import (
     g1_manipulation_model_config,
 )
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
-from dimos.teleop.quest.quest_extensions import MobileVideoArmTeleopModule
+from dimos.teleop.quest.quest_extensions import VideoArmTeleopModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -100,23 +100,19 @@ def test_g1_blueprint_keeps_bounded_trajectory_path_below_teleop() -> None:
     ]
 
 
-def test_g1_teleop_wires_arm_velocity_and_recording_streams() -> None:
-    teleop_kwargs = _module_kwargs(unitree_g1_teleop, MobileVideoArmTeleopModule)
+def test_g1_teleop_wires_arm_and_recording_streams_without_quest_locomotion() -> None:
+    teleop_kwargs = _module_kwargs(unitree_g1_teleop, VideoArmTeleopModule)
 
     assert "task_names" not in teleop_kwargs
     assert (
-        unitree_g1_teleop.remapping_map[(MobileVideoArmTeleopModule.name, "left_controller_output")]
+        unitree_g1_teleop.remapping_map[(VideoArmTeleopModule.name, "left_controller_output")]
         == "left_cartesian_command"
     )
     assert (
-        unitree_g1_teleop.remapping_map[
-            (MobileVideoArmTeleopModule.name, "right_controller_output")
-        ]
+        unitree_g1_teleop.remapping_map[(VideoArmTeleopModule.name, "right_controller_output")]
         == "right_cartesian_command"
     )
-    assert (
-        unitree_g1_teleop.remapping_map[(MobileVideoArmTeleopModule.name, "cmd_vel")] == "cmd_vel"
-    )
+    assert (VideoArmTeleopModule.name, "cmd_vel") not in unitree_g1_teleop.remapping_map
     assert "left_cartesian_command" in G1CollectionRecorder.__annotations__
     assert "right_cartesian_command" in G1CollectionRecorder.__annotations__
 

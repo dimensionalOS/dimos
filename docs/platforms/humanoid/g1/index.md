@@ -80,8 +80,9 @@ Note: this button combination may vary based on the model of the G1
 
 The robot must already be standing and balancing in sport mode. Use a clear,
 level work area, keep the Unitree remote and emergency stop reachable, and use
-a gantry or spotter for the first hardware run. Do not walk while executing
-planned arm motion because the upper-body planner excludes leg geometry.
+a gantry or spotter for the first hardware run. Keep the robot stationary while
+using Quest arm teleoperation or planned manipulation; Quest thumbsticks do not
+command locomotion in this blueprint.
 
 On the G1 computer:
 
@@ -111,9 +112,6 @@ self-signed certificate.
 
 | Input | Operation |
 |---|---|
-| Left stick | Move forward or backward; yaw in strafe mode |
-| Right stick | Yaw |
-| Press right stick | Publish a zero-velocity stop command |
 | Hold X + A | Engage both arms from a shared reference pose |
 | B | Start or save a recording episode |
 | Y | Discard the current episode |
