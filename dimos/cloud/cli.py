@@ -138,7 +138,12 @@ def status(upload_id: str) -> None:
 
 @handle_fail
 def quota() -> None:
+    from rich.filesize import decimal
+
     q = CloudData().quota()
+    lim = q["limits"]
     typer.echo(
-        f"{q['pct']}% used ({q['state']}) — {q['used_total']} bytes of {q['limits']['total_gb']} GB"
+        f"{q['pct']}% used ({q['state']}) — total {decimal(q['used_total'])}"
+        f" of {lim['total_gb']} GB, today {decimal(q['used_today'])}"
+        f" of {lim['daily_gb']} GB"
     )
