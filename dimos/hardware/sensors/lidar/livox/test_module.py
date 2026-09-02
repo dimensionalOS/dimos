@@ -21,8 +21,8 @@ from pydantic import ValidationError
 import pytest
 import tomllib
 
-from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.hardware.sensors.lidar.livox.module import Mid360, Mid360Config
+from dimos.core.native_module import NativeModuleConfig
+from dimos.hardware.sensors.lidar.livox.module import Mid360, Mid360Config, _resolved_host_ip
 
 _RUST_MANIFEST = Path(__file__).parent / "rust" / "Cargo.toml"
 
@@ -60,22 +60,13 @@ def test_empty_pcap_is_rejected() -> None:
         Mid360Config(pcap="")
 
 
-def test_pcap_mode_skips_host_ip_resolution(monkeypatch) -> None:
-    resolved = []
+def test_pcap_mode_skips_host_ip_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "dimos.hardware.sensors.lidar.livox.module.resolve_host_ip",
-        lambda *args, **kwargs: resolved.append(args) or "10.0.0.1",
+        lambda lidar_ip, host_ip, label: "10.0.0.1",
     )
-    monkeypatch.setattr(NativeModule, "start", lambda self: None)
-
-    module = object.__new__(Mid360)
-    module.config = Mid360Config(pcap="capture.pcap")
-    Mid360.start(module)
-    assert not resolved
-
-    module.config = Mid360Config(host_ip="10.0.0.1")
-    Mid360.start(module)
-    assert resolved
+    assert _resolved_host_ip(Mid360Config(pcap="capture.pcap", host_ip=None)) is None
+    assert _resolved_host_ip(Mid360Config(host_ip=None)) == "10.0.0.1"
 
 
 def test_ports_match_registry() -> None:

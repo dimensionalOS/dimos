@@ -106,6 +106,13 @@ class Mid360Config(NativeModuleConfig):
         return config
 
 
+def _resolved_host_ip(config: Mid360Config) -> str | None:
+    """Live mode derives host_ip from a NIC on the lidar's subnet. Replay skips it."""
+    if config.pcap is not None:
+        return config.host_ip
+    return resolve_host_ip(config.lidar_ip, config.host_ip, label="Mid360")
+
+
 class Mid360(NativeModule, perception.Lidar, perception.IMU):
     config: Mid360Config
 
@@ -114,12 +121,7 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
 
     @rpc
     def start(self) -> None:
-        # Auto-derive host_ip from a local NIC on the lidar's subnet (shared with
-        # Point-LIO) when the configured value isn't one of our IPs.
-        if self.config.pcap is None:
-            self.config.host_ip = resolve_host_ip(
-                self.config.lidar_ip, self.config.host_ip, label="Mid360"
-            )
+        self.config.host_ip = _resolved_host_ip(self.config)
         super().start()
 
     @rpc

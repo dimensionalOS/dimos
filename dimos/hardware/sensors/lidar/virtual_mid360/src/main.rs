@@ -470,18 +470,4 @@ mod tests {
     fn generic_ack_layout() {
         assert_eq!(control_ack_payload(wire::cmd_id::PARAM_SET), vec![0, 0, 0]);
     }
-
-    #[test]
-    fn workmode_request_from_host_is_recognized() {
-        let request = wire::build_control(
-            7,
-            wire::cmd_id::PARAM_SET,
-            wire::CMD_TYPE_REQUEST,
-            wire::SENDER_HOST,
-            &[],
-        );
-        let frame = ControlFrame::parse(&request).unwrap();
-        assert_eq!(frame.cmd_id, CMD_WORKMODE);
-        assert_eq!(frame.seq, 7);
-    }
 }

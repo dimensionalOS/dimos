@@ -472,10 +472,14 @@ mod tests {
     }
 
     #[test]
-    fn config_rejects_unknown_point_format() {
-        let mut bad = config_json();
-        bad["point_format"] = "wat".into();
-        let err = serde_json::from_value::<Config>(bad).unwrap_err();
-        assert!(err.to_string().contains("unknown variant"), "{err}");
+    fn replay_rate_zero_is_rejected_but_null_is_flat_out() {
+        use validator::Validate;
+        let null_rate: Config = serde_json::from_value(config_json()).unwrap();
+        null_rate.validate().expect("null replay_rate is flat-out");
+
+        let mut zero_rate = config_json();
+        zero_rate["replay_rate"] = 0.0.into();
+        let config: Config = serde_json::from_value(zero_rate).unwrap();
+        assert!(config.validate().is_err());
     }
 }

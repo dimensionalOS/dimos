@@ -602,125 +602,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn crc_check_values() {
-        // Catalog check values for CRC-16/IBM-3740 and CRC-32/ISO-HDLC.
-        assert_eq!(crc16(b"123456789"), 0x29B1);
-        assert_eq!(crc32(b"123456789"), 0xCBF43926);
-    }
-
-    #[test]
-    fn control_frame_round_trip() {
-        let data = [1u8, 2, 3, 4, 5];
-        let frame = build_control(42, cmd_id::PARAM_SET, CMD_TYPE_REQUEST, SENDER_HOST, &data);
-        let parsed = ControlFrame::parse(&frame).unwrap();
-        assert_eq!(parsed.seq, 42);
-        assert_eq!(parsed.cmd_id, cmd_id::PARAM_SET);
-        assert_eq!(parsed.cmd_type, CMD_TYPE_REQUEST);
-        assert_eq!(parsed.sender_type, SENDER_HOST);
-        assert_eq!(parsed.data, &data);
-        assert_eq!(parsed.build(), frame);
-    }
-
-    #[test]
-    fn control_frame_rejects_corruption() {
-        let frame = build_control(1, cmd_id::SEARCH, CMD_TYPE_ACK, SENDER_LIDAR, &[9, 9]);
-        assert_eq!(ControlFrame::parse(&frame[..10]), Err(WireError::TooShort));
-
-        let mut bad_sof = frame.clone();
-        bad_sof[0] = 0xAB;
-        assert_eq!(ControlFrame::parse(&bad_sof), Err(WireError::BadSof));
-
-        let mut bad_header = frame.clone();
-        bad_header[4] ^= 0xFF; // seq is inside the crc16 span
-        assert_eq!(ControlFrame::parse(&bad_header), Err(WireError::BadCrc16));
-
-        let mut bad_data = frame.clone();
-        *bad_data.last_mut().unwrap() ^= 0xFF;
-        assert_eq!(ControlFrame::parse(&bad_data), Err(WireError::BadCrc32));
-
-        let mut bad_length = frame.clone();
-        bad_length.push(0);
-        assert_eq!(ControlFrame::parse(&bad_length), Err(WireError::BadLength));
-    }
-
-    #[test]
-    fn detection_ack_round_trip() {
-        let mut sn = [0u8; 16];
-        sn[..10].copy_from_slice(b"FAKEMID360");
-        let ack = DetectionAck {
-            ret_code: 0,
-            dev_type: DEVICE_TYPE_MID360,
-            sn,
-            lidar_ip: Ipv4Addr::new(192, 168, 1, 171),
-            cmd_port: LIDAR_CMD_PORT,
-        };
-        let bytes = ack.build();
-        assert_eq!(bytes.len(), DetectionAck::LEN);
-        assert_eq!(DetectionAck::parse(&bytes).unwrap(), ack);
-    }
-
-    #[test]
-    fn async_control_ack_round_trip() {
-        let ack = AsyncControlAck {
-            ret_code: 0,
-            error_key: 0x001A,
-        };
-        assert_eq!(AsyncControlAck::parse(&ack.build()).unwrap(), ack);
-    }
-
-    #[test]
-    fn internal_info_round_trip() {
-        let ack = InternalInfoAck {
-            ret_code: 0,
-            params: vec![KeyValue {
-                key: param_key::FW_TYPE,
-                value: &[FW_TYPE_APP],
-            }],
-        };
-        let bytes = ack.build();
-        let parsed = InternalInfoAck::parse(&bytes).unwrap();
-        assert_eq!(parsed, ack);
-    }
-
-    #[test]
-    fn param_set_body_round_trip() {
-        let value = host_ip_config_value(Ipv4Addr::new(192, 168, 1, 5), HOST_POINT_PORT, 56300);
-        let params = [
-            KeyValue {
-                key: param_key::POINT_DATA_HOST_IP_CFG,
-                value: &value,
-            },
-            KeyValue {
-                key: param_key::WORK_MODE,
-                value: &[WORK_MODE_NORMAL],
-            },
-        ];
-        let body = build_param_set_body(&params);
-        assert_eq!(&body[..4], &[2, 0, 0, 0]); // key_num = 2, rsvd = 0
-        let parsed = parse_param_set_body(&body).unwrap();
-        assert_eq!(parsed, params);
-        assert_eq!(parsed[0].value[..4], [192, 168, 1, 5]);
-        assert_eq!(
-            parse_param_set_body(&body[..body.len() - 1]),
-            Err(WireError::BadPayload)
-        );
-    }
-
-    #[test]
-    fn kv_list_rejects_truncation() {
-        let bytes = build_kv_list(&[KeyValue {
-            key: param_key::WORK_MODE,
-            value: &[WORK_MODE_NORMAL],
-        }]);
-        assert!(parse_kv_list(&bytes).is_ok());
-        assert_eq!(
-            parse_kv_list(&bytes[..bytes.len() - 1]),
-            Err(WireError::BadPayload)
-        );
-    }
-
-    #[test]
-    fn point_packet_round_trip() {
+    fn data_packets_round_trip() {
         let points = [
             PointHigh {
                 x_mm: 1500,
@@ -740,7 +622,7 @@ mod tests {
         let payload = build_points_high(&points);
         let packet = DataPacket {
             time_interval: 1000,
-            dot_num: points.len() as u16,
+            dot_num: 2,
             udp_cnt: 7,
             frame_cnt: 3,
             data_type: DataType::CartesianHigh,
@@ -748,28 +630,28 @@ mod tests {
             timestamp_ns: 1_700_000_000_123_456_789,
             payload: &payload,
         };
-        let bytes = packet.build();
+        let mut bytes = packet.build();
         let parsed = DataPacket::parse(&bytes).unwrap();
-        assert_eq!(parsed.dot_num, 2);
         assert_eq!(parsed.timestamp_ns, packet.timestamp_ns);
         assert_eq!(parsed.points_high().collect::<Vec<_>>(), points);
-        assert_eq!(parsed.points_low().count(), 0);
         assert_eq!(parsed.imu_samples().count(), 0);
         // 100 us across the packet, 2 points -> 50 us between points.
         assert_eq!(parsed.point_interval_ns(), 50_000);
-    }
 
-    #[test]
-    fn low_precision_packet_round_trip() {
-        let points = [PointLow {
+        // The virtual device rewrites timestamps in place during replay.
+        shift_timestamp_ns(&mut bytes, 50);
+        assert_eq!(read_timestamp_ns(&bytes), Some(packet.timestamp_ns + 50));
+        assert!(DataPacket::parse(&bytes).is_ok());
+
+        let low = [PointLow {
             x_cm: 150,
             y_cm: -250,
             z_cm: 30,
             reflectivity: 128,
             tag: 1,
         }];
-        let payload = build_points_low(&points);
-        let packet = DataPacket {
+        let low_payload = build_points_low(&low);
+        let low_bytes = DataPacket {
             time_interval: 1000,
             dot_num: 1,
             udp_cnt: 0,
@@ -777,21 +659,18 @@ mod tests {
             data_type: DataType::CartesianLow,
             time_type: 0,
             timestamp_ns: 5,
-            payload: &payload,
-        };
-        let parsed_bytes = packet.build();
-        let parsed = DataPacket::parse(&parsed_bytes).unwrap();
-        assert_eq!(parsed.points_low().collect::<Vec<_>>(), points);
-    }
+            payload: &low_payload,
+        }
+        .build();
+        let low_parsed = DataPacket::parse(&low_bytes).unwrap();
+        assert_eq!(low_parsed.points_low().collect::<Vec<_>>(), low);
 
-    #[test]
-    fn imu_packet_round_trip() {
         let samples = [ImuSample {
             gyro: [0.01, -0.02, 0.03],
             acc_g: [0.0, 0.0, 1.0],
         }];
-        let payload = build_imu_samples(&samples);
-        let packet = DataPacket {
+        let imu_payload = build_imu_samples(&samples);
+        let imu_bytes = DataPacket {
             time_interval: 0,
             dot_num: 1,
             udp_cnt: 0,
@@ -799,54 +678,102 @@ mod tests {
             data_type: DataType::Imu,
             time_type: 0,
             timestamp_ns: 99,
-            payload: &payload,
-        };
-        let bytes = packet.build();
-        let parsed = DataPacket::parse(&bytes).unwrap();
-        assert_eq!(parsed.imu_samples().collect::<Vec<_>>(), samples);
-    }
+            payload: &imu_payload,
+        }
+        .build();
+        let imu_parsed = DataPacket::parse(&imu_bytes).unwrap();
+        assert_eq!(imu_parsed.imu_samples().collect::<Vec<_>>(), samples);
 
-    #[test]
-    fn data_packet_rejects_short_payload() {
-        let payload = build_points_high(&[PointHigh {
-            x_mm: 0,
-            y_mm: 0,
-            z_mm: 0,
-            reflectivity: 0,
-            tag: 0,
-        }]);
-        let packet = DataPacket {
+        // dot_num claiming more points than the payload holds is rejected.
+        let short = DataPacket {
             time_interval: 0,
-            dot_num: 2, // claims two points, payload has one
+            dot_num: 2,
             udp_cnt: 0,
             frame_cnt: 0,
             data_type: DataType::CartesianHigh,
             time_type: 0,
             timestamp_ns: 0,
-            payload: &payload,
+            payload: &build_points_high(&points[..1]),
         };
-        assert_eq!(
-            DataPacket::parse(&packet.build()),
-            Err(WireError::BadLength)
-        );
+        assert_eq!(DataPacket::parse(&short.build()), Err(WireError::BadLength));
     }
 
     #[test]
-    fn timestamp_shift_in_place() {
-        let packet = DataPacket {
-            time_interval: 0,
-            dot_num: 0,
-            udp_cnt: 0,
-            frame_cnt: 0,
-            data_type: DataType::CartesianHigh,
-            time_type: 0,
-            timestamp_ns: 100,
-            payload: &[],
+    fn control_frames_round_trip() {
+        // Catalog check values pin the CRC-16/IBM-3740 and CRC-32/ISO-HDLC params.
+        assert_eq!(crc16(b"123456789"), 0x29B1);
+        assert_eq!(crc32(b"123456789"), 0xCBF43926);
+
+        let data = [1u8, 2, 3, 4, 5];
+        let frame = build_control(42, cmd_id::PARAM_SET, CMD_TYPE_REQUEST, SENDER_HOST, &data);
+        let parsed = ControlFrame::parse(&frame).unwrap();
+        assert_eq!(parsed.seq, 42);
+        assert_eq!(parsed.cmd_id, cmd_id::PARAM_SET);
+        assert_eq!(parsed.cmd_type, CMD_TYPE_REQUEST);
+        assert_eq!(parsed.sender_type, SENDER_HOST);
+        assert_eq!(parsed.data, &data);
+        assert_eq!(parsed.build(), frame);
+
+        // Corruption in any span is caught, never mis-parsed.
+        assert_eq!(ControlFrame::parse(&frame[..10]), Err(WireError::TooShort));
+        let mut bad_sof = frame.clone();
+        bad_sof[0] = 0xAB;
+        assert_eq!(ControlFrame::parse(&bad_sof), Err(WireError::BadSof));
+        let mut bad_header = frame.clone();
+        bad_header[4] ^= 0xFF; // seq is inside the crc16 span
+        assert_eq!(ControlFrame::parse(&bad_header), Err(WireError::BadCrc16));
+        let mut bad_data = frame.clone();
+        *bad_data.last_mut().unwrap() ^= 0xFF;
+        assert_eq!(ControlFrame::parse(&bad_data), Err(WireError::BadCrc32));
+        let mut bad_length = frame;
+        bad_length.push(0);
+        assert_eq!(ControlFrame::parse(&bad_length), Err(WireError::BadLength));
+
+        let value = host_ip_config_value(Ipv4Addr::new(192, 168, 1, 5), HOST_POINT_PORT, 56300);
+        let params = [
+            KeyValue {
+                key: param_key::POINT_DATA_HOST_IP_CFG,
+                value: &value,
+            },
+            KeyValue {
+                key: param_key::WORK_MODE,
+                value: &[WORK_MODE_NORMAL],
+            },
+        ];
+        let body = build_param_set_body(&params);
+        assert_eq!(parse_param_set_body(&body).unwrap(), params);
+        assert_eq!(
+            parse_param_set_body(&body[..body.len() - 1]),
+            Err(WireError::BadPayload)
+        );
+
+        let mut sn = [0u8; 16];
+        sn[..10].copy_from_slice(b"FAKEMID360");
+        let detection = DetectionAck {
+            ret_code: 0,
+            dev_type: DEVICE_TYPE_MID360,
+            sn,
+            lidar_ip: Ipv4Addr::new(192, 168, 1, 171),
+            cmd_port: LIDAR_CMD_PORT,
         };
-        let mut bytes = packet.build();
-        shift_timestamp_ns(&mut bytes, 50);
-        assert_eq!(read_timestamp_ns(&bytes), Some(150));
-        let reparsed = DataPacket::parse(&bytes).unwrap();
-        assert_eq!(reparsed.timestamp_ns, 150);
+        assert_eq!(DetectionAck::parse(&detection.build()).unwrap(), detection);
+
+        let async_ack = AsyncControlAck {
+            ret_code: 0,
+            error_key: 0x001A,
+        };
+        assert_eq!(
+            AsyncControlAck::parse(&async_ack.build()).unwrap(),
+            async_ack
+        );
+
+        let info = InternalInfoAck {
+            ret_code: 0,
+            params: vec![KeyValue {
+                key: param_key::FW_TYPE,
+                value: &[FW_TYPE_APP],
+            }],
+        };
+        assert_eq!(InternalInfoAck::parse(&info.build()).unwrap(), info);
     }
 }

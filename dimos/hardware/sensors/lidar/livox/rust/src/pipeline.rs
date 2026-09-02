@@ -34,31 +34,6 @@ pub trait PacketSource {
     }
 }
 
-/// A source over an in-memory packet list.
-#[cfg(test)]
-pub struct VecSource {
-    packets: std::vec::IntoIter<Vec<u8>>,
-}
-
-#[cfg(test)]
-impl VecSource {
-    pub fn new(packets: Vec<Vec<u8>>) -> Self {
-        VecSource {
-            packets: packets.into_iter(),
-        }
-    }
-}
-
-#[cfg(test)]
-impl PacketSource for VecSource {
-    fn recv(&mut self, buf: &mut [u8]) -> Option<usize> {
-        let packet = self.packets.next()?;
-        let len = packet.len().min(buf.len());
-        buf[..len].copy_from_slice(&packet[..len]);
-        Some(len)
-    }
-}
-
 /// One assembled lidar point in the sensor frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RawPoint {
@@ -382,15 +357,5 @@ mod tests {
             .push(&DataPacket::parse(&imu_bytes).unwrap())
             .is_none());
         assert!(assembler.flush().is_none());
-    }
-
-    #[test]
-    fn vec_source_replays_in_order() {
-        let mut source = VecSource::new(vec![vec![1, 2, 3], vec![4]]);
-        let mut buf = [0u8; 16];
-        assert_eq!(source.recv(&mut buf), Some(3));
-        assert_eq!(&buf[..3], &[1, 2, 3]);
-        assert_eq!(source.recv(&mut buf), Some(1));
-        assert_eq!(source.recv(&mut buf), None);
     }
 }

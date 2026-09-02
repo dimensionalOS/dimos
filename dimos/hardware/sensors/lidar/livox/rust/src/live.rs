@@ -334,7 +334,10 @@ mod tests {
     use crate::wire::{build_imu_samples, build_points_high, DataPacket, DataType, ImuSample};
     use std::collections::HashSet;
 
-    fn test_ports(base: u16) -> Ports {
+    /// Distinct per test slot and per process, so parallel checkouts running
+    /// cargo test at once don't fight over loopback ports.
+    fn test_ports(slot: u16) -> Ports {
+        let base = 40000 + (std::process::id() % 1000) as u16 * 24 + slot * 8;
         Ports {
             cmd_data: base,
             point_data: base + 1,
@@ -436,7 +439,7 @@ mod tests {
 
     #[test]
     fn handshake_and_stream_over_loopback() {
-        let ports = test_ports(47600);
+        let ports = test_ports(0);
         let device = spawn_fake_device(ports);
 
         let stop = Arc::new(AtomicBool::new(false));
@@ -482,7 +485,7 @@ mod tests {
 
     #[test]
     fn recv_ends_on_stop() {
-        let ports = test_ports(47700);
+        let ports = test_ports(1);
         let stop = Arc::new(AtomicBool::new(false));
         let mut source = LiveSource::start(
             LiveConfig {
@@ -503,7 +506,7 @@ mod tests {
 
     #[test]
     fn rejected_handshake_fails_the_source() {
-        let ports = test_ports(47800);
+        let ports = test_ports(2);
         let device = std::thread::spawn(move || {
             let cmd =
                 UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, ports.cmd_data)).unwrap();

@@ -278,6 +278,14 @@ def test_live_loopback_handshake_and_stream(spawn: Spawn, synth_pcap: Path) -> N
     assert len(imus) >= 120, f"expected >=120 imu samples, got {len(imus)}"
     _assert_cloud_shape(clouds[len(clouds) // 2], min_points=1000)
 
+    # The synthetic capture is a 5 m ring at z ~1 m, so a decode regression
+    # in scaling or field layout shows up as broken geometry here.
+    points, _ = clouds[len(clouds) // 2].as_numpy()
+    radii = sorted(math.hypot(x, y) for x, y, _z in points)
+    assert abs(radii[len(radii) // 2] - 5.0) < 0.1, f"median ring radius {radii[len(radii) // 2]}"
+    z_values = sorted(z for _x, _y, z in points)
+    assert 0.9 < z_values[len(z_values) // 2] < 1.2
+
     # The synthesized IMU reports exactly 1 g on z.
     sample = imus[len(imus) // 2]
     assert abs(_magnitude(sample) - GRAVITY_MS2) < 1e-3

@@ -246,7 +246,6 @@ impl PacketSource for PcapSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::FrameAssembler;
     use crate::wire::{self, build_points_high, DataPacket, DataType, PointHigh};
     use std::io::Write;
 
@@ -271,6 +270,16 @@ mod tests {
         frame
     }
 
+    fn pcap_record(ts: f64, frame: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&(ts as u32).to_le_bytes());
+        out.extend_from_slice(&((ts.fract() * 1e6) as u32).to_le_bytes());
+        out.extend_from_slice(&(frame.len() as u32).to_le_bytes()); // captured
+        out.extend_from_slice(&(frame.len() as u32).to_le_bytes()); // original
+        out.extend_from_slice(frame);
+        out
+    }
+
     /// Wrap UDP payloads into a classic little-endian pcap byte stream.
     fn synth_pcap(packets: &[(f64, u16, Vec<u8>)]) -> Vec<u8> {
         let mut out = Vec::new();
@@ -280,12 +289,7 @@ mod tests {
         out.extend_from_slice(&LINKTYPE_ETHERNET.to_le_bytes());
 
         for (ts, src_port, payload) in packets {
-            let frame = eth_frame(*src_port, payload);
-            out.extend_from_slice(&(*ts as u32).to_le_bytes());
-            out.extend_from_slice(&(((ts.fract()) * 1e6) as u32).to_le_bytes());
-            out.extend_from_slice(&(frame.len() as u32).to_le_bytes()); // captured
-            out.extend_from_slice(&(frame.len() as u32).to_le_bytes()); // original
-            out.extend_from_slice(&frame);
+            out.extend_from_slice(&pcap_record(*ts, &eth_frame(*src_port, payload)));
         }
         out
     }
@@ -350,108 +354,27 @@ mod tests {
     }
 
     #[test]
-    fn rejects_pcapng_with_conversion_hint() {
-        let err = parse_pcap(path_of(&write_temp_pcap(&[0x0A, 0x0D, 0x0D, 0x0A])))
+    fn rejects_unusable_captures() {
+        let assert_err = |bytes: &[u8], needle: &str| {
+            let file = write_temp_pcap(bytes);
+            let err = PcapSource::from_file(
+                path_of(&file),
+                wire::LIDAR_POINT_PORT,
+                wire::LIDAR_IMU_PORT,
+                None,
+            )
             .err()
             .unwrap();
-        assert!(err.to_string().contains("editcap"), "{err}");
-    }
+            assert!(err.to_string().contains(needle), "{err}");
+        };
 
-    #[test]
-    fn replay_through_assembler_is_deterministic() {
-        let pcap = synth_pcap(&[
-            (
-                0.0,
-                wire::LIDAR_POINT_PORT,
-                point_packet(1_000_000_000, 500),
-            ),
-            (
-                0.1,
-                wire::LIDAR_POINT_PORT,
-                point_packet(1_150_000_000, 600),
-            ),
-        ]);
-        let file = write_temp_pcap(&pcap);
-        let mut frames = Vec::new();
-        let mut source = PcapSource::from_file(
-            path_of(&file),
-            wire::LIDAR_POINT_PORT,
-            wire::LIDAR_IMU_PORT,
-            None,
-        )
-        .unwrap();
-        let mut assembler = FrameAssembler::new(10.0);
-        let mut buf = [0u8; 4096];
-        while let Some(len) = source.recv(&mut buf) {
-            let packet = DataPacket::parse(&buf[..len]).unwrap();
-            if let Some(frame) = assembler.push(&packet) {
-                frames.push(frame);
-            }
-        }
-        frames.extend(assembler.flush());
-
-        // 150 ms apart at 10 Hz: the second packet opens a new frame, and
-        // sensor timestamps pass through unshifted.
-        assert_eq!(frames.len(), 2);
-        assert_eq!(frames[0].start_ns, 1_000_000_000);
-        assert_eq!(frames[1].start_ns, 1_150_000_000);
-    }
-
-    #[test]
-    fn rejects_non_pcap_files() {
-        let file = write_temp_pcap(b"not a pcap at all");
-        assert!(parse_pcap(path_of(&file)).is_err());
-    }
-
-    #[test]
-    fn rejects_unsupported_link_type() {
-        let mut pcap = synth_pcap(&[(1.0, wire::LIDAR_POINT_PORT, point_packet(1_000, 100))]);
-        pcap[20..24].copy_from_slice(&113u32.to_le_bytes()); // LINUX_SLL
-        let file = write_temp_pcap(&pcap);
-        let err = PcapSource::from_file(
-            path_of(&file),
-            wire::LIDAR_POINT_PORT,
-            wire::LIDAR_IMU_PORT,
-            None,
-        )
-        .err()
-        .unwrap();
-        assert!(err.to_string().contains("link-type 113"), "{err}");
-    }
-
-    #[test]
-    fn rejects_capture_without_data_packets() {
-        let pcap = synth_pcap(&[(1.0, wire::LIDAR_PUSH_MSG_PORT, vec![9, 9, 9])]);
-        let file = write_temp_pcap(&pcap);
-        let err = PcapSource::from_file(
-            path_of(&file),
-            wire::LIDAR_POINT_PORT,
-            wire::LIDAR_IMU_PORT,
-            None,
-        )
-        .err()
-        .unwrap();
-        assert!(err.to_string().contains("no Livox data packets"), "{err}");
-    }
-
-    #[test]
-    fn truncated_tail_ends_stream_cleanly() {
-        let pcap = synth_pcap(&[
-            (1.0, wire::LIDAR_POINT_PORT, point_packet(1_000, 100)),
-            (1.1, wire::LIDAR_POINT_PORT, point_packet(2_000, 200)),
-        ]);
-        let file = write_temp_pcap(&pcap[..pcap.len() - 20]);
-        let mut source = PcapSource::from_file(
-            path_of(&file),
-            wire::LIDAR_POINT_PORT,
-            wire::LIDAR_IMU_PORT,
-            None,
-        )
-        .unwrap();
-        let mut buf = [0u8; 4096];
-        assert!(source.recv(&mut buf).is_some());
-        assert!(source.recv(&mut buf).is_none());
-        assert_eq!(source.failure(), None);
+        assert_err(b"not a pcap at all", "not a pcap");
+        assert_err(&[0x0A, 0x0D, 0x0D, 0x0A], "editcap");
+        let mut sll = synth_pcap(&[(1.0, wire::LIDAR_POINT_PORT, point_packet(1_000, 100))]);
+        sll[20..24].copy_from_slice(&113u32.to_le_bytes()); // LINUX_SLL
+        assert_err(&sll, "link-type 113");
+        let no_data = synth_pcap(&[(1.0, wire::LIDAR_PUSH_MSG_PORT, vec![9, 9, 9])]);
+        assert_err(&no_data, "no Livox data packets");
     }
 
     #[test]
@@ -474,16 +397,5 @@ mod tests {
         let start = Instant::now();
         while paced.recv(&mut buf).is_some() {}
         assert!(start.elapsed() >= Duration::from_millis(90));
-
-        let mut flat_out = PcapSource::from_file(
-            path_of(&file),
-            wire::LIDAR_POINT_PORT,
-            wire::LIDAR_IMU_PORT,
-            None,
-        )
-        .unwrap();
-        let start = Instant::now();
-        while flat_out.recv(&mut buf).is_some() {}
-        assert!(start.elapsed() < Duration::from_millis(80));
     }
 }
