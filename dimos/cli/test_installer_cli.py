@@ -21,20 +21,20 @@ import sys
 import pytest
 from typer.testing import CliRunner
 
-from dimos.cli import forward as forward_cli
+from dimos.cli import installer_cli
 from dimos.cli.dimos import main
 
 runner = CliRunner()
 
-RESERVED_RS = Path(__file__).parents[2] / "installer" / "src" / "forward.rs"
+RESERVED_RS = Path(__file__).parents[2] / "installer" / "src" / "venv_forward.rs"
 
 
 @pytest.fixture(autouse=True)
 def _no_guard():
     """Every test starts and ends with the recursion guard unset."""
-    os.environ.pop(forward_cli.GUARD, None)
+    os.environ.pop(installer_cli.GUARD, None)
     yield
-    os.environ.pop(forward_cli.GUARD, None)
+    os.environ.pop(installer_cli.GUARD, None)
 
 
 @pytest.fixture
@@ -42,7 +42,7 @@ def installer(tmp_path, mocker):
     """An installer binary that exists, standing in for ~/.local/bin/dimos."""
     path = tmp_path / "dimos"
     path.write_text("#!/bin/sh\n")
-    mocker.patch.object(forward_cli, "INSTALLER", path)
+    mocker.patch.object(installer_cli, "INSTALLER", path)
     return path
 
 
@@ -60,7 +60,7 @@ def installer(tmp_path, mocker):
     ],
 )
 def test_each_forwarded_verb_execs_the_installer_with_the_same_argv(argv, installer, mocker):
-    execv = mocker.patch.object(forward_cli.os, "execv")
+    execv = mocker.patch.object(installer_cli.os, "execv")
 
     result = runner.invoke(main, argv)
 
@@ -70,42 +70,42 @@ def test_each_forwarded_verb_execs_the_installer_with_the_same_argv(argv, instal
 
 def test_missing_installer_exits_2_and_prints_the_install_line(tmp_path, mocker):
     absent = tmp_path / "dimos"
-    mocker.patch.object(forward_cli, "INSTALLER", absent)
-    execv = mocker.patch.object(forward_cli.os, "execv")
+    mocker.patch.object(installer_cli, "INSTALLER", absent)
+    execv = mocker.patch.object(installer_cli.os, "execv")
 
     result = runner.invoke(main, ["setup"])
 
     assert result.exit_code == 2
     assert str(absent) in result.stderr
-    assert forward_cli.INSTALL_LINE in result.stderr
+    assert installer_cli.INSTALL_LINE in result.stderr
     execv.assert_not_called()
 
 
 def test_forwarding_twice_exits_2_instead_of_looping(installer, mocker):
-    execv = mocker.patch.object(forward_cli.os, "execv")
-    os.environ[forward_cli.GUARD] = "1"
+    execv = mocker.patch.object(installer_cli.os, "execv")
+    os.environ[installer_cli.GUARD] = "1"
 
     result = runner.invoke(main, ["setup"])
 
     assert result.exit_code == 2
-    assert forward_cli.INSTALL_LINE in result.stderr
+    assert installer_cli.INSTALL_LINE in result.stderr
     execv.assert_not_called()
 
 
 def test_the_child_carries_the_guard_so_the_second_hop_can_refuse(installer, mocker):
     seen = {}
-    mocker.patch.object(forward_cli.os, "execv", side_effect=lambda *_: seen.update(os.environ))
+    mocker.patch.object(installer_cli.os, "execv", side_effect=lambda *_: seen.update(os.environ))
 
     runner.invoke(main, ["setup"])
 
-    assert seen[forward_cli.GUARD] == "1"
+    assert seen[installer_cli.GUARD] == "1"
 
 
 def test_forwarded_verbs_match_the_rust_reserved_list():
     """This list is the contract between the two CLIs, so it is read from both sides."""
     literal = re.search(r"RESERVED: &\[&str\] = &\[(.*?)\]", RESERVED_RS.read_text(), re.S)
     assert literal, f"{RESERVED_RS} defines RESERVED"
-    assert tuple(re.findall(r'"([^"]+)"', literal.group(1))) == forward_cli.FORWARDED
+    assert tuple(re.findall(r'"([^"]+)"', literal.group(1))) == installer_cli.FORWARDED
 
 
 def test_importing_the_forwarder_pulls_no_heavy_deps():
@@ -115,7 +115,7 @@ def test_importing_the_forwarder_pulls_no_heavy_deps():
             sys.executable,
             "-c",
             (
-                "import sys; import dimos.cli.forward; "
+                "import sys; import dimos.cli.installer_cli; "
                 "bad = [m for m in ('matplotlib', 'torch', 'scipy') if m in sys.modules]; "
                 "assert not bad, f'Heavy deps imported: {bad}'"
             ),

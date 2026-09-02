@@ -11,7 +11,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::install_record::Installed;
 
-/// Verbs the installer owns; `dimos/cli/forward.py` FORWARDED mirrors this literally.
+/// Verbs the installer owns; `dimos/cli/installer_cli.py` FORWARDED mirrors this literally.
 pub const RESERVED: &[&str] = &["setup", "update", "service", "uninstall", "robot"];
 
 pub const NO_VENV_HINT: &str = "no DimOS install found: run `dimos setup` \
@@ -99,7 +99,7 @@ mod tests {
     fn forwarded_tuple(source: &str) -> Vec<String> {
         let start = source
             .find("FORWARDED")
-            .expect("forward.py defines FORWARDED");
+            .expect("installer_cli.py defines FORWARDED");
         let open = start + source[start..].find('(').expect("FORWARDED is a tuple");
         let close = open + source[open..].find(')').expect("FORWARDED tuple closes");
         source[open..close]
@@ -158,7 +158,7 @@ mod tests {
     /// Reads a repo file on purpose: this list is the contract between the Rust and Python CLIs.
     #[test]
     fn reserved_list_matches_python_forwarder() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../dimos/cli/forward.py");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../dimos/cli/installer_cli.py");
         let source =
             fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         let want: Vec<String> = RESERVED.iter().map(|verb| verb.to_string()).collect();

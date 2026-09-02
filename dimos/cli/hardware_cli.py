@@ -16,7 +16,7 @@
 
 import typer
 
-from dimos.cli.forward import register as register_forwarders
+from dimos.cli.installer_cli import register as register_forwarders
 from dimos.cli.hardware.a1z import app as a1z_app
 
 app = typer.Typer(help="Diagnose and configure robot hardware", no_args_is_help=True)
