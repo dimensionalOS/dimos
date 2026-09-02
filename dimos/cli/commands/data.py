@@ -47,14 +47,11 @@ def upload(
 
 
 @data_app.command("ls")
-def data_ls(
-    interactive: bool = typer.Option(
-        False, "--interactive", "-i", help="Browse uploads in a TUI: enter=detail, p=pull"
-    ),
-) -> None:
+def data_ls() -> None:
+    """List cloud uploads: interactive browser on a terminal, plain table when piped."""
     from dimos.cloud import cli
 
-    cli.ls(interactive)
+    cli.ls()
 
 
 @data_app.command()

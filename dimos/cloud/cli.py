@@ -86,8 +86,10 @@ def upload(
 
 
 @handle_fail
-def ls(interactive: bool = False) -> None:
-    if interactive:
+def ls() -> None:
+    import sys
+
+    if sys.stdout.isatty() and sys.stdin.isatty():  # Textual needs a real TTY
         from dimos.cloud.tui import DataBrowser
 
         DataBrowser().run()
