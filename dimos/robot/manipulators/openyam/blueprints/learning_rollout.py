@@ -21,11 +21,9 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import pSHMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
-from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
-from dimos.imitation.policy.rollout_supervisor import (
-    POLICY_GRIPPER_TASK_NAME,
+from dimos.imitation.policy.lerobot.module import (
     POLICY_ROLLOUT_TASK_NAME,
-    PolicyRolloutSupervisor,
+    LeRobotPolicyModule,
 )
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.sensor_msgs.Image import Image
@@ -36,45 +34,31 @@ from dimos.robot.manipulators.openyam.blueprints.teleop import (
     openyam_quest_tasks,
 )
 from dimos.robot.manipulators.openyam.config import (
-    OPENYAM_ARM_JOINTS,
-    OPENYAM_GRIPPER_JOINT,
+    OPENYAM_JOINTS,
 )
 from dimos.robot.manipulators.openyam.learning import OPENYAM_LEARNING_PROFILE
-from dimos.teleop.quest.action_bindings import QuestActionBindingsModule
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
-_policy_arm_task = TaskConfig(
+_policy_task = TaskConfig(
     name=POLICY_ROLLOUT_TASK_NAME,
     type="trajectory",
-    joint_names=list(OPENYAM_ARM_JOINTS),
+    joint_names=list(OPENYAM_JOINTS),
     priority=10,
-    params={"requires_activation": True},
-    stream_bind={"joint_command": "policy_joint_command"},
-)
-_policy_gripper_task = TaskConfig(
-    name=POLICY_GRIPPER_TASK_NAME,
-    type="gripper",
-    joint_names=[OPENYAM_GRIPPER_JOINT],
-    priority=10,
-    params={"hold_duration": 0.1, "requires_activation": True},
-    stream_bind={"gripper_command": "policy_gripper_command"},
 )
 
 learning_rollout_quest_openyam = (
     autoconnect(
         LeRobotPolicyModule.blueprint(
             joint_names=list(OPENYAM_LEARNING_PROFILE.joint_names),
-            gripper_joint_name=OPENYAM_LEARNING_PROFILE.gripper_joint_name,
             fps=OPENYAM_LEARNING_PROFILE.fps,
             robot_type=OPENYAM_LEARNING_PROFILE.robot_type,
+            trajectory_task_name=POLICY_ROLLOUT_TASK_NAME,
         ),
-        PolicyRolloutSupervisor.blueprint(),
-        QuestActionBindingsModule.blueprint(),
         ArmTeleopModule.blueprint(),
         TeleopControlCoordinator.blueprint(
             instance_name="ControlCoordinator",
             hardware=[OPENYAM_QUEST_HARDWARE],
-            tasks=openyam_quest_tasks(_policy_arm_task, _policy_gripper_task),
+            tasks=openyam_quest_tasks(_policy_task),
         ),
         CameraModule.blueprint(
             instance_name="WristCamera",
@@ -97,9 +81,6 @@ learning_rollout_quest_openyam = (
         [
             (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
             (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
-            (LeRobotPolicyModule, "joint_command", "policy_joint_command"),
-            (LeRobotPolicyModule, "gripper_command", "policy_gripper_command"),
-            (QuestActionBindingsModule, "primary_action", "rollout_toggle"),
         ]
     )
     .transports(

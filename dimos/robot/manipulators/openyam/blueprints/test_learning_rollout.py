@@ -23,18 +23,14 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
-from dimos.imitation.policy.rollout_supervisor import (
-    POLICY_GRIPPER_TASK_NAME,
+from dimos.imitation.policy.lerobot.module import (
     POLICY_ROLLOUT_TASK_NAME,
+    LeRobotPolicyModule,
 )
 from dimos.robot.manipulators.openyam.blueprints.learning_rollout import (
     learning_rollout_quest_openyam,
 )
-from dimos.robot.manipulators.openyam.config import (
-    OPENYAM_ARM_JOINTS,
-    OPENYAM_GRIPPER_JOINT,
-)
+from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
 from dimos.robot.manipulators.openyam.learning import OPENYAM_LEARNING_PROFILE
 
 
@@ -44,33 +40,23 @@ def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
     )
 
 
-def test_rollout_routes_policy_to_inactive_low_priority_tasks() -> None:
+def test_rollout_uses_one_low_priority_seven_joint_trajectory_task() -> None:
     coordinator = _module_kwargs(learning_rollout_quest_openyam, ControlCoordinator)
-    policy_arm = next(
-        task for task in coordinator["tasks"] if task.name == POLICY_ROLLOUT_TASK_NAME
-    )
-    policy_gripper = next(
-        task for task in coordinator["tasks"] if task.name == POLICY_GRIPPER_TASK_NAME
-    )
+    policy = next(task for task in coordinator["tasks"] if task.name == POLICY_ROLLOUT_TASK_NAME)
     teleop = next(task for task in coordinator["tasks"] if task.name == "teleop_openyam")
     trajectory = next(
         task for task in coordinator["tasks"] if task.name == JOINT_TRAJECTORY_TASK_NAME
     )
 
-    assert policy_arm.type == "trajectory"
-    assert policy_arm.joint_names == OPENYAM_ARM_JOINTS
-    assert policy_arm.priority == 10
-    assert policy_arm.params == {"requires_activation": True}
-    assert policy_arm.stream_bind == {"joint_command": "policy_joint_command"}
-    assert policy_gripper.type == "gripper"
-    assert policy_gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
-    assert policy_gripper.priority == 10
-    assert policy_gripper.params == {"hold_duration": 0.1, "requires_activation": True}
-    assert policy_gripper.stream_bind == {"gripper_command": "policy_gripper_command"}
+    assert policy.type == "trajectory"
+    assert policy.joint_names == OPENYAM_JOINTS
+    assert policy.priority == 10
+    assert policy.params == {}
+    assert policy.stream_bind == {}
     assert teleop.priority == 20
     assert trajectory.priority == 30
 
-    task = control_task_registry.create(policy_arm.type, policy_arm)
+    task = control_task_registry.create(policy.type, policy, hardware={})
     assert isinstance(task, JointTrajectoryTask)
     assert task.name == POLICY_ROLLOUT_TASK_NAME
     assert not task.is_active()
@@ -82,7 +68,7 @@ def test_rollout_uses_the_shared_learning_profile() -> None:
 
     assert policy["fps"] == OPENYAM_LEARNING_PROFILE.fps
     assert policy["joint_names"] == list(OPENYAM_LEARNING_PROFILE.joint_names)
-    assert policy["gripper_joint_name"] == OPENYAM_LEARNING_PROFILE.gripper_joint_name
+    assert policy["trajectory_task_name"] == POLICY_ROLLOUT_TASK_NAME
     assert camera["hardware"].fps == OPENYAM_LEARNING_PROFILE.fps
     assert camera["hardware"].width == OPENYAM_LEARNING_PROFILE.camera_width
     assert camera["hardware"].height == OPENYAM_LEARNING_PROFILE.camera_height

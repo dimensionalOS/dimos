@@ -309,8 +309,6 @@ all_modules = {
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
     "point-lio-rust": "dimos.hardware.sensors.lidar.pointlio.module.PointLioRust",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",
-    "policy-rollout-supervisor": "dimos.imitation.policy.rollout_supervisor.PolicyRolloutSupervisor",
-    "quest-action-bindings-module": "dimos.teleop.webxr.action_bindings.QuestActionBindingsModule",
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
     "raw-robot-bridge": "dimos.robot.raw_robot_bridge.RawRobotBridge",
     "ray-tracing-voxel-map": "dimos.mapping.ray_tracing.module.RayTracingVoxelMap",

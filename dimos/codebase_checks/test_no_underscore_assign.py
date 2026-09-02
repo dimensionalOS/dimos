@@ -15,7 +15,6 @@
 import ast
 from pathlib import Path
 
-from dimos.codebase_checks.source_files import python_source_files
 from dimos.constants import DIMOS_PROJECT_ROOT
 
 
@@ -39,7 +38,7 @@ def find_underscore_assignments() -> list[tuple[Path, int]]:
     """Return (file, line_number) for every `_ = ...` binding under dimos/."""
     dimos_dir = DIMOS_PROJECT_ROOT / "dimos"
     hits: list[tuple[Path, int]] = []
-    for path in sorted(python_source_files(dimos_dir)):
+    for path in sorted(dimos_dir.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if _binds_underscore(node):
