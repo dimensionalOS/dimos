@@ -63,8 +63,8 @@ from dimos.cli.commands.mcp import agent_send_cmd, mcp_app
 from dimos.cli.commands.rerun_bridge import rerun_bridge_cmd
 from dimos.cli.commands.topic import topic_app
 from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
-from dimos.cli.installer_cli import FORWARDED, register as register_forwarders
 from dimos.cli.hardware_cli import app as hardware_app
+from dimos.cli.installer_cli import FORWARDED, register as register_forwarders
 from dimos.cli.shell import shell
 from dimos.cli.vqa import app as vqa_app
 from dimos.robot.unitree.go2.cli.go2tool import app as go2tool_app
