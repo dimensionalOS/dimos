@@ -86,7 +86,12 @@ def upload(
 
 
 @handle_fail
-def ls() -> None:
+def ls(interactive: bool = False) -> None:
+    if interactive:
+        from dimos.cloud.tui import DataBrowser
+
+        DataBrowser().run()
+        return
     from rich import box
     from rich.console import Console
     from rich.filesize import decimal
