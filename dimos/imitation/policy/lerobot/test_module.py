@@ -62,12 +62,8 @@ def test_contract_resolves_sibling_runtime_project() -> None:
             "policy_path must not be blank",
         ),
         (
-            {
-                "policy_path": "checkpoint",
-                "joint_names": ["joint1"],
-                "gripper_joint_name": "gripper",
-            },
-            "gripper_joint_name must be present in joint_names",
+            {"policy_path": "checkpoint", "joint_names": ["joint1"], "rollout_button": "NOPE"},
+            "unknown Quest button",
         ),
     ],
 )

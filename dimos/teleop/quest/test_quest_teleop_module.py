@@ -273,6 +273,80 @@ def test_stop_publishes_safe_button_state(
     assert published[-1].data == 0
 
 
+def test_button_edges_are_debounced_and_not_repeated_while_held(
+    module: QuestTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    pressed = mocker.patch.object(module.button_pressed, "publish")
+    released = mocker.patch.object(module.button_released, "publish")
+    mocker.patch(
+        "dimos.teleop.quest.quest_teleop_module.time.monotonic",
+        side_effect=[0.0, 0.049, 0.05, 1.0, 1.01, 1.06],
+    )
+    held = Buttons()
+    held.right_primary = True
+
+    module._publish_buttons(held)
+    module._publish_buttons(held)
+    module._publish_buttons(held)
+    module._publish_buttons(held)
+    module._publish_buttons(Buttons())
+    module._publish_buttons(Buttons())
+
+    pressed.assert_called_once()
+    assert pressed.call_args.args[0].right_primary
+    released.assert_called_once()
+    assert released.call_args.args[0].right_primary
+
+
+def test_button_edges_can_contain_simultaneous_digital_buttons(
+    module: QuestTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    publish = mocker.patch.object(module.button_pressed, "publish")
+    mocker.patch(
+        "dimos.teleop.quest.quest_teleop_module.time.monotonic",
+        side_effect=[0.0, 0.05],
+    )
+    buttons = Buttons()
+    buttons.left_secondary = True
+    buttons.right_primary = True
+
+    module._publish_buttons(buttons)
+    module._publish_buttons(buttons)
+
+    publish.assert_called_once()
+    edge = publish.call_args.args[0]
+    assert edge.left_secondary
+    assert edge.right_primary
+
+
+def test_analog_trigger_bits_do_not_emit_button_edges(
+    module: QuestTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    pressed = mocker.patch.object(module.button_pressed, "publish")
+    released = mocker.patch.object(module.button_released, "publish")
+    buttons = Buttons()
+    buttons.pack_analog_triggers(1.0, 1.0)
+
+    module._publish_buttons(buttons)
+    module._publish_buttons(buttons)
+
+    pressed.assert_not_called()
+    released.assert_not_called()
+
+
+def test_disconnect_releases_debounced_buttons_immediately(
+    module: QuestTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    publish = mocker.patch.object(module.button_released, "publish")
+    module._debounced_buttons = 1 << Buttons.BITS["right_primary"]
+
+    module._release_all_buttons()
+
+    publish.assert_called_once()
+    assert publish.call_args.args[0].right_primary
+    assert module._debounced_buttons == 0
+
+
 def test_go2_stale_input_publishes_zero_velocity(mocker: pytest_mock.MockerFixture) -> None:
     module = Go2TeleopModule()
     publish = mocker.patch.object(module.cmd_vel, "publish")

@@ -85,6 +85,12 @@ available for application lifecycle controls; the OpenYAM learning rollout
 uses **A** to toggle policy execution. The index-finger trigger remains the
 analog gripper command and is forwarded only while that hand's grip is held.
 
+`teleop_buttons` publishes raw button levels. `button_pressed` and
+`button_released` publish digital-only edges after 50 ms of stable input;
+disconnecting the control client releases held buttons immediately. Lifecycle
+consumers should subscribe to the edge streams instead of detecting edges from
+raw levels independently.
+
 ## Subclassing
 
 | Method | Purpose |

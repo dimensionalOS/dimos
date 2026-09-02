@@ -14,10 +14,10 @@
 
 """Behavior tests for the isolated LeRobot runtime."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from threading import Event
 import time
-from typing import Protocol
+from typing import Any, Protocol
 
 from dimos_lerobot import runtime as policy_runtime
 from dimos_lerobot.runtime import LeRobotPolicyRuntime
@@ -29,10 +29,16 @@ import pytest_mock
 import torch
 from torch import Tensor
 
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    TrajectoryCancellationResult,
+    TrajectoryCancellationStatus,
+    TrajectoryExecutionResult,
+    TrajectoryExecutionStatus,
+)
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.teleop.quest.quest_types import Buttons
 from dimos.utils.testing.waiting import wait_until
 
 JOINTS = [f"test_arm/joint{i}" for i in range(1, 5)]
@@ -44,12 +50,13 @@ class FakeFeature:
 
 
 class FakeUpstreamConfig:
-    def __init__(self, joint_count: int) -> None:
+    def __init__(self, joint_count: int, n_action_steps: int) -> None:
         self.type = "fake_policy"
         self.device: str | None = "cpu"
         self.use_amp = False
-        self.chunk_size = 100
-        self.n_action_steps = 100
+        self.chunk_size = 3
+        self.n_action_steps: int | None = n_action_steps
+        self.temporal_ensemble_coeff: float | None = None
         self.input_features = {
             "observation.images.wrist": FakeFeature((3, 4, 5)),
             "observation.state": FakeFeature((joint_count,)),
@@ -71,12 +78,12 @@ class FakePipeline:
 
 
 class FakePolicy:
-    def __init__(self, action: NDArray[np.float32]) -> None:
-        self.action = torch.from_numpy(action).unsqueeze(0)
+    def __init__(self, action_chunk: NDArray[np.float32], n_action_steps: int = 2) -> None:
+        self.action_chunk = torch.from_numpy(action_chunk).unsqueeze(0)
         self.called = Event()
         self.reset_count = 0
         self.batch: dict[str, object] | None = None
-        self.upstream_config = FakeUpstreamConfig(len(JOINTS))
+        self.upstream_config = FakeUpstreamConfig(len(JOINTS), n_action_steps)
         self.preprocessor = FakePipeline()
         self.postprocessor = FakePipeline()
         self.config_load_count = 0
@@ -84,28 +91,10 @@ class FakePolicy:
     def reset(self) -> None:
         self.reset_count += 1
 
-    def select_action(self, batch: dict[str, object]) -> Tensor:
+    def predict_action_chunk(self, batch: dict[str, object]) -> Tensor:
         self.batch = dict(batch)
         self.called.set()
-        return self.action
-
-
-class CapturingOutput:
-    def __init__(self) -> None:
-        self.messages: list[JointState] = []
-        self.published = Event()
-
-    def publish(self, message: JointState) -> None:
-        self.messages.append(message)
-        self.published.set()
-
-
-class CapturingGripperOutput:
-    def __init__(self) -> None:
-        self.messages: list[Float32] = []
-
-    def publish(self, message: Float32) -> None:
-        self.messages.append(message)
+        return self.action_chunk
 
 
 class RuntimeFactory(Protocol):
@@ -114,8 +103,7 @@ class RuntimeFactory(Protocol):
         policy: FakePolicy,
         *,
         device: str | None = None,
-        gripper_joint_name: str | None = None,
-    ) -> tuple[LeRobotPolicyRuntime, CapturingOutput]: ...
+    ) -> tuple[LeRobotPolicyRuntime, Any]: ...
 
 
 @pytest.fixture
@@ -131,19 +119,14 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
         policy: FakePolicy,
         *,
         device: str | None = None,
-        gripper_joint_name: str | None = None,
-    ) -> tuple[LeRobotPolicyRuntime, CapturingOutput]:
+    ) -> tuple[LeRobotPolicyRuntime, Any]:
         def load_config(_path: str) -> FakeUpstreamConfig:
             policy.config_load_count += 1
             return policy.upstream_config
 
         policy_class = mocker.MagicMock()
         policy_class.from_pretrained.return_value = policy
-        mocker.patch.object(
-            PreTrainedConfig,
-            "from_pretrained",
-            side_effect=load_config,
-        )
+        mocker.patch.object(PreTrainedConfig, "from_pretrained", side_effect=load_config)
         mocker.patch.object(policy_runtime, "get_policy_class", return_value=policy_class)
         mocker.patch.object(
             policy_runtime,
@@ -180,277 +163,250 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
             task="pick up the test object",
             device=device,
             joint_names=JOINTS,
-            gripper_joint_name=gripper_joint_name,
             fps=50.0,
             robot_type="test_arm",
         )
-        output = CapturingOutput()
-        mocker.patch.object(module, "joint_command", output)
-        mocker.patch.object(module, "gripper_command", CapturingGripperOutput())
+        control = mocker.MagicMock()
+        control.execute_trajectory.return_value = TrajectoryExecutionResult(
+            TrajectoryExecutionStatus.ACCEPTED
+        )
+        control.cancel_trajectory.return_value = TrajectoryCancellationResult(
+            TrajectoryCancellationStatus.ALREADY_STOPPED
+        )
+        mocker.patch.object(module, "_control", control, create=True)
         built.append(module)
-        return module, output
+        return module, control
 
     yield _make
     for module in built:
         module.stop()
 
 
+def _action_chunk(steps: int = 3) -> NDArray[np.float32]:
+    return np.arange(steps * len(JOINTS), dtype=np.float32).reshape(
+        steps, len(JOINTS)
+    ) / np.float32(10)
+
+
 def _provide_observation(
     module: LeRobotPolicyRuntime,
-) -> tuple[NDArray[np.uint8], list[float]]:
+    *,
+    positions: list[float] | None = None,
+    ts: float | None = None,
+) -> tuple[NDArray[np.uint8], list[float], float]:
     bgr = np.zeros((4, 5, 3), dtype=np.uint8)
     bgr[..., 0] = 10
     bgr[..., 1] = 20
     bgr[..., 2] = 30
-    positions = [float(i) / 10 for i in range(len(JOINTS))]
-    now = time.time()
-    module._on_color_image(Image(data=bgr, format=ImageFormat.BGR, ts=now))
-    module._on_joint_state(JointState(ts=now, name=JOINTS, position=positions))
-    return bgr, positions
+    values = positions or [float(i) / 10 for i in range(len(JOINTS))]
+    timestamp = time.time() if ts is None else ts
+    module._on_color_image(Image(data=bgr, format=ImageFormat.BGR, ts=timestamp))
+    module._on_joint_state(JointState(ts=timestamp, name=JOINTS, position=values))
+    return bgr, values, timestamp
 
 
-def test_policy_uses_direct_lerobot_inference_pipeline(make_runtime: RuntimeFactory) -> None:
-    action = (np.arange(len(JOINTS), dtype=np.float32) / 20).astype(np.float32)
-    policy = FakePolicy(action)
-    module, output = make_runtime(policy)
-    bgr, positions = _provide_observation(module)
+def test_policy_predicts_and_executes_one_native_joint_chunk(make_runtime: RuntimeFactory) -> None:
+    actions = _action_chunk()
+    policy = FakePolicy(actions, n_action_steps=2)
+    module, control = make_runtime(policy)
+    bgr, positions, _ts = _provide_observation(module)
 
-    result = module.start_rollout(duration=1.0)
+    assert module.start_rollout()["active"] is True
+    wait_until(lambda: control.execute_trajectory.call_count >= 1, timeout=1.0)
+    module.stop_rollout()
 
-    assert result["active"] is True
-    assert output.published.wait(1.0), "policy did not publish a command"
-    assert policy.reset_count >= 1
-    assert policy.preprocessor.reset_count >= 1
-    assert policy.postprocessor.reset_count >= 1
+    call = control.execute_trajectory.call_args_list[0]
+    trajectory = call.args[0]
+    assert call.kwargs == {"task_name": "policy_rollout"}
+    assert trajectory.joint_names == JOINTS
+    assert [point.time_from_start for point in trajectory.points] == [0.0, 0.02, 0.04]
+    np.testing.assert_allclose(trajectory.points[0].positions, positions)
+    np.testing.assert_allclose(trajectory.points[1].positions, actions[0])
+    np.testing.assert_allclose(trajectory.points[2].positions, actions[1])
     assert policy.batch is not None
     assert policy.batch["task"] == "pick up the test object"
-    assert policy.batch["robot_type"] == "test_arm"
     image = policy.batch["observation.images.wrist"]
-    state = policy.batch["observation.state"]
     assert isinstance(image, Tensor)
-    assert isinstance(state, Tensor)
     np.testing.assert_array_equal(image.squeeze(0).numpy(), bgr[..., ::-1])
-    np.testing.assert_allclose(state.squeeze(0).numpy(), positions)
-    assert output.messages[0].name == JOINTS
-    np.testing.assert_allclose(output.messages[0].position, action)
+    assert policy.postprocessor.calls
+    assert module.rollout_status()["chunks_accepted"] >= 1
 
 
-def test_policy_splits_gripper_without_changing_checkpoint_action_order(
+def test_next_chunk_uses_latest_joint_observation(make_runtime: RuntimeFactory) -> None:
+    policy = FakePolicy(_action_chunk(), n_action_steps=1)
+    module, control = make_runtime(policy)
+    first_submitted = Event()
+    release_first = Event()
+
+    def execute_trajectory(*_args: object, **_kwargs: object) -> TrajectoryExecutionResult:
+        if not first_submitted.is_set():
+            first_submitted.set()
+            assert release_first.wait(timeout=1.0)
+        return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+
+    control.execute_trajectory.side_effect = execute_trajectory
+    _provide_observation(module, positions=[0.0] * len(JOINTS))
+    module.start_rollout()
+    assert first_submitted.wait(timeout=1.0)
+
+    latest = [0.4, 0.3, 0.2, 0.1]
+    _provide_observation(module, positions=latest)
+    release_first.set()
+    wait_until(lambda: control.execute_trajectory.call_count >= 2, timeout=1.0)
+    module.stop_rollout()
+
+    second = control.execute_trajectory.call_args_list[1].args[0]
+    np.testing.assert_allclose(second.points[0].positions, latest)
+
+
+def test_start_mismatch_waits_for_new_joint_state_before_retry(
     make_runtime: RuntimeFactory,
 ) -> None:
-    action = np.asarray([0.1, 0.2, 0.3, 1.02], dtype=np.float32)
-    policy = FakePolicy(action)
-    module, arm_output = make_runtime(policy, gripper_joint_name=JOINTS[-1])
+    policy = FakePolicy(_action_chunk(), n_action_steps=1)
+    module, control = make_runtime(policy)
     _provide_observation(module)
 
-    module.start_rollout(duration=1.0)
+    def execute_trajectory(*_args: object, **_kwargs: object) -> TrajectoryExecutionResult:
+        status = (
+            TrajectoryExecutionStatus.START_STATE_MISMATCH
+            if control.execute_trajectory.call_count == 1
+            else TrajectoryExecutionStatus.ACCEPTED
+        )
+        return TrajectoryExecutionResult(status)
 
-    assert arm_output.published.wait(1.0)
-    gripper_output = module.gripper_command
-    assert isinstance(gripper_output, CapturingGripperOutput)
-    assert arm_output.messages[0].name == JOINTS[:-1]
-    np.testing.assert_allclose(arm_output.messages[0].position, action[:-1])
-    assert gripper_output.messages[0].data == pytest.approx(action[-1])
+    control.execute_trajectory.side_effect = execute_trajectory
+    module.start_rollout()
+    wait_until(lambda: control.execute_trajectory.call_count == 1, timeout=1.0)
+
+    _provide_observation(module, positions=[0.2] * len(JOINTS), ts=time.time() + 0.01)
+    wait_until(lambda: control.execute_trajectory.call_count >= 2, timeout=1.0)
+    module.stop_rollout()
+
+    assert module.rollout_status()["last_error"] is None
+
+
+def test_a_press_toggles_rollout_and_cancels_before_stopping(
+    make_runtime: RuntimeFactory,
+) -> None:
+    policy = FakePolicy(_action_chunk(), n_action_steps=2)
+    module, control = make_runtime(policy)
+    _provide_observation(module)
+    pressed = Buttons()
+    pressed.right_primary = True
+
+    module._on_button_pressed(pressed)
+    wait_until(lambda: control.execute_trajectory.call_count >= 1, timeout=1.0)
+    module._on_button_pressed(pressed)
+
+    assert module.rollout_status()["active"] is False
+    control.cancel_trajectory.assert_called_with(task_name="policy_rollout")
+
+
+@pytest.mark.parametrize(
+    ("actions", "message"),
+    [
+        (np.zeros((3, len(JOINTS) - 1), dtype=np.float32), "action width"),
+        (np.full((3, len(JOINTS)), np.nan, dtype=np.float32), "non-finite joint targets"),
+    ],
+)
+def test_invalid_action_chunk_cancels_and_latches_rollout_off(
+    make_runtime: RuntimeFactory,
+    actions: NDArray[np.float32],
+    message: str,
+) -> None:
+    policy = FakePolicy(actions)
+    module, control = make_runtime(policy)
+    _provide_observation(module)
+
+    module.start_rollout()
+
+    wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
+    assert message in (module.rollout_status()["last_error"] or "")
+    control.cancel_trajectory.assert_called_with(task_name="policy_rollout")
+
+
+def test_trajectory_rejection_cancels_and_latches_rollout_off(
+    make_runtime: RuntimeFactory,
+) -> None:
+    policy = FakePolicy(_action_chunk())
+    module, control = make_runtime(policy)
+    _provide_observation(module)
+    control.execute_trajectory.return_value = TrajectoryExecutionResult(
+        TrajectoryExecutionStatus.POSITION_LIMIT_VIOLATION,
+        "outside hardware limits",
+    )
+
+    module.start_rollout()
+
+    wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
+    assert module.rollout_status()["last_error"] == "outside hardware limits"
+    control.cancel_trajectory.assert_called_with(task_name="policy_rollout")
+
+
+@pytest.mark.parametrize(
+    ("configure", "message"),
+    [
+        (lambda config: setattr(config, "n_action_steps", None), "positive int"),
+        (lambda config: setattr(config, "n_action_steps", 0), "positive int"),
+        (
+            lambda config: setattr(config, "temporal_ensemble_coeff", 0.01),
+            "temporal ensembling",
+        ),
+    ],
+)
+def test_incompatible_chunk_contract_is_rejected(
+    make_runtime: RuntimeFactory,
+    configure: Callable[[FakeUpstreamConfig], None],
+    message: str,
+) -> None:
+    policy = FakePolicy(_action_chunk())
+    configure(policy.upstream_config)
+    module, control = make_runtime(policy)
+    _provide_observation(module)
+
+    module.start_rollout()
+
+    wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
+    assert message in (module.rollout_status()["last_error"] or "")
+    control.execute_trajectory.assert_not_called()
 
 
 def test_policy_refuses_to_load_without_live_observations(make_runtime: RuntimeFactory) -> None:
-    policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
-    module, output = make_runtime(policy)
+    policy = FakePolicy(_action_chunk())
+    module, control = make_runtime(policy)
 
-    result = module.start_rollout(duration=1.0)
+    result = module.start_rollout()
 
     assert result["active"] is False
     assert "no camera image" in (result["last_error"] or "")
     assert policy.config_load_count == 0
-    assert output.messages == []
-    assert module.rollout_status()["active"] is False
+    control.execute_trajectory.assert_not_called()
 
 
 def test_policy_refuses_stale_observations(make_runtime: RuntimeFactory) -> None:
-    policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
-    module, output = make_runtime(policy)
-    stale = time.time() - module.config.max_observation_age_s - 1.0
-    module._on_color_image(
-        Image(data=np.zeros((4, 5, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=stale)
-    )
-    module._on_joint_state(JointState(ts=stale, name=JOINTS, position=[0.0] * len(JOINTS)))
+    policy = FakePolicy(_action_chunk())
+    module, control = make_runtime(policy)
+    _provide_observation(module, ts=time.time() - module.config.max_observation_age_s - 1.0)
 
-    result = module.start_rollout(duration=1.0)
+    result = module.start_rollout()
 
+    assert result["active"] is False
     assert "camera image is stale" in (result["last_error"] or "")
     assert policy.config_load_count == 0
-    assert output.messages == []
-
-
-def test_policy_refuses_incomplete_joint_state(make_runtime: RuntimeFactory) -> None:
-    policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
-    module, output = make_runtime(policy)
-    now = time.time()
-    module._on_color_image(
-        Image(data=np.zeros((4, 5, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=now)
-    )
-    module._on_joint_state(JointState(ts=now, name=JOINTS[:-1], position=[0.0] * 3))
-
-    result = module.start_rollout(duration=1.0)
-
-    assert JOINTS[-1] in (result["last_error"] or "")
-    assert policy.config_load_count == 0
-    assert output.messages == []
-
-
-@pytest.mark.parametrize(
-    ("action", "message"),
-    [
-        (np.zeros(len(JOINTS) - 1, dtype=np.float32), f"expected ({len(JOINTS)},)"),
-        (
-            np.asarray([0.0, 0.0, 0.0, np.nan], dtype=np.float32),
-            "policy returned non-finite joint targets",
-        ),
-    ],
-)
-def test_invalid_policy_action_stops_without_publishing(
-    make_runtime: RuntimeFactory,
-    action: NDArray[np.float32],
-    message: str,
-) -> None:
-    policy = FakePolicy(action)
-    module, output = make_runtime(policy)
-    _provide_observation(module)
-
-    module.start_rollout(duration=1.0)
-
-    assert policy.called.wait(1.0), "policy was not invoked"
-    wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
-    assert output.messages == []
-    assert message in (module.rollout_status()["last_error"] or "")
+    control.execute_trajectory.assert_not_called()
 
 
 def test_checkpoint_loads_on_demand_and_is_cached(make_runtime: RuntimeFactory) -> None:
-    policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
-    module, _output = make_runtime(policy)
+    policy = FakePolicy(_action_chunk())
+    module, control = make_runtime(policy)
     _provide_observation(module)
 
-    assert module.start_rollout(duration=1.0)["active"] is True
-    assert policy.called.wait(1.0)
-    assert module.stop_rollout()["active"] is False
-    policy.called.clear()
-    assert module.start_rollout(duration=1.0)["active"] is True
-    assert policy.called.wait(1.0)
+    module.start_rollout()
+    wait_until(lambda: control.execute_trajectory.call_count >= 1, timeout=1.0)
+    module.stop_rollout()
+    control.execute_trajectory.reset_mock()
+    module.start_rollout()
+    wait_until(lambda: control.execute_trajectory.call_count >= 1, timeout=1.0)
     module.stop_rollout()
 
     assert policy.config_load_count == 1
-    assert policy.reset_count >= 4
-
-
-def test_policy_accepts_config_without_action_chunk_metadata(
-    make_runtime: RuntimeFactory,
-) -> None:
-    policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
-    del policy.upstream_config.chunk_size
-    del policy.upstream_config.n_action_steps
-    module, output = make_runtime(policy)
-    _provide_observation(module)
-
-    result = module.start_rollout(duration=1.0)
-
-    assert result["active"] is True
-    assert output.published.wait(1.0), "policy did not publish a command"
-    assert module.rollout_status()["last_error"] is None
-
-
-@pytest.mark.parametrize("attribute", ["chunk_size", "n_action_steps"])
-def test_policy_rejects_non_integer_action_chunk_metadata(
-    make_runtime: RuntimeFactory,
-    attribute: str,
-) -> None:
-    policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
-    setattr(policy.upstream_config, attribute, "invalid")
-    module, output = make_runtime(policy)
-    _provide_observation(module)
-
-    module.start_rollout(duration=1.0)
-
-    wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
-    assert module.rollout_status()["last_error"] == f"{attribute} must be an int, got str"
-    assert output.messages == []
-
-
-def test_policy_rejects_incompatible_checkpoint_features(make_runtime: RuntimeFactory) -> None:
-    policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
-    del policy.upstream_config.input_features["observation.images.wrist"]
-    module, output = make_runtime(policy)
-    _provide_observation(module)
-
-    module.start_rollout(duration=1.0)
-
-    wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
-    assert "missing input features" in (module.rollout_status()["last_error"] or "")
-    assert output.messages == []
-
-
-def test_policy_rejects_unavailable_cuda_device(
-    make_runtime: RuntimeFactory,
-    mocker: pytest_mock.MockerFixture,
-) -> None:
-    policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
-    module, output = make_runtime(policy, device="cuda")
-    _provide_observation(module)
-    mocker.patch.object(torch.cuda, "is_available", return_value=False)
-
-    result = module.start_rollout(duration=1.0)
-
-    assert result["active"] is True
-    wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
-    assert "CUDA is not available" in (module.rollout_status()["last_error"] or "")
-    assert output.messages == []
-
-
-def test_concurrent_policy_start_is_rejected(make_runtime: RuntimeFactory) -> None:
-    policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
-    module, _output = make_runtime(policy)
-    _provide_observation(module)
-    assert module.start_rollout(duration=1.0)["active"] is True
-    assert policy.called.wait(1.0)
-
-    result = module.start_rollout(duration=1.0)
-
-    assert result["active"] is True
-    assert "already active" in (result["last_error"] or "")
-    assert module.stop_rollout()["active"] is False
-
-
-def test_policy_reports_duration_completion(make_runtime: RuntimeFactory) -> None:
-    policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
-    module, output = make_runtime(policy)
-    _provide_observation(module)
-
-    result = module.start_rollout(duration=0.05)
-
-    assert result["active"] is True
-    assert output.published.wait(1.0), "policy did not publish before its deadline"
-    wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
-
-
-def test_rollout_without_duration_runs_until_stopped(make_runtime: RuntimeFactory) -> None:
-    policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
-    module, output = make_runtime(policy)
-    _provide_observation(module)
-
-    assert module.start_rollout()["active"] is True
-    assert output.published.wait(1.0)
-
-    assert module.rollout_status()["active"] is True
-    assert module.stop_rollout()["active"] is False
-
-
-def test_invalid_duration_is_rejected_without_loading(make_runtime: RuntimeFactory) -> None:
-    policy = FakePolicy(np.zeros(len(JOINTS), dtype=np.float32))
-    module, output = make_runtime(policy)
-    _provide_observation(module)
-
-    result = module.start_rollout(duration=0.0)
-
-    assert result["active"] is False
-    assert result["last_error"] == "duration must be greater than zero"
-    assert policy.config_load_count == 0
-    assert output.messages == []
