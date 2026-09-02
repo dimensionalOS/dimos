@@ -127,6 +127,11 @@ class RelayClient:
             create_protocol=SessionProtocol,
         )
         session = cast("SessionProtocol", await ctx.__aenter__())
+        # The robot leg's only incoming uni stream is the relay-opened control
+        # carrier: corruption, reset, or an end of it must fail the whole
+        # session (the bridge reconnects) instead of leaving it alive without
+        # control. Viewer legs keep per-stream poisoning and routine ends.
+        session.incoming_is_carrier = role == "robot"
         try:
             session.open_session(f"{host}:{port}", path)
             await asyncio.wait_for(session.session_ready.wait(), timeout)
@@ -318,9 +323,11 @@ class RelayClient:
     async def control_messages(self) -> AsyncIterator[Msg]:
         """Control messages pushed by the relay (subs snapshots, robots, ...).
 
-        Same contract as :meth:`frames`: buffered messages drain before the
-        close is honored, and cancelling the consumer never orphans the queue
-        getter. Ends when the session closes.
+        Fed by relay datagrams and, on the robot leg, by @control frames from
+        the relay-opened control carrier. Same contract as :meth:`frames`:
+        buffered messages drain before the close is honored, and cancelling
+        the consumer never orphans the queue getter. Ends when the session
+        closes.
         """
         closed = asyncio.ensure_future(self._session.wait_closed())
         try:

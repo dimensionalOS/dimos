@@ -34,6 +34,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Verify dispatched from a release/* branch
         run: |
           branch="${GITHUB_REF#refs/heads/}"
@@ -82,6 +83,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Build cockpit dist  # shipped pre-built in the sdist and wheels
         uses: ./.github/actions/build-cockpit
       - name: Build sdist

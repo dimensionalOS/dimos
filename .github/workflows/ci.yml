@@ -176,6 +176,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
       - name: Mypy
@@ -227,6 +228,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Install dependency for pyaudio
         run: |
           sudo apt-get update
@@ -344,6 +346,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - uses: actions/setup-node@v7
         with:
           node-version: 'lts/*'
@@ -460,6 +463,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Setup Python
         uses: actions/setup-python@v7.0.0
         with:
@@ -477,7 +481,8 @@ jobs:
       - name: Cockpit + SDK browser e2e
         run: >-
           uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py
-          dimos/e2e_tests/test_sdk_browser.py --no-cov
+          dimos/e2e_tests/test_sdk_browser.py
+          dimos/e2e_tests/test_custom_channel_browser.py --no-cov
 
   tests:
     if: |
@@ -518,6 +523,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Setup Python
         uses: actions/setup-python@v7.0.0
         with:

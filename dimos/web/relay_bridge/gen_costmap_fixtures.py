@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 import numpy as np
 
@@ -37,11 +37,8 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.web.relay_bridge.builtin_codecs import encode_costmap
 from dimos.web.relay_bridge.locate import find_web_dir
-from dimos.web.relay_bridge.relay_bridge_module import _encode_costmap
-
-if TYPE_CHECKING:
-    from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
 
 
 def grid_msg(rows: list[list[int]], res: float, x: float, y: float, yaw: float) -> OccupancyGrid:
@@ -86,9 +83,9 @@ def build_vectors() -> list[dict[str, Any]]:
     vectors: list[dict[str, Any]] = []
     for name, (rows, res, x, y, yaw) in CASES.items():
         msg = grid_msg(rows, res, x, y, yaw)
-        encoded = _encode_costmap(cast("RelayBridgeModule", None), msg)  # module unused
+        encoded = encode_costmap(msg)
         assert encoded is not None
-        payload, meta = encoded
+        payload, meta = encoded.payload, encoded.meta
         cells = np.where(msg.grid == -1, 255, msg.grid).astype(np.uint8)
         vectors.append(
             {
