@@ -1,0 +1,19 @@
+# System packages (what PEP 621 cannot express) and Linux machine settings.
+# Keys under [extras] must be [project.optional-dependencies] names; pkgs.rs tests fail on any other key.
+
+[always]  # every install: the core `dependencies` set needs these (scripts/install.sh:32-33 minus python and pre-commit)
+apt  = ["curl", "git", "git-lfs", "g++", "python3-dev", "portaudio19-dev", "libturbojpeg", "libgl1", "libegl1"]
+brew = ["git-lfs", "gnu-sed", "gcc", "portaudio", "libjpeg-turbo"]
+
+[extras.unitree]
+apt  = ["cmake"]  # CycloneDDS releases/0.10.x is built from source by `dimos hardware g1 setup`
+brew = ["cmake"]
+
+[extras.cuda]
+only_arch = ["x86_64"]  # pyproject gates cupy-cuda12x / onnxruntime-gpu to platform_machine == 'x86_64'; Jetson CUDA wheels come from NVIDIA's index
+
+[linux]
+# LCM UDP receive buffers: the 208 KiB kernel default drops Mid360 clouds. Same value as lcm.py IDEAL_RMEM_SIZE (runtime applies per run; this file persists it).
+sysctl = { "net.core.rmem_max" = 67108864, "net.core.rmem_default" = 67108864 }
+# zenoh locks a 16 MiB SHM pool and systemd's DefaultLimitMEMLOCK is 8 MiB. Same value as zenoh.py REQUIRED_MEMLOCK_BYTES.
+memlock_bytes = 67108864

@@ -1,0 +1,24 @@
+[package]
+name = "dimos-installer"
+version = "0.0.0" # the real version is pyproject's [project].version, exported by build.rs as DIMOS_VERSION
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "dimos"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+clap = { version = "4", features = ["derive", "env"] }
+dirs = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+toml = "1"
+which = "6"
+
+[build-dependencies]
+toml = "1"
