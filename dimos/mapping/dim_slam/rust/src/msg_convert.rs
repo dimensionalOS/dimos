@@ -17,6 +17,7 @@
 use dim_slam::nalgebra::{Isometry3, Matrix6, Quaternion, Translation3, UnitQuaternion, Vector3};
 use dim_slam::{CameraModel, ImageFrame, ImuSample, OdometryEstimate, PointCloud, Twist};
 use dimos_module::{Tf, Transform};
+use lcm_msgs::geometry_msgs;
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{CameraInfo, Image, Imu, PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
@@ -35,29 +36,41 @@ fn to_stamp(timestamp_ns: i64) -> Time {
     }
 }
 
-fn vector3(vector: &lcm_msgs::geometry_msgs::Vector3) -> Vector3<f64> {
-    Vector3::new(vector.x, vector.y, vector.z)
-}
-
-fn flatten(matrix: &Matrix6<f64>, flat: &mut [f64; 36]) {
-    for row in 0..6 {
-        for column in 0..6 {
-            flat[row * 6 + column] = matrix[(row, column)];
-        }
+fn to_header(timestamp_ns: i64, frame_id: &str) -> Header {
+    Header {
+        seq: 0,
+        stamp: to_stamp(timestamp_ns),
+        frame_id: frame_id.to_string(),
     }
 }
 
-pub fn to_isometry(transform: &Transform) -> Isometry3<f64> {
-    Isometry3::from_parts(
-        Translation3::from(transform.translation()),
-        transform.rotation(),
-    )
+fn to_vector3(vector: &geometry_msgs::Vector3) -> Vector3<f64> {
+    Vector3::new(vector.x, vector.y, vector.z)
+}
+
+fn to_vector3_msg(vector: &Vector3<f64>) -> geometry_msgs::Vector3 {
+    geometry_msgs::Vector3 {
+        x: vector.x,
+        y: vector.y,
+        z: vector.z,
+    }
+}
+
+// nalgebra stores column-major, the message wants row-major.
+fn row_major(matrix: &Matrix6<f64>) -> [f64; 36] {
+    let mut flat = [0.0; 36];
+    flat.copy_from_slice(matrix.transpose().as_slice());
+    flat
 }
 
 pub fn tf_lookup(tf: &Tf) -> impl Fn(&str, &str) -> Option<Isometry3<f64>> + '_ {
     move |parent: &str, child: &str| {
-        tf.get_latest(parent, child)
-            .map(|transform| to_isometry(&transform))
+        tf.get_latest(parent, child).map(|transform| {
+            Isometry3::from_parts(
+                Translation3::from(transform.translation()),
+                transform.rotation(),
+            )
+        })
     }
 }
 
@@ -88,8 +101,8 @@ pub fn to_imu_sample(msg: &Imu) -> ImuSample {
     ImuSample {
         timestamp_ns: stamp_to_ns(&msg.header),
         frame_id: msg.header.frame_id.clone(),
-        angular_velocity: vector3(&msg.angular_velocity),
-        linear_acceleration: vector3(&msg.linear_acceleration),
+        angular_velocity: to_vector3(&msg.angular_velocity),
+        linear_acceleration: to_vector3(&msg.linear_acceleration),
     }
 }
 
@@ -111,35 +124,43 @@ pub fn to_estimate(msg: &Odometry) -> OdometryEstimate {
         ),
         pose_covariance: Matrix6::from_row_slice(&msg.pose.covariance),
         twist: Twist {
-            linear: vector3(&msg.twist.twist.linear),
-            angular: vector3(&msg.twist.twist.angular),
+            linear: to_vector3(&msg.twist.twist.linear),
+            angular: to_vector3(&msg.twist.twist.angular),
         },
         twist_covariance: Matrix6::from_row_slice(&msg.twist.covariance),
     }
 }
 
 pub fn to_odometry_msg(estimate: &OdometryEstimate) -> Odometry {
-    let mut msg = Odometry::default();
-    msg.header.stamp = to_stamp(estimate.timestamp_ns);
-    msg.header.frame_id = estimate.frame_id.clone();
-    msg.child_frame_id = estimate.child_frame_id.clone();
-    msg.pose.pose.position.x = estimate.pose.translation.x;
-    msg.pose.pose.position.y = estimate.pose.translation.y;
-    msg.pose.pose.position.z = estimate.pose.translation.z;
+    let translation = estimate.pose.translation;
     let rotation = estimate.pose.rotation.quaternion();
-    msg.pose.pose.orientation.x = rotation.i;
-    msg.pose.pose.orientation.y = rotation.j;
-    msg.pose.pose.orientation.z = rotation.k;
-    msg.pose.pose.orientation.w = rotation.w;
-    msg.twist.twist.linear.x = estimate.twist.linear.x;
-    msg.twist.twist.linear.y = estimate.twist.linear.y;
-    msg.twist.twist.linear.z = estimate.twist.linear.z;
-    msg.twist.twist.angular.x = estimate.twist.angular.x;
-    msg.twist.twist.angular.y = estimate.twist.angular.y;
-    msg.twist.twist.angular.z = estimate.twist.angular.z;
-    flatten(&estimate.pose_covariance, &mut msg.pose.covariance);
-    flatten(&estimate.twist_covariance, &mut msg.twist.covariance);
-    msg
+    Odometry {
+        header: to_header(estimate.timestamp_ns, &estimate.frame_id),
+        child_frame_id: estimate.child_frame_id.clone(),
+        pose: geometry_msgs::PoseWithCovariance {
+            pose: geometry_msgs::Pose {
+                position: geometry_msgs::Point {
+                    x: translation.x,
+                    y: translation.y,
+                    z: translation.z,
+                },
+                orientation: geometry_msgs::Quaternion {
+                    x: rotation.i,
+                    y: rotation.j,
+                    z: rotation.k,
+                    w: rotation.w,
+                },
+            },
+            covariance: row_major(&estimate.pose_covariance),
+        },
+        twist: geometry_msgs::TwistWithCovariance {
+            twist: geometry_msgs::Twist {
+                linear: to_vector3_msg(&estimate.twist.linear),
+                angular: to_vector3_msg(&estimate.twist.angular),
+            },
+            covariance: row_major(&estimate.twist_covariance),
+        },
+    }
 }
 
 pub fn to_transform(estimate: &OdometryEstimate) -> Transform {
@@ -161,23 +182,24 @@ fn xyz_field(name: &str, offset: i32) -> PointField {
 }
 
 pub fn to_point_cloud2(cloud: &PointCloud) -> PointCloud2 {
-    let mut msg = PointCloud2::default();
-    msg.header.stamp = to_stamp(cloud.timestamp_ns);
-    msg.header.frame_id = cloud.frame_id.clone();
-    msg.height = 1;
-    msg.width = cloud.points.len() as i32;
-    msg.fields = vec![xyz_field("x", 0), xyz_field("y", 4), xyz_field("z", 8)];
-    msg.is_bigendian = false;
-    msg.point_step = BYTES_PER_POINT;
-    msg.row_step = BYTES_PER_POINT * msg.width;
-    msg.data = Vec::with_capacity(cloud.points.len() * BYTES_PER_POINT as usize);
+    let width = cloud.points.len() as i32;
+    let mut data = Vec::with_capacity(cloud.points.len() * BYTES_PER_POINT as usize);
     for point in &cloud.points {
         for coordinate in point {
-            msg.data.extend_from_slice(&coordinate.to_le_bytes());
+            data.extend_from_slice(&coordinate.to_le_bytes());
         }
     }
-    msg.is_dense = true;
-    msg
+    PointCloud2 {
+        header: to_header(cloud.timestamp_ns, &cloud.frame_id),
+        height: 1,
+        width,
+        fields: vec![xyz_field("x", 0), xyz_field("y", 4), xyz_field("z", 8)],
+        is_bigendian: false,
+        point_step: BYTES_PER_POINT,
+        row_step: BYTES_PER_POINT * width,
+        data,
+        is_dense: true,
+    }
 }
 
 #[cfg(test)]
