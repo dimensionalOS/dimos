@@ -1,18 +1,96 @@
 # DimOS web
 
 Deno workspace for the robot web stack. `shared/` holds the wire protocol and its golden vectors;
-`relay/` is the WebTransport relay; `cockpit/` is the browser app (Vite + React + TS). The Python
-mirror + WebTransport client live in `dimos/web/relay_bridge/`.
+`relay/` is the WebTransport relay; `sdk/` is the viewer SDK (`@dimos/sdk`: transport, session,
+stores, decoders, React hooks); `cockpit/` is the browser app (Vite + React + TS) built on the SDK.
+The Python mirror + WebTransport client live in `dimos/web/relay_bridge/`.
 
 Everything runs on Deno 2.6.10, pinned in `dimos/utils/deno.py` (CI reads the pin from there). No
 node/npm anywhere: vite, vitest, and tsc run as npm packages under Deno (`nodeModulesDir: auto`),
 and `dimos --local-relay` auto-downloads Deno via `ensure_deno()`.
 
 ```bash
-deno task dev            # relay on http://127.0.0.1:7780 (add --cockpit-dir cockpit/dist for the UI)
+deno task dev            # relay on http://127.0.0.1:7780 (add --cockpit-dir cockpit/dist for the UI,
+                         # --sdk-dir sdk/dist for /sdk.js, --serve-dir DIR for a custom page at /)
 deno task test           # relay + shared tests (unit + loopback e2e)
 deno task check          # type-check relay + shared; deno fmt + deno lint for style (all of web/)
 ```
+
+The local relay deliberately answers `/api/info`, `/api/stats`, `/sdk.js`, and served JavaScript
+modules with wildcard CORS so any local origin (a Vite dev server, a `file:` page) can bootstrap
+against it; a remotely reachable relay is a different, fail-closed mode (W10) and must not inherit
+that. For the same reason `startRelay` refuses to bind a non-loopback host unless
+`--unsafe-non-loopback` explicitly acknowledges it (only sensible behind your own TLS and access
+control).
+
+## SDK
+
+`sdk/` is the read-only viewer library the cockpit is built on: reconnecting WebTransport, session
+state, channel/status stores, per-session decoder registries, refcounted subscriptions (`connect`,
+`Session.watch/subscribe/close`), and React hooks on the `@dimos/sdk/react` subpath (the root entry
+is React-free). The SDK subscribes to nothing by itself; the cockpit's panel policy lives in
+`cockpit/src/subscriptions.ts`.
+
+```bash
+cd sdk
+deno task test           # vitest
+deno task check          # tsc --noEmit
+deno task build          # dist/sdk.js, the zero-build ESM bundle the relay serves at /sdk.js
+deno task fixture        # demo consumer on http://localhost:5174 (run a relay first)
+```
+
+`fixture/` is a minimal non-cockpit consumer: it lists robots, auto-watches the lone robot, and
+subscribes to `odom` by hand. Run `dimos run <bp> --local-relay` and `deno task fixture` side by
+side; like the cockpit dev server it proxies `/api` to the relay on `:7780`.
+
+### Decoders
+
+Each session owns a `DecoderRegistry` (pass one via `connect({decoders})`; the default is a fresh
+registry with the built-ins). A decoder is
+`(payload: Uint8Array, header: FrameHeader) => { value, preview? }`, looked up by the channel's
+manifest `encoding`. Built-ins: `jpeg.v1`, `costmap.zlib.v1`, `json.v1`; any other `*.json.vN`
+encoding JSON-decodes without registration. An exact registration wins over that convention, and a
+duplicate `register()` throws unless `{ replace: true }`. An encoding with no decoder is not an
+error: the channel still counts frames and renders as unsupported. A throwing decoder bumps the
+channel's `decodeErrors`/`decodeFailing` stats and keeps the last good value. Keep decoders
+synchronous and cheap - they run on the ingest path; panel-paced work (inflate, draw) belongs in the
+consumer.
+
+The Python half is `@web_encoder` (`dimos.web.codecs`) plus `Channel` (`dimos.web.cockpit`);
+`examples/custom-path/` is the end-to-end pair for this exact codec:
+
+```python skip
+import struct
+
+from dimos.msgs.nav_msgs.Path import Path
+from dimos.web.cockpit import Channel, cockpit
+from dimos.web.codecs import EncodedPayload, web_encoder
+
+
+@web_encoder("path.points.v1")
+def encode_path_points(msg: Path) -> EncodedPayload:
+    payload = b"".join(struct.pack("<ff", p.position.x, p.position.y) for p in msg.poses)
+    return EncodedPayload(payload, {"n": len(msg.poses)})
+
+
+my_ui = cockpit(channels=[Channel("nav_path", Path, encoding="path.points.v1", max_hz=20.0)])
+```
+
+### Zero-build page
+
+`examples/minimal/` is a single HTML file importing `/sdk.js` - no bundler, no npm. Serve it from
+the relay itself:
+
+```bash
+dimos run <bp> --local-relay --serve-dir web/examples/minimal
+```
+
+`--serve-dir` replaces the cockpit at `/` with the given directory (`/api/*` and `/sdk.js` keep
+precedence, and the relay's traversal/symlink guards apply); it needs the spawned local relay and is
+rejected with `--relay-url`. A page can also import the absolute `http://127.0.0.1:7780/sdk.js` and
+pass that base to `connect({url})` - from another local origin or straight from a `file:` page (both
+supported browsers permit WebTransport there; `dimos/e2e_tests/test_sdk_browser.py` pins all three
+forms).
 
 ## Cockpit
 
@@ -28,20 +106,22 @@ Dev workflow: run the relay (`deno task dev` in `web/`, or just `dimos run <bp> 
 the vite server side by side. `localhost:5173` is a secure context; vite proxies `/api` to the relay
 on `:7780` and the WebTransport connection goes straight to the advertised `wtUrl`.
 
-Without vite, `--local-relay` serves the built `cockpit/dist` at `/`, building it first when it is
-missing or older than the sources (`ensure_cockpit_dist` in `relay_process.py`). Release wheels ship
-a pre-built dist inside `_relay_dist` (built by the release workflow; see `setup.py`), so a
+Without vite, `--local-relay` serves the built `cockpit/dist` at `/` and `sdk/dist/sdk.js` at
+`/sdk.js`, building both first when either is missing or older than the sources (`ensure_web_dist`
+in `relay_process.py`; one stamp, both products swapped together). Release wheels ship both
+pre-built dists inside `_relay_dist` (built by the release workflow; see `setup.py`), so a
 pip-installed dimos never builds or downloads npm packages.
 
-After changing cockpit dependencies run `deno install` in `web/` and commit the `deno.lock` update;
-CI validates it with `deno install --frozen`. If vitest ever misbehaves under a new Deno, the
-fallback ladder is `--no-file-parallelism`, then `--pool=threads`, then pinning a different vitest
-minor.
+After changing cockpit or sdk dependencies run `deno install` in `web/` and commit the `deno.lock`
+update; CI validates it with `deno install --frozen`. If vitest ever misbehaves under a new Deno,
+the fallback ladder is `--no-file-parallelism`, then `--pool=threads`, then pinning a different
+vitest minor.
 
-The cockpit browser e2e (`dimos/e2e_tests/test_cockpit_browser.py`, marker `web_browser`) drives the
-whole stack against the go2 replay dataset in both Playwright Chromium and Firefox (their
-WebTransport stacks differ; see bug 11). The CI `web` job runs it; the pinned browser builds
-auto-install on first run.
+The browser e2e (`dimos/e2e_tests/test_cockpit_browser.py` for the cockpit, `test_sdk_browser.py`
+for the SDK's zero-build/cross-origin/file: pages; marker `web_browser`) drives the whole stack
+against the go2 replay dataset in both Playwright Chromium and Firefox (their WebTransport stacks
+differ; see bug 11). The CI `web` job runs them; the pinned browser builds auto-install on first
+run.
 
 ## Teleop safety chain
 
@@ -75,6 +155,23 @@ vectors in `shared/fixtures/` (regenerate via
 pytest). The one exception is `costmap_frames.json`: its payloads pin the Python encoder's zlib
 bytes, so it is generated by `uv run python -m dimos.web.relay_bridge.gen_costmap_fixtures`.
 
+The transport per leg is deliberately asymmetric (the numbered workarounds below explain why):
+
+| Leg             | What                          | Transport                                                                                        |
+| --------------- | ----------------------------- | ------------------------------------------------------------------------------------------------ |
+| robot -> relay  | hello                         | `@control` data frame on a one-shot bidi stream, resent until welcomed                           |
+| robot -> relay  | channel data                  | one-shot bidi stream per frame                                                                   |
+| robot -> relay  | ping                          | datagram                                                                                         |
+| relay -> robot  | welcome, errors, pong, teleop | datagrams (lossy; teleop is loss-tolerant by design)                                             |
+| relay -> robot  | subs snapshots                | `@control` frames on the robot control carrier: ONE relay-opened reliable uni stream per session |
+| viewer -> relay | control                       | viewer-opened bidi control stream (browser/SDK) or datagrams (Python test viewer)                |
+| relay -> viewer | control replies + pushes      | the same control stream, or datagrams                                                            |
+| relay -> viewer | channel data                  | relay-opened uni streams: per-frame for latest, one persistent per reliable channel              |
+
+Relay-opened uni streams are the proven direction on both legs: Deno's server->client uni delivery
+works to browsers, Deno's own client, and aioquic alike; only client->Deno-server uni receive is
+broken (bug 1).
+
 Several choices are workarounds for upstream bugs, verified 2026-07-10..15 on Deno 2.6.10 + aioquic
 1.3 (details and probes in the spike branch `paul/experiment/webtransport`):
 
@@ -86,8 +183,18 @@ Several choices are workarounds for upstream bugs, verified 2026-07-10..15 on De
    `u32-LE headerLen | u32-LE payloadLen | header JSON | payload`.
 3. **The relay never writes on robot-opened streams** and aborts its send half (RESET). aioquic
    parses server bytes on client-initiated bidi WT streams as H3 frames and kills the connection
-   (H3_FRAME_UNEXPECTED). Robot-leg control (hello/welcome/ping/pong) rides datagrams instead; the
-   robot retries hello until welcomed (datagrams are lossy).
+   (H3_FRAME_UNEXPECTED). Relay->robot handshake and teleop control (welcome/error/pong/teleop)
+   rides datagrams. Subs snapshots ride `@control` frames on the robot control carrier, one
+   relay-OPENED reliable uni stream per robot session - the direction bug 1 does not break - so
+   snapshots are ordered, unbounded by the old ~1200 B datagram budget, and never need a periodic
+   resend. The carrier is a control dependency: a relay-side write failure or overflow fails the
+   whole robot session (`carrier_failed` error + close), and the bridge treats corrupt carrier
+   framing, a carrier reset, or a carrier end while the connection lives the same way (the relay
+   never replaces a carrier); either way the bridge reconnects and the fresh registration
+   re-baselines subs. Since protocol v5 the robot's hello rides an `@control` data frame (payload =
+   the datagram encoding, capped at 64 KiB) on a fresh one-shot bidi stream, resent until the lossy
+   welcome datagram lands - which freed the manifest from the ~1100 B datagram budget. Channel ids
+   beginning with `@` are reserved for control frames and never forwarded to viewers.
 4. **aioquic must set `max_datagram_frame_size=65536`** or the session dies at SETTINGS time.
 5. **Relay installs an `unhandledrejection` guard** (deno#28406) or it dies ~30 s after a browser
    tab closes.

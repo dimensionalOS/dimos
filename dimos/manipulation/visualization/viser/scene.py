@@ -34,9 +34,7 @@ from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import DEFAULT_OBSTACLE_RGBA, Obstacle
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.visualization.viser.animation import (
-    GroupPreviewAnimation,
-    PreviewFrame,
-    preview_tick_times,
+    PreviewAnimation,
     scaled_frame_delays,
 )
 from dimos.manipulation.visualization.viser.runtime import (
@@ -75,6 +73,7 @@ except ImportError as e:
     raise ModuleNotFoundError(VISER_URDF_INSTALL_HINT) from e
 
 logger = setup_logger()
+
 
 GOAL_ROBOT_FEASIBLE_COLOR = (255, 122, 0)
 GOAL_ROBOT_INFEASIBLE_COLOR = (255, 30, 30)
@@ -383,16 +382,16 @@ class ViserManipulationScene:
         except ValueError as error:
             raise ValueError(f"Unsupported robot display mode: {mode!r}") from error
         self._robot_display_mode = normalized_mode
-        for robot_id in self._configs_by_id:
-            self._apply_robot_display_mode(robot_id)
+        for model_key in self._configs_by_id:
+            self._apply_robot_display_mode(model_key)
 
     @property
     def collision_geometry_available(self) -> bool:
         """Return whether any primary robot has loaded collision geometry."""
         return any(
-            self._model_has_collision_geometry(self._models_by_id[robot_id])
-            for robot_id in self._configs_by_id
-            if f"{robot_id}:current" in self._urdfs
+            self._model_has_collision_geometry(self._models_by_id[model_key])
+            for model_key in self._configs_by_id
+            if f"{model_key}:current" in self._urdfs
         )
 
     @staticmethod
@@ -420,22 +419,26 @@ class ViserManipulationScene:
         self._grid_visible = visible
         self._set_handle_visibility(self._grid_handle, visible)
 
-    def register_robot(self, robot_id: str, config: RobotModelConfig) -> None:
-        self._configs_by_id[robot_id] = config
-        self._preview_visible.setdefault(robot_id, False)
-        self._animation_generations.setdefault(robot_id, 0)
-        self._target_active.setdefault(robot_id, False)
-        self._target_tracks_current.setdefault(robot_id, True)
-        if robot_id not in self._models_by_id:
-            self._models_by_id[robot_id] = self._load_robot_model(config)
-        self._ensure_robot_urdfs(robot_id, config)
+    def _register_model_key(self, model_key: str, config: RobotModelConfig) -> None:
+        self._configs_by_id[model_key] = config
+        self._preview_visible.setdefault(model_key, False)
+        self._animation_generations.setdefault(model_key, 0)
+        self._target_active.setdefault(model_key, False)
+        self._target_tracks_current.setdefault(model_key, True)
+        if model_key not in self._models_by_id:
+            self._models_by_id[model_key] = self._load_robot_model(config)
+        self._ensure_robot_urdfs(model_key, config)
 
-    def set_target_active(self, robot_id: str, active: bool) -> None:
+    def register_model(self, config: RobotModelConfig) -> None:
+        """Register the one configured model."""
+        self._register_model_key("model", config)
+
+    def set_target_active(self, model_key: str, active: bool) -> None:
         """Show the target ghost only while a pose-target group is selected."""
-        self._target_active[robot_id] = active
+        self._target_active[model_key] = active
         if not active:
-            self._target_tracks_current[robot_id] = True
-        self._set_target_visibility(robot_id, active)
+            self._target_tracks_current[model_key] = True
+        self._set_target_visibility(model_key, active)
 
     def _ensure_reference_grid(self) -> None:
         try:
@@ -467,13 +470,13 @@ class ViserManipulationScene:
             self._grid_handle = None
 
     def ensure_target_controls(
-        self, robot_id: str, on_update: Callable[[TransformControlsHandle], None]
+        self, model_key: str, on_update: Callable[[TransformControlsHandle], None]
     ) -> TransformControlsHandle | None:
-        handle_key = f"{robot_id}:ee_control"
+        handle_key = f"{model_key}:ee_control"
         if handle_key in self._handles:
             return self._handles[handle_key]
         handle = self.server.scene.add_transform_controls(
-            f"/targets/{robot_id}/ee_control", scale=0.25
+            f"/targets/{model_key}/ee_control", scale=0.25
         )
 
         def dispatch(event: TransformControlsEvent) -> None:
@@ -486,136 +489,100 @@ class ViserManipulationScene:
     def remove_target_controls(self, control_id: str) -> None:
         self._remove_handle(f"{control_id}:ee_control")
 
-    def update_current_robot(self, robot_id: str, joint_state: JointState | None) -> None:
+    def _update_current_model_key(self, model_key: str, joint_state: JointState | None) -> None:
         with self._scene_lock:
-            config = self._configs_by_id.get(robot_id)
+            config = self._configs_by_id.get(model_key)
             if config is None or joint_state is None:
                 return
-            self._ensure_robot_urdfs(robot_id, config)
-            current = self._urdfs.get(f"{robot_id}:current")
+            self._ensure_robot_urdfs(model_key, config)
+            current = self._urdfs.get(f"{model_key}:current")
             self.set_urdf_joints(current, config.joint_names, joint_state.position)
-            if self._target_tracks_current.get(robot_id, True):
-                self._set_target_joints(robot_id, config.joint_names, joint_state.position)
-                self._set_target_visibility(robot_id, self._target_active.get(robot_id, False))
+            if self._target_tracks_current.get(model_key, True):
+                self._set_target_joints(model_key, config.joint_names, joint_state.position)
+                self._set_target_visibility(model_key, self._target_active.get(model_key, False))
         self.set_urdf_joints(
-            self._collision_fallback_urdfs.get(robot_id),
+            self._collision_fallback_urdfs.get(model_key),
             config.joint_names,
             joint_state.position,
         )
 
-    def cancel_preview_animation(self, robot_ids: Sequence[str] | None = None) -> None:
+    def update_current_model(self, joint_state: JointState | None) -> None:
+        """Update the one configured model's canonical joint state."""
+        self._update_current_model_key("model", joint_state)
+
+    def cancel_preview_animation(self) -> None:
         """Prevent an old blocking animation from touching replacement handles."""
         with self._scene_lock:
             self._animation_generation += 1
-            affected = set(robot_ids) if robot_ids is not None else set(self._preview_visible)
-            for robot_id in affected:
-                self._animation_generations[robot_id] = (
-                    self._animation_generations.get(robot_id, 0) + 1
+            for model_key in set(self._preview_visible):
+                self._animation_generations[model_key] = (
+                    self._animation_generations.get(model_key, 0) + 1
                 )
-                if robot_id not in self._preview_visible:
+                if model_key not in self._preview_visible:
                     continue
-                self._preview_visible[robot_id] = False
-                self._set_preview_visibility(robot_id, False)
+                self._preview_visible[model_key] = False
+                self._set_preview_visibility(model_key, False)
 
-    def animate_preview(self, preview: GroupPreviewAnimation, duration: float) -> bool:
-        """Play every robot from one normalized tick clock.
+    def animate_preview(self, preview: PreviewAnimation, duration: float) -> bool:
+        """Play the model preview from one normalized tick clock.
 
         Inputs are fully validated before ghosts become visible; a generation
         replacement, clear, or close stops mutation before the next tick.
         """
-        frames = {track.robot_id: track.frames for track in preview.tracks}
-        names = {track.robot_id: track.joint_names for track in preview.tracks}
-        if (
-            not frames
-            or len(frames) != len(preview.tracks)
-            or any(
-                not values or robot_id not in self._configs_by_id
-                for robot_id, values in frames.items()
-            )
-        ):
-            return False
-        tick_times = preview_tick_times(preview)
-        if not tick_times:
+        model_key = "model"
+        if not preview.frames or model_key not in self._configs_by_id:
             return False
         with self._scene_lock:
             self._animation_generation += 1
-            generations: dict[str, int] = {}
-            for robot_id in frames:
-                self._animation_generations[robot_id] = (
-                    self._animation_generations.get(robot_id, 0) + 1
-                )
-                generations[robot_id] = self._animation_generations[robot_id]
-                self._preview_visible[robot_id] = True
-                self._set_preview_visibility(robot_id, True)
+            generation = self._animation_generations.get(model_key, 0) + 1
+            self._animation_generations[model_key] = generation
+            self._preview_visible[model_key] = True
+            self._set_preview_visibility(model_key, True)
         try:
-            delays = scaled_frame_delays(
-                tuple(
-                    PreviewFrame(time_from_start=tick_time, positions=())
-                    for tick_time in tick_times
-                ),
-                duration,
-            )
-            frame_indices = {robot_id: 0 for robot_id in frames}
-            for tick, tick_time in enumerate(tick_times):
+            delays = scaled_frame_delays(preview.frames, duration)
+            for index, frame in enumerate(preview.frames):
                 with self._scene_lock:
-                    active_robot_ids = [
-                        robot_id
-                        for robot_id in frames
-                        if self._animation_generations.get(robot_id) == generations[robot_id]
-                    ]
-                    if not active_robot_ids:
+                    if self._animation_generations.get(model_key) != generation:
                         return False
-                    for robot_id in active_robot_ids:
-                        robot_frames = frames[robot_id]
-                        while (
-                            frame_indices[robot_id] + 1 < len(robot_frames)
-                            and robot_frames[frame_indices[robot_id] + 1].time_from_start
-                            <= tick_time
-                        ):
-                            frame_indices[robot_id] += 1
-                        source = frame_indices[robot_id]
-                        self._set_preview_ghost_joints(
-                            robot_id, names[robot_id], robot_frames[source].positions
-                        )
-                if tick < len(delays):
-                    time.sleep(delays[tick])
+                    self._set_preview_ghost_joints(model_key, preview.joint_names, frame.positions)
+                if index < len(delays):
+                    time.sleep(delays[index])
             return True
         finally:
             with self._scene_lock:
-                for robot_id in frames:
-                    if self._animation_generations.get(robot_id) == generations[robot_id]:
-                        self._preview_visible[robot_id] = False
-                        self._set_preview_visibility(robot_id, False)
+                if self._animation_generations.get(model_key) == generation:
+                    self._preview_visible[model_key] = False
+                    self._set_preview_visibility(model_key, False)
 
     def set_target_joints(
-        self, robot_id: str, joint_names: Sequence[str], joints: Sequence[float]
+        self, model_key: str, joint_names: Sequence[str], joints: Sequence[float]
     ) -> bool:
-        target = self._urdfs.get(f"{robot_id}:target")
+        target = self._urdfs.get(f"{model_key}:target")
         if target is None:
             return False
-        self._target_tracks_current[robot_id] = False
-        self._set_target_joints(robot_id, joint_names, joints)
-        self._set_target_visibility(robot_id, True)
+        self._target_tracks_current[model_key] = False
+        self._set_target_joints(model_key, joint_names, joints)
+        self._set_target_visibility(model_key, True)
         return True
 
-    def clear_target(self, robot_id: str) -> None:
+    def clear_target(self, model_key: str) -> None:
         """Return the persistent target ghost to current-state tracking."""
-        self._target_tracks_current[robot_id] = True
+        self._target_tracks_current[model_key] = True
 
     def _set_target_joints(
-        self, robot_id: str, joint_names: Sequence[str], joints: Sequence[float]
+        self, model_key: str, joint_names: Sequence[str], joints: Sequence[float]
     ) -> None:
-        target = self._urdfs.get(f"{robot_id}:target")
+        target = self._urdfs.get(f"{model_key}:target")
         self.set_urdf_joints(target, joint_names, joints)
 
     def _set_preview_ghost_joints(
-        self, robot_id: str, joint_names: Sequence[str], joints: Sequence[float]
+        self, model_key: str, joint_names: Sequence[str], joints: Sequence[float]
     ) -> None:
-        ghost = self._urdfs.get(f"{robot_id}:preview")
+        ghost = self._urdfs.get(f"{model_key}:preview")
         self.set_urdf_joints(ghost, joint_names, joints)
 
-    def set_target_pose(self, robot_id: str, pose: Pose | None) -> None:
-        handle = self._handles.get(f"{robot_id}:ee_control")
+    def set_target_pose(self, model_key: str, pose: Pose | None) -> None:
+        handle = self._handles.get(f"{model_key}:ee_control")
         if handle is None or pose is None:
             return
         handle.position = (
@@ -630,10 +597,10 @@ class ViserManipulationScene:
             float(pose.orientation.z),
         )
 
-    def set_target_visual_state(self, robot_id: str, feasible: bool) -> None:
-        """Set the legacy matching robot/control target visual state."""
-        self.set_target_control_visual_state(robot_id, feasible)
-        self.set_target_robot_visual_state(robot_id, feasible)
+    def set_target_visual_state(self, model_key: str, feasible: bool) -> None:
+        """Set the matching model and control target visual state."""
+        self.set_target_control_visual_state(model_key, feasible)
+        self.set_target_robot_visual_state(model_key, feasible)
 
     def set_target_control_visual_state(self, control_id: str, feasible: bool) -> None:
         """Set feasibility color for one planning-group keyed target control."""
@@ -642,11 +609,11 @@ class ViserManipulationScene:
         if handle is not None:
             cast("_ColorHandle", handle).color = color
 
-    def set_target_robot_visual_state(self, robot_id: str, feasible: bool) -> None:
+    def set_target_robot_visual_state(self, model_key: str, feasible: bool) -> None:
         """Set feasibility material for one robot-ID keyed target ghost."""
         mesh_color = GOAL_ROBOT_FEASIBLE_COLOR if feasible else GOAL_ROBOT_INFEASIBLE_COLOR
         mesh_opacity = GOAL_ROBOT_FEASIBLE_OPACITY if feasible else GOAL_ROBOT_INFEASIBLE_OPACITY
-        target = self._urdfs.get(f"{robot_id}:target")
+        target = self._urdfs.get(f"{model_key}:target")
         self._set_urdf_mesh_material(target, mesh_color, mesh_opacity)
 
     def close(self) -> None:
@@ -686,15 +653,15 @@ class ViserManipulationScene:
             self._target_tracks_current.clear()
             self._robot_display_mode = RobotDisplayMode.VISUAL
 
-    def _ensure_robot_urdfs(self, robot_id: str, config: RobotModelConfig) -> None:
-        model = self._models_by_id.get(robot_id)
+    def _ensure_robot_urdfs(self, model_key: str, config: RobotModelConfig) -> None:
+        model = self._models_by_id.get(model_key)
         if model is None:
             return
         for kind in ("current", "target", "preview"):
-            key = f"{robot_id}:{kind}"
+            key = f"{model_key}:{kind}"
             if key in self._urdfs:
                 continue
-            root_node_name = self._urdf_root_node_name(robot_id, kind, config)
+            root_node_name = self._urdf_root_node_name(model_key, kind, config)
             mesh_color_override = {
                 "current": None,
                 "target": GOAL_ROBOT_MESH_COLOR,
@@ -703,7 +670,7 @@ class ViserManipulationScene:
             if kind == "current":
                 # Keep both representations resident so changing the diagnostic
                 # view does not reload or replace the primary robot.
-                old_fallback = self._collision_fallback_urdfs.pop(robot_id, None)
+                old_fallback = self._collision_fallback_urdfs.pop(model_key, None)
                 if old_fallback is not None:
                     self._remove_scene_handle(old_fallback)
                 urdf = self.viser_urdf(
@@ -734,7 +701,7 @@ class ViserManipulationScene:
                     fallback = self.viser_urdf(
                         self.server,
                         urdf_or_path=model,
-                        root_node_name=f"/robots/{robot_id}/collision_fallback",
+                        root_node_name=f"/robots/{model_key}/collision_fallback",
                         mesh_color_override=(
                             *COLLISION_MESH_COLOR,
                             COLLISION_MESH_OPACITY,
@@ -742,34 +709,34 @@ class ViserManipulationScene:
                         load_meshes=True,
                         load_collision_meshes=False,
                     )
-                    self._collision_fallback_urdfs[robot_id] = fallback
+                    self._collision_fallback_urdfs[model_key] = fallback
                     self._joint_names_by_urdf[id(fallback)] = tuple(
                         str(name) for name in model.actuated_joint_names
                     )
                     self._set_urdf_mesh_material(
                         fallback, COLLISION_MESH_COLOR, COLLISION_MESH_OPACITY
                     )
-                self._apply_robot_display_mode(robot_id)
+                self._apply_robot_display_mode(model_key)
             if kind == "target":
                 self._set_urdf_mesh_material(
                     self._urdfs[key], GOAL_ROBOT_FEASIBLE_COLOR, GOAL_ROBOT_FEASIBLE_OPACITY
                 )
                 self._set_handle_visibility(
-                    self._urdfs[key], self._target_active.get(robot_id, False)
+                    self._urdfs[key], self._target_active.get(model_key, False)
                 )
             elif kind == "preview":
                 self._set_urdf_mesh_material(
                     self._urdfs[key], PREVIEW_ROBOT_COLOR, PREVIEW_ROBOT_OPACITY
                 )
                 self._set_handle_visibility(
-                    self._urdfs[key], self._preview_visible.get(robot_id, False)
+                    self._urdfs[key], self._preview_visible.get(model_key, False)
                 )
 
-    def _apply_robot_display_mode(self, robot_id: str) -> None:
-        current = self._urdfs.get(f"{robot_id}:current")
+    def _apply_robot_display_mode(self, model_key: str) -> None:
+        current = self._urdfs.get(f"{model_key}:current")
         if current is None:
             return
-        model = self._models_by_id.get(robot_id)
+        model = self._models_by_id.get(model_key)
         if model is None:
             return
         has_collision = self._model_has_collision_geometry(model)
@@ -782,7 +749,7 @@ class ViserManipulationScene:
             RobotDisplayMode.COLLISION,
             RobotDisplayMode.BOTH,
         }
-        fallback = self._collision_fallback_urdfs.get(robot_id)
+        fallback = self._collision_fallback_urdfs.get(model_key)
         if fallback is not None:
             fallback.show_visual = mode in {
                 RobotDisplayMode.COLLISION,
@@ -795,9 +762,8 @@ class ViserManipulationScene:
             )
 
     def loaded_robot_description(self, config: RobotModelConfig) -> LoadedRobotModel:
-        description = config.model.load()
         description = prepare_urdf_for_drake(
-            description,
+            config.model.load(),
             convert_meshes=bool(config.auto_convert_meshes),
         )
         description = self._strip_visualization_world_root_attachment(config, description)
@@ -806,8 +772,7 @@ class ViserManipulationScene:
 
     @staticmethod
     def _strip_visualization_world_root_attachment(
-        config: RobotModelConfig,
-        description: LoadedRobotModel,
+        config: RobotModelConfig, description: LoadedRobotModel
     ) -> LoadedRobotModel:
         """Detach a model-owned world root only for Viser base-pose rendering."""
         urdf_content = description.xml
@@ -850,18 +815,9 @@ class ViserManipulationScene:
 
     @staticmethod
     def _assert_base_link_is_urdf_root(
-        config: RobotModelConfig,
-        description: LoadedRobotModel,
+        config: RobotModelConfig, description: LoadedRobotModel
     ) -> None:
-        root = ET.fromstring(description.xml)
-        links = {link.get("name") for link in root.findall("link")}
-        child_links = {
-            child.get("link")
-            for joint in root.findall("joint")
-            if (child := joint.find("child")) is not None
-        }
-        root_links = links - child_links
-        root_link = next(iter(root_links)) if len(root_links) == 1 else ""
+        root_link = description.root_link
         if root_link == config.base_link:
             return
         raise ValueError(
@@ -869,26 +825,26 @@ class ViserManipulationScene:
             f"the prepared URDF root '{root_link}' because base_pose is applied to the URDF root"
         )
 
-    def _urdf_root_node_name(self, robot_id: str, kind: str, config: RobotModelConfig) -> str:
+    def _urdf_root_node_name(self, model_key: str, kind: str, config: RobotModelConfig) -> str:
         root_node_name = {
-            "current": f"/robots/{robot_id}/current",
-            "target": f"/targets/{robot_id}/target",
-            "preview": f"/previews/{robot_id}/ghost",
+            "current": f"/robots/{model_key}/current",
+            "target": f"/targets/{model_key}/target",
+            "preview": f"/previews/{model_key}/ghost",
         }[kind]
         if not self._has_non_identity_base_pose(config):
             return root_node_name
-        self._ensure_base_pose_frame(robot_id, kind, config)
+        self._ensure_base_pose_frame(model_key, kind, config)
         return f"{root_node_name}/base_pose/urdf"
 
-    def _ensure_base_pose_frame(self, robot_id: str, kind: str, config: RobotModelConfig) -> None:
-        key = f"{robot_id}:{kind}:base_pose"
+    def _ensure_base_pose_frame(self, model_key: str, kind: str, config: RobotModelConfig) -> None:
+        key = f"{model_key}:{kind}:base_pose"
         if key in self._root_frames:
             return
         pose = config.base_pose
         frame_name = {
-            "current": f"/robots/{robot_id}/current/base_pose",
-            "target": f"/targets/{robot_id}/target/base_pose",
-            "preview": f"/previews/{robot_id}/ghost/base_pose",
+            "current": f"/robots/{model_key}/current/base_pose",
+            "target": f"/targets/{model_key}/target/base_pose",
+            "preview": f"/previews/{model_key}/ghost/base_pose",
         }[kind]
         self._root_frames[key] = self.server.scene.add_frame(
             frame_name,
@@ -954,11 +910,11 @@ class ViserManipulationScene:
     def viser_actuated_joint_names(self, urdf: ViserUrdf) -> tuple[str, ...]:
         return self._joint_names_by_urdf.get(id(urdf), ())
 
-    def _set_preview_visibility(self, robot_id: str, visible: bool) -> None:
-        self._set_handle_visibility(self._urdfs.get(f"{robot_id}:preview"), visible)
+    def _set_preview_visibility(self, model_key: str, visible: bool) -> None:
+        self._set_handle_visibility(self._urdfs.get(f"{model_key}:preview"), visible)
 
-    def _set_target_visibility(self, robot_id: str, visible: bool) -> None:
-        self._set_handle_visibility(self._urdfs.get(f"{robot_id}:target"), visible)
+    def _set_target_visibility(self, model_key: str, visible: bool) -> None:
+        self._set_handle_visibility(self._urdfs.get(f"{model_key}:target"), visible)
 
     def _set_handle_visibility(self, handle: SceneHandle | None, visible: bool) -> None:
         if handle is None:

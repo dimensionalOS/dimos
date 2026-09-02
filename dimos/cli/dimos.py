@@ -52,6 +52,7 @@ from dimos.cli.cloud import login as cloud_login, logout as cloud_logout, whoami
 from dimos.cli.commands.apriltag import apriltag
 from dimos.cli.commands.bake import bake
 from dimos.cli.commands.cameracalibrate import cameracalibrate
+from dimos.cli.commands.data import data_app
 from dimos.cli.commands.dataprep import dataprep_app
 from dimos.cli.commands.docs import docs
 from dimos.cli.commands.global_options import create_dynamic_callback
@@ -76,29 +77,34 @@ main = typer.Typer(
 load_dotenv()
 
 SIMULATORS = ("mujoco", "dimsim")
+RECORDERS = ("sqlite",)
+
+# Flags with an optional value; bare `--flag` means the first choice.
+OPTIONAL_VALUE_FLAGS = {
+    "--simulation": SIMULATORS,
+    "--record": RECORDERS,
+}
 
 
-def _normalize_simulation_argv(argv: list[str]) -> list[str]:
-    """Keep `--simulation` backwards compatible.
-
-    Without an argument it should be `mujoco`, but can be overridden.
-    """
+def normalize_argv(argv: list[str]) -> list[str]:
     out: list[str] = []
     for arg, nxt in zip(argv, [*argv[1:], None], strict=False):
         out.append(arg)
-        if arg == "--simulation" and nxt not in SIMULATORS:
-            out.append(SIMULATORS[0])
+        choices = OPTIONAL_VALUE_FLAGS.get(arg)
+        if choices and nxt not in choices:
+            out.append(choices[0])
     return out
 
 
 def cli_main() -> None:
-    sys.argv = _normalize_simulation_argv(sys.argv)
+    sys.argv = normalize_argv(sys.argv)
     main()
 
 
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 hardware_app.add_typer(can_app, name="can")
 main.add_typer(hardware_app, name="hardware")
+main.add_typer(data_app, name="data")
 main.add_typer(go2tool_app, name="go2tool")
 main.command()(shell)
 main.add_typer(cache_app, name="cache")

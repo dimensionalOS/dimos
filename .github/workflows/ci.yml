@@ -4,6 +4,12 @@ on:
     branches: [main]
   pull_request:
   merge_group:
+  workflow_dispatch:
+    inputs:
+      force-cachix-build:
+        description: Publish to Cachix even if the inputs marker says nothing changed
+        type: boolean
+        default: false
 
 concurrency:
   # Cancels runs from previous pushes in a PR.
@@ -38,6 +44,125 @@ jobs:
           fi
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
+  cachix-build-check:
+    # Mirror check in cachix-build to skip forks.
+    if: |
+      !cancelled() &&
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository)
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+    env:
+      CACHIX_CACHE_NAME: dimensionalos
+    outputs:
+      needs-build: ${{ steps.decide.outputs.needs-build }}
+      inputs-hash: ${{ steps.hash.outputs.inputs-hash }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Compute native-module inputs hash
+        id: hash
+        run: python3 bin/build-native-modules --inputs-hash
+      - name: Probe publish marker
+        id: marker
+        uses: actions/cache/restore@v6
+        with:
+          path: .cachix-marker
+          key: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ steps.hash.outputs.inputs-hash }}
+          lookup-only: true
+      - name: Decide whether a publish is needed
+        id: decide
+        env:
+          FORCE: ${{ inputs.force-cachix-build }}
+          MARKER_HIT: ${{ steps.marker.outputs.cache-hit }}
+        run: |
+          if [ "$FORCE" != "true" ] && [ "$MARKER_HIT" = "true" ]; then
+            echo "needs-build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs-build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  cachix-build:
+    # ⚠️ NEVER RUN ON UNTRUSTED (fork) CODE ⚠️
+    # This job has write access to CACHIX_AUTH_TOKEN. Any workflow change that
+    # reaches a `run:` step here could exfiltrate the token, letting an attacker
+    # push poisoned binaries to the Cachix cache — which subsequent CI runs and
+    # every dev with the substituter configured would unwittingly install.
+    # Allowed only on trusted events: push, merge_group (a maintainer must
+    # approve + queue the PR), and same-repo PRs — NEVER on fork `pull_request`s.
+    # The `if:` guard below is the only thing keeping forks out — DO NOT REMOVE.
+    # merge_group runs the PR's *merged* workflow with secrets, so .github/
+    # changes must be reviewed before a fork PR is queued.
+    #
+    # Gated on cachix-build-check so an entry into the `cachix` environment
+    # always corresponds to a real publish — see that job for why.
+    if: |
+      !cancelled() &&
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.cachix-build-check.outputs.needs-build == 'true'
+    needs: cachix-build-check
+    timeout-minutes: 300
+    environment: cachix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Free runner disk space
+        uses: BRAINSia/free-disk-space@v2.1.3
+      - name: Install Nix (with Cachix substituter)
+        env:
+          INPUT_EXTRA_NIX_CONFIG: |
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          INPUT_SET_AS_TRUSTED_USER: "true"
+        run: bash docker/ros/install-nix.sh
+      - name: Cache Nix fetcher + eval cache
+        # ~/.cache/nix holds the flake fetcher cache (the github tarballs of
+        # each `nix build github:…` ref) and the eval cache (compiled flake
+        # outputs). ~/.local/state/nix holds profile/gcroot bookkeeping.
+        # Restoring these skips the ~20s/module evaluation cost, which is
+        # paid every cold run otherwise. /nix/store is intentionally NOT
+        # cached here — that's the slow heavy part that Cachix handles.
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/nix
+            ~/.local/state/nix
+          key: nix-fetcher-build-${{ runner.os }}-${{ hashFiles('bin/build-native-modules', '**/flake.lock', '**/flake.nix') }}
+          restore-keys: nix-fetcher-build-${{ runner.os }}-
+      - name: Authenticate Cachix
+        uses: cachix/cachix-action@v17
+        with:
+          name: dimensionalos
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Build native modules
+        env:
+          BUILD_WORKERS: "1"
+        run: python3 bin/build-native-modules
+      - name: Verify Cachix holds the built paths
+        env:
+          CACHIX_CACHE_NAME: dimensionalos
+        run: python3 bin/build-native-modules --verify-published
+      - name: Record the published inputs manifest
+        # Forensics for the marker saved below: the manifest names every tree
+        # hash behind the inputs-hash this publish ran for.
+        env:
+          CACHIX_CACHE_NAME: dimensionalos
+        run: |
+          mkdir -p .cachix-marker
+          python3 bin/build-native-modules --inputs-hash \
+            > .cachix-marker/inputs-hash.txt 2> .cachix-marker/manifest.txt
+      - name: Save publish marker
+        uses: actions/cache/save@v6
+        with:
+          path: .cachix-marker
+          key: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
+
   lint:
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -48,9 +173,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
       - name: Mypy
@@ -82,24 +208,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      - name: Find Cargo workspace roots
-        id: find-crates
-        run: |
-          crates=$(find . -name Cargo.lock \
-            -not -path './target/*' \
-            -not -path './.venv/*' \
-            -not -path './node_modules/*' \
-            -not -path './.git/*' \
-            -printf '%h\n' \
-            | sed 's|^\./||' \
-            | sort)
-          echo "Found Rust workspace roots:"
-          echo "$crates"
-          {
-            echo "crates<<EOF"
-            echo "$crates"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -107,46 +215,32 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ${{ steps.find-crates.outputs.crates }}
-          # The bake e2e's generated crate: caching it keeps its Cargo.lock, so
-          # dependency resolution stays pinned, and its target dir of built deps.
-          cache-directories: target/dimos-bake
-          key: bake-e2e
+          # Only main writes the cache, so a PR run cannot evict main's entry
+          # from the repo's 10GB budget. PR runs still restore from it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo fmt
-        env:
-          CRATES: ${{ steps.find-crates.outputs.crates }}
-        run: |
-          for crate in $CRATES; do
-            (cd "$crate" && cargo fmt --all -- --check)
-          done
+        run: cargo fmt --all -- --check
       - name: cargo clippy
-        env:
-          CRATES: ${{ steps.find-crates.outputs.crates }}
-        run: |
-          for crate in $CRATES; do
-            (cd "$crate" && cargo clippy --workspace --all-targets --all-features --locked -- -D warnings)
-          done
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: cargo test
-        env:
-          CRATES: ${{ steps.find-crates.outputs.crates }}
-        run: |
-          for crate in $CRATES; do
-            (cd "$crate" && cargo test --workspace --all-features --locked)
-          done
+        run: cargo test --workspace --all-features --locked
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Install dependency for pyaudio
         run: |
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev
       - name: Build and test PyO3 bindings
+        # PyO3 extension modules (cdylib + `extension-module`) are the one case
+        # that still needs a plain build: pytest imports the compiled .so.
         run: |
           uv sync --group tests --frozen
           source .venv/bin/activate
-          maturin develop -m dimos/mapping/ray_tracing/rust/Cargo.toml
-          maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/Cargo.toml
+          maturin develop -m dimos/mapping/ray_tracing/rust/py/Cargo.toml
+          maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/py/Cargo.toml
           python -c "import dimos_voxel_ray_tracing, dimos_mls_planner"
           python -m pytest -c /dev/null --rootdir . --noconftest --import-mode=importlib -p no:cacheprovider -v \
             dimos/mapping/ray_tracing/test_voxel_map.py \
@@ -249,9 +343,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libturbojpeg portaudio19-dev
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - uses: actions/setup-node@v7
         with:
           node-version: 'lts/*'
@@ -339,6 +434,14 @@ jobs:
         working-directory: web
         run: deno task test
 
+      - name: SDK type-check
+        working-directory: web/sdk
+        run: deno task check
+
+      - name: SDK vitest
+        working-directory: web/sdk
+        run: deno task test
+
       - name: Cockpit type-check
         working-directory: web/cockpit
         run: deno task check
@@ -347,17 +450,22 @@ jobs:
         working-directory: web/cockpit
         run: deno task test
 
+      - name: SDK bundle build
+        working-directory: web/sdk
+        run: deno task build
+
       - name: Cockpit build
         working-directory: web/cockpit
         run: deno task build
 
       # ---- Browser e2e: dimos run --local-relay + Playwright on the dist ----
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Setup Python
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
       - name: Install native dependencies (pyaudio build, JPEG encoding)
@@ -370,10 +478,18 @@ jobs:
         run: uv sync --group tests --group browser-tests --frozen
       - name: Install Playwright browsers  # the e2e runs in both engines
         run: uv run playwright install --with-deps chromium firefox
-      - name: Cockpit browser e2e
-        run: uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py --no-cov
+      - name: Cockpit + SDK browser e2e
+        run: >-
+          uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py
+          dimos/e2e_tests/test_sdk_browser.py
+          dimos/e2e_tests/test_custom_channel_browser.py --no-cov
 
   tests:
+    if: |
+      !cancelled() &&
+      contains(fromJSON('["success", "skipped"]'), needs.cachix-build-check.result) &&
+      contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
+    needs: [cachix-build-check, cachix-build]
     timeout-minutes: 20
     strategy:
       matrix:
@@ -404,11 +520,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Setup Python
-        uses: actions/setup-python@v6.3.0
+        uses: actions/setup-python@v7.0.0
         with:
           allow-prereleases: true
           python-version: ${{ matrix.pyver }}
@@ -490,8 +607,10 @@ jobs:
     # self-hosted runner to untrusted code from external contributors.
     if: |
       !cancelled() &&
-      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)
-    needs: [compute-ros-pin]
+      (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.cachix-build-check.result == 'success' &&
+      contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
+    needs: [compute-ros-pin, cachix-build-check, cachix-build]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -506,7 +625,7 @@ jobs:
           - os: Linux
             # GitHub Actions only honours `container:` on Linux runners.
             container:
-              image: ghcr.io/dimensionalos/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
+              image: dimensional/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
               # Hard-cap container RAM so a runaway test OOMs inside the container, not
               # as a host global-OOM that takes out sshd/tmux.
               options: --memory=6g --memory-swap=6g
@@ -526,7 +645,6 @@ jobs:
     continue-on-error: ${{ matrix.experimental }}
     permissions:
       contents: read  # For checkout
-      packages: read  # For pulling the ros-dev container from ghcr.io
       id-token: write  # For codecov-action's OIDC upload
     container: ${{ matrix.container }}
 
@@ -552,7 +670,7 @@ jobs:
         if: matrix.os == 'Linux'
         run: echo "UV_CACHE_DIR=$(dirname "$RUNNER_WORKSPACE")/uv-cache" >> "$GITHUB_ENV"
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           # We persist on disk above, cache would clean some of this up.
           enable-cache: false
@@ -586,6 +704,36 @@ jobs:
             echo "ROS_VERSION=$ROS_VERSION"
             echo "ROS_PYTHON_VERSION=$ROS_PYTHON_VERSION"
           } >> "$GITHUB_ENV"
+      - name: Install Nix (with Cachix substituter)
+        if: contains(matrix.markers, 'skipif_no_ros')
+        # /nix is bind-mounted from the self-hosted runner's host filesystem
+        # (see this job's matrix container.volumes). On warm runs Nix is
+        # already installed; install-nix.sh's `type -p nix` check will exit
+        # early, but only if the profile bin is on PATH — prepend it before
+        # calling. If /nix is empty (first job on a fresh runner), nix isn't
+        # on PATH and the install proceeds normally. After install-nix.sh,
+        # we unconditionally (re-)write /etc/nix/nix.conf: on warm runs
+        # install-nix.sh exited before it would have written the config,
+        # which leaves `experimental-features = nix-command flakes` absent
+        # and the build dying with "experimental Nix feature 'nix-command'
+        # is disabled". Writing it here keeps cold and warm runs identical.
+        run: |
+          export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+          bash docker/ros/install-nix.sh
+          sudo mkdir -p /etc/nix
+          sudo tee /etc/nix/nix.conf > /dev/null <<'EOF'
+          experimental-features = nix-command flakes
+          extra-substituters = https://dimensionalos.cachix.org
+          extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          always-allow-substitutes = true
+          build-users-group =
+          # Substitute-only: everything should be compiled already and stored in Cachix.
+          max-jobs = 0
+          EOF
+          echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
+      - name: Fetch native modules from Cachix
+        if: contains(matrix.markers, 'skipif_no_ros')
+        run: python3 bin/build-native-modules
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
@@ -650,7 +798,11 @@ jobs:
   self-hosted-large-tests:
     # Skip on PRs from forks which would expose the self-hosted runner to untrusted code from external contributors.
     if: |
-      github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      needs.cachix-build-check.result == 'success' &&
+      contains(fromJSON('["success", "skipped"]'), needs.cachix-build.result)
+    needs: [cachix-build-check, cachix-build]
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -662,7 +814,6 @@ jobs:
     runs-on: [self-hosted, Linux, large]
     permissions:
       contents: read  # For checkout
-      packages: read  # For pulling the ros-dev container from ghcr.io
       id-token: write  # For codecov-action's OIDC upload
 
     steps:
@@ -689,7 +840,7 @@ jobs:
           git lfs pull --include="misc/DimSim/**"
           git config --local --unset-all http.https://github.com/.extraheader
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           # We persist on disk, cache would clean some of this up.
           enable-cache: false

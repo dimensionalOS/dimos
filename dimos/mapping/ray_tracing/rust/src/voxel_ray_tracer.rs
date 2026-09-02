@@ -90,6 +90,12 @@ pub struct Config {
     /// stray far hit cannot inflate it.
     #[validate(range(min = 0.0, max = 100.0))]
     pub region_percentile: f32,
+    /// Fixed frame clouds are registered and published in.
+    #[validate(length(min = 1))]
+    pub world_frame: String,
+    /// Max stamp gap between a cloud and the transform used to register it (s).
+    #[validate(range(exclusive_min = 0.0))]
+    pub tf_match_tolerance_s: f64,
     /// Worker threads for parallel map work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
@@ -129,6 +135,12 @@ fn split_fine_key(fine_key: VoxelKey, divisor: i32) -> (VoxelKey, usize) {
     let ly = fine_key.1.rem_euclid(divisor);
     let lz = fine_key.2.rem_euclid(divisor);
     (coarse, ((lx * divisor + ly) * divisor + lz) as usize)
+}
+
+/// The voxel a fine key belongs to.
+#[inline]
+pub fn coarse_of_fine(fine_key: VoxelKey, divisor: i32) -> VoxelKey {
+    split_fine_key(fine_key, divisor).0
 }
 
 /// Rebuild a fine key from its voxel key and flat child index.
@@ -297,6 +309,32 @@ impl VoxelMap {
         self.update_health_index(key, was_healthy, now_healthy);
         if was_healthy != now_healthy {
             self.propagate_neighbor_support(key, if now_healthy { 1 } else { -1 });
+        }
+        removed
+    }
+
+    /// Delete voxels outright, whatever their health, keeping the healthy-chunk
+    /// index and every neighbor's `support` count in sync. Unknown keys are
+    /// skipped. Returns how many voxels were removed.
+    ///
+    /// This is the escape hatch for space a sensor cannot ray-trace clear: a
+    /// wrist camera's own arm occludes the volume behind it, so no ray ever
+    /// fires a miss there and the arm's own returns would sit in the map
+    /// forever. A caller that knows those keys are free names them here.
+    pub fn clear_voxels(&mut self, keys: impl IntoIterator<Item = VoxelKey>) -> usize {
+        let mut removed = 0;
+        for key in keys {
+            let Some(voxel) = self.voxels.remove(&key) else {
+                continue;
+            };
+            // The fine-cell bitmask rides inside the removed voxel, so the fine
+            // layer needs no separate cleanup.
+            let was_healthy = voxel.health > 0;
+            self.update_health_index(key, was_healthy, false);
+            if was_healthy {
+                self.propagate_neighbor_support(key, -1);
+            }
+            removed += 1;
         }
         removed
     }
@@ -967,6 +1005,19 @@ fn world_to_voxel(x: f32, y: f32, z: f32, inv: f32) -> VoxelKey {
         (y * inv).floor() as i32,
         (z * inv).floor() as i32,
     )
+}
+
+/// Quantize world-frame metric points to voxel keys the same way returns are
+/// quantized, so a caller naming voxels by position lands on the ones the map
+/// actually holds.
+pub fn metric_voxel_keys(
+    points: impl IntoIterator<Item = (f32, f32, f32)>,
+    voxel_size: f32,
+) -> impl Iterator<Item = VoxelKey> {
+    let inv = 1.0 / voxel_size;
+    points
+        .into_iter()
+        .map(move |(x, y, z)| world_to_voxel(x, y, z, inv))
 }
 
 /// Fine cells of `key` crossed by the ray segment between `t0` and `t1`,

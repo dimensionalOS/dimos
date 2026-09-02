@@ -36,12 +36,15 @@ from typing import (
 )
 from urllib.parse import urlparse
 
+import numpy as np
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TfFrameTree, TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
@@ -357,6 +360,10 @@ class RerunBridgeModule(Module):
                     rr.log(path, archetype)
             return
 
+        if isinstance(msg, CameraInfo) and entity_path not in self.config.visual_override:
+            self._log_camera_info(entity_path, msg)
+            return
+
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
 
         if not rerun_data:
@@ -368,6 +375,8 @@ class RerunBridgeModule(Module):
                 rr.log(path, archetype)
         else:
             rr.log(entity_path, cast("Archetype", rerun_data))
+            if isinstance(msg, Image):
+                self._image_entities.add(entity_path)
             # if source msg carries a frame_id, attach the entity to that TF frame
             # should skip if archetype is a Transform3D
             if not isinstance(rerun_data, rr.Transform3D):
@@ -375,6 +384,25 @@ class RerunBridgeModule(Module):
                 if frame_id and self._frame_attached.get(entity_path) != frame_id:
                     rr.log(entity_path, rr.Transform3D(parent_frame=f"tf#/{frame_id}"))
                     self._frame_attached[entity_path] = frame_id
+                    if isinstance(msg, Image) and frame_id in self._camera_infos:
+                        rr.log(entity_path, self._camera_infos[frame_id].to_rerun_pinhole())
+
+    def _log_camera_info(self, entity_path: str, info: CameraInfo) -> None:
+        """A CameraInfo is the pinhole of every image in its optical frame.
+
+        Rerun draws the frustum only when the Pinhole sits on the image entity,
+        so the info is paired with images by frame_id rather than logged on
+        its own topic; an image that arrives later picks it up on attach.
+        """
+        import rerun as rr
+
+        if not info.frame_id:
+            rr.log(entity_path, info.to_rerun_pinhole())
+            return
+        self._camera_infos[info.frame_id] = info
+        for image_path, frame_id in self._frame_attached.items():
+            if frame_id == info.frame_id and image_path in self._image_entities:
+                rr.log(image_path, info.to_rerun_pinhole())
 
     @rpc
     def start(self) -> None:
@@ -386,6 +414,8 @@ class RerunBridgeModule(Module):
 
         self._last_log = {}
         self._frame_attached = {}
+        self._camera_infos: dict[str, CameraInfo] = {}
+        self._image_entities: set[str] = set()
         self._tf_tree = self._new_tf_tree()
         self._min_intervals: dict[str, float] = {
             entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
@@ -601,7 +631,7 @@ class RerunBridgeModule(Module):
             rr.GraphNodes(
                 node_ids=node_ids,
                 labels=node_labels,
-                colors=node_colors,
+                colors=np.asarray(node_colors, dtype=np.uint32),
                 positions=positions,
                 radii=radii,
                 show_labels=True,
