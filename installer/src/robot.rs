@@ -10,8 +10,10 @@ use serde::Serialize;
 use socket2::{Domain, Protocol, Socket, Type};
 
 use crate::cli::ScanArgs;
-use crate::plan::{say, text, Ctx, Mode};
+use crate::plan::text;
 use crate::probe::{capture, Os, Probes};
+use crate::run::{Ctx, Mode};
+use crate::say;
 
 const GROUP: Ipv4Addr = Ipv4Addr::new(231, 1, 1, 1);
 const QUERY_PORT: u16 = 10131;

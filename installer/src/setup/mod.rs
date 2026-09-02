@@ -15,8 +15,10 @@ use anyhow::{bail, Context, Result};
 
 use crate::cli::{InstallMode, SetupArgs};
 use crate::pkgs::{self, Platforms, DIMOS_VERSION, EXTRAS};
-use crate::plan::{self, say, text, Ctx, Plan, Stage};
+use crate::plan::{text, Plan, Stage};
 use crate::probe::{self, Arch, Os, PkgManager, Platform, Probes};
+use crate::run::{self, Ctx};
+use crate::say;
 use crate::state::{self, Installed};
 
 const GIB: u64 = 1024 * 1024 * 1024;
@@ -185,8 +187,8 @@ fn stages(
 
 /// An unreadable binary hashes to nothing, so the copy is planned rather than silently skipped.
 fn self_install_stage(probes: &Probes, home: &Path) -> Stage {
-    let own = plan::sha256_hex(&probes.current_exe).unwrap_or_default();
-    let installed = plan::sha256_hex(&state::installed_bin(home)).ok();
+    let own = run::sha256_hex(&probes.current_exe).unwrap_or_default();
+    let installed = run::sha256_hex(&state::installed_bin(home)).ok();
     self_install::stage(
         &probes.current_exe,
         home,
@@ -312,7 +314,7 @@ pub fn run(
     let target = resolve_target(args, prior, &cwd, probes.platform.arch, cfg, ctx)?;
     preflight(&target, probes)?;
     let steps = plan(&target, probes, cfg, home)?;
-    let report = plan::run(&steps, ctx)?;
+    let report = run::run(&steps, ctx)?;
     report.print(ctx);
     if !ctx.dry_run {
         state::save(home, &record(&target, probes, prior))?;
@@ -326,8 +328,8 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::Mode;
     use crate::probe::{Gpu, Kernel, Tools};
+    use crate::run::Mode;
     use crate::state::{ActionLog, PlatformSummary, TmpDir};
     use crate::sudo::Sudo;
 

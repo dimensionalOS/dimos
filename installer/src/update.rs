@@ -9,8 +9,10 @@ use anyhow::{bail, Result};
 use crate::cli::{HardwareSetupArgs, InstallMode, UpdateArgs};
 use crate::hardware::{self, Robot};
 use crate::pkgs::{self, Platforms, DIMOS_VERSION};
-use crate::plan::{self, say, text, Action, Ctx, Outcome, Plan, Report, Stage};
+use crate::plan::{text, Action, Outcome, Plan, Stage};
 use crate::probe::{capture, Probes};
+use crate::run::{self, Ctx, Report};
+use crate::say;
 use crate::setup::g1::G1Observed;
 use crate::setup::{deps, g1, install, jetson, sysconfig, verify};
 use crate::state::{self, Installed};
@@ -451,7 +453,7 @@ pub fn rollback(ctx: &mut Ctx, home: &Path) -> Result<i32> {
         stages: vec![Stage::new("rollback", true).push(Action::Rename { from: bak, to: bin })],
         notes: Vec::new(),
     };
-    let report = plan::run(&steps, ctx)?;
+    let report = run::run(&steps, ctx)?;
     report.print(ctx);
     Ok(report.exit_code())
 }
@@ -473,7 +475,7 @@ pub fn run(
     };
     let obs = observe(&installed, args, override_url().as_deref(), home);
     let steps = plan(&installed, args, probes, cfg, &obs, home);
-    let report = plan::run(&steps, ctx)?;
+    let report = run::run(&steps, ctx)?;
     report.print(ctx);
     if ctx.dry_run {
         say::warn(NOT_VERIFIED);
@@ -610,7 +612,7 @@ mod tests {
 
     fn ctx(home: &Path, dry_run: bool) -> Ctx {
         Ctx {
-            mode: crate::plan::Mode::NonInteractive,
+            mode: crate::run::Mode::NonInteractive,
             dry_run,
             verbose: false,
             yes: true,
@@ -953,7 +955,7 @@ mod tests {
             &Observed::default(),
             home.path(),
         );
-        let report = plan::run(&steps, &mut ctx(home.path(), true)).expect("dry run");
+        let report = run::run(&steps, &mut ctx(home.path(), true)).expect("dry run");
         assert_eq!(dry_run_exit(&report), 0, "{:?}", report.stages);
     }
 
@@ -1014,6 +1016,6 @@ mod tests {
             &g1_observed(home.path()),
             home.path(),
         );
-        assert!(plan::sudo_env_violations(&steps).is_empty());
+        assert!(run::sudo_env_violations(&steps).is_empty());
     }
 }

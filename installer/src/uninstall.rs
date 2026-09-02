@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::plan::{self, Action, Ctx, Plan, Stage};
+use crate::plan::{self, Action, Plan, Stage};
+use crate::run::{self, Ctx};
 use crate::service;
 use crate::setup::g1::CDDS_MARKER;
 use crate::setup::self_install::PATH_MARKER;
@@ -152,7 +153,7 @@ fn installer_stage(existing: &Existing, home: &Path) -> Stage {
 }
 
 pub fn run(ctx: &mut Ctx, home: &Path) -> Result<i32> {
-    let report = plan::run(&plan(&observe(home), home), ctx)?;
+    let report = run::run(&plan(&observe(home), home), ctx)?;
     report.print(ctx);
     Ok(report.exit_code())
 }

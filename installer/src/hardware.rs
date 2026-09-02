@@ -8,8 +8,10 @@ use anyhow::{bail, Result};
 
 use crate::cli::{HardwareSetupArgs, HardwareTarget, HardwareVerb};
 use crate::pkgs::{self, Platforms};
-use crate::plan::{self, say, Ctx, Plan, Report, Stage};
+use crate::plan::{Plan, Stage};
 use crate::probe::{Arch, Os, Probes};
+use crate::run::{self, Ctx, Report};
+use crate::say;
 use crate::setup::{deps, g1, jetson, sysconfig, verify};
 use crate::state::{self, HardwareRun, Installed};
 
@@ -66,7 +68,7 @@ pub fn run(
         Robot::G1 => g1_setup(args, probes, cfg, &installed, home),
         Robot::Jetson => jetson_plan(args, probes, cfg, &installed),
     };
-    let report = plan::run(&steps, ctx)?;
+    let report = run::run(&steps, ctx)?;
     report.print(ctx);
     if !ctx.dry_run {
         state::save(home, &recorded(robot, args, &installed, &report))?;
@@ -314,8 +316,9 @@ mod tests {
     use clap::Parser;
 
     use crate::cli::{Cli, Command, InstallMode};
-    use crate::plan::{Action, Mode, Outcome, Stage};
+    use crate::plan::{self, Action, Outcome, Stage};
     use crate::probe::{Gpu, Jetson, Kernel, PkgManager, Platform, RcFile, Tools};
+    use crate::run::Mode;
     use crate::state::{ActionLog, PlatformSummary, TmpDir, SCHEMA};
     use crate::sudo::Sudo;
 
@@ -904,7 +907,7 @@ mod tests {
             g1_plan_of(&fresh_g1(), &fresh_obs(), &cfg),
             jetson_plan(&args(), &fresh_g1(), &cfg, &installed(&["base"])),
         ] {
-            assert!(plan::sudo_env_violations(&plan).is_empty(), "{plan:?}");
+            assert!(run::sudo_env_violations(&plan).is_empty(), "{plan:?}");
         }
     }
 }

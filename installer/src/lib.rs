@@ -1,4 +1,4 @@
-//! The DimOS installer. Every command builds a `plan::Plan` from `probe::Probes`; `plan::run`
+//! The DimOS installer. Every command builds a `plan::Plan` from `probe::Probes`; `run::run`
 //! is the only place that mutates the machine or reads stdin. Probes spawn read-only commands
 //! through `probe::capture`, each with a deadline.
 
@@ -9,6 +9,8 @@ pub mod pkgs;
 pub mod plan;
 pub mod probe;
 pub mod robot;
+pub mod run;
+pub mod say;
 pub mod service;
 pub mod setup;
 pub mod state;

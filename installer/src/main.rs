@@ -12,8 +12,10 @@ use dimos_installer::cli::{
     hardware_argv, Cli, Command, HardwareTarget, RobotAction, ServiceAction,
 };
 use dimos_installer::pkgs::Platforms;
-use dimos_installer::plan::{self, say, Action, Ctx, Plan, Stage};
+use dimos_installer::plan::{Action, Plan, Stage};
 use dimos_installer::probe::Probes;
+use dimos_installer::run::{self, Ctx};
+use dimos_installer::say;
 use dimos_installer::setup::g1;
 use dimos_installer::state::{self, LastRun};
 use dimos_installer::{forward, hardware, robot, service, setup, uninstall, update};
@@ -120,7 +122,7 @@ fn service_run(action: &ServiceAction, ctx: &mut Ctx, probes: &Probes, home: &Pa
         return Ok(2);
     };
     let steps = service::plan(action, installed, &probes.platform, cdds_home(home))?;
-    let report = plan::run(&steps, ctx)?;
+    let report = run::run(&steps, ctx)?;
     report.print(ctx);
     Ok(report.exit_code())
 }
@@ -159,7 +161,7 @@ fn clear_backup(ctx: &mut Ctx, home: &Path, command: &Command) -> Result<()> {
         })],
         notes: Vec::new(),
     };
-    plan::run(&steps, ctx).map(|_| ())
+    run::run(&steps, ctx).map(|_| ())
 }
 
 /// The verb installer.json's `last` records; a scan saves nothing, and a forward never returns.

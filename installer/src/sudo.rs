@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 
-use crate::plan::{self, Mode};
 use crate::probe;
+use crate::run::{self, Mode};
 
 const NO_SUDO: &str =
     "sudo is not installed: run as root, or install sudo (apt-get install -y sudo)";
@@ -64,7 +64,7 @@ impl Sudo {
             sudo_n_ok(),
             askpass(),
             env_password(),
-            mode == Mode::Interactive && crate::plan::stdin_is_tty(),
+            mode == Mode::Interactive && crate::run::stdin_is_tty(),
             validate,
         )
     }
@@ -215,7 +215,7 @@ fn validate(secret: &Secret) -> bool {
     if let Some(mut pipe) = child.stdin.take() {
         let _ = pipe.write_all(format!("{}\n", secret.expose()).as_bytes());
     }
-    plan::wait_until(&mut child, Duration::from_secs(VALIDATE_TIMEOUT_S))
+    run::wait_until(&mut child, Duration::from_secs(VALIDATE_TIMEOUT_S))
         .ok()
         .flatten()
         .is_some_and(|s| s.success())

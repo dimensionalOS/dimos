@@ -170,8 +170,8 @@ pub fn nix_stage(tools: &Tools, home: &Path, with_nix: bool) -> Stage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::sudo_env_violations;
     use crate::probe::{Arch, Gpu, Os, Platform, Probes};
+    use crate::run::sudo_env_violations;
     use std::path::PathBuf;
 
     fn platform(pkg: PkgManager) -> Platform {

@@ -13,6 +13,7 @@ use anyhow::{bail, Context, Result};
 use serde::Serialize;
 
 use crate::plan;
+use crate::run;
 use crate::state::{self, Installed, PlatformSummary};
 
 /// L4T release prefix -> JetPack, from NVIDIA's L4T archive; a longer prefix must come first.
@@ -154,7 +155,7 @@ pub fn capture(
         let _ = pipe.read_to_string(&mut out);
         out
     });
-    let status = plan::wait_until(&mut child, Duration::from_secs(timeout_s)).ok()??;
+    let status = run::wait_until(&mut child, Duration::from_secs(timeout_s)).ok()??;
     let out = reader.join().ok()?;
     status.success().then(|| out.trim().to_string())
 }
