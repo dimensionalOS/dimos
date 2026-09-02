@@ -15,7 +15,7 @@
 
 """Gap between things you could pass through — VQA over the go2 replays.
 
-Rows (``go2_pointcloud_gap_width_vqa.json``) are pure data emitted by
+Rows (``go2_pointcloud_gap_width.json``) are pure data emitted by
 :func:`rows` — ground truth by single-linkage grouping of the
 full-resolution returns, quizzing whatever lossy encoding the agent receives
 for a ``PointCloud2``.
@@ -47,7 +47,7 @@ from scipy.spatial import cKDTree
 from dimos.evals.suites.lib import generate
 from dimos.evals.types import Suite
 
-_JSON = Path(__file__).parent / "go2_pointcloud_gap_width_vqa.json"
+_JSON = Path(__file__).parent / "go2_pointcloud_gap_width.json"
 
 SUITE: Suite = generate.cases(json.loads(_JSON.read_text()), tags=frozenset({"pointcloud"}))
 

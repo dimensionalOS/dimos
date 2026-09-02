@@ -15,7 +15,7 @@
 
 """Gap-crossing VQA over the go2 replays — the glass probe.
 
-Rows (``go2_pointcloud_glass_vqa.json``) are pure data emitted by :func:`rows`.
+Rows (``go2_pointcloud_glass.json``) are pure data emitted by :func:`rows`.
 Each case names one coordinate and asks whether the robot could stand there.
 The body-height cloud leaves a robot-width gap at every one; half are floor,
 half are glass.
@@ -43,7 +43,7 @@ import numpy as np
 from dimos.evals.suites.lib import generate
 from dimos.evals.types import Suite
 
-_JSON = Path(__file__).parent / "go2_pointcloud_glass_vqa.json"
+_JSON = Path(__file__).parent / "go2_pointcloud_glass.json"
 
 SUITE: Suite = generate.cases(json.loads(_JSON.read_text()), tags=frozenset({"pointcloud"}))
 

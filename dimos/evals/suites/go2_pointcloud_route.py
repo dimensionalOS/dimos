@@ -15,7 +15,7 @@
 
 """Path-to-goal VQA over the go2 replays, in sensing terms.
 
-Rows (``go2_pointcloud_route_vqa.json``) are pure data emitted by
+Rows (``go2_pointcloud_route.json``) are pure data emitted by
 :func:`rows` — ground truth a flood fill over the full-resolution cloud,
 quizzing whatever lossy encoding the agent receives for a ``PointCloud2``.
 
@@ -51,7 +51,7 @@ from scipy import ndimage
 from dimos.evals.suites.lib import generate
 from dimos.evals.types import Suite
 
-_JSON = Path(__file__).parent / "go2_pointcloud_route_vqa.json"
+_JSON = Path(__file__).parent / "go2_pointcloud_route.json"
 
 SUITE: Suite = generate.cases(json.loads(_JSON.read_text()), tags=frozenset({"pointcloud"}))
 
