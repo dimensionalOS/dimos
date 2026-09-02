@@ -9,9 +9,9 @@ name = "dim_slam"
 path = "src/main.rs"
 
 [dependencies]
-# branch, not rev: nix's fetchGit only searches the ref the url names, so a bare rev on a
-# side branch is unfetchable. Cargo.lock still pins the exact commit.
-dim_slam = { git = "https://github.com/dimensionalOS/dimSLAM", branch = "fused_odom" }
+# tag, not rev: nix's fetchGit only searches the ref the url names, so a bare rev is
+# unfetchable. Cargo.lock still pins the exact commit.
+dim_slam = { git = "https://github.com/dimensionalOS/dimSLAM", tag = "v0.4.0" }
 # Unused directly, but cargo hands DEP_CUVSLAM_LIB_DIR only to immediate dependents
 # and build.rs needs it for the rpath.
 cu_vslam_rs = "0.2.0"
