@@ -82,7 +82,9 @@ class StreamingModule(Module):
 @pytest.fixture
 def mcp_server():
     """Start a blueprint with StreamingModule + McpServer, wait for readiness."""
-    global_config.update(viewer="none")
+    # Keep the integration test hermetic: Zenoh peer discovery can block when
+    # stale peers from another local run are still finalizing.
+    global_config.update(viewer="none", transport="lcm")
     blueprint = autoconnect(StreamingModule.blueprint(), McpServer.blueprint())
     coordinator = ModuleCoordinator.build(blueprint)
 
@@ -527,7 +529,7 @@ def tool_helper_module(mocker):
     mocker.patch.object(LCMRPC, "__init__", return_value=None)
     mocker.patch.object(LCMRPC, "serve_module_rpc")
     mocker.patch.object(LCMRPC, "start")
-    module = _ToolHelperTestModule()
+    module = _ToolHelperTestModule(rpc_transport=LCMRPC)
     yield module, mock_transport
     module._close_all_tools()
 

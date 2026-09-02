@@ -206,3 +206,68 @@ class TestSkillDecoratorTiming:
         assert sentinel.duration_ms == 999.0  # untouched
         # Decorator overwrites with actual measured elapsed (very small).
         assert result.duration_ms != 999.0
+
+
+class TestRetryabilityIsDerived:
+    """Whether a retry helps is a property of the evidence, not the author."""
+
+    def test_an_author_cannot_set_it(self):
+        import dataclasses
+
+        names = {f.name for f in dataclasses.fields(SkillResult)}
+
+        assert "retryable" not in names
+
+    def test_a_non_terminal_reason_carries_the_capability_that_clears_it(self):
+        from dimos.experimental.memory_belief.answer import UnknownReason
+
+        result = SkillResult(success=False, unknown_reason=UnknownReason.INCOHERENT)
+
+        assert result.retryable is True
+        assert result.suggested_capability == "observe_place"
+
+    def test_a_terminal_reason_is_not_worth_retrying(self):
+        from dimos.experimental.memory_belief.answer import UnknownReason
+
+        result = SkillResult(success=False, unknown_reason=UnknownReason.NO_CAPABILITY)
+
+        assert result.retryable is False
+        assert result.suggested_capability is None
+
+    def test_success_has_no_opinion_about_retrying(self):
+        assert SkillResult(success=True).retryable is None
+
+    def test_a_failure_with_no_stated_reason_says_it_does_not_know(self):
+        """Better an admitted unknown than a fabricated True or False."""
+        assert SkillResult(success=False, error_code="EXECUTION_FAILED").retryable is None
+
+
+class TestStructuredFailureReachesTheAgent:
+    def test_the_reason_is_encoded_as_structure_not_prose(self):
+        """Deciding what to do next must not require matching a message string."""
+        import json
+
+        from dimos.experimental.memory_belief.answer import UnknownReason
+
+        result = SkillResult(success=False, unknown_reason=UnknownReason.INCOHERENT)
+        payload = json.loads(result.agent_encode()[0]["text"])
+
+        assert payload["unknown_reason"] == "INCOHERENT"
+        assert payload["retryable"] is True
+        assert payload["suggested_capability"] == "observe_place"
+
+    def test_evidence_is_encoded_when_present(self):
+        import json
+
+        result = SkillResult(success=True, evidence=(("color_image", 42),))
+        payload = json.loads(result.agent_encode()[0]["text"])
+
+        assert payload["evidence"] == [{"stream": "color_image", "id": 42}]
+
+    def test_a_plain_result_is_unchanged(self):
+        """The 60-odd skills returning bare results must not grow noise."""
+        import json
+
+        payload = json.loads(SkillResult.ok("done").agent_encode()[0]["text"])
+
+        assert set(payload) == {"success", "message", "error_code", "duration_ms"}

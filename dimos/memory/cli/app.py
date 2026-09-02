@@ -33,9 +33,35 @@ def rerun(
     root: str = typer.Option(
         None, "--root", help="Nest every stream under this entity path (<root>/<name>)"
     ),
+    view: str = typer.Option(
+        None,
+        "--view",
+        help="module:function returning a rerun_config, e.g. "
+        "dimos.robot.unitree.go2.belief_rerun:go2_belief_rerun_config",
+    ),
 ) -> None:
     """Render a memory store into rerun (writes a .rrd, then opens the viewer)."""
     from dimos.memory.cli.dataset import open_dataset
     from dimos.memory.cli.render import render_store
 
-    render_store(open_dataset(path), out=out, seconds=seconds, no_gui=no_gui, root=root)
+    # `module:function`, the same form `all_blueprints` uses, so a robot's view
+    # lives with the robot instead of needing a registry here or a script of its
+    # own. Called rather than passed as a value: a config carries closures and a
+    # shared dict would leak one robot's statics into the next one's view.
+    rerun_config = None
+    if view:
+        import importlib
+
+        module_path, _, attr = view.partition(":")
+        if not attr:
+            raise typer.BadParameter("expected module:function", param_hint="--view")
+        rerun_config = getattr(importlib.import_module(module_path), attr)()
+
+    render_store(
+        open_dataset(path),
+        out=out,
+        seconds=seconds,
+        no_gui=no_gui,
+        root=root,
+        rerun_config=rerun_config,
+    )

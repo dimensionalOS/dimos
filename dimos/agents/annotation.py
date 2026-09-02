@@ -66,7 +66,51 @@ def _stamp_and_log(func_name: str, result: Any, elapsed_ms: float) -> Any:
         # Not a SkillResult — we can't verify the outcome, so don't claim "OK".
         code = "UNKNOWN"
     logger.info("SKILL %s result=%s duration_ms=%.1f", func_name, code, elapsed_ms)
+    _trace_skill(func_name, result, code, elapsed_ms)
     return result
+
+
+def _trace_skill(func_name: str, result: Any, code: str, elapsed_ms: float) -> None:
+    """Record one skill outcome, if an agent trace is open.
+
+    The single point every skill passes through, which makes it the only place
+    the refusal taxonomy can be collected without touching ninety-odd call
+    sites. Silent outside a trace, so background perception at 15 Hz costs
+    nothing and does not drown the traces that matter.
+    """
+    from dimos.utils.tracing import enabled, span
+
+    if not enabled():
+        return
+    from dimos.agents.skill_result import SkillResult
+
+    attributes: dict[str, Any] = {
+        "skill_name": func_name,
+        "outcome": code,
+        "duration_ms": round(elapsed_ms, 1),
+    }
+    if isinstance(result, SkillResult):
+        reason = result.unknown_reason
+        if reason is not None:
+            # The whole point of the belief layer: why it could not answer, and
+            # what would fix it. Without these a refusal is indistinguishable
+            # from a crash on a dashboard.
+            attributes["belief_unknown_reason"] = reason.name
+            attributes["belief_suggested_capability"] = result.suggested_capability
+            attributes["belief_retryable"] = result.retryable
+            attributes["belief_needs_revisit"] = reason.needs_revisit
+        attributes["belief_evidence_count"] = len(result.evidence)
+        # `quality` is what the query layer actually attaches: row count,
+        # support, dispersion and whether the rows were deduplicated. A loop
+        # over `coverage` and `staleness_s` stood here, reading two fields that
+        # no skill has ever set.
+        quality = result.metadata.get("quality")
+        if isinstance(quality, dict):
+            for field in ("rows", "support", "dispersion_m", "deduplicated"):
+                if field in quality:
+                    attributes[f"belief_{field}"] = quality[field]
+    with span(f"skill:{func_name}", as_type="tool", **attributes):
+        pass
 
 
 def _make_skill(func: F, uses: list[str], lifecycle: SkillLifecycle) -> F:

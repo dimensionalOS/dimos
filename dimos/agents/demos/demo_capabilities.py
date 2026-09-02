@@ -19,15 +19,13 @@ import time
 from typing import Any
 
 from dimos.agents.annotation import skill
-from dimos.agents.capabilities import CAP_MOVEMENT
+from dimos.agents.capabilities import CAP_MOVEMENT, CAP_PAYLOAD
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
-
-CAP_PAYLOAD = "payload"
 
 DEMO_CAPABILITIES_PROMPT = """
 You are controlling a simulated warehouse inspection robot.

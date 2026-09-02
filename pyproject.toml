@@ -235,6 +235,10 @@ agents = [
     "langchain-ollama>=1,<2",
     "ollama>=0.6.0",
     "openevals>=0.1",  # eval scorers (LLM-as-judge etc.) — dimos/evals
+    # Agent tracing (dimos/utils/tracing.py). Optional at runtime: without it
+    # _client() returns None and everything continues untraced, which is why its
+    # absence had gone unnoticed.
+    "langfuse>=3",
 
     # Audio
     "openai",

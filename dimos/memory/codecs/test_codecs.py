@@ -22,9 +22,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, ConfigDict
 import pytest
 
-from dimos.memory.codecs.base import Codec, codec_for
+from dimos.memory.codecs.base import Codec, codec_for, codec_from_id, codec_id
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.pickle import PickleCodec
@@ -156,15 +157,71 @@ def _jpeg_case() -> Case | None:
     )
 
 
+@dataclass(frozen=True)
+class _JsonInner:
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    label: str
+    weight: float
+
+
+@dataclass(frozen=True)
+class _JsonRecord:
+    """Stand-in for a derived record: versioned, nested, strict."""
+
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    schema_version: str
+    name: str
+    count: int
+    parts: tuple[_JsonInner, ...] = ()
+    note: str | None = None
+
+
+class _JsonModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str
+    value: int
+
+
+def _json_values() -> list[_JsonRecord]:
+    return [
+        _JsonRecord(schema_version="1", name="empty", count=0),
+        _JsonRecord(
+            schema_version="1",
+            name="nested",
+            count=2,
+            parts=(_JsonInner(label="a", weight=1.5), _JsonInner(label="b", weight=-0.25)),
+            note="with a note",
+        ),
+    ]
+
+
+def _json_case() -> Case:
+    from dimos.memory.codecs.json import JsonCodec
+
+    return Case(name="json", codec=JsonCodec(_JsonRecord), values=_json_values())
+
+
+def _lz4_json_case() -> Case:
+    from dimos.memory.codecs.json import JsonCodec
+    from dimos.memory.codecs.lz4 import Lz4Codec
+
+    return Case(name="lz4+json", codec=Lz4Codec(JsonCodec(_JsonRecord)), values=_json_values())
+
+
 _case_factories = {
     "pickle": _pickle_case,
     "lcm": _lcm_case,
     "lz4+pickle": _lz4_pickle_case,
     "lz4+lcm": _lz4_lcm_case,
     "jpeg": _jpeg_case,
+    "json": _json_case,
+    "lz4+json": _lz4_json_case,
 }
 
-case_params: list[Any] = ["pickle", "lcm", "lz4+pickle", "lz4+lcm"]
+case_params: list[Any] = ["pickle", "lcm", "lz4+pickle", "lz4+lcm", "json", "lz4+json"]
 if _turbojpeg_available():
     case_params.append("jpeg")
 
@@ -216,3 +273,101 @@ class TestCodecFor:
         from dimos.memory.codecs.jpeg import JpegCodec
 
         assert isinstance(codec_for(Image), JpegCodec)
+
+    def test_json_is_never_auto_selected(self) -> None:
+        """Opt-in only: auto-selecting it would silently change existing streams."""
+        from dimos.memory.codecs.json import JsonCodec
+
+        assert not isinstance(codec_for(_JsonRecord), JsonCodec)
+
+
+class TestJsonCodecContracts:
+    """The two construction-time contracts, and why each exists."""
+
+    def test_rejects_type_that_allows_unknown_fields(self) -> None:
+        from dimos.memory.codecs.json import JsonCodec
+
+        @dataclass(frozen=True)
+        class Lax:
+            schema_version: str
+
+        with pytest.raises(TypeError, match="extra='forbid'"):
+            JsonCodec(Lax)
+
+    def test_rejects_type_without_a_version_field(self) -> None:
+        from dimos.memory.codecs.json import JsonCodec
+
+        @dataclass(frozen=True)
+        class Unversioned:
+            __pydantic_config__ = ConfigDict(extra="forbid")
+
+            name: str
+
+        with pytest.raises(TypeError, match="schema_version"):
+            JsonCodec(Unversioned)
+
+    def test_version_requirement_can_be_waived(self) -> None:
+        from dimos.memory.codecs.json import JsonCodec
+
+        @dataclass(frozen=True)
+        class Unversioned:
+            __pydantic_config__ = ConfigDict(extra="forbid")
+
+            name: str
+
+        codec = JsonCodec(Unversioned, version_field=None)
+        assert codec.decode(codec.encode(Unversioned(name="x"))) == Unversioned(name="x")
+
+    def test_unknown_field_on_decode_raises(self) -> None:
+        """A field a newer writer added must surface, not vanish."""
+        from dimos.memory.codecs.json import JsonCodec
+
+        codec = JsonCodec(_JsonRecord)
+        payload = b'{"schema_version":"1","name":"x","count":1,"parts":[],"from_the_future":7}'
+        with pytest.raises(Exception, match="from_the_future"):
+            codec.decode(payload)
+
+    def test_missing_required_field_on_decode_raises(self) -> None:
+        from dimos.memory.codecs.json import JsonCodec
+
+        codec = JsonCodec(_JsonRecord)
+        with pytest.raises(Exception, match="count"):
+            codec.decode(b'{"schema_version":"1","name":"x"}')
+
+    def test_pydantic_model_is_supported(self) -> None:
+        from dimos.memory.codecs.json import JsonCodec
+
+        codec = JsonCodec(_JsonModel)
+        value = _JsonModel(schema_version="1", value=7)
+        assert codec.decode(codec.encode(value)) == value
+
+    def test_output_is_human_readable_json(self) -> None:
+        """The whole point over pickle: another tool can read it."""
+        import json as json_module
+
+        from dimos.memory.codecs.json import JsonCodec
+
+        encoded = JsonCodec(_JsonRecord).encode(_json_values()[1])
+        assert json_module.loads(encoded)["parts"][0]["label"] == "a"
+
+
+class TestJsonCodecRegistry:
+    """A stream stored as json must be reopenable from its recorded codec id."""
+
+    def test_codec_id_is_json(self) -> None:
+        from dimos.memory.codecs.json import JsonCodec
+
+        assert codec_id(JsonCodec(_JsonRecord)) == "json"
+
+    def test_lz4_wrapper_id_roundtrips(self) -> None:
+        from dimos.memory.codecs.json import JsonCodec
+        from dimos.memory.codecs.lz4 import Lz4Codec
+
+        assert codec_id(Lz4Codec(JsonCodec(_JsonRecord))) == "lz4+json"
+
+    @pytest.mark.parametrize("cid", ["json", "lz4+json"])
+    def test_rebuilt_from_id_still_roundtrips(self, cid: str) -> None:
+        module = f"{_JsonRecord.__module__}.{_JsonRecord.__qualname__}"
+        codec = codec_from_id(cid, module)
+        value = _json_values()[1]
+        assert codec.decode(codec.encode(value)) == value

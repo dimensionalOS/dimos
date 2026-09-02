@@ -105,6 +105,10 @@ def _make_one(name: str, payload_module: str, inner: Codec[Any] | None = None) -
         from dimos.memory.codecs.lcm import LcmCodec
 
         return LcmCodec(resolve_payload_type(payload_module))
+    if name == "json":
+        from dimos.memory.codecs.json import JsonCodec
+
+        return JsonCodec(resolve_payload_type(payload_module))
     if name == "pickle":
         from dimos.memory.codecs.pickle import PickleCodec
 
