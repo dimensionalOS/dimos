@@ -66,6 +66,8 @@ class OpenArmTeleopCoordinatorConfig(ControlCoordinatorConfig):
     enable_base: bool = False
     # Portal RPC "host:port"; None takes the flowbase adapter default.
     base_address: str | None = None
+    # Adds the pillar lift as read-only hardware so its joint is observed.
+    enable_pillar: bool = False
 
 
 class OpenArmTeleopCoordinator(TeleopControlCoordinator):
@@ -102,6 +104,10 @@ class OpenArmTeleopCoordinator(TeleopControlCoordinator):
                     address=self.config.base_address,
                 )
             )
+        if self.config.enable_pillar:
+            from dimos.robot.diy.alfred.pillar_connection import pillar_hardware
+
+            self.config.hardware.append(pillar_hardware())
         super()._setup_from_config()
 
 
@@ -149,16 +155,22 @@ _openarm_quest_task = TaskConfig(
 
 
 def teleop_quest_openarm_blueprint(
-    *, publish_joint_targets: bool = False, enable_base: bool = False
+    *,
+    publish_joint_targets: bool = False,
+    enable_base: bool = False,
+    enable_pillar: bool = False,
+    teleop_module_cls: type[ArmTeleopModule] | None = None,
 ) -> Blueprint:
     """The OpenArm Quest teleop stack, with optional coordinator extras.
 
     Safe default: both controllers feed one bimanual task backed by in-memory
     hardware. Supplying both CAN ports selects the physical adapter. With
     enable_base the flowbase joins the coordinator and the thumbsticks drive
-    it: right stick translates, left stick yaws.
+    it: right stick translates, left stick yaws. With enable_pillar the lift
+    joint is observed through the coordinator.
     """
-    teleop_module_cls = ArmBaseTeleopModule if enable_base else ArmTeleopModule
+    if teleop_module_cls is None:
+        teleop_module_cls = ArmBaseTeleopModule if enable_base else ArmTeleopModule
     base_tasks = (
         [
             TaskConfig(
@@ -177,6 +189,7 @@ def teleop_quest_openarm_blueprint(
             instance_name="ControlCoordinator",
             publish_joint_targets=publish_joint_targets,
             enable_base=enable_base,
+            enable_pillar=enable_pillar,
             tasks=[
                 _openarm_quest_task,
                 TaskConfig(

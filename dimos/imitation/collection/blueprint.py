@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from functools import partial
+import time
+from typing import Any
 
 import numpy as np
 from reactivex.disposable import Disposable
@@ -46,13 +48,25 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.core.transport import LCMTransport
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.robot.diy.alfred.pillar_connection import (
+    PILLAR_HARDWARE_ID,
+    PILLAR_MAX_POSITION_M,
+    PILLAR_MIN_POSITION_M,
+    PillarConnection,
+)
 from dimos.robot.manipulators.openarm.blueprints.teleop import teleop_quest_openarm_blueprint
 from dimos.robot.manipulators.openarm.homing_module import OpenArmHomingModule
 from dimos.teleop.quest.blueprints import (
     teleop_quest_piper,
     teleop_quest_xarm7,
 )
-from dimos.teleop.quest.quest_types import Buttons
+from dimos.teleop.quest.quest_extensions import ArmBaseTeleopConfig, ArmBaseTeleopModule
+from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 def _session_db(robot: str) -> str:
@@ -192,6 +206,114 @@ def _usb_camera(name: str, device: str) -> Blueprint:
     )
 
 
+class AlfredLiftTeleopConfig(ArmBaseTeleopConfig):
+    lift_speed_m_s: float = 0.01
+    lift_deadzone: float = 0.25
+    lift_engage_center_tolerance: float = 0.15
+    lift_command_hz: float = 5.0
+
+
+class AlfredLiftTeleopModule(ArmBaseTeleopModule):
+    """Base driving plus a click-gated pillar lift mode on the left stick.
+
+    A left thumbstick click with both deadman grips released and both sticks
+    centered toggles lift mode. In lift mode the base is frozen (zero twist
+    every tick) and the left stick's vertical axis jogs the pillar slowly
+    through its position RPC. A second click, or grabbing either deadman,
+    exits the mode, stops the pillar, and drops every internal target.
+    """
+
+    config: AlfredLiftTeleopConfig
+
+    _pillar: PillarConnection
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._lift_mode = False
+        self._lift_target: float | None = None
+        self._lift_press_was_down = False
+        self._last_lift_rpc_t = 0.0
+        self._last_drive_t: float | None = None
+
+    def _exit_lift_mode(self) -> None:
+        self._lift_mode = False
+        self._lift_target = None
+        try:
+            self._pillar.stop_motion()
+        except Exception:
+            logger.exception("Pillar stop failed on lift mode exit")
+        logger.info("Lift mode off")
+
+    def _try_enter_lift_mode(
+        self,
+        left: QuestControllerState,
+        right: QuestControllerState | None,
+    ) -> None:
+        tol = self.config.lift_engage_center_tolerance
+        sticks = [left.thumbstick.x, left.thumbstick.y]
+        if right is not None:
+            sticks += [right.thumbstick.x, right.thumbstick.y]
+        if any(abs(v) > tol for v in sticks):
+            logger.warning("Ignoring lift mode click while a stick is deflected")
+            return
+        try:
+            status = self._pillar.get_status()
+        except Exception:
+            logger.exception("Pillar status unavailable, staying out of lift mode")
+            return
+        if not status.get("homed") or status.get("position_m") is None:
+            logger.warning("Pillar is not homed, run PillarConnection.home() first")
+            return
+        self._lift_target = float(status["position_m"])
+        self._lift_mode = True
+        logger.info("Lift mode on at %.3f m", self._lift_target)
+
+    def _handle_base_drive(
+        self,
+        left: QuestControllerState | None,
+        right: QuestControllerState | None,
+    ) -> None:
+        now = time.monotonic()
+        dt = 0.0 if self._last_drive_t is None else min(now - self._last_drive_t, 0.1)
+        self._last_drive_t = now
+
+        press = bool(left.thumbstick_press) if left is not None else False
+        rising = press and not self._lift_press_was_down
+        self._lift_press_was_down = press
+
+        deadman_held = any(self._is_engaged.values())
+        if self._lift_mode and deadman_held:
+            self._exit_lift_mode()
+        elif rising and not deadman_held:
+            if self._lift_mode:
+                self._exit_lift_mode()
+            elif left is not None:
+                self._try_enter_lift_mode(left, right)
+
+        if not self._lift_mode:
+            super()._handle_base_drive(left, right)
+            return
+
+        self._publish_safe_base_command()
+        if left is None or self._lift_target is None:
+            return
+        y = left.thumbstick.y
+        if abs(y) < self.config.lift_deadzone:
+            return
+        self._lift_target -= y * self.config.lift_speed_m_s * dt
+        self._lift_target = min(
+            max(self._lift_target, PILLAR_MIN_POSITION_M), PILLAR_MAX_POSITION_M
+        )
+        if now - self._last_lift_rpc_t < 1.0 / self.config.lift_command_hz:
+            return
+        self._last_lift_rpc_t = now
+        try:
+            self._pillar.set_position(self._lift_target)
+        except Exception:
+            logger.exception("Pillar position command failed")
+            self._exit_lift_mode()
+
+
 class OpenArmCollectionRecorder(CollectionRecorder):
     left_wrist_image: In[Image]
     right_wrist_image: In[Image]
@@ -256,7 +378,13 @@ learning_collect_quest_openarm = autoconnect(
     ),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
     OpenArmHomingModule.blueprint(),  # right thumbstick click, deadman released
-    teleop_quest_openarm_blueprint(publish_joint_targets=True, enable_base=True),
+    teleop_quest_openarm_blueprint(
+        publish_joint_targets=True,
+        enable_base=True,
+        enable_pillar=True,
+        teleop_module_cls=AlfredLiftTeleopModule,
+    ),
+    PillarConnection.blueprint(),
     # The D455 mounts upside down for cable routing; the recorder reads the
     # flipped stream while raw color_image stays on the bus for diagnosis.
     ImageFlipModule.blueprint(instance_name="scene_flip").remappings(
@@ -266,7 +394,16 @@ learning_collect_quest_openarm = autoconnect(
         ]
     ),
     *_openarm_cameras_if_real(),
-).remappings([(OpenArmCollectionRecorder, "color_image", "scene_image")])
+).remappings([(OpenArmCollectionRecorder, "color_image", "scene_image")]).transports(
+    {
+        ("motor_command", MotorCommandArray): LCMTransport.spec(
+            f"/{PILLAR_HARDWARE_ID}/motor_command", MotorCommandArray
+        ),
+        ("motor_states", JointState): LCMTransport.spec(
+            f"/{PILLAR_HARDWARE_ID}/motor_states", JointState
+        ),
+    }
+)
 
 
 # Mobile manipulation variant: the lidar odometry stack joins, so the

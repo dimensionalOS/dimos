@@ -166,6 +166,7 @@ all_blueprints = {
 
 all_modules = {
     "alfred-high-level": "dimos.robot.diy.alfred.effector_high_level.AlfredHighLevel",
+    "alfred-lift-teleop-module": "dimos.imitation.collection.blueprint.AlfredLiftTeleopModule",
     "arm-base-teleop-module": "dimos.teleop.quest.quest_extensions.ArmBaseTeleopModule",
     "arm-command-module": "dimos.teleop.hosted.arm_command.ArmCommandModule",
     "arm-pose-coordinator": "dimos.robot.manipulators.common.coordinators.ArmPoseCoordinator",
@@ -269,6 +270,7 @@ all_modules = {
     "person-tracker": "dimos.perception.detection.person_tracker.PersonTracker",
     "phone-teleop-module": "dimos.teleop.phone.phone_teleop_module.PhoneTeleopModule",
     "pick-and-place-module": "dimos.manipulation.pick_and_place_module.PickAndPlaceModule",
+    "pillar-connection": "dimos.robot.diy.alfred.pillar_connection.PillarConnection",
     "point-cloud-self-filter": "dimos.manipulation.planning.utils.point_cloud_self_filter.PointCloudSelfFilter",
     "point-lio": "dimos.hardware.sensors.lidar.pointlio.module.PointLio",
     "pointlio-recorder": "dimos.hardware.sensors.lidar.pointlio.recorder.PointlioRecorder",

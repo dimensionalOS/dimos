@@ -305,6 +305,14 @@ class ArmBaseTeleopModule(ArmTeleopModule):
         with self._lock:
             left = self._controllers.get(Hand.LEFT)
             right = self._controllers.get(Hand.RIGHT)
+        self._handle_base_drive(left, right)
+        return True
+
+    def _handle_base_drive(
+        self,
+        left: QuestControllerState | None,
+        right: QuestControllerState | None,
+    ) -> None:
         twist = Twist()
         twist.linear = Vector3(0.0, 0.0, 0.0)
         twist.angular = Vector3(0.0, 0.0, 0.0)
@@ -320,7 +328,6 @@ class ArmBaseTeleopModule(ArmTeleopModule):
                 -self._base_deadzone(left.thumbstick.x) * self.config.base_angular_speed
             )
         self.twist_command.publish(twist)
-        return True
 
 
 class Go2TeleopConfig(QuestTeleopConfig):

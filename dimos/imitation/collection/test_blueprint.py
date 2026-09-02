@@ -18,6 +18,7 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.imitation.collection.blueprint import (
+    AlfredLiftTeleopModule,
     OpenArmCollectionRecorder,
     learning_collect_quest_openarm,
     learning_collect_quest_piper,
@@ -155,7 +156,7 @@ def test_openarm_collection_status_is_wired_to_quest_hud() -> None:
     hud = next(
         atom
         for atom in learning_collect_quest_openarm.blueprints
-        if atom.module is ArmBaseTeleopModule
+        if atom.module is AlfredLiftTeleopModule
     )
     status = next(stream for stream in hud.streams if stream.name == "status")
 
