@@ -32,7 +32,7 @@ stated in the prompt; the encoder never sees it.
 
 Regenerate (needs the three recordings)::
 
-    uv run python -m dimos.evals.suites.go2_pointcloud_free_range
+    uv run python -m dimos.evals.suites.pointcloud.go2_pointcloud_free_range
 """
 
 from __future__ import annotations

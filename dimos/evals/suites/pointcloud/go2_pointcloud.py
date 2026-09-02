@@ -24,12 +24,12 @@ quizzing whatever lossy encoding the agent receives for a ``PointCloud2``.
 window, which is why the two datasets take different stream families.
 
 Free-space families live in their own suites, one per question class:
-:mod:`dimos.evals.suites.go2_pointcloud_clearance` and
-:mod:`dimos.evals.suites.go2_pointcloud_route`.
+:mod:`dimos.evals.suites.pointcloud.go2_pointcloud_clearance` and
+:mod:`dimos.evals.suites.pointcloud.go2_pointcloud_route`.
 
 Regenerate (needs both recordings)::
 
-    uv run python -m dimos.evals.suites.go2_pointcloud
+    uv run python -m dimos.evals.suites.pointcloud.go2_pointcloud
 """
 
 from __future__ import annotations
