@@ -135,8 +135,8 @@ my_robot = ControlCoordinator.blueprint(
 | `list_joints()` | List all joint names |
 | `list_tasks()` | List task names |
 | `get_joint_positions()` | Get current positions |
-| `execute_trajectory(traj)` | Execute through the sole trajectory task |
-| `cancel_trajectory()` | Cancel the sole trajectory task |
+| `execute_trajectory(traj, task_name="joint_trajectory")` | Execute through a named trajectory task |
+| `cancel_trajectory(task_name="joint_trajectory")` | Cancel a named trajectory task |
 
 ## Control Modes
 

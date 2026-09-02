@@ -49,14 +49,11 @@ class GripperControlTaskConfig:
         joint_names: Ordinary joints this task owns, in command order.
         priority: Priority for arbitration.
         hold_duration: Seconds to keep emitting a target; 0.0 holds forever.
-        requires_activation: Reject commands until explicitly activated, and
-            deactivate after any control preemption.
     """
 
     joint_names: list[str]
     priority: int = 10
     hold_duration: float = 0.0
-    requires_activation: bool = False
 
 
 class GripperControlTask(BaseControlTask):
@@ -94,8 +91,6 @@ class GripperControlTask(BaseControlTask):
         self._stamp_pending = False
         self._estopped = False
         self._measured: dict[str, float] = {}
-        self._warned_normalized_clamps: set[str] = set()
-        self._activated = not config.requires_activation
 
     def claim(self) -> ResourceClaim:
         """Declare resource requirements."""
@@ -106,21 +101,7 @@ class GripperControlTask(BaseControlTask):
         )
 
     def is_active(self) -> bool:
-        """Read state and emit commands only while activated."""
-        return self._activated
-
-    def activate(self) -> bool:
-        """Allow new gripper commands."""
-        with self._lock:
-            self._activated = True
-        return True
-
-    def deactivate(self) -> bool:
-        """Reject new commands and release the gripper joint."""
-        with self._lock:
-            self._activated = False
-            self._target = None
-            self._stamp_pending = False
+        """Always True; compute() decides what to emit so reads stay fresh."""
         return True
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
@@ -153,7 +134,7 @@ class GripperControlTask(BaseControlTask):
         )
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-        """Log preemption and fail closed when activation is required."""
+        """Log preemption; this task is meant to be the sole claimant."""
         claimed = frozenset(self._joint_names)
         if joints & claimed:
             logger.warning(
@@ -162,8 +143,6 @@ class GripperControlTask(BaseControlTask):
                 preempting_task=by_task,
                 joints=sorted(joints & claimed),
             )
-            if self._config.requires_activation:
-                self.deactivate()
 
     def set_estop(self, estopped: bool) -> None:
         """Latch E-STOP and drop the target so it cannot replay."""
@@ -179,41 +158,12 @@ class GripperControlTask(BaseControlTask):
         return self._latch(list(values), t_now)
 
     def set_normalized(self, values: list[float], t_now: float | None = None) -> bool:
-        """Set bounded per-joint openings; finite inputs saturate to 0.0-1.0."""
-        if len(values) != len(self._joint_names):
-            logger.warning(
-                "Joint command rejected",
-                task=self._name,
-                method="set_normalized",
-                reason="arity",
-                expected=len(self._joint_names),
-                got=len(values),
-            )
+        """Set per-joint targets as 0.0-1.0 of travel; 0.0 closed, 1.0 open."""
+        if not self._validate_values(
+            "set_normalized", values, [(_CLOSED, _OPEN)] * len(self._joint_names)
+        ):
             return False
-        if any(not math.isfinite(value) for value in values):
-            logger.warning(
-                "Joint command rejected",
-                task=self._name,
-                method="set_normalized",
-                reason="non-finite",
-                values=values,
-            )
-            return False
-
-        normalized = [min(_OPEN, max(_CLOSED, value)) for value in values]
-        for name, value, bounded in zip(self._joint_names, values, normalized, strict=True):
-            if value != bounded and name not in self._warned_normalized_clamps:
-                logger.warning(
-                    "Normalized gripper command saturated",
-                    task=self._name,
-                    joint_name=name,
-                    value=value,
-                    saturated=bounded,
-                )
-                self._warned_normalized_clamps.add(name)
-        native = [
-            lo + (hi - lo) * value for value, (lo, hi) in zip(normalized, self._limits, strict=True)
-        ]
+        native = [lo + (hi - lo) * v for v, (lo, hi) in zip(values, self._limits, strict=True)]
         return self._latch(native, t_now)
 
     def get_position(self) -> list[float] | None:
@@ -275,7 +225,7 @@ class GripperControlTask(BaseControlTask):
 
     def _latch(self, target: list[float], t_now: float | None) -> bool:
         with self._lock:
-            if self._estopped or not self._activated:
+            if self._estopped:
                 return False
             self._target = target
             if t_now is None:
@@ -290,7 +240,6 @@ class GripperControlTaskParams(BaseConfig):
     """Task-specific gripper parameters."""
 
     hold_duration: float = 0.0
-    requires_activation: bool = False
 
 
 def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
@@ -344,7 +293,6 @@ def create_task(cfg: Any, hardware: Any) -> GripperControlTask:
             joint_names=list(cfg.joint_names),
             priority=cfg.priority,
             hold_duration=params.hold_duration,
-            requires_activation=params.requires_activation,
         ),
         limits=_resolve_limits(cfg, hardware),
     )

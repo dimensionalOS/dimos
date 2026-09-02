@@ -177,7 +177,7 @@ class ArmTeleopModule(QuestTeleopModule):
             left=left.trigger if left is not None else 0.0,
             right=right.trigger if right is not None else 0.0,
         )
-        self.teleop_buttons.publish(buttons)
+        self._publish_buttons(buttons)
         self._publish_gripper_commands(left, right)
 
     def _publish_gripper_commands(
@@ -243,7 +243,7 @@ class HandTeleopModule(ArmTeleopModule):
         )
         buttons.left_primary = self._is_engaged[Hand.LEFT]
         buttons.right_primary = self._is_engaged[Hand.RIGHT]
-        self.teleop_buttons.publish(buttons)
+        self._publish_buttons(buttons)
         self._publish_gripper_commands(left, right)
 
 

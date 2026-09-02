@@ -73,12 +73,10 @@ def _events(monitor: EpisodeMonitorModule) -> list[EpisodeStatus]:
 
 
 def _press(monitor: EpisodeMonitorModule, alias: str) -> None:
-    """Rising edge: release-then-press the given Quest button alias."""
+    """Deliver one debounced Quest button-press edge."""
     attr = BUTTON_ALIASES[alias]
-    released = Buttons()
     pressed = Buttons()
     pressed.set_attribute(attr, True)
-    monitor._on_buttons(released)
     monitor._on_buttons(pressed)
 
 
@@ -126,15 +124,12 @@ def test_start_while_recording_autocommits_previous(
     assert last.episodes_saved == 1  # the auto-committed one
 
 
-def test_no_event_without_rising_edge(
+def test_empty_press_event_is_ignored(
     make_monitor: Callable[..., EpisodeMonitorModule],
 ) -> None:
     m = make_monitor()
-    pressed = Buttons()
-    pressed.right_secondary = True  # B held
-    m._on_buttons(pressed)
-    m._on_buttons(pressed)  # still held — no new edge
-    assert [e.last_event for e in _events(m)] == ["start"]
+    m._on_buttons(Buttons())
+    assert _events(m) == []
 
 
 def test_published_status_is_internally_consistent(

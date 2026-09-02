@@ -151,6 +151,7 @@ uv run dimos run learning-rollout-quest-openyam \
 ```
 
 Quest **A** toggles policy rollout. Hold the right controller grip to take over
-with teleoperation. The grip action stops inference and deactivates both policy
-control tasks. Release the grip and press **A** to start a new rollout. **B** and
-**Y** remain reserved for collection save/discard controls.
+with teleoperation; its higher-priority tasks preempt the current policy chunk.
+Release the grip to let the next policy chunk resume control. Press **A** again
+to stop rollout and cancel the active chunk. **B** and **Y** remain reserved for
+collection save/discard controls.
