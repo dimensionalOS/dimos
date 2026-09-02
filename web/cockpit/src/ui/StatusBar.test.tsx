@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { SessionStatus } from "@dimos/sdk";
-import { StatusBar } from "./StatusBar.tsx";
+import { StatusBar, type View } from "./StatusBar.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -35,8 +35,8 @@ describe("StatusBar", () => {
     container.remove();
   });
 
-  function render(status: SessionStatus) {
-    act(() => root.render(<StatusBar status={status} />));
+  function render(status: SessionStatus, onViewChange: (view: View) => void = () => {}) {
+    act(() => root.render(<StatusBar status={status} view="panels" onViewChange={onViewChange} />));
   }
 
   function testId(id: string): Element {
@@ -78,5 +78,14 @@ describe("StatusBar", () => {
     expect(container.textContent).toContain("unknown_robot: no robot a");
     render(makeStatus({ lastError: null }));
     expect(container.textContent).not.toContain("unknown_robot");
+  });
+
+  it("offers the panels and channels views and reports the pick", () => {
+    const picks: View[] = [];
+    render(makeStatus(), (v) => picks.push(v));
+    expect(testId("view-panels").getAttribute("aria-selected")).toBe("true");
+    expect(testId("view-channels").getAttribute("aria-selected")).toBe("false");
+    act(() => (testId("view-channels") as HTMLElement).click());
+    expect(picks).toEqual(["channels"]);
   });
 });

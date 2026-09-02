@@ -36,7 +36,7 @@ export function Tabs({ manifest, children, ...panelProps }: {
           data-testid="tab-overview"
           onClick={() => setActive(0)}
         >
-          overview
+          Overview
         </button>
         {manifest.pages.map((id, i) => {
           const spec = byId.get(id);

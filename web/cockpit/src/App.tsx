@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { Session } from "@dimos/sdk";
 import { teleopHooks } from "@dimos/sdk/internal/teleop";
 import { useStatus } from "@dimos/sdk/react";
@@ -6,12 +6,15 @@ import { LayoutTree } from "./layout/LayoutTree.tsx";
 import { startChatTranscripts } from "./panels/chatTranscript.ts";
 import { Tabs } from "./layout/Tabs.tsx";
 import { ChannelList } from "./ui/ChannelList.tsx";
-import { StatusBar } from "./ui/StatusBar.tsx";
+import { StatusBar, type View } from "./ui/StatusBar.tsx";
 import styles from "./App.module.css";
 
 export function App({ session }: { session: Session }) {
   const status = useStatus(session);
   const teleop = teleopHooks(session);
+  // Panels or the raw channel table. Held above the epoch-keyed <main> so a
+  // manifest change (robot restart) does not yank the operator off the table.
+  const [view, setView] = useState<View>("panels");
   // Chat transcripts outlive their panels (an inactive page is unmounted),
   // so they start as soon as a manifest names them.
   useEffect(() => {
@@ -36,6 +39,17 @@ export function App({ session }: { session: Session }) {
     );
   } else if (status.manifest === null || status.manifest.channels.length === 0) {
     content = <p className={styles.notice}>Waiting for a robot to register...</p>;
+  } else if (view === "channels") {
+    content = (
+      <ChannelList
+        channels={status.manifest.channels}
+        panels={status.manifest.panels}
+        store={session.store}
+      />
+    );
+  } else if (status.manifest.panels.length === 0) {
+    // cockpit(channels=[...]) alone: nothing to lay out, only rows.
+    content = <p className={styles.notice}>This cockpit has no panels. Open the channels tab.</p>;
   } else {
     content = (
       <Tabs manifest={status.manifest} store={session.store} teleop={teleop} session={session}>
@@ -45,18 +59,13 @@ export function App({ session }: { session: Session }) {
           teleop={teleop}
           session={session}
         />
-        <ChannelList
-          channels={status.manifest.channels}
-          panels={status.manifest.panels}
-          store={session.store}
-        />
       </Tabs>
     );
   }
 
   return (
     <div className={styles.app}>
-      <StatusBar status={status} />
+      <StatusBar status={status} view={view} onViewChange={setView} />
       {/* A changed manifest remounts everything below the status bar. */}
       <main className={styles.main} key={status.epoch}>
         {content}

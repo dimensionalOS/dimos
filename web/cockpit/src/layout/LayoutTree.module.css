@@ -1,11 +1,13 @@
 .root {
   display: flex;
+  flex: 1;
   flex-direction: column;
-  margin-bottom: 1rem;
+  min-height: 0;
 }
 
 .row {
   display: flex;
+  flex: 1;
   gap: 1rem;
   min-height: 0;
   min-width: 0;
@@ -14,6 +16,7 @@
 
 .col {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 1rem;
   min-height: 0;
