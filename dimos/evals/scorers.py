@@ -28,7 +28,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import math
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
+
+if TYPE_CHECKING:
+    from dimos.evals.types import Outcome
 
 T = TypeVar("T")
 
@@ -98,6 +101,20 @@ def choice(options: Sequence[str]) -> Callable[[str], str]:
         return str(found[-1]).lower()
 
     return parse
+
+
+def grade_choice(choices: Sequence[str], answer: str) -> Callable[[Outcome], float]:
+    """Exact match on the last choice the reply names; naming none scores 0."""
+    parse = choice(choices)
+
+    def grade(o: Outcome) -> float:
+        try:
+            got = parse(o.trajectory.final_answer)
+        except ValueError:
+            return 0.0
+        return exact(answer.lower(), got)
+
+    return grade
 
 
 def within(band: float) -> Callable[[float, float], float]:

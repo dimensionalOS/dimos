@@ -20,7 +20,7 @@ model names."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Iterator
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -29,8 +29,8 @@ from typing import Any
 import jsonlines
 
 from dimos.evals.environments.image_file import ImageFile
-from dimos.evals.scorers import choice, exact
-from dimos.evals.types import EvalCase, Outcome, Suite
+from dimos.evals.scorers import grade_choice
+from dimos.evals.types import EvalCase, Suite
 from dimos.evals.vqa.generate import PrivateLabel, PublicCase
 
 
@@ -47,20 +47,6 @@ def source_record(dataset: Path) -> dict[str, Any]:
             if path.is_file()
         },
     }
-
-
-def grade_choice(choices: Sequence[str], answer: str) -> Callable[[Outcome], float]:
-    """Exact match on the last choice the reply names; naming none scores 0."""
-    parse = choice(choices)
-
-    def grade(o: Outcome) -> float:
-        try:
-            got = parse(o.trajectory.final_answer)
-        except ValueError:
-            return 0.0
-        return exact(answer.lower(), got)
-
-    return grade
 
 
 def load_suite(dataset: Path) -> Suite:

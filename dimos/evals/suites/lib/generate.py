@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from dimos.evals.environments.dataset import Dataset
-from dimos.evals.scorers import choice, coord_list, exact, first_number, matched_set, within
+from dimos.evals.scorers import coord_list, first_number, grade_choice, matched_set, within
 from dimos.evals.types import EvalCase, Outcome, Select
 from dimos.memory.cli.dataset import open_dataset
 
@@ -488,15 +488,7 @@ def _grade(row: Row) -> Callable[[Outcome], float]:
                 return 0.0
 
         return coords
-    answer, parse = str(row["a"]), choice(cast("list[str]", row["choices"]))
-
-    def mcq(o: Outcome) -> float:
-        try:
-            return exact(answer, parse(o.trajectory.final_answer))
-        except ValueError:
-            return 0.0
-
-    return mcq
+    return grade_choice(cast("list[str]", row["choices"]), str(row["a"]))
 
 
 def cases(rows: Sequence[Row], *, tags: frozenset[str] = frozenset()) -> list[EvalCase]:
