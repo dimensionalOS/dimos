@@ -1,0 +1,22 @@
+[package]
+name = "dimos-memory-replayer"
+version = "0.1.0"
+edition = "2021"
+description = "Experimental native Memory2 stream replayer for DimOS"
+license = "Apache-2.0"
+
+[dependencies]
+anyhow = "1"
+dimos-module = { path = "../../dimos-module" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+lz4_flex = "0.14.0"
+rusqlite = "0.40.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "io-std", "io-util", "sync", "time", "test-util"] }
+tracing = "0.1"
+turbojpeg = { version = "1.5.1", default-features = false, features = ["cmake"] }
+validator = { version = "0.21", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"

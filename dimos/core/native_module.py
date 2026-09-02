@@ -47,6 +47,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+import queue
 import signal
 import subprocess
 import sys
@@ -130,6 +131,7 @@ class NativeModuleConfig(ModuleConfig):
     auto_build: bool = False
 
     stdin_config: bool = False
+    persistent_stdin: bool = False
 
     cli_exclude: frozenset[str] = frozenset()
     cli_name_override: dict[str, str] = Field(default_factory=dict)
@@ -145,6 +147,8 @@ class NativeModuleConfig(ModuleConfig):
                 f"{self.executable} pins a session config but has stdin_config off, "
                 "so the module would open its own defaults instead"
             )
+        if self.persistent_stdin and not self.stdin_config:
+            raise ValueError("persistent_stdin requires stdin_config")
         return self
 
     def _ignore_fields(self) -> set[str]:
@@ -211,6 +215,10 @@ class NativeModule(Module):
     _watchdog: threading.Thread | None = None
     _stopping: bool = False
     _stop_lock: threading.Lock
+    _stdin_lock: threading.Lock
+    _control_lock: threading.Lock
+    _control_sequence: int
+    _control_waiters: dict[int, queue.Queue[dict[str, Any]]]
 
     @functools.cached_property
     def _module_label(self) -> str:
@@ -220,6 +228,10 @@ class NativeModule(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stop_lock = threading.Lock()
+        self._stdin_lock = threading.Lock()
+        self._control_lock = threading.Lock()
+        self._control_sequence = 0
+        self._control_waiters = {}
 
         if self.config.cwd is not None and not Path(self.config.cwd).is_absolute():
             base_dir = Path(inspect.getfile(type(self))).resolve().parent
@@ -321,7 +333,9 @@ class NativeModule(Module):
         assert self._process.stdin is not None
         if stdin_blob is not None:
             self._process.stdin.write(stdin_blob)
-        self._process.stdin.close()
+            self._process.stdin.flush()
+        if not self.config.persistent_stdin:
+            self._process.stdin.close()
         logger.info(
             "Native process started",
             module=self._module_label,
@@ -355,6 +369,9 @@ class NativeModule(Module):
                 module=self._module_label,
                 pid=proc.pid,
             )
+            if self.config.persistent_stdin and proc.stdin is not None:
+                with self._stdin_lock:
+                    proc.stdin.close()
             proc.send_signal(signal.SIGTERM)
             try:
                 proc.wait(timeout=self.config.shutdown_timeout)
@@ -380,6 +397,7 @@ class NativeModule(Module):
         with self._stop_lock:
             self._watchdog = None
             self._process = None
+        self._fail_control_waiters("native process stopped")
 
         super().stop()
 
@@ -392,6 +410,7 @@ class NativeModule(Module):
         stdout_t = self._start_reader(proc.stdout, "info", pid)
         stderr_t = self._start_reader(proc.stderr, "warning", pid)
         rc = proc.wait()
+        self._fail_control_waiters(f"native process exited with status {rc}")
         stdout_t.join(timeout=self.config.shutdown_timeout)
         stderr_t.join(timeout=self.config.shutdown_timeout)
 
@@ -440,6 +459,8 @@ class NativeModule(Module):
             line = raw.decode("utf-8", errors="replace").rstrip()
             if not line:
                 continue
+            if NativeModule._handle_control_response(self, line):
+                continue
             if self.config.log_format == LogFormat.JSON:
                 try:
                     data = json.loads(line)
@@ -459,6 +480,63 @@ class NativeModule(Module):
                     pass
             default_log_fn(line, module=self._module_label, pid=pid)
         stream.close()
+
+    def _native_command(self, command: str, **arguments: Any) -> None:
+        """Send one acknowledged command to a persistent-stdin native process."""
+        if not self.config.persistent_stdin:
+            raise RuntimeError(f"[{self._module_label}] persistent stdin is disabled")
+        process = self._process
+        if process is None or process.poll() is not None or process.stdin is None:
+            raise RuntimeError(f"[{self._module_label}] native process is not running")
+
+        with self._control_lock:
+            self._control_sequence += 1
+            request_id = self._control_sequence
+            response: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
+            self._control_waiters[request_id] = response
+
+        payload = {"dimos_control": {"id": request_id, "command": command, **arguments}}
+        try:
+            with self._stdin_lock:
+                process.stdin.write(json.dumps(payload).encode() + b"\n")
+                process.stdin.flush()
+            result = response.get(timeout=self.config.shutdown_timeout)
+        except (BrokenPipeError, OSError) as error:
+            raise RuntimeError(f"[{self._module_label}] failed to send {command!r}") from error
+        except queue.Empty as error:
+            raise TimeoutError(f"[{self._module_label}] timed out applying {command!r}") from error
+        finally:
+            with self._control_lock:
+                self._control_waiters.pop(request_id, None)
+
+        if not result.get("ok", False):
+            message = result.get("error") or f"native command {command!r} failed"
+            raise RuntimeError(f"[{self._module_label}] {message}")
+
+    def _handle_control_response(self, line: str) -> bool:
+        try:
+            envelope = json.loads(line)
+            result = envelope["dimos_control"]
+            request_id = int(result["id"])
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return False
+        with self._control_lock:
+            waiter = self._control_waiters.get(request_id)
+        if waiter is not None:
+            try:
+                waiter.put_nowait(result)
+            except queue.Full:
+                pass
+        return True
+
+    def _fail_control_waiters(self, message: str) -> None:
+        with self._control_lock:
+            waiters = list(self._control_waiters.values())
+        for waiter in waiters:
+            try:
+                waiter.put_nowait({"ok": False, "error": message})
+            except queue.Full:
+                pass
 
     def _maybe_build(self) -> None:
         exe = Path(self.config.executable)

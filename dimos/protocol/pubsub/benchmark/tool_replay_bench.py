@@ -199,6 +199,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "meta.json").write_text(json.dumps(vars(args)))
 
+    from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.core.transport import LCMTransport
@@ -220,7 +221,11 @@ def main() -> None:
             }
         )
 
-    coordinator = ModuleCoordinator.build(bp, {"g": {"replay": True, "viewer": "none"}})
+    parsed = BlueprintConfigParser(bp).parse(
+        environ={},
+        global_overrides={"replay": True, "viewer": "none"},
+    )
+    coordinator = ModuleCoordinator.build(bp, parsed)
     logger.info("benchmark run started", mode=args.mode, blueprint=args.blueprint)
 
     stop = threading.Event()

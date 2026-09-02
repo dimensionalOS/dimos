@@ -15,7 +15,7 @@
 
 from pathlib import Path
 
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
 from dimos.mapping.costmapper import CostMapper
@@ -39,15 +39,27 @@ from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 from dimos.robot.unitree.go2.connection import GO2Connection
 
-unitree_go2 = autoconnect(
-    unitree_go2_basic,
+_go2_stack_modules = (
     VoxelGridMapper.blueprint(emit_every=5),
     CostMapper.blueprint(),
     ReplanningAStarPlanner.blueprint(),
     WavefrontFrontierExplorer.blueprint(),
     PatrollingModule.blueprint(),
     MovementManager.blueprint(),
-).global_config(n_workers=10, robot_model="unitree_go2")
+)
+
+
+def _unitree_go2_stack(source: Blueprint) -> Blueprint:
+    return autoconnect(source, *_go2_stack_modules).global_config(
+        n_workers=10,
+        robot_model="unitree_go2",
+    )
+
+
+unitree_go2 = autoconnect(unitree_go2_basic, *_go2_stack_modules).global_config(
+    n_workers=10,
+    robot_model="unitree_go2",
+)
 
 
 class Go2MemoryConfig(RecorderConfig):

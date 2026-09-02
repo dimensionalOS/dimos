@@ -55,6 +55,11 @@ impl RecordingStore for SqliteRecordingStore {
 fn ensure_stream_tables(connection: &Connection, stream: &StreamConfig) -> Result<()> {
     let name = &stream.name;
     validate_identifier(name)?;
+    let table_existed: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [name],
+        |row| row.get(0),
+    )?;
     connection.execute_batch(&format!(
         r#"
         CREATE TABLE IF NOT EXISTS "{name}" (
@@ -74,6 +79,12 @@ fn ensure_stream_tables(connection: &Connection, stream: &StreamConfig) -> Resul
         );
         "#
     ))?;
+    if !table_existed {
+        connection.execute(
+            &format!(r#"CREATE INDEX "{name}_ts_id" ON "{name}"(ts, id)"#),
+            [],
+        )?;
+    }
     if !stream.is_tf() {
         connection.execute(
             &format!(
