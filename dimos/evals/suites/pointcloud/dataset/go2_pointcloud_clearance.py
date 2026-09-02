@@ -24,12 +24,12 @@ plus odom, quizzing whatever lossy encoding the agent receives for a
 obstructed. Two-valued on purpose: at 2 m the lidar has swept everywhere
 around the robot, so silence really does mean empty. Unmeasured space is a
 real question, but it needs a goal far enough out to reach it — that belongs
-to :mod:`dimos.evals.suites.pointcloud.go2_pointcloud_route`.
+to :mod:`dimos.evals.suites.pointcloud.dataset.go2_pointcloud_route`.
 
 
 Regenerate (needs both recordings)::
 
-    uv run python -m dimos.evals.suites.pointcloud.go2_pointcloud_clearance
+    uv run python -m dimos.evals.suites.pointcloud.dataset.go2_pointcloud_clearance
 """
 
 from __future__ import annotations
@@ -150,7 +150,7 @@ def clearance_rows(
     height shows the lidar sweeps the floor all around the robot, so a 2 m
     corridor has always been scanned and silence at body height means nothing
     is there; by 5 m nothing is clear. Unmeasured space belongs to
-    :mod:`dimos.evals.suites.pointcloud.go2_pointcloud_route`, whose goal is far enough
+    :mod:`dimos.evals.suites.pointcloud.dataset.go2_pointcloud_route`, whose goal is far enough
     out to reach it.
 
     Obstruction is judged at body height because that is what would hit the

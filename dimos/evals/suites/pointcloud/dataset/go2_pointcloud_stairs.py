@@ -20,7 +20,7 @@ An open-ended answer scored by :func:`~dimos.evals.scorers.matched_set` at a
 1.2 m radius with a 0.15 m band on the rise.
 
 Deliberately the same six frames as
-:mod:`dimos.evals.suites.pointcloud.go2_pointcloud_floor_level`, asked differently. That
+:mod:`dimos.evals.suites.pointcloud.dataset.go2_pointcloud_floor_level`, asked differently. That
 suite asks whether any part of the floor sits at a different level; this one
 asks whether there are *steps*. An encoding can carry elevation — a patch of
 floor is higher over there — without carrying the structure that makes it a
@@ -32,7 +32,7 @@ steps, three do not.
 
 Regenerate the context windows (needs the recording; keeps the labels)::
 
-    uv run python -m dimos.evals.suites.pointcloud.go2_pointcloud_stairs
+    uv run python -m dimos.evals.suites.pointcloud.dataset.go2_pointcloud_stairs
 """
 
 from __future__ import annotations

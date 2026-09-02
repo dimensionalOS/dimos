@@ -41,13 +41,11 @@ from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
 from dimos.evals.agents.question_answer import QuestionAnswer
-from dimos.evals.cli import load_agent
 from dimos.evals.environments.base import Environment
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.image_file import ImageFile
 from dimos.evals.environments.lib.launch import default_mcp_url
 from dimos.evals.environments.sim import Sim
-from dimos.evals.module import list_agents
 from dimos.evals.runner import EvalRunner, summarize
 from dimos.evals.scorers import (
     choice,
@@ -60,8 +58,28 @@ from dimos.evals.scorers import (
     within,
     yes_no,
 )
-from dimos.evals.suites import dimsim_house, dimsim_pointcloud_mapping, examples, go2_smoke, go2_vqa
-from dimos.evals.suites.dimsim_pointcloud_mapping import N_ROOMS, ROOMS, grade_rooms
+from dimos.evals.cli import load_agent
+from dimos.evals.module import list_agents
+from dimos.evals.suites import dimsim_house, examples, go2_smoke, go2_vqa
+from dimos.evals.suites.pointcloud.dataset import (
+    go2_pointcloud,
+    go2_pointcloud_clearance,
+    go2_pointcloud_doorway,
+    go2_pointcloud_floor_height,
+    go2_pointcloud_floor_level,
+    go2_pointcloud_free_disk,
+    go2_pointcloud_free_range,
+    go2_pointcloud_free_range_holdout,
+    go2_pointcloud_frontier,
+    go2_pointcloud_gap_width,
+    go2_pointcloud_glass,
+    go2_pointcloud_rooms,
+    go2_pointcloud_route,
+    go2_pointcloud_stairs,
+)
+from dimos.evals.suites.pointcloud.sim import dimsim_pointcloud_mapping
+
+from dimos.evals.suites.pointcloud.sim.dimsim_pointcloud_mapping import N_ROOMS, ROOMS, grade_rooms
 from dimos.evals.suites.lib import generate
 from dimos.evals.types import (
     EvalCase,
@@ -736,32 +754,6 @@ def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
 
 def test_suites_and_agents_importable() -> None:
     """Modules construct without data or network (lambdas stay lazy)."""
-    from dimos.evals.cli import load_agent
-    from dimos.evals.module import list_agents
-    from dimos.evals.suites import (
-        dimsim_house,
-        dimsim_pointcloud_mapping,
-        examples,
-        go2_smoke,
-        go2_vqa,
-    )
-    from dimos.evals.suites.pointcloud import (
-        go2_pointcloud,
-        go2_pointcloud_clearance,
-        go2_pointcloud_doorway,
-        go2_pointcloud_floor_height,
-        go2_pointcloud_floor_level,
-        go2_pointcloud_free_disk,
-        go2_pointcloud_free_range,
-        go2_pointcloud_free_range_holdout,
-        go2_pointcloud_frontier,
-        go2_pointcloud_gap_width,
-        go2_pointcloud_glass,
-        go2_pointcloud_rooms,
-        go2_pointcloud_route,
-        go2_pointcloud_stairs,
-    )
-
     for module in (
         examples,
         go2_smoke,

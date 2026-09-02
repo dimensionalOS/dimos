@@ -36,7 +36,7 @@ now the sensing definition above, and 10 of 36 answers moved with it.
 
 Regenerate (needs both recordings)::
 
-    uv run python -m dimos.evals.suites.pointcloud.go2_pointcloud_route
+    uv run python -m dimos.evals.suites.pointcloud.dataset.go2_pointcloud_route
 """
 
 from __future__ import annotations

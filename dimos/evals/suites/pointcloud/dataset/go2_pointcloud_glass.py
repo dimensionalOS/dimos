@@ -28,7 +28,7 @@ glass defeats. The verdicts, rejections included, are in
 
 Regenerate (needs both recordings)::
 
-    uv run python -m dimos.evals.suites.pointcloud.go2_pointcloud_glass
+    uv run python -m dimos.evals.suites.pointcloud.dataset.go2_pointcloud_glass
 """
 
 from __future__ import annotations
