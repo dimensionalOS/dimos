@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type { FrameHeader, Msg, PanelSpec } from "@dimos/shared";
 import { ChannelStore, StatusStore } from "@dimos/sdk";
 import type { TeleopHooks, TxResult } from "@dimos/sdk/internal/teleop";
-import { AGENT_MODE_NOTICE, ChatPanel, THINKING_TEXT } from "./ChatPanel.tsx";
+import { AGENT_MODE_NOTICE, ChatPanel, EMPTY_TEXT, THINKING_TEXT } from "./ChatPanel.tsx";
 import { ControlPanel } from "./ControlPanel.tsx";
 import { PENDING_MS } from "./controlPolicy.ts";
 import { NavMapPanel, NOTE_LINGER_MS, startNavOverlay } from "./NavMapPanel.tsx";
@@ -170,7 +170,10 @@ describe("cockpit panels", () => {
     });
 
     it("renders the humancli transcript from chat frames, with tool rows and the spinner", () => {
-      expect(container.textContent).toContain("waiting for the agent...");
+      // An empty transcript invites a message; it must not look like the
+      // agent is still starting up.
+      expect(container.textContent).toContain(EMPTY_TEXT);
+      expect(container.textContent).not.toContain("waiting for");
       chat("human", "go to the kitchen");
       chat("ai", "on my way", {
         tool_calls: [{ id: "c1", name: "go_to", args: { room: "kitchen" } }],

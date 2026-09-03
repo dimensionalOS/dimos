@@ -1600,11 +1600,11 @@ MICRODUCK_RX = (
     "policy_state",
     "nav_state",
     # Built-ins first (BUILTIN_CHANNELS order), then the authored ones in
-    # first-declaration order - which is panel order, so chase_image sits
-    # where its small second-view panel does.
+    # first-declaration order - which is panel order, so chase_image leads:
+    # it is the main feed of the first video panel.
+    "chase_image",
     "path",
     "places",
-    "chase_image",
     "agent",
     "agent_idle",
 )

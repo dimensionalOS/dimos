@@ -206,6 +206,51 @@ def test_wrong_tx_encoding_raises() -> None:
         cockpit(layout=Sender())
 
 
+def test_video_inset_binds_a_second_feed() -> None:
+    # Picture-in-picture: channels[0] is the main feed, channels[1] the
+    # inset. Each keeps its own rate and quality, so a cheap thumbnail can
+    # ride along with an expensive main view.
+    # chase_image is an authored channel, so cockpit() generates a bridge
+    # subclass for its port; read the manifest off the atom directly.
+    (atom,) = cockpit(
+        layout=Video(
+            "chase_image",
+            max_hz=30.0,
+            quality=70,
+            inset="color_image",
+            inset_max_hz=12.0,
+            inset_quality=55,
+        ),
+        channels=[
+            Channel(
+                "chase_image",
+                Image,
+                encoding="jpeg.v1",
+                delivery="latest",
+                max_hz=30.0,
+                params={"quality": 70},
+            )
+        ],
+    ).blueprints
+    manifest = atom.kwargs["manifest"]
+    (panel,) = manifest["panels"]
+    assert panel["kind"] == "video"
+    assert panel["channels"] == ["chase_image", "color_image"]
+    by_ch = {c["ch"]: c for c in manifest["channels"]}
+    assert by_ch["chase_image"]["params"] == {"quality": 70}
+    assert by_ch["color_image"]["params"] == {"quality": 55}
+    assert by_ch["color_image"]["maxHz"] == 12.0
+    # The domain parser accepts two feeds on one video panel.
+    assert parse_manifest(manifest).model_dump() == manifest
+
+    # A single-feed video panel is unchanged, and an inset cannot alias the
+    # main stream (it would draw the same picture over itself).
+    (plain,) = manifest_of(cockpit(layout=Video("color_image")))["panels"]
+    assert plain["channels"] == ["color_image"]
+    with pytest.raises(ValueError, match="inset must differ"):
+        Video("color_image", inset="color_image")
+
+
 def test_pages_get_ids_after_the_grid() -> None:
     manifest = manifest_of(cockpit(layout=Video("color_image"), pages=[Map2D(pose=None)]))
     assert [p["id"] for p in manifest["panels"]] == ["p0", "p1"]

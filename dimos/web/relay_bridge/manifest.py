@@ -280,16 +280,20 @@ def parse_manifest(data: Any) -> Manifest:
         # unknown kinds stay unvalidated (forward compatibility with newer
         # bridges).
         if panel.kind == "video":
-            if len(panel.channels) != 1:
-                raise ManifestError(
-                    "invalid_video_panel", f"video panel {panel.id} must bind exactly one channel"
-                )
-            bound = ch_ids[panel.channels[0]]
-            if bound.encoding != "jpeg.v1" or bound.delivery != "latest" or bound.dir != "rx":
+            # One feed, or two: the second is drawn inset over the first
+            # (picture-in-picture). Both must be real video.
+            if not 1 <= len(panel.channels) <= 2:
                 raise ManifestError(
                     "invalid_video_panel",
-                    f"video panel {panel.id} needs a jpeg.v1 latest rx channel",
+                    f"video panel {panel.id} must bind one channel, or two for an inset",
                 )
+            for ch in panel.channels:
+                bound = ch_ids[ch]
+                if bound.encoding != "jpeg.v1" or bound.delivery != "latest" or bound.dir != "rx":
+                    raise ManifestError(
+                        "invalid_video_panel",
+                        f"video panel {panel.id} needs a jpeg.v1 latest rx channel",
+                    )
         if panel.kind == "map2d":
             # channels[0] is the costmap; channels[1] (optional) the pose overlay.
             if len(panel.channels) not in (1, 2):

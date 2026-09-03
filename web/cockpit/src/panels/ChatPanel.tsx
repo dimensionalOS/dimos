@@ -30,6 +30,9 @@ import { txReasonText } from "./txReason.ts";
 export const CHAT_INPUT_MAX_CHARS = 900;
 export const AGENT_MODE_NOTICE = "Switch to Agent mode to talk to the duck";
 export const THINKING_TEXT = "◌ agent thinking";
+/** An empty transcript means nothing has been said yet, not that the agent is
+ * still coming up - "waiting for the agent..." read as a stuck spinner. */
+export const EMPTY_TEXT = "Ask the duck something - try \"go to the kitchen\"";
 /** Scroll slack under which the transcript still counts as "at the bottom". */
 const STICK_SLACK_PX = 8;
 
@@ -202,7 +205,7 @@ function ChatView({ spec, store, teleop, chans }: PanelProps & { chans: ChatChan
             </div>
           )}
           {rows.length === 0 && pending.length === 0 && !thinking && (
-            <span className={styles.hint}>waiting for the agent...</span>
+            <span className={styles.hint}>{EMPTY_TEXT}</span>
           )}
         </div>
         <div className={styles.compose}>

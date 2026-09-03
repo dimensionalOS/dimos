@@ -132,18 +132,28 @@ _TELEOP_MAX_ANGULAR = 0.6
 # smaller picture. 480 x 270 measured only ~7% more delivered fps than
 # 640 x 360 and looked worse, so the primary camera keeps 640 x 360.
 #
-# The head camera is the primary view: it is what the duck actually sees, and
-# it is the same frame the agent's `observe` skill reads. The chase camera is
-# the small second view - useful for driving, since a first-person duck
-# cannot see its own feet - so it takes the leftover budget.
-_HEAD_CAM_SIZE = (640, 360)
-_HEAD_CAM_FPS = 30
-_HEAD_CAM_MAX_HZ = 40.0
-_HEAD_CAM_QUALITY = 70
-_CHASE_CAM_SIZE = (320, 180)
-_CHASE_CAM_FPS = 6.0
-_CHASE_CAM_MAX_HZ = 12.0
+# Rate is what costs, on BOTH budgets, so it is what gets allocated: the
+# chase camera is the main panel and takes the frames; the head camera rides
+# along as a thumbnail inset and needs only enough to look live.
+#
+# Resolution is NOT the lever it looks like. Render cost here is geometry,
+# not pixels - the duck's own 215k-vertex body dominates every frame, so a
+# 64x48 render measures ~27 ms against ~29 ms for 640x360. The head camera
+# therefore keeps 640x360 even as a thumbnail: it costs the same to render,
+# and it is the frame the agent's `observe` skill reads, where detail counts.
+#
+# Both are also latest channels, and every latest frame costs one
+# relay->viewer stream out of a budget the browser meters. 26 renders/s
+# across the two cameras is deliberately below the ~31/s that was measured
+# stalling: fewer streams, fewer credit exhaustions, fewer freezes.
+_CHASE_CAM_SIZE = (640, 360)
+_CHASE_CAM_FPS = 20.0
+_CHASE_CAM_MAX_HZ = 30.0
 _CHASE_CAM_QUALITY = 70
+_HEAD_CAM_SIZE = (640, 360)
+_HEAD_CAM_FPS = 6
+_HEAD_CAM_MAX_HZ = 12.0
+_HEAD_CAM_QUALITY = 70
 
 MICRODUCK_COCKPIT_SYSTEM_PROMPT = """\
 You are the brain of Microduck, a tiny (25 cm tall) two-legged duck robot
@@ -181,39 +191,37 @@ actions finish.
 MICRODUCK_COCKPIT_LAYOUT = Col(
     Control(),
     Row(
-        # The duck's own view is the big panel. Rate/quality are pinned here
-        # and mirrored by the chase_image Channel below (a panel and a
-        # channel for one stream must agree on everything but max_hz);
+        # The chase camera is the main view - you need to see the duck to
+        # drive it - with the duck's own view inset in the corner, so both
+        # are visible at once instead of trading places. Rate/quality are
+        # pinned here and mirrored by the chase_image Channel below (a panel
+        # and a channel for one stream must agree on everything but max_hz);
         # color_image is a built-in bridge port, so it needs no Channel.
         Video(
-            "color_image",
-            title="Duck view (head cam)",
-            max_hz=_HEAD_CAM_MAX_HZ,
-            quality=_HEAD_CAM_QUALITY,
+            "chase_image",
+            title="Chase cam (duck view inset)",
+            max_hz=_CHASE_CAM_MAX_HZ,
+            quality=_CHASE_CAM_QUALITY,
+            inset="color_image",
+            inset_max_hz=_HEAD_CAM_MAX_HZ,
+            inset_quality=_HEAD_CAM_QUALITY,
         ),
         Col(
             NavMap(),
-            Row(
-                Video(
-                    "chase_image",
-                    title="Chase cam",
-                    max_hz=_CHASE_CAM_MAX_HZ,
-                    quality=_CHASE_CAM_QUALITY,
-                ),
-                Teleop(
-                    max_linear=_TELEOP_MAX_LINEAR,
-                    max_angular=_TELEOP_MAX_ANGULAR,
-                    # DuckControl drops teleop twists in agent mode; naming
-                    # the stream lets the pad say so instead of arming.
-                    mode="mode",
-                    title="Teleop (WASDQE)",
-                ),
-                shares=[1, 1],
+            Teleop(
+                max_linear=_TELEOP_MAX_LINEAR,
+                max_angular=_TELEOP_MAX_ANGULAR,
+                # DuckControl drops teleop twists in agent mode; naming
+                # the stream lets the pad say so instead of arming.
+                mode="mode",
+                title="Teleop (WASDQE)",
             ),
             shares=[3, 2],
         ),
         Chat(),
-        shares=[5, 4, 3],
+        # The transcript wraps tool calls and their results, so the agent
+        # column earns more width than the map/teleop stack beside it.
+        shares=[5, 3, 4],
     ),
 )
 

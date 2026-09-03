@@ -4,6 +4,21 @@
   max-width: 100%;
 }
 
+/* Picture-in-picture: a second feed over the corner of the first. Sized by
+   viewport width so it stays a thumbnail on any panel, and pointer-events
+   off so it never eats a click meant for the panel. */
+.inset {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: min(34%, 260px);
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  background: #0d1117;
+  box-shadow: 0 2px 10px rgb(1 4 9 / 70%);
+  pointer-events: none;
+}
+
 .waiting {
   color: #8b949e;
   position: absolute;

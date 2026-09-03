@@ -317,14 +317,18 @@ export function parseManifest(value: unknown): Manifest {
     // unknown kinds stay unvalidated (forward compatibility with newer
     // bridges).
     if (panel.kind === "video") {
-      if (panel.channels.length !== 1) {
+      // One feed, or two: the second is drawn inset over the first
+      // (picture-in-picture). Both must be real video.
+      if (panel.channels.length < 1 || panel.channels.length > 2) {
         throw new ManifestError(
           "invalid_video_panel",
-          `video panel ${panel.id} must bind exactly one channel`,
+          `video panel ${panel.id} must bind one channel, or two for an inset`,
         );
       }
-      const bound = chIds.get(panel.channels[0])!;
-      if (bound.encoding !== "jpeg.v1" || bound.delivery !== "latest" || dirOf(bound) !== "rx") {
+      const bad = panel.channels
+        .map((c) => chIds.get(c)!)
+        .find((b) => b.encoding !== "jpeg.v1" || b.delivery !== "latest" || dirOf(b) !== "rx");
+      if (bad !== undefined) {
         throw new ManifestError(
           "invalid_video_panel",
           `video panel ${panel.id} needs a jpeg.v1 latest rx channel`,

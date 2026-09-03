@@ -249,12 +249,19 @@ class Panel(ABC):
 
 @dataclass(frozen=True)
 class Video(Panel):
-    """JPEG video feed of one image stream."""
+    """JPEG video feed of one image stream, optionally with a second drawn
+    inset over the first (picture-in-picture): `Video("chase_image",
+    inset="color_image")` puts the close view in the corner of the wide one.
+    The inset keeps its own rate and quality, so a cheap thumbnail can ride
+    along with an expensive main feed."""
 
     kind: ClassVar[str] = "video"
     stream: str = "color_image"
     max_hz: float = field(default=30.0, kw_only=True)
     quality: int = field(default=75, kw_only=True)
+    inset: str | None = field(default=None, kw_only=True)
+    inset_max_hz: float = field(default=10.0, kw_only=True)
+    inset_quality: int = field(default=60, kw_only=True)
     title: str = field(default="", kw_only=True)
 
     def __post_init__(self) -> None:
@@ -266,9 +273,24 @@ class Video(Panel):
             or not 0 <= self.quality <= 100
         ):
             raise ValueError(f"quality must be an int in 0..100, got {self.quality!r}")
+        if self.inset is not None:
+            _check_stream("inset", self.inset)
+            if self.inset == self.stream:
+                raise ValueError(f"inset must differ from stream, both are {self.stream!r}")
+            _check_rate("inset_max_hz", self.inset_max_hz)
+            if (
+                isinstance(self.inset_quality, bool)
+                or not isinstance(self.inset_quality, int)
+                or not 0 <= self.inset_quality <= 100
+            ):
+                raise ValueError(
+                    f"inset_quality must be an int in 0..100, got {self.inset_quality!r}"
+                )
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
-        return (
+        # Main feed first: the web panel draws channels[0] full-bleed and
+        # channels[1], when present, inset over it.
+        requests = [
             ChannelRequest(
                 self.stream,
                 "rx",
@@ -276,8 +298,20 @@ class Video(Panel):
                 self.max_hz,
                 {"quality": self.quality},
                 delivery="latest",
-            ),
-        )
+            )
+        ]
+        if self.inset is not None:
+            requests.append(
+                ChannelRequest(
+                    self.inset,
+                    "rx",
+                    "jpeg.v1",
+                    self.inset_max_hz,
+                    {"quality": self.inset_quality},
+                    delivery="latest",
+                )
+            )
+        return tuple(requests)
 
 
 @dataclass(frozen=True)
