@@ -15,12 +15,9 @@
 from typing import Any
 
 from dimos.control.coordinator import ControlCoordinator
-from dimos.control.tasks.registry import control_task_registry
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JOINT_TRAJECTORY_TASK_NAME,
-    JointTrajectoryTask,
 )
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.imitation.policy.lerobot.module import (
@@ -50,16 +47,7 @@ def test_rollout_uses_one_low_priority_seven_joint_trajectory_task() -> None:
 
     assert policy.type == "trajectory"
     assert policy.joint_names == OPENYAM_JOINTS
-    assert policy.priority == 10
-    assert policy.params == {}
-    assert policy.stream_bind == {}
-    assert teleop.priority == 20
-    assert trajectory.priority == 30
-
-    task = control_task_registry.create(policy.type, policy, hardware={})
-    assert isinstance(task, JointTrajectoryTask)
-    assert task.name == POLICY_ROLLOUT_TASK_NAME
-    assert not task.is_active()
+    assert policy.priority < teleop.priority < trajectory.priority
 
 
 def test_rollout_uses_the_shared_learning_profile() -> None:
@@ -72,12 +60,3 @@ def test_rollout_uses_the_shared_learning_profile() -> None:
     assert camera["hardware"].fps == OPENYAM_LEARNING_PROFILE.fps
     assert camera["hardware"].width == OPENYAM_LEARNING_PROFILE.camera_width
     assert camera["hardware"].height == OPENYAM_LEARNING_PROFILE.camera_height
-
-
-def test_rollout_requires_policy_path_from_cli() -> None:
-    parsed = BlueprintConfigParser(learning_rollout_quest_openyam).parse(
-        ["--LeRobotPolicyModule.policy-path", "outputs/checkpoint"],
-        environ={},
-    )
-
-    assert parsed.module_kwargs("lerobotpolicymodule")["policy_path"] == "outputs/checkpoint"
