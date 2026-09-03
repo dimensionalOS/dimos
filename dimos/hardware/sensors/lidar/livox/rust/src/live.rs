@@ -419,10 +419,7 @@ mod tests {
             let point_packet = DataPacket {
                 time_interval: 100,
                 dot_num: 1,
-                udp_cnt: 0,
-                frame_cnt: 0,
                 data_type: DataType::CartesianHigh,
-                time_type: 0,
                 timestamp_ns: 1_000,
                 payload: &point_payload,
             }
@@ -443,10 +440,7 @@ mod tests {
             let imu_packet = DataPacket {
                 time_interval: 0,
                 dot_num: 1,
-                udp_cnt: 0,
-                frame_cnt: 0,
                 data_type: DataType::Imu,
-                time_type: 0,
                 timestamp_ns: 2_000,
                 payload: &imu_payload,
             }
@@ -542,10 +536,7 @@ mod tests {
             DataPacket {
                 time_interval: 0,
                 dot_num: 1,
-                udp_cnt: 0,
-                frame_cnt: 0,
                 data_type: DataType::CartesianHigh,
-                time_type: 0,
                 timestamp_ns: ts_ns,
                 payload: &payload,
             }

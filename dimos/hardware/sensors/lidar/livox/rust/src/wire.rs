@@ -32,12 +32,12 @@ pub const HOST_POINT_PORT: u16 = 56301;
 pub const HOST_IMU_PORT: u16 = 56401;
 
 // ---- control plane (LivoxLidarCmdPacket) ----
-pub const SOF: u8 = 0xAA;
+pub(crate) const SOF: u8 = 0xAA;
 /// Bytes before `data[]`: sof, version, length, seq, cmd_id, cmd_type,
 /// sender_type, rsvd[6], crc16, crc32.
-pub const CONTROL_HEADER_LEN: usize = 24;
+pub(crate) const CONTROL_HEADER_LEN: usize = 24;
 /// The crc16 covers header bytes [0..CONTROL_CRC16_SPAN).
-pub const CONTROL_CRC16_SPAN: usize = 18;
+pub(crate) const CONTROL_CRC16_SPAN: usize = 18;
 
 pub const CMD_TYPE_REQUEST: u8 = 0;
 pub const CMD_TYPE_ACK: u8 = 1;
@@ -101,11 +101,11 @@ impl std::error::Error for WireError {}
 const CRC16: crc::Crc<u16> = crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740);
 const CRC32: crc::Crc<u32> = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
 
-pub fn crc16(data: &[u8]) -> u16 {
+pub(crate) fn crc16(data: &[u8]) -> u16 {
     CRC16.checksum(data)
 }
 
-pub fn crc32(data: &[u8]) -> u32 {
+pub(crate) fn crc32(data: &[u8]) -> u32 {
     CRC32.checksum(data)
 }
 
@@ -193,7 +193,7 @@ pub struct DetectionAck {
 }
 
 impl DetectionAck {
-    pub const LEN: usize = 24;
+    pub(crate) const LEN: usize = 24;
 
     pub fn build(&self) -> Vec<u8> {
         let mut payload = Vec::with_capacity(Self::LEN);
@@ -229,7 +229,7 @@ pub struct AsyncControlAck {
 }
 
 impl AsyncControlAck {
-    pub const LEN: usize = 3;
+    pub(crate) const LEN: usize = 3;
 
     pub fn build(&self) -> Vec<u8> {
         let mut payload = vec![self.ret_code];
@@ -256,7 +256,7 @@ pub struct KeyValue<'a> {
 }
 
 /// Serialize key-value params back to back (key u16, len u16, value).
-pub fn build_kv_list(params: &[KeyValue<'_>]) -> Vec<u8> {
+pub(crate) fn build_kv_list(params: &[KeyValue<'_>]) -> Vec<u8> {
     let mut out = Vec::new();
     for param in params {
         out.extend_from_slice(&param.key.to_le_bytes());
@@ -267,7 +267,7 @@ pub fn build_kv_list(params: &[KeyValue<'_>]) -> Vec<u8> {
 }
 
 /// Parse a back-to-back key-value list, e.g. an internal-info response body.
-pub fn parse_kv_list(mut data: &[u8]) -> Result<Vec<KeyValue<'_>>, WireError> {
+pub(crate) fn parse_kv_list(mut data: &[u8]) -> Result<Vec<KeyValue<'_>>, WireError> {
     let mut out = Vec::new();
     while !data.is_empty() {
         if data.len() < 4 {
@@ -356,9 +356,9 @@ impl<'a> InternalInfoAck<'a> {
 
 /// Header bytes before `data[]`: version, length, time_interval, dot_num,
 /// udp_cnt, frame_cnt, data_type, time_type, rsvd[12], crc32, timestamp[8].
-pub const DATA_HEADER_LEN: usize = 36;
+pub(crate) const DATA_HEADER_LEN: usize = 36;
 /// Byte offset of the u64 nanosecond timestamp within the packet.
-pub const DATA_TIMESTAMP_OFFSET: usize = 28;
+pub(crate) const DATA_TIMESTAMP_OFFSET: usize = 28;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DataType {
@@ -390,7 +390,7 @@ pub struct PointHigh {
     pub tag: u8,
 }
 
-pub const POINT_HIGH_LEN: usize = 14;
+pub(crate) const POINT_HIGH_LEN: usize = 14;
 
 /// Low-precision cartesian point, 8 bytes on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -402,7 +402,7 @@ pub struct PointLow {
     pub tag: u8,
 }
 
-pub const POINT_LOW_LEN: usize = 8;
+pub(crate) const POINT_LOW_LEN: usize = 8;
 
 /// One IMU sample: gyro in rad/s, accel in g. 24 bytes on the wire.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -411,7 +411,7 @@ pub struct ImuSample {
     pub acc_g: [f32; 3],
 }
 
-pub const IMU_SAMPLE_LEN: usize = 24;
+pub(crate) const IMU_SAMPLE_LEN: usize = 24;
 
 /// One data-plane packet, borrowed from the receive buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -419,10 +419,7 @@ pub struct DataPacket<'a> {
     /// Time between points within the packet, in 0.1 microsecond units.
     pub time_interval: u16,
     pub dot_num: u16,
-    pub udp_cnt: u16,
-    pub frame_cnt: u8,
     pub data_type: DataType,
-    pub time_type: u8,
     pub timestamp_ns: u64,
     pub payload: &'a [u8],
 }
@@ -450,10 +447,7 @@ impl<'a> DataPacket<'a> {
         Ok(DataPacket {
             time_interval: u16::from_le_bytes([packet[3], packet[4]]),
             dot_num,
-            udp_cnt: u16::from_le_bytes([packet[7], packet[8]]),
-            frame_cnt: packet[9],
             data_type,
-            time_type: packet[11],
             timestamp_ns: read_timestamp_ns(packet).unwrap_or(0),
             payload,
         })
@@ -529,14 +523,12 @@ impl<'a> DataPacket<'a> {
         packet[1..3].copy_from_slice(&(length as u16).to_le_bytes());
         packet[3..5].copy_from_slice(&self.time_interval.to_le_bytes());
         packet[5..7].copy_from_slice(&self.dot_num.to_le_bytes());
-        packet[7..9].copy_from_slice(&self.udp_cnt.to_le_bytes());
-        packet[9] = self.frame_cnt;
+        // udp_cnt(7..9), frame_cnt(9) and time_type(11) stay zero.
         packet[10] = match self.data_type {
             DataType::Imu => 0x00,
             DataType::CartesianHigh => 0x01,
             DataType::CartesianLow => 0x02,
         };
-        packet[11] = self.time_type;
         packet[24..28].copy_from_slice(&crc32(self.payload).to_le_bytes());
         packet[DATA_TIMESTAMP_OFFSET..DATA_TIMESTAMP_OFFSET + 8]
             .copy_from_slice(&self.timestamp_ns.to_le_bytes());
@@ -609,10 +601,7 @@ mod tests {
         let packet = DataPacket {
             time_interval: 1000,
             dot_num: 2,
-            udp_cnt: 7,
-            frame_cnt: 3,
             data_type: DataType::CartesianHigh,
-            time_type: 0,
             timestamp_ns: 1_700_000_000_123_456_789,
             payload: &payload,
         };
@@ -637,10 +626,7 @@ mod tests {
         let imu_bytes = DataPacket {
             time_interval: 0,
             dot_num: 1,
-            udp_cnt: 0,
-            frame_cnt: 0,
             data_type: DataType::Imu,
-            time_type: 0,
             timestamp_ns: 99,
             payload: &imu_payload,
         }
@@ -652,10 +638,7 @@ mod tests {
         let short = DataPacket {
             time_interval: 0,
             dot_num: 2,
-            udp_cnt: 0,
-            frame_cnt: 0,
             data_type: DataType::CartesianHigh,
-            time_type: 0,
             timestamp_ns: 0,
             payload: &build_points_high(&points[..1]),
         };

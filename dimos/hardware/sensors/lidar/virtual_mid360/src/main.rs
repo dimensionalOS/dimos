@@ -18,7 +18,7 @@
 // binds lidar_ip and sends UDP, so it works wherever the host_ip/lidar_ip are
 // reachable — IPs aliased on an interface (host ns, incl. macOS lo0) or a netns.
 
-use dimos_livox::pcap::{parse_pcap, PcapPacket};
+use dimos_livox::pcap::PcapReader;
 use dimos_livox::wire::{
     self, AsyncControlAck, ControlFrame, DetectionAck, InternalInfoAck, KeyValue,
 };
@@ -31,7 +31,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[native_config]
 struct Config {
-    /// Recorded Mid-360 pcap (point/IMU/status UDP). Read fully into RAM.
+    /// Recorded Mid-360 pcap (point/IMU/status UDP). Streamed from disk.
     pcap: String,
     /// Replay speed; 1.0 = original timing, >1 = faster.
     #[validate(range(min = 0.01, max = 1000.0))]
@@ -134,16 +134,10 @@ impl VirtualMid360 {
             }
         };
 
-        let packets = match parse_pcap(&cfg.pcap) {
-            Ok(parsed) if !parsed.is_empty() => Arc::new(parsed),
-            Ok(_) => {
-                tracing::error!(
-                    "[virtual_mid360] pcap '{}' has no Livox UDP data packets. \
-                     Check the path / that it's a Mid-360 capture, then re-run.",
-                    cfg.pcap
-                );
-                std::process::exit(2);
-            }
+        // Validation pass: the capture streams from disk, so scan it once for
+        // the packet count and the first data-plane timestamp.
+        let mut scan = match PcapReader::open(&cfg.pcap) {
+            Ok(reader) => reader,
             Err(err) => {
                 tracing::error!(
                     "[virtual_mid360] failed to read pcap '{}': {err}. Fix the path, then re-run.",
@@ -152,6 +146,32 @@ impl VirtualMid360 {
                 std::process::exit(2);
             }
         };
+        let mut packet_count = 0u64;
+        let mut first_orig = None;
+        while let Some(pkt) = scan.next_packet() {
+            packet_count += 1;
+            if first_orig.is_none()
+                && matches!(pkt.src_port, wire::LIDAR_POINT_PORT | wire::LIDAR_IMU_PORT)
+            {
+                first_orig = Some(read_ts_ns(&pkt.payload));
+            }
+        }
+        if let Some(failure) = scan.failure() {
+            tracing::error!(
+                "[virtual_mid360] failed to read pcap '{}': {failure}.",
+                cfg.pcap
+            );
+            std::process::exit(2);
+        }
+        if packet_count == 0 {
+            tracing::error!(
+                "[virtual_mid360] pcap '{}' has no Livox UDP data packets. \
+                 Check the path / that it's a Mid-360 capture, then re-run.",
+                cfg.pcap
+            );
+            std::process::exit(2);
+        }
+        let first_orig = first_orig.unwrap_or(0);
 
         let stop = Arc::new(AtomicBool::new(false));
         let armed = Arc::new(AtomicBool::new(false));
@@ -164,7 +184,16 @@ impl VirtualMid360 {
         spawn_control(lidar_ip, armed.clone(), stop.clone());
         // data streamer — point/IMU/status paced at `rate`, timestamps shifted to now
         spawn_stream(
-            lidar_ip, host_ip, mcast_data, packets, rate, delay, armed, stop,
+            lidar_ip,
+            host_ip,
+            mcast_data,
+            cfg.pcap.clone(),
+            packet_count,
+            first_orig,
+            rate,
+            delay,
+            armed,
+            stop,
         );
         tracing::info!(lidar = %lidar_ip, host = %host_ip, rate, delay, "virtual_mid360 started");
     }
@@ -284,7 +313,9 @@ fn spawn_stream(
     lidar_ip: Ipv4Addr,
     host_ip: Ipv4Addr,
     mcast_data: Ipv4Addr,
-    packets: Arc<Vec<PcapPacket>>,
+    pcap: String,
+    packet_count: u64,
+    first_orig: u64,
     rate: f64,
     delay: f64,
     armed: Arc<AtomicBool>,
@@ -315,7 +346,7 @@ fn spawn_stream(
             std::thread::sleep(Duration::from_millis(50));
         }
         std::thread::sleep(Duration::from_secs_f64(delay.max(0.0)));
-        tracing::info!("streaming {} packets at {rate}x", packets.len());
+        tracing::info!("streaming {packet_count} packets at {rate}x");
 
         // Shift every packet's sensor timestamp so the first reads ≈ now,
         // preserving inter-packet spacing — the stream looks live.
@@ -323,12 +354,17 @@ fn spawn_stream(
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-        let first_orig = packets
-            .iter()
-            .find(|pkt| matches!(pkt.src_port, wire::LIDAR_POINT_PORT | wire::LIDAR_IMU_PORT))
-            .map(|pkt| read_ts_ns(&pkt.payload))
-            .unwrap_or(0);
         let ts_shift = now_ns.wrapping_sub(first_orig);
+
+        // The capture streams from disk record by record, so memory stays
+        // flat regardless of its size.
+        let mut reader = match PcapReader::open(&pcap) {
+            Ok(reader) => reader,
+            Err(err) => {
+                tracing::error!("failed to reopen pcap '{pcap}': {err}");
+                return;
+            }
+        };
 
         // Linux multicasts point/IMU to mcast_data (the SDK joins the group). On
         // macOS the IPs are lo0 aliases and a multicast send source-bound to an
@@ -347,7 +383,7 @@ fn spawn_stream(
 
         let t_wall0 = Instant::now();
         let mut t_cap0: Option<f64> = None;
-        for pkt in packets.iter() {
+        while let Some(mut pkt) = reader.next_packet() {
             if stop.load(Ordering::Relaxed) {
                 break;
             }
@@ -363,11 +399,13 @@ fn spawn_stream(
             if target > elapsed {
                 std::thread::sleep(Duration::from_secs_f64(target - elapsed));
             }
-            let mut out = pkt.payload.clone();
             if matches!(pkt.src_port, wire::LIDAR_POINT_PORT | wire::LIDAR_IMU_PORT) {
-                rewrite_ts(&mut out, ts_shift);
+                rewrite_ts(&mut pkt.payload, ts_shift);
             }
-            let _ = socket.send_to(&out, SocketAddrV4::new(dest_ip, dest_port));
+            let _ = socket.send_to(&pkt.payload, SocketAddrV4::new(dest_ip, dest_port));
+        }
+        if let Some(failure) = reader.failure() {
+            tracing::warn!("capture read failed mid-stream: {failure}");
         }
         tracing::info!("data stream finished");
     });

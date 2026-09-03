@@ -95,8 +95,8 @@ enum PointFormat {
 impl PointFormat {
     fn point_step(self) -> i32 {
         match self {
-            PointFormat::Full => 22,
-            PointFormat::Minimal | PointFormat::Legacy => 16,
+            PointFormat::Full => (OFFSET_FULL_LINE + 1) as i32,
+            PointFormat::Minimal | PointFormat::Legacy => (OFFSET_FOURTH + 4) as i32,
         }
     }
 }
@@ -115,7 +115,7 @@ impl Config {
 }
 
 #[derive(Module)]
-#[module(name = "mid360", setup = start, teardown = stop)]
+#[module(name = "mid360", setup = start, handle = wait, teardown = stop)]
 pub struct Mid360 {
     #[output(encode = PointCloud2::encode)]
     lidar: Output<PointCloud2>,
@@ -127,6 +127,7 @@ pub struct Mid360 {
     config: Config,
 
     stop: Arc<AtomicBool>,
+    failed: Arc<tokio::sync::Notify>,
     threads: Vec<std::thread::JoinHandle<()>>,
 }
 
@@ -138,16 +139,29 @@ impl Mid360 {
         let imu = self.imu.clone();
         let config = self.config.clone();
         let stop = self.stop.clone();
+        let failed = self.failed.clone();
         self.threads.push(std::thread::spawn(move || {
-            run_pipeline(source, &config, &handle, &lidar, &imu, &stop);
+            run_pipeline(source, &config, &handle, &lidar, &imu, &stop, &failed);
         }));
+    }
+
+    /// Ends the module when the packet source dies, so the framework runs
+    /// every teardown instead of the pipeline killing the process.
+    async fn wait(&mut self) {
+        self.failed.notified().await;
     }
 
     async fn stop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        for t in self.threads.drain(..) {
-            let _ = t.join();
-        }
+        // Joined off the runtime: the pipeline thread may be parked in a
+        // publish that needs this worker to drain.
+        let threads = std::mem::take(&mut self.threads);
+        let _ = tokio::task::spawn_blocking(move || {
+            for t in threads {
+                let _ = t.join();
+            }
+        })
+        .await;
     }
 
     fn build_source(&self) -> Box<dyn PacketSource + Send> {
@@ -162,6 +176,7 @@ impl Mid360 {
                 config.point_data_port,
                 config.imu_data_port,
                 config.replay_rate.0,
+                self.stop.clone(),
             )
             .unwrap_or_else(|err| panic!("failed to open pcap '{path}': {err}"));
             tracing::info!(pcap = %path, rate = ?config.replay_rate.0, "replaying capture");
@@ -203,6 +218,7 @@ fn run_pipeline(
     lidar: &Output<PointCloud2>,
     imu: &Output<Imu>,
     stop: &AtomicBool,
+    failed: &tokio::sync::Notify,
 ) {
     let format = config.point_format;
     let mut assembler = crate::pipeline::FrameAssembler::new(config.frequency);
@@ -233,7 +249,8 @@ fn run_pipeline(
     }
     if let Some(reason) = source.failure() {
         tracing::error!("packet source failed: {reason}");
-        std::process::exit(1);
+        failed.notify_one();
+        return;
     }
     if let Some(frame) = assembler.flush() {
         let msg = cloud_message(format, &config.frame_id, &frame);
@@ -278,72 +295,78 @@ fn imu_message(frame_id: &str, record: &ImuRecord) -> Imu {
     }
 }
 
-fn cloud_message(format: PointFormat, frame_id: &str, frame: &Frame) -> PointCloud2 {
-    let make_field = |name: &str, offset: i32, datatype: u8| PointField {
+// Byte offsets within one packed point, shared by the field table and the
+// packing loop. Offset 12 holds intensity or offset_time depending on format.
+const OFFSET_X: usize = 0;
+const OFFSET_Y: usize = 4;
+const OFFSET_Z: usize = 8;
+const OFFSET_FOURTH: usize = 12;
+const OFFSET_FULL_TIME: usize = 16;
+const OFFSET_FULL_TAG: usize = 20;
+const OFFSET_FULL_LINE: usize = 21;
+
+fn cloud_fields(format: PointFormat) -> Vec<PointField> {
+    let make_field = |name: &str, offset: usize, datatype: u8| PointField {
         name: name.into(),
-        offset,
+        offset: offset as i32,
         datatype,
         count: 1,
     };
     let f32t = PointField::FLOAT32 as u8;
     let u32t = PointField::UINT32 as u8;
     let u8t = PointField::UINT8 as u8;
-    let fields = match format {
-        PointFormat::Full => vec![
-            make_field("x", 0, f32t),
-            make_field("y", 4, f32t),
-            make_field("z", 8, f32t),
-            make_field("intensity", 12, f32t),
-            make_field("offset_time", 16, u32t),
-            make_field("tag", 20, u8t),
-            make_field("line", 21, u8t),
-        ],
-        PointFormat::Minimal => vec![
-            make_field("x", 0, f32t),
-            make_field("y", 4, f32t),
-            make_field("z", 8, f32t),
-            make_field("offset_time", 12, u32t),
-        ],
-        PointFormat::Legacy => vec![
-            make_field("x", 0, f32t),
-            make_field("y", 4, f32t),
-            make_field("z", 8, f32t),
-            make_field("intensity", 12, f32t),
-        ],
-    };
+    let mut fields = vec![
+        make_field("x", OFFSET_X, f32t),
+        make_field("y", OFFSET_Y, f32t),
+        make_field("z", OFFSET_Z, f32t),
+    ];
+    match format {
+        PointFormat::Full => fields.extend([
+            make_field("intensity", OFFSET_FOURTH, f32t),
+            make_field("offset_time", OFFSET_FULL_TIME, u32t),
+            make_field("tag", OFFSET_FULL_TAG, u8t),
+            make_field("line", OFFSET_FULL_LINE, u8t),
+        ]),
+        PointFormat::Minimal => fields.push(make_field("offset_time", OFFSET_FOURTH, u32t)),
+        PointFormat::Legacy => fields.push(make_field("intensity", OFFSET_FOURTH, f32t)),
+    }
+    fields
+}
 
+fn cloud_message(format: PointFormat, frame_id: &str, frame: &Frame) -> PointCloud2 {
     let step = format.point_step() as usize;
     let mut data = vec![0u8; step * frame.points.len()];
     for (i, p) in frame.points.iter().enumerate() {
         let base = &mut data[i * step..(i + 1) * step];
-        base[0..4].copy_from_slice(&p.xyz_m[0].to_le_bytes());
-        base[4..8].copy_from_slice(&p.xyz_m[1].to_le_bytes());
-        base[8..12].copy_from_slice(&p.xyz_m[2].to_le_bytes());
+        base[OFFSET_X..OFFSET_X + 4].copy_from_slice(&p.xyz_m[0].to_le_bytes());
+        base[OFFSET_Y..OFFSET_Y + 4].copy_from_slice(&p.xyz_m[1].to_le_bytes());
+        base[OFFSET_Z..OFFSET_Z + 4].copy_from_slice(&p.xyz_m[2].to_le_bytes());
         match format {
             PointFormat::Full => {
-                base[12..16].copy_from_slice(&p.intensity.to_le_bytes());
-                base[16..20].copy_from_slice(&p.offset_ns.to_le_bytes());
-                base[20] = p.tag;
-                base[21] = 0; // Mid-360: single line
+                base[OFFSET_FOURTH..OFFSET_FOURTH + 4].copy_from_slice(&p.intensity.to_le_bytes());
+                base[OFFSET_FULL_TIME..OFFSET_FULL_TIME + 4]
+                    .copy_from_slice(&p.offset_ns.to_le_bytes());
+                base[OFFSET_FULL_TAG] = p.tag;
+                base[OFFSET_FULL_LINE] = 0; // Mid-360: single line
             }
             PointFormat::Minimal => {
-                base[12..16].copy_from_slice(&p.offset_ns.to_le_bytes());
+                base[OFFSET_FOURTH..OFFSET_FOURTH + 4].copy_from_slice(&p.offset_ns.to_le_bytes());
             }
             PointFormat::Legacy => {
-                base[12..16].copy_from_slice(&p.intensity.to_le_bytes());
+                base[OFFSET_FOURTH..OFFSET_FOURTH + 4].copy_from_slice(&p.intensity.to_le_bytes());
             }
         }
     }
 
-    let n = frame.points.len() as i32;
+    let point_count = frame.points.len() as i32;
     PointCloud2 {
         header: header(frame_id, frame.start_ns),
         height: 1,
-        width: n,
-        fields,
+        width: point_count,
+        fields: cloud_fields(format),
         is_bigendian: false,
         point_step: format.point_step(),
-        row_step: format.point_step() * n,
+        row_step: format.point_step() * point_count,
         data,
         is_dense: true,
     }

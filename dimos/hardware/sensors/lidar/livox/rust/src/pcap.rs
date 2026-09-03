@@ -24,6 +24,8 @@ use pcap_parser::traits::PcapReaderIterator;
 use pcap_parser::{LegacyPcapReader, Linktype, PcapBlockOwned, PcapError};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Comfortably above any Ethernet frame a capture can hold.
@@ -85,12 +87,17 @@ fn decode_udp(ts: f64, frame: &[u8]) -> Option<PcapPacket> {
 }
 
 /// Streams UDP packets out of a classic pcap capture.
-struct PcapReader {
+pub struct PcapReader {
     reader: LegacyPcapReader<File>,
     state: ReaderState,
 }
 
 impl PcapReader {
+    /// Open a capture for streaming, rejecting non-pcap files up front.
+    pub fn open(path: &str) -> io::Result<Self> {
+        PcapReader::new(File::open(path)?).map_err(|err| invalid(&format!("{err} at {path}")))
+    }
+
     fn new(mut file: File) -> io::Result<Self> {
         let mut magic = [0u8; 4];
         let peeked = file.read(&mut magic)?;
@@ -108,9 +115,14 @@ impl PcapReader {
         })
     }
 
+    /// Why the stream ended, if it died rather than reaching EOF.
+    pub fn failure(&self) -> Option<&str> {
+        self.state.failure.as_deref()
+    }
+
     /// Next UDP packet. A truncated record ends the stream like a clean EOF.
     /// Anything else that ends it early is recorded in `state.failure`.
-    fn next_packet(&mut self) -> Option<PcapPacket> {
+    pub fn next_packet(&mut self) -> Option<PcapPacket> {
         loop {
             match self.reader.next() {
                 Ok((offset, block)) => {
@@ -149,20 +161,6 @@ fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
-/// Parse a classic pcap capture into its UDP packets.
-pub fn parse_pcap(path: &str) -> io::Result<Vec<PcapPacket>> {
-    let mut reader =
-        PcapReader::new(File::open(path)?).map_err(|err| invalid(&format!("{err} at {path}")))?;
-    let mut out = Vec::new();
-    while let Some(packet) = reader.next_packet() {
-        out.push(packet);
-    }
-    match reader.state.failure {
-        Some(failure) => Err(invalid(&format!("{failure} at {path}"))),
-        None => Ok(out),
-    }
-}
-
 /// Replays a capture's point/IMU packets through the `PacketSource` seam.
 ///
 /// Streams record by record, so memory stays flat regardless of capture size.
@@ -173,19 +171,21 @@ pub struct PcapSource {
     /// Replay speed relative to capture time. `None` runs flat-out.
     rate: Option<f64>,
     started: Option<(Instant, f64)>,
+    stop: Arc<AtomicBool>,
 }
 
 impl PcapSource {
     /// Errors on a capture the replay could never use: bad header, wrong
-    /// link-type, or no packets on the configured data ports.
+    /// link-type, or no packets on the configured data ports. `stop` ends
+    /// `recv`, interrupting any pacing sleep in progress.
     pub fn from_file(
         path: &str,
         point_port: u16,
         imu_port: u16,
         rate: Option<f64>,
+        stop: Arc<AtomicBool>,
     ) -> io::Result<Self> {
-        let mut scan = PcapReader::new(File::open(path)?)
-            .map_err(|err| invalid(&format!("{err} at {path}")))?;
+        let mut scan = PcapReader::open(path)?;
         loop {
             match scan.next_packet() {
                 Some(packet) if packet.src_port == point_port || packet.src_port == imu_port => {
@@ -203,23 +203,32 @@ impl PcapSource {
             }
         }
         Ok(PcapSource {
-            reader: PcapReader::new(File::open(path)?)?,
+            reader: PcapReader::open(path)?,
             point_port,
             imu_port,
             rate,
             started: None,
+            stop,
         })
     }
 
+    /// Sleeps in bounded slices so a stop request never waits out a long
+    /// capture gap.
     fn pace(&mut self, capture_ts: f64) {
         let Some(rate) = self.rate else {
             return;
         };
         let (wall_start, capture_start) = *self.started.get_or_insert((Instant::now(), capture_ts));
         let target = (capture_ts - capture_start) / rate;
-        let elapsed = wall_start.elapsed().as_secs_f64();
-        if target > elapsed {
-            std::thread::sleep(Duration::from_secs_f64(target - elapsed));
+        loop {
+            if self.stop.load(Ordering::Relaxed) {
+                return;
+            }
+            let remaining = target - wall_start.elapsed().as_secs_f64();
+            if remaining <= 0.0 {
+                return;
+            }
+            std::thread::sleep(Duration::from_secs_f64(remaining.min(0.1)));
         }
     }
 }
@@ -227,6 +236,9 @@ impl PcapSource {
 impl PacketSource for PcapSource {
     fn recv(&mut self, buf: &mut [u8]) -> Option<usize> {
         loop {
+            if self.stop.load(Ordering::Relaxed) {
+                return None;
+            }
             let packet = self.reader.next_packet()?;
             if packet.src_port != self.point_port && packet.src_port != self.imu_port {
                 continue;
@@ -305,10 +317,7 @@ mod tests {
         DataPacket {
             time_interval: 0,
             dot_num: 1,
-            udp_cnt: 0,
-            frame_cnt: 0,
             data_type: DataType::CartesianHigh,
-            time_type: 0,
             timestamp_ns: ts_ns,
             payload: &payload,
         }
@@ -333,7 +342,12 @@ mod tests {
             (1.2, wire::LIDAR_POINT_PORT, point_packet(2_000, 200)),
         ]);
         let file = write_temp_pcap(&pcap);
-        let parsed = parse_pcap(path_of(&file)).unwrap();
+        let mut reader = PcapReader::open(path_of(&file)).unwrap();
+        let mut parsed = Vec::new();
+        while let Some(packet) = reader.next_packet() {
+            parsed.push(packet);
+        }
+        assert_eq!(reader.failure(), None);
         assert_eq!(parsed.len(), 3);
         assert_eq!(parsed[1].src_port, wire::LIDAR_PUSH_MSG_PORT);
 
@@ -342,6 +356,7 @@ mod tests {
             wire::LIDAR_POINT_PORT,
             wire::LIDAR_IMU_PORT,
             None,
+            Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
         let mut buf = [0u8; 4096];
@@ -362,6 +377,7 @@ mod tests {
                 wire::LIDAR_POINT_PORT,
                 wire::LIDAR_IMU_PORT,
                 None,
+                Arc::new(AtomicBool::new(false)),
             )
             .err()
             .unwrap();
@@ -392,6 +408,7 @@ mod tests {
             wire::LIDAR_POINT_PORT,
             wire::LIDAR_IMU_PORT,
             Some(0.5),
+            Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
         let start = Instant::now();

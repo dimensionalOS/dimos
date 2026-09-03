@@ -128,9 +128,14 @@ impl FrameAssembler {
         let frame_start = self.frame_start_ns.expect("set above");
         // Offset 0 = "at the frame stamp": clamp rather than wrap when a UDP
         // packet arrives out of order with a stamp older than the frame start.
-        let packet_offset_ns = ts_ns.saturating_sub(frame_start);
-        let point_interval_ns = packet.point_interval_ns();
+        self.append_points(packet, ts_ns.saturating_sub(frame_start));
 
+        completed
+    }
+
+    /// Convert one packet's points to meters and frame-relative offsets.
+    fn append_points(&mut self, packet: &DataPacket<'_>, packet_offset_ns: u64) {
+        let point_interval_ns = packet.point_interval_ns();
         let offset = |i: usize| {
             let ns = packet_offset_ns + i as u64 * point_interval_ns;
             ns.min(u64::from(u32::MAX)) as u32
@@ -166,8 +171,6 @@ impl FrameAssembler {
             }
             DataType::Imu => unreachable!("filtered above"),
         }
-
-        completed
     }
 
     /// Emit whatever is accumulated, e.g. at end of stream.
@@ -197,10 +200,7 @@ mod tests {
         DataPacket {
             time_interval,
             dot_num: points.len() as u16,
-            udp_cnt: 0,
-            frame_cnt: 0,
             data_type: DataType::CartesianHigh,
-            time_type: 0,
             timestamp_ns: ts_ns,
             payload: &payload,
         }
@@ -319,10 +319,7 @@ mod tests {
         let bytes = DataPacket {
             time_interval: 0,
             dot_num: 1,
-            udp_cnt: 0,
-            frame_cnt: 0,
             data_type: DataType::Imu,
-            time_type: 0,
             timestamp_ns: 42,
             payload: &payload,
         }
@@ -345,10 +342,7 @@ mod tests {
         let imu_bytes = DataPacket {
             time_interval: 0,
             dot_num: 1,
-            udp_cnt: 0,
-            frame_cnt: 0,
             data_type: DataType::Imu,
-            time_type: 0,
             timestamp_ns: 7,
             payload: &imu_payload,
         }
