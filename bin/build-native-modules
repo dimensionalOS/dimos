@@ -118,12 +118,13 @@ def _literal_default(classdef: ast.ClassDef, field: str, source: str) -> str | N
     return None
 
 
-# Modules building a remote *pinned* flake whose attr is chosen per machine at
-# runtime (e.g. cuvslam's sdk_variant: nix can't see the GPU driver, and a CI
-# runner could only ever build its own variant anyway). Their binaries come
-# from that project's CI, so they sit deliberately outside this repo's
-# build/publish gate. Every other non-literal build_command still fails loudly.
-EXTERNALLY_PROVISIONED = frozenset({"dimos.mapping.cuvslam.cuvslam.CuvslamConfig"})
+# Modules whose flake attr is chosen per machine at runtime (dim_slam's
+# sdk_variant: nix sees neither the installed GPU driver nor /proc/device-tree, so
+# orin vs thor and cuda12 vs cuda13 are undecidable during evaluation, and a CI
+# runner could only ever build its own variant anyway). They sit deliberately
+# outside this repo's build/publish gate; each machine builds the variant it needs.
+# Every other non-literal build_command still fails loudly.
+EXTERNALLY_PROVISIONED = frozenset({"dimos.mapping.dim_slam.dim_slam.DimSlamConfig"})
 
 
 def is_nix_build(command: str | None) -> bool:
