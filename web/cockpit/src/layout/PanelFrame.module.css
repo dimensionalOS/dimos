@@ -26,6 +26,28 @@
   padding: 0.3rem 0.6rem;
 }
 
+/* Provenance tint: which panels ship with dimos and which were added for the
+   microduck cockpit. Blue = a dimos panel kind (video, map2d, teleop), orange
+   = a kind this cockpit introduced (chat, navmap, control - the three
+   registered under the "Microduck cockpit" comment in panels/registry.tsx).
+   Purely a reading aid; deleting this block and the data-panel-kind attribute on
+   the frame restores the plain header. */
+.frame .head,
+.frameMax .head {
+  background: #12283f;
+  border-bottom: 1px solid #2f81f7;
+}
+
+.frame[data-panel-kind="chat"] .head,
+.frame[data-panel-kind="navmap"] .head,
+.frame[data-panel-kind="control"] .head,
+.frameMax[data-panel-kind="chat"] .head,
+.frameMax[data-panel-kind="navmap"] .head,
+.frameMax[data-panel-kind="control"] .head {
+  background: #3d2708;
+  border-bottom-color: #d29922;
+}
+
 .title {
   font-weight: 600;
   overflow: hidden;

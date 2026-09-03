@@ -82,6 +82,7 @@ export function PanelFrame({ spec, badge, children }: {
     <section
       className={maximized ? styles.frameMax : styles.frame}
       data-testid={`panel-${spec.id}`}
+      data-panel-kind={spec.kind}
       data-maximized={maximized || undefined}
     >
       <div className={styles.head}>
