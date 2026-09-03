@@ -13,9 +13,15 @@
 # limitations under the License.
 
 from abc import ABC
-from typing import Any, ClassVar, Self, get_type_hints
+import sys
+from typing import Any, ClassVar, get_type_hints
 
 from pydantic import BaseModel
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 from dimos.core.global_config import TransportBackend
 

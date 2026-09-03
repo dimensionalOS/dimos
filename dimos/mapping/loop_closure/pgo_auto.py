@@ -56,7 +56,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, Unpack
+import sys
+from typing import TYPE_CHECKING, Any, TypedDict, TypeVar
+
+if sys.version_info >= (3, 11):
+    from typing import Unpack
+else:
+    from typing_extensions import Unpack
 
 import numpy as np
 from scipy.spatial.transform import Rotation

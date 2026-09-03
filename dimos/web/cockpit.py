@@ -38,7 +38,13 @@ from collections.abc import Mapping, Sequence, Set as AbstractSet
 from dataclasses import dataclass, field, replace
 import json
 import math
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
+import sys
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 from dimos.web.relay_bridge.manifest import (
     MANIFEST_VERSION,
