@@ -103,21 +103,36 @@ _TELEOP_MAX_ANGULAR = 0.6
 # to the source aliases against publisher jitter and silently loses ~30% of
 # frames (measured: 11.5 Hz in, 8.4 fps out under a 12 Hz cap).
 #
-# 30 fps is a deliberate choice, not a default: each 640 x 360 frame costs
-# ~11 ms on the SIM THREAD (see MicroduckSimModuleConfig.cast_shadows), so
-# both cameras together spend roughly 0.6 s of every second rendering. What
-# that buys and costs, measured on an M4 (10 cores) against the old 12/5 fps:
-# ~25 fps delivered on both cams (up from 11.2 and 4.6), ~540 kB/s instead of
-# ~190, and the sim worker at 59% of one core instead of 37%. Physics is
-# unaffected - the real-time factor stays 1.00 and the gait, policies and nav
-# all still pass end to end; what halves is the odom publish rate (112 -> 55
-# Hz), still far above the 10 Hz the planner consumes. For a truer 30, shrink
-# the frame rather than raise the rate: render cost scales with pixels.
+# Two separate budgets bound these numbers, and the second one bites first.
+#
+# Render: each 640 x 360 frame costs ~11 ms on the SIM THREAD (see
+# MicroduckSimModuleConfig.cast_shadows). At 30 fps the chase cam alone
+# spends ~0.33 s of every second rendering. That is affordable here - the
+# sim's real-time factor stays 1.00 and the gait, policies and nav all pass
+# end to end - but render cost scales with PIXELS, so shrink the frame before
+# raising the rate.
+#
+# Delivery: every `latest` frame costs one relay->viewer QUIC stream, and
+# that stream is held until the reaper frees it (web/README.md bug 12). A
+# real viewer sustains only ~30 latest-frames per second IN TOTAL, shared
+# across every latest channel - measured, and independent of frame size: a
+# 500 byte state frame costs the same as a 15 kB JPEG. That is why the state
+# channels above are `reliable` (one persistent stream, no per-frame cost)
+# and why the head cam is deliberately slower than the chase cam: the big
+# panel should get the budget. Raising these past the ceiling does not add
+# frames, it just splits the same ~30 fps more ways.
+#
+# Both budgets point the same way: fewer pixels. A latest channel's delivered
+# rate is 1 / (fixed per-stream cost + time to write the payload), so a
+# smaller frame is worth more fps than a higher requested rate, and it cuts
+# the sim-thread render cost at the same time. 480 x 270 is 44% fewer pixels
+# than 640 x 360 and still fills the cockpit's largest panel.
+_CHASE_CAM_SIZE = (480, 270)
 _CHASE_CAM_FPS = 30.0
 _CHASE_CAM_MAX_HZ = 40.0
 _CHASE_CAM_QUALITY = 70
-_HEAD_CAM_FPS = 30
-_HEAD_CAM_MAX_HZ = 40.0
+_HEAD_CAM_FPS = 6
+_HEAD_CAM_MAX_HZ = 12.0
 
 MICRODUCK_COCKPIT_SYSTEM_PROMPT = """\
 You are the brain of Microduck, a tiny (25 cm tall) two-legged duck robot
@@ -231,7 +246,6 @@ MICRODUCK_COCKPIT_CHANNELS = (
         "nav_state",
         str,
         encoding="navstate.json.v1",
-        delivery="latest",
         max_hz=10.0,
         resend_on_subscribe=True,
         rate_gate=False,
@@ -256,7 +270,6 @@ MICRODUCK_COCKPIT_CHANNELS = (
         "policy_state",
         str,
         encoding="policy.json.v1",
-        delivery="latest",
         max_hz=10.0,
         resend_on_subscribe=True,
         rate_gate=False,
@@ -293,6 +306,7 @@ def _stack(mcp_client_kwargs: dict[str, object]):  # type: ignore[no-untyped-def
             mujoco_lidar_robot_exclusion_radius=0.2,
             chase_cam=True,
             chase_cam_fps=_CHASE_CAM_FPS,
+            chase_cam_size=_CHASE_CAM_SIZE,
         ),
         # CPU voxel grid: the flat is tiny, and this also runs on macOS.
         VoxelGridMapper.blueprint(emit_every=1, voxel_size=0.03, device="CPU:0"),

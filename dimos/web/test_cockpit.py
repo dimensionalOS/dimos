@@ -569,10 +569,12 @@ MICRODUCK_RX_REGISTRY = {
     "agent": ("chat.json.v1", "reliable"),
     "agent_idle": ("flag.json.v1", "reliable"),
     "path": ("path.json.v1", "latest"),
-    "nav_state": ("navstate.json.v1", "latest"),
+    # State, not frames: reliable, so they cost no per-frame relay->viewer
+    # stream out of the budget the cameras need (web/README.md bug 12).
+    "nav_state": ("navstate.json.v1", "reliable"),
     "mode": ("mode.json.v1", "reliable"),
     "places": ("places.json.v1", "reliable"),
-    "policy_state": ("policy.json.v1", "latest"),
+    "policy_state": ("policy.json.v1", "reliable"),
 }
 MICRODUCK_TX_REGISTRY = {
     "tele_cmd_vel": ("twist.json.v1", "latest"),
@@ -622,10 +624,10 @@ MICRODUCK_MANIFEST = {
         _rx("agent", "chat.json.v1", "reliable", 30.0),
         _rx("agent_idle", "flag.json.v1", "reliable", 10.0),
         _rx("path", "path.json.v1", "latest", 5.0),
-        _rx("nav_state", "navstate.json.v1", "latest", 10.0),
+        _rx("nav_state", "navstate.json.v1", "reliable", 10.0),
         _rx("mode", "mode.json.v1", "reliable", 10.0),
         _rx("places", "places.json.v1", "reliable", 2.0),
-        _rx("policy_state", "policy.json.v1", "latest", 10.0),
+        _rx("policy_state", "policy.json.v1", "reliable", 10.0),
         _tx(
             "tele_cmd_vel",
             "twist.json.v1",

@@ -422,7 +422,11 @@ class NavMap(Panel):
             ChannelRequest(self.pose, "rx", "pose.json.v1", 10.0),
             ChannelRequest(self.path, "rx", "path.json.v1", 5.0, delivery="latest"),
             ChannelRequest(self.places, "rx", "places.json.v1", 2.0),
-            ChannelRequest(self.nav_state, "rx", "navstate.json.v1", 10.0, delivery="latest"),
+            # State, not a frame stream: reliable. A latest channel costs one
+            # relay->viewer stream per frame out of a budget shared with the
+            # cameras (web/README.md bug 12), and a dropped nav_state would
+            # leave the chip showing a state the robot has already left.
+            ChannelRequest(self.nav_state, "rx", "navstate.json.v1", 10.0),
             ChannelRequest(self.goal, "tx", "pose_goal.json.v1", 5.0),
             ChannelRequest(self.command, "tx", "command.json.v1", 10.0),
         )
@@ -460,8 +464,9 @@ class Control(Panel):
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
         return (
             ChannelRequest(self.mode, "rx", "mode.json.v1", 10.0),
-            ChannelRequest(self.policies, "rx", "policy.json.v1", 10.0, delivery="latest"),
-            ChannelRequest(self.nav_state, "rx", "navstate.json.v1", 10.0, delivery="latest"),
+            # Both are state, not frames: see the note in NavMap.
+            ChannelRequest(self.policies, "rx", "policy.json.v1", 10.0),
+            ChannelRequest(self.nav_state, "rx", "navstate.json.v1", 10.0),
             ChannelRequest(self.command, "tx", "command.json.v1", 10.0),
         )
 
