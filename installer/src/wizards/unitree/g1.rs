@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
+use crate::action::{self, text, Action};
 use crate::cli::HardwareSetupArgs;
 use crate::install_record::Installed;
-use crate::plan::{self, text, Action, Plan, Stage};
+use crate::plan::{Plan, Stage};
 use crate::platforms::Platforms;
 use crate::probe::{capture, Arch, Os, Probes, RcFile};
 use crate::setup::{system_config, system_packages, verify};
@@ -213,7 +214,7 @@ pub fn numpy_pin_stage(
 pub fn rc_stage(rc: &[RcFile]) -> Stage {
     let lines = vec![format!("export CYCLONEDDS_HOME=\"$HOME/{CDDS_HOME_REL}\"")];
     rc.iter()
-        .filter(|file| plan::ensure_block(&file.text, CDDS_MARKER, &lines).1)
+        .filter(|file| action::ensure_block(&file.text, CDDS_MARKER, &lines).1)
         .fold(Stage::new("cyclonedds env", false), |stage, file| {
             stage.push(Action::EnsureBlock {
                 file: file.path.clone(),
@@ -444,7 +445,7 @@ mod tests {
 
     fn rc_with_block() -> Vec<RcFile> {
         let lines = [format!("export CYCLONEDDS_HOME=\"$HOME/{CDDS_HOME_REL}\"")];
-        rc(&plan::ensure_block("", CDDS_MARKER, &lines).0)
+        rc(&action::ensure_block("", CDDS_MARKER, &lines).0)
     }
 
     fn argvs(stage: &Stage) -> Vec<Vec<String>> {

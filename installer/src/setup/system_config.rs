@@ -4,8 +4,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use crate::action::Action;
 use crate::install_record;
-use crate::plan::{Action, Stage};
+use crate::plan::Stage;
 use crate::platforms::{self, Platforms};
 use crate::probe::{Kernel, Os, Platform};
 

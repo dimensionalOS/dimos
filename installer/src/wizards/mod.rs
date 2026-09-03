@@ -207,10 +207,11 @@ mod tests {
 
     use clap::Parser;
 
+    use crate::action::{self, Action};
     use crate::action_log::ActionLog;
     use crate::cli::{Cli, Command, InstallMode};
     use crate::install_record::{PlatformSummary, TmpDir, SCHEMA};
-    use crate::plan::{self, Action, Outcome, Plan, Stage};
+    use crate::plan::{Outcome, Plan, Stage};
     use crate::probe::{Arch, Gpu, Jetson, Kernel, Os, PkgManager, Platform, RcFile, Tools};
     use crate::run_context::Mode;
     use crate::sudo::Sudo;
@@ -363,7 +364,7 @@ mod tests {
             orin(),
             configured_kernel(cfg),
             &every_package_installed(cfg),
-            rc(&plan::ensure_block("", g1::CDDS_MARKER, &lines).0),
+            rc(&action::ensure_block("", g1::CDDS_MARKER, &lines).0),
         )
     }
 

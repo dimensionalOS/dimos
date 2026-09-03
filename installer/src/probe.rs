@@ -11,8 +11,8 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 
+use crate::action;
 use crate::install_record::{self, Installed, PlatformSummary};
-use crate::plan;
 use crate::probe_parse::{
     detect_gpu, is_musl_loader, jetpack_for_l4t, memlock_conf_bytes, multicast_ok,
     nvpmodel_is_maxn, parse_device_tree_model, parse_glibc, parse_iface_ipv4,
@@ -168,9 +168,9 @@ pub fn pkg_manager(os: &Os) -> PkgManager {
 /// A fresh login shell under `home` tests what the rc files actually do, instead of parsing them.
 pub fn login_shell_path(shell: &Path, home: &Path) -> Option<String> {
     capture(
-        &plan::text(shell),
+        &action::text(shell),
         &["-l", "-c", "echo $PATH"],
-        &[("PATH", "/usr/bin:/bin"), ("HOME", &plan::text(home))],
+        &[("PATH", "/usr/bin:/bin"), ("HOME", &action::text(home))],
         LOGIN_SHELL_TIMEOUT_S,
     )
 }
@@ -503,7 +503,7 @@ mod tests {
             let home = install_record::TmpDir::new("probe-rc");
             let lines = ["export PATH=\"$HOME/.local/bin:$PATH\"".to_string()];
             for file in install_record::rc_files(home.path(), shell) {
-                let (text, _) = plan::ensure_block("", "path", &lines);
+                let (text, _) = action::ensure_block("", "path", &lines);
                 fs::write(&file, text).expect("write rc fixture");
             }
             let path = login_shell_path(shell, home.path()).expect("the login shell runs");

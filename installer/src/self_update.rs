@@ -4,9 +4,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
+use crate::action::{text, Action};
 use crate::cli::UpdateArgs;
 use crate::install_record;
-use crate::plan::{text, Action, Plan, Stage};
+use crate::plan::{Plan, Stage};
 use crate::platforms::DIMOS_VERSION;
 use crate::probe::Probes;
 use crate::run;

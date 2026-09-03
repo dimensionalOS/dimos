@@ -9,8 +9,8 @@ use anyhow::Result;
 use serde::Serialize;
 use socket2::{Domain, Protocol, Socket, Type};
 
+use crate::action::text;
 use crate::cli::ScanArgs;
-use crate::plan::text;
 use crate::probe::{capture, Os, Probes};
 use crate::run_context::{Ctx, Mode};
 use crate::say;

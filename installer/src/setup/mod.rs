@@ -11,10 +11,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
+use crate::action::text;
 use crate::cli::{InstallMode, SetupArgs};
 use crate::file_actions;
 use crate::install_record::{self, Installed};
-use crate::plan::{text, Plan, Stage};
+use crate::plan::{Plan, Stage};
 use crate::platforms::{self, Platforms, DIMOS_VERSION, EXTRAS};
 use crate::probe::{self, Arch, Os, PkgManager, Platform, Probes};
 use crate::run;

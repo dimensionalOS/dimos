@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::action::{self, Action};
 use crate::action_log::action_log_path;
 use crate::install_record;
-use crate::plan::{self, Action, Plan, Stage};
+use crate::plan::{Plan, Stage};
 use crate::run;
 use crate::run_context::Ctx;
 use crate::setup::self_install::PATH_MARKER;
@@ -61,7 +62,7 @@ fn rc_files_with_blocks(home: &Path) -> Vec<PathBuf> {
 fn has_block(text: &str) -> bool {
     MARKERS
         .iter()
-        .any(|marker| plan::ensure_block(text, marker, &[]).1)
+        .any(|marker| action::ensure_block(text, marker, &[]).1)
 }
 
 pub fn plan(existing: &Existing, home: &Path) -> Plan {
@@ -239,7 +240,7 @@ mod tests {
         let mut text = RC.to_string();
         for action in actions(&built) {
             if let Action::EnsureBlock { marker, lines, .. } = action {
-                text = plan::ensure_block(&text, marker, lines).0;
+                text = action::ensure_block(&text, marker, lines).0;
             }
         }
         assert_eq!(text, "export EDITOR=vim\nalias k=kubectl\n");

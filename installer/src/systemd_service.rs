@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
+use crate::action::Action;
 use crate::cli::ServiceAction;
 use crate::install_record::{self, Installed};
-use crate::plan::{Action, Plan, Stage};
+use crate::plan::{Plan, Stage};
 use crate::probe::Platform;
 
 /// systemctl returns as soon as the job is queued; the budget only bounds a hung sudo.

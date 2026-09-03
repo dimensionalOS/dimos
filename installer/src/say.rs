@@ -4,8 +4,9 @@ use std::io::IsTerminal;
 
 use serde::Serialize;
 
+use crate::action::Action;
 use crate::action_log::ActionView;
-use crate::plan::{Action, Outcome, Plan, Stage};
+use crate::plan::{Outcome, Plan, Stage};
 use crate::run_context::{Ctx, Mode};
 
 pub fn info(msg: &str) {

@@ -2,6 +2,7 @@
 //! `run::run`, which mutates the machine only through `file_actions` and reads stdin only through
 //! `run_context`. Probes spawn read-only commands through `probe::capture`, each with a deadline.
 
+pub mod action;
 pub mod action_log;
 pub mod cli;
 pub mod file_actions;

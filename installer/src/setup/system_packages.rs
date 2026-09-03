@@ -3,8 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::action::{owned, text, Action};
 use crate::install_record;
-use crate::plan::{owned, text, Action, Stage};
+use crate::plan::Stage;
 use crate::platforms::{self, Platforms};
 use crate::probe::{PkgManager, Probes, Tools};
 

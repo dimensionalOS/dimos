@@ -39,7 +39,7 @@ means "already there".
 
 ## 2. The contract
 
-### `Action` — `src/plan.rs:13`
+### `Action` — `src/action.rs:8`
 
 ```rust
 pub enum Action {
@@ -74,7 +74,7 @@ A sudo action that needs an environment carries it in argv (`["env", "K=V", "cmd
 rules. A systemd unit is `system_config::unit_actions(name, contents)`: write as root,
 `daemon-reload`, `enable --now`.
 
-### `Stage` and `Plan` — `src/plan.rs:250`, `src/plan.rs:336`
+### `Stage` and `Plan` — `src/plan.rs:11`, `src/plan.rs:97`
 
 ```rust
 pub struct Stage {
@@ -375,5 +375,5 @@ than the last.
 - No TODO, no FIXME, no compat shim for a caller that does not exist.
 - No `std::process::Command` outside `spawn.rs`, `sudo.rs` and `probe::capture`; an `observe` calls
   `capture`, so every probe has a deadline.
-- No second definition of a computation. Grep before adding a helper: `plan::text`, `plan::owned`,
+- No second definition of a computation. Grep before adding a helper: `action::text`, `action::owned`,
   `Action::run_owned` and `probe::capture` already exist.

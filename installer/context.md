@@ -13,7 +13,8 @@ verbatim.
 
 ```
 installer/                 Rust crate `dimos-installer`, binary `dimos`, workspace member
-  src/plan.rs              Action / Stage / Plan / Outcome — the vocabulary every stage builder speaks
+  src/action.rs            Action — the one thing a stage does, and the text it renders as
+  src/plan.rs              Stage / Plan / Outcome — the shape of a run every stage builder speaks
   src/run.rs               the executor: gate each stage, apply it, report what the machine did
   src/run_context.rs       Mode / Ctx — the run's settings, the consent prompt, the ONE stdin read
   src/spawn.rs             one program under a deadline, keeping the tail of its output
@@ -276,7 +277,7 @@ the earlier PRD (Paul, Ivan, Jeff, Stash, Jetson Wu) are dispositioned in the kn
   are picked by the login shell (zsh → `.zprofile`) and a test proves `rc_files` and the `-l` probe
   agree; `Sudo::Tty` refreshes `sudo -v` outside every deadline; every probe spawns through
   `probe::capture` with a deadline (dup `capture`/`text`/`run_in` copies deleted; `Action::run_owned`,
-  `plan::owned`, `plan::text` are the one home); `hardware g1|jetson setup` forward from the venv CLI;
+  `action::owned`, `action::text` are the one home); `hardware g1|jetson setup` forward from the venv CLI;
   torch is a warn-only `verify-torch` stage whose last line is the LD_PRELOAD fix; the numpy pin, rc
   block and `.env` stages are probe-gated so a configured G1 plans nothing but the checks;
   `apt-get update` is a best-effort warn-only stage; the G1 verify ends with a live `rt/lowstate` read

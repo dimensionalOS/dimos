@@ -6,9 +6,10 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
+use crate::action::{text, Action};
 use crate::cli::InstallMode;
 use crate::install_record;
-use crate::plan::{text, Action, Stage};
+use crate::plan::Stage;
 use crate::platforms::{self, DIMOS_VERSION};
 
 const REPO_URL: &str = "https://github.com/dimensionalOS/dimos";

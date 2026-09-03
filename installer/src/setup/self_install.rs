@@ -2,8 +2,9 @@
 
 use std::path::Path;
 
+use crate::action::{text, Action};
 use crate::install_record;
-use crate::plan::{text, Action, Stage};
+use crate::plan::Stage;
 use crate::probe::{RcFile, Tools};
 
 pub const PATH_MARKER: &str = "path";

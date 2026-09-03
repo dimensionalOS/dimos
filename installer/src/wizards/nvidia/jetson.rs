@@ -109,7 +109,7 @@ pub fn plan(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::Action;
+    use crate::action::Action;
     use crate::probe::{Arch, Gpu, Jetson, Os, PkgManager};
     use crate::probe_parse::nvpmodel_is_maxn;
     use std::path::PathBuf;

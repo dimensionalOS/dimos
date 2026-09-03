@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 
-use crate::plan::display_argv;
+use crate::action::display_argv;
 use crate::run_context::Ctx;
 use crate::say;
 

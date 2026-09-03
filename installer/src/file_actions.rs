@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 
-use crate::plan::{ensure_block, Action};
+use crate::action::{ensure_block, Action};
 use crate::run_context::Ctx;
 use crate::spawn::run_argv;
 

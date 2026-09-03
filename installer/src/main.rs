@@ -8,11 +8,12 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::Parser;
 
+use dimos_installer::action::Action;
 use dimos_installer::cli::{
     hardware_argv, Cli, Command, HardwareTarget, RobotAction, ServiceAction,
 };
 use dimos_installer::install_record::{self, LastRun};
-use dimos_installer::plan::{Action, Plan, Stage};
+use dimos_installer::plan::{Plan, Stage};
 use dimos_installer::platforms::Platforms;
 use dimos_installer::probe::Probes;
 use dimos_installer::run;

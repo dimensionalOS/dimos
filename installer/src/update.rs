@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::action::{text, Action};
 use crate::cli::{HardwareSetupArgs, InstallMode, UpdateArgs};
 use crate::install_record::{self, Installed};
-use crate::plan::{text, Action, Outcome, Plan, Stage};
+use crate::plan::{Outcome, Plan, Stage};
 use crate::platforms::{self, Platforms, DIMOS_VERSION};
 use crate::probe::{capture, Probes};
 use crate::run::{self, Report};

@@ -5,10 +5,11 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Result};
 use serde::Serialize;
 
+use crate::action::{display_argv, Action};
 use crate::action_log::{ActionRecord, ActionView};
 use crate::file_actions::exec_action;
 use crate::install_record;
-use crate::plan::{display_argv, Action, Outcome, Plan, Stage};
+use crate::plan::{Outcome, Plan, Stage};
 use crate::run_context::{open_shell, Ctx, Mode};
 use crate::say;
 use crate::spawn::run_argv;
