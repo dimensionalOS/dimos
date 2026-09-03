@@ -381,3 +381,22 @@ the earlier PRD (Paul, Ivan, Jeff, Stash, Jetson Wu) are dispositioned in the kn
   16 pytest). The layout binary re-ran `setup` on `dimensional-67oe` against the install the previous
   binary made: only self-install applied, every other stage already, verify passed, the record read
   back. `update --dry-run` exits 1 from both binaries alike, because that clone sits one commit behind.
+- 2026-09-02 — same branch, two more passes. **Split the four oversized files** along the seams already
+  inside them: `run.rs` 777 → `run.rs` (executor) + `run_context.rs` (`Ctx`, the only stdin read) +
+  `spawn.rs` (one program under a deadline, tail kept) + `file_actions.rs` (the filesystem effects),
+  with the plan printing moved into `say.rs`; `probe.rs` 564 → `probe.rs` + `probe_parse.rs` (every
+  pure parser and its fixtures); `update.rs` 504 → `update.rs` + `self_update.rs` + `version.rs`;
+  `plan.rs` 403 → `action.rs` + `plan.rs`. The two file-walking guard tests got stricter as a result:
+  their allowed homes narrowed from `run.rs` (777 lines) to `file_actions.rs` (145), and they now live
+  in `tests/source_invariants.rs` so one `sources()` walker serves both. **Then simplified:**
+  `sync_action` was defined twice, in `setup/dimos_venv.rs` and `update.rs`, same docstring word for
+  word and both timeouts 3600 — now one function taking the nix wrap and `UV_PYTHON` as parameters;
+  the loopback-multicast and jetson-clocks units render from one `oneshot_unit` skeleton; and every
+  item narrowed to the visibility it is actually used at, `pub` 294 → 85 (each of the 85 reachable
+  from `main.rs`). No behavior change: with an isolated `$HOME`, the `setup --dry-run` plan is
+  byte-identical before and after, 28 lines, exit 0, and `update --dry-run` likewise. Largest files
+  now: probe.rs 409, g1.rs 391 (one file per robot, deliberate), robot_scan.rs 360, setup/mod.rs 334.
+  Gates on every commit: 267 + 4 + 3 + 2 tests, clippy `-D warnings`, fmt, release build, 16 pytest.
+  Open, deliberately not done: `dimos_venv::library_actions` and `update::pip_action` build the same
+  `uv pip install` with different budgets (3600 vs 1800) — decide whether that gap is intent or drift,
+  then merge. `installer/README.md` and `WIZARDS.md` follow the new names.
