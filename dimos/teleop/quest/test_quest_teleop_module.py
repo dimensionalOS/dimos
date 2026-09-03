@@ -510,7 +510,7 @@ def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture)
 
         assert module._is_engaged[Hand.RIGHT]
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert publish.call_args.args[0].right_primary
+        assert publish.call_args.args[0].right_grip
         assert publish.call_args.args[0].right_trigger_analog == pytest.approx(1.0)
 
         module._handle_engage()
@@ -520,12 +520,12 @@ def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture)
         module._controllers[Hand.RIGHT] = QuestControllerState(is_left=False, primary=False)
         module._handle_engage()
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert publish.call_args.args[0].right_primary
+        assert publish.call_args.args[0].right_grip
         module._controllers[Hand.RIGHT] = QuestControllerState(is_left=False, primary=True)
         module._handle_engage()
 
         assert not module._is_engaged[Hand.RIGHT]
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert not publish.call_args.args[0].right_primary
+        assert not publish.call_args.args[0].right_grip
     finally:
         module.stop()

@@ -145,9 +145,12 @@ code. The returned config is a reusable template whose fields mean:
 ## 4. Roll out an OpenYAM checkpoint
 
 ```bash
-uv run dimos run learning-rollout-quest-openyam \
+uv run dimos \
+  --can-port follower_l \
+  run learning-rollout-quest-openyam \
   --LeRobotPolicyModule.policy-path \
-    outputs/train/last/pretrained_model
+    "$PWD/outputs/train/openyam-act/checkpoints/last/pretrained_model" \
+  --WristCamera.hardware.camera-index 0
 ```
 
 Quest **A** toggles policy rollout. Hold the right controller grip to take over

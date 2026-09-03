@@ -15,7 +15,7 @@
 """Behavior tests for the isolated LeRobot runtime."""
 
 from collections.abc import Callable, Iterator
-from threading import Event
+from threading import Event, Thread
 import time
 from typing import Any, Protocol
 
@@ -331,21 +331,61 @@ def test_start_mismatch_waits_for_new_joint_state_before_retry(
     assert module.rollout_status()["last_error"] is None
 
 
-def test_a_press_toggles_rollout_and_cancels_before_stopping(
+def test_a_press_stops_worker_before_cancelling_its_trajectory(
     make_runtime: RuntimeFactory,
 ) -> None:
     policy = FakePolicy(_action_chunk(), n_action_steps=2)
     module, control = make_runtime(policy)
     _provide_observation(module)
+    execute_started = Event()
+    release_execute = Event()
+    stop_finished = Event()
+
+    def execute_trajectory(*_args: object, **_kwargs: object) -> TrajectoryExecutionResult:
+        execute_started.set()
+        assert release_execute.wait(timeout=1.0)
+        return TrajectoryExecutionResult(TrajectoryExecutionStatus.ACCEPTED)
+
+    control.execute_trajectory.side_effect = execute_trajectory
     pressed = Buttons()
     pressed.right_primary = True
 
-    module._on_button_pressed(pressed)
-    wait_until(lambda: control.execute_trajectory.call_count >= 1, timeout=1.0)
-    module._on_button_pressed(pressed)
+    def stop_from_button() -> None:
+        module._on_button_pressed(pressed)
+        stop_finished.set()
 
-    assert module.rollout_status()["active"] is False
+    module._on_button_pressed(pressed)
+    assert execute_started.wait(timeout=1.0)
+    stop_thread = Thread(target=stop_from_button)
+    stop_thread.start()
+    try:
+        assert module._stop_event.wait(timeout=1.0)
+        assert module.rollout_status()["active"] is True
+        control.cancel_trajectory.assert_not_called()
+    finally:
+        release_execute.set()
+        stop_thread.join(timeout=1.0)
+
+    assert stop_finished.is_set()
+    assert control.execute_trajectory.call_count == 1
     control.cancel_trajectory.assert_called_with(task_name="policy_rollout")
+
+
+def test_uncertain_cancellation_is_reported(make_runtime: RuntimeFactory) -> None:
+    policy = FakePolicy(_action_chunk(), n_action_steps=1)
+    module, control = make_runtime(policy)
+    _provide_observation(module)
+    control.cancel_trajectory.return_value = TrajectoryCancellationResult(
+        TrajectoryCancellationStatus.UNCERTAIN,
+        "coordinator did not confirm cancellation",
+    )
+
+    module.start_rollout()
+    wait_until(lambda: control.execute_trajectory.call_count >= 1, timeout=1.0)
+    status = module.stop_rollout()
+
+    assert status["active"] is False
+    assert status["last_error"] == "coordinator did not confirm cancellation"
 
 
 @pytest.mark.parametrize(
