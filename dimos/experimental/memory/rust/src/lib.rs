@@ -13,14 +13,17 @@
 // limitations under the License.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender};
-use dimos_module::{Builder, Input, Module};
+use crossbeam_utils::sync::WaitGroup;
+use dimos_module::{worker_pool, Builder, Input, Module};
+use rayon::ThreadPool;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
 use tracing::{debug, info};
@@ -83,10 +86,16 @@ pub struct RecorderConfig {
 
 #[derive(Clone)]
 pub struct RecorderHandle {
-    sender: Sender<EncodeMessage>,
+    submission: Arc<Mutex<Option<Submission>>>,
     permits: Sender<()>,
     sequence: Arc<AtomicU64>,
-    accepting: Arc<AtomicBool>,
+}
+
+#[derive(Clone)]
+struct Submission {
+    pool: Arc<ThreadPool>,
+    sender: Sender<EncodedBatch>,
+    pending: WaitGroup,
 }
 
 impl RecorderHandle {
@@ -95,43 +104,62 @@ impl RecorderHandle {
     }
 
     fn record_owned(&self, stream: Arc<StreamConfig>, data: Vec<u8>) {
-        if !self.accepting.load(Ordering::Acquire) {
+        let Some(Submission {
+            pool,
+            sender,
+            pending,
+        }) = self
+            .submission
+            .lock()
+            .expect("recorder submission lock poisoned")
+            .clone()
+        else {
             return;
-        }
+        };
         if self.permits.send(()).is_err() {
             return;
         }
-        let job = EncodeJob {
-            sequence: self.sequence.fetch_add(1, Ordering::Relaxed),
-            stream,
-            reception_ts: wall_time(),
-            data,
-        };
-        if self.sender.send(EncodeMessage::Job(job)).is_err() {
-            self.accepting.store(false, Ordering::Release);
-        }
+        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
+        let reception_ts = wall_time();
+        pool.spawn_fifo(move || {
+            let observations =
+                catch_unwind(AssertUnwindSafe(|| process(&stream, &data, reception_ts)))
+                    .map_err(|_| "encoding task panicked".to_string())
+                    .and_then(|result| result.map_err(|error| format!("{error:#}")));
+            let _ = sender.send(EncodedBatch {
+                sequence,
+                stream,
+                reception_ts,
+                observations,
+            });
+            drop(pending);
+        });
     }
 }
 
 pub struct RecorderEngine {
     handle: RecorderHandle,
-    workers: Vec<JoinHandle<()>>,
     writer: Option<JoinHandle<Result<WriterStats>>>,
     failure: Receiver<String>,
 }
 
 impl RecorderEngine {
     pub fn start(config: RecorderConfig) -> Result<Self> {
-        let (encode_tx, encode_rx) = bounded(QUEUE_CAPACITY);
         let (write_tx, write_rx) = bounded(QUEUE_CAPACITY);
         let (permit_tx, permit_rx) = bounded(QUEUE_CAPACITY);
         let (failure_tx, failure_rx) = bounded(1);
-        let accepting = Arc::new(AtomicBool::new(true));
+        let worker_count = u32::try_from(config.encoding_threads)
+            .context("encoding thread count exceeds the supported range")?;
+        let pool = worker_pool(worker_count);
+        let submission = Arc::new(Mutex::new(Some(Submission {
+            pool,
+            sender: write_tx,
+            pending: WaitGroup::new(),
+        })));
         let handle = RecorderHandle {
-            sender: encode_tx,
+            submission,
             permits: permit_tx,
             sequence: Arc::new(AtomicU64::new(0)),
-            accepting: Arc::clone(&accepting),
         };
 
         let writer_config = config.clone();
@@ -146,23 +174,8 @@ impl RecorderEngine {
             })
             .context("failed to start memory writer thread")?;
 
-        let worker_count = config.encoding_threads;
-        let mut workers = Vec::with_capacity(worker_count);
-        for index in 0..worker_count {
-            let receiver = encode_rx.clone();
-            let sender = write_tx.clone();
-            workers.push(
-                thread::Builder::new()
-                    .name(format!("mem2-encoder-{index}"))
-                    .spawn(move || encode_loop(receiver, sender))
-                    .context("failed to start encoding thread")?,
-            );
-        }
-        drop(write_tx);
-
         Ok(Self {
             handle,
-            workers,
             writer: Some(writer),
             failure: failure_rx,
         })
@@ -177,14 +190,20 @@ impl RecorderEngine {
     }
 
     pub fn shutdown(mut self) -> Result<WriterStats> {
-        self.handle.accepting.store(false, Ordering::Release);
-        for _ in &self.workers {
-            let _ = self.handle.sender.send(EncodeMessage::Shutdown);
-        }
-        for worker in self.workers.drain(..) {
-            worker
-                .join()
-                .map_err(|_| anyhow!("encoding worker panicked"))?;
+        let submission = self
+            .handle
+            .submission
+            .lock()
+            .expect("recorder submission lock poisoned")
+            .take();
+        if let Some(Submission {
+            pool: _pool,
+            sender,
+            pending,
+        }) = submission
+        {
+            drop(sender);
+            pending.wait();
         }
         self.writer
             .take()
@@ -192,20 +211,6 @@ impl RecorderEngine {
             .join()
             .map_err(|_| anyhow!("writer thread panicked"))?
     }
-}
-
-#[derive(Debug)]
-enum EncodeMessage {
-    Job(EncodeJob),
-    Shutdown,
-}
-
-#[derive(Debug)]
-struct EncodeJob {
-    sequence: u64,
-    stream: Arc<StreamConfig>,
-    reception_ts: f64,
-    data: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -221,27 +226,6 @@ pub struct WriterStats {
     pub received: u64,
     pub written: u64,
     pub encode_errors: u64,
-}
-
-fn encode_loop(receiver: Receiver<EncodeMessage>, sender: Sender<EncodedBatch>) {
-    while let Ok(message) = receiver.recv() {
-        match message {
-            EncodeMessage::Job(job) => {
-                let encoded = process(&job.stream, &job.data, job.reception_ts)
-                    .map_err(|error| format!("{error:#}"));
-                let batch = EncodedBatch {
-                    sequence: job.sequence,
-                    stream: job.stream,
-                    reception_ts: job.reception_ts,
-                    observations: encoded,
-                };
-                if sender.send(batch).is_err() {
-                    return;
-                }
-            }
-            EncodeMessage::Shutdown => return,
-        }
-    }
 }
 
 fn process(
@@ -538,14 +522,10 @@ mod tests {
         let message = TFMessage {
             transforms: vec![first, second],
         };
-        let job = EncodeJob {
-            sequence: 0,
-            stream: stream("tf", Codec::Lcm, true),
-            reception_ts: 100.0,
-            data: message.encode(),
-        };
+        let stream = stream("tf", Codec::Lcm, true);
+        let data = message.encode();
 
-        let observations = process(&job.stream, &job.data, job.reception_ts).unwrap();
+        let observations = process(&stream, &data, 100.0).unwrap();
 
         assert_eq!(observations.len(), 2);
         assert_eq!(observations[0].ts, 10.000_000_005);
@@ -564,19 +544,14 @@ mod tests {
     fn stamped_sensor_messages_preserve_their_source_timestamp() {
         let mut message = Imu::default();
         message.header.stamp = Time { sec: 42, nsec: 25 };
-        let job = EncodeJob {
-            sequence: 0,
-            stream: Arc::new(StreamConfig {
-                port: "imu".to_string(),
-                name: "imu".to_string(),
-                payload_type: "dimos.msgs.sensor_msgs.Imu.Imu".to_string(),
-                codec: Codec::Lcm,
-            }),
-            reception_ts: 100.0,
-            data: message.encode(),
-        };
+        let stream = Arc::new(StreamConfig {
+            port: "imu".to_string(),
+            name: "imu".to_string(),
+            payload_type: "dimos.msgs.sensor_msgs.Imu.Imu".to_string(),
+            codec: Codec::Lcm,
+        });
 
-        let observations = decoding::decode(&job.stream, &job.data, job.reception_ts).unwrap();
+        let observations = decoding::decode(&stream, &message.encode(), 100.0).unwrap();
         assert_eq!(observations[0].ts, 42.000_000_025);
     }
 
@@ -772,7 +747,9 @@ mod tests {
             streams: vec![(*raw).clone()],
         };
         let engine = RecorderEngine::start(config).unwrap();
-        assert_eq!(engine.workers.len(), 3);
+        let submission = engine.handle.submission.lock().unwrap();
+        assert_eq!(submission.as_ref().unwrap().pool.current_num_threads(), 3);
+        drop(submission);
         let handle = engine.handle();
         handle.record(raw.clone(), b"one");
         handle.record(raw, b"two");

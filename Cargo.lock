@@ -642,10 +642,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
+ "crossbeam-utils",
  "dimos-module",
  "lcm-msgs",
  "lz4_flex 0.14.0",
  "mcap",
+ "rayon",
  "rusqlite",
  "serde",
  "serde_json",
