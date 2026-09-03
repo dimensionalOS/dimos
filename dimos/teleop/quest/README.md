@@ -83,7 +83,9 @@ For controller-based arm teleoperation, the middle-finger grip is the deadman:
 hold the relevant grip to engage and release it to disengage. Face buttons are
 available for application lifecycle controls; the OpenYAM learning rollout
 uses **A** to toggle policy execution. The index-finger trigger remains the
-analog gripper command and is forwarded only while that hand's grip is held.
+analog gripper command and is forwarded only while that hand's classified grip
+bit is held. Arm engagement and manual gripper gating therefore use the same
+float-to-digital conversion from the Quest input.
 
 `teleop_buttons` publishes raw button levels. `button_pressed` and
 `button_released` publish digital-only edges after 50 ms of stable input;
