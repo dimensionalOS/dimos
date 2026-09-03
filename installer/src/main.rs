@@ -15,7 +15,8 @@ use dimos_installer::install_record::{self, LastRun};
 use dimos_installer::plan::{Action, Plan, Stage};
 use dimos_installer::platforms::Platforms;
 use dimos_installer::probe::Probes;
-use dimos_installer::run::{self, Ctx};
+use dimos_installer::run;
+use dimos_installer::run_context::Ctx;
 use dimos_installer::say;
 use dimos_installer::wizards::unitree::g1;
 use dimos_installer::{

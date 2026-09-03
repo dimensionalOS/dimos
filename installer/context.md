@@ -14,8 +14,11 @@ verbatim.
 ```
 installer/                 Rust crate `dimos-installer`, binary `dimos`, workspace member
   src/plan.rs              Action / Stage / Plan / Outcome — the vocabulary every stage builder speaks
-  src/run.rs               the executor; `run` is the ONLY fn that mutates the machine or prompts
-  src/say.rs               `-> ok !! xx` on stderr, colour only on a TTY with NO_COLOR unset
+  src/run.rs               the executor: gate each stage, apply it, report what the machine did
+  src/run_context.rs       Mode / Ctx — the run's settings, the consent prompt, the ONE stdin read
+  src/spawn.rs             one program under a deadline, keeping the tail of its output
+  src/file_actions.rs      the ONLY file writer outside install_record.rs and action_log.rs
+  src/say.rs               `-> ok !! xx` on stderr plus the plan and stage lines; colour only on a TTY
   src/probe.rs             read the machine once into Probes; `capture` is the one bounded spawn; parsers pure over &str
   src/sudo.rs              Root | Passwordless | Askpass | Stdin(DIMOS_SUDO_PASSWORD) | Tty | Unavailable
   src/install_record.rs    installer paths + ~/.config/dimos/installer.json

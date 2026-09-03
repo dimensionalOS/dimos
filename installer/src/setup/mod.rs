@@ -12,11 +12,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use crate::cli::{InstallMode, SetupArgs};
+use crate::file_actions;
 use crate::install_record::{self, Installed};
 use crate::plan::{text, Plan, Stage};
 use crate::platforms::{self, Platforms, DIMOS_VERSION, EXTRAS};
 use crate::probe::{self, Arch, Os, PkgManager, Platform, Probes};
-use crate::run::{self, Ctx};
+use crate::run;
+use crate::run_context::Ctx;
 use crate::say;
 use crate::wizards::nvidia::jetson;
 
@@ -190,8 +192,8 @@ fn stages(
 
 /// An unreadable binary hashes to nothing, so the copy is planned rather than silently skipped.
 fn self_install_stage(probes: &Probes, home: &Path) -> Stage {
-    let own = run::sha256_hex(&probes.current_exe).unwrap_or_default();
-    let installed = run::sha256_hex(&install_record::installed_bin(home)).ok();
+    let own = file_actions::sha256_hex(&probes.current_exe).unwrap_or_default();
+    let installed = file_actions::sha256_hex(&install_record::installed_bin(home)).ok();
     self_install::stage(
         &probes.current_exe,
         home,
@@ -336,7 +338,7 @@ mod tests {
     use crate::action_log::ActionLog;
     use crate::install_record::{PlatformSummary, TmpDir};
     use crate::probe::{Gpu, Kernel, Tools};
-    use crate::run::Mode;
+    use crate::run_context::Mode;
     use crate::sudo::Sudo;
 
     fn ctx(home: &Path) -> Ctx {

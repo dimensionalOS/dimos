@@ -373,7 +373,7 @@ than the last.
 - No shell strings. `Action::Run` takes an argv vector.
 - No `unwrap()`/`expect()` on an I/O path.
 - No TODO, no FIXME, no compat shim for a caller that does not exist.
-- No `std::process::Command` outside `run.rs`, `sudo.rs` and `probe::capture`; an `observe` calls
+- No `std::process::Command` outside `spawn.rs`, `sudo.rs` and `probe::capture`; an `observe` calls
   `capture`, so every probe has a deadline.
 - No second definition of a computation. Grep before adding a helper: `plan::text`, `plan::owned`,
   `Action::run_owned` and `probe::capture` already exist.

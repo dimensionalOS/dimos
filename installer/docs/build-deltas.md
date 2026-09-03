@@ -42,8 +42,8 @@ Where this file and the plan disagree, THIS FILE WINS. Brief: /Users/aaryan/.cla
   the question; `--yes` → true). `choose(question, options) -> usize` prints numbered options and reads a
   number. Failure recovery menu is `[c]ontinue / [s]hell / [h]elp`. No banner, no spinner, no box drawing.
   Long-running actions print `-> running: <argv>` before and `ok (<secs>s)` after.
-- The plan's "grep test that only Ui uses cliclack" becomes: a test that no file other than run.rs
-  reads stdin or calls `print!`/`println!` for prompts (`grep -rn "stdin()" src/ | grep -v run.rs` is empty).
+- The plan's "grep test that only Ui uses cliclack" becomes: a test that no file other than run_context.rs
+  reads stdin or calls `print!`/`println!` for prompts (`grep -rn "stdin()" src/ | grep -v run_context.rs` is empty).
 
 ## D4 — `dimos robot scan` (v1, brief decision 17)
 - New file `installer/src/robot_scan.rs`: `scan(opts) -> Vec<Found>` where

@@ -14,7 +14,7 @@ use serde::Serialize;
 
 use crate::install_record::{self, Installed, PlatformSummary};
 use crate::plan;
-use crate::run;
+use crate::spawn;
 
 /// L4T release prefix -> JetPack, from NVIDIA's L4T archive; a longer prefix must come first.
 const JETPACK: [(&str, &str); 4] = [
@@ -155,7 +155,7 @@ pub fn capture(
         let _ = pipe.read_to_string(&mut out);
         out
     });
-    let status = run::wait_until(&mut child, Duration::from_secs(timeout_s)).ok()??;
+    let status = spawn::wait_until(&mut child, Duration::from_secs(timeout_s)).ok()??;
     let out = reader.join().ok()?;
     status.success().then(|| out.trim().to_string())
 }

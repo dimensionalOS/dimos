@@ -11,7 +11,8 @@ use crate::install_record::{self, Installed};
 use crate::plan::{text, Action, Outcome, Plan, Stage};
 use crate::platforms::{self, Platforms, DIMOS_VERSION};
 use crate::probe::{capture, Probes};
-use crate::run::{self, Ctx, Report};
+use crate::run::{self, Report};
+use crate::run_context::Ctx;
 use crate::say;
 use crate::setup::{dimos_venv, system_config, system_packages, verify};
 use crate::wizards::nvidia::jetson;
@@ -617,7 +618,7 @@ mod tests {
 
     fn ctx(home: &Path, dry_run: bool) -> Ctx {
         Ctx {
-            mode: crate::run::Mode::NonInteractive,
+            mode: crate::run_context::Mode::NonInteractive,
             dry_run,
             verbose: false,
             yes: true,

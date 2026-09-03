@@ -12,7 +12,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use crate::cli::ScanArgs;
 use crate::plan::text;
 use crate::probe::{capture, Os, Probes};
-use crate::run::{Ctx, Mode};
+use crate::run_context::{Ctx, Mode};
 use crate::say;
 
 const GROUP: Ipv4Addr = Ipv4Addr::new(231, 1, 1, 1);

@@ -14,7 +14,8 @@ use crate::install_record::{self, HardwareRun, Installed};
 use crate::plan::Stage;
 use crate::platforms::{self, Platforms};
 use crate::probe::Probes;
-use crate::run::{self, Ctx, Report};
+use crate::run::{self, Report};
+use crate::run_context::Ctx;
 use crate::say;
 use crate::setup::{system_config, verify};
 use crate::wizards::nvidia::jetson;
@@ -211,7 +212,7 @@ mod tests {
     use crate::install_record::{PlatformSummary, TmpDir, SCHEMA};
     use crate::plan::{self, Action, Outcome, Plan, Stage};
     use crate::probe::{Arch, Gpu, Jetson, Kernel, Os, PkgManager, Platform, RcFile, Tools};
-    use crate::run::Mode;
+    use crate::run_context::Mode;
     use crate::sudo::Sudo;
     use crate::wizards::unitree::g1::UNITREE_EXTRA;
 
