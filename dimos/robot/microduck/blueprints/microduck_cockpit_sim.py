@@ -107,53 +107,46 @@ _TELEOP_MAX_ANGULAR = 0.6
 # to the source aliases against publisher jitter and silently loses ~30% of
 # frames (measured: 11.5 Hz in, 8.4 fps out under a 12 Hz cap).
 #
-# Two separate budgets bound these numbers, and the second one bites first.
+# Two budgets bound these numbers, and they respond to different knobs.
 #
-# Render: each 640 x 360 frame costs ~11 ms on the SIM THREAD (see
-# MicroduckSimModuleConfig.cast_shadows). At 30 fps the head cam alone
-# spends ~0.33 s of every second rendering. That is affordable here - the
-# sim's real-time factor stays 1.00 and the gait, policies and nav all pass
-# end to end - but render cost scales with PIXELS, so shrink the frame before
-# raising the rate.
+# RENDER (sim thread). Cameras render inline in the sim loop, so every
+# millisecond spent rendering is one physics does not advance. Cost here is
+# GEOMETRY, not pixels: the duck's own 215k-vertex body dominates, so a
+# 64x48 render measures ~27 ms against ~29 ms for 640x360. Only the frame
+# RATE moves this. At these rates the real-time factor stays 1.00 and the
+# gait, policies and nav all pass end to end.
 #
-# Delivery: every `latest` frame costs one relay->viewer QUIC stream, and
-# that stream is held until the reaper frees it (web/README.md bug 12). A
-# real viewer sustains only ~30 latest-frames per second IN TOTAL, shared
-# across every latest channel - measured, and independent of frame size: a
-# 500 byte state frame costs the same as a 15 kB JPEG. That is why the state
-# channels above are `reliable` (one persistent stream, no per-frame cost)
-# and why the chase cam is deliberately slower than the head cam: the big
-# panel - the duck's own view - should get the budget. Raising these past the
-# ceiling does not add frames, it just splits the same ~30 fps more ways.
+# DELIVERY (relay -> browser). This is the one that produces "stale", and it
+# is BYTES, not stream count. Measured against the live cockpit while the
+# duck walked, watching the relay's own counters: the sim never hitches (bus
+# gaps p50 56 ms, worst 79 ms) and the robot->relay leg never hitches, but
+# relay->browser freezes for seconds at a time, ALL CHANNELS AT ONCE - the
+# signature of connection-level flow control rather than a per-stream
+# problem. Halving JPEG quality, which leaves the stream count untouched,
+# cut the freezes from 2.1-4.1 s to 0.8-1.3 s; shrinking the inset (~7% of
+# the bytes) barely moved them. So quality and rate on the CHASE camera are
+# the levers that matter - it is ~90% of the byte budget - and 40 is the
+# highest quality measured to keep freezes under the 2 s that trips the
+# panel badge.
 #
-# Frame SIZE is the weaker lever of the two and it is not free: the cockpit's
-# video canvas scales down to its panel but never up (VideoPanel.module.css
-# `max-width: 100%`), so a smaller frame just leaves dead space around a
-# smaller picture. 480 x 270 measured only ~7% more delivered fps than
-# 640 x 360 and looked worse, so the primary camera keeps 640 x 360.
-#
-# Rate is what costs, on BOTH budgets, so it is what gets allocated: the
-# chase camera is the main panel and takes the frames; the head camera rides
-# along as a thumbnail inset and needs only enough to look live.
-#
-# Resolution is NOT the lever it looks like. Render cost here is geometry,
-# not pixels - the duck's own 215k-vertex body dominates every frame, so a
-# 64x48 render measures ~27 ms against ~29 ms for 640x360. The head camera
-# therefore keeps 640x360 even as a thumbnail: it costs the same to render,
-# and it is the frame the agent's `observe` skill reads, where detail counts.
-#
-# Both are also latest channels, and every latest frame costs one
-# relay->viewer stream out of a budget the browser meters. 26 renders/s
-# across the two cameras is deliberately below the ~31/s that was measured
-# stalling: fewer streams, fewer credit exhaustions, fewer freezes.
+# This is a workaround, not a fix. The freeze is the relay blocking in
+# createUnidirectionalStream (web/relay/session.ts) with waitUntilAvailable
+# and no timeout, which stops every channel rather than dropping a frame on
+# a latest-wins video feed. Fixing that upstream would let all of these
+# numbers go back up.
 _CHASE_CAM_SIZE = (640, 360)
 _CHASE_CAM_FPS = 20.0
 _CHASE_CAM_MAX_HZ = 30.0
-_CHASE_CAM_QUALITY = 70
-_HEAD_CAM_SIZE = (640, 360)
+_CHASE_CAM_QUALITY = 40
+# The head camera only fills a ~260 px inset, so it ships at a quarter of the
+# pixels. That costs nothing in render time (geometry-bound, see above) but a
+# lot in BYTES, which is the constraint that actually bites - see the
+# flow-control note below. It stays the frame `observe` reads; 320x180 is
+# ample for describing a room.
+_HEAD_CAM_SIZE = (320, 180)
 _HEAD_CAM_FPS = 6
 _HEAD_CAM_MAX_HZ = 12.0
-_HEAD_CAM_QUALITY = 70
+_HEAD_CAM_QUALITY = 40
 
 MICRODUCK_COCKPIT_SYSTEM_PROMPT = """\
 You are the brain of Microduck, a tiny (25 cm tall) two-legged duck robot
