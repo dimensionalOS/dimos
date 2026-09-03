@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from pathlib import Path
 import subprocess
 
@@ -92,7 +93,12 @@ def test_conversion_runs_packaged_module_in_policy_project(
     run = mocker.patch(
         "dimos.imitation.dataprep.lerobot.subprocess.run",
         return_value=subprocess.CompletedProcess(
-            [], 0, stdout=f'{{"command":"build","path":"{tmp_path / "dataset"}"}}', stderr=""
+            [],
+            0,
+            stdout=(
+                f'[dataprep] wrote 1 episode\n{{"command":"build","path":"{tmp_path / "dataset"}"}}'
+            ),
+            stderr="",
         ),
     )
     config = DataPrepConfig(
@@ -113,6 +119,9 @@ def test_conversion_runs_packaged_module_in_policy_project(
     assert run.call_args.kwargs["capture_output"] is True
     assert run.call_args.kwargs["text"] is True
     assert '"command":"build"' in run.call_args.kwargs["input"]
+    assert json.loads(run.call_args.kwargs["input"])["config"]["source"] == str(
+        Path("recording.db").resolve()
+    )
 
 
 def test_conversion_reports_missing_uv(tmp_path: Path, mocker: pytest_mock.MockerFixture) -> None:
@@ -148,8 +157,9 @@ def test_conversion_reports_child_process_diagnostics(
 
 
 def test_inspection_uses_the_same_isolated_entrypoint(
-    tmp_path: Path, mocker: pytest_mock.MockerFixture
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: pytest_mock.MockerFixture
 ) -> None:
+    monkeypatch.chdir(tmp_path)
     run = mocker.patch(
         "dimos.imitation.dataprep.lerobot.subprocess.run",
         return_value=subprocess.CompletedProcess(
@@ -157,5 +167,6 @@ def test_inspection_uses_the_same_isolated_entrypoint(
         ),
     )
 
-    assert inspect_lerobot_dataset(tmp_path / "dataset") == {"format": "lerobot"}
+    assert inspect_lerobot_dataset(Path("dataset")) == {"format": "lerobot"}
     assert '"command":"inspect"' in run.call_args.kwargs["input"]
+    assert json.loads(run.call_args.kwargs["input"])["path"] == str(tmp_path / "dataset")

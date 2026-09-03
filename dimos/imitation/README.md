@@ -106,19 +106,20 @@ A complete session is:
 start daemon ─▶ attach panel ─▶ start/save takes ─▶ detach panel ─▶ stop daemon
 ```
 
-After collection, stop the stack cleanly and build the dataset with the same
-OpenYAM profile used by Quest collection and policy rollout:
+After collection, stop the stack cleanly and build the dataset with the
+direct-teach profile:
 
 ```bash
 dimos stop
 dimos dataprep build \
   --source data/recordings/openyam-teach.mcap \
-  --profile dimos.robot.manipulators.openyam.learning:OPENYAM_LEARNING_PROFILE \
+  --profile dimos.robot.manipulators.openyam.learning:OPENYAM_TEACH_LEARNING_PROFILE \
   --output data/datasets/openyam-teach
 ```
 
 The action row contains the measured arm and gripper positions at that instant.
-No timing shift or alternate data profile is required.
+The direct-teach profile therefore reads both state and action from the continuous
+coordinator joint-state stream; Quest collection continues to use accepted commands.
 
 Before a production collection, run one hardware smoke test:
 
@@ -129,7 +130,7 @@ Before a production collection, run one hardware smoke test:
 2. Attach `dimos collect` and verify that the panel reports the gripper as
    passive.
 3. Record and save a short take, stop the daemon, then inspect the MCAP with
-   `dimos dataprep inspect` and `OPENYAM_LEARNING_PROFILE`.
+   `dimos dataprep inspect` and `OPENYAM_TEACH_LEARNING_PROFILE`.
 
 ### Where the recording goes
 
