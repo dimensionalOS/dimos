@@ -14,8 +14,8 @@
 
 """One disposable resource wrapping the memory perception API.
 
-``DanDetector`` owns the models behind :func:`embed_index`, :func:`localize`,
-and :func:`inventory`: enter once, query many times on warm weights, and
+``DanDetector`` owns the models behind :func:`embed_index` and
+:func:`localize`: enter once, query many times on warm weights, and
 ``stop()`` (or leave the ``with`` block) releases whatever loaded.
 
 Every entry point takes an optional :class:`~dimos.perception.memory.rig.Rig`
@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING, Any, Literal, cast, overload
 from dimos.core.resource import Resource
 from dimos.memory.embed import EmbedImages
 from dimos.memory.transform import QualityWindow
-from dimos.perception.memory.inventory import DEFAULT_VOCABULARY, NamingVocabulary, inventory
 from dimos.perception.memory.localize import embed_index, localize
 from dimos.perception.memory.rig import Rig
 
@@ -41,15 +40,15 @@ if TYPE_CHECKING:
     from dimos.models.embedding.siglip import SigLIPModel
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
     from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
-    from dimos.perception.memory.types import Instance, Localization, LocalizePolicy
+    from dimos.perception.memory.types import Localization, LocalizePolicy
 
 
 class DanDetector(Resource):
     """The perception models as one resource.
 
     ``start()`` constructs SigLIP, OWLv2, and EdgeTAM. The two
-    HuggingFace models load lazily on first use, so an inventory-only
-    caller never pays for SigLIP; ``stop()`` releases whatever loaded.
+    HuggingFace models load lazily on first use. ``stop()`` releases
+    whatever loaded.
     """
 
     siglip: SigLIPModel
@@ -156,21 +155,5 @@ class DanDetector(Resource):
             detector=self.detector,
             segmenter=self.segmenter,
             policy=policy,
-            **kwargs,
-        )
-
-    def inventory(
-        self,
-        store: Any,
-        *,
-        naming_vocabulary: NamingVocabulary = DEFAULT_VOCABULARY,
-        **kwargs: Any,
-    ) -> list[Instance]:
-        """:func:`inventory` on this resource's models."""
-        return inventory(
-            store,
-            segmenter=self.segmenter,
-            detector=self.detector,
-            naming_vocabulary=naming_vocabulary,
             **kwargs,
         )
