@@ -680,7 +680,7 @@ def test_scene_joint_limits_validate_joint_names(
     )
     monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint2", "extra_joint"])
 
-    with pytest.raises(ValueError, match="does not match the composed model"):
+    with pytest.raises(ValueError, match="does not match the prepared model"):
         _make_world(fake_roboplan, config)
 
 
