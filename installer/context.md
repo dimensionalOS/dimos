@@ -400,3 +400,10 @@ the earlier PRD (Paul, Ivan, Jeff, Stash, Jetson Wu) are dispositioned in the kn
   Open, deliberately not done: `dimos_venv::library_actions` and `update::pip_action` build the same
   `uv pip install` with different budgets (3600 vs 1800) — decide whether that gap is intent or drift,
   then merge. `installer/README.md` and `WIZARDS.md` follow the new names.
+- 2026-09-02 — the refactored binary on real hardware. Cross-built aarch64 musl from this Linux box
+  (static, stripped, SHA-256 `ea1c32a2e02f35f6da2f82f470916ca3623ddb1a48f1723c35137f85c3e1b79a`) and
+  run on `orin-nx-7837` against the install the pre-refactor binary made: `setup` exit 0 with every
+  stage already except self-install (the binary's own sha changed, so it copies), `hardware jetson
+  setup` exit 0 with all four stages already, MAXN_SUPER held and both units still active. `update
+  --dry-run` exits 1 there because that clone sits behind `origin/aaryan/installer` and so plans a
+  pull — the same exit the pre-refactor binary gives, not a regression.
