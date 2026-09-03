@@ -96,10 +96,28 @@ _DUCK_STUCK_THRESHOLD = 0.15
 _TELEOP_MAX_LINEAR = 0.15
 _TELEOP_MAX_ANGULAR = 0.6
 
-# Chase camera: the sim renders it at 12 fps, so capping the cockpit there
-# saves re-encoding frames nobody produced.
-_CHASE_CAM_HZ = 12.0
+# Camera rates: what the sim renders at, and the cockpit's cap on top.
+#
+# The cap must sit ABOVE the render rate, never on it. The bridge's rate gate
+# drops any frame arriving less than 1/max_hz after the last, so a cap equal
+# to the source aliases against publisher jitter and silently loses ~30% of
+# frames (measured: 11.5 Hz in, 8.4 fps out under a 12 Hz cap).
+#
+# 30 fps is a deliberate choice, not a default: each 640 x 360 frame costs
+# ~11 ms on the SIM THREAD (see MicroduckSimModuleConfig.cast_shadows), so
+# both cameras together spend roughly 0.6 s of every second rendering. What
+# that buys and costs, measured on an M4 (10 cores) against the old 12/5 fps:
+# ~25 fps delivered on both cams (up from 11.2 and 4.6), ~540 kB/s instead of
+# ~190, and the sim worker at 59% of one core instead of 37%. Physics is
+# unaffected - the real-time factor stays 1.00 and the gait, policies and nav
+# all still pass end to end; what halves is the odom publish rate (112 -> 55
+# Hz), still far above the 10 Hz the planner consumes. For a truer 30, shrink
+# the frame rather than raise the rate: render cost scales with pixels.
+_CHASE_CAM_FPS = 30.0
+_CHASE_CAM_MAX_HZ = 40.0
 _CHASE_CAM_QUALITY = 70
+_HEAD_CAM_FPS = 30
+_HEAD_CAM_MAX_HZ = 40.0
 
 MICRODUCK_COCKPIT_SYSTEM_PROMPT = """\
 You are the brain of Microduck, a tiny (25 cm tall) two-legged duck robot
@@ -139,12 +157,17 @@ MICRODUCK_COCKPIT_LAYOUT = Col(
     Row(
         # Rate/quality are pinned here and mirrored by the chase_image
         # Channel below (a panel and a channel for one stream must agree on
-        # everything but max_hz); the sim renders the chase cam at 12 fps.
-        Video("chase_image", title="Chase cam", max_hz=_CHASE_CAM_HZ, quality=_CHASE_CAM_QUALITY),
+        # everything but max_hz).
+        Video(
+            "chase_image",
+            title="Chase cam",
+            max_hz=_CHASE_CAM_MAX_HZ,
+            quality=_CHASE_CAM_QUALITY,
+        ),
         Col(
             NavMap(),
             Row(
-                Video("color_image", title="Head cam"),
+                Video("color_image", title="Head cam", max_hz=_HEAD_CAM_MAX_HZ),
                 Teleop(
                     max_linear=_TELEOP_MAX_LINEAR,
                     max_angular=_TELEOP_MAX_ANGULAR,
@@ -174,7 +197,7 @@ MICRODUCK_COCKPIT_CHANNELS = (
         Image,
         encoding="jpeg.v1",
         delivery="latest",
-        max_hz=_CHASE_CAM_HZ,
+        max_hz=_CHASE_CAM_MAX_HZ,
         params={"quality": _CHASE_CAM_QUALITY},
         resend_on_subscribe=True,
     ),
@@ -242,69 +265,76 @@ MICRODUCK_COCKPIT_CHANNELS = (
 
 
 def _stack(mcp_client_kwargs: dict[str, object]):  # type: ignore[no-untyped-def]
-    return (
-        autoconnect(
-            MicroduckSimModule.blueprint(
-                scene_xml=FOUR_ROOM_XML,
-                headless=True,
-                spawn_xy=(0.0, 0.0),
-                variant=_VARIANT,
-                # Head camera for the cockpit and the observe skill.
-                width=320,
-                height=240,
-                fps=5,
-                enable_color=True,
-                enable_depth=False,
-                # Raycast lidar -> world-frame pointcloud for mapping. World
-                # geometry is group 0; the robot and the ball are not.
-                enable_pointcloud=True,
-                pointcloud_fps=3.0,
-                enable_mujoco_lidar=True,
-                mujoco_lidar_camera_names=[name for name, _ in LIDAR_CAMERA_SPECS],
-                mujoco_lidar_geom_groups=[0],
-                mujoco_lidar_raycast_width=96,
-                mujoco_lidar_raycast_height=48,
-                mujoco_lidar_min_range=0.05,
-                mujoco_lidar_max_range=6.0,
-                mujoco_lidar_max_height=0.6,
-                mujoco_lidar_voxel_size=0.03,
-                mujoco_lidar_robot_exclusion_radius=0.2,
-                chase_cam=True,
+    return autoconnect(
+        MicroduckSimModule.blueprint(
+            scene_xml=FOUR_ROOM_XML,
+            headless=True,
+            spawn_xy=(0.0, 0.0),
+            variant=_VARIANT,
+            # Head camera for the cockpit and the observe skill.
+            width=320,
+            height=240,
+            fps=_HEAD_CAM_FPS,
+            enable_color=True,
+            enable_depth=False,
+            # Raycast lidar -> world-frame pointcloud for mapping. World
+            # geometry is group 0; the robot and the ball are not.
+            enable_pointcloud=True,
+            pointcloud_fps=3.0,
+            enable_mujoco_lidar=True,
+            mujoco_lidar_camera_names=[name for name, _ in LIDAR_CAMERA_SPECS],
+            mujoco_lidar_geom_groups=[0],
+            mujoco_lidar_raycast_width=96,
+            mujoco_lidar_raycast_height=48,
+            mujoco_lidar_min_range=0.05,
+            mujoco_lidar_max_range=6.0,
+            mujoco_lidar_max_height=0.6,
+            mujoco_lidar_voxel_size=0.03,
+            mujoco_lidar_robot_exclusion_radius=0.2,
+            chase_cam=True,
+            chase_cam_fps=_CHASE_CAM_FPS,
+        ),
+        # CPU voxel grid: the flat is tiny, and this also runs on macOS.
+        VoxelGridMapper.blueprint(emit_every=1, voxel_size=0.03, device="CPU:0"),
+        CostMapper.blueprint(
+            config=HeightCostConfig(
+                resolution=0.03,
+                can_pass_under=_DUCK_HEIGHT + 0.05,
+                can_climb=0.03,
             ),
-            # CPU voxel grid: the flat is tiny, and this also runs on macOS.
-            VoxelGridMapper.blueprint(emit_every=1, voxel_size=0.03, device="CPU:0"),
-            CostMapper.blueprint(
-                config=HeightCostConfig(
-                    resolution=0.03,
-                    can_pass_under=_DUCK_HEIGHT + 0.05,
-                    can_climb=0.03,
-                ),
-                initial_safe_radius_meters=_DUCK_WIDTH + 0.15,
-            ),
-            ReplanningAStarPlanner.blueprint(
-                robot_width=_DUCK_WIDTH,
-                robot_rotation_diameter=_DUCK_ROTATION_DIAMETER,
-                stuck_time_window=_DUCK_STUCK_TIME_WINDOW,
-                stuck_threshold=_DUCK_STUCK_THRESHOLD,
-            ),
-            # Teleop/agent arbitration; replaces MovementManager (nav_cmd_vel
-            # only reaches cmd_vel in agent mode).
-            DuckControlModule.blueprint(),
-            MicroduckSkillContainer.blueprint(rooms=MICRODUCK_ROOMS, objects=MICRODUCK_OBJECTS),
-            ObserveSkill.blueprint(),
-            McpServer.blueprint(),
-            McpClient.blueprint(system_prompt=MICRODUCK_COCKPIT_SYSTEM_PROMPT, **mcp_client_kwargs),
-            cockpit(layout=MICRODUCK_COCKPIT_LAYOUT, channels=MICRODUCK_COCKPIT_CHANNELS),
-        )
-        .remappings([(VoxelGridMapper, "lidar", "pointcloud")])
-        # nerf_speed halves the planner's 0.55 m/s default; the sim module's
-        # command gain maps the rest into the gait's trained velocity range.
-        .global_config(robot_model="microduck", nerf_speed=0.5)
-    )
+            initial_safe_radius_meters=_DUCK_WIDTH + 0.15,
+        ),
+        ReplanningAStarPlanner.blueprint(
+            robot_width=_DUCK_WIDTH,
+            robot_rotation_diameter=_DUCK_ROTATION_DIAMETER,
+            stuck_time_window=_DUCK_STUCK_TIME_WINDOW,
+            stuck_threshold=_DUCK_STUCK_THRESHOLD,
+        ),
+        # Teleop/agent arbitration; replaces MovementManager (nav_cmd_vel
+        # only reaches cmd_vel in agent mode).
+        DuckControlModule.blueprint(),
+        MicroduckSkillContainer.blueprint(rooms=MICRODUCK_ROOMS, objects=MICRODUCK_OBJECTS),
+        ObserveSkill.blueprint(),
+        McpServer.blueprint(),
+        McpClient.blueprint(system_prompt=MICRODUCK_COCKPIT_SYSTEM_PROMPT, **mcp_client_kwargs),
+        cockpit(layout=MICRODUCK_COCKPIT_LAYOUT, channels=MICRODUCK_COCKPIT_CHANNELS),
+    ).remappings([(VoxelGridMapper, "lidar", "pointcloud")])
 
 
-microduck_cockpit_sim = _stack({})
+# The last call in each assignment below has to be a builder method: the
+# blueprint registry is generated by a static AST scan
+# (test_all_blueprints_generation) that only recognises `autoconnect(...)` by
+# name or an expression ending in one of these builders. A bare `_stack({})`
+# is invisible to it, and `dimos run microduck-cockpit-sim` then fails with
+# "Unknown blueprint" while the ollama variant - which ends in
+# .requirements() - resolves fine.
+#
+# nerf_speed halves the planner's 0.55 m/s default; the sim module's command
+# gain maps the rest into the gait's trained velocity range.
+microduck_cockpit_sim = _stack({}).global_config(robot_model="microduck", nerf_speed=0.5)
 
-microduck_cockpit_sim_ollama = _stack({"model": "ollama:qwen3:8b"}).requirements(
-    ollama_installed,
+microduck_cockpit_sim_ollama = (
+    _stack({"model": "ollama:qwen3:8b"})
+    .global_config(robot_model="microduck", nerf_speed=0.5)
+    .requirements(ollama_installed)
 )

@@ -77,6 +77,7 @@ all_blueprints = {
     "learning-collect-quest-xarm7": "dimos.imitation.collection.blueprint:learning_collect_quest_xarm7",
     "microduck-agentic-sim": "dimos.robot.microduck.blueprints.microduck_agentic_sim:microduck_agentic_sim",
     "microduck-agentic-sim-ollama": "dimos.robot.microduck.blueprints.microduck_agentic_sim:microduck_agentic_sim_ollama",
+    "microduck-cockpit-sim": "dimos.robot.microduck.blueprints.microduck_cockpit_sim:microduck_cockpit_sim",
     "microduck-cockpit-sim-ollama": "dimos.robot.microduck.blueprints.microduck_cockpit_sim:microduck_cockpit_sim_ollama",
     "microduck-sim": "dimos.robot.microduck.blueprints.microduck_sim:microduck_sim",
     "mid360": "dimos.hardware.sensors.lidar.livox.livox_blueprints:mid360",
