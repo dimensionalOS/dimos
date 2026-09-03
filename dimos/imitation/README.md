@@ -117,6 +117,18 @@ dimos dataprep build \
   --output data/datasets/openyam-teach
 ```
 
+Visualize an episode from the isolated LeRobot environment so its matching
+Rerun viewer executable is available on `PATH`:
+
+```bash
+uv run --project dimos/imitation/policy/lerobot/python --frozen \
+  lerobot-dataset-viz \
+  --repo-id local/openyam-wrist \
+  --root "$PWD/data/datasets/openyam-teach" \
+  --episode-index 0 \
+  --mode local
+```
+
 The action row contains the measured arm and gripper positions at that instant.
 The direct-teach profile therefore reads both state and action from the continuous
 coordinator joint-state stream; Quest collection continues to use accepted commands.
