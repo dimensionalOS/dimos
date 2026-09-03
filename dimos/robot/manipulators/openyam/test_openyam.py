@@ -58,7 +58,7 @@ def test_make_openyam_model_config_uses_canonical_arm_joints() -> None:
     config = make_openyam_model_config()
 
     assert OPENYAM_MODEL_PATH.parts[-2:] == ("i2rt", "yam.urdf")
-    assert config.model.source_path == OPENYAM_MODEL_PATH
+    assert config.model.source_path is OPENYAM_MODEL_PATH
     assert config.joint_names == OPENYAM_ARM_JOINTS
     assert config.base_link == "base"
     assert config.planning_groups[0].tip_link == "gripper_tip"
