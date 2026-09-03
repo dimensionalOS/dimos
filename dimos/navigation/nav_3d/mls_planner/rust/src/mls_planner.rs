@@ -178,6 +178,13 @@ impl RegionBounds {
     }
 }
 
+/// One tile of a full-map load: a region cylinder and the cloud points
+/// inside it, ready for update_region.
+pub struct MapTile {
+    pub bounds: RegionBounds,
+    pub points: Vec<(f32, f32, f32)>,
+}
+
 pub struct Planner {
     // The planner owns its worker pool, so its thread setting cannot collide
     // with other components sharing the process.
@@ -259,6 +266,91 @@ impl Planner {
 
             self.rebuild_region_graph(added, removed, config);
         });
+    }
+
+    /// Partition a whole-map cloud into region tiles on a `tile_size_m` grid,
+    /// ordered nearest `center` first. Tiles cover the union of the cloud and
+    /// the current map, so applying them all removes every voxel absent from
+    /// the cloud. The z band spans both, with no sensor overhead cap.
+    pub fn partition_full_map(
+        &self,
+        points: &[(f32, f32, f32)],
+        center: (f32, f32),
+        tile_size_m: f32,
+        config: &Config,
+    ) -> Vec<MapTile> {
+        let s = tile_size_m;
+        // Circumradius of an s x s grid cell, so the cylinders cover the plane.
+        let radius = s * std::f32::consts::FRAC_1_SQRT_2 + config.voxel_size;
+        let half = config.voxel_size * 0.5;
+
+        let mut z_min = f32::INFINITY;
+        let mut z_max = f32::NEG_INFINITY;
+        // A point lands in every tile whose cylinder contains it, so tile
+        // order cannot decide whether an overlap point survives.
+        let mut tile_points: AHashMap<(i32, i32), Vec<_>> = AHashMap::default();
+        for &p in points {
+            z_min = z_min.min(p.2);
+            z_max = z_max.max(p.2);
+            covering_cells(p.0, p.1, s, radius, |cell| {
+                tile_points.entry(cell).or_default().push(p);
+            });
+        }
+
+        // A stale voxel needs only one covering tile, and its home tile
+        // always covers it.
+        let mut occupied: AHashSet<(i32, i32)> = AHashSet::new();
+        for &(kx, ky, kz) in &self.voxel_map {
+            let z = kz as f32 * config.voxel_size + half;
+            z_min = z_min.min(z);
+            z_max = z_max.max(z);
+            let x = kx as f32 * config.voxel_size + half;
+            let y = ky as f32 * config.voxel_size + half;
+            occupied.insert(((x / s).floor() as i32, (y / s).floor() as i32));
+        }
+        occupied.extend(tile_points.keys().copied());
+        if occupied.is_empty() {
+            return Vec::new();
+        }
+
+        let z_min = z_min - config.voxel_size;
+        let z_max = z_max + config.voxel_size;
+        let mut tiles: Vec<MapTile> = occupied
+            .into_iter()
+            .map(|cell| MapTile {
+                bounds: RegionBounds {
+                    origin_x: (cell.0 as f32 + 0.5) * s,
+                    origin_y: (cell.1 as f32 + 0.5) * s,
+                    radius,
+                    z_min,
+                    z_max,
+                },
+                points: tile_points.remove(&cell).unwrap_or_default(),
+            })
+            .collect();
+        let dist = |t: &MapTile| {
+            (t.bounds.origin_x - center.0).powi(2) + (t.bounds.origin_y - center.1).powi(2)
+        };
+        tiles.sort_unstable_by(|a, b| {
+            dist(a)
+                .total_cmp(&dist(b))
+                .then(a.bounds.origin_x.total_cmp(&b.bounds.origin_x))
+                .then(a.bounds.origin_y.total_cmp(&b.bounds.origin_y))
+        });
+        tiles
+    }
+
+    /// Load a whole-map cloud through the region pipeline, tile by tile.
+    pub fn load_full_map(
+        &mut self,
+        points: &[(f32, f32, f32)],
+        center: (f32, f32),
+        tile_size_m: f32,
+        config: &Config,
+    ) {
+        for tile in self.partition_full_map(points, center, tile_size_m, config) {
+            self.update_region(&tile.points, &tile.bounds, config);
+        }
     }
 
     /// Patch changed cells, then repair nodes and edges around the change.
@@ -658,6 +750,23 @@ impl Planner {
 
     pub fn voxel_keys(&self) -> impl Iterator<Item = VoxelKey> + '_ {
         self.voxel_map.iter().copied()
+    }
+}
+
+/// Call `f` with every grid cell whose covering cylinder contains (x, y):
+/// the 3x3 neighborhood of the home cell, distance-tested.
+fn covering_cells(x: f32, y: f32, s: f32, radius: f32, mut f: impl FnMut((i32, i32))) {
+    let hx = (x / s).floor() as i32;
+    let hy = (y / s).floor() as i32;
+    let r_sq = radius * radius;
+    for gx in (hx - 1)..=(hx + 1) {
+        for gy in (hy - 1)..=(hy + 1) {
+            let dx = x - (gx as f32 + 0.5) * s;
+            let dy = y - (gy as f32 + 0.5) * s;
+            if dx * dx + dy * dy <= r_sq {
+                f((gx, gy));
+            }
+        }
     }
 }
 
@@ -1459,6 +1568,154 @@ mod region_tests {
             "with a heavy step penalty the path should detour to the flat gap: max_y={}",
             max_y(&wp_avoid)
         );
+    }
+
+    /// Loading a whole cloud tile by tile must build exactly what a full
+    /// rebuild builds, and plan equivalently.
+    #[test]
+    fn full_map_load_matches_full_rebuild() {
+        let cfg = test_config();
+        let all = big_world();
+
+        let mut full = Planner::new(cfg.worker_threads);
+        full.update_global_map(&all, &cfg);
+
+        let mut loaded = Planner::new(cfg.worker_threads);
+        loaded.load_full_map(&all, (0.5, 0.5), 2.0, &cfg);
+
+        assert_eq!(voxel_set(&loaded), voxel_set(&full), "voxel mismatch");
+        assert_eq!(surface_set(&loaded), surface_set(&full), "surface mismatch");
+        assert_eq!(
+            cell_edges(&loaded),
+            cell_edges(&full),
+            "cell edges mismatch"
+        );
+        assert_plans_equivalent(&full, &loaded, &cfg);
+    }
+
+    /// A load sweeps every voxel absent from the cloud, including stale
+    /// geometry outside the cloud's xy extent and above its ceiling.
+    #[test]
+    fn full_map_load_sweeps_absent_voxels() {
+        let cfg = test_config();
+        let all = big_world();
+
+        let mut junk = all.clone();
+        junk.push((15.05, 15.05, 0.05));
+        junk.push((2.05, 2.05, 5.05));
+        let mut p = Planner::new(cfg.worker_threads);
+        p.update_global_map(&junk, &cfg);
+
+        p.load_full_map(&all, (0.5, 0.5), 2.0, &cfg);
+
+        let mut clean = Planner::new(cfg.worker_threads);
+        clean.update_global_map(&all, &cfg);
+        assert_eq!(
+            voxel_set(&p),
+            voxel_set(&clean),
+            "stale voxels survived the load"
+        );
+        assert_eq!(surface_set(&p), surface_set(&clean));
+    }
+
+    /// Reloading the same cloud is a no-op: nodes placed before the load
+    /// survive untouched.
+    #[test]
+    fn full_map_reload_leaves_graph_bit_identical() {
+        let cfg = test_config();
+        let all = big_world();
+        let mut p = Planner::new(cfg.worker_threads);
+        p.update_global_map(&all, &cfg);
+        let before_cells = cell_edges(&p);
+        let before_nodes = node_coords(&p);
+        let before_edges = node_edge_pairs(&p);
+
+        p.load_full_map(&all, (4.0, 4.0), 2.0, &cfg);
+
+        assert_eq!(cell_edges(&p), before_cells, "cells changed on reload");
+        assert_eq!(node_coords(&p), before_nodes, "nodes moved on reload");
+        assert_eq!(node_edge_pairs(&p), before_edges, "edges changed on reload");
+    }
+
+    /// Distant sticky nodes survive a load that carries a small local change.
+    #[test]
+    fn full_map_load_keeps_distant_nodes_sticky() {
+        let cfg = test_config();
+        let all = big_world();
+        let vs = cfg.voxel_size;
+        let mut p = Planner::new(cfg.worker_threads);
+        p.update_global_map(&all, &cfg);
+        let before = node_coords(&p);
+
+        let mut changed = all.clone();
+        changed.push((1.05, 1.05, 0.45));
+        p.load_full_map(&changed, (1.0, 1.0), 2.0, &cfg);
+
+        let after = node_coords(&p);
+        let far = |c: &VoxelKey| {
+            let x = c.0 as f32 * vs;
+            let y = c.1 as f32 * vs;
+            ((x - 1.0).powi(2) + (y - 1.0).powi(2)).sqrt() > 3.5
+        };
+        for c in before.iter().filter(|c| far(c)) {
+            assert!(after.contains(c), "distant node {c:?} moved on a load");
+        }
+    }
+
+    /// The load takes its z band from the cloud, so geometry far above any
+    /// sensor overhead cap still lands.
+    #[test]
+    fn full_map_load_keeps_high_geometry() {
+        let cfg = test_config();
+        let vs = cfg.voxel_size;
+        let half = vs * 0.5;
+        let mut all = big_world();
+        for ix in 10..20 {
+            for iy in 10..20 {
+                all.push((
+                    ix as f32 * vs + half,
+                    iy as f32 * vs + half,
+                    30.0 * vs + half,
+                ));
+            }
+        }
+        let mut p = Planner::new(cfg.worker_threads);
+        p.load_full_map(&all, (0.5, 0.5), 2.0, &cfg);
+        assert!(
+            p.voxel_map.contains(&(15, 15, 30)),
+            "high platform truncated"
+        );
+    }
+
+    /// Tiles come back nearest the given center first, and a map-only cell
+    /// still gets a tile so its stale voxels are swept.
+    #[test]
+    fn partition_orders_tiles_near_center_first() {
+        let cfg = test_config();
+        let all = big_world();
+        let p = Planner::new(cfg.worker_threads);
+        let tiles = p.partition_full_map(&all, (0.0, 0.0), 2.0, &cfg);
+        assert!(tiles.len() >= 4);
+        let d: Vec<f32> = tiles
+            .iter()
+            .map(|t| t.bounds.origin_x.powi(2) + t.bounds.origin_y.powi(2))
+            .collect();
+        assert!(
+            d.windows(2).all(|w| w[0] <= w[1]),
+            "tiles not sorted near-first: {d:?}"
+        );
+
+        let mut stale = Planner::new(cfg.worker_threads);
+        stale.update_global_map(&[(30.05, 30.05, 0.05)], &cfg);
+        let tiles = stale.partition_full_map(&all, (0.0, 0.0), 2.0, &cfg);
+        let covers_stale = tiles.iter().any(|t| {
+            t.points.is_empty()
+                && t.bounds.contains_voxel(
+                    voxelize((30.05, 30.05, 0.05), cfg.voxel_size),
+                    cfg.voxel_size,
+                )
+        });
+        assert!(covers_stale, "map-only cell got no sweeping tile");
     }
 
     #[test]
