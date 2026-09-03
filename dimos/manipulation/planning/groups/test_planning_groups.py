@@ -32,7 +32,6 @@ from dimos.manipulation.planning.groups.utils import (
     filter_joint_state_to_selected_joints,
     joint_state_to_ordered_positions,
     normalize_joint_target,
-    planning_group_id_from_selector,
 )
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -127,7 +126,7 @@ def test_discovery_rejects_missing_explicit_srdf(tmp_path: Path) -> None:
 
 
 def test_registry_uses_stable_unprefixed_ids_and_canonical_joints() -> None:
-    registry = PlanningGroupRegistry([_config()])
+    registry = PlanningGroupRegistry(_config().planning_groups)
     assert [group.id for group in registry.list()] == ["left_arm", "right_arm"]
     assert registry.get("left_arm").joint_names == ("left/j1", "left/j2")
     assert registry.default_group_id() is None
@@ -137,14 +136,14 @@ def test_registry_uses_stable_unprefixed_ids_and_canonical_joints() -> None:
 
 def test_registry_default_requires_exactly_one_compatible_group() -> None:
     registry = PlanningGroupRegistry(
-        [_config([PlanningGroupDefinition("arm", ("left/j1",), "base", "tool")])]
+        _config([PlanningGroupDefinition("arm", ("left/j1",), "base", "tool")]).planning_groups
     )
     assert registry.default_group_id() == "arm"
     assert registry.primary_pose_group_id() == "arm"
 
 
 def test_selection_preserves_order_and_rejects_overlap() -> None:
-    registry = PlanningGroupRegistry([_config()])
+    registry = PlanningGroupRegistry(_config().planning_groups)
     selection = registry.select(("right_arm", "left_arm"))
     assert selection.group_ids == ("right_arm", "left_arm")
     assert selection.joint_names == ("right/j1", "left/j1", "left/j2")
@@ -156,7 +155,7 @@ def test_selection_preserves_order_and_rejects_overlap() -> None:
         ]
     )
     with pytest.raises(ValueError, match="overlap"):
-        PlanningGroupRegistry([overlap]).select(("one", "two"))
+        PlanningGroupRegistry(overlap.planning_groups).select(("one", "two"))
 
 
 def test_normalize_joint_target_accepts_exact_or_unnamed_target() -> None:
@@ -185,20 +184,3 @@ def test_state_projection_requires_exact_canonical_names() -> None:
     ).tolist() == [1.0, 2.0, 3.0]
     with pytest.raises(ValueError, match="missing"):
         filter_joint_state_to_selected_joints(state, ("missing",))
-
-
-def test_selector_accepts_id_or_group() -> None:
-    group = PlanningGroup("arm", ("left/j1",), "base", "tool")
-    assert planning_group_id_from_selector("arm") == "arm"
-    assert planning_group_id_from_selector(group) == "arm"
-
-
-def test_model_config_rejects_obsolete_name_and_mapping_fields() -> None:
-    base = {
-        "model": RobotModel.from_file(Path("/tmp/model.urdf")),
-        "joint_names": ["joint1"],
-    }
-    with pytest.raises(ValueError):
-        RobotModelConfig(**base, name="arm")
-    with pytest.raises(ValueError):
-        RobotModelConfig(**base, joint_name_mapping={"arm/joint1": "joint1"})

@@ -78,7 +78,7 @@ def _install_generated_plan(
 ) -> None:
     """Install a canonical generated plan and monitor state."""
     module._world_monitor = MagicMock()
-    module._world_monitor.planning_groups = PlanningGroupRegistry([config])
+    module._world_monitor.planning_groups = PlanningGroupRegistry(config.planning_groups)
     module._world_monitor.get_current_joint_state.return_value = JointState(
         name=config.joint_names,
         position=[0.0 for _ in config.joint_names],

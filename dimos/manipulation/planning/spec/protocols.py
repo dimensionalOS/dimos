@@ -105,7 +105,7 @@ class WorldSpec(Protocol):
 
     # Lifecycle
     def finalize(self) -> None:
-        """Finalize the world. Must be called after adding robots."""
+        """Finalize the world after loading the model."""
         ...
 
     @property
@@ -226,7 +226,7 @@ class VisualizationSpec(Protocol):
     def animate_trajectory(
         self, trajectory: JointTrajectory, duration: float | None = None
     ) -> None:
-        """Animate a raw globally named trajectory."""
+        """Animate a raw canonical trajectory."""
         ...
 
     def cancel_preview_animation(self) -> None:
