@@ -87,15 +87,14 @@ def upload(
 
 @handle_fail
 def ls() -> None:
-    import sys
     from datetime import datetime, timezone
-    
+    import sys
+
     if sys.stdout.isatty() and sys.stdin.isatty():  # Textual needs a real TTY
         from dimos.cloud.tui import DataBrowser
 
         DataBrowser().run()
         return
-
 
     from rich import box
     from rich.console import Console
