@@ -337,6 +337,18 @@ def test_upload_refuses_when_staging_partition_is_full(
         cloud.upload(db)
 
 
+def test_pull_refuses_when_disk_is_full(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cloud, _, db = env
+    uid = cloud.upload(db)["upload_id"]
+    import shutil
+
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: shutil._ntuple_diskusage(10, 9, 1))  # type: ignore[attr-defined]
+    with pytest.raises(RuntimeError, match="free, need"):
+        cloud.pull(uid)
+
+
 def test_missing_staging_dir_is_created(tmp_path: Path) -> None:
     where = tmp_path / "scratch" / "deeper"
     b = MultipartBackend(DataApi(FakeTransport()), "lz4", where, retries=0)

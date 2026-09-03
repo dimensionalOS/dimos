@@ -165,7 +165,12 @@ class MultipartBackend:
             return {**done, "upload_id": uid, "skipped": False}
 
     def pull(
-        self, upload_id: str, dest: Path | None, tag: str = "", progress: Progress | None = None
+        self,
+        upload_id: str,
+        dest: Path | None,
+        tag: str = "",
+        progress: Progress | None = None,
+        size: int = 0,
     ) -> Path:
         tick = progress or (lambda phase, done, total: None)
         d = self.api.download(upload_id)
@@ -173,6 +178,9 @@ class MultipartBackend:
         out = dest or DOWNLOADS_DIR / f"{tag}{_plain_name(d['filename'], wire)}"
         out.parent.mkdir(parents=True, exist_ok=True)
         with self._staging(out) as tmp:
+            if size:
+                # wire and decompressed copies coexist in staging before the move
+                _require_space(Path(tmp), size * 2 if wire else size)
             raw = Path(tmp) / "wire"
             tick("download", 0, 0)
             self._retry(
@@ -260,7 +268,13 @@ class CloudData:
         self, upload_id: str | None, dest: Path | None = None, progress: Progress | None = None
     ) -> Path:
         row = self.resolve(upload_id)
-        return self.backend.pull(str(row["id"]), dest, tag=_tag(row), progress=progress)
+        return self.backend.pull(
+            str(row["id"]),
+            dest,
+            tag=_tag(row),
+            progress=progress,
+            size=int(row.get("size") or 0),
+        )
 
     def ls(self) -> list[dict[str, Any]]:
         return self.backend.ls()
@@ -306,13 +320,13 @@ def kind_of(path: Path) -> str:
 
 
 def _require_space(where: Path, need: int) -> None:
-    """Compression stages a copy beside the file (or in dimos_staging_dir); fail before
-    starting rather than at 99% of a 100 GB transfer."""
+    """Uploads and pulls stage copies beside the file (or in dimos_staging_dir); fail
+    before starting rather than at 99% of a 100 GB transfer."""
     free = shutil.disk_usage(where).free
     if free < need:
         raise RuntimeError(
-            f"{where} has {free / 2**30:.1f} GB free, need ~{need / 2**30:.1f} GB to stage the "
-            "compressed copy — set dimos_staging_dir to a larger partition or upload with dimos_upload_codec=''"
+            f"{where} has {free / 2**30:.1f} GB free, need ~{need / 2**30:.1f} GB to stage — "
+            "set dimos_staging_dir to a larger partition"
         )
 
 

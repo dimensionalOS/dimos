@@ -41,9 +41,25 @@ def handle_fail(fn: Callable[..., None]) -> Callable[..., None]:
 
 @contextlib.contextmanager
 def _bar(name: str) -> Iterator[Callable[[str, int, int], None]]:
-    from rich.progress import Progress
+    from rich.progress import (
+        BarColumn,
+        DownloadColumn,
+        Progress,
+        TaskProgressColumn,
+        TextColumn,
+        TimeRemainingColumn,
+        TransferSpeedColumn,
+    )
 
-    with Progress(transient=True) as bar:
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        transient=True,
+    ) as bar:
         task = bar.add_task(name, total=None)
 
         def tick(phase: str, done: int, total: int) -> None:

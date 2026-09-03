@@ -21,8 +21,9 @@ their column (auto-height rows) instead of truncating."""
 
 from __future__ import annotations
 
+import threading
 import time
-from typing import Any
+from typing import Any, Literal
 
 from rich.pretty import Pretty
 from rich.text import Text
@@ -38,6 +39,10 @@ from dimos.cloud.data import CloudData
 
 def _topics(u: dict[str, Any]) -> list[str]:
     return [s.get("name", "?") for s in (u.get("manifest") or {}).get("streams") or []]
+
+
+class _PullCancelledError(Exception):
+    """Raised inside the progress callback to abort a pull the user cancelled."""
 
 
 class DetailScreen(ModalScreen[None]):
@@ -70,6 +75,7 @@ class DataBrowser(App[None]):
         Binding("space", "toggle_topics", "topics", key_display="enter"),
         Binding("d", "detail", "detail"),
         Binding("p", "pull", "pull"),
+        Binding("x", "cancel_pull", "cancel pull"),
     ]
 
     FIXED = {"id": 12, "uploaded": 16, "kind": 9, "size": 9, "state": 9}
@@ -80,10 +86,15 @@ class DataBrowser(App[None]):
         self._cloud = cloud or CloudData()
         self._rows: list[dict[str, Any]] = []
         self._expanded: set[str] = set()
+        self._pull_cancel: threading.Event | None = None
+        self._rate: tuple[float, int] | None = None  # (monotonic, done) of last tick
+        self._speed = 0.0  # EMA bytes/s
 
     CSS = """
-    #pull-status { height: 1; padding: 0 1; }
-    #pull-status Label { margin-right: 1; }
+    #pull-status { height: 1; padding: 0 1; background: $boost; }
+    #pull-status Label { margin-right: 2; }
+    #pull-bar { width: 1fr; }
+    #pull-bar Bar { width: 1fr; }
     """
 
     def compose(self) -> ComposeResult:
@@ -199,13 +210,24 @@ class DataBrowser(App[None]):
         if row["state"] != "complete":
             self.notify(f"{row['filename']} is {row['state']} — not pullable", severity="warning")
             return
-        self.run_worker(lambda: self._pull(row), thread=True)
+        if self._pull_cancel is not None:
+            self.notify("a pull is already running — x cancels it", severity="warning")
+            return
+        cancel = threading.Event()
+        self._pull_cancel = cancel
+        self.run_worker(lambda: self._pull(row, cancel), thread=True)
 
-    def _pull(self, row: dict[str, Any]) -> None:
+    def action_cancel_pull(self) -> None:
+        if self._pull_cancel is not None:
+            self._pull_cancel.set()
+
+    def _pull(self, row: dict[str, Any], cancel: threading.Event) -> None:
         last = 0.0
 
         def tick(phase: str, done: int, total: int) -> None:
             nonlocal last
+            if cancel.is_set():
+                raise _PullCancelledError
             if phase == "download" and done != total and time.monotonic() - last < 0.1:
                 return  # a 40GB pull ticks per MB; don't flood the UI thread
             last = time.monotonic()
@@ -213,18 +235,39 @@ class DataBrowser(App[None]):
 
         try:
             out = self._cloud.pull(str(row["id"]), progress=tick)
-            self.call_from_thread(self._pull_finished, f"pulled to {out}", False)
+            self.call_from_thread(self._pull_finished, f"pulled to {out}", "information")
+        except _PullCancelledError:
+            self.call_from_thread(
+                self._pull_finished, f"pull of {row['filename']} cancelled", "warning"
+            )
         except (RuntimeError, OSError) as e:
-            self.call_from_thread(self._pull_finished, str(e), True)
+            self.call_from_thread(self._pull_finished, str(e), "error")
+        finally:
+            self._pull_cancel = None
 
     def _pull_progress(self, filename: str, phase: str, done: int, total: int) -> None:
         from rich.filesize import decimal
 
+        now = time.monotonic()
+        if phase == "download" and self._rate is not None:
+            dt, db = now - self._rate[0], done - self._rate[1]
+            if dt > 0 and db >= 0:
+                inst = db / dt
+                self._speed = inst if not self._speed else 0.8 * self._speed + 0.2 * inst
+        self._rate = (now, done)
         self.query_one("#pull-status").display = True
-        of = f" {decimal(done)} / {decimal(total)}" if total else ""
-        self.query_one("#pull-label", Label).update(f"{phase} {filename}{of}")
+        if phase == "download":
+            of = f"  {decimal(done)} / {decimal(total)}" if total else ""
+            speed = f"  [cyan]↓ {decimal(int(self._speed))}/s[/]" if self._speed else ""
+            label = f"[b]{filename}[/b]{of}{speed}  [dim](x cancels)[/]"
+        else:
+            label = f"[b]{filename}[/b]  {phase}…"
+        self.query_one("#pull-label", Label).update(label)
         self.query_one("#pull-bar", ProgressBar).update(total=total or None, progress=done)
 
-    def _pull_finished(self, message: str, failed: bool) -> None:
+    def _pull_finished(
+        self, message: str, severity: Literal["information", "warning", "error"]
+    ) -> None:
         self.query_one("#pull-status").display = False
-        self.notify(message, severity="error" if failed else "information")
+        self._rate, self._speed = None, 0.0
+        self.notify(message, severity=severity)

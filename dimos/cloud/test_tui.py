@@ -96,3 +96,33 @@ async def test_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pulled = list(tmp_path.iterdir())
     assert len(pulled) == 1
     assert pulled[0].read_bytes() == blob
+
+
+async def test_pull_cancel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    monkeypatch.setattr(cd, "DOWNLOADS_DIR", tmp_path)
+    cloud, _ = _seeded_cloud()
+    t = cloud.backend.api.t
+    real = t.download
+
+    def slow(url: str, dst: Path, progress=None) -> None:  # type: ignore[no-untyped-def]
+        real(url, dst)
+        for i in range(200):  # ~4s of ticks; the cancel lands in the first few
+            if progress:
+                progress(i, 1000)
+            time.sleep(0.02)
+
+    t.download = slow  # type: ignore[method-assign]
+    app = DataBrowser(cloud)
+    async with app.run_test(size=(120, 24)) as pilot:
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.press("p")
+        while app._pull_cancel is None:  # worker not started yet
+            await pilot.pause(0.01)
+        await pilot.press("x")
+        await app.workers.wait_for_complete()
+        assert app._pull_cancel is None
+        assert not app.query_one("#pull-status").display
+    assert not list(tmp_path.iterdir())  # nothing kept from the aborted pull
