@@ -41,6 +41,27 @@ def _topics(u: dict[str, Any]) -> list[str]:
     return [s.get("name", "?") for s in (u.get("manifest") or {}).get("streams") or []]
 
 
+def _tz_label() -> str:
+    from datetime import datetime
+
+    return datetime.now().astimezone().tzname() or ""
+
+
+def _local_time(ts: str) -> str:
+    """Mirrors cli.ls's local(): upload times in local time, DST-boundary rows labeled."""
+    from datetime import datetime, timezone
+
+    try:
+        d = datetime.fromisoformat(ts)
+    except ValueError:
+        return ts[:16].replace("T", " ")
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    d = d.astimezone()
+    suffix = "" if d.tzname() == _tz_label() else f" {d.tzname()}"
+    return d.strftime("%Y-%m-%d %H:%M") + suffix
+
+
 class _PullCancelledError(Exception):
     """Raised inside the progress callback to abort a pull the user cancelled."""
 
@@ -149,13 +170,11 @@ class DataBrowser(App[None]):
         table = self.query_one(DataTable)
         selected = self._selected()
         table.clear(columns=True)
-        from dimos.cloud.cli import local_time, tz_label
-
         widths = self._widths()
         order = ["id", "file", "uploaded", "kind", "uploader", "blueprint", "robot"]
         order += ["topics", "size", "state"]
         for name in order:
-            label = f"uploaded ({tz_label()})" if name == "uploaded" else name
+            label = f"uploaded ({_tz_label()})" if name == "uploaded" else name
             table.add_column(label, width=widths[name])
         from rich.filesize import decimal
 
@@ -165,7 +184,7 @@ class DataBrowser(App[None]):
             table.add_row(
                 Text(u["id"][:12], style="cyan"),
                 Text(u["filename"], style="bold"),
-                Text(local_time(str(u.get("created_at") or "")) or "—", style="dim"),
+                Text(_local_time(str(u.get("created_at") or "")) or "—", style="dim"),
                 Text(u.get("kind", "")),
                 Text(u.get("uploader_email") or "—", style="dim"),
                 Text((u.get("manifest") or {}).get("blueprint") or "—", style="magenta"),
