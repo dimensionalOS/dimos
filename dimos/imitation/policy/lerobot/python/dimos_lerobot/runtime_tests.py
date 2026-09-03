@@ -65,9 +65,10 @@ class FakeUpstreamConfig:
 
 
 class FakePipeline:
-    def __init__(self) -> None:
+    def __init__(self, steps: list[object] | None = None) -> None:
         self.calls: list[object] = []
         self.reset_count = 0
+        self.steps = steps or []
 
     def __call__(self, value: object) -> object:
         self.calls.append(value)
@@ -77,15 +78,40 @@ class FakePipeline:
         self.reset_count += 1
 
 
+class FakeActionStats:
+    def __init__(self, lower: list[float], upper: list[float]) -> None:
+        self._state = {
+            "action.min": torch.tensor(lower),
+            "action.max": torch.tensor(upper),
+        }
+
+    def state_dict(self) -> dict[str, Tensor]:
+        return self._state
+
+
 class FakePolicy:
-    def __init__(self, action_chunk: NDArray[np.float32], n_action_steps: int = 2) -> None:
+    def __init__(
+        self,
+        action_chunk: NDArray[np.float32],
+        n_action_steps: int = 2,
+        *,
+        action_lower: list[float] | None = None,
+        action_upper: list[float] | None = None,
+    ) -> None:
         self.action_chunk = torch.from_numpy(action_chunk).unsqueeze(0)
         self.called = Event()
         self.reset_count = 0
         self.batch: dict[str, object] | None = None
         self.upstream_config = FakeUpstreamConfig(len(JOINTS), n_action_steps)
         self.preprocessor = FakePipeline()
-        self.postprocessor = FakePipeline()
+        self.postprocessor = FakePipeline(
+            [
+                FakeActionStats(
+                    action_lower or [-100.0] * len(JOINTS),
+                    action_upper or [100.0] * len(JOINTS),
+                )
+            ]
+        )
         self.config_load_count = 0
 
     def reset(self) -> None:
@@ -230,6 +256,26 @@ def test_policy_predicts_and_executes_one_native_joint_chunk(make_runtime: Runti
     np.testing.assert_array_equal(image.squeeze(0).numpy(), bgr[..., ::-1])
     assert policy.postprocessor.calls
     assert module.rollout_status()["chunks_accepted"] >= 1
+
+
+def test_policy_actions_are_clipped_to_checkpoint_range(make_runtime: RuntimeFactory) -> None:
+    actions = np.zeros((3, len(JOINTS)), dtype=np.float32)
+    actions[:, -1] = 1.016
+    policy = FakePolicy(
+        actions,
+        n_action_steps=2,
+        action_lower=[-10.0, -10.0, -10.0, 0.0],
+        action_upper=[10.0, 10.0, 10.0, 1.0],
+    )
+    module, control = make_runtime(policy)
+    _provide_observation(module)
+
+    module.start_rollout()
+    wait_until(lambda: control.execute_trajectory.call_count >= 1, timeout=1.0)
+    module.stop_rollout()
+
+    trajectory = control.execute_trajectory.call_args_list[0].args[0]
+    assert [point.positions[-1] for point in trajectory.points[1:]] == [1.0, 1.0]
 
 
 def test_next_chunk_uses_latest_joint_observation(make_runtime: RuntimeFactory) -> None:

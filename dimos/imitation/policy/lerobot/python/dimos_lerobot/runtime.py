@@ -66,6 +66,8 @@ class _LoadedPolicy:
     use_amp: bool
     chunk_size: int | None
     n_action_steps: int
+    action_lower: NDArray[np.float32]
+    action_upper: NDArray[np.float32]
 
 
 class LeRobotPolicyRuntime(LeRobotPolicyModule):
@@ -237,6 +239,10 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             pretrained_path=self.config.policy_path,
             preprocessor_overrides={"device_processor": {"device": str(device)}},
         )
+        action_lower, action_upper = _checkpoint_action_bounds(
+            postprocessor,
+            len(self.config.joint_names),
+        )
         return _LoadedPolicy(
             policy=loaded_policy,
             device=device,
@@ -245,6 +251,8 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             use_amp=bool(policy_config.use_amp),
             chunk_size=_optional_int_attribute(policy_config, "chunk_size"),
             n_action_steps=_positive_int_attribute(policy_config, "n_action_steps"),
+            action_lower=action_lower,
+            action_upper=action_upper,
         )
 
     def _validate_features(self, policy_config: PreTrainedConfig) -> None:
@@ -347,6 +355,24 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                 actions = action_chunk[0, : loaded_policy.n_action_steps]
                 if not np.all(np.isfinite(actions)):
                     raise RuntimeError("policy returned non-finite joint targets")
+                bounded_actions = np.clip(
+                    actions,
+                    loaded_policy.action_lower,
+                    loaded_policy.action_upper,
+                )
+                clipped = np.any(actions != bounded_actions, axis=0)
+                if np.any(clipped):
+                    logger.warning(
+                        "Clipped policy actions to checkpoint range",
+                        joints=[
+                            name
+                            for name, was_clipped in zip(
+                                self.config.joint_names, clipped, strict=True
+                            )
+                            if was_clipped
+                        ],
+                    )
+                actions = bounded_actions
                 if self._stop_event.is_set():
                     break
                 result = self._control.execute_trajectory(
@@ -433,6 +459,36 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                 "Failed to cancel policy trajectory",
                 task_name=self.config.trajectory_task_name,
             )
+
+
+def _checkpoint_action_bounds(
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
+    expected_width: int,
+) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
+    lower_tensor: torch.Tensor | None = None
+    upper_tensor: torch.Tensor | None = None
+    for step in postprocessor.steps:
+        state = step.state_dict()
+        if "action.min" in state and "action.max" in state:
+            lower_tensor = state["action.min"]
+            upper_tensor = state["action.max"]
+            break
+    if lower_tensor is None or upper_tensor is None:
+        raise ValueError("Policy postprocessor has no action min/max statistics")
+
+    lower = np.asarray(lower_tensor.detach().cpu().numpy(), dtype=np.float32)
+    upper = np.asarray(upper_tensor.detach().cpu().numpy(), dtype=np.float32)
+    expected_shape = (expected_width,)
+    if lower.shape != expected_shape or upper.shape != expected_shape:
+        raise ValueError(
+            "Policy action range shape does not match configured joints: "
+            f"min={lower.shape}, max={upper.shape}, expected={expected_shape}"
+        )
+    if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
+        raise ValueError("Policy action range contains non-finite values")
+    if np.any(lower > upper):
+        raise ValueError("Policy action range has min greater than max")
+    return lower, upper
 
 
 def _reset(instance: object) -> None:

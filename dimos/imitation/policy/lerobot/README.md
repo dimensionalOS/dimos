@@ -37,10 +37,12 @@ trajectories outside the hardware's declared position limits. Pressing the
 configured Quest button (A by default) toggles rollout.
 
 The runtime calls LeRobot's `predict_action_chunk()`, postprocesses the entire
-chunk, and executes its first `n_action_steps` at the configured `fps`. Each
-trajectory starts with the joint-state observation used for inference, so the
-coordinator rejects a stale start if the robot moved in the meantime. Configure
-`fps` to match the action frequency used by the training dataset.
+chunk, clips every action dimension to the checkpoint's recorded data range,
+and executes its first `n_action_steps` at the configured `fps`. The coordinator
+still validates the resulting trajectory against hardware limits. Each trajectory
+starts with the joint-state observation used for inference, so the coordinator
+rejects a stale start if the robot moved in the meantime. Configure `fps` to
+match the action frequency used by the training dataset.
 
 Current limitation: this contract assumes every postprocessed action is an
 absolute target in the connected hardware joint's native coordinate. A generic
