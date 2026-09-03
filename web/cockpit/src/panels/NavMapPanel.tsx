@@ -22,7 +22,7 @@ import { useStoreChannel } from "@dimos/sdk/react";
 import { Badge, type DrawHealth, PanelFrame } from "../layout/PanelFrame.tsx";
 import { navCancellable, type NavState, navTone, readNavState } from "./controlPolicy.ts";
 import { useOptionalSlot } from "./hooks.ts";
-import { MAP_STALE_MS, type MapSinkDeps, startMapSink } from "./MapPanel.tsx";
+import { type MapSinkDeps, startMapSink } from "./MapPanel.tsx";
 import {
   drawPose,
   fitTransform,
@@ -80,6 +80,14 @@ function readPose(v: unknown): Pose2d | null {
 
 /** How long a click's note stays under the map before it clears itself. */
 export const NOTE_LINGER_MS = 4000;
+
+/** The costmap is a slow, static-scene channel - about 2 Hz - so MapPanel's
+ * 5 s video-shaped threshold leaves only ~8 frames of slack and cries stale
+ * on any brief transport hiccup. It is also the wrong thing to panic about:
+ * the flat does not move, a grid seconds old is as correct as a fresh one,
+ * and the panel still draws rooms, path and the live pose (odom, reliable,
+ * never dropped) meanwhile. Flag a genuinely dead mapper instead. */
+export const NAVMAP_STALE_MS = 15000;
 
 const NAV_CHIP_CLASS = {
   bad: styles.chipBad,
@@ -447,7 +455,7 @@ function NavMapView({ spec, store, teleop, chans }: PanelProps & { chans: NavMap
           store={store}
           ch={chans.costmap}
           health={health}
-          staleMs={MAP_STALE_MS}
+          staleMs={NAVMAP_STALE_MS}
           unit="Hz"
           testId={`navmap-${chans.costmap}-badge`}
         />

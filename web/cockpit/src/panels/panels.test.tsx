@@ -175,6 +175,23 @@ describe("startVideoSink", () => {
     await flush();
   });
 
+  it("returns from a hidden tab without reporting a stall it caused itself", async () => {
+    const { decode } = deferredDecode();
+    let hidden = false;
+    stop = startVideoSink(store, CH, canvas, health, { decode, hidden: () => hidden });
+
+    // Away long enough that the badge would call it stalled, decoding nothing
+    // the whole time - which is the panel's own choice, not a broken pipeline.
+    hidden = true;
+    health.lastDrawOkAtMs = Date.now() - 60_000;
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(health.lastDrawOkAtMs).toBeLessThan(Date.now() - 30_000); // still hidden: untouched
+
+    hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(health.lastDrawOkAtMs).toBeGreaterThan(Date.now() - 1_000);
+  });
+
   it("stops decoding and drawing after cleanup", async () => {
     const { decode, calls, settlers } = deferredDecode();
     stop = startVideoSink(store, CH, canvas, health, { decode, hidden: () => false });

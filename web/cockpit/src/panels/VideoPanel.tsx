@@ -81,7 +81,14 @@ export function startVideoSink(
   };
 
   const unsubscribe = store.subscribe(ch, pump);
-  const onVisibility = (): void => pump();
+  const onVisibility = (): void => {
+    // Coming back from hidden: the gap since the last draw is one WE chose by
+    // not decoding, not a stalled pipeline, so do not let the badge report it
+    // (same reasoning as the fresh-mount reset above). A tab flipped away and
+    // back would otherwise always return reading "stalled".
+    if (!hidden()) health.lastDrawOkAtMs = Date.now();
+    pump();
+  };
   document.addEventListener("visibilitychange", onVisibility);
   pump(); // a slot may predate the mount
   return () => {
