@@ -113,11 +113,9 @@ uv run dimos hardware g1 status
 uv run dimos topic echo /g1/cmd_vel
 ```
 
-`status` reports both ends of the command path: Quest axes, neutral-gate state,
-bounded producer command and controller ages, followed by the GR00T command,
-age, timeout state, and selected balance/walk policy. Seeing data on `/cmd_vel`
-does not prove the hardware stack received it; hardware uses `/g1/cmd_vel`.
-Declared transports use the process's selected DimOS transport backend.
+Seeing data on `/cmd_vel` does not prove the hardware stack received it;
+hardware uses `/g1/cmd_vel`. Declared transports use the process's selected
+DimOS transport backend.
 
 While still in dry-run, move and release each stick, disconnect the Quest, and
 let controller input go stale. Every stop case must produce zero and select the

@@ -27,10 +27,8 @@ from the behavior the policies were trained for.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import math
 from pathlib import Path
 import threading
-import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -330,7 +328,6 @@ class G1GrootWBCTask(BaseControlTask):
         self._first_inference = True
         self._tick_count = 0
         self._last_targets: list[float] | None = None
-        self._last_selected_policy = "not_run"
 
         # Last-known-good state caches. compute() falls back to these
         # whenever a joint is missing from CoordinatorState (transient
@@ -534,10 +531,8 @@ class G1GrootWBCTask(BaseControlTask):
         # Model selection: balance when near-stationary, walk otherwise.
         cmd_norm = float(np.linalg.norm(cmd))
         if cmd_norm <= self._config.cmd_norm_threshold:
-            self._last_selected_policy = "balance"
             raw = self._balance_session.run(None, {self._balance_input: self._obs_buf})[0]
         else:
-            self._last_selected_policy = "walk"
             raw = self._walk_session.run(None, {self._walk_input: self._obs_buf})[0]
 
         action = raw[0, :_NUM_ACTIONS].astype(np.float32)
@@ -580,12 +575,8 @@ class G1GrootWBCTask(BaseControlTask):
         Called by the coordinator's twist_command dispatcher and by
         external Python callers.  Thread-safe.
         """
-        command = [vx, vy, yaw_rate]
-        if not all(math.isfinite(value) for value in command):
-            logger.warning("G1GrootWBCTask rejected non-finite velocity command", task=self._name)
-            command = [0.0, 0.0, 0.0]
         with self._cmd_lock:
-            self._cmd[:] = command
+            self._cmd[:] = [vx, vy, yaw_rate]
             self._last_cmd_time = t_now
 
     def on_twist_command(self, msg: Twist, t_now: float) -> None:
@@ -735,17 +726,7 @@ class G1GrootWBCTask(BaseControlTask):
         logger.info("G1GrootWBCTask dry_run changed", task=self._name, dry_run=new_val)
 
     def state_snapshot(self) -> dict[str, Any]:
-        """Return safety state plus velocity-command receipt telemetry."""
-        now = time.perf_counter()
-        with self._cmd_lock:
-            command = self._cmd.tolist()
-            last_command_at = self._last_cmd_time
-        command_age = None if last_command_at <= 0.0 else max(0.0, now - last_command_at)
-        command_timed_out = last_command_at <= 0.0 or bool(
-            self._config.timeout > 0.0
-            and command_age is not None
-            and command_age > self._config.timeout
-        )
+        """Return the current state-machine flags for UI / telemetry."""
         return {
             "active": self._active,
             "armed": self._armed,
@@ -753,10 +734,6 @@ class G1GrootWBCTask(BaseControlTask):
             "arm_pending": self._arm_pending,
             "dry_run": self._dry_run,
             "arming_duration": self._arming_duration,
-            "velocity_command": command,
-            "velocity_command_age_s": command_age,
-            "velocity_command_timed_out": command_timed_out,
-            "selected_policy": self._last_selected_policy,
         }
 
     # Internal helpers
@@ -767,7 +744,6 @@ class G1GrootWBCTask(BaseControlTask):
         self._obs_buf[:] = 0.0
         self._first_inference = True
         self._tick_count = 0
-        self._last_selected_policy = "not_run"
 
     def _build_obs(
         self,

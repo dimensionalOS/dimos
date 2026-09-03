@@ -31,7 +31,6 @@ app = typer.Typer(help="Operate a running Unitree G1 stack safely")
 
 _COORDINATOR = "ControlCoordinator"
 _MANIPULATION = "G1Manipulation"
-_QUEST_TELEOP = "G1QuestTeleopModule"
 _GROOT_TASK = "groot_wbc"
 _TELEOP_TASK = "teleop_g1"
 _ARM_POLL_SECONDS = 0.1
@@ -49,10 +48,6 @@ class _G1ManipulationHandle(Protocol):
     def list_planning_groups(self) -> list[Any]: ...
     def plan_to_joints(self, targets: dict[str, JointState], *, speed_scale: float) -> Any: ...
     def execute(self, *, blocking: bool) -> Any: ...
-
-
-class _G1QuestTeleopHandle(Protocol):
-    def state_snapshot(self) -> dict[str, Any]: ...
 
 
 def _abort(message: str) -> NoReturn:
@@ -82,10 +77,6 @@ def _is_manipulation(handle: ModuleHandle) -> TypeGuard[_G1ManipulationHandle]:
     return _has_methods(handle, ("list_planning_groups", "plan_to_joints", "execute"))
 
 
-def _is_quest_teleop(handle: ModuleHandle) -> TypeGuard[_G1QuestTeleopHandle]:
-    return _has_methods(handle, ("state_snapshot",))
-
-
 def _coordinator(client: Dimos) -> _G1CoordinatorHandle:
     handle = client.get_module(_COORDINATOR)
     if not _is_coordinator(handle):
@@ -109,27 +100,6 @@ def _groot_state(coordinator: _G1CoordinatorHandle) -> dict[str, Any]:
     if not _is_groot_state(state):
         _abort("the running stack does not expose G1 GR00T safety state")
     return state
-
-
-def _quest_state(client: Dimos) -> dict[str, Any] | None:
-    try:
-        handle = client.get_module(_QUEST_TELEOP)
-    except KeyError:
-        return None
-    if not _is_quest_teleop(handle):
-        return None
-    state = handle.state_snapshot()
-    return state if isinstance(state, dict) else None
-
-
-def _format_number(value: Any) -> str:
-    return "unavailable" if not isinstance(value, int | float) else f"{float(value):.3f}"
-
-
-def _format_command(value: Any) -> str:
-    if not isinstance(value, list | tuple) or len(value) != 3:
-        return "unavailable"
-    return f"({_format_number(value[0])}, {_format_number(value[1])}, {_format_number(value[2])})"
 
 
 def _require_armed_and_enabled(coordinator: _G1CoordinatorHandle) -> dict[str, Any]:
@@ -205,7 +175,7 @@ def _execute_ready_pose(
 
 @app.command()
 def status() -> None:
-    """Show G1 safety, Quest drive, GR00T receipt, and planning state."""
+    """Show the G1 safety state, trajectory state, and planning groups."""
     client = _connect()
     try:
         coordinator = _coordinator(client)
@@ -218,31 +188,11 @@ def status() -> None:
             group_ids = [str(group.id) for group in groups]
         except (AttributeError, KeyError):
             group_ids = []
-        quest = _quest_state(client)
 
         typer.echo(f"active:      {bool(state.get('active'))}")
         typer.echo(f"armed:       {bool(state.get('armed'))}")
         typer.echo(f"arming:      {bool(state.get('arming') or state.get('arm_pending'))}")
         typer.echo(f"dry_run:     {bool(state.get('dry_run'))}")
-        if quest is None:
-            typer.echo("quest_drive_ready: unavailable")
-        else:
-            typer.echo(f"quest_drive_ready: {bool(quest.get('drive_ready'))}")
-            typer.echo(
-                "quest_axes:        "
-                f"left_y={_format_number(quest.get('left_stick_y'))} "
-                f"right_x={_format_number(quest.get('right_stick_x'))}"
-            )
-            typer.echo(
-                "quest_input_age:   "
-                f"left={_format_number(quest.get('left_input_age_s'))}s "
-                f"right={_format_number(quest.get('right_input_age_s'))}s"
-            )
-            typer.echo(f"quest_command:     {_format_command(quest.get('command'))}")
-        typer.echo(f"groot_command:     {_format_command(state.get('velocity_command'))}")
-        typer.echo(f"groot_command_age: {_format_number(state.get('velocity_command_age_s'))}s")
-        typer.echo(f"groot_timed_out:   {bool(state.get('velocity_command_timed_out'))}")
-        typer.echo(f"groot_policy:      {state.get('selected_policy', 'unavailable')}")
         typer.echo(f"trajectory:  {trajectory}")
         typer.echo(f"manipulation: {', '.join(group_ids) if group_ids else 'unavailable'}")
     except (AttributeError, KeyError, RuntimeError) as exc:

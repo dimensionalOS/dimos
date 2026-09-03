@@ -40,7 +40,6 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import (
     G1CollectionRecorder,
     G1ManipulationModule,
-    _viewer_if_sim,
     unitree_g1_teleop,
 )
 from dimos.robot.unitree.g1.manip_config import (
@@ -139,23 +138,6 @@ def test_g1_teleop_excludes_navigation_and_legacy_visualization() -> None:
             "RerunBridgeModule",
             "RerunWebSocketServer",
         }
-    )
-
-
-def test_g1_sim_teleop_includes_g1_rerun_visualization(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(global_config, "simulation", "mujoco")
-    monkeypatch.setattr(global_config, "viewer", "rerun")
-
-    viewer = _viewer_if_sim()[0]
-    modules = {atom.module.__name__: atom for atom in viewer.active_blueprints}
-
-    assert {"RerunBridgeModule", "RerunWebSocketServer", "WebsocketVisModule"} <= modules.keys()
-    bridge_kwargs = modules["RerunBridgeModule"].kwargs
-    assert bridge_kwargs["static"]
-    assert all(callable(factory) for factory in bridge_kwargs["static"].values())
-    assert all(
-        override is None or callable(override)
-        for override in bridge_kwargs["visual_override"].values()
     )
 
 

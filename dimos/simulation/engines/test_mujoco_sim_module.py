@@ -27,8 +27,6 @@ import pytest
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
-from dimos.simulation.mujoco.model import get_assets
-from dimos.utils.data import LfsPath
 
 
 class _FakeData:
@@ -82,20 +80,6 @@ class _FakeSimHooks:
 
     def clear_latched_commands(self) -> None:
         self.cleared = True
-
-
-@pytest.mark.mujoco
-def test_legacy_g1_model_compiles_with_explicit_robot_meshdir() -> None:
-    model_path = LfsPath("mujoco_sim/g1_gear_wbc.xml")
-    meshdir = LfsPath("g1_urdf/meshes")
-
-    engine = MujocoEngine(
-        config_path=Path(model_path),
-        headless=True,
-        assets=get_assets(meshdir),
-    )
-
-    assert engine.model.nu == 29
 
 
 def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:

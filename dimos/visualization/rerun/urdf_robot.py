@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -119,13 +120,13 @@ def _build_link_paths(
     return link_paths
 
 
+@dataclass
 class UrdfRobotStaticRerunFactory:
     """Log a URDF robot's static visual meshes under a Rerun root path."""
 
-    def __init__(self, urdf_path: str | Path, root_path: str) -> None:
-        self.urdf_path = urdf_path
-        self.root_path = root_path
-        self._robot: Any = None
+    urdf_path: str | Path
+    root_path: str
+    _robot: Any = field(default=None, init=False, repr=False)
 
     def __call__(self, rr: Any) -> list[tuple[str, Any]]:
         robot = self._load_robot()
@@ -166,24 +167,18 @@ class UrdfRobotStaticRerunFactory:
         return self._robot
 
 
+@dataclass
 class UrdfRobotJointStateRerunFactory:
     """Convert JointState-like messages into animated URDF link transforms."""
 
-    def __init__(
-        self,
-        urdf_path: str | Path,
-        root_path: str,
-        joint_name_mapper: JointNameMapper = default_joint_name_mapper,
-        clamp_joint_limits: bool = False,
-    ) -> None:
-        self.urdf_path = urdf_path
-        self.root_path = root_path
-        self.joint_name_mapper = joint_name_mapper
-        self.clamp_joint_limits = clamp_joint_limits
-        self._tree: Any = None
-        self._joints: list[Any] = []
-        self._joint_paths: dict[str, str] = {}
-        self._joint_values: dict[str, float] = {}
+    urdf_path: str | Path
+    root_path: str
+    joint_name_mapper: JointNameMapper = default_joint_name_mapper
+    clamp_joint_limits: bool = False
+    _tree: Any = field(default=None, init=False, repr=False)
+    _joints: list[Any] = field(default_factory=list, init=False, repr=False)
+    _joint_paths: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _joint_values: dict[str, float] = field(default_factory=dict, init=False, repr=False)
 
     def __call__(self, msg: Any) -> list[tuple[str, Any]]:
         self._load_tree()

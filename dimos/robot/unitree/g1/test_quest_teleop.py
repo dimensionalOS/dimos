@@ -197,6 +197,7 @@ def test_stale_input_relocks_drive_and_requires_new_neutral_samples(
             buttons=[0, 0, 0, 0, 0, 0, 0],
         ).lcm_encode(),
     ],
+    ids=("malformed", "nonfinite"),
 )
 def test_malformed_or_nonfinite_joy_immediately_zeros_and_relocks(
     module: G1QuestTeleopModule,

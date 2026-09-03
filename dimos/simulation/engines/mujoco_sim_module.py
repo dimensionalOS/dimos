@@ -427,7 +427,7 @@ class MujocoSimModule(
             # optional) and is only needed when injecting bundled meshes.
             from dimos.simulation.mujoco.model import get_assets
 
-            engine_assets = get_assets(self.config.robot_meshdir)
+            engine_assets = get_assets()
         # Compose rendered cameras separately from raycast lidar. Each
         # rendered camera blocks the sim thread, so MuJoCo lidar does not
         # register depth cameras here.
