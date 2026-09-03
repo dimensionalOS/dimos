@@ -190,11 +190,10 @@ class _PinkSolverCore:
 
     def _step_configuration(
         self,
-        robot_context: _PinkRobotContext,
         configuration: pink.Configuration,
         tasks: Mapping[str, pink.Task],
         dt: float,
-        locked_joint_positions: Mapping[int, float] | None = None,
+        constraints: Sequence[pink.Task] = (),
     ) -> None:
         self._before_solve(tasks, configuration, dt)
         velocity = pink.solve_ik(
@@ -204,14 +203,36 @@ class _PinkSolverCore:
             solver=self.config.solver,
             damping=self.config.damping,
             safety_break=self.config.safety_break,
+            constraints=constraints or None,
         )
         self._after_solve(tasks, velocity, dt)
         configuration.integrate_inplace(velocity, dt)
-        if locked_joint_positions:
-            locked_q = configuration.q.copy()
-            for local_index, value in locked_joint_positions.items():
-                locked_q[robot_context.mapping.idx_q[local_index]] = value
-            configuration.update(locked_q)
+
+    def _locked_joint_constraints(
+        self,
+        robot_context: _PinkRobotContext,
+        seed_q: NDArray[np.float64],
+        locked_joint_positions: Mapping[int, float] | None,
+    ) -> tuple[pink.Task, ...]:
+        if not locked_joint_positions:
+            return ()
+
+        reference_q = seed_q.copy()
+        constraint_matrix = np.zeros(
+            (len(locked_joint_positions), robot_context.model.nv),
+            dtype=np.float64,
+        )
+        for row, (local_index, position) in enumerate(locked_joint_positions.items()):
+            reference_q[robot_context.mapping.idx_q[local_index]] = position
+            constraint_matrix[row, robot_context.mapping.idx_v[local_index]] = 1.0
+
+        return (
+            pink.tasks.LinearHolonomicTask(
+                A=constraint_matrix,
+                b=np.zeros(len(locked_joint_positions), dtype=np.float64),
+                q_0=reference_q,
+            ),
+        )
 
     def _build_robot_context(
         self,

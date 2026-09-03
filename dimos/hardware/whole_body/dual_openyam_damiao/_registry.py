@@ -12,13 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hardware diagnostics and configuration commands."""
-
-import typer
-
-from dimos.cli.hardware.a1z import app as a1z_app
-from dimos.cli.hardware.g1 import app as g1_app
-
-app = typer.Typer(help="Diagnose and configure robot hardware", no_args_is_help=True)
-app.add_typer(a1z_app, name="a1z")
-app.add_typer(g1_app, name="g1")
+ADAPTER_FACTORIES = {
+    "dual_openyam_damiao": (
+        "dimos.hardware.whole_body.dual_openyam_damiao.adapter:DualOpenYamDamiaoAdapter"
+    ),
+}
