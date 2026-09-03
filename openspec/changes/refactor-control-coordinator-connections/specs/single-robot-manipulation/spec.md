@@ -87,7 +87,7 @@ The manipulation system SHALL represent every gripper degree of freedom as an or
 #### Scenario: Select a gripper group
 - **GIVEN** a group containing `left/gripper`
 - **WHEN** a caller commands the gripper through its public manipulation API
-- **THEN** the control claim targets that joint’s declared interface
+- **THEN** the task claims that joint and selects one of its supported command interfaces
 - **AND** manipulation does not derive a task name or limits from hardware identity
 
 #### Scenario: Control a multi-DOF gripper

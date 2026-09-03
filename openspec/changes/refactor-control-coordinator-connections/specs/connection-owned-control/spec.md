@@ -8,6 +8,7 @@ Each connection module SHALL own its device or simulator connection, native life
 - **GIVEN** a connection instance configured for a physical device
 - **WHEN** the module starts
 - **THEN** that module establishes and monitors the native connection
+- **AND** reports universal module readiness only while it can safely accept responsibility for the device
 - **AND** the coordinator interacts only through declared typed streams and robot-level lifecycle operations
 
 #### Scenario: Use a private adapter helper
@@ -17,7 +18,7 @@ Each connection module SHALL own its device or simulator connection, native life
 
 ### Requirement: Resolved immutable connection description
 
-Each connection SHALL publish a description after all instance configuration is resolved and before it may be armed. The description SHALL identify its source, interfaces, units, limits, profile, rates, timeouts, omission rules, and safe-stop policy, and SHALL remain immutable for that running epoch.
+Each connection SHALL publish a description after all instance configuration is resolved and before it may be armed. The description SHALL identify its source, joint resources, interfaces, units, limits, supported interface combinations, rates, timeouts, omission rules, safe-stop policy, and verified process-loss classification, and SHALL remain immutable for that running epoch.
 
 #### Scenario: Announce a configured connection
 - **GIVEN** a connection whose instance overrides are resolved
@@ -41,15 +42,15 @@ The system SHALL support multiple instances of the same connection implementatio
 - **THEN** the coordinator accepts `left/...` and `right/...` interfaces
 - **AND** no hardware ID or generated coordinator type is required
 
-#### Scenario: Duplicate command ownership
-- **GIVEN** two descriptions claiming the same command interface
+#### Scenario: Duplicate joint ownership
+- **GIVEN** two descriptions claiming command ownership of the same canonical joint
 - **WHEN** the coordinator validates readiness
-- **THEN** readiness fails with both sources and the conflicting key
+- **THEN** readiness fails with both sources and the conflicting joint
 - **AND** neither connection is armed
 
 ### Requirement: Per-instance configuration ownership
 
-Device addresses, bus identifiers, credentials, native options, command profiles, and safety settings SHALL be configured on each connection instance rather than in hardware-specific global coordinator configuration.
+Device addresses, bus identifiers, credentials, native options, command-interface behavior, and safety settings SHALL be configured on each connection instance rather than in hardware-specific global coordinator configuration.
 
 #### Scenario: Override one identical device
 - **GIVEN** `left` and `right` instances of one connection class
@@ -57,25 +58,43 @@ Device addresses, bus identifiers, credentials, native options, command profiles
 - **THEN** only `left` receives that setting
 - **AND** both descriptions reflect independently resolved configuration
 
-### Requirement: Static compatible command profile
+### Requirement: Connection-validated command-interface combinations
 
-A connection SHALL advertise one configured command profile containing mutually compatible fields and SHALL reject commands outside that profile. Changing to an incompatible profile while active is unsupported.
+A connection SHALL advertise its available command interfaces and autonomously perform any native transition required by a change in winning command semantics. It SHALL accept only combinations supported by the device and SHALL keep native mode identifiers private.
 
-#### Scenario: Position profile receives velocity
-- **GIVEN** an armed connection declaring position commands only
-- **WHEN** it receives a velocity command key
-- **THEN** it rejects the complete batch
-- **AND** no value from that batch reaches the device
+#### Scenario: Switch an arm from position to velocity
+- **GIVEN** position interfaces are active and the connection supports velocity control
+- **WHEN** it receives fresh winning velocity commands
+- **THEN** it changes native device behavior without restarting
+- **AND** applies velocity values only after the native transition succeeds
 
-#### Scenario: Whole-body impedance profile
-- **GIVEN** a profile declaring position, velocity, proportional gain, derivative gain, and effort
-- **WHEN** it receives a valid batch
-- **THEN** it dispatches the fields in native order
-- **AND** public commands and state remain in canonical SI units
+#### Scenario: Transition is in progress
+- **GIVEN** a connection is changing its native behavior for a new command interface
+- **WHEN** command frames continue to arrive
+- **THEN** it remains module-ready, retains the newest compatible command, and never interprets new values through the old native mode
+- **AND** it applies only a fresh compatible command after success without exposing transition state to the coordinator
+
+#### Scenario: Native transition fails
+- **GIVEN** a winning command requires a supported interface transition
+- **WHEN** the native device rejects or fails that transition
+- **THEN** the connection enters its safe state and withdraws module readiness with the fault reason
+- **AND** the coordinator handles the fault through its normal required-connection safety policy
+
+#### Scenario: Whole-body impedance combination
+- **GIVEN** the connection supports position, velocity, proportional gain, derivative gain, and effort together
+- **WHEN** one winning task activates that combination for its joints
+- **THEN** the connection accepts and dispatches those fields in native order
+- **AND** no other task supplies a field for those owned joints
 
 ### Requirement: Atomic command-batch validation
 
-A connection SHALL validate target, epoch, sequence, lengths, duplicate keys, supported keys, finite values, and hard limits before applying any value in a command batch.
+A connection SHALL validate armed lifecycle state, current control epoch, target, sequence, lengths, duplicate keys, supported keys, finite values, and hard limits before applying any value in a command batch.
+
+#### Scenario: Command arrives while safe-stopped
+- **GIVEN** a connection latched `SAFE_STOPPED` and invalidated its control epoch
+- **WHEN** any ordinary command frame arrives
+- **THEN** the connection rejects it before invoking the driver
+- **AND** only explicit recovery followed by a new arm transaction can reopen its command gate
 
 #### Scenario: One key is unknown
 - **GIVEN** a batch with valid keys and one undeclared key
@@ -88,6 +107,22 @@ A connection SHALL validate target, epoch, sequence, lengths, duplicate keys, su
 - **WHEN** the connection validates it
 - **THEN** it refuses the command before invoking the driver
 - **AND** reports the fault according to policy
+
+### Requirement: Connections own physical safe behavior
+
+Each connection SHALL implement `SAFE_STOP` and `ESTOP` according to the mechanics and native controller of its device. It SHALL latch lifecycle state before device action and SHALL acknowledge repeated operation identifiers idempotently. It SHALL NOT treat command silence or one generic zero vector as a substitute for these operations. Physical deactivation SHALL remain part of the connection's device-specific `Module.stop()` teardown rather than the generic runtime control protocol.
+
+#### Scenario: Connection detects its own fault
+- **GIVEN** an armed connection detects an SDK failure, device-link loss, unsafe command, or command-watchdog timeout
+- **WHEN** the failure occurs
+- **THEN** it latches and executes its safe-stop policy without waiting for the coordinator
+- **AND** publishes status so the coordinator safe-stops the rest of the robot
+
+#### Scenario: Healthy peer receives robot-wide safe stop
+- **GIVEN** another required connection caused the robot fault
+- **WHEN** this healthy connection receives `SAFE_STOP`
+- **THEN** it enters `SAFE_STOPPED` while retaining module readiness
+- **AND** rejects ordinary commands until explicit recovery and re-arming
 
 ### Requirement: Rich device streams remain independently routable
 

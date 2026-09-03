@@ -2,7 +2,7 @@
 
 ### Requirement: Named scalar control-value contract
 
-Control-state and command frames SHALL carry a source, producer timestamp, per-source sequence, parallel interface-name and `float64` value arrays, and fully qualified canonical keys.
+Control-state and command frames SHALL carry a source, producer timestamp, producer/control epoch, per-source sequence, parallel interface-name and `float64` value arrays, and fully qualified canonical keys. Every frame SHALL identify each value by the name in the same frame rather than by a description-defined index.
 
 #### Scenario: Publish joint feedback
 - **GIVEN** a connection owns joint position and velocity
@@ -10,26 +10,58 @@ Control-state and command frames SHALL carry a source, producer timestamp, per-s
 - **THEN** the frame names `left/j1/position` and `left/j1/velocity` explicitly
 - **AND** values align one-to-one with names
 
+#### Scenario: Interface description defines capabilities
+- **GIVEN** an accepted description lists supported interfaces in some order
+- **WHEN** a valid state or command frame arrives
+- **THEN** the consumer matches its explicitly carried names against the description
+- **AND** does not interpret values through the description's list positions
+
 #### Scenario: Frame arrays do not align
 - **GIVEN** a frame with different name and value counts
 - **WHEN** a consumer validates it
 - **THEN** the complete frame is rejected
 - **AND** no partial update occurs
 
-### Requirement: Exact interface-key arbitration
+### Requirement: Whole-joint arbitration
 
-The coordinator SHALL arbitrate exact scalar interface keys and SHALL NOT require joint, hardware, robot, atomic-device, or mode semantics to select a winner.
+The coordinator SHALL arbitrate canonical joints and select at most one winning task for each joint. The winner SHALL exclusively supply all command-interface values for that joint.
 
-#### Scenario: Tasks claim disjoint fields
-- **GIVEN** tasks claiming `left/j1/position` and `right/j1/position`
+#### Scenario: Tasks claim disjoint joints
+- **GIVEN** tasks claiming `left/j1` and `right/j1`
 - **WHEN** both produce valid commands
-- **THEN** both may win independently and route to their owners
+- **THEN** both tasks may win independently and route to their owning connections
 
-#### Scenario: Tasks contend for one field
-- **GIVEN** tasks claiming the same key at different priorities
-- **WHEN** the coordinator ticks
-- **THEN** only the higher-priority valid value wins
-- **AND** unrelated keys are unaffected
+#### Scenario: Tasks contend with different command interfaces
+- **GIVEN** a lower-priority task claiming `left/j1` with a position command and a higher-priority task claiming `left/j1` with a velocity command
+- **WHEN** the coordinator arbitrates
+- **THEN** the higher-priority task alone owns `left/j1`
+- **AND** no position value from the losing task is combined with the winner's velocity value
+
+### Requirement: Runtime command-interface transitions
+
+The system SHALL support changing the command interfaces emitted by winning tasks without restarting tasks or connections. The coordinator SHALL preserve ordinary joint arbitration and SHALL NOT orchestrate native device transitions.
+
+#### Scenario: Winner changes from position to velocity
+- **GIVEN** a position task owns an arm's joints and a higher-priority velocity task contends for them
+- **WHEN** the velocity task wins
+- **THEN** the coordinator selects the velocity task as joint owner and publishes its velocity commands
+- **AND** the connection alone performs any required native transition before applying those values
+
+#### Scenario: Hardware rejects a proposed combination
+- **GIVEN** winning commands require an interface combination unsupported by one connection
+- **WHEN** that connection validates the command
+- **THEN** it applies no value through an incompatible native device mode
+- **AND** it reports a fault through normal connection status
+
+### Requirement: Native modes remain connection-private
+
+The generic control contract SHALL express active command interfaces rather than vendor-specific control modes. Each connection SHALL map accepted command-interface sets to its native device behavior.
+
+#### Scenario: Device has a vendor-specific velocity mode
+- **GIVEN** tasks and the coordinator request joint velocity interfaces
+- **WHEN** the connection performs the transition
+- **THEN** it selects the required vendor-native mode internally
+- **AND** the vendor mode identifier does not appear in task or coordinator APIs
 
 ### Requirement: Complete connection state snapshots
 
@@ -47,6 +79,16 @@ Each state frame SHALL contain exactly one value for every state interface in it
 - **THEN** the frame is rejected
 - **AND** the last valid snapshot remains until its stale deadline
 
+### Requirement: Named robot joint-state projection
+
+The coordinator SHALL publish aggregated position, velocity, and effort feedback as `JointState` with canonical joint names carried in every message. It SHALL derive each joint entry from the validated scalar interfaces with the same canonical joint prefix.
+
+#### Scenario: Publish aggregated arm state
+- **GIVEN** valid state interfaces for `left/j1` and `right/j1`
+- **WHEN** the coordinator publishes robot state
+- **THEN** `JointState.name` contains `left/j1` and `right/j1` directly
+- **AND** manipulation consumes those names without connection, robot-ID, or local/global name mapping
+
 ### Requirement: Sparse commands and explicit heartbeat
 
 Command frames MAY contain only interfaces with current winners. The coordinator SHALL publish at its heartbeat rate even when no task supplies a value.
@@ -56,6 +98,12 @@ Command frames MAY contain only interfaces with current winners. The coordinator
 - **WHEN** the coordinator ticks
 - **THEN** it publishes an empty frame with fresh sequence and epoch
 - **AND** connections distinguish liveness from ownership
+
+#### Scenario: Coordinator enters safe stop
+- **GIVEN** the coordinator has closed its command gate because of a fault
+- **WHEN** it initiates robot-wide safe stop
+- **THEN** it stops publishing ordinary command heartbeats
+- **AND** it does not represent safe stop as an empty command frame
 
 #### Scenario: Route sparse commands
 - **GIVEN** winners owned by different connections
