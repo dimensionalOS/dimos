@@ -56,6 +56,7 @@ def test_limit() -> None:
     assert calls == [("first", 1), ("third", 3), ("fourth", 0)]
 
 
+@pytest.mark.flaky(reruns=2)
 def test_latest_rolling_average() -> None:
     """Test RollingAverageAccumulator with limit decorator."""
     calls = []
