@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+import concurrent.futures
+import contextlib
 import importlib.util
 import threading
 from typing import Any, Protocol, runtime_checkable
@@ -38,7 +40,8 @@ logger = setup_logger()
 # find_spec instead of importing: aiortc takes ~150ms and core.transport pulls
 # this module in everywhere. Providers import aiortc lazily on start().
 WEBRTC_AVAILABLE = (
-    importlib.util.find_spec("aiortc") is not None and importlib.util.find_spec("httpx") is not None
+    importlib.util.find_spec("aiortc") is not None
+    and importlib.util.find_spec("aiohttp") is not None
 )
 
 
@@ -64,6 +67,15 @@ class Provider(Protocol):
 
     @property
     def is_connected(self) -> bool: ...
+
+
+@runtime_checkable
+class AudioProvider(Provider, Protocol):
+    """Provider that receives decoded operator audio frames."""
+
+    def set_audio_frame_callback(
+        self, callback: Callable[[bytes, int, int], None] | None
+    ) -> None: ...
 
 
 _providers: dict[ProviderConfig, Provider] = {}
@@ -119,7 +131,6 @@ class AsyncProviderBase:
     def __init__(self) -> None:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
-        self._stop_ev: asyncio.Event | None = None
         self._started = False
         self._lock = threading.RLock()
         self._lifecycle_lock = threading.Lock()
@@ -175,24 +186,22 @@ class AsyncProviderBase:
             self._teardown()
 
     def _teardown(self) -> None:
-        loop, stop_ev = self._loop, self._stop_ev
-        if loop is not None and stop_ev is not None and loop.is_running():
-            loop.call_soon_threadsafe(stop_ev.set)
+        if self._loop is not None:
+            with contextlib.suppress(RuntimeError):
+                self._loop.call_soon_threadsafe(self._loop.stop)
         if self._thread is not None:
             self._thread.join(timeout=5.0)
         self._thread = None
         self._loop = None
-        self._stop_ev = None
 
     def _run_loop(self, ready: threading.Event) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         self._loop = loop
-        self._stop_ev = asyncio.Event()
         ready.set()
 
         try:
-            loop.run_until_complete(self._stop_ev.wait())
+            loop.run_forever()
         finally:
             tasks = asyncio.all_tasks(loop)
             for task in tasks:
@@ -203,13 +212,22 @@ class AsyncProviderBase:
 
     def _run_sync(self, coro: Any, timeout: float = 30.0) -> Any:
         assert self._loop is not None
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=timeout)
+        fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        try:
+            return fut.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            fut.cancel()
+            with contextlib.suppress(Exception):
+                fut.result(timeout=5.0)
+            raise
 
 
 async def wait_connected(pc: Any, timeout: float = 15.0) -> None:
     """Wait until an RTCPeerConnection reaches the ``connected`` state."""
     if pc.connectionState == "connected":
         return
+    if pc.connectionState in ("failed", "closed"):
+        raise RuntimeError(f"PeerConnection failed: {pc.connectionState}")
     ev = asyncio.Event()
 
     @pc.on("connectionstatechange")  # type: ignore[untyped-decorator]
@@ -226,6 +244,8 @@ async def wait_open(channel: Any, timeout: float = 15.0) -> None:
     """Wait until an RTCDataChannel is open."""
     if channel.readyState == "open":
         return
+    if channel.readyState in ("closing", "closed"):
+        raise RuntimeError(f"DataChannel {channel.label!r} is {channel.readyState}")
     ev = asyncio.Event()
 
     @channel.on("open")  # type: ignore[untyped-decorator]

@@ -1,19 +1,17 @@
----
-title: "Transforms"
----
+# Transforms
 
 ## The Problem: Everything Measures from Its Own Perspective
 
-Imagine your robot has an RGB-D camera—a camera that captures both color images and depth (distance to each pixel). These are common in robotics: Intel RealSense, Microsoft Kinect, and similar sensors.
+Imagine your robot has an RGB-D camera, which captures both color images and depth (distance to each pixel). These are common in robotics: Intel RealSense, Microsoft Kinect, and similar sensors.
 
-The camera spots a coffee mug at pixel (320, 240), and the depth sensor says it's 1.2 meters away. You want the robot arm to pick it up—but the arm doesn't understand pixels or camera-relative distances. It needs coordinates in its own workspace: "move to position (0.8, 0.3, 0.1) meters from my base."
+The camera spots a coffee mug at pixel (320, 240), and the depth sensor says it's 1.2 meters away. You want the robot arm to pick it up. But the arm doesn't understand pixels or camera-relative distances. It needs coordinates in its own workspace: "move to position (0.8, 0.3, 0.1) meters from my base."
 
 To convert camera measurements to arm coordinates, you need to know:
 - The camera's intrinsic parameters (focal length, sensor size) to convert pixels to a 3D direction
 - The depth value to get the full 3D position relative to the camera
 - Where the camera is mounted relative to the arm, and at what angle
 
-This chain of conversions—(pixels + depth) → 3D point in camera frame → robot coordinates—is what **transforms** handle.
+This chain of conversions is what **transforms** handle: (pixels + depth) → 3D point in camera frame → robot coordinates.
 
 <details>
 <summary>diagram source</summary>
@@ -50,7 +48,7 @@ Each arrow in this tree is a transform. To get the mug's position in gripper coo
 
 ## What's a Coordinate Frame?
 
-A **coordinate frame** is simply a point of view—an origin point and a set of axes (X, Y, Z) from which you measure positions and orientations.
+A **coordinate frame** is simply a point of view: an origin point and a set of axes (X, Y, Z) from which you measure positions and orientations.
 
 Think of it like giving directions:
 - **GPS** says you're at 37.7749° N, 122.4194° W
@@ -165,7 +163,7 @@ print(matrix)
 
 ## Frame IDs in Modules
 
-Modules in DimOS automatically get a `frame_id` property. This is controlled by two config options in [`core/module.py`](/dimos/core/module.py#L78):
+Modules in dimOS automatically get a `frame_id` property. This is controlled by two config options in [`core/module.py`](/dimos/core/module.py#L78):
 
 - `frame_id` - The base frame name (defaults to the class name)
 - `frame_id_prefix` - Optional prefix for namespacing
@@ -190,19 +188,22 @@ print(f"With prefix: {sensor2.frame_id}")
 ```
 
 ```results
+00:33:00.665 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=True listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo
 Default frame_id: sensor_link
 With prefix: robot1/sensor_link
 ```
 
-## The TF Service
+## The tf Topic
 
-Every module has access to `self.tf`, a transform service that:
+Transforms travel on an ordinary stream named `tf` carrying [`TFMessage`](/dimos/msgs/tf2_msgs/TFMessage.py)s. A module declares the port like any other stream, choosing the direction it actually uses:
 
-- **Publishes** transforms to the system
-- **Looks up** transforms between any two frames
-- **Buffers** historical transforms for temporal queries
+- `tf: Out[TFMessage]`: publishes transforms
+- `tf: In[TFMessage]`: consumes transforms
+- `tf: IO[TFMessage]`: both, on the same topic
 
-The TF service is implemented in [`protocol/tf/tf.py`](/dimos/protocol/tf/tf.py) and is lazily initialized on first access.
+The coordinator wires every port named `tf` onto one shared `/tf` transport, so all modules see one transform tree.
+
+For lookups, use `self.tfbuffer`, a lazy [`TF`](/dimos/protocol/tf/tf.py) buffer view over the module's `tf` port that subscribes to the stream, buffers what it sees, and answers `get()` queries (including chained and inverse lookups). It is built on first touch and disposed with the module. Outside modules, construct the view explicitly: `TF(stream)` accepts any port or raw transport.
 
 ### Multi-Module Transform Example
 
@@ -215,16 +216,20 @@ This example demonstrates how multiple modules publish and receive transforms. T
 ```python skip ansi=false
 import time
 import reactivex as rx
-from reactivex import operators as ops
 from dimos.core.core import rpc
 from dimos.core.module import Module
+from dimos.core.stream import In, Out
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 class RobotBaseModule(Module):
     """Publishes the robot's position in the world frame at 10Hz."""
+
+    tf: Out[TFMessage]
 
     @rpc
     def start(self) -> None:
@@ -238,7 +243,7 @@ class RobotBaseModule(Module):
                 child_frame_id="base_link",
                 ts=time.time(),
             )
-            self.tf.publish(robot_pose)
+            self.tf.publish(TFMessage(robot_pose))
 
         self.register_disposable(
             rx.interval(0.1).subscribe(publish_pose)
@@ -246,6 +251,9 @@ class RobotBaseModule(Module):
 
 class CameraModule(Module):
     """Publishes camera transforms at 10Hz."""
+
+    tf: Out[TFMessage]
+
     @rpc
     def start(self) -> None:
         super().start()
@@ -265,7 +273,7 @@ class CameraModule(Module):
                 child_frame_id="camera_optical",
                 ts=time.time(),
             )
-            self.tf.publish(camera_mount, optical_frame)
+            self.tf.publish(TFMessage(camera_mount, optical_frame))
 
         self.register_disposable(
             rx.interval(0.1).subscribe(publish_transforms)
@@ -274,48 +282,39 @@ class CameraModule(Module):
 class PerceptionModule(Module):
     """Receives transforms and performs lookups."""
 
-    @rpc
-    def start(self) -> None:
-        super().start()
-        # This is just to init the transforms system.
-        # Touching the property for the first time enables the system for this module.
-        # Transform lookups normally happen in fast loops in IRL modules.
-        _ = self.tf
+    tf: In[TFMessage]
 
     @rpc
     def lookup(self) -> None:
 
         # Will pretty-print information on transforms in the buffer
-        print(self.tf)
+        print(self.tfbuffer)
 
-        direct = self.tf.get("world", "base_link")
+        direct = self.tfbuffer.get("world", "base_link")
         print(f"Direct: robot is at ({direct.translation.x}, {direct.translation.y})m in world\n")
 
         # Chained lookup - automatically composes world -> base -> camera -> optical
-        chained = self.tf.get("world", "camera_optical")
+        chained = self.tfbuffer.get("world", "camera_optical")
         print(f"Chained: {chained}\n")
 
         # Inverse lookup - automatically inverts direction
-        inverse = self.tf.get("camera_optical", "world")
+        inverse = self.tfbuffer.get("camera_optical", "world")
         print(f"Inverse: {inverse}\n")
 
         print("Transform tree:")
-        print(self.tf.graph())
+        print(self.tfbuffer.graph())
 
 if __name__ == "__main__":
-    dimos = ModuleCoordinator()
-    dimos.start()
-
-    robot = dimos.deploy(RobotBaseModule)
-    camera = dimos.deploy(CameraModule)
-    perception = dimos.deploy(PerceptionModule)
-
-    dimos.start_all_modules()
+    dimos = ModuleCoordinator.build(autoconnect(
+        RobotBaseModule.blueprint(),
+        CameraModule.blueprint(),
+        PerceptionModule.blueprint(),
+    ))
 
     # Give worker TF publishers a moment to populate the buffer before querying.
     time.sleep(2.5)
 
-    perception.lookup()
+    dimos.get_instance(PerceptionModule).lookup()
 
     dimos.stop()
 
@@ -335,7 +334,7 @@ if __name__ == "__main__":
 16:21:48.062 [inf][ation/worker_manager_python.py] Shutting down all workers...
 16:21:48.062 [inf][/coordination/python_worker.py] Worker stopping module... module=CameraModule module_id=1 worker_id=1
 16:21:48.063 [inf][/coordination/python_worker.py] Worker module stopped. module=CameraModule module_id=1 worker_id=1
-LCMTF(3 buffers):
+TF(3 buffers):
   TBuffer(base_link -> camera_link, 24 msgs, 2.37s [2026-04-21 01:21:45 - 2026-04-21 01:21:47])
   TBuffer(camera_link -> camera_optical, 24 msgs, 2.37s [2026-04-21 01:21:45 - 2026-04-21 01:21:47])
   TBuffer(world -> base_link, 24 msgs, 2.37s [2026-04-21 01:21:45 - 2026-04-21 01:21:47])
@@ -367,11 +366,11 @@ Transform tree:
 
 You can view these transforms in 3D using the Rerun viewer (see [Visualization](/docs/usage/visualization.md)).
 
-![transforms](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/assets/transforms.png)
+![transforms](assets/transforms.png)
 
 Key points:
 
-- **Automatic broadcasting**: `self.tf.publish()` broadcasts via LCM to all modules
+- **One shared topic**: every `tf` port is autoconnected onto the same `/tf` transport
 - **Chained lookups**: TF finds paths through the tree automatically
 - **Inverse lookups**: Request transforms in either direction
 - **Temporal buffering**: Transforms are timestamped and buffered (default 10s) for sensor fusion
@@ -411,11 +410,11 @@ text "CameraModule" italic at ((CL.x + CO.x)/2, CL.s.y - 0.25in)
 
 ![output](assets/transforms_modules.svg)
 
-# Internals
+## Internals
 
 ## Transform Buffer
 
-`self.tf` on a module is a transform buffer. This is a standalone class that maintains a temporal buffer of transforms (default 10 seconds) allowing queries at past timestamps, you can use it directly:
+`TF` is a thin subscription layer over `MultiTBuffer`, a standalone class that maintains a temporal buffer of transforms (default 10 seconds) allowing queries at past timestamps. You can use it directly:
 
 ```python
 import time
@@ -449,7 +448,7 @@ print(tf)
 Latest transform: x=4.0
 Buffer has 1 transform pair(s)
 MultiTBuffer(1 buffers):
-  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2026-05-15 21:11:37 - 2026-05-15 21:11:37])
+  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2026-08-24 15:36:04 - 2026-08-24 15:36:04])
 ```
 
 This is essential for sensor fusion where you need to know where the camera was when an image was captured, not where it is now.

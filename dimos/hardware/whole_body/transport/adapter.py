@@ -24,6 +24,7 @@ import threading
 from typing import Any
 
 from dimos.core.transport import LCMTransport
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -123,6 +124,9 @@ class TransportWholeBodyAdapter:
             if self._latest_imu is None:
                 return IMUState()
             return self._latest_imu
+
+    def get_limits(self) -> JointLimits | None:
+        return None
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
         if self._motor_command_transport is None:

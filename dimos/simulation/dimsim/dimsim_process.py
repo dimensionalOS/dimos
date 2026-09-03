@@ -16,18 +16,19 @@ import os
 from pathlib import Path
 import subprocess
 import threading
-import time
 from typing import IO
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.global_config import GlobalConfig
-from dimos.simulation.dimsim.deno_utils import ensure_deno, ensure_playwright_chromium
+from dimos.simulation.dimsim.deno_utils import ensure_playwright_chromium
+from dimos.utils.deno import ensure_deno
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 _VIDEO_RATE = 50
 _LIDAR_RATE = 100
-_DIMSIM_DIR = Path(__file__).resolve().parents[3] / "misc" / "DimSim"
+_DIMSIM_DIR = DIMOS_PROJECT_ROOT / "misc" / "DimSim"
 
 
 class DimSimProcess:
@@ -36,16 +37,17 @@ class DimSimProcess:
         self.process: subprocess.Popen[bytes] | None = None
 
     def start(self) -> None:
+        scene = self.global_config.dimsim_scene
+        _check_lfs_stubs(scene)
+
         deno_path = ensure_deno()
         base_cmd = _deno_cmd(deno_path, _DIMSIM_DIR)
 
-        scene = self.global_config.dimsim_scene
         port = self.global_config.dimsim_port
         headless = self.global_config.dimsim_headless
 
         if headless:
             ensure_playwright_chromium(deno_path)
-        _kill_port_holder(port)
 
         render = os.environ.get("DIMSIM_RENDER", "").strip()
         if not render:
@@ -111,25 +113,28 @@ class DimSimProcess:
             t.start()
 
 
-def _kill_port_holder(port: int) -> None:
-    """Kill any process listening on the given port."""
-    try:
-        result = subprocess.run(
-            ["lsof", "-ti", f":{port}"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        pids = result.stdout.strip()
-        if pids:
-            for pid in pids.splitlines():
-                logger.info(f"Killing stale process {pid} on port {port}")
-                subprocess.run(["kill", pid], timeout=5)
-            time.sleep(0.5)
-    except Exception as e:
-        logger.warning(f"Failed to check/kill port {port}: {e}")
-
-
 def _deno_cmd(deno_path: str, repo_dir: Path) -> list[str]:
     cli_ts = repo_dir / "cli" / "cli.ts"
     return [deno_path, "run", "--allow-all", "--unstable-net", str(cli_ts)]
+
+
+_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
+
+
+def _check_lfs_stubs(scene: str) -> None:
+    """Fail fast when DimSim assets are un-fetched Git LFS pointer stubs."""
+    stubs = []
+    for asset_dir in (_DIMSIM_DIR / "scenes" / scene, _DIMSIM_DIR / "public" / "embodiment"):
+        for pattern in ("*.glb", "*.gltf"):
+            for path in sorted(asset_dir.rglob(pattern)):
+                with open(path, "rb") as f:
+                    if f.read(len(_LFS_POINTER_PREFIX)) == _LFS_POINTER_PREFIX:
+                        stubs.append(path)
+    if stubs:
+        shown = "\n".join(f"  {p.relative_to(DIMOS_PROJECT_ROOT)}" for p in stubs[:5])
+        more = f"\n  ... and {len(stubs) - 5} more" if len(stubs) > 5 else ""
+        raise RuntimeError(
+            f"{len(stubs)} DimSim asset file(s) are Git LFS pointer stubs, not real content:\n"
+            f"{shown}{more}\n"
+            'Fetch them with: git lfs pull --include="misc/DimSim/**"'
+        )

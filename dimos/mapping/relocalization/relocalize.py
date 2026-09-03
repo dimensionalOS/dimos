@@ -18,12 +18,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
 
-_reg = o3d.pipelines.registration
+if TYPE_CHECKING:
+    import open3d as o3d  # type: ignore[import-untyped]
 
 # (voxel_size, total RANSAC runs at that scale). 0.8m is the coarsest, cheapest
 # scale; it provides anchor candidates that don't need as many restarts.
@@ -42,6 +42,9 @@ def _preprocess(
     pcd: o3d.geometry.PointCloud, voxel_size: float
 ) -> tuple[o3d.geometry.PointCloud, Any]:
     """Downsample, estimate normals, compute FPFH descriptors."""
+    import open3d as o3d
+
+    _reg = o3d.pipelines.registration
     down = pcd.voxel_down_sample(voxel_size)
     down.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_size * 2, max_nn=30))
     fpfh = _reg.compute_fpfh_feature(
@@ -72,6 +75,8 @@ def _global_preprocess(
 
 
 def _global_fine(global_map: o3d.geometry.PointCloud, voxel_size: float) -> o3d.geometry.PointCloud:
+    import open3d as o3d
+
     key = ("fine", voxel_size, len(global_map.points))
     cached = _GLOBAL_CACHE.get(key)
     if cached is None:
@@ -96,6 +101,9 @@ def _ransac(
     Docs:
       https://www.open3d.org/docs/latest/python_api/open3d.registration.registration_ransac_based_on_feature_matching.html
     """
+    import open3d as o3d
+
+    _reg = o3d.pipelines.registration
     dist = voxel_size * 1.5
     return _reg.registration_ransac_based_on_feature_matching(
         src_down,
@@ -131,6 +139,10 @@ def relocalize(
     rerank catches z-degenerate and wrong-room busts: at FINE_VOXEL a
     5m-off candidate has ~0 inliers while RANSAC reports it as fit.
     """
+    import open3d as o3d
+
+    _reg = o3d.pipelines.registration
+
     # Fine downsample once — used for both candidate scoring and the final ICP.
     src_fine = local_map.voxel_down_sample(FINE_VOXEL)
     src_fine.estimate_normals(

@@ -19,11 +19,12 @@ from __future__ import annotations
 from collections.abc import Callable
 import pickle
 import struct
-from typing import get_args
 
 from pydantic import ValidationError
 import pytest
 
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import _materialize_transports
 from dimos.core.transport import WebRTCTransport
@@ -259,29 +260,27 @@ def test_provider_config_is_frozen_and_hashable() -> None:
 
 
 def test_blueprint_config_exposes_transport_fields() -> None:
-    """Each unique `_config_cls` becomes a `transports.<name>` sub-model on the schema."""
+    """Each unique `_config_cls` becomes a `transports.<name>` config section."""
     bp = Blueprint(blueprints=()).transports({("topic", FakeLCMMsg): MockTransport.spec("topic")})
-    cfg = bp.config()
-    parsed = cfg(transports={"mock": {"name": "override"}})
-    assert parsed.transports.mock.name == "override"
+    parser = BlueprintConfigParser(bp)
+    parsed = parser.parse(environ={}, overrides={"transports": {"mock": {"name": "override"}}})
+    assert parsed.transport_overrides() == {"mock": {"name": "override"}}
     # Sub-field name → MockConfig; extra fields and unknown namespaces rejected.
-    with pytest.raises(ValidationError, match="bogus"):
-        cfg(transports={"mock": {"bogus": 1}})
-    with pytest.raises(ValidationError, match="other"):
-        cfg(transports={"other": {}})
-    # Multiple transports sharing one `_config_cls` collapse to one slot.
+    with pytest.raises(BlueprintConfigError, match="bogus"):
+        parser.parse(environ={}, overrides={"transports": {"mock": {"bogus": 1}}})
+    with pytest.raises(BlueprintConfigError, match="other"):
+        parser.parse(environ={}, overrides={"transports": {"other": {}}})
+    # Multiple transports sharing one `_config_cls` collapse to one section.
     bp_shared = Blueprint(blueprints=()).transports(
         {
             ("a", FakeLCMMsg): MockTransport.spec("a"),
             ("b", FakeLCMMsg): MockTransport.spec("b"),
         }
     )
-    inner = next(
-        a
-        for a in get_args(bp_shared.config().model_fields["transports"].annotation)
-        if a is not type(None)
+    shared = BlueprintConfigParser(bp_shared).parse(
+        environ={}, overrides={"transports": {"mock": {"name": "both"}}}
     )
-    assert set(inner.model_fields.keys()) == {"mock"}
+    assert shared.transport_overrides() == {"mock": {"name": "both"}}
 
 
 def test_transport_overrides_apply_and_survive_pickle() -> None:
@@ -317,20 +316,25 @@ def test_transport_overrides_coerce_string_values() -> None:
 
 def test_raw_transport_pins_still_work() -> None:
     """Backwards compat: plain transport instances in .transports() (the pre-spec
-    style used across existing blueprints) must survive config() and materialize
-    unchanged — only spec-declared transports opt into the override flow."""
-    from dimos.core.transport import LCMTransport
+    style used across existing blueprints) must survive config parsing and
+    materialize unchanged — only spec-declared transports opt into the
+    override flow."""
+    from dimos.core.transport_factory import make_transport
 
-    raw = LCMTransport("/raw_topic", FakeLCMMsg)
+    # Pinned on the active backend: a plain LCM/Zenoh pin that does not match it
+    # is deliberately rebuilt by the backend switch, which is a different path.
+    raw = make_transport("/raw_topic", FakeLCMMsg)
     bp = Blueprint(blueprints=()).transports(
         {
             ("raw", FakeLCMMsg): raw,
             ("speced", FakeLCMMsg): MockTransport.spec("topic"),
         }
     )
-    # Raw pins contribute no transports.* config fields; the spec still does.
-    cfg = bp.config()
-    assert cfg(transports={"mock": {"name": "x"}}).transports.mock.name == "x"
+    # Raw pins contribute no transports.* config sections; the spec still does.
+    parsed = BlueprintConfigParser(bp).parse(
+        environ={}, overrides={"transports": {"mock": {"name": "x"}}}
+    )
+    assert parsed.transport_overrides() == {"mock": {"name": "x"}}
 
     materialized = _materialize_transports(bp, {})
     assert materialized[("raw", FakeLCMMsg)] is raw

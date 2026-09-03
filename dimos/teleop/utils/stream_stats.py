@@ -50,15 +50,13 @@ class LiveStreamStats:
 
     def __init__(self, window: int = 120) -> None:
         self._lock = threading.Lock()
-        # (wall_arrival, ts, seq, nbytes); ts/seq/nbytes are None when absent.
-        self._samples: deque[tuple[float, float | None, int | None, int | None]] = deque(
-            maxlen=window
-        )
+        # (wall_arrival, ts, nbytes); ts/nbytes are None when absent.
+        self._samples: deque[tuple[float, float | None, int | None]] = deque(maxlen=window)
 
-    def record(self, ts: float | None, seq: int | None = None, nbytes: int | None = None) -> None:
-        """Note an inbound message's send-stamp, seq, and wire size (any None)."""
+    def record(self, ts: float | None, nbytes: int | None = None) -> None:
+        """Note an inbound message's send-stamp and wire size (either None)."""
         with self._lock:
-            self._samples.append((time.time(), ts, seq, nbytes))
+            self._samples.append((time.time(), ts, nbytes))
 
     def snapshot(self) -> dict[str, float | None] | None:
         """Median latency/jitter (ms), rate (Hz), throughput. None until 2 samples."""
@@ -67,11 +65,11 @@ class LiveStreamStats:
         if len(samples) < 2:
             return None
 
-        arrivals = [w for w, _, _, _ in samples]
+        arrivals = [w for w, _, _ in samples]
         intervals_ms = [(b - a) * 1000.0 for a, b in pairwise(arrivals)]
         # `is not None` — ts=0.0 is a real value, only None means absent.
-        e2e_ms = [(w - ts) * 1000.0 for w, ts, _, _ in samples if ts is not None]
-        sizes = [n for _, _, _, n in samples if n is not None]
+        e2e_ms = [(w - ts) * 1000.0 for w, ts, _ in samples if ts is not None]
+        sizes = [n for _, _, n in samples if n is not None]
 
         e2e = pcts(e2e_ms)
         jit = pcts(intervals_ms)

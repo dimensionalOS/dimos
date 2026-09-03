@@ -179,3 +179,29 @@ def test_set_cam_selection_ignores_foreign_frames(payload: bytes) -> None:
         mux._cam_selected = ["cam2"]
     mux._set_cam_selection(payload)
     assert mux._cam_selected == ["cam2"]  # unchanged
+
+
+def test_latency_stamp_fits_640_width() -> None:
+    mux = _make(["cam1"], latency_stamp=True)
+    _feed(mux, "cam1", _img(640, 480))
+    out = mux._composite()
+    assert out is not None and out.data.shape[:2] == (480 + 16, 640)
+
+
+def test_fps_cap_drops_frames_within_window() -> None:
+    mux = _make(["cam1"], video_max_fps=30.0)
+    mux._on_cam("cam1", _img(640, 480))
+    mux._on_cam("cam1", _img(640, 480))  # immediately again — inside 1/30 s
+    assert len(mux.published) == 1
+
+
+def test_fps_cap_window_released_on_failed_composite() -> None:
+    mux = _make(["cam1", "cam2"], video_max_fps=30.0)
+    with mux._cam_lock:
+        mux._cam_selected = ["cam1", "cam2"]
+    _feed(mux, "cam2", Image(data=np.zeros((480, 640, 4), np.uint8), format=ImageFormat.BGRA))
+    mux._on_cam("cam1", _img(640, 480))  # BGR + BGRA hstack fails → None
+    assert mux.published == []
+    _feed(mux, "cam2", _img(640, 480))
+    mux._on_cam("cam1", _img(640, 480))  # still inside the window — must publish
+    assert len(mux.published) == 1

@@ -14,15 +14,10 @@
 
 """Serialized command executor with nonce dedup + safety-epoch fencing.
 
-Robot-agnostic: a hosted-teleop command module (Go2, arm, ...) HOLDS one of
-these and calls ``submit()``. A single worker thread runs blocking driver
-commands off the transport callback, deduped by operator nonce, bounded backlog,
-with an urgent bypass (E-STOP) and a safety epoch that aborts queued/in-flight
-work after an E-STOP / operator-lost event.
-
-Dependencies are injected (not inherited): ``send_ack(nonce, ok)`` to publish a
-command ack, and ``is_estopped()`` — True while the host's E-STOP latch is set.
-Lifecycle: call ``start()`` from the host's start(), ``stop()`` from its stop().
+A hosted command module (Go2, arm, ...) holds one and calls ``submit()``: one
+worker thread runs blocking driver commands off the transport callback, with an
+urgent bypass (E-STOP) and a safety epoch that aborts queued/in-flight work
+after E-STOP / operator-lost. ``send_ack`` and ``is_estopped`` are injected.
 """
 
 from __future__ import annotations
@@ -59,11 +54,9 @@ class SerializedCommandExecutor:
         self._urgent_threads: set[threading.Thread] = set()
 
     def start(self) -> None:
-        """Create the single worker; call from the host's start()."""
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="HostedCmd")
 
     def stop(self) -> None:
-        """Shut down the worker (cancel pending); call from the host's stop()."""
         self.bump_safety_epoch()
         if self._executor is not None:
             self._executor.shutdown(wait=True, cancel_futures=True)
@@ -90,13 +83,11 @@ class SerializedCommandExecutor:
 
     @property
     def safety_epoch(self) -> int:
-        """Current safety epoch (snapshot; use safety_ok() for a fence check)."""
         with self._lock:
             return self._safety_epoch
 
     def clear_nonces(self) -> None:
-        """Drop the dedup cache — after operator-lost so a reconnected operator's
-        retried nonces aren't silently re-acked from the prior session."""
+        """Drop dedup cache on operator-lost — a reconnect must not re-ack old nonces."""
         with self._lock:
             self._nonce_results.clear()
 
@@ -111,23 +102,16 @@ class SerializedCommandExecutor:
     def submit(
         self, label: str, nonce: Any, task: Callable[[int], bool], *, urgent: bool = False
     ) -> None:
-        """Run a blocking command off the loop and ack it. Non-urgent commands
-        serialize on one worker (bounded backlog, busy-rejected past
-        _MAX_PENDING_CMDS); urgent (Damp/E-STOP) bypasses the queue.
+        """Run a blocking command off the loop and ack it; urgent bypasses the
+        queue. The task gets the epoch captured at SUBMIT time — multi-step
+        tasks check ``safety_ok(epoch)`` between steps."""
 
-        The task receives the safety epoch captured at SUBMIT time. If E-STOP or
-        operator-lost fires before it runs, it is refused; multi-step tasks pass
-        the epoch to ``safety_ok`` between steps so in-flight work can't resume
-        motion after the safety event.
-        """
-
-        # E-STOP latch: only urgent work (Damp itself) may run while latched.
         if self._is_estopped() and not urgent:
             logger.warning("%s rejected: E-STOP latched", label)
             self._send_ack(nonce, False)
             return
 
-        submit_epoch = self._safety_epoch
+        submit_epoch = self.safety_epoch
 
         if nonce is not None and not urgent:
             now = time.monotonic()
@@ -161,8 +145,7 @@ class SerializedCommandExecutor:
         def runner() -> None:
             ok = False
             try:
-                # Refuse if a safety event fired between submit and run (a queued
-                # command must not resume motion after E-STOP / operator-lost).
+                # A queued command must not resume motion after E-STOP / operator-lost.
                 if not urgent and not self.safety_ok(submit_epoch):
                     logger.warning("%s aborted: E-STOP / operator-lost before run", label)
                 else:
@@ -176,7 +159,8 @@ class SerializedCommandExecutor:
             if nonce is not None and not urgent:
                 with self._lock:
                     self._nonce_results[nonce] = (ok, time.monotonic())
-            self._send_ack(nonce, ok)
+            if nonce is not None:
+                self._send_ack(nonce, ok)
 
         if urgent:
 

@@ -19,9 +19,9 @@ import asyncio
 import pytest
 
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.core.demos.stress_test_module import StressTestModule
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.core.tests.stress_test_module import StressTestModule
 from dimos.porcelain.dimos import Dimos, _resolve_target
 
 
@@ -176,6 +176,49 @@ def test_module_rpc_call(running_app):
     assert module.ping() == "pong"
 
 
+def test_list_modules_returns_structured_instance_information(running_app):
+    modules = running_app.list_modules()
+
+    assert len(modules) == 1
+    assert modules[0].instance_name == "StressTestModule"
+    assert modules[0].class_name == "StressTestModule"
+    assert modules[0].qualified_path.endswith(".StressTestModule")
+    assert repr(modules[0]).startswith("<Module StressTestModule")
+
+
+def test_get_module_supports_public_lookup(running_app):
+    assert running_app.get_module("StressTestModule").ping() == "pong"
+
+
+def test_list_rpcs_includes_skills_and_preserves_metadata(running_app):
+    rpcs = running_app.list_rpcs("StressTestModule")
+    ping = next(rpc_info for rpc_info in rpcs if rpc_info.name == "ping")
+    slow = next(rpc_info for rpc_info in rpcs if rpc_info.name == "slow")
+
+    assert ping.documentation == "Simple health check. Returns 'pong'."
+    assert slow.module_name == "StressTestModule"
+    assert slow.signature == "(self, seconds: 'float' = 1.0) -> 'str'"
+    assert repr(slow) == "<RPC StressTestModule.slow(seconds: float = 1.0) -> str>"
+
+
+def test_list_rpcs_accepts_module_proxy(running_app):
+    proxy = running_app.get_module("StressTestModule")
+    assert {rpc_info.name for rpc_info in running_app.list_rpcs(proxy)} >= {"ping", "echo"}
+
+
+def test_describe_module_and_rpc(running_app):
+    module = running_app.get_module("StressTestModule")
+
+    assert running_app.describe(module).instance_name == "StressTestModule"
+    assert running_app.describe(module.ping).name == "ping"
+    assert running_app.describe("StressTestModule.ping").name == "ping"
+
+
+def test_describe_rejects_unqualified_rpc_name(running_app):
+    with pytest.raises(ValueError, match="not qualified"):
+        running_app.describe("ping")
+
+
 def test_dir_lists_modules(running_app):
     d = dir(running_app)
     assert "StressTestModule" in d
@@ -198,6 +241,10 @@ def test_connected_run_by_name_adds_module(running_app, client):
     client.run("mcp-server")
     assert "McpServer" in client._source.list_module_names()
     assert "McpServer" in running_app._source.list_module_names()
+    assert {module.instance_name for module in client.list_modules()} >= {
+        "StressTestModule",
+        "McpServer",
+    }
 
 
 def test_connected_run_by_class_adds_module(client):

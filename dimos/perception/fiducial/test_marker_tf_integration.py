@@ -23,14 +23,16 @@ from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothe
 import pytest
 
 from dimos.core.transport import LCMTransport
+from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.fiducial.marker_tf_module import MarkerTfModule
-from dimos.protocol.tf.tf import LCMTF
+from dimos.protocol.tf.tf import TF
 
 
 def _marker_detection_array(ts: float) -> Detection3DArray:
@@ -68,7 +70,9 @@ def test_marker_tf_consumes_detection_array_over_lcm() -> None:
         Detection3DArray,
     )
     module.detections.transport = detections_transport
-    host_tf = LCMTF()
+    module.tf.transport = make_transport("/tf", TFMessage)
+    host_transport = make_transport("/tf", TFMessage)
+    host_tf = TF(host_transport)
 
     try:
         module.start()
@@ -93,5 +97,6 @@ def test_marker_tf_consumes_detection_array_over_lcm() -> None:
         assert w_marker.translation.y == pytest.approx(-0.2)
         assert w_marker.translation.z == pytest.approx(1.25)
     finally:
-        host_tf.stop()
+        host_tf.dispose()
+        host_transport.stop()
         module.stop()

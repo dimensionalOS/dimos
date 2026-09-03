@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.memory2.transform import Transformer
+from dimos.memory.transform import Transformer
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
 
 logger = setup_logger()
 

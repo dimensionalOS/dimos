@@ -20,6 +20,10 @@ cd ~/galaxea-dimos/install/startup_config/share/startup_config/script
 - `ROS_DOMAIN_ID=1` (new-gen V2.3.0), `RMW_IMPLEMENTATION=rmw_fastrtps_cpp`.
 - ROS 2 Humble → Python 3.10: `ln -sf .envrc.r1pro .envrc && direnv allow`,
   then `uv sync --all-extras --no-extra dds --no-extra unitree-dds`.
+- The planning model fetches the vendor URDF from the pinned upstream repo. The
+  on-robot build carries extra chassis cameras and names the wrist camera
+  `*_realsense_link` instead of `*_d405_link` / `*_gmsl_link`; point
+  `R1PRO_DESCRIPTION` at that checkout to plan against it.
 
 ## Blueprints
 

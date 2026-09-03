@@ -22,14 +22,13 @@ import types as types_mod
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin, get_type_hints
 
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
-from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, is_module_type
-from dimos.core.stream import In, Out, Transport
+from dimos.core.stream import IO, In, Out, Transport
 from dimos.spec.utils import Spec, is_spec
 from dimos.utils.logging_config import setup_logger
 
@@ -69,7 +68,7 @@ class DisabledModuleProxy:
 class StreamRef:
     name: str
     type: type
-    direction: Literal["in", "out"]
+    direction: Literal["in", "out", "inout"]
 
 
 @dataclass(frozen=True)
@@ -119,8 +118,8 @@ class BlueprintAtom:
         for name, annotation in all_annotations.items():
             origin = get_origin(annotation)
             # Streams
-            if origin in (In, Out):
-                direction = "in" if origin == In else "out"
+            if origin in (In, Out, IO):
+                direction = "in" if origin == In else "out" if origin == Out else "inout"
                 type_ = get_args(annotation)[0]
                 streams.append(
                     StreamRef(name=name, type=type_, direction=direction)  # type: ignore[arg-type]
@@ -217,36 +216,6 @@ class Blueprint:
 
     def disabled_modules(self, *modules: type[ModuleBase]) -> "Blueprint":
         return replace(self, disabled_modules_tuple=self.disabled_modules_tuple + modules)
-
-    def config(self) -> type:
-        configs = {}
-
-        for b in self.blueprints:
-            key = config_key(b.name)
-            if key in configs:
-                raise ValueError(
-                    f"Config key collision: two module instances map to {key!r}. "
-                    f"Rename one of the instances."
-                )
-            configs[key] = (get_type_hints(b.module)["config"] | None, None)
-
-        configs["g"] = (GlobalConfig | None, None)
-        transport_fields: dict[str, Any] = {}
-        seen: set[type] = set()
-        for spec in self.transport_map.values():
-            # Raw transport instances (plain `LCMTransport(...)` pins) have no
-            # config override surface — only deferred specs participate.
-            cls = spec.config_cls if isinstance(spec, TransportSpec) else None
-            if cls is None or cls in seen:
-                continue
-            seen.add(cls)
-            transport_fields[transport_config_name(cls)] = (cls | None, None)
-        if transport_fields:
-            transports_model = create_model(
-                "TransportsConfig", __config__={"extra": "forbid"}, **transport_fields
-            )
-            configs["transports"] = (transports_model | None, None)
-        return create_model("BlueprintConfig", __config__={"extra": "forbid"}, **configs)  # type: ignore[call-overload,no-any-return]
 
     def transports(
         self, transports: dict[tuple[str, type], TransportSpec | Transport[Any]]

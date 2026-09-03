@@ -26,10 +26,10 @@ from __future__ import annotations
 
 import os
 import time
-from types import MappingProxyType
 
 import pytest
 
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -92,9 +92,11 @@ def test_blueprint_stream_over_cloudflare() -> None:
         }
     )
 
-    coordinator = ModuleCoordinator.build(
-        blueprint, MappingProxyType({"g": {"viewer": "none", "n_workers": 1}}).copy()
+    parsed = BlueprintConfigParser(blueprint).parse(
+        environ={},
+        overrides={"g": {"viewer": "none", "n_workers": 1}},
     )
+    coordinator = ModuleCoordinator.build(blueprint, parsed)
     try:
         coordinator.start_all_modules()
         source = coordinator.get_instance(TwistSource)

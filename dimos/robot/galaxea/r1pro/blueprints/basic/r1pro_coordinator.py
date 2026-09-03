@@ -157,20 +157,24 @@ def r1pro_control(
     ``tasks`` overrides the default task set (whole-body servo + chassis
     velocity); transports and remappings stay identical either way.
     """
-    resolved_tasks = list(tasks) if tasks is not None else [
-        TaskConfig(
-            name="servo_r1pro",
-            type="servo",
-            joint_names=R1PRO_UPPER_BODY_JOINTS,
-            priority=10,
-        ),
-        TaskConfig(
-            name="vel_chassis",
-            type="velocity",
-            joint_names=_chassis_joints,
-            priority=10,
-        ),
-    ]
+    resolved_tasks = (
+        list(tasks)
+        if tasks is not None
+        else [
+            TaskConfig(
+                name="servo_r1pro",
+                type="servo",
+                joint_names=R1PRO_UPPER_BODY_JOINTS,
+                priority=10,
+            ),
+            TaskConfig(
+                name="vel_chassis",
+                type="velocity",
+                joint_names=_chassis_joints,
+                priority=10,
+            ),
+        ]
+    )
 
     return (
         autoconnect(
@@ -222,21 +226,15 @@ def r1pro_control(
                 ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
                 # Sensor pass-throughs.
                 ("head_left_color", Image): JpegLcmTransport("/r1pro/head_left_color", Image),
-                ("head_right_color", Image): JpegLcmTransport(
-                    "/r1pro/head_right_color", Image
-                ),
+                ("head_right_color", Image): JpegLcmTransport("/r1pro/head_right_color", Image),
                 ("head_depth", Image): LCMTransport("/r1pro/head_depth", Image),
                 ("lidar", PointCloud2): LCMTransport("/r1pro/lidar", PointCloud2),
                 ("wrist_left_color", Image): JpegLcmTransport("/r1pro/wrist_left_color", Image),
                 ("wrist_left_depth", Image): LCMTransport("/r1pro/wrist_left_depth", Image),
-                ("wrist_right_color", Image): JpegLcmTransport(
-                    "/r1pro/wrist_right_color", Image
-                ),
+                ("wrist_right_color", Image): JpegLcmTransport("/r1pro/wrist_right_color", Image),
                 ("wrist_right_depth", Image): LCMTransport("/r1pro/wrist_right_depth", Image),
                 # ControlCoordinator outs.
-                ("joint_state", JointState): LCMTransport(
-                    "/coordinator/joint_state", JointState
-                ),
+                ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
                 ("joint_command", JointState): LCMTransport("/r1pro/joint_command", JointState),
             }
         )

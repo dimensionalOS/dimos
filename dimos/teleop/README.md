@@ -71,13 +71,14 @@ teleop/
 │       └── static/index.html    # WebXR client
 ├── hosted/                      # Hosted teleop (transport-swap, per-concern modules)
 │   ├── go2_command.py           # Go2CommandModule: command/E-STOP dispatch + drive guard
-│   ├── command_executor.py      # SerializedCommandMixin: serialized cmds + safety fence
+│   ├── arm_command.py           # ArmCommandModule: VR poses / EE-twist → coordinator tasks
+│   ├── command_executor.py      # SerializedCommandExecutor: serialized cmds + safety fence
 │   ├── camera_mux.py            # CameraMuxModule: N cameras → one composited video track
 │   ├── map_compress.py          # MapCompressModule: costmap/odom → minimap datachannel
 │   ├── hosted_stats.py          # HostedStatsModule: telemetry + acks + cmd-link stats
+│   ├── robot_type.py            # RobotType: broker config → operator view auto-select
 │   ├── README.md                # Broker session / aiortc + Cloudflare WebRTC internals
-│   └── blueprints/              # cloudflare.py (Go2 single + multicam)
-├── quest_hosted/                # Deprecated monolithic hosted Quest teleop (teleop-hosted-go2)
+│   └── blueprints/              # cloudflare.py (Go2 transport + multicam, xArm6/7)
 ├── phone/
 │   ├── phone_teleop_module.py   # Base Phone teleop module
 │   ├── phone_extensions.py      # SimplePhoneTeleop
@@ -88,7 +89,8 @@ teleop/
 │   ├── teleop_transforms.py     # WebXR → robot frame math
 │   ├── recorder.py              # Generic SQLite recorder (writes .db + report_<ts>.json on stop)
 │   ├── report.py                # generate_report(db_path) — read .db, emit report_<ts>.json
-│   └── stream_stats.py          # LiveStreamStats + pcts/loss_pct (shared math)
+│   ├── stream_stats.py          # LiveStreamStats + pcts (shared latency/jitter math)
+│   └── video_stats.py           # VideoStats msg + loss_pct (operator-reported video health)
 └── blueprints.py                # Module blueprints for easy instantiation
 ```
 

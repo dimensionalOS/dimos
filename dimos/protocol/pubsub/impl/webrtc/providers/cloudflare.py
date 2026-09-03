@@ -23,7 +23,7 @@ loopback pubsub through the CF edge: exactly what the integration tests and
 the pubsub benchmark need, and nothing else.
 
 ``app_id`` / ``app_secret`` reach ``CloudflareConfig`` via the standard
-blueprint config flow (``-o transports.cloudflare.app_id=...`` or
+blueprint config flow (``--transports.cloudflare.app-id=...`` or
 ``TRANSPORTS__CLOUDFLARE__APP_ID=...``).
 """
 
@@ -48,6 +48,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 if WEBRTC_AVAILABLE:
+    import aiohttp
     from aiortc import (
         RTCConfiguration,
         RTCDataChannel,
@@ -55,16 +56,14 @@ if WEBRTC_AVAILABLE:
         RTCPeerConnection,
         RTCSessionDescription,
     )
-    import httpx
 else:
     RTCDataChannel = Any  # type: ignore[misc,assignment]
 
 # Forces an SCTP m-line into the offer; CF-assigned channel ids start low, so
 # a high fixed id stays clear of them.
 _PLACEHOLDER_DC_ID = 100
-# CF Realtime drops DataChannel messages larger than this (observed: 100% loss
-# from 64KB up in the pubsub benchmark); also matches the SCTP fragmentation unit.
-MAX_MSG_SIZE = 16 * 1024
+# CF silently drops DataChannel messages above ~64 KB; warn at half.
+MAX_MSG_SIZE = 32 * 1024
 
 
 def _dc_name(topic: str) -> str:
@@ -100,20 +99,21 @@ class CloudflareProvider(AsyncProviderBase):
 
     def __init__(self, config: CloudflareConfig | None = None) -> None:
         if not WEBRTC_AVAILABLE:
-            raise RuntimeError("aiortc and httpx required: pip install dimos[webrtc]")
+            raise RuntimeError("aiortc and aiohttp required: pip install dimos[webrtc]")
         super().__init__()
         config = config or CloudflareConfig()
         if not config.app_id or not config.app_secret:
             raise RuntimeError(
                 "CloudflareConfig.app_id and app_secret required "
-                "(set -o transports.cloudflare.app_id=... and app_secret=..., or the "
+                "(set --transports.cloudflare.app-id=... and "
+                "--transports.cloudflare.app-secret=..., or the "
                 "TRANSPORTS__CLOUDFLARE__APP_ID / TRANSPORTS__CLOUDFLARE__APP_SECRET env form)"
             )
         self._app_secret = config.app_secret
         self._config = config
         self._base_url = f"https://rtc.live.cloudflare.com/v1/apps/{config.app_id}"
 
-        self._http: httpx.AsyncClient | None = None
+        self._http: aiohttp.ClientSession | None = None
         self._pub_pc: RTCPeerConnection | None = None
         self._sub_pc: RTCPeerConnection | None = None
         self.pub_session_id: str | None = None
@@ -132,7 +132,7 @@ class CloudflareProvider(AsyncProviderBase):
     # ─── Connect / Disconnect (loop thread) ──────────────────────────
 
     async def _connect(self) -> None:
-        self._http = httpx.AsyncClient(timeout=30.0)
+        self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30.0))
         self._channel_lock = asyncio.Lock()
         ice = RTCConfiguration(iceServers=[RTCIceServer(urls=[self._config.stun_url])])
 
@@ -156,7 +156,7 @@ class CloudflareProvider(AsyncProviderBase):
             await self._sub_pc.close()
             self._sub_pc = None
         if self._http:
-            await self._http.aclose()
+            await self._http.close()
             self._http = None
         with self._lock:
             self._pub_channels.clear()
@@ -166,10 +166,11 @@ class CloudflareProvider(AsyncProviderBase):
 
     async def _create_session(self) -> str:
         assert self._http
-        r = await self._http.post(f"{self._base_url}/sessions/new", headers=self._headers)
-        if r.status_code not in (200, 201):
-            raise RuntimeError(f"CF /sessions/new: {r.status_code} {r.text}")
-        return str(r.json()["sessionId"])
+        async with self._http.post(f"{self._base_url}/sessions/new", headers=self._headers) as r:
+            if r.status not in (200, 201):
+                raise RuntimeError(f"CF /sessions/new: {r.status} {await r.text()}")
+            data = await r.json(content_type=None)
+        return str(data["sessionId"])
 
     async def _establish_transport(self, pc: RTCPeerConnection, session_id: str) -> None:
         assert self._http
@@ -187,17 +188,17 @@ class CloudflareProvider(AsyncProviderBase):
 
             await asyncio.wait_for(ev.wait(), 10.0)
 
-        r = await self._http.post(
+        async with self._http.post(
             f"{self._base_url}/sessions/{session_id}/datachannels/establish",
             headers=self._headers,
             json={
                 "dataChannel": {"location": "remote", "dataChannelName": "server-events"},
                 "sessionDescription": {"type": "offer", "sdp": pc.localDescription.sdp},
             },
-        )
-        if r.status_code not in (200, 201):
-            raise RuntimeError(f"CF /establish: {r.status_code} {r.text}")
-        data = r.json()
+        ) as r:
+            if r.status not in (200, 201):
+                raise RuntimeError(f"CF /establish: {r.status} {await r.text()}")
+            data = await r.json(content_type=None)
 
         await pc.setRemoteDescription(
             RTCSessionDescription(
@@ -207,24 +208,25 @@ class CloudflareProvider(AsyncProviderBase):
         if data.get("requiresImmediateRenegotiation"):
             answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
-            r2 = await self._http.put(
+            async with self._http.put(
                 f"{self._base_url}/sessions/{session_id}/renegotiate",
                 headers=self._headers,
                 json={"sessionDescription": {"sdp": answer.sdp, "type": "answer"}},
-            )
-            if r2.status_code != 200:
-                raise RuntimeError(f"CF /renegotiate: {r2.status_code} {r2.text}")
+            ) as r2:
+                if r2.status != 200:
+                    raise RuntimeError(f"CF /renegotiate: {r2.status} {await r2.text()}")
 
     async def _new_datachannel(self, body: dict[str, Any], session_id: str) -> int:
         assert self._http
-        r = await self._http.post(
+        async with self._http.post(
             f"{self._base_url}/sessions/{session_id}/datachannels/new",
             headers=self._headers,
             json={"dataChannels": [body]},
-        )
-        if r.status_code not in (200, 201):
-            raise RuntimeError(f"CF /datachannels/new: {r.status_code} {r.text}")
-        return int(r.json()["dataChannels"][0]["id"])
+        ) as r:
+            if r.status not in (200, 201):
+                raise RuntimeError(f"CF /datachannels/new: {r.status} {await r.text()}")
+            data = await r.json(content_type=None)
+        return int(data["dataChannels"][0]["id"])
 
     # ─── Channel management (loop thread) ────────────────────────────
 

@@ -57,6 +57,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -69,13 +70,7 @@ _NUM_MOTORS = 18
 
 _FEEDBACK_DISCOVERY_TIMEOUT_S = 5.0
 
-# URDF-faithful joint names. Indices match the flat MotorCommandArray layout.
-_R1PRO_UPPER_BODY_BARE: list[str] = (
-    [f"torso_joint{i}" for i in range(1, 5)]
-    + [f"left_arm_joint{i}" for i in range(1, 8)]
-    + [f"right_arm_joint{i}" for i in range(1, 8)]
-)
-R1PRO_UPPER_BODY_JOINTS: list[str] = [f"r1pro/{j}" for j in _R1PRO_UPPER_BODY_BARE]
+R1PRO_UPPER_BODY_JOINTS: list[str] = [coordinator_name(j) for j in UPPER_BODY_JOINTS]
 assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
 
 # JPEG color streams: stream name → ROS topic.
@@ -263,14 +258,10 @@ class R1ProConnection(Module):
                 *seen,
             )
 
-        self.register_disposable(
-            Disposable(self.motor_command.subscribe(self._on_motor_command))
-        )
+        self.register_disposable(Disposable(self.motor_command.subscribe(self._on_motor_command)))
         self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
 
-        self._publish_thread = Thread(
-            target=self._publish_loop, name="r1pro-publish", daemon=True
-        )
+        self._publish_thread = Thread(target=self._publish_loop, name="r1pro-publish", daemon=True)
         self._publish_thread.start()
 
         logger.info("R1ProConnection started")
@@ -346,7 +337,10 @@ class R1ProConnection(Module):
 
         for topic, cb in (
             (RawROSTopic("/hdas/feedback_torso", RosJointState, qos=qos), self._on_feedback_torso),
-            (RawROSTopic("/hdas/feedback_arm_left", RosJointState, qos=qos), self._on_feedback_left),
+            (
+                RawROSTopic("/hdas/feedback_arm_left", RosJointState, qos=qos),
+                self._on_feedback_left,
+            ),
             (
                 RawROSTopic("/hdas/feedback_arm_right", RosJointState, qos=qos),
                 self._on_feedback_right,
@@ -367,10 +361,12 @@ class R1ProConnection(Module):
 
     def _setup_sensor_streams(self) -> None:
         try:
-            from sensor_msgs.msg import CompressedImage
-            from sensor_msgs.msg import Image as RosImage
-            from sensor_msgs.msg import Imu as RosImu
-            from sensor_msgs.msg import PointCloud2 as RosPointCloud2
+            from sensor_msgs.msg import (
+                CompressedImage,
+                Image as RosImage,
+                Imu as RosImu,
+                PointCloud2 as RosPointCloud2,
+            )
         except ImportError:
             logger.warning("sensor_msgs not available — sensor streams disabled")
             return
@@ -516,9 +512,7 @@ class R1ProConnection(Module):
 
     def _on_motor_command(self, msg: MotorCommandArray) -> None:
         if msg.num_joints != _NUM_MOTORS:
-            logger.warning(
-                f"Expected {_NUM_MOTORS} motor commands, got {msg.num_joints}; ignoring"
-            )
+            logger.warning(f"Expected {_NUM_MOTORS} motor commands, got {msg.num_joints}; ignoring")
             return
 
         from sensor_msgs.msg import JointState as RosJointState
@@ -566,17 +560,23 @@ class R1ProConnection(Module):
 
     def _on_feedback_torso(self, msg: Any, _topic: Any) -> None:
         with self._lock:
-            self._copy_segment(msg, self._latest_torso_q, self._latest_torso_dq, self._latest_torso_eff)
+            self._copy_segment(
+                msg, self._latest_torso_q, self._latest_torso_dq, self._latest_torso_eff
+            )
             self._torso_seen = True
 
     def _on_feedback_left(self, msg: Any, _topic: Any) -> None:
         with self._lock:
-            self._copy_segment(msg, self._latest_left_q, self._latest_left_dq, self._latest_left_eff)
+            self._copy_segment(
+                msg, self._latest_left_q, self._latest_left_dq, self._latest_left_eff
+            )
             self._left_seen = True
 
     def _on_feedback_right(self, msg: Any, _topic: Any) -> None:
         with self._lock:
-            self._copy_segment(msg, self._latest_right_q, self._latest_right_dq, self._latest_right_eff)
+            self._copy_segment(
+                msg, self._latest_right_q, self._latest_right_dq, self._latest_right_eff
+            )
             self._right_seen = True
 
     @staticmethod

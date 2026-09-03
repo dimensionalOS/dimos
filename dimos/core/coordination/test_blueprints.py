@@ -15,9 +15,8 @@
 
 import pickle
 from types import MappingProxyType
-from typing import Protocol, get_type_hints
+from typing import Protocol
 
-from pydantic import ValidationError
 import pytest
 
 from dimos.core._test_future_annotations_helper import (
@@ -25,6 +24,8 @@ from dimos.core._test_future_annotations_helper import (
     FutureModuleIn,
     FutureModuleOut,
 )
+from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import (
     Blueprint,
     BlueprintAtom,
@@ -126,15 +127,14 @@ def test_autoconnect() -> None:
     )
 
 
-def test_config() -> None:
+def test_config_rejects_unknown_fields_and_sections() -> None:
     blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
-    config = blueprint.config()
-    assert config.model_fields.keys() == {"modulea", "moduleb", "g"}
-    assert config.model_fields["modulea"].annotation == get_type_hints(ModuleA)["config"] | None
-    assert config.model_fields["moduleb"].annotation == get_type_hints(ModuleB)["config"] | None
+    parser = BlueprintConfigParser(blueprint)
 
-    with pytest.raises(ValidationError, match="invalid_key"):
-        config(module_a={"invalid_key": 5})
+    with pytest.raises(BlueprintConfigError, match="invalid_key"):
+        parser.parse(environ={}, overrides={"modulea": {"invalid_key": 5}})
+    with pytest.raises(BlueprintConfigError, match="Unknown configuration section"):
+        parser.parse(environ={}, overrides={"nosuchmodule": {"x": 1}})
 
 
 def test_transports() -> None:
@@ -316,8 +316,10 @@ def test_namespace_config_keys_escaped() -> None:
         ModuleA.blueprint().namespace("robot0"),
         ModuleA.blueprint().namespace("robot1"),
     )
-    config = blueprint.config()
-    assert {"robot0_modulea", "robot1_modulea", "g"} <= set(config.model_fields.keys())
+    parser = BlueprintConfigParser(blueprint)
+    parser.parse(environ={}, overrides={"robot0_modulea": {}, "robot1_modulea": {}})
+    with pytest.raises(BlueprintConfigError, match="Unknown configuration section"):
+        parser.parse(environ={}, overrides={"robot2_modulea": {}})
 
 
 def test_explicit_instance_name_sets_blueprint_identity() -> None:
@@ -326,7 +328,6 @@ def test_explicit_instance_name_sets_blueprint_identity() -> None:
     atom = blueprint.blueprints[0]
     assert atom.name == "custom/modulea"
     assert atom.instance_name == "custom/modulea"
-    assert set(blueprint.config().model_fields) == {"custom_modulea", "g"}
 
 
 def test_namespace_prefixes_pinned_transports() -> None:

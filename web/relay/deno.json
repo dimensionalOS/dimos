@@ -1,0 +1,11 @@
+{
+  "name": "@dimos/relay",
+  "version": "0.0.0",
+  "exports": {
+    ".": "./server.ts"
+  },
+  "imports": {
+    "@peculiar/x509": "npm:@peculiar/x509@^2.0",
+    "reflect-metadata": "npm:reflect-metadata@^0.2"
+  }
+}

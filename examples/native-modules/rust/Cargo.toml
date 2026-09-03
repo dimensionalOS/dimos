@@ -11,10 +11,18 @@ path = "src/ping.rs"
 name = "pong"
 path = "src/pong.rs"
 
+[[bin]]
+name = "tf_listener"
+path = "src/tf_listener.rs"
+
+[[bin]]
+name = "tf_broadcaster"
+path = "src/tf_broadcaster.rs"
+
 [dependencies]
 dimos-module = { path = "../../../native/rust/dimos-module" }
 lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
-validator = { version = "0.20", features = ["derive"] }
+validator = { version = "0.21", features = ["derive"] }

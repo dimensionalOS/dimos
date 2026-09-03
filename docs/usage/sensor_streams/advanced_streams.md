@@ -1,6 +1,4 @@
----
-title: "Advanced Stream Handling"
----
+# Advanced Stream Handling
 
 > **Prerequisite:** Read [ReactiveX Fundamentals](/docs/usage/sensor_streams/reactivex.md) first for Observable basics.
 
@@ -43,7 +41,7 @@ from reactivex import operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 from dimos.utils.reactive import backpressure
 
-# We need this scaffolding here. Normally DimOS handles this.
+# We need this scaffolding here. Normally dimOS handles this.
 scheduler = ThreadPoolScheduler(max_workers=4)
 
 # Simulate fast source

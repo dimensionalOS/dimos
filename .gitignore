@@ -1,109 +1,99 @@
-# generic ignore pattern
-**/*.ignore
-**/*.ignore.*
-
-# Default output of `dimos apriltag`
-/apriltags.pdf
-
-.vscode/
-
-# Ignore Python cache files
+# Python
 __pycache__/
 *.pyc
-
-# Ignore virtual environment directories
-*venv*/
-.venv*/
-.ssh/
-.direnv/
-
-# Ignore python tooling dirs
 *.egg-info/
-__pycache__
+*venv*/
+/.mypy_cache*
 
+# Test coverage
+htmlcov/
+.coverage
+.coverage.*
+
+# Node (files at the root are created by the devcontainers cli)
+node_modules/
+/package.json
+/package-lock.json
+
+# Rust
+target/
+*.rs.bk
+
+# Build artifacts
+dist/
+build/
+*.so
+/web/.build.lock
+/web/cockpit/.build.lock
+/web/cockpit/.dist-*
+/web/sdk/.dist-*
+
+# Nix / direnv (symlink one of the tracked .envrc.* files to .envrc)
+.direnv/
+.envrc
+
+# Nix build output symlinks
+result
+result-*
+
+# Editor and OS files
+.vscode/
+.DS_Store
+
+# Local environment and secrets
 .env
-**/.DS_Store
+.ssh/
+.bash_history
 
-# Ignore default runtime output folder
+# AI dev tools
+.claude
+CLAUDE.md
+CLAUDE.MD
+/.mcp.json
+.opencode/
+.omo/
+.slim/deepwork/
+.codegraph/
+
+# Test data: ignore data/ but keep the compressed LFS archives
+data/*
+!data/.lfs/
+
+# Runtime output
+/logs
+/recordings
+results/
 /assets/output/
 /assets/rgbd_data/
 /assets/saved_maps/
 /assets/model-cache/
 /assets/agent/memory.txt
+/assets/teleop_certs/
+/misc/fresh-ubuntu-tests/cache
 
-.bash_history
-
-# Ignore all test data directories but allow compressed files
-/data/*
-!/data/.lfs/
-
-# node env (used by devcontainers cli)
-node_modules
-/package.json
-/package-lock.json
-
-# Ignore build artifacts
-dist/
-build/
-
-# Rust build artifacts
-**/target/
-**/*.rs.bk
-
-# Ignore data directory but keep .lfs subdirectory
-data/*
-!data/.lfs/
-FastSAM-x.pt
-yolo11n.pt
+# Default output of `dimos apriltag`
+/apriltags.pdf
 
 /thread_monitor_report.csv
 
-# symlink one of .envrc.* if you'd like to use
-.envrc
-.claude
-.opencode/
-**/CLAUDE.md
-.omo/
-.direnv/
-.omo/
-
-/logs
-/recordings
-
-*.so
-
-/.mypy_cache*
-
-*mobileclip*
-/results
-results/
-**/cpp/result
-**/rust/result
-
-CLAUDE.MD
-/assets/teleop_certs/
-
-/.mcp.json
-*.speedscope.json
-
-# Coverage
-htmlcov/
-.coverage
-.coverage.*
-
-# Memory2 autorecord
+# Memory autorecord
 recording*.db
 
 # Rerun recordings
 *.rrd
 
-/misc/fresh-ubuntu-tests/cache
+# Profiler output
+*.speedscope.json
+
+# Downloaded model weights
+FastSAM-x.pt
+yolo11n*.pt
+*mobileclip*
 
 # openspec
 /openspec/changes/archive/
 
-# Deepwork local progress state
-.slim/deepwork/
-
-# codegraph
-.codegraph/
+# Generic ignore patterns
+*.ignore
+*.ignore.*
+site/

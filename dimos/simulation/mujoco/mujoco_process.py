@@ -26,7 +26,6 @@ import mujoco
 from mujoco import viewer
 import numpy as np
 from numpy.typing import NDArray
-import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -72,6 +71,8 @@ class MockController:
 
 
 def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
+    import open3d as o3d  # type: ignore[import-untyped]
+
     robot_name = config.robot_model or "unitree_go1"
     if robot_name == "unitree_go2":
         robot_name = "unitree_go1"

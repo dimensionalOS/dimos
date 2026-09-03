@@ -56,7 +56,7 @@ impl Ping {
         tracing::info!(
             seq = echo.linear.x as u64,
             sample_config = echo.angular.z as i64,
-            "echo received",
+            "echo received (rust)",
         );
     }
 }

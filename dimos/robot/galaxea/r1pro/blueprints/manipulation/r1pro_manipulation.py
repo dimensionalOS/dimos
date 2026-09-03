@@ -15,9 +15,10 @@
 
 """R1 Pro dual-arm manipulation (EXPERIMENTAL).
 
-Swaps the whole-body servo task for per-arm trajectory tasks; planned
-trajectories execute through ``traj_left_arm`` / ``traj_right_arm``. The
-torso holds position; grippers are not driven yet.
+Swaps the whole-body servo task for the canonical joint-trajectory task; the
+planner picks an arm through the model's ``left_arm`` / ``right_arm`` planning
+groups. The chassis is welded in the planning model and driven separately by
+the velocity task; grippers are not driven yet.
 
 Usage:
     dimos run r1pro-manipulation
@@ -27,6 +28,7 @@ from __future__ import annotations
 
 from dimos.control.components import make_twist_base_joints
 from dimos.control.coordinator import TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -34,26 +36,14 @@ from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     r1pro_control,
     rerun_config,
 )
-from dimos.robot.galaxea.r1pro.config import make_r1pro_arm_model_config
+from dimos.robot.galaxea.r1pro.config import make_r1pro_model_config
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS
 from dimos.visualization.vis_module import vis_module
 
-_left_arm_joints = [j for j in R1PRO_UPPER_BODY_JOINTS if "left_arm" in j]
-_right_arm_joints = [j for j in R1PRO_UPPER_BODY_JOINTS if "right_arm" in j]
-
+# One canonical trajectory task spans both arms and the torso; the planner
+# selects an arm through the model's planning groups, not through task names.
 _manipulation_tasks = [
-    TaskConfig(
-        name="traj_left_arm",
-        type="trajectory",
-        joint_names=_left_arm_joints,
-        priority=10,
-    ),
-    TaskConfig(
-        name="traj_right_arm",
-        type="trajectory",
-        joint_names=_right_arm_joints,
-        priority=10,
-    ),
+    joint_trajectory_task(R1PRO_UPPER_BODY_JOINTS),
     TaskConfig(
         name="vel_chassis",
         type="velocity",
@@ -66,10 +56,7 @@ r1pro_manipulation = autoconnect(
     vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
     r1pro_control(tasks=_manipulation_tasks),
     ManipulationModule.blueprint(
-        robots=[
-            make_r1pro_arm_model_config("left"),
-            make_r1pro_arm_model_config("right"),
-        ],
+        model=make_r1pro_model_config(),
         planning_timeout=10.0,
     ),
 ).global_config(n_workers=6)

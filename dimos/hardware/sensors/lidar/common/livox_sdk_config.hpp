@@ -12,6 +12,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -26,6 +27,10 @@ inline constexpr double GRAVITY_MS2 = 9.80665;
 inline constexpr uint8_t DATA_TYPE_IMU = 0x00;
 inline constexpr uint8_t DATA_TYPE_CARTESIAN_HIGH = 0x01;
 inline constexpr uint8_t DATA_TYPE_CARTESIAN_LOW = 0x02;
+
+// Width of the sn and lidar_ip fields in LivoxLidarInfo. Not null-terminated,
+// so a buffer reading one needs room for a terminator.
+inline constexpr std::size_t kInfoFieldLen = 16;
 
 // SDK network port configuration for Livox Mid-360
 struct SdkPorts {

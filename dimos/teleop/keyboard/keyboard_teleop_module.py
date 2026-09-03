@@ -24,6 +24,8 @@ Keyboard controls:
     R/F: +Roll/-Roll
     T/G: +Pitch/-Pitch
     Y/H: +Yaw/-Yaw
+    [: Open gripper
+    ]: Close gripper
     ESC: Quit
 """
 
@@ -39,14 +41,14 @@ except ImportError:
     pygame = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
-    from pygame.key import ScancodeWrapper  # type: ignore[attr-defined]
+    from pygame.key import _ScancodeWrapper
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
+from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -54,15 +56,44 @@ logger = setup_logger()
 # Force X11 driver to avoid OpenGL threading issues
 os.environ["SDL_VIDEODRIVER"] = "x11"
 
-# Jog speeds
-LINEAR_SPEED = 0.05  # m/s
-ANGULAR_SPEED = 0.5  # rad/s
+# Default jog speeds
+DEFAULT_LINEAR_SPEED = 0.05  # m/s
+DEFAULT_ANGULAR_SPEED = 0.5  # rad/s
 
 TwistVector = tuple[float, float, float]
 
 
 class KeyboardTeleopConfig(ModuleConfig):
-    task_name: str = EEF_TWIST_TASK_NAME
+    linear_speed: float = DEFAULT_LINEAR_SPEED
+    angular_speed: float = DEFAULT_ANGULAR_SPEED
+
+
+def _motion_key_codes() -> frozenset[int]:
+    if pygame is None:
+        return frozenset()
+    return frozenset(
+        (
+            pygame.K_w,
+            pygame.K_s,
+            pygame.K_a,
+            pygame.K_d,
+            pygame.K_q,
+            pygame.K_e,
+            pygame.K_r,
+            pygame.K_f,
+            pygame.K_t,
+            pygame.K_g,
+            pygame.K_y,
+            pygame.K_h,
+        )
+    )
+
+
+def _gripper_key_codes() -> tuple[int, int]:
+    """Return pygame's bracket key codes without relying on stub attributes."""
+    if pygame is None:
+        return (-1, -1)
+    return pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET
 
 
 class KeyboardTeleopModule(Module):
@@ -73,14 +104,17 @@ class KeyboardTeleopModule(Module):
 
     config: KeyboardTeleopConfig
 
-    coordinator_ee_twist_command: Out[TwistStamped]
+    ee_twist_command: Out[TwistStamped]
+    gripper_command: Out[Float32]
 
     _stop_event: threading.Event
     _thread: threading.Thread | None = None
+    _gripper_opening: float | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stop_event = threading.Event()
+        self._gripper_opening = None
 
     @rpc
     def start(self) -> None:
@@ -101,41 +135,37 @@ class KeyboardTeleopModule(Module):
         super().stop()
 
     def _pygame_loop(self) -> None:
-        task_name = self.config.task_name
-
         pygame.init()
         screen = pygame.display.set_mode((600, 400), pygame.SWSURFACE)
-        pygame.display.set_caption(f"Keyboard Teleop — {task_name}")
+        pygame.display.set_caption("Keyboard Teleop")
         font = pygame.font.Font(None, 28)
         clock = pygame.time.Clock()
+        held_motion_keys: set[int] = set()
         was_moving = False
 
         while not self._stop_event.is_set():
             for event in pygame.event.get():
-                if event.type == pygame.QUIT:
+                if self._handle_pygame_event(event, held_motion_keys):
                     self._stop_event.set()
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
-                        self._stop_event.set()
 
-            linear, angular = _twist_from_keys(pygame.key.get_pressed())
+            linear, angular = _twist_from_keys(
+                held_motion_keys,
+                linear_speed=self.config.linear_speed,
+                angular_speed=self.config.angular_speed,
+            )
             linear_x, linear_y, linear_z = linear
             angular_x, angular_y, angular_z = angular
 
             is_moving = any(value != 0.0 for value in (*linear, *angular))
             if is_moving or was_moving:
-                self._publish_twist(
-                    task_name,
-                    linear=linear,
-                    angular=angular,
-                )
+                self._publish_twist(linear=linear, angular=angular)
                 was_moving = is_moving
 
             # Draw UI
             screen.fill((30, 30, 30))
             y_pos = 20
 
-            title = font.render(f"Keyboard Teleop — {task_name}", True, (255, 255, 255))
+            title = font.render("Keyboard Teleop", True, (255, 255, 255))
             screen.blit(title, (20, y_pos))
             y_pos += 40
 
@@ -156,6 +186,7 @@ class KeyboardTeleopModule(Module):
                 ("R/F", "+Roll/-Roll"),
                 ("T/G", "+Pitch/-Pitch"),
                 ("Y/H", "+Yaw/-Yaw"),
+                ("[/]", "Open/close gripper"),
                 ("ESC", "Quit"),
             ]
             for key, desc in controls:
@@ -165,40 +196,79 @@ class KeyboardTeleopModule(Module):
             pygame.display.flip()
             clock.tick(50)
 
-        self._publish_twist(task_name)
+        self._publish_twist()
         pygame.quit()
+
+    def _handle_pygame_event(
+        self,
+        event: Any,
+        held_motion_keys: set[int],
+    ) -> bool:
+        """Apply one pygame event and synchronously stop motion on KEYUP."""
+        if pygame is None:
+            return False
+        if event.type == pygame.QUIT:
+            return True
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                return True
+            left_bracket, right_bracket = _gripper_key_codes()
+            if event.key in _motion_key_codes():
+                held_motion_keys.add(event.key)
+            elif event.key == left_bracket:
+                self._publish_gripper_command(opening=1.0)
+            elif event.key == right_bracket:
+                self._publish_gripper_command(opening=0.0)
+        elif event.type == pygame.KEYUP and event.key in _motion_key_codes():
+            held_motion_keys.discard(event.key)
+            linear, angular = _twist_from_keys(
+                held_motion_keys,
+                linear_speed=self.config.linear_speed,
+                angular_speed=self.config.angular_speed,
+            )
+            self._publish_twist(linear=linear, angular=angular)
+        return False
 
     def _publish_twist(
         self,
-        task_name: str,
         *,
         linear: TwistVector = (0.0, 0.0, 0.0),
         angular: TwistVector = (0.0, 0.0, 0.0),
     ) -> None:
-        self.coordinator_ee_twist_command.publish(
-            TwistStamped(frame_id=task_name, linear=list(linear), angular=list(angular))
-        )
+        self.ee_twist_command.publish(TwistStamped(linear=list(linear), angular=list(angular)))
+
+    def _publish_gripper_command(self, *, opening: float) -> None:
+        """Publish a changed normalized gripper opening."""
+        if self._gripper_opening == opening:
+            return
+        self._gripper_opening = opening
+        self.gripper_command.publish(Float32(data=opening))
 
 
-def _twist_from_keys(keys: ScancodeWrapper) -> tuple[TwistVector, TwistVector]:
+def _twist_from_keys(
+    keys: _ScancodeWrapper | set[int],
+    *,
+    linear_speed: float,
+    angular_speed: float,
+) -> tuple[TwistVector, TwistVector]:
     linear = [0.0, 0.0, 0.0]
     angular = [0.0, 0.0, 0.0]
     bindings = {
-        pygame.K_w: (linear, 0, LINEAR_SPEED),
-        pygame.K_s: (linear, 0, -LINEAR_SPEED),
-        pygame.K_a: (linear, 1, LINEAR_SPEED),
-        pygame.K_d: (linear, 1, -LINEAR_SPEED),
-        pygame.K_q: (linear, 2, LINEAR_SPEED),
-        pygame.K_e: (linear, 2, -LINEAR_SPEED),
-        pygame.K_r: (angular, 0, ANGULAR_SPEED),
-        pygame.K_f: (angular, 0, -ANGULAR_SPEED),
-        pygame.K_t: (angular, 1, ANGULAR_SPEED),
-        pygame.K_g: (angular, 1, -ANGULAR_SPEED),
-        pygame.K_y: (angular, 2, ANGULAR_SPEED),
-        pygame.K_h: (angular, 2, -ANGULAR_SPEED),
+        pygame.K_w: (linear, 0, linear_speed),
+        pygame.K_s: (linear, 0, -linear_speed),
+        pygame.K_a: (linear, 1, linear_speed),
+        pygame.K_d: (linear, 1, -linear_speed),
+        pygame.K_q: (linear, 2, linear_speed),
+        pygame.K_e: (linear, 2, -linear_speed),
+        pygame.K_r: (angular, 0, angular_speed),
+        pygame.K_f: (angular, 0, -angular_speed),
+        pygame.K_t: (angular, 1, angular_speed),
+        pygame.K_g: (angular, 1, -angular_speed),
+        pygame.K_y: (angular, 2, angular_speed),
+        pygame.K_h: (angular, 2, -angular_speed),
     }
     for key, (vector, axis, delta) in bindings.items():
-        if keys[key]:
+        if key in keys if isinstance(keys, set) else keys[key]:
             vector[axis] += delta
 
     return (linear[0], linear[1], linear[2]), (angular[0], angular[1], angular[2])

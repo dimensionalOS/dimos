@@ -1,6 +1,4 @@
----
-title: "DimOS Modules"
----
+# dimOS Modules
 
 Modules are subsystems on a robot that operate autonomously and communicate with other subsystems using standardized messages.
 
@@ -50,14 +48,15 @@ print(CameraModule.io())
 └┬─────────────┘
  ├─ color_image: Image
  ├─ camera_info: CameraInfo
+ ├─ tf: TFMessage
  │
  ├─ RPC build() -> None
  ├─ RPC get_skills() -> list
+ ├─ RPC peek_stream(stream_name: str, timeout: float) -> Any
  ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
  ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
  ├─ RPC start() -> None
  ├─ RPC stop() -> None
- ├─ RPC take_a_picture() -> Image
 ```
 
 We can see that the camera module outputs two streams:
@@ -67,7 +66,7 @@ We can see that the camera module outputs two streams:
 
 It offers two RPC calls: `start()` and `stop()` (lifecycle methods).
 
-It also exposes an agentic [skill](/docs/usage/blueprints.md#defining-skills) called `take_a_picture` (more on skills in the Blueprints guide).
+Camera observation as an agentic [skill](/docs/usage/blueprints.md#defining-skills) is provided separately by the reusable `ObserveSkill` container (`dimos/agents/skills/observe_skill.py`), which subscribes to `color_image` and can be added to any blueprint (more on skills in the Blueprints guide).
 
 We can start this module and explore the output of its streams in real time (this will use your webcam).
 
@@ -154,7 +153,7 @@ camera.stop()
 
 As we build module structures, we'll quickly want to utilize all cores on the machine (which Python doesn't allow as a single process) and potentially distribute modules across machines or even the internet.
 
-For this, we use `dimos.core` and DimOS transport protocols.
+For this, we use `dimos.core` and dimOS transport protocols.
 
 Defining message exchange protocols and message types also gives us the ability to write models in faster languages.
 
@@ -240,7 +239,7 @@ class Watchdog(Module):
             self._notifier.notify(f"value={msg.data}")
 ```
 
-The Spec must match the target module's `@rpc` signatures (sync/async are interchangeable — see [Async modules](#async-modules-lock-free-state)).
+The Spec must match the target module's `@rpc` signatures. Sync and async are interchangeable (see [Async modules](#async-modules-lock-free-state)).
 
 To deploy `Watchdog`, add `Watchdog.blueprint()` to an existing blueprint's `autoconnect(...)` chain. The coordinator matches `Out[T]` to `In[T]` by name across the union of modules, and resolves `_notifier: NotifierSpec` to whichever module in the blueprint implements `notify`. No manual wiring required.
 
@@ -321,7 +320,7 @@ class MovementManager(Module):
         self.cmd_vel.publish(msg)
 ```
 
-Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are serialized: only one invocation of `handle_x` runs at a time. If messages arrive faster than the handler can process them, intermediate messages are dropped — only the most recent unprocessed message is kept (LATEST policy). The handler is guaranteed to eventually run with the most recently published value.
+Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are serialized: only one invocation of `handle_x` runs at a time. If messages arrive faster than the handler can process them, intermediate messages are dropped. Only the most recent unprocessed message is kept (LATEST policy). The handler is guaranteed to eventually run with the most recently published value.
 
 ### Async `@rpc` methods
 

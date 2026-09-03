@@ -22,17 +22,19 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.mapping.voxels import VoxelGridMapper
+from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
+from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.05
+# Raise above 0 to draw what the planner searched over (surface, nodes, weighted edges).
+planner_viz_hz = 0.0
 # Height of the head-mounted lidar above the ground while standing.
 # While in case of Go2 it's ~ .3m, but in this blueprint
 # MLSPlanner works better on Go2 lidar when the value is 0.5
@@ -63,9 +65,7 @@ _nav_rerun_config = {
         "world/global_map": _render_global_map,
         "world/planner_path": None,
         "world/path": _render_path,
-        "world/surface_map": None,
-        "world/nodes": None,
-        "world/node_edges": None,
+        **planner_visual_override(planner_viz_hz),
     },
 }
 
@@ -81,20 +81,14 @@ unitree_go2_mls_htc = autoconnect(
         world_frame="world",
         voxel_size=voxel_size,
         robot_height=go2_lidar_height,
+        start_z_offset_m=go2_lidar_height,
         wall_clearance_m=0.2,
         wall_buffer_m=0.75,
         wall_buffer_weight=100.0,
         step_threshold_m=0.16,
         step_penalty_weight=1.0,
-        viz_publish_hz=0.0,
-    ).remappings(
-        [
-            (MLSPlannerNative, "path", "planner_path"),
-            # The planner's start pose is the robot's odom pose
-            (MLSPlannerNative, "start_pose", "odom"),
-        ]
-    ),
-    GoalRelay.blueprint(),
+        viz_publish_hz=planner_viz_hz,
+    ).remappings([(MLSPlannerNative, "path", "planner_path")]),
     # Setting resample_spacing_m to > 0.0 will smooth out jagged paths retunned my MLSP
     DanLocalPlanner.blueprint(resample_spacing_m=0.1),
     DanHolonomicTC.blueprint(run_profile="walk"),

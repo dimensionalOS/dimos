@@ -15,12 +15,12 @@
 """The RealSense D435i + Mid-360 rig: static mount frames, recorder, record blueprints.
 
 A single physical sensor assembly described in one place: the mount geometry published
-onto tf (:class:`Mid360RealsenseStaticTf`), the memory2 recorder
+onto tf (:class:`Mid360RealsenseStaticTf`), the memory recorder
 (:class:`Mid360RealsenseRecorder`), and the record blueprints that wire them to the
 live sensors.
 
 Point-LIO odom+lidar and the RealSense color/depth/pointcloud streams are recorded into
-a memory2 db, with the rig's mount frames published continuously onto tf. Two variants:
+a memory db, with the rig's mount frames published continuously onto tf. Two variants:
 ``mid360_realsense_record`` (db only) and ``mid360_realsense_record_with_pcap`` (also
 captures a raw .pcap of the Mid-360 UDP stream).
 
@@ -33,9 +33,8 @@ Mid-360 / pcap capture, ``DIMOS_POINTLIO_LIDAR_IP`` for Point-LIO)::
 
 Frame sources
 -------------
-RealSense D435i frame transforms are transcribed from the official
-realsense2_description xacro (urdf/_d435.urdf.xacro + urdf/_d435i_imu_modules.urdf.xacro,
-use_nominal_extrinsics=true).
+The RealSense's own frames come from RealSenseCamera, which reads them off the device;
+this file places the lidar side.
 
 Mid-360 geometry (manual): body is 65 x 65 x 60 mm; the point-cloud origin O lies on the
 central vertical axis, ~47 mm above the base. The IMU chip is *not* on that axis. The
@@ -64,29 +63,14 @@ from dimos.protocol.tf.static_tf_publisher import (
     frames_to_edge_transforms,
 )
 
+BASE_LINK = "base_link"
+
 CAMERA_ANGLE_UP = math.radians(10)
 
-# Mid-360 box: pitched down from bottom_screw_frame, then offset back/up in that frame
+# Mid-360 box: pitched down from camera_link, then offset back/up in that frame
 BOX_PITCH_DOWN = math.radians(26) + CAMERA_ANGLE_UP
 BOX_BACK = 0.085
-BOX_UP = 0.037  # ~4cm up
-
-# Physical constants from _d435.urdf.xacro (meters)
-CAM_HEIGHT = 0.025
-DEPTH_PY = 0.0175
-DEPTH_PZ = CAM_HEIGHT / 2
-MOUNT_FROM_CENTER_OFFSET = 0.0149
-GLASS_TO_FRONT = 0.1e-3
-ZERO_DEPTH_TO_GLASS = 4.2e-3
-MESH_X_OFFSET = MOUNT_FROM_CENTER_OFFSET - GLASS_TO_FRONT - ZERO_DEPTH_TO_GLASS
-
-DEPTH_TO_INFRA1_OFFSET = 0.0
-DEPTH_TO_INFRA2_OFFSET = -0.050
-DEPTH_TO_COLOR_OFFSET = 0.015
-IMU_XYZ = (-0.01174, -0.00552, 0.0051)
-
-# rpy that maps a sensor frame to its optical frame (z-forward, x-right, y-down)
-OPTICAL_RPY = (-math.pi / 2, 0.0, -math.pi / 2)
+BOX_UP = 0.037
 
 # Mid-360 internal frames (manual: point-cloud origin O ~47mm above base, on central axis).
 # Box center is 30mm above base, so O sits +17mm along box +z.
@@ -94,24 +78,11 @@ LIDAR_ABOVE_BOX_CENTER = 0.017
 # IMU position in point-cloud (lidar) coordinates, from Livox Mid-360 extrinsics.
 IMU_IN_LIDAR = (0.011, 0.02329, -0.04412)
 
-# The physical mount tree (parent -> child). The gravity-flat "world" helper frame from
-# the offline tooling is omitted here — during recording, world comes from odometry.
+# The lidar side of the rig. The camera hangs its own frames off base_link, named for
+# whichever model is plugged in, and reads their geometry off the device.
 FRAMES: list[FrameSpec] = [
-    ("bottom_screw_frame", None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-    ("link", "bottom_screw_frame", (MESH_X_OFFSET, DEPTH_PY, DEPTH_PZ), (0.0, 0.0, 0.0)),
-    ("depth_frame", "link", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-    ("depth_optical_frame", "depth_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
-    ("infra1_frame", "link", (0.0, DEPTH_TO_INFRA1_OFFSET, 0.0), (0.0, 0.0, 0.0)),
-    ("infra1_optical_frame", "infra1_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
-    ("infra2_frame", "link", (0.0, DEPTH_TO_INFRA2_OFFSET, 0.0), (0.0, 0.0, 0.0)),
-    ("infra2_optical_frame", "infra2_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
-    ("color_frame", "link", (0.0, DEPTH_TO_COLOR_OFFSET, 0.0), (0.0, 0.0, 0.0)),
-    ("color_optical_frame", "color_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
-    ("accel_frame", "link", IMU_XYZ, (0.0, 0.0, 0.0)),
-    ("accel_optical_frame", "accel_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
-    ("gyro_frame", "link", IMU_XYZ, (0.0, 0.0, 0.0)),
-    ("gyro_optical_frame", "gyro_frame", (0.0, 0.0, 0.0), OPTICAL_RPY),
-    ("box_pitch_frame", "bottom_screw_frame", (0.0, 0.0, 0.0), (0.0, BOX_PITCH_DOWN, 0.0)),
+    (BASE_LINK, None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
+    ("box_pitch_frame", BASE_LINK, (0.0, 0.0, 0.0), (0.0, BOX_PITCH_DOWN, 0.0)),
     ("box_center", "box_pitch_frame", (-BOX_BACK, 0.0, BOX_UP), (0.0, 0.0, 0.0)),
     ("lidar_frame", "box_center", (0.0, 0.0, LIDAR_ABOVE_BOX_CENTER), (0.0, 0.0, 0.0)),
     ("imu_frame", "lidar_frame", IMU_IN_LIDAR, (0.0, 0.0, 0.0)),
@@ -126,7 +97,7 @@ class Mid360RealsenseStaticTf(StaticTfPublisher):
 
 
 class Mid360RealsenseRecorder(PointlioRecorder):
-    """Records Point-LIO odom+lidar plus the RealSense streams into a memory2 db.
+    """Records Point-LIO odom+lidar plus the RealSense streams into a memory db.
 
     Trajectory is baked into ``pointlio_lidar`` via the inherited ``@pose_setter_for``.
     The raw Livox stream is NOT recorded here — enable the pcap recorder in the record

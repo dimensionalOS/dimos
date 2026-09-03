@@ -14,8 +14,8 @@
 
 """aiortc video track sourced from an Image stream.
 
-Extracted from ``hosted_teleop_module`` so the broker-handshake file stays
-focused on session lifecycle rather than media plumbing.
+Kept separate from ``broker.py`` so the broker-handshake file stays focused
+on session lifecycle rather than media plumbing.
 """
 
 from __future__ import annotations

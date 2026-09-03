@@ -1,10 +1,8 @@
----
-title: "Go2 Navigation Deep Dive"
----
+# Go2 Navigation Deep Dive
 
 The Go2 navigation stack runs entirely without ROS. It uses a **column-carving voxel map** strategy: each new LiDAR frame replaces the corresponding region of the global map entirely, ensuring the map always reflects the latest observations.
 
-![Live Go2 navigation in Rerun](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/noros_nav.gif)
+![Live Go2 navigation in Rerun](assets/noros_nav.gif)
 
 For return visits to a known space, use [premap relocalization](/docs/capabilities/navigation/relocalization.md) instead of relying on live mapping alone.
 
@@ -41,7 +39,7 @@ text "Twist" italic at (M4.x, Nav.s.y - 0.45in)
 
 </details>
 
-![Go2 navigation data flow](assets/go2nav_dataflow.svg)
+![output](assets/go2nav_dataflow.svg)
 
 ## Pipeline Steps
 
@@ -49,11 +47,11 @@ text "Twist" italic at (M4.x, Nav.s.y - 0.45in)
 
 We do not connect to the LiDAR directly. Instead we use Unitree's WebRTC client via [legion's webrtc driver](https://github.com/legion1581/unitree_webrtc_connect), which streams a heavily preprocessed 5cm voxel grid rather than raw point cloud data. This lets us support stock, unjailbroken Go2 Air and Pro models out of the box.
 
-![LiDAR frame](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/1-lidar.png)
+![LiDAR frame](assets/1-lidar.png)
 
-### 2. Global Voxel Map ([`VoxelGridMapper`](/dimos/mapping/voxels.py))
+### 2. Global Voxel Map ([`VoxelGridMapper`](/dimos/mapping/voxels/module.py))
 
-The [`VoxelGridMapper`](/dimos/mapping/voxels.py) maintains a sparse 3D occupancy grid using Open3D's `VoxelBlockGrid` backed by a hash map. Each voxel is a 5cm cube by default.
+The [`VoxelGridMapper`](/dimos/mapping/voxels/module.py) maintains a sparse 3D occupancy grid using Open3D's `VoxelBlockGrid` backed by a hash map. Each voxel is a 5cm cube by default.
 
 Voxel hash map provides O(1) insert/erase/lookup, so this is efficient even with millions of voxels. The grid runs on **CUDA** by default for speed, with CPU fallback.
 
@@ -76,7 +74,7 @@ Live column-carving has no loop closure. We trust Go2 odometry, which is stable 
 | `carve_columns`    | `true`    | Enable column carving (disable for append-only mapping) |
 | `emit_every`       | 1         | Publish the map every Nth frame (1 = every frame)       |
 
-![Global map](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/2-globalmap.png)
+![Global map](assets/2-globalmap.png)
 
 ### 3. Global Costmap ([`CostMapper`](/dimos/mapping/costmapper.py))
 
@@ -104,7 +102,7 @@ class HeightCostConfig(OccupancyConfig):
 | 100  | Steep or impassable (≥15cm rise per cell in case of go2) |
 | -1   | Unknown (no observations)                                |
 
-![Global costmap](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/3-globalcostmap.png)
+![Global costmap](assets/3-globalcostmap.png)
 
 ### 4. Navigation Costmap ([`ReplanningAStarPlanner`](/dimos/navigation/replanning_a_star/module.py))
 
@@ -112,13 +110,13 @@ The planner processes the terrain gradient and computes its own planning costmap
 
 We run the planner in a constant loop so it dynamically reacts to obstacles as they appear.
 
-![Navigation costmap with path](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/4-navcostmap.png)
+![Navigation costmap with path](assets/4-navcostmap.png)
 
 ### 5. All Layers Combined
 
 All visualization layers shown together:
 
-![All layers](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/5-all.png)
+![All layers](assets/5-all.png)
 
 ## Frontier Exploration
 
@@ -154,11 +152,11 @@ Goal candidates are filtered through a safe mask, which is the free-space region
 
 | Coverage | Frontier | Random |
 |----------|----------|--------|
-| ![coverage](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/coverage.png) | ![frontier](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/frontier.png) | ![random](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/random.png) |
+| ![coverage](assets/coverage.png) | ![frontier](assets/frontier.png) | ![random](assets/random.png) |
 
 ### Sample patrol trace (26 min)
 
-![Patrol path](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/capabilities/navigation/assets/patrol_path.png)
+![Patrol path](assets/patrol_path.png)
 
 ## Blueprint Composition
 
@@ -168,7 +166,7 @@ The navigation stack is composed in the [`unitree_go2`](/dimos/robot/unitree/go2
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.introspection.svg import to_svg
 from dimos.mapping.costmapper import CostMapper
-from dimos.mapping.voxels import VoxelGridMapper
+from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )

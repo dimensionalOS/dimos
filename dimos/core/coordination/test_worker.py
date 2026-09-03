@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -45,6 +46,18 @@ class SimpleModule(Module):
     @rpc
     def get_counter(self) -> int:
         return self.counter
+
+    @rpc
+    def read_global_robot_ip(self) -> str | None:
+        return global_config.robot_ip
+
+    @rpc
+    def unpicklable(self) -> threading.Lock:
+        return threading.Lock()
+
+    @rpc
+    def make_lock(self) -> None:
+        self.lock = threading.Lock()
 
 
 class AnotherModule(Module):
@@ -133,6 +146,50 @@ def test_worker_manager_basic(create_worker_manager):
 
 
 @pytest.mark.skipif_macos_bug
+def test_unpicklable_rpc_result_raises_without_killing_the_worker(create_worker_manager):
+    """An RPC result that cannot pickle comes back as the error, not a dead worker."""
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(SimpleModule, global_config, {})
+    module.start()
+
+    with pytest.raises(TypeError, match="cannot pickle"):
+        module.unpicklable()
+
+    assert module.increment() == 1
+
+    module.stop()
+
+
+@pytest.mark.skipif_macos_bug
+def test_unpicklable_pipe_response_raises_without_killing_the_worker(create_worker_manager):
+    """A response the worker pipe cannot pickle errors out; the worker lives on."""
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(SimpleModule, global_config, {})
+    module.start()
+    module.make_lock()
+
+    # Attribute access rides the pipe, unlike rpc calls, which ride the transport.
+    with pytest.raises(RuntimeError, match="(?i)pickle"):
+        module.actor_instance.lock  # noqa: B018
+
+    assert module.increment() == 1
+
+    module.stop()
+
+
+@pytest.mark.skipif_macos_bug
+def test_worker_inherits_host_global_config(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=1)
+    host_config = GlobalConfig(robot_ip="10.11.12.13")
+    module = worker_manager.deploy(SimpleModule, host_config, {})
+    module.start()
+
+    assert module.read_global_robot_ip() == "10.11.12.13"
+
+    module.stop()
+
+
+@pytest.mark.skipif_macos_bug
 def test_worker_manager_multiple_different_modules(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
     module1 = worker_manager.deploy(SimpleModule, global_config, {})
@@ -157,16 +214,17 @@ def test_worker_manager_multiple_different_modules(create_worker_manager):
 @pytest.mark.skipif_macos_bug
 def test_worker_manager_parallel_deployment(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
+    simple_kwargs = {}
     modules = worker_manager.deploy_parallel(
         [
-            (SimpleModule, global_config, {}),
+            (SimpleModule, global_config, simple_kwargs),
             (AnotherModule, global_config, {}),
             (ThirdModule, global_config, {}),
         ],
-        {},
     )
 
     assert len(modules) == 3
+    assert simple_kwargs == {}
     module1, module2, module3 = modules
 
     # Start all modules

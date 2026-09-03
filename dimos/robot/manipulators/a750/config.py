@@ -19,12 +19,13 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.global_config import global_config
+from dimos.hardware.spec import JointLimits
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import (
-    base_pose,
-    coordinator_joint_mapping,
     joint_names,
 )
 from dimos.utils.data import LfsPath
@@ -69,16 +70,25 @@ def make_a750_hardware(
     auto_enable: bool = True,
     home_joints: list[float] | None = None,
 ) -> HardwareComponent:
-    joints = make_joints(hw_id, 6)
+    gripper_joints = [f"{hw_id}/finger"] if gripper else []
+    initial_positions = [*(home_joints or A750_HOME_JOINTS), *([0.0] * len(gripper_joints))]
+    adapter_kwargs: dict[str, object] = {"initial_positions": initial_positions}
+    limits: JointLimits | None = None
+    if adapter_type == "mock":
+        limits = JointLimits(
+            position_lower=[*([-math.pi] * 6), *([0.0] * len(gripper_joints))],
+            position_upper=[*([math.pi] * 6), *([0.06] * len(gripper_joints))],
+            velocity_max=[*([math.pi] * 6), *([0.0] * len(gripper_joints))],
+        )
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
-        joints=joints,
+        joints=[*joint_names(6), *gripper_joints],
         adapter_type=adapter_type,
         address=address,
         auto_enable=auto_enable,
-        gripper_joints=[f"{hw_id}/finger"] if gripper else [],
-        adapter_kwargs={"initial_positions": home_joints or A750_HOME_JOINTS},
+        limits=limits,
+        adapter_kwargs=adapter_kwargs,
     )
 
 
@@ -95,29 +105,23 @@ def a750_hardware(hw_id: str = "arm", *, mock_without_address: bool = False) -> 
     )
 
 
-def make_a750_model_config(
-    name: str = "arm",
-    *,
-    joint_prefix: str | None = None,
-    coordinator_task_name: str | None = None,
-) -> RobotModelConfig:
+def make_a750_model_config() -> RobotModelConfig:
     dof = 6
+    model_joint_names = joint_names(dof)
     return RobotModelConfig(
-        name=name,
-        model_path=A750_MODEL_PATH,
-        base_pose=base_pose(),
-        joint_names=joint_names(dof),
-        end_effector_link="gripper_base",
+        model=RobotModel.from_file(A750_MODEL_PATH, package_paths=A750_PACKAGE_PATHS),
+        joint_names=model_joint_names,
         base_link="base_link",
-        package_paths=A750_PACKAGE_PATHS,
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="manipulator",
+                joint_names=tuple(model_joint_names),
+                base_link="base_link",
+                tip_link="gripper_base",
+            )
+        ],
         auto_convert_meshes=True,
         collision_exclusion_pairs=A750_GRIPPER_COLLISION_EXCLUSIONS,
-        joint_name_mapping=coordinator_joint_mapping(
-            name,
-            dof,
-            joint_prefix=joint_prefix,
-        ),
-        coordinator_task_name=coordinator_task_name or f"traj_{name}",
-        gripper_hardware_id=name,
+        gripper_hardware_id="arm",
         home_joints=A750_HOME_JOINTS,
     )

@@ -31,8 +31,8 @@ import pytest
 
 from dimos.protocol.pubsub.impl.webrtc.providers.broker import BrokerConfig, BrokerProvider
 
-# broker.py imports aiortc lazily, but BrokerProvider.__init__ pulls in the
-# video track (aiortc/av) — so constructing one needs the extras installed.
+# broker.py imports aiortc lazily (inside _connect); constructing a provider
+# only needs aiortc/httpx to be installed (WEBRTC_AVAILABLE find_spec check).
 
 
 @pytest.fixture

@@ -19,11 +19,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
-import open3d as o3d  # type: ignore[import-untyped]
 import trimesh  # type: ignore[import-untyped]
 
 from dimos.experimental.scene_cooking.mujoco.collision_policy import CollisionSpec
@@ -36,6 +35,9 @@ from dimos.experimental.scene_cooking.source_assets.mesh import (
 )
 from dimos.simulation.scene_assets.spec import SceneMeshAlignment
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    import open3d as o3d  # type: ignore[import-untyped]
 
 logger = setup_logger()
 
@@ -320,6 +322,8 @@ def _mesh_for_prim(
 def _mesh_from_arrays(
     vertices: NDArray[np.float64], faces: NDArray[np.int64]
 ) -> o3d.geometry.TriangleMesh:
+    import open3d as o3d  # type: ignore[import-untyped]
+
     mesh = o3d.geometry.TriangleMesh()
     mesh.vertices = o3d.utility.Vector3dVector(vertices)
     mesh.triangles = o3d.utility.Vector3iVector(faces.astype(np.int32))

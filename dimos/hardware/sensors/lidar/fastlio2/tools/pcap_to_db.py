@@ -23,7 +23,7 @@ Usage:
 
     # override FastLio2Config tuning via direct flags
     python -m dimos.hardware.sensors.lidar.fastlio2.tools.pcap_to_db \
-        --pcap "$PCAP_PATH" --acc-cov 0.5 --filter-size-surf 0.3 --lidar-type livox
+        --pcap "$PCAP_PATH" --acc-cov 0.5 --filter-size-surf 0.3
 
     # add to existing .db (a missing --db is fetched via get_data before falling
     # back to building from scratch)
@@ -77,7 +77,6 @@ _TUNING_FIELDS = (
     "blind",
     "fov_degree",
     "scan_line",
-    "lidar_type",
     "extrinsic_est_en",
     "scan_publish_en",
     "dense_publish_en",
@@ -152,7 +151,7 @@ def _write_rrd(db_path: Path, odom_stream: str, lidar_stream: str, voxel: float)
     import numpy as np
     import rerun as rr
 
-    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.memory.store.sqlite import SqliteStore
     from dimos.msgs.nav_msgs.Odometry import Odometry
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.visualization.rerun.init import rerun_init
@@ -414,7 +413,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--db",
         default=None,
-        help="target memory2 SQLite db. Existing -> append/align; missing -> fetched via "
+        help="target memory SQLite db. Existing -> append/align; missing -> fetched via "
         "get_data (LFS), else built from scratch. Omit to default to <pcap>.db.",
     )
     parser.add_argument(
@@ -458,7 +457,6 @@ def main(argv: list[str]) -> int:
     tuning.add_argument("--blind", type=float, help="spherical min range (m)")
     tuning.add_argument("--fov-degree", type=int, help="sensor FOV (deg)")
     tuning.add_argument("--scan-line", type=int, help="lidar scan lines")
-    tuning.add_argument("--lidar-type", choices=("livox", "velodyne", "ouster"))
     tuning.add_argument(
         "--extrinsic-est-en",
         action=argparse.BooleanOptionalAction,

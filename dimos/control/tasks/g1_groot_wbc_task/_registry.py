@@ -15,3 +15,18 @@
 TASK_FACTORIES = {
     "g1_groot_wbc": "dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task:create_task",
 }
+
+TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
+    "g1_groot_wbc": {"twist_command": ("on_twist_command", "broadcast")},
+}
+
+TASK_EXPOSES: dict[str, list[str]] = {
+    "g1_groot_wbc": [
+        "arm",
+        "disarm",
+        "set_dry_run",
+        "state_snapshot",
+        "reset_runtime_state",
+        "start",
+    ],
+}

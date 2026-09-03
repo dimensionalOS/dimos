@@ -25,8 +25,8 @@ Usage::
         SomeConsumer.blueprint(),
     )).loop()
 
-Point-LIO tuning lives directly on ``PointLioConfig`` and is passed to the C++
-binary as plain CLI args (no YAML).
+Point-LIO tuning lives on PointLioConfig and is sent to the C++ binary as
+stdin JSON.
 """
 
 from __future__ import annotations
@@ -58,15 +58,11 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.navigation.cmu_nav.frames import FRAME_ODOM
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
 
 # Human-readable enums; the C++ binary (main.cpp) maps these strings to
 # Point-LIO's int codes.
-# LID_TYPE enum (Point-LIO src/preprocess.h). avia = 1 selects the Livox branch
-# the Mid-360 emits.
-LidarType = Literal["avia", "velodyne", "ouster", "hesai", "unilidar"]
-TimestampUnit = Literal["second", "millisecond", "microsecond", "nanosecond"]
 # iVox local-map neighbour stencil.
 IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 
@@ -74,7 +70,9 @@ IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 class PointLioConfig(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/pointlio_native"
-    build_command: str | None = "nix build .#pointlio_native"
+    build_command: str | None = "nix build -L .#pointlio_native"
+    stdin_config: bool = True
+    base_fields: frozenset[str] = frozenset({"frame_id"})
     # lidar_ip required; host_ip optional (auto-derived from lidar_ip's subnet).
     # Both fall back to DIMOS_POINTLIO_LIDAR_IP / DIMOS_POINTLIO_HOST_IP.
     host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_HOST_IP"))
@@ -83,7 +81,7 @@ class PointLioConfig(NativeModuleConfig):
 
     # Odometry is published as frame_id (fixed) -> sensor_frame_id (moving sensor),
     # and also broadcast on TF. The point cloud is stamped with sensor_frame_id
-    frame_id: str = FRAME_ODOM
+    frame_id: str = "odom"
     sensor_frame_id: str = "mid360_link"
 
     # Point-LIO internal processing rates (Hz)
@@ -95,7 +93,7 @@ class PointLioConfig(NativeModuleConfig):
 
     debug: bool = False
 
-    # Point-LIO tuning, passed to the binary as plain CLI args (read in main.cpp).
+    # Point-LIO tuning (read in main.cpp).
     # common
     con_frame: bool = False
     con_frame_num: int = 1
@@ -103,10 +101,8 @@ class PointLioConfig(NativeModuleConfig):
     cut_frame_time_interval: float = 0.1
     time_lag_imu_to_lidar: float = 0.0
     # preprocess
-    lidar_type: LidarType = "avia"  # 1 = AVIA (Livox) branch the Mid-360 emits
     scan_line: int = 4
     scan_rate: int = 10
-    timestamp_unit: TimestampUnit = "nanosecond"
     blind: float = 0.5  # spherical min range (m)
     point_filter_num: int = 3  # pre-KF decimation: keep every Nth raw point (1 = all)
     # mapping
@@ -170,6 +166,7 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
 
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
+    tf: Out[TFMessage]
 
     @rpc
     def start(self) -> None:
@@ -181,23 +178,16 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
 
     def _on_odom_for_tf(self, msg: Odometry) -> None:
         self.tf.publish(
-            Transform(
-                frame_id=self.frame_id,
-                child_frame_id=self.config.sensor_frame_id,
-                translation=Vector3(
-                    msg.pose.position.x,
-                    msg.pose.position.y,
-                    msg.pose.position.z,
-                ),
-                rotation=Quaternion(
-                    msg.pose.orientation.x,
-                    msg.pose.orientation.y,
-                    msg.pose.orientation.z,
-                    msg.pose.orientation.w,
-                ),
-                # Match the odometry ts exactly; no `or time.time()` fallback (a
-                # real ts of 0.0 must not become wall time).
-                ts=msg.ts,
+            TFMessage(
+                Transform(
+                    frame_id=self.frame_id,
+                    child_frame_id=self.config.sensor_frame_id,
+                    translation=Vector3(msg.pose.position),
+                    rotation=Quaternion(msg.pose.orientation),
+                    # Match the odometry ts exactly; no `or time.time()` fallback (a
+                    # real ts of 0.0 must not become wall time).
+                    ts=msg.ts,
+                )
             )
         )
 

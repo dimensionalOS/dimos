@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.mapping.voxels import VoxelGrid
+from dimos.mapping.voxels.grid import VoxelGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.test_moment import Go2Moment

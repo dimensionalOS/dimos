@@ -19,7 +19,7 @@
 Each robot gets its own namespaced GO2Connection: topics like `/robot0/lidar`,
 TF frames like `robot0/...`, and RPC like `robot0/go2connection/move`.
 
-Configure a single robot with `-o robot0/go2connection.<field>=<value>`.
+Configure a single robot with `--robot0/go2connection.<field>=<value>`.
 
 Usage:
     ROBOT_IPS=10.0.0.102,10.0.0.209 dimos run unitree-go2-multi

@@ -15,21 +15,26 @@
 from __future__ import annotations
 
 import atexit
+import importlib
 import inspect
 import threading
-from typing import Any
+from typing import Any, TypeAlias
 
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.module_coordinator import ModuleCoordinator, ModuleDescriptor
 from dimos.core.global_config import global_config
+from dimos.core.introspection.module.info import ModuleInfo, RpcInfo, extract_rpc_info
 from dimos.core.module import ModuleBase, PeekNotFound
-from dimos.core.run_registry import get_most_recent
+from dimos.core.rpc_client import RpcCall
 from dimos.porcelain.local_module_source import LocalModuleSource
+from dimos.porcelain.module_handle import ModuleHandle
 from dimos.porcelain.module_source import ModuleSource
 from dimos.porcelain.remote_module_source import RemoteModuleSource
 from dimos.porcelain.skills_proxy import SkillsProxy
 from dimos.robot.all_blueprints import all_modules
 from dimos.robot.get_all_blueprints import class_name_to_registry_key, get_by_name
+
+DescribeTarget: TypeAlias = str | ModuleHandle | RpcCall | ModuleInfo | RpcInfo
 
 
 class Dimos:
@@ -100,24 +105,106 @@ class Dimos:
 
     @classmethod
     def connect(cls, *, timeout: float = 5.0) -> Dimos:
-        """Connect to the running DimOS daemon on the current LCM bus.
+        """Connect to the running DimOS coordinator on the current transport bus.
 
-        One daemon serves the bus identified by `LCM_DEFAULT_URL`. To target
-        a different daemon (e.g. a different host), point `LCM_DEFAULT_URL`
-        at its bus before calling.
+        One coordinator serves the configured bus. This works for both
+        `dimos run` processes and coordinators launched directly from Python;
+        a run-registry entry is not required.
 
         Returns a `Dimos` instance in read/call mode: `skills`, attribute
         access, `__repr__` and `__dir__` work, but only methods marked with
         `@rpc` (and `@skill`, which implies `@rpc`) on a module are callable.
         `stop()` closes the connection without terminating the remote process.
         """
-        if get_most_recent(alive_only=True) is None:
-            raise RuntimeError("No running DimOS instance. Start one with `dimos run <blueprint>`.")
-
         source = RemoteModuleSource(timeout=timeout)
         instance = cls()
         instance._source = source
         return instance
+
+    def list_modules(self) -> list[ModuleInfo]:
+        """Return structured information for the currently deployed module instances.
+
+        Discovery is live: every call asks the coordinator for fresh descriptors.
+        """
+        with self._lock:
+            source = self._require_source()
+            descriptors = source.list_module_descriptors()
+
+        return [_describe_module(descriptor) for descriptor in descriptors]
+
+    def get_module(self, name: str) -> ModuleHandle:
+        """Return a module proxy by exact instance name or unique class name."""
+        with self._lock:
+            return self._require_source().get_module(name)
+
+    def list_rpcs(self, module: str | ModuleHandle | None = None) -> list[RpcInfo]:
+        """Return structured metadata for all advertised RPCs.
+
+        Args:
+            module: Optional exact instance name, unique class name, or module proxy.
+        """
+        modules = self.list_modules()
+        if module is None:
+            return [rpc_info for module_info in modules for rpc_info in module_info.rpcs]
+
+        instance_name = self._module_instance_name(module)
+        for module_info in modules:
+            if module_info.instance_name == instance_name:
+                return module_info.rpcs
+        raise KeyError(instance_name)
+
+    def describe(self, target: DescribeTarget) -> ModuleInfo | RpcInfo:
+        """Describe a module or RPC proxy, or a qualified ``module.rpc`` string."""
+        if isinstance(target, (ModuleInfo, RpcInfo)):
+            return target
+        if isinstance(target, RpcCall):
+            return self._find_rpc(target.remote_name, target.rpc_name)
+        if not isinstance(target, str):
+            return self._find_module(self._module_instance_name(target))
+
+        try:
+            proxy = self.get_module(target)
+        except KeyError:
+            proxy = None
+        if proxy is not None:
+            return self._find_module(self._module_instance_name(proxy))
+
+        if "." in target:
+            module_name, rpc_name = target.rsplit(".", 1)
+            return self._find_rpc(self._module_instance_name(module_name), rpc_name)
+
+        matching_modules = sorted(
+            {
+                rpc_info.module_name
+                for rpc_info in self.list_rpcs()
+                if rpc_info.name == target and rpc_info.module_name is not None
+            }
+        )
+        if matching_modules:
+            choices = ", ".join(f"{name}.{target}" for name in matching_modules)
+            raise ValueError(f"RPC name {target!r} is not qualified; use one of: {choices}")
+        raise KeyError(target)
+
+    def _find_module(self, instance_name: str) -> ModuleInfo:
+        for module_info in self.list_modules():
+            if module_info.instance_name == instance_name:
+                return module_info
+        raise KeyError(instance_name)
+
+    def _find_rpc(self, instance_name: str, rpc_name: str) -> RpcInfo:
+        for rpc_info in self.list_rpcs(instance_name):
+            if rpc_info.name == rpc_name:
+                return rpc_info
+        raise KeyError(f"{instance_name}.{rpc_name}")
+
+    def _module_instance_name(self, module: str | ModuleHandle) -> str:
+        proxy = self.get_module(module) if isinstance(module, str) else module
+        return proxy.remote_name
+
+    def _require_source(self) -> ModuleSource:
+        if self._source is None:
+            raise RuntimeError("No modules are running")
+        return self._source
 
     @property
     def skills(self) -> SkillsProxy:
@@ -125,7 +212,7 @@ class Dimos:
 
         Returns a proxy that supports attribute access and pretty-printing::
 
-            app.skills.relative_move(forward=2.0)
+            app.skills.move_to(x=2.0, relative=True)
             print(app.skills)
         """
         with self._lock:
@@ -195,7 +282,7 @@ class Dimos:
         with self._lock:
             return self._source is not None and not self._stopped
 
-    def __getattr__(self, name: str) -> Any:
+    def __getattr__(self, name: str) -> ModuleHandle:
         if name.startswith("_"):
             raise AttributeError(name)
 
@@ -249,6 +336,37 @@ def _run_remote(target: str | Blueprint | type[ModuleBase], source: RemoteModule
     raise TypeError(
         f"run() expects a blueprint name (str), Blueprint, or Module class, "
         f"got {type(target).__name__}"
+    )
+
+
+def _describe_module(descriptor: ModuleDescriptor) -> ModuleInfo:
+    instance_name = descriptor.rpc_name or descriptor.class_name
+    module_class: type[ModuleBase] | None = None
+    try:
+        module_path, class_name = descriptor.qualified_path.rsplit(".", 1)
+        candidate = getattr(importlib.import_module(module_path), class_name)
+        if inspect.isclass(candidate) and issubclass(candidate, ModuleBase):
+            module_class = candidate
+    except (ImportError, AttributeError, ValueError):
+        pass
+
+    rpc_infos: list[RpcInfo] = []
+    for rpc_name in descriptor.rpc_names:
+        original = getattr(module_class, rpc_name, None) if module_class is not None else None
+        if callable(original):
+            rpc_info = extract_rpc_info(original)
+        else:
+            rpc_info = RpcInfo(name=rpc_name)
+        rpc_info.module_name = instance_name
+        rpc_infos.append(rpc_info)
+
+    return ModuleInfo(
+        name=instance_name,
+        rpcs=rpc_infos,
+        instance_name=instance_name,
+        class_name=descriptor.class_name,
+        qualified_path=descriptor.qualified_path,
+        documentation=inspect.getdoc(module_class) if module_class is not None else None,
     )
 
 

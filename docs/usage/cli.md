@@ -1,8 +1,6 @@
----
-title: "CLI Reference"
----
+# CLI Reference
 
-The `dimos` CLI manages the full lifecycle of a DimOS robot stack — start, stop, inspect, and interact.
+The `dimos` CLI manages the full lifecycle of a dimOS robot stack: start, stop, inspect, and interact.
 
 ## Global Options
 
@@ -18,7 +16,9 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--robot-ips` | TEXT | `None` | Multiple robot IPs |
 | `--simulation` / `--no-simulation` | bool | `False` | Enable MuJoCo simulation |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
-| `--replay-db` | TEXT | `go2_bigoffice` | Replay memory2 SQLite database name |
+| `--replay-db` | TEXT | `go2_bigoffice` | Replay memory SQLite database name |
+| `--record [sqlite]` | `sqlite` | off | Record every stream to `recordings/<run-id>/memory.db` ([Recording](/docs/usage/recording.md)) |
+| `--record-topics` | TEXT | `*` | Comma-separated globs on stream names to record |
 | `--new-memory` / `--no-new-memory` | bool | `False` | Clear persistent memory on start |
 | `--viewer` | `rerun\|none` | `rerun` | Visualization backend |
 | `--rerun-open` | `native\|web\|both\|none` | `native` | How to open the Rerun viewer |
@@ -27,7 +27,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--memory-limit` | TEXT | `auto` | Rerun viewer memory limit |
 | `--mcp-port` | INT | `9990` | MCP server port |
 | `--mcp-host` | TEXT | `127.0.0.1` | MCP server bind address |
-| `--transport` | `lcm\|zenoh` | platform-dependent | Transport backend for streams, RPC, and TF. Defaults to `zenoh` on macOS, otherwise `lcm`. Set `DIMOS_TRANSPORT` (env var or `.env`) to switch every process at once. Standalone CLIs like `humancli`, `agentspy`, and `dtop`, which also accept `--transport`. |
+| `--transport` | `lcm\|zenoh` | `zenoh` | Transport backend for streams, RPC, and TF. Zenoh is the default on every platform and is pinned to localhost until you pass `--robot-ip` or enable scouting. Set `DIMOS_TRANSPORT` (env var or `.env`) to switch every process at once. Standalone CLIs like `humancli`, `agentspy`, and `dtop`, which also accept `--transport`. |
 | `--dtop` / `--no-dtop` | bool | `False` | Enable live resource monitor overlay |
 | `--obstacle-avoidance` / `--no-obstacle-avoidance` | bool | `True` | Enable obstacle avoidance |
 | `--detection-model` | `qwen\|moondream` | `moondream` | Vision model for object detection |
@@ -62,21 +62,27 @@ Environment variables and `.env` values use the field name in uppercase, for exa
 
 ### `dimos run`
 
-Start one or more robot blueprints. Built-in DimOS blueprints use bare names such as
+Start one or more robot blueprints. Built-in dimOS blueprints use bare names such as
 `unitree-go2`; external blueprints installed from Python packages use namespaced names
 such as `my-robot-stack.go2`.
 
 ```bash
-dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...]
+dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...] [--<config-field> <value> ...]
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--config` `-c` | Path to read JSON config file from (options can be overriden with `-o` |
+| `--config`, `-c` | Path to a JSON configuration file; dynamic flags override its values |
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
-| `--option`, `-o` | Provide an configuration option to the blueprint (e.g. `-o voxelgridmapper.voxel_size=1` |
-| `--help` | Display the available configuration options that can be changed with `-o` or the config file |
+| `--<config-field>` | Set a blueprint configuration field using its kebab-case name, for example `--voxel-size=1`; qualify ambiguous fields as `--voxelgridmapper.voxel-size=1` |
+| `--help` | Display the run options and available blueprint configuration flags |
+
+Dynamic values accept both `--field=value` and `--field value`. A shorthand is
+available only when it identifies one active module. If two modules expose the
+same field, the CLI reports the ambiguity and lists stable qualified forms such
+as `--relocalizationmodule.map-file`. Global flags work on either side of
+`run`; older wrapper-style overrides are no longer accepted.
 
 ```bash
 # Foreground (Ctrl-C to stop)
@@ -88,11 +94,18 @@ dimos run unitree-go2-agentic --daemon
 # Replay with Rerun viewer
 dimos --replay --viewer rerun run unitree-go2
 
-# Replay Big Office (on Linux use --transport=zenoh; on macOS Zenoh is default when installed)
+# Record every stream of a run, then replay it
+dimos --record --simulation run unitree-go2
+dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
+
+# Replay Big Office (Zenoh is the default transport)
 dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go2
 
 # Real robot
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161
+
+# Blueprint configuration (both value forms are accepted)
+dimos run unitree-go2-relocalization --map-file recording_go2
 
 # Compose modules dynamically
 dimos run unitree-go2 keyboard-teleop
@@ -113,17 +126,17 @@ derived from the installed Python distribution name by lowercasing it and collap
 runs of `-`, `_`, and `.` into `-`. The local blueprint name is the entry point name
 and must be lowercase kebab-case, for example `keyboard-teleop`.
 
-On macOS, heavy replay workloads can be unreliable over LCM UDP, so the default transport resolves to `zenoh`; you can still force either path explicitly with `--transport=lcm` or `--transport=zenoh`.
+Heavy replay workloads can be unreliable over LCM UDP, which is one reason `zenoh` is the default transport; you can still force either path explicitly with `--transport=lcm` or `--transport=zenoh`.
 
 When `--daemon` is used, the process:
-1. Builds and starts all modules (foreground — you see errors)
+1. Builds and starts all modules (foreground, so you see errors)
 2. Runs a health check (polls worker PIDs)
 3. Forks to background, writes a run registry entry
 4. Prints run ID, PID, log path, and MCP endpoint
 
 #### Adding a New Blueprint
 
-For an in-repository DimOS blueprint, define a module-level `Blueprint` variable and
+For an in-repository dimOS blueprint, define a module-level `Blueprint` variable and
 regenerate the built-in registry:
 
 ```bash
@@ -135,9 +148,72 @@ packages do not edit that file; they expose blueprints through Python package en
 points. See [blueprints](/docs/usage/blueprints.md) for composition and external
 publishing details.
 
+### `dimos shell`
+
+Open an IPython session attached to the coordinator on the configured transport bus:
+
+```bash skip
+dimos shell
+```
+
+The command requires an interactive terminal. For scripts and automation, use
+`Dimos.connect()` through the [Python API](/docs/usage/python-api.md) instead.
+While attaching, the shell displays a waiting indicator and retries coordinator
+discovery within the default five-second connection budget.
+
+The shell starts with five names:
+
+| Name | Purpose |
+|------|---------|
+| `app` | Connected `Dimos` instance; access modules and invoke RPCs directly |
+| `guide()` | Reprint the shell's quick-start guide |
+| `modules()` | Print module instances, classes, and RPC counts |
+| `rpcs()` | Print every RPC's signature and docstring summary |
+| `describe(value)` | Pretty-print a module or RPC's signature and documentation |
+
+For example:
+
+```python skip
+modules()
+guide()
+rpcs("StressTestModule")
+describe("StressTestModule.ping")
+app.StressTestModule.ping()
+```
+
+For example, `describe("StressTestModule.echo")` prints:
+
+```text
+RPC: StressTestModule.echo
+Signature: echo(message: str) -> str
+
+Documentation:
+Echo a message back to the caller.
+```
+
+Use `app.describe(...)` when you want the structured `ModuleInfo` or `RpcInfo`
+record instead of formatted output.
+
+Discovery is live, so modules loaded after attachment appear on the next
+`modules()` or `rpcs()` call. Use `app.list_modules()` and `app.list_rpcs()` when
+you want structured records. Exact instance names select one deployment when
+multiple instances share a class.
+
+RPC calls execute immediately against the running system. The shell does not filter
+methods or ask for confirmation, so an RPC may move hardware or change lifecycle
+state. Start with a non-hardware, simulation, or replay stack.
+
+Exiting IPython closes only the shell's client connection. The coordinator and its
+modules keep running. If the coordinator stops or restarts, calls fail visibly; start
+a new `dimos shell` session to reconnect.
+
+The shell normally displays the CLI run ID and blueprint. Coordinators launched
+directly from Python have no run-registry metadata and are shown as
+`unregistered coordinator`.
+
 ### `dimos status`
 
-Show the running DimOS instance.
+Show the running dimOS instance.
 
 ```bash
 dimos status
@@ -147,7 +223,7 @@ Reads the run registry, verifies the PID is alive, and displays: run ID, PID, bl
 
 ### `dimos stop`
 
-Stop the running DimOS instance.
+Stop the running dimOS instance.
 
 ```bash
 dimos stop [--force]
@@ -175,7 +251,7 @@ Reads saved CLI args from the run registry, stops the current instance, then re-
 
 ### `dimos log`
 
-View logs from a DimOS run.
+View logs from a dimOS run.
 
 ```bash
 dimos log [OPTIONS]
@@ -233,6 +309,23 @@ Print resolved GlobalConfig values and their sources.
 dimos show-config
 ```
 
+### `dimos cache clean`
+
+Remove caches generated by dimOS, including downloaded robot assets, prepared
+URDFs, cooked scene meshes, the ament index, and the auto-downloaded Deno
+runtime. All of these live under the platform-specific dimOS cache directory.
+
+```bash
+dimos cache clean
+```
+
+The command does not remove logs, recordings, datasets, configuration, or
+third-party model caches. It refuses to run while a dimOS blueprint is active.
+
+Before deleting anything, the command displays the cache root and every
+top-level entry currently present. It then asks for confirmation with a default
+of `No`. Pass `--yes` to skip the prompt in automation.
+
 ### `dimos spy`
 
 Universal transport spy: a live table of every topic on every pubsub transport (LCM, Zenoh, or both), with per-topic message rate, bandwidth, size, and liveness.
@@ -242,6 +335,21 @@ dimos spy                     # everything, all transports
 dimos spy --transport zenoh   # filter to one transport (repeatable flag)
 dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
 ```
+
+### `dimos login`
+
+Device-code sign-in for the hosted platform; `dimos logout` and `dimos whoami` manage the stored key.
+
+### `dimos data`
+
+Upload recordings (or any file) to hosted storage and pull them back. See [Cloud data](/docs/usage/cloud_data.md).
+
+| Subcommand | Description |
+|------------|-------------|
+| `upload [PATH\|latest] [--since 1h] [--robot ID] [--kind KIND] [--chunk MB]` | Upload; no argument means the newest recording |
+| `ls` | List uploads: id, date, kind, blueprint, topics, size, state |
+| `pull [ID-PREFIX\|latest] [--dest PATH]` | Download to `downloads/`, sha256-verified |
+| `status ID` / `quota` | Upload state and parts on server / storage quota |
 
 ## Agent & MCP Commands
 
@@ -253,11 +361,11 @@ Send a text message to the running agent via LCM.
 dimos agent-send "walk forward 2 meters"
 ```
 
-Works with any agentic blueprint — does not require MCP. Publishes directly to the `/human_input` LCM topic.
+Works with any agentic blueprint. Does not require MCP. Publishes directly to the `/human_input` LCM topic.
 
 ### `dimos mcp`
 
-Interact with the running MCP server. **Requires a blueprint that includes `McpServer`** — for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcp-port` / `--mcp-host` to override).
+Interact with the running MCP server. **Requires a blueprint that includes `McpServer`**, for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcp-port` / `--mcp-host` to override).
 
 To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `McpClient.blueprint()` (LLM agent that fetches tools from the server):
 
@@ -299,15 +407,15 @@ dimos mcp call <tool_name> [--arg key=value ...] [--json-args '{}']
 | `--json-args`, `-j` | Arguments as a JSON string |
 
 ```bash
-dimos mcp call relative_move --arg forward=0.5
-dimos mcp call relative_move --json-args '{"forward": 2.0, "left": 0, "degrees": 0}'
+dimos mcp call move_to --arg x=3.2 --arg y=-0.5
+dimos mcp call move_to --json-args '{"x": 2.0, "y": 0, "relative": true}'
 dimos mcp call observe
 dimos mcp call land
 ```
 
 #### `dimos mcp status`
 
-Show MCP server status — PID, uptime, deployed modules, skill count.
+Show MCP server status: PID, uptime, deployed modules, skill count.
 
 ```bash
 dimos mcp status
@@ -351,7 +459,7 @@ agentspy
 
 ### `dtop`
 
-Live resource monitor TUI — CPU, memory, and process stats. Can also be activated during a run with `--dtop`:
+Live resource monitor TUI: CPU, memory, and process stats. Can also be activated during a run with `--dtop`:
 
 ```bash
 dimos --dtop run unitree-go2

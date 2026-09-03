@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Render Go2 odom sources to rerun — memory2 store pipelines (standalone).
+"""Render Go2 odom sources to rerun — memory store pipelines (standalone).
 
 Each *pipeline* is a function ``(store, seconds) -> None`` composed from
 reusable stream transforms over standard dimos messages. ``leg_odom`` logs both
@@ -35,11 +35,10 @@ import subprocess
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
-import rerun as rr
 import typer
 
-from dimos.memory2.transform import throttle
-from dimos.memory2.utils.progress import progress
+from dimos.memory.transform import throttle
+from dimos.memory.utils.progress import progress
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -52,7 +51,7 @@ from dimos.robot.unitree.go2.dds.store import Go2McapStore
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
@@ -157,6 +156,7 @@ def accumulate_path(upstream: Iterator[Observation[PoseStamped]]) -> Iterator[Ob
 
 def leg_odom(store: Go2McapStore, seconds: float | None) -> None:
     """Leg-inertial odometry — pose stream (Transform3D) + accumulated Path line."""
+    import rerun as rr
 
     def log_pose(obs: Observation[PoseStamped]) -> None:
         rr.set_time("time", timestamp=obs.ts)
@@ -181,6 +181,7 @@ def leg_odom(store: Go2McapStore, seconds: float | None) -> None:
 
 def imu_odom(store: Go2McapStore, seconds: float | None) -> None:
     """Dead-reckoned IMU odometry — accel -> velocity -> position -> growing Path (drifts)."""
+    import rerun as rr
 
     def log_path(obs: Observation[Path]) -> None:
         rr.set_time("time", timestamp=obs.ts)
@@ -202,6 +203,7 @@ def imu_odom(store: Go2McapStore, seconds: float | None) -> None:
 
 def lidar(store: Go2McapStore, seconds: float | None) -> None:
     """Lidar point cloud, under the leg_odom transform (lidar -> base -> world)."""
+    import rerun as rr
 
     def log_lidar(obs: Observation[PointCloud2]) -> None:
         rr.set_time("time", timestamp=obs.ts)
@@ -229,7 +231,9 @@ def _interp_pose(
 
 
 def world_lidar(store: Go2McapStore, seconds: float | None) -> None:
-    from dimos.mapping.voxels import VoxelMapTransformer
+    import rerun as rr
+
+    from dimos.mapping.voxels.module import VoxelMapTransformer
 
     ext = LIDAR_TO_BASE  # lidar -> base (standard Transform from extrinsics)
 
@@ -271,6 +275,7 @@ def camera(store: Go2McapStore, seconds: float | None, hz: float) -> None:
     Throttling runs before ``obs.data``, so thinned frames never pay the jpeg
     decode; frames that fail to decode (``None``) are skipped.
     """
+    import rerun as rr
 
     def log_image(obs: Observation[Image]) -> None:
         if obs.data is None:  # truncated/corrupt frame
@@ -300,6 +305,8 @@ def main(
     image_hz: float = typer.Option(10.0, "--image-hz", help="Camera frame rate when --image"),
     no_gui: bool = typer.Option(False, "--no-gui", help="Write the .rrd but don't open the viewer"),
 ) -> None:
+    import rerun as rr
+
     from dimos.visualization.rerun.init import rerun_init
 
     store = Go2McapStore(path=mcap)
