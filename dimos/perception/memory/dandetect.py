@@ -12,20 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""One disposable resource wrapping the memory perception API.
+"""The perception models as one disposable resource.
 
-``DanDetector`` owns the models behind :func:`embed_index` and
-:func:`localize`: enter once, query many times on warm weights, and
-``stop()`` (or leave the ``with`` block) releases whatever loaded.
-
-Every entry point takes an optional :class:`~dimos.perception.memory.rig.Rig`
-describing where poses and 3D geometry come from; without one the store's
-shape decides.
+Enter once, query many times on warm weights; ``stop()`` releases whatever
+loaded. Every entry point takes an optional
+:class:`~dimos.perception.memory.rig.Rig`; without one the store's shape
+decides.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, cast, overload
+from typing import TYPE_CHECKING, Any
 
 from dimos.core.resource import Resource
 from dimos.memory.embed import EmbedImages
@@ -44,12 +41,7 @@ if TYPE_CHECKING:
 
 
 class DanDetector(Resource):
-    """The perception models as one resource.
-
-    ``start()`` constructs SigLIP, OWLv2, and EdgeTAM. The two
-    HuggingFace models load lazily on first use. ``stop()`` releases
-    whatever loaded.
-    """
+    """SigLIP, OWLv2 and EdgeTAM; the HuggingFace two load on first use."""
 
     siglip: SigLIPModel
     detector: Owlv2Detector
@@ -74,52 +66,21 @@ class DanDetector(Resource):
         self.detector.stop()
         del self.segmenter
 
-    @overload
     def embed(
-        self,
-        store: Any,
-        after: float,
-        before: float,
-        *,
-        live: Literal[False] = False,
-        rig: Rig | None = ...,
-    ) -> Stream[Any, Any]: ...
-    @overload
-    def embed(
-        self,
-        store: Any,
-        *,
-        live: Literal[True],
-        rig: Rig | None = ...,
-    ) -> Stream[Any, Any]: ...
-    def embed(
-        self,
-        store: Any,
-        after: float | None = None,
-        before: float | None = None,
-        *,
-        live: bool = False,
-        rig: Rig | None = None,
+        self, store: Any, after: float, before: float, *, rig: Rig | None = None
     ) -> Stream[Any, Any]:
-        """SigLIP-embedded, world-posed frame index for :meth:`localize`.
+        """SigLIP-embedded, world-posed index over ``[after, before]``."""
+        return embed_index(store, self.siglip, after, before, rig=rig or Rig.from_store(store))
 
-        Replay mode indexes ``[after, before]`` in memory and returns when
-        done. ``live=True`` instead tails the rig's color stream and keeps
-        saving into the store's named ``color_image_embedded`` stream on a
-        background thread; the returned stream is that named stream.
+    def embed_live(self, store: Any, *, rig: Rig | None = None) -> Stream[Any, Any]:
+        """Tail the colour stream into ``color_image_embedded`` on a background thread.
+
+        Returns that named stream, which :meth:`localize` reads like a replay
+        index; it keeps filling for as long as the resource is open.
         """
-        rig = rig or Rig.from_store(store)
-        if not live:
-            return embed_index(
-                store,
-                self.siglip,
-                cast("float", after),
-                cast("float", before),
-                rig=rig,
-            )
-
         from dimos.msgs.sensor_msgs.Image import Image
 
+        rig = rig or Rig.from_store(store)
         embedded: Stream[Any, Any] = store.stream("color_image_embedded", Image)
         pipeline = (
             rig.color.live()
@@ -142,11 +103,7 @@ class DanDetector(Resource):
         policy: LocalizePolicy | None = None,
         **kwargs: Any,
     ) -> list[Localization] | list[list[Localization]]:
-        """:func:`localize` on this resource's models.
-
-        ``policy`` is the localize thresholds. ``None`` uses the rig's scale
-        defaults.
-        """
+        """:func:`localize` on this resource's models."""
         return localize(
             store,
             query,

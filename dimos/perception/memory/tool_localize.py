@@ -121,7 +121,7 @@ def render(
         points = det.pointcloud.points_f32()
         matrix = det.transform.to_matrix()
         cam = points @ matrix[:3, :3].T + matrix[:3, 3]
-        pixels = Detection3DPC.project_pixels(cam, rig.camera_info)
+        pixels = Detection3DPC.project_pixels(cam, rig.cameras[rig.optical_frame])
         cols = np.round(pixels[:, 0]).astype(int)
         rows = np.round(pixels[:, 1]).astype(int)
         rgb = det.image.to_rgb().data
@@ -145,7 +145,7 @@ def render(
     elif rig.depth is not None:
         backdrop_ts = next((t.backdrop_ts for _, t in traces if t.backdrop_ts is not None), None)
         if backdrop_ts is None:
-            backdrop_ts = next((t.matched[0][0] for _, t in traces if t.matched), None)
+            backdrop_ts = next((t.first_match_ts for _, t in traces if t.first_match_ts), None)
         if backdrop_ts is not None:
             backdrop = rig.backdrop(backdrop_ts)
             if backdrop is not None:
@@ -165,7 +165,7 @@ def render(
 
     # live camera feed + frustum tracking the capture pose along the
     # timeline; on mobile rigs a translucent box marks the robot
-    rr.log("camera", rig.camera_info.to_rerun(), static=True)
+    rr.log("camera", rig.cameras[rig.optical_frame].to_rerun(), static=True)
     if rig.mobile:
         rr.log(
             "robot",
@@ -207,7 +207,7 @@ def render(
                 continue
             frame = f"{root}/frames/{i}"
             rr.log(frame, pose.to_rerun())
-            rr.log(frame, rig.camera_info.to_rerun())
+            rr.log(frame, rig.cameras[rig.optical_frame].to_rerun())
             rr.log(f"{frame}/image", annotated.to_rerun())
 
         # the answers: per verified instance, every sighting's cloud colored
