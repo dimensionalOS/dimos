@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""cuVSLAM on a RealSense stereo camera.
+"""dimSLAM on a RealSense stereo camera.
 
-    dimos run demo-cuvslam-realsense --viewer rerun --rerun-host 0.0.0.0
+    dimos run demo-dim-slam-realsense --viewer rerun --rerun-host 0.0.0.0
 
 ``world/odom_hist`` should retrace the route walked.
 """
@@ -26,12 +26,12 @@ from typing import Any
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.mapping.cuvslam.cuvslam import CuvslamOdometry
+from dimos.mapping.dim_slam.dim_slam import DimSlam
 from dimos.mapping.odometry_hist import OdometryHist, path_at_true_height
 from dimos.visualization.vis_module import vis_module
 
 
-def cuvslam_rerun_blueprint() -> Any:
+def dim_slam_rerun_blueprint() -> Any:
     """Rerun names entities after the topic, which both cameras share."""
     import rerun as rr
     import rerun.blueprint as rrb
@@ -52,7 +52,13 @@ def cuvslam_rerun_blueprint() -> Any:
     )
 
 
-demo_cuvslam_realsense = (
+rerun_config = {
+    "blueprint": dim_slam_rerun_blueprint,
+    "visual_override": {"world/odom_hist": path_at_true_height},
+}
+
+
+demo_dim_slam_realsense = (
     autoconnect(
         RealSenseCamera.blueprint(
             fps=30,
@@ -61,14 +67,11 @@ demo_cuvslam_realsense = (
             enable_color=False,
             enable_depth=False,
         ),
-        CuvslamOdometry.blueprint(camera_mode="stereo"),
+        DimSlam.blueprint(camera_mode="stereo"),
         OdometryHist.blueprint(),
         vis_module(
             global_config.viewer,
-            rerun_config={
-                "blueprint": cuvslam_rerun_blueprint,
-                "visual_override": {"world/odom_hist": path_at_true_height},
-            },
+            rerun_config=rerun_config,
         ),
     )
     .remappings(

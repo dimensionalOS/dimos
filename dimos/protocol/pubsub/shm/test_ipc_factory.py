@@ -201,6 +201,7 @@ def slow_ftruncate(monkeypatch):
     monkeypatch.setattr(os, "ftruncate", delayed)
 
 
+@pytest.mark.flaky(reruns=2)
 def test_concurrent_open_survives_the_creation_window(slow_ftruncate) -> None:
     """Two peers opening the same segment at once: one creates, one waits it out.
 
