@@ -26,6 +26,7 @@ from dimos_lcm.nav_msgs import (
 from dimos_lcm.std_msgs import Time as LCMTime
 import numpy as np
 
+from dimos.msgs.agent_activity import record_agent_encode
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
 from dimos.types.timestamped import Timestamped
@@ -347,7 +348,9 @@ class OccupancyGrid(Timestamped):
         """Encode this grid as metadata and a conservatively cleaned image for an agent."""
         from dimos.msgs.conversions.occupancy_grid import occupancy_grid_agent_encode
 
-        return occupancy_grid_agent_encode(self)
+        encoded = occupancy_grid_agent_encode(self)
+        record_agent_encode(type(self).__name__, encoded)
+        return encoded
 
     def lcm_encode(self) -> bytes:
         """Encode OccupancyGrid to LCM bytes."""

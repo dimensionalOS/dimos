@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
 
+from dimos.msgs.agent_activity import record_agent_encode
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -105,7 +106,7 @@ class PoseStamped(Pose, Timestamped):
     def agent_encode(self) -> dict[str, Any]:
         """Encode a stamped pose with explicit frames, component order, and units."""
         euler = self.orientation.to_euler()
-        return {
+        encoded = {
             "frame_id": self.frame_id,
             "timestamp_s": self.ts,
             "position_m": [self.x, self.y, self.z],
@@ -116,6 +117,8 @@ class PoseStamped(Pose, Timestamped):
                 math.degrees(euler.yaw),
             ],
         }
+        record_agent_encode(type(self).__name__, encoded)
+        return encoded
 
     def to_rerun(self) -> Archetype:
         """Convert to rerun Transform3D format.

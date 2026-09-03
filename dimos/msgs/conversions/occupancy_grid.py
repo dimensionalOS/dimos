@@ -39,13 +39,9 @@ def _structural_cells(cells: np.ndarray, resolution: float) -> np.ndarray:
 
     known = cells >= 0
     occupied = (cells >= _OCCUPIED_THRESHOLD).astype(np.uint8)
-    component_count, labels, stats, _ = cv2.connectedComponentsWithStats(
-        occupied, connectivity=8
-    )
+    component_count, labels, stats, _ = cv2.connectedComponentsWithStats(occupied, connectivity=8)
     retained = np.zeros_like(occupied)
-    min_component_cells = max(
-        1, math.ceil(_MIN_COMPONENT_AREA_M2 / resolution**2 - 1e-12)
-    )
+    min_component_cells = max(1, math.ceil(_MIN_COMPONENT_AREA_M2 / resolution**2 - 1e-12))
     for label in range(1, component_count):
         if stats[label, cv2.CC_STAT_AREA] >= min_component_cells:
             retained[labels == label] = 1

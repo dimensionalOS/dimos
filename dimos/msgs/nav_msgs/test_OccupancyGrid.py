@@ -16,6 +16,7 @@
 """Test the OccupancyGrid convenience class."""
 
 import base64
+import json
 import pickle
 
 import numpy as np
@@ -127,6 +128,20 @@ def test_agent_encode_contains_metadata_and_cleaned_world_oriented_map() -> None
         [[255, 255, 255], [0, 0, 0], [0, 0, 0], [255, 255, 255]],
         [[255, 255, 255], [255, 255, 255], [255, 255, 255], [127, 127, 127]],
     ]
+
+
+def test_agent_encode_activity_externalizes_image(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DIMOS_AGENT_ACTIVITY_DIR", str(tmp_path))
+    grid = OccupancyGrid(grid=np.zeros((2, 3), dtype=np.int8), resolution=0.1)
+
+    grid.agent_encode()
+
+    event = json.loads((tmp_path / "events.jsonl").read_text())
+    image = event["output"][1]["image_url"]["url"]
+    assert event["message_type"] == "OccupancyGrid"
+    assert image["media_type"] == "image/png"
+    assert image["bytes"] > 0
+    assert (tmp_path / "media" / image["activity_media"]).is_file()
 
 
 def test_agent_encode_filter_is_resolution_aware_and_preserves_openings() -> None:

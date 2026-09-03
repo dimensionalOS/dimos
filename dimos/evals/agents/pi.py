@@ -293,7 +293,11 @@ class Pi:
         proxy; ``_command`` names models as ``dimos/<model>``."""
         agent_dir = run_dir / ".pi-agent"
         agent_dir.mkdir(parents=True, exist_ok=True)
-        model: dict[str, Any] = {"id": self.model, "reasoning": True}
+        model: dict[str, Any] = {
+            "id": self.model,
+            "reasoning": True,
+            "input": ["text", "image"],
+        }
         if cost := _registry_cost(self.cli, self.model):
             model["cost"] = cost
         provider = {
@@ -311,6 +315,7 @@ class Pi:
         passed = {k: v for k, v in os.environ.items() if k in keep or k.startswith("DIMOS_")}
         return {
             **passed,
+            "DIMOS_AGENT_ACTIVITY_DIR": str(run_dir / "agent-activity"),
             "PI_CODING_AGENT_DIR": str(run_dir / ".pi-agent"),
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",

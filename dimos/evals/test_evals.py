@@ -45,7 +45,6 @@ from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.image_file import ImageFile
 from dimos.evals.environments.occupancy_dataset import OccupancyDataset
-from dimos.evals.environments.pose_trajectory_dataset import PoseTrajectoryDataset
 from dimos.evals.environments.sim import Sim
 from dimos.evals.runner import EvalRunner
 from dimos.evals.scorers import (
@@ -348,9 +347,7 @@ def test_occupancy_dataset_exposes_only_derived_costmaps(
         grids = list(running.streams[0])
         assert len(grids) == 3
         assert len({obs.data.grid.shape for obs in grids}) == 1
-        assert len(
-            {(obs.data.origin.position.x, obs.data.origin.position.y) for obs in grids}
-        ) == 1
+        assert len({(obs.data.origin.position.x, obs.data.origin.position.y) for obs in grids}) == 1
         assert all(obs.data.agent_encode()[-1]["type"] == "image_url" for obs in grids)
         spy = SpyChat(reply="yes")
         QuestionAnswer(chat_model=spy).run(
@@ -359,30 +356,6 @@ def test_occupancy_dataset_exposes_only_derived_costmaps(
         content = spy.seen[0][-1].content
         assert isinstance(content, list)
         assert sum(block.get("type") == "image_url" for block in content) == 3
-    finally:
-        env.stop()
-
-
-def test_pose_trajectory_dataset_preserves_full_odom_as_one_path(
-    dataset: str, tmp_path: Path
-) -> None:
-    env = PoseTrajectoryDataset(dataset)
-    env.preflight(QuestionAnswer())
-    running = env.start("")
-    try:
-        assert [stream.name for stream in running.streams] == ["trajectory"]
-        (observation,) = list(running.streams[0])
-        assert len(observation.data.poses) == 5
-        assert observation.data.frame_id == "world"
-
-        spy = SpyChat(reply="yes")
-        QuestionAnswer(chat_model=spy).run(
-            "Describe this path", running, tmp_path / "run", timeout_s=60.0
-        )
-        content = spy.seen[0][-1].content
-        assert isinstance(content, list)
-        assert sum(block.get("type") == "image_url" for block in content) == 1
-        assert "dimos.pose_path.v1" in _text(spy.seen[0])
     finally:
         env.stop()
 
@@ -993,6 +966,7 @@ def test_pi_runs_headless_over_the_recording_and_records_every_call(
     run_dir.mkdir()
     try:
         agent = Pi(cli=str(fake_pi), model="gpt-fake")
+        assert agent._env(run_dir)["DIMOS_AGENT_ACTIVITY_DIR"] == str(run_dir / "agent-activity")
         agent.preflight(env)
         trajectory = agent.run("how far?", running, run_dir, timeout_s=60.0)
     finally:
@@ -1017,6 +991,10 @@ def test_pi_runs_headless_over_the_recording_and_records_every_call(
         4,
     )
     assert totals.total_cached_tokens == 10 and totals.total_cost_usd == pytest.approx(0.01)
+    model_config = json.loads((run_dir / ".pi-agent" / "models.json").read_text())["providers"][
+        "dimos"
+    ]["models"][0]
+    assert model_config["input"] == ["text", "image"]
     assert sum(s.extra.reasoning_tokens for s in trajectory.steps if s.extra) == 2
     for i, step in enumerate((first, last)):  # every call captured whole, auth dropped
         assert step.extra is not None

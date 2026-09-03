@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import pickle
 import time
 
@@ -72,3 +73,15 @@ def test_agent_encode_labels_pose_frame_components_and_units() -> None:
         "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
         "roll_pitch_yaw_deg": pytest.approx([0.0, 0.0, 0.0]),
     }
+
+
+def test_agent_encode_records_activity_when_enabled(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DIMOS_AGENT_ACTIVITY_DIR", str(tmp_path))
+    pose = PoseStamped(ts=12.5, frame_id="world", position=(1.0, 2.0, 3.0))
+
+    encoded = pose.agent_encode()
+
+    event = json.loads((tmp_path / "events.jsonl").read_text())
+    assert event["event"] == "agent_encode"
+    assert event["message_type"] == "PoseStamped"
+    assert event["output"] == encoded

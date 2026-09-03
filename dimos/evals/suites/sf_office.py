@@ -20,13 +20,25 @@ from dimos.evals.environments.occupancy_dataset import OccupancyDataset
 from dimos.evals.types import EvalCase, Suite
 
 _DATASET = str(
-    Path.home() / "Documents/2026-08-27_sf_office_8mins_moshi/go2_SF_office_8mins_moshi.db"
+    # Path.home() / "Documents/go2_recordings/2026-08-27_sf_office_8mins_moshi/go2_SF_office_8mins_moshi.db"
+    Path.home()
+    / "Documents/go2_recordings/2026-07-18_sf_office_survey1/sf_office_go2_20260718_survey1.db"
+)
+
+# _DATASET = "go2_short"
+_EVIDENCE_INSTRUCTIONS = (
+    "Open the recording file listed in the system prompt and use only its global_costmap "
+    "OccupancyGrid observations. Call obs.data.agent_encode() on every observation. Use only "
+    "the returned text and image blocks as spatial evidence; do not inspect the raw grid array "
+    "or other message fields. Decode each returned data:image/png;base64 image_url to a PNG "
+    "file and inspect it with the read tool. "
 )
 
 SUITE: Suite = [
     EvalCase(
         id="sf_office_room_count",
-        inputs=(
+        inputs=_EVIDENCE_INSTRUCTIONS
+        + (
             "Infer all distinct rooms from the enclosing wall structure, not from furniture "
             "or isolated obstacles. Return one simple boundary polygon per room, kept inside "
             "that room's enclosing walls and excluding corridors and exterior unknown space. "
@@ -35,11 +47,13 @@ SUITE: Suite = [
         ),
         environment=OccupancyDataset(_DATASET, emit_every=0),
         grade=lambda _: 0.0,
+        timeout_s=120.0,
         tags=frozenset({"sf-office", "occupancy", "rooms", "exploratory"}),
     ),
     EvalCase(
         id="sf_office_door_locations",
-        inputs=(
+        inputs=_EVIDENCE_INSTRUCTIONS
+        + (
             "Identify each distinct door or door-sized opening in the wall structure. Each "
             "segment must span the free opening from one wall edge to the opposite wall edge; "
             "do not mark gaps caused by clutter or incomplete observations and do not return "
@@ -48,11 +62,13 @@ SUITE: Suite = [
         ),
         environment=OccupancyDataset(_DATASET, emit_every=0),
         grade=lambda _: 0.0,
+        timeout_s=120.0,
         tags=frozenset({"sf-office", "occupancy", "doors", "exploratory"}),
     ),
     EvalCase(
         id="sf_office_movement_hotspots",
-        inputs=(
+        inputs=_EVIDENCE_INSTRUCTIONS
+        + (
             "Identify areas whose changes across snapshots provide the strongest evidence of "
             "moving objects, rather than newly observed static map structure. Return one "
             "simple boundary polygon per distinct hotspot; merge overlapping hotspot regions "
@@ -62,11 +78,13 @@ SUITE: Suite = [
         # Roughly one cumulative grid every 20 seconds at this recording's lidar rate.
         environment=OccupancyDataset(_DATASET, emit_every=150),
         grade=lambda _: 0.0,
+        timeout_s=120.0,
         tags=frozenset({"sf-office", "occupancy", "motion", "temporal", "exploratory"}),
     ),
     EvalCase(
         id="sf_office_closed_doors",
-        inputs=(
+        inputs=_EVIDENCE_INSTRUCTIONS
+        + (
             "Identify doors that the temporal snapshots show as closed, not merely occluded or "
             "unknown. Each segment must span the closed doorway from one wall edge to the "
             "opposite wall edge, with no duplicates. Return only a JSON list in world-frame "
@@ -74,13 +92,13 @@ SUITE: Suite = [
         ),
         environment=OccupancyDataset(_DATASET, emit_every=150),
         grade=lambda _: 0.0,
-        tags=frozenset(
-            {"sf-office", "occupancy", "doors", "temporal", "exploratory"}
-        ),
+        timeout_s=120.0,
+        tags=frozenset({"sf-office", "occupancy", "doors", "temporal", "exploratory"}),
     ),
     EvalCase(
         id="sf_office_door_cover_route",
-        inputs=(
+        inputs=_EVIDENCE_INSTRUCTIONS
+        + (
             "Find the shortest traversable route that visits every visible door opening. "
             "Consecutive waypoints define straight path segments: add enough waypoints that "
             "every segment remains entirely in observed white free space and never crosses or "
@@ -90,13 +108,13 @@ SUITE: Suite = [
         ),
         environment=OccupancyDataset(_DATASET, emit_every=150),
         grade=lambda _: 0.0,
-        tags=frozenset(
-            {"sf-office", "occupancy", "doors", "routing", "temporal", "exploratory"}
-        ),
+        timeout_s=120.0,
+        tags=frozenset({"sf-office", "occupancy", "doors", "routing", "temporal", "exploratory"}),
     ),
     EvalCase(
         id="sf_office_hide_and_seek",
-        inputs=(
+        inputs=_EVIDENCE_INSTRUCTIONS
+        + (
             "Choose the best place to hide in this space. The point must be inside observed "
             "white free space, not inside or beyond black occupied cells or gray unknown space. "
             "Prefer a location concealed by mapped obstacles while still reachable through "
@@ -104,8 +122,7 @@ SUITE: Suite = [
         ),
         environment=OccupancyDataset(_DATASET, emit_every=0),
         grade=lambda _: 0.0,
-        tags=frozenset(
-            {"sf-office", "occupancy", "spatial-reasoning", "exploratory"}
-        ),
+        timeout_s=120.0,
+        tags=frozenset({"sf-office", "occupancy", "spatial-reasoning", "exploratory"}),
     ),
 ]
