@@ -153,19 +153,30 @@ class DataBrowser(App[None]):
                 Text(state, style="green" if state == "complete" else "yellow"),
                 height=None,
             )
+        # Measure auto-height rows now instead of on idle: the deferred pass
+        # repaints via the virtual_size reactive, which skips when total height
+        # lands unchanged (0/1-topic toggles) and leaves the post-clear blank
+        # frame on screen; it also lets the cursor restore scroll against
+        # zero-height rows.
+        table._require_update_dimensions = False
+        table._new_rows.clear()
+        table._update_dimensions(set(table.rows.keys()))
         if selected:
             for i, u in enumerate(self._rows):
                 if u["id"] == selected["id"]:
                     table.move_cursor(row=i)
                     break
+        table.refresh()
 
     def on_data_table_row_selected(self, _: DataTable.RowSelected) -> None:
         self.action_toggle_topics()
 
     def action_toggle_topics(self) -> None:
-        if row := self._selected():
-            self._expanded ^= {row["id"]}
-            self._render()
+        row = self._selected()
+        if not row or not _topics(row):  # nothing to expand: don't rebuild at all
+            return
+        self._expanded ^= {row["id"]}
+        self._render()
 
     def action_detail(self) -> None:
         if row := self._selected():

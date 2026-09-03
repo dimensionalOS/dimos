@@ -44,6 +44,12 @@ def _seeded_cloud() -> tuple[CloudData, bytes]:
     t.uploads["u1"] = dict(
         t.uploads["u0"], filename="chunk.db.lz4", kind="blob", manifest=None, sha256="x"
     )
+    t.uploads["u2"] = dict(
+        t.uploads["u0"],
+        filename="one.db",
+        sha256="y",
+        manifest={"streams": [{"name": "/global_costmap_updates_throttled_full"}]},
+    )
     return CloudData(MultipartBackend(DataApi(t), "", None, retries=1)), blob
 
 
@@ -55,7 +61,7 @@ async def test_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         await app.workers.wait_for_complete()
         await pilot.pause()
         table = app.query_one(DataTable)
-        assert table.row_count == 2
+        assert table.row_count == 3
         assert str(table.get_row_at(0)[4]) == "stash@dimensional.org"
         assert str(table.get_row_at(0)[7]) == "2 topics"
 
@@ -64,10 +70,21 @@ async def test_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         await pilot.press("space")  # collapse again
         assert str(table.get_row_at(0)[7]) == "2 topics"
 
-        # zero-topic row: expanding must not create a zero-height row (broke layout)
+        # zero-topic row: toggling is a no-op — a rebuild whose geometry is
+        # unchanged used to leave the post-clear blank frame on screen
         await pilot.press("down", "enter")
+        assert not app._expanded
         assert str(table.get_row_at(1)[7]) == "0 topics"
-        assert all(row.height >= 1 for row in table.rows.values())
+
+        # one wrapping topic: heights must be valid immediately (sync measure),
+        # without waiting for the idle pass
+        await pilot.press("down")
+        heights = [r.height for r in table.rows.values()]
+        await pilot.press("enter")
+        assert str(table.get_row_at(2)[7]) == "/global_costmap_updates_throttled_full"
+        assert [r.height for r in table.rows.values()][2] > heights[2]
+        assert all(r.height >= 1 for r in table.rows.values())
+        await pilot.press("space", "up")  # collapse, back to zero-topic row
 
         await pilot.press("d")
         assert isinstance(app.screen, DetailScreen)
