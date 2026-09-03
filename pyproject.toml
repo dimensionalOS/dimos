@@ -180,9 +180,6 @@ Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
 misc = [
-    # Core requirements
-    "python-multipart>=0.0.27",
-
     # Developer Specific
     "ipykernel",
 
@@ -244,6 +241,7 @@ agents = [
 
 web = [
     "fastapi>=0.115.6",
+    "python-multipart>=0.0.27",
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
     "jinja2>=3.1.6",
@@ -510,6 +508,7 @@ tests-self-hosted = [
     "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
+    "dim-odom>=0.4.1",
 ]
 docs = [
     "mkdocs-awesome-nav>=3.3.0",
@@ -526,7 +525,7 @@ dev = [
 required-version = ">=0.9.17"
 default-groups = ["tests"]
 exclude-newer = "7 days"
-exclude-newer-package = { dimos-viewer = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false }
+exclude-newer-package = { dimos-viewer = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false }
 override-dependencies = [
     # ultralytics, unitree-sdk2py-dimos and unitree-webrtc-connect depend on
     # opencv-python, which ships the same cv2/ tree as our opencv-contrib-python

@@ -129,7 +129,7 @@ class MultipartBackend:
             else:
                 artifact = path
             size = artifact.stat().st_size
-            create = self.api.create(
+            spec = dict(
                 filename=artifact.name,
                 size=size,
                 sha256=_sha256(artifact),
@@ -139,6 +139,7 @@ class MultipartBackend:
                 manifest=manifest,
                 part_size=part_size,
             )
+            create = self.api.create(**spec)
             if create["state"] == "complete":
                 return {**create, "skipped": True}
             uid = create["upload_id"]
@@ -146,16 +147,31 @@ class MultipartBackend:
             ps = create["part_size"]
             done = min(len(have) * ps, size)
             tick("upload", done, size)
+            urls = {p["part_number"]: p["url"] for p in create["part_urls"]}
             with artifact.open("rb") as f:
-                for part in create["part_urls"]:
-                    if part["part_number"] in have:
+                for n in sorted(urls):
+                    if n in have:
                         continue
-                    f.seek((part["part_number"] - 1) * ps)
+                    f.seek((n - 1) * ps)
                     chunk = f.read(ps)
-                    self._retry(
-                        functools.partial(self.api.put_part, part["url"], chunk),
-                        f"part {part['part_number']}",
-                    )
+                    try:
+                        self._retry(
+                            functools.partial(self.api.put_part, urls[n], chunk), f"part {n}"
+                        )
+                    except RuntimeError as e:
+                        if "403" not in str(e):
+                            raise
+                        # Part URLs are presigned at create and share one expiry
+                        # clock; an upload slower than the TTL outlives them and
+                        # S3 answers 403. create is idempotent by sha256 and
+                        # re-signs every URL.
+                        fresh = self.api.create(**spec)
+                        if fresh["state"] == "complete":
+                            return {**fresh, "skipped": True}
+                        urls = {p["part_number"]: p["url"] for p in fresh["part_urls"]}
+                        self._retry(
+                            functools.partial(self.api.put_part, urls[n], chunk), f"part {n}"
+                        )
                     done += len(chunk)
                     tick("upload", done, size)
             parts = sorted(self.status(uid)["parts"], key=lambda p: p["part_number"])
