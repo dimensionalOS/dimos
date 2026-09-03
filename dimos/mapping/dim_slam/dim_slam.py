@@ -122,10 +122,8 @@ class SourceConfig(BaseModel):
 class DimSlamConfig(NativeModuleConfig):
     cwd: str | None = "rust"
     executable: str = "result/bin/dim_slam"
-    # The dimos-repo input is this repo, so writing the lock during evaluation changes the
-    # tree being hashed and the build dies on its own edit.
     build_command: str | None = Field(
-        default_factory=lambda: f"nix build -L --no-write-lock-file 'path:.#{sdk_variant()}'"
+        default_factory=lambda: f"nix build -L 'path:.#{sdk_variant()}'"
     )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=driver_env)
