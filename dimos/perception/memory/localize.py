@@ -14,20 +14,11 @@
 
 """Query-time object localization: text prompt to latest 3D pose and cloud.
 
-Search memory with embeddings (SigLIP,
-frame-level), open-vocabulary detection (OWLv2, calibrated per-box scores),
-segmentation (EdgeTAM), projection to 3D through the rig's geometry - an
-aligned depth stream or a registered pointcloud stream. Two
-algorithm rules distinguish it from a best-crop search:
-
-* **Latest-pose semantics.** Every verified instance is returned,
-  latest-seen first, and each instance's position follows its latest
-  sighting: "where is it now", never "where did it match best". The
-  instance's cloud is the union of every viewpoint that saw it.
-* **Calibrated refusal.** Every stage carries a score and the answer can be
-  empty: no accept-level detection, no multi-view confirmation. Coexisting
-  same-label instances below the refusal margin are flagged, never merged
-  or silently dropped.
+SigLIP frame retrieval, OWLv2 detection, EdgeTAM segmentation, then a lift to
+3D through the rig's geometry. Two rules distinguish it from a best-crop
+search: every verified instance is returned latest-seen first and positioned
+by its latest sighting ("where is it now"), and every stage carries a score so
+the answer can be empty rather than a guess.
 """
 
 from __future__ import annotations
@@ -40,10 +31,10 @@ import numpy as np
 
 from dimos.memory.embed import EmbedImages
 from dimos.memory.transform import QualityWindow, peaks
-from dimos.perception.detection.identity import Identity, fused, spatial
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.perception.memory.rig import CLOUD_MIN_POINTS, Rig
+from dimos.perception.memory.rig import Rig
 from dimos.perception.memory.types import Localization, LocalizePolicy, Support
 from dimos.utils.logging_config import setup_logger
 
@@ -56,30 +47,128 @@ if TYPE_CHECKING:
     from dimos.models.segmentation.edge_tam import EdgeTAMImageSegmenter
     from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
     from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
-    from dimos.perception.memory.identity_store import IdentityStore
 
 logger = setup_logger()
 
 _SCORE_CACHE_MAX = 8192
 
+# One row per accepted sighting. Everything verification reports is a reduction
+# over these columns, so no detection - and no image - is retained.
+M_TS, M_SCORE, M_CX, M_CY, M_CZ, M_KX, M_KY, M_KZ = range(8)
+M_WIDTH = 8
 
-# A support candidate is an identity group: the member sightings of one
-# object. Everything a group reports is a plain function over its members.
+
+@dataclass
+class IndexFrame:
+    """What frame selection needs. The pixels stay in the color stream."""
+
+    ts: float
+    frame_id: str
+    sharpness: float
 
 
-def _similarity(obs: Any) -> float:
-    return float(obs.similarity)
+@dataclass
+class LocalizeTrace:
+    """Artifacts a renderer needs; collected only when one is passed in."""
+
+    detection_frames: list[Any] = field(default_factory=list)
+    answers: list[list[Detection3DPC]] = field(default_factory=list)
+    backdrop_ts: float | None = None
+    first_match_ts: float | None = None
+
+
+@dataclass
+class Groups:
+    """Sightings of one label grouped into objects, cumulative across calls.
+
+    Parallel per-group arrays. The only geometry held is each group's fused
+    union and its latest member's own cloud, which the answer's orientation
+    comes from; per-sighting evidence is eight floats in a flat row.
+    """
+
+    centers: list[np.ndarray] = field(default_factory=list)  # running weighted center
+    clouds: list[PointCloud2] = field(default_factory=list)  # fused union
+    weights: list[np.ndarray | None] = field(default_factory=list)  # per fused point
+    raw: list[float] = field(default_factory=list)  # raw points folded in so far
+    latest: list[PointCloud2] = field(default_factory=list)
+    latest_ts: list[float] = field(default_factory=list)
+    members: list[list[float]] = field(default_factory=list)  # flat, M_WIDTH per row
+    trace: list[list[Detection3DPC]] = field(default_factory=list)
+    ingested: set[float] = field(default_factory=set)  # frame ts already lifted
+    ungrounded: tuple[float, float] | None = None  # best (score, ts) with no depth
+
+    def add(self, det: Detection3DPC, radius: float, voxel: float) -> int:
+        """Assign one sighting to its object, folding its cloud in."""
+        points = np.asarray(det.pointcloud.pointcloud.points)
+        centroid = points.mean(axis=0)
+        camera = (-det.transform).translation
+
+        hit = next(
+            (i for i, c in enumerate(self.centers) if np.linalg.norm(c - centroid) <= radius), -1
+        )
+        if hit < 0:
+            hit = len(self.centers)
+            self.centers.append(centroid)
+            self.clouds.append(det.pointcloud)
+            self.weights.append(None)
+            self.raw.append(float(len(points)))
+            self.latest.append(det.pointcloud)
+            self.latest_ts.append(det.ts)
+            self.members.append([])
+            self.trace.append([])
+        else:
+            self._fuse(hit, det.pointcloud.ts, points, centroid, voxel)
+            if det.ts > self.latest_ts[hit]:
+                self.latest[hit] = det.pointcloud
+                self.latest_ts[hit] = det.ts
+
+        self.members[hit].extend(
+            (det.ts, float(det.confidence), *centroid, camera.x, camera.y, camera.z)
+        )
+        return hit
+
+    def _fuse(self, i: int, ts: float, points: np.ndarray, centroid: np.ndarray, voxel: float):
+        """Voxel-average a sighting into the group's union.
+
+        Each fused point carries the raw points behind it, so the union is a
+        weighted mean over every viewpoint rather than a mean of means, and the
+        running center follows the same counts.
+        """
+        held = np.asarray(self.clouds[i].pointcloud.points)
+        na, nb = self.raw[i], float(len(points))
+        self.centers[i] = (na * self.centers[i] + nb * centroid) / (na + nb)
+        self.raw[i] = na + nb
+        merged = np.vstack([held, points])
+        ts = max(self.clouds[i].ts, ts)
+        frame = self.clouds[i].frame_id
+
+        if voxel > 0:
+            w = np.ones(len(merged))
+            weights = self.weights[i]
+            if weights is not None:
+                w[: len(weights)] = weights
+            _, inverse = np.unique(
+                np.floor(merged / voxel).astype(np.int64), axis=0, return_inverse=True
+            )
+            wsum = np.zeros(inverse.max() + 1)
+            np.add.at(wsum, inverse, w)
+            psum = np.zeros((len(wsum), 3))
+            np.add.at(psum, inverse, merged * w[:, None])
+            merged = psum / wsum[:, None]
+            self.weights[i] = wsum
+        self.clouds[i] = PointCloud2.from_numpy(merged, frame_id=frame, timestamp=ts)
+
+    def rows(self, i: int) -> np.ndarray:
+        return np.asarray(self.members[i]).reshape(-1, M_WIDTH)
 
 
 def _settled(index: Stream[Any, Any], spacing: float) -> set[int]:
-    """Ids of the index frames left once sub-spacing duplicates are dropped.
+    """Ids left once sub-spacing duplicates are dropped.
 
     The index emits the sharpest frame per window from a fixed phase, so a
     camera that moves between windows leaves both the settled frame and the
     blurred one taken while it was still moving. Their poses differ, so the
-    blurred one passes as a second viewpoint and lifts to a displaced cloud.
-    A pair closer than half the index window is one window's content split
-    by that phase; only the sharper of the two survives here.
+    blurred one would pass as a second viewpoint and lift to a displaced cloud.
     """
     ids: set[int] = set()
     last_id = -1
@@ -96,116 +185,32 @@ def _settled(index: Stream[Any, Any], spacing: float) -> set[int]:
     return ids
 
 
-def _centroid(det: Detection3DPC) -> np.ndarray:
-    centroid: np.ndarray = np.asarray(det.pointcloud.pointcloud.points).mean(axis=0)
-    return centroid
-
-
-def _camera_position(det: Detection3DPC) -> np.ndarray:
-    position = (-det.transform).translation
-    return np.array([position.x, position.y, position.z])
-
-
-def _group_center(members: list[Detection3DPC]) -> np.ndarray:
-    center: np.ndarray = np.mean(np.stack([_centroid(d) for d in members]), axis=0)
-    return center
-
-
-def _max_score(members: list[Detection3DPC]) -> float:
-    return max(d.confidence for d in members)
-
-
-def _latest(members: list[Detection3DPC]) -> Detection3DPC:
-    return max(members, key=lambda d: d.ts)
-
-
-def _interval(members: list[Detection3DPC]) -> tuple[float, float]:
-    times = [d.ts for d in members]
-    return min(times), max(times)
-
-
-def _n_views(members: list[Detection3DPC]) -> int:
-    return len({tuple(np.round(_camera_position(d), 2)) for d in members})
-
-
-@dataclass
-class LocalizeTrace:
-    """Intermediate artifacts collected for rendering; filled when passed in."""
-
-    detection_frames: list[Any] = field(default_factory=list)  # Observation[ImageDetections2D]
-    matched: list[tuple[float, Detection3DPC]] = field(default_factory=list)
-    verified: list[tuple[float, Detection3DPC]] = field(default_factory=list)
-    answers: list[list[Detection3DPC]] = field(default_factory=list)  # sightings per instance
-    backdrop_ts: float | None = None
-
-
-def _quaternion_from_matrix(rotation: np.ndarray) -> tuple[float, float, float, float]:
-    from scipy.spatial.transform import Rotation
-
-    x, y, z, w = Rotation.from_matrix(rotation).as_quat()
-    return (float(x), float(y), float(z), float(w))
-
-
-def _azimuth_coverage(members: list[Detection3DPC], center: np.ndarray) -> float:
-    directions = []
-    for det in members:
-        v = _camera_position(det) - center
-        norm = np.linalg.norm(v)
-        if norm > 1e-6:
-            directions.append(v / norm)
-    if not directions:
-        return 0.0
-    dirs = np.stack(directions)
-    azimuth = np.arctan2(dirs[:, 1], dirs[:, 0])
-    bins = set(((azimuth + math.pi) / (2 * math.pi) * 8).astype(int) % 8)
-    return len(bins) / 8.0
-
-
-def _axes_observed(members: list[Detection3DPC], center: np.ndarray) -> tuple[bool, bool, bool]:
-    directions = []
-    for det in members:
-        v = _camera_position(det) - center
-        norm = np.linalg.norm(v)
-        if norm > 1e-6:
-            directions.append(v / norm)
-    if not directions:
-        return (False, False, False)
-    dirs = np.stack(directions)
-    return tuple(bool((np.abs(dirs[:, i]) > 0.3).any()) for i in range(3))  # type: ignore[return-value]
-
-
 def _lift(
-    detections: ImageDetections2D[Any],
-    rig: Rig,
-    policy: LocalizePolicy,
-    plane: Any | None = None,
+    detections: ImageDetections2D[Any], rig: Rig, policy: LocalizePolicy, plane: Any | None
 ) -> list[Detection3DPC]:
     """Gate a frame's lifted detections."""
-    pose = rig.camera_pose(detections.ts)
-    if pose is None:
-        return []
-    camera = np.array([pose.position.x, pose.position.y, pose.position.z])
-    lifted = rig.lift(detections, plane)
+    pose = rig.camera_pose(detections.ts, detections.image.frame_id)
+    lifted = rig.lift(detections, plane) if pose is not None else None
     if lifted is None:
         return []
+    camera = np.array([pose.position.x, pose.position.y, pose.position.z])
 
-    floor = policy.min_depth_points if rig.cloud is None else CLOUD_MIN_POINTS
     valid: list[Detection3DPC] = []
     for det3d in lifted:
         points = np.asarray(det3d.pointcloud.pointcloud.points)
-        if len(points) < floor:
+        if len(points) < policy.min_points:
             continue
-        extent = points.max(axis=0) - points.min(axis=0)
-        if float(extent.max()) > policy.max_object_extent_m:
+        if float((points.max(axis=0) - points.min(axis=0)).max()) > policy.max_object_extent_m:
             continue
-        ranges = np.linalg.norm(points - camera, axis=1)
-        if float(np.median(ranges)) < policy.min_camera_range_m:
+        if float(np.median(np.linalg.norm(points - camera, axis=1))) < policy.min_camera_range_m:
             continue
         if plane is not None:
             heights = rig.support_heights(detections.ts, plane, points)
-            low = float(np.quantile(heights, 0.05))
-            high = float(np.quantile(heights, 0.95))
-            if low > policy.surface_patch_min_drop_m and high < policy.surface_patch_max_rise_m:
+            # A cloud hugging the support is a patch of the surface, not an object.
+            if (
+                float(np.quantile(heights, 0.05)) > policy.surface_patch_min_drop_m
+                and float(np.quantile(heights, 0.95)) < policy.surface_patch_max_rise_m
+            ):
                 continue
         valid.append(det3d)
     return valid
@@ -221,19 +226,27 @@ def embed_index(
 ) -> Stream[Any, Any]:
     """SigLIP-embedded, world-posed frame index at the rig's embed rate.
 
-    Built once per window and handed to every ``localize`` call on it: the
-    embed forwards are what a second query would otherwise repeat.
+    Built once per window and handed to every ``localize`` call on it. Only the
+    pose, the embedding and the sharpness are kept; the pixels are re-read from
+    the color stream for the handful of frames that reach the detector, so the
+    index costs bytes per frame instead of a decoded image.
     """
     rig = rig or Rig.from_store(store)
-    posed = (
+    embedded: Stream[Any, Any] = (
         rig.color.after(t0)
         .before(t1)
         .filter(lambda obs: obs.data.brightness > 0.1)
         .transform(QualityWindow(lambda img: img.sharpness, window=1.0 / rig.embed_hz))
         .map(lambda obs: obs.derive(data=obs.data, pose=rig.index_pose(obs)))
         .filter(lambda obs: obs.pose is not None)
+        .transform(EmbedImages(siglip))
+        .map(
+            lambda obs: obs.derive(
+                data=IndexFrame(obs.ts, obs.data.frame_id, float(obs.data.sharpness))
+            )
+        )
+        .materialize()
     )
-    embedded: Stream[Any, Any] = posed.transform(EmbedImages(siglip)).materialize()
     logger.info(f"index: {embedded.count()} frames embedded over {t1 - t0:.1f}s")
     return embedded
 
@@ -250,37 +263,20 @@ def localize(
     require_pose: bool = True,
     policy: LocalizePolicy | None = None,
     trace: LocalizeTrace | list[LocalizeTrace] | None = None,
-    identity_store: IdentityStore | None = None,
+    groups: dict[str, Groups] | None = None,
 ) -> list[Localization] | list[list[Localization]]:
     """Every verified 3D instance of *query*, latest-seen first.
 
-    Each instance's ``point_cloud`` is the union of every viewpoint that saw
-    it, and its position follows the latest sighting. An empty list is a
-    first-class answer: nothing reached the accept score, no support was
-    confirmed from a second viewpoint, or the best candidate had no valid
-    depth and ``require_pose`` holds. Coexisting instances of one label are
-    all returned; each carries ``ambiguity_margin`` against its rivals and
-    is flagged below ``refusal_margin`` - never a silent guess.
+    An empty list is a first-class answer: nothing reached the accept score, no
+    support was confirmed from a second viewpoint, or the best candidate had no
+    valid depth and ``require_pose`` holds. Coexisting instances of one label
+    are all returned, each carrying ``ambiguity_margin`` against its rivals.
 
-    A list *query* shares one detection pass: every label's semantic peaks
-    mark its sightings, each peak takes the frames adjacent to it in time
-    until the verification policy's viewpoints are covered, and each unique
-    selected frame is scored against every label, segmented and lifted once.
-    One instance list per label, in input order. ``trace`` then takes a list
-    of the same length.
-
-    The index, the rig and the three models belong to the caller: nothing
-    here is loaded or stopped, so one process can call this repeatedly on
-    warm weights, and every query on one window reuses the same embeddings.
-    The window is the index's - build it with :func:`embed_index`. Without a
-    ``rig`` the store's shape decides one, and without a ``policy`` the rig
-    supplies scale-appropriate defaults.
-
-    An ``identity_store`` makes evidence cumulative: each label's groups
-    persist across calls, frames the store already ingested for a label are
-    skipped entirely, and an object stays answerable after it leaves the
-    window, its position still following the latest sighting. Without one,
-    every call verifies from scratch inside its window.
+    A list *query* shares one detection pass and returns one list per label, in
+    input order; ``trace`` then takes a list of the same length. The index, the
+    rig and the models belong to the caller. A ``groups`` dict makes evidence
+    cumulative across calls: frames already ingested for a label are skipped,
+    and an object stays answerable after it leaves the window.
     """
     rig = rig or Rig.from_store(store)
     policy = policy or rig.default_localize_policy()
@@ -289,14 +285,14 @@ def localize(
     traces: list[LocalizeTrace | None] = (
         list(trace) if isinstance(trace, list) else [trace] * len(queries)
     )
+    state = [(groups if groups is not None else {}).setdefault(q, Groups()) for q in queries]
 
     index_count = index.count()
     settled = _settled(index, policy.settled_window_fraction / rig.embed_hz)
     source = index.filter(lambda obs: obs.id in settled)
     candidate_ids: set[int] = set()
     expanded: set[float] = set()
-    anchor_x = 0.0
-    anchor_y = 0.0
+    anchor = np.zeros(2)
     anchor_count = 0
 
     for q in queries:
@@ -306,7 +302,7 @@ def localize(
             .order_by("ts")
             .transform(
                 peaks(
-                    key=_similarity,
+                    key=lambda obs: float(obs.similarity),
                     prominence=policy.peak_prominence,
                     distance=policy.peak_distance_s,
                     width=policy.peak_width_s,
@@ -320,23 +316,18 @@ def localize(
                 query_embedding, k=policy.tail_k
             )
         )
-        peak_count = 0
         for peak in sightings:
-            peak_pose = cast("PoseTuple", peak.pose_tuple)
-            peak_count += 1
+            anchor += cast("PoseTuple", peak.pose_tuple)[:2]
             anchor_count += 1
-            anchor_x += peak_pose[0]
-            anchor_y += peak_pose[1]
             candidate_ids.add(peak.id)
             if peak.ts in expanded:
                 continue
             expanded.add(peak.ts)
             gathered: Stream[Any, Any] = source.near(
                 peak.pose_stamped, radius=policy.verify_radius_m
-            ).transform(QualityWindow(lambda img: img.sharpness, window=policy.verify_window_s))
-            for obs in gathered:
-                candidate_ids.add(obs.id)
-        logger.info(f"localize {q!r}: {peak_count} semantic peaks of {index_count} embedded")
+            ).transform(QualityWindow(lambda f: f.sharpness, window=policy.verify_window_s))
+            candidate_ids.update(obs.id for obs in gathered)
+        logger.info(f"localize {q!r}: {len(sightings)} semantic peaks of {index_count} embedded")
 
     candidates = index.filter(lambda obs: obs.id in candidate_ids).order_by("ts")
     candidate_count = len(candidate_ids)
@@ -346,71 +337,48 @@ def localize(
     if candidate_count:
         from dimos.perception.memory.support_plane import fit_support_plane
 
-        mx = anchor_x / anchor_count
-        my = anchor_y / anchor_count
-        cell = (round(mx / policy.plane_cell_m), round(my / policy.plane_cell_m))
-        plane = rig._plane_cache.get(cell)
+        mean = anchor / anchor_count
+        cell = (round(mean[0] / policy.plane_cell_m), round(mean[1] / policy.plane_cell_m))
+        plane = rig.plane_cache.get(cell)
         if plane is None:
             stride = max(1, candidate_count // policy.plane_keyframes)
-            keyframes = []
-            for i, obs in enumerate(candidates):
-                if i % stride == 0:
-                    keyframes.append(obs)
-                    if len(keyframes) == policy.plane_keyframes:
-                        break
-            plane = fit_support_plane(rig, keyframes)
-            if plane is not None:
-                rig._plane_cache[cell] = plane
-
-    if identity_store is None:
-        entries = None
-        identities = [
-            Identity(is_same=spatial(policy.cluster_radius_m), merge=fused(policy.fuse_voxel_m))
-            for _ in queries
-        ]
-        ingested: list[set[float]] = [set() for _ in queries]
-        ungrounded: list[tuple[float, float] | None] = [None] * len(queries)  # (score, ts)
-    else:
-        entries = [
-            identity_store.get_or_create(
-                q, spatial(policy.cluster_radius_m), fused(policy.fuse_voxel_m)
+            plane = fit_support_plane(
+                rig,
+                [obs for i, obs in enumerate(candidates) if i % stride == 0][
+                    : policy.plane_keyframes
+                ],
             )
-            for q in queries
-        ]
-        identities = [entry.identity for entry in entries]
-        ingested = [entry.ingested for entry in entries]
-        ungrounded = [entry.ungrounded for entry in entries]
+            if plane is not None:
+                rig.plane_cache[cell] = plane
 
     floor = policy.candidate_floor
     cache = detector.score_cache
 
     def _detect(upstream: Iterator[Any]) -> Iterator[Any]:
         for obs in upstream:
-            active = [j for j in range(len(queries)) if obs.ts not in ingested[j]]
+            active = [j for j in range(len(queries)) if obs.ts not in state[j].ingested]
             if not active:
                 continue
-            if any((obs.ts, queries[j], floor) not in cache for j in active):
-                boxes, rows = detector.query_score_rows_batch([obs.data], queries, threshold=floor)[
-                    0
-                ]
+            keys = [(obs.ts, queries[j], floor) for j in active]
+            img = rig.frame_at(obs) if any(k not in cache for k in keys) else None
+            if img is not None:
+                boxes, rows = detector.query_score_rows_batch([img], queries, threshold=floor)[0]
                 for j, q in enumerate(queries):
                     keep = rows[:, j] >= floor
                     cache[(obs.ts, q, floor)] = (boxes[keep], rows[keep, j])
                     if len(cache) > _SCORE_CACHE_MAX:
                         cache.popitem(last=False)
-
-            rows_per_label: list[tuple[int, tuple[Any, Any]]] = []
-            for j in active:
-                key = (obs.ts, queries[j], floor)
+            for key in keys:
                 cache.move_to_end(key)
-                rows_per_label.append((j, cache[key]))
-                ingested[j].add(obs.ts)
-            if not any(len(scores) for _j, (_boxes, scores) in rows_per_label):
+            for j in active:
+                state[j].ingested.add(obs.ts)
+            if not any(len(cache[key][1]) for key in keys):
                 continue
-            img = obs.data
+            img = img if img is not None else rig.frame_at(obs)
+
             detections: list[Detection2DBBox] = []
-            for j, (boxes, scores) in rows_per_label:
-                for box, score in zip(boxes, scores, strict=True):
+            for j, key in zip(active, keys, strict=True):
+                for box, score in zip(*cache[key], strict=True):
                     det = Detection2DBBox(
                         bbox=(float(box[0]), float(box[1]), float(box[2]), float(box[3])),
                         track_id=len(detections),
@@ -431,21 +399,20 @@ def localize(
             lifted = _lift(frame, rig, policy, plane)
             grounded = {det3d.track_id for det3d in lifted}
             for det2d in frame:
-                j = det2d.class_id
-                best = ungrounded[j]
+                group = state[det2d.class_id]
+                best = group.ungrounded
                 if det2d.track_id not in grounded and (best is None or det2d.confidence > best[0]):
-                    ungrounded[j] = (det2d.confidence, det2d.ts)
+                    group.ungrounded = (det2d.confidence, det2d.ts)
             for det3d in lifted:
-                label_trace = traces[det3d.class_id]
-                if label_trace is not None:
-                    label_trace.matched.append((det3d.ts, det3d))
-                identities[det3d.class_id].add(det3d)
-            for j in range(len(queries)):
-                label_trace = traces[j]
-                if label_trace is None:
-                    continue
+                j = det3d.class_id
+                slot = state[j].add(det3d, policy.cluster_radius_m, policy.fuse_voxel_m)
+                if traces[j] is not None:
+                    state[j].trace[slot].append(det3d)
+                    if traces[j].first_match_ts is None:  # type: ignore[union-attr]
+                        traces[j].first_match_ts = det3d.ts  # type: ignore[union-attr]
+            for j, label_trace in enumerate(traces):
                 label_dets = [det for det in frame if det.class_id == j]
-                if label_dets:
+                if label_trace is not None and label_dets:
                     label_trace.detection_frames.append(
                         obs.derive(data=ImageDetections2D(image=frame.image, detections=label_dets))
                     )
@@ -455,148 +422,145 @@ def localize(
         lambda obs: obs.derive(data=segmenter.segment(obs.data))
     ).transform(_ingest).drain()
 
-    if entries is not None:
-        for entry, best in zip(entries, ungrounded, strict=True):
-            entry.ungrounded = best
-
     results = [
-        _finalize(
-            q,
-            identity=identities[j],
-            ungrounded_best=ungrounded[j],
-            rig=rig,
-            require_pose=require_pose,
-            policy=policy,
-            trace=traces[j],
-        )
-        for j, q in enumerate(queries)
+        _finalize(q, state[j], rig, require_pose, policy, traces[j]) for j, q in enumerate(queries)
     ]
     return results[0] if isinstance(query, str) else results
 
 
+def _orientation(cloud: PointCloud2) -> tuple[float, float, float, float]:
+    from scipy.spatial.transform import Rotation
+
+    try:
+        x, y, z, w = Rotation.from_matrix(np.asarray(cloud.oriented_bounding_box.R)).as_quat()
+    except Exception:
+        return (0.0, 0.0, 0.0, 1.0)
+    return (float(x), float(y), float(z), float(w))
+
+
 def _finalize(
     query: str,
-    *,
-    identity: Identity,
-    ungrounded_best: tuple[float, float] | None,
+    group: Groups,
     rig: Rig,
     require_pose: bool,
     policy: LocalizePolicy,
     trace: LocalizeTrace | None,
 ) -> list[Localization]:
+    rows = [group.rows(i) for i in range(len(group.centers))]
+    views = [len(np.unique(np.round(r[:, M_KX : M_KZ + 1], 2), axis=0)) for r in rows]
     verified = [
-        (merged, members)
-        for merged, members in zip(identity.merged, identity.groups, strict=True)
-        if _max_score(members) >= policy.accept_score and _n_views(members) >= policy.min_views
+        i
+        for i, r in enumerate(rows)
+        if r[:, M_SCORE].max() >= policy.accept_score and views[i] >= policy.min_views
     ]
     logger.info(
         f"verification {query!r}: "
         + ", ".join(
-            f"score={_max_score(g):.2f} views={_n_views(g)} obs={len(g)}" for g in identity.groups
+            f"score={r[:, M_SCORE].max():.2f} views={views[i]} obs={len(r)}"
+            for i, r in enumerate(rows)
         )
     )
-    if trace is not None:
-        for _merged, members in verified:
-            for det3d in members:
-                trace.verified.append((det3d.ts, det3d))
 
     if not verified:
-        if ungrounded_best is not None and ungrounded_best[0] >= policy.accept_score:
-            if require_pose:
-                logger.info(f"{query!r}: best candidate has no valid depth and require_pose is set")
-                return []
-            score, ts = ungrounded_best
-            return [
-                Localization(
-                    instance_id="query-0",
-                    semantic_score=score,
-                    identity_score=0.0,
-                    ambiguity_margin=1.0,
-                    position_world_xyz=None,
-                    orientation_world_xyzw=None,
-                    frame_id=rig.world_frame,
-                    support=None,
-                    pose_timestamp=ts,
-                    geometry_timestamp=ts,
-                    last_seen_timestamp=ts,
-                    point_cloud=None,
-                    coverage=0.0,
-                    n_views=1,
-                    reason="no_valid_depth",
-                )
-            ]
-        return []
-
-    verified.sort(key=lambda pair: _latest(pair[1]).ts, reverse=True)
-    instances: list[Localization] = []
-    for k, (merged, members) in enumerate(verified):
-        m_lo, m_hi = _interval(members)
-        rival_scores = [
-            _max_score(others)
-            for _m, others in verified
-            if others is not members
-            and not (_interval(others)[1] < m_lo or _interval(others)[0] > m_hi)  # coexisting
+        best = group.ungrounded
+        if best is None or best[0] < policy.accept_score:
+            return []
+        if require_pose:
+            logger.info(f"{query!r}: best candidate has no valid depth and require_pose is set")
+            return []
+        score, ts = best
+        return [
+            Localization(
+                instance_id="query-0",
+                semantic_score=score,
+                identity_score=0.0,
+                ambiguity_margin=1.0,
+                position_world_xyz=None,
+                orientation_world_xyzw=None,
+                frame_id=rig.world_frame,
+                support=None,
+                pose_timestamp=ts,
+                geometry_timestamp=ts,
+                last_seen_timestamp=ts,
+                point_cloud=None,
+                coverage=0.0,
+                n_views=1,
+                reason="no_valid_depth",
+            )
         ]
-        margin = _max_score(members) - max(rival_scores) if rival_scores else 1.0
-        reason = (
-            "ambiguous_between_coexisting_candidates" if margin < policy.refusal_margin else None
-        )
 
-        latest = _latest(members)
-        union = merged.pointcloud
+    verified.sort(key=lambda i: rows[i][:, M_TS].max(), reverse=True)
+    instances: list[Localization] = []
+    for k, i in enumerate(verified):
+        mine = rows[i]
+        score = float(mine[:, M_SCORE].max())
+        lo, hi = float(mine[:, M_TS].min()), float(mine[:, M_TS].max())
+        rivals = [
+            float(rows[j][:, M_SCORE].max())
+            for j in verified
+            if j != i
+            and not (rows[j][:, M_TS].max() < lo or rows[j][:, M_TS].min() > hi)  # coexisting
+        ]
+        margin = score - max(rivals) if rivals else 1.0
+
+        union = group.clouds[i]
         points = np.asarray(union.pointcloud.points)
         aabb_min, aabb_max = points.min(axis=0), points.max(axis=0)
-        try:
-            orientation = _quaternion_from_matrix(
-                np.asarray(latest.pointcloud.oriented_bounding_box.R)
+        centroids = mine[:, M_CX : M_CZ + 1]
+        offsets = mine[:, M_KX : M_KZ + 1] - centroids.mean(axis=0)  # center to camera
+        norms = np.linalg.norm(offsets, axis=1)
+        dirs = offsets[norms > 1e-6] / norms[norms > 1e-6, None]
+        if len(dirs):
+            octant = ((np.arctan2(dirs[:, 1], dirs[:, 0]) + math.pi) / (2 * math.pi) * 8).astype(
+                int
             )
-        except Exception:
-            orientation = (0.0, 0.0, 0.0, 1.0)
+            coverage = len(set(octant % 8)) / 8.0
+            axes = tuple(bool((np.abs(dirs[:, a]) > 0.3).any()) for a in range(3))
+        else:
+            coverage, axes = 0.0, (False, False, False)
+
         center = (aabb_min + aabb_max) / 2
         extent = np.maximum(aabb_max - aabb_min, 0.005)
-        sigma = (
-            np.stack([_centroid(d) for d in members]).std(axis=0)
-            if len(members) > 1
-            else np.full(3, 0.01)
-        )
-        group_center = _group_center(members)
-        support = Support(
-            center_xyz=(float(center[0]), float(center[1]), float(center[2])),
-            extent_xyz_m=(float(extent[0]), float(extent[1]), float(extent[2])),
-            orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
-            sigma_xyz_m=(float(sigma[0]), float(sigma[1]), float(sigma[2])),
-            coverage=_azimuth_coverage(members, group_center),
-            axes_observed=_axes_observed(members, group_center),
-            frame_id=rig.world_frame,
-        )
-
+        sigma = centroids.std(axis=0) if len(mine) > 1 else np.full(3, 0.01)
         if trace is not None:
-            trace.answers.append(members)
+            trace.answers.append(group.trace[i])
             if k == 0:
-                trace.backdrop_ts = latest.ts
+                trace.backdrop_ts = hi
 
-        latest_centroid = _centroid(latest)
+        newest = mine[mine[:, M_TS].argmax()]
         instances.append(
             Localization(
                 instance_id=f"query-{k}",
-                semantic_score=_max_score(members),
-                identity_score=min(1.0, _n_views(members) / 4.0),
+                semantic_score=score,
+                identity_score=min(1.0, views[i] / 4.0),
                 ambiguity_margin=margin,
                 position_world_xyz=(
-                    float(latest_centroid[0]),
-                    float(latest_centroid[1]),
-                    float(latest_centroid[2]),
+                    float(newest[M_CX]),
+                    float(newest[M_CY]),
+                    float(newest[M_CZ]),
                 ),
-                orientation_world_xyzw=orientation,
+                orientation_world_xyzw=_orientation(group.latest[i]),
                 frame_id=rig.world_frame,
-                support=support,
-                pose_timestamp=latest.ts,
-                geometry_timestamp=latest.ts,
-                last_seen_timestamp=latest.ts,
+                support=Support(
+                    center_xyz=tuple(float(v) for v in center),  # type: ignore[arg-type]
+                    extent_xyz_m=tuple(float(v) for v in extent),  # type: ignore[arg-type]
+                    orientation_xyzw=(0.0, 0.0, 0.0, 1.0),
+                    sigma_xyz_m=tuple(float(v) for v in sigma),  # type: ignore[arg-type]
+                    coverage=coverage,
+                    axes_observed=cast("tuple[bool, bool, bool]", axes),
+                    frame_id=rig.world_frame,
+                ),
+                pose_timestamp=hi,
+                geometry_timestamp=hi,
+                last_seen_timestamp=hi,
                 point_cloud=union,
-                coverage=support.coverage,
-                n_views=_n_views(members),
-                reason=reason,
+                coverage=coverage,
+                n_views=views[i],
+                reason=(
+                    "ambiguous_between_coexisting_candidates"
+                    if margin < policy.refusal_margin
+                    else None
+                ),
             )
         )
     return instances
