@@ -828,6 +828,14 @@ jobs:
         run: |
           sudo git config --global --add safe.directory '*'
           sudo git clean -ffdx
+      - name: Release the dimsim bridge port
+        # A bridge that outlives its job keeps :8090, and `git clean` cannot
+        # reclaim it. Every later run then dies with AddrInUse before it
+        # publishes /odom, and the dimsim tests fail with "No odom received".
+        run: |
+          for pid in $(sudo ss -lptnH 'sport = :8090' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u); do
+            sudo kill -9 "$pid"
+          done
       - name: Fetch DimSim LFS assets only
         # The checkout above doesn't fetch LFS, so the dimsim scene/embodiment
         # glbs are pointer stubs and the browser sim fails to load them. Pull
