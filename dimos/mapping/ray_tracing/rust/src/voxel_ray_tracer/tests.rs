@@ -1446,9 +1446,8 @@ fn clear_voxels_takes_the_fine_layer_with_it() {
     assert!(emit_points_fine(&map, 1.0, 2, None, 0, &no_live).is_empty());
 }
 
-/// Seeding a cloud into an empty map must build exactly what the maintained
-/// incremental path builds: same voxels, health, moments, support counts,
-/// chunk index, and normals.
+/// Seeding into an empty map builds exactly what the incremental path
+/// builds: voxels, health, moments, support, chunk index, normals.
 #[test]
 fn seed_matches_from_scratch_build() {
     let mut state = 6364136223846793005_u64;
@@ -1507,9 +1506,8 @@ fn seed_matches_from_scratch_build() {
     }
 }
 
-/// A seed never touches a voxel live data already observed: health and
-/// moments stay exactly as they were. Only the support bookkeeping sees the
-/// new healthy neighbor.
+/// A seed leaves existing voxels' health and moments alone. Only their
+/// support counts see the new neighbors.
 #[test]
 fn seed_leaves_live_voxels_untouched() {
     let cfg = basic_config();
@@ -1525,7 +1523,7 @@ fn seed_leaves_live_voxels_untouched() {
     assert_eq!(after.health, before.health);
     assert_eq!(
         after.num_pts, before.num_pts,
-        "premap points must not pollute live moments"
+        "seeded points must not pollute live moments"
     );
     assert_eq!(after.sum, before.sum);
     assert_eq!(after.support, 1, "the seeded neighbor still counts");
@@ -1551,8 +1549,8 @@ fn second_seed_is_a_no_op() {
     assert_eq!(map.voxels[&(1, 1, 0)].support, support_before);
 }
 
-/// Seeded wall voxels get pooled normal fits, so a grazing ray spares them
-/// where a moment-less wall of the same shape is carved.
+/// Seeded wall voxels get normals, so a grazing ray spares them where a
+/// moment-less wall is carved.
 #[test]
 fn seeded_wall_normals_spare_grazing_rays() {
     let cfg = basic_config();
@@ -1570,13 +1568,13 @@ fn seeded_wall_normals_spare_grazing_rays() {
         "seeded wall voxel must carry a normal"
     );
 
-    // The same wall occupied without moments, so nothing fits a plane.
+    // The same wall without moments, so no normals.
     let mut bare = VoxelMap::default();
     for key in metric_voxel_keys(wall.iter().copied(), cfg.voxel_size) {
         bare.set_health(key, SEED_HEALTH);
     }
 
-    // A ray running along the wall plane inside one wall voxel column.
+    // A ray along the wall plane.
     let origin = (5.5, -2.5, 4.5);
     let hit = [(5.5, 10.5, 4.5)];
     update_map(&mut seeded, origin, &hit, &cfg);
@@ -1608,9 +1606,8 @@ fn seed_sets_fine_bits_when_layer_is_on() {
     );
 }
 
-/// Seeding into a live map must leave every pre-existing voxel's health
-/// alone while keeping the support counts and the healthy-chunk index
-/// exactly what a from-scratch scan would produce.
+/// Seeding a live map leaves existing health alone and keeps support and
+/// the chunk index matching a from-scratch scan.
 #[test]
 fn seed_into_live_map_keeps_indexes_consistent() {
     let mut state = 1442695040888963407_u64;

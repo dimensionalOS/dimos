@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::mapper::{Mapper, Pose};
 use crate::voxel_ray_tracer::Config;
-use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
+use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf, Transform};
 use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
-use tracing::warn;
+use tracing::{info, warn};
 
 #[derive(Module)]
 #[module(name = "ray_tracing", setup = init_mapper)]
@@ -33,6 +33,10 @@ pub struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_voxel_clear_mask)]
     voxel_clear_mask: Input<PointCloud2>,
 
+    // An externally loaded map cloud. Only the first one seeds the map.
+    #[input(decode = PointCloud2::decode, handler = on_loaded_map)]
+    loaded_map: Input<PointCloud2>,
+
     #[tf]
     tf: Tf,
 
@@ -44,6 +48,10 @@ pub struct RayTracingVoxelMap {
 
     #[output(encode = PointCloud2::encode)]
     local_map_fine: Output<PointCloud2>,
+
+    // Support-gated snapshot of the whole map, emitted once after the seed.
+    #[output(encode = PointCloud2::encode)]
+    full_map: Output<PointCloud2>,
 
     // Cylinder bounds of the local map. Position is the center, orientation holds
     // radius, z_min, z_max. Stamped like local_map so consumers pair them.
@@ -59,6 +67,9 @@ pub struct RayTracingVoxelMap {
     // Stamp of the last applied clear mask, so a late one cannot erase voxels a
     // newer mask already accounted for.
     last_clear_mask_stamp: f64,
+
+    // Whether a loaded map has been seeded.
+    seeded: bool,
 }
 
 impl RayTracingVoxelMap {
@@ -86,18 +97,6 @@ impl RayTracingVoxelMap {
             );
             return;
         };
-        let translation = tf_pose.translation().cast::<f32>();
-        let rotation = tf_pose.rotation().cast::<f32>();
-        let pose = Pose {
-            position: (translation.x, translation.y, translation.z),
-            orientation: (
-                rotation.coords.x,
-                rotation.coords.y,
-                rotation.coords.z,
-                rotation.coords.w,
-            ),
-        };
-
         let points = match extract_xyz(&msg) {
             Ok(p) => p,
             Err(e) => {
@@ -114,7 +113,7 @@ impl RayTracingVoxelMap {
         }
 
         let mapper = self.mapper.as_mut().expect("built in setup");
-        mapper.add_frame(points, pose);
+        mapper.add_frame(points, tf_to_pose(&tf_pose));
 
         let region = mapper.local_due().then(|| mapper.take_local_bounds());
         let cylinder = region.map(|c| c.bounds());
@@ -169,6 +168,50 @@ impl RayTracingVoxelMap {
             let fine = points_to_cloud(&points, out_frame_id, stamp);
             publish_cloud(&self.local_map_fine, &fine).await;
         }
+    }
+
+    /// Seed the map from the first loaded cloud and emit the full map once.
+    /// Later clouds are ignored: reseeding would resurrect voxels live rays
+    /// have carved. The lookup takes the latest transform, since the cloud
+    /// keeps its original stamp.
+    async fn on_loaded_map(&mut self, msg: PointCloud2) {
+        if self.seeded {
+            return;
+        }
+        let Some(tf_pose) = self
+            .tf
+            .get_latest(&self.config.world_frame, &msg.header.frame_id)
+        else {
+            warn_throttled!(
+                Duration::from_secs(5),
+                world_frame = %self.config.world_frame,
+                cloud_frame = %msg.header.frame_id,
+                "No transform for the loaded map yet, dropped a cloud.",
+            );
+            return;
+        };
+        let points = match extract_xyz(&msg) {
+            Ok(p) => p,
+            Err(e) => {
+                warn_throttled!(
+                    Duration::from_secs(1),
+                    error = %e,
+                    "Failed to get loaded map points, dropped a cloud.",
+                );
+                return;
+            }
+        };
+        if points.is_empty() {
+            return;
+        }
+        let mapper = self.mapper.as_mut().expect("built in setup");
+        let num_created = mapper.seed_frame(points, tf_to_pose(&tf_pose));
+        let full = mapper.full_points();
+        self.seeded = true;
+        info!(num_created, "Seeded the voxel map from a loaded map cloud.");
+
+        let cloud = points_to_cloud(&full, &self.config.world_frame, now());
+        publish_cloud(&self.full_map, &cloud).await;
     }
 
     /// Delete the voxels covering a cloud of world-frame points a sensor knows
@@ -227,6 +270,31 @@ const TF_WAIT_TIMEOUT: Duration = Duration::from_millis(50);
 
 fn time_secs(t: &Time) -> f64 {
     t.sec as f64 + t.nsec as f64 * 1e-9
+}
+
+fn now() -> Time {
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    Time {
+        sec: dur.as_secs().min(i32::MAX as u64) as i32,
+        nsec: dur.subsec_nanos() as i32,
+    }
+}
+
+/// The f32 pose of a transform, for registering clouds.
+fn tf_to_pose(t: &Transform) -> Pose {
+    let translation = t.translation().cast::<f32>();
+    let rotation = t.rotation().cast::<f32>();
+    Pose {
+        position: (translation.x, translation.y, translation.z),
+        orientation: (
+            rotation.coords.x,
+            rotation.coords.y,
+            rotation.coords.z,
+            rotation.coords.w,
+        ),
+    }
 }
 
 struct ExtractError(&'static str);
@@ -361,9 +429,8 @@ mod tests {
     };
     use ahash::AHashSet;
 
-    /// Build a map whose listed voxels are healthy, through the public API.
-    fn map_with_healthy(keys: &[VoxelKey]) -> VoxelMap {
-        let cfg = Config {
+    fn test_config() -> Config {
+        Config {
             voxel_size: 1.0,
             fine_divisor: 0,
             max_range: 1000.0,
@@ -380,13 +447,17 @@ mod tests {
             world_frame: "world".to_string(),
             tf_match_tolerance_s: 0.1,
             worker_threads: 4,
-        };
+        }
+    }
+
+    /// Build a map whose listed voxels are healthy, through the public API.
+    fn map_with_healthy(keys: &[VoxelKey]) -> VoxelMap {
         let mut map = VoxelMap::default();
         let pts: Vec<(f32, f32, f32)> = keys
             .iter()
             .map(|&(x, y, z)| (x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5))
             .collect();
-        update_map(&mut map, (0.25, 0.25, 0.25), &pts, &cfg);
+        update_map(&mut map, (0.25, 0.25, 0.25), &pts, &test_config());
         map
     }
 
@@ -409,6 +480,29 @@ mod tests {
             (ky as f32 + 0.5).to_bits(),
             (kz as f32 + 0.5).to_bits(),
         )
+    }
+
+    /// A loaded cloud in the map frame lands in the world through the same
+    /// decode and pose conversion the handler uses.
+    #[test]
+    fn loaded_map_round_trips_through_the_latest_transform() {
+        use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
+
+        // Yaw 90 deg at (10, 0, 0): map +x becomes world +y.
+        let iso = Isometry3::from_parts(
+            Translation3::new(10.0, 0.0, 0.0),
+            UnitQuaternion::from_axis_angle(&Vector3::z_axis(), std::f64::consts::FRAC_PI_2),
+        );
+        let t = Transform::new("odom", "map", 0.0, iso);
+
+        let cloud = points_to_cloud(&[3.5, 0.0, 0.5], "map", Time::default());
+        let points = extract_xyz(&cloud).unwrap_or_else(|e| panic!("loaded map must decode: {e}"));
+
+        let mut mapper = Mapper::new(test_config());
+        assert_eq!(mapper.seed_frame(points, tf_to_pose(&t)), 1);
+
+        let full = points_to_cloud(&mapper.full_points(), "odom", now());
+        assert!(cloud_points(&full).contains(&voxel_center(10, 3, 0)));
     }
 
     /// The clear-mask handler names voxels by decoding a cloud and quantizing

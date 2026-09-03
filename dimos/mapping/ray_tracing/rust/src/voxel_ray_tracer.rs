@@ -998,16 +998,12 @@ pub fn update_map(
     }
 }
 
-/// Health seeded voxels start at. Just healthy, so they emit and count as
-/// support, while a couple of live misses can still carve stale geometry.
+/// Health seeded voxels start at: healthy, but easily carved by live misses.
 const SEED_HEALTH: VoxelHealth = 1;
 
-/// Bulk-load a world-frame premap cloud. Creates only voxels no live data has
-/// observed, at `SEED_HEALTH`, and accumulates the cloud's moments into them.
-/// Existing voxels keep their health and moments, since live data is fresher
-/// than an ICP-aligned premap. Support counts, the healthy-chunk index, and
-/// pooled normal fits are brought up to date in one batched pass. Returns the
-/// created keys.
+/// Bulk-load a world-frame map cloud without ray tracing. Only absent voxels
+/// are created, with moments, support, chunk index, and normals brought up
+/// to date. Returns the created keys.
 pub fn seed_points(
     map: &mut VoxelMap,
     points: &[(f32, f32, f32)],
@@ -1034,10 +1030,8 @@ pub fn seed_points(
         return created;
     }
 
-    // One batched pass over the created voxels: each counts its healthy
-    // neighbors, and each pre-existing neighbor gains one support per
-    // adjacent created voxel. Created pairs cover each other through their
-    // own counts.
+    // Bumps skip created neighbors: created pairs already count each other
+    // through their own fresh counts.
     let voxels = &map.voxels;
     let (supports, bumps) = created
         .par_iter()

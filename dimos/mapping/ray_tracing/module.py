@@ -86,10 +86,15 @@ class RayTracingVoxelMap(NativeModule, mapping.GlobalPointcloud):
     # outright, reaching space ray tracing cannot clear: a wrist camera's own
     # arm occludes the volume behind it, so no ray ever misses through it.
     voxel_clear_mask: In[PointCloud2]
+    # An externally loaded map cloud, placed by the latest tf world_frame ->
+    # cloud frame_id. Only the first cloud seeds the map.
+    loaded_map: In[PointCloud2]
     tf: In[TFMessage]
     global_map: Out[PointCloud2]
     local_map: Out[PointCloud2]
     local_map_fine: Out[PointCloud2]
+    # Support-gated snapshot of the whole map, emitted once after the seed.
+    full_map: Out[PointCloud2]
     region_bounds: Out[PoseStamped]
 
 

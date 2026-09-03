@@ -184,7 +184,7 @@ impl VoxelRayMapper {
         Ok(())
     }
 
-    /// Bulk-seed a world-frame premap cloud, creating only absent voxels.
+    /// Bulk-seed a world-frame map cloud, creating only absent voxels.
     /// Returns how many voxels were created.
     fn seed_points(&mut self, py: Python<'_>, points: &Bound<'_, PyAny>) -> PyResult<usize> {
         let pts = extract_tuples(points, "points")?;
