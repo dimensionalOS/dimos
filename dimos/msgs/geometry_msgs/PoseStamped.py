@@ -44,6 +44,11 @@ def sec_nsec(ts):  # type: ignore[no-untyped-def]
 
 class PoseStamped(Pose, Timestamped):
     msg_name = "geometry_msgs.PoseStamped"
+    AGENT_ENCODE_LEGEND = (
+        "PoseStamped JSON uses meters in frame_id, absolute timestamp_s, quaternion_xyzw in "
+        "[x, y, z, w] order, and roll_pitch_yaw_deg as intrinsic XYZ angles in degrees. "
+        "Robot forward/left/up are local +X/+Y/+Z."
+    )
     ts: float
     frame_id: str
 
@@ -96,6 +101,21 @@ class PoseStamped(Pose, Timestamped):
             f"PoseStamped(pos=[{self.x:.3f}, {self.y:.3f}, {self.z:.3f}], "
             f"euler=[{math.degrees(self.roll):.1f}, {math.degrees(self.pitch):.1f}, {math.degrees(self.yaw):.1f}])"
         )
+
+    def agent_encode(self) -> dict[str, Any]:
+        """Encode a stamped pose with explicit frames, component order, and units."""
+        euler = self.orientation.to_euler()
+        return {
+            "frame_id": self.frame_id,
+            "timestamp_s": self.ts,
+            "position_m": [self.x, self.y, self.z],
+            "quaternion_xyzw": self.orientation.to_list(),
+            "roll_pitch_yaw_deg": [
+                math.degrees(euler.roll),
+                math.degrees(euler.pitch),
+                math.degrees(euler.yaw),
+            ],
+        }
 
     def to_rerun(self) -> Archetype:
         """Convert to rerun Transform3D format.

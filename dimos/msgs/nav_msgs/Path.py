@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from dimos_lcm.geometry_msgs import (
     Point as LCMPoint,
@@ -159,6 +159,12 @@ class Path(Timestamped):
     def __str__(self) -> str:
         """String representation of Path."""
         return f"Path(frame_id='{self.frame_id}', poses={len(self.poses)})"
+
+    def agent_encode(self) -> list[dict[str, Any]]:
+        """Encode the complete timed path as metrics, representative poses, and an XY plot."""
+        from dimos.msgs.conversions.pose_path import pose_path_agent_encode
+
+        return pose_path_agent_encode(self)
 
     def __getitem__(self, index: int | slice) -> PoseStamped | list[PoseStamped]:
         """Allow indexing and slicing of poses."""

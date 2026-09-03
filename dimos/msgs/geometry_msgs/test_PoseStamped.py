@@ -15,6 +15,8 @@
 import pickle
 import time
 
+import pytest
+
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
@@ -53,3 +55,20 @@ def test_pickle_encode_decode() -> None:
     assert isinstance(pose_dest, PoseStamped)
     assert pose_dest is not pose_source
     assert pose_dest == pose_source
+
+
+def test_agent_encode_labels_pose_frame_components_and_units() -> None:
+    pose = PoseStamped(
+        ts=12.5,
+        frame_id="world",
+        position=(1.0, 2.0, 3.0),
+        orientation=(0.0, 0.0, 0.0, 1.0),
+    )
+
+    assert pose.agent_encode() == {
+        "frame_id": "world",
+        "timestamp_s": 12.5,
+        "position_m": [1.0, 2.0, 3.0],
+        "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+        "roll_pitch_yaw_deg": pytest.approx([0.0, 0.0, 0.0]),
+    }

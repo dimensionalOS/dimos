@@ -17,7 +17,7 @@ from __future__ import annotations
 from enum import IntEnum
 from functools import lru_cache
 import time
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from dimos_lcm.nav_msgs import (
     MapMetaData,
@@ -342,6 +342,12 @@ class OccupancyGrid(Timestamped):
             f"occupied={self.occupied_cells}, free={self.free_cells}, "
             f"unknown={self.unknown_cells})"
         )
+
+    def agent_encode(self) -> list[dict[str, Any]]:
+        """Encode this grid as metadata and a conservatively cleaned image for an agent."""
+        from dimos.msgs.conversions.occupancy_grid import occupancy_grid_agent_encode
+
+        return occupancy_grid_agent_encode(self)
 
     def lcm_encode(self) -> bytes:
         """Encode OccupancyGrid to LCM bytes."""

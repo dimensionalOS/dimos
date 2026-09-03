@@ -15,6 +15,7 @@
 
 """Test the OccupancyGrid convenience class."""
 
+import base64
 import pickle
 
 import numpy as np
@@ -80,6 +81,79 @@ def test_grid_from_numpy_array() -> None:
     assert abs(grid.occupied_percent - 8.33) < 0.1
     assert abs(grid.free_percent - 90.17) < 0.1
     assert abs(grid.unknown_percent - 1.5) < 0.1
+
+
+def test_agent_encode_contains_metadata_and_cleaned_world_oriented_map() -> None:
+    import cv2
+
+    cells = np.array(
+        [
+            [0, 49, 0, -1],
+            [0, 100, 100, 0],
+            [0, 100, 50, 0],
+            [0, 0, 0, 0],
+            [75, 0, 0, 0],
+        ],
+        dtype=np.int8,
+    )
+    grid = OccupancyGrid(
+        grid=cells,
+        resolution=0.1,
+        origin=Pose(1.0, 2.0, 0.0),
+        frame_id="map",
+    )
+
+    metadata, image = grid.agent_encode()
+    assert metadata["type"] == "text"
+    assert "size=4x5" in metadata["text"]
+    assert "resolution=0.1 m/cell" in metadata["text"]
+    assert "origin=(1, 2)" in metadata["text"]
+    assert f"timestamp={grid.ts:g} s" in metadata["text"]
+    assert "white=free" in metadata["text"]
+    assert "costs >= 50 are occupied" in metadata["text"]
+    assert "components smaller than 0.04 m^2 are removed" in metadata["text"]
+    assert "robot cannot enter or cross" in metadata["text"]
+    assert "treat them as impassable" in metadata["text"]
+    assert np.array_equal(grid.grid, cells)
+
+    url = image["image_url"]["url"]
+    assert image["type"] == "image_url" and url.startswith("data:image/png;base64,")
+    encoded = np.frombuffer(base64.b64decode(url.partition(",")[2]), dtype=np.uint8)
+    decoded = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+    assert decoded.tolist() == [
+        [[255, 255, 255], [255, 255, 255], [255, 255, 255], [255, 255, 255]],
+        [[255, 255, 255], [255, 255, 255], [255, 255, 255], [255, 255, 255]],
+        [[255, 255, 255], [0, 0, 0], [0, 0, 0], [255, 255, 255]],
+        [[255, 255, 255], [0, 0, 0], [0, 0, 0], [255, 255, 255]],
+        [[255, 255, 255], [255, 255, 255], [255, 255, 255], [127, 127, 127]],
+    ]
+
+
+def test_agent_encode_filter_is_resolution_aware_and_preserves_openings() -> None:
+    from dimos.msgs.conversions.occupancy_grid import _structural_cells
+
+    coarse = np.zeros((12, 8), dtype=np.int8)
+    coarse[1:3, 1:3] = 100  # 0.04 m^2: retain
+    coarse[10, 1] = 100  # 0.01 m^2: remove
+    coarse[1:10, 5] = 100
+    coarse[5, 5] = 0  # Preserve the opening instead of closing it.
+    coarse[10, 7] = -1
+
+    fine = np.zeros((8, 8), dtype=np.int8)
+    fine[0:4, 0:4] = 100  # Same 0.04 m^2 footprint: retain
+    fine[6:8, 0:2] = 100  # Same 0.01 m^2 footprint: remove
+
+    coarse_cleaned = _structural_cells(coarse, resolution=0.1)
+    fine_cleaned = _structural_cells(fine, resolution=0.05)
+
+    assert np.all(coarse_cleaned[1:3, 1:3] == 100)
+    assert coarse_cleaned[10, 1] == 0
+    assert coarse_cleaned[4, 5] == 100
+    assert coarse_cleaned[5, 5] == 0
+    assert coarse_cleaned[6, 5] == 100
+    assert coarse_cleaned[10, 7] == -1
+    assert np.all(fine_cleaned[0:4, 0:4] == 100)
+    assert np.all(fine_cleaned[6:8, 0:2] == 0)
 
 
 def test_world_grid_coordinate_conversion() -> None:

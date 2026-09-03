@@ -44,6 +44,8 @@ from dimos.evals.agents.pi import Pi
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.image_file import ImageFile
+from dimos.evals.environments.occupancy_dataset import OccupancyDataset
+from dimos.evals.environments.pose_trajectory_dataset import PoseTrajectoryDataset
 from dimos.evals.environments.sim import Sim
 from dimos.evals.runner import EvalRunner
 from dimos.evals.scorers import (
@@ -70,6 +72,7 @@ from dimos.evals.types import (
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 def _pose(x: float, y: float) -> PoseStamped:
@@ -313,6 +316,74 @@ def test_dataset_launches_the_agents_modules(dataset: str, monkeypatch: pytest.M
         f"wait {running.mcp_url}",
         "stop",
     ]
+
+
+def test_occupancy_dataset_exposes_only_derived_costmaps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dimos.memory.store.sqlite import SqliteStore
+
+    path = tmp_path / "lidar.db"
+    source = SqliteStore(path=str(path))
+    lidar = source.stream("lidar", PointCloud2)
+    points = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 0.0]], dtype=np.float32)
+    for i in range(3):
+        offset = np.array([float(i), 0.0, 0.0], dtype=np.float32)
+        lidar.append(PointCloud2.from_numpy(points + offset, timestamp=float(i)), ts=float(i))
+    source.stop()
+
+    class PassThroughMap:
+        def __init__(self, **kwargs: Any) -> None:
+            assert kwargs["emit_every"] == 2
+
+        def __call__(self, upstream: Iterator[Any]) -> Iterator[Any]:
+            yield from upstream
+
+    monkeypatch.setattr("dimos.mapping.voxels.module.VoxelMapTransformer", PassThroughMap)
+    env = OccupancyDataset(str(path), emit_every=2, occupancy_algo="simple", resolution=0.5)
+    env.preflight(QuestionAnswer())
+    running = env.start("")
+    try:
+        assert running.recording.list_streams() == ["global_costmap"]
+        grids = list(running.recording.streams.global_costmap)
+        assert len(grids) == 3
+        assert len({obs.data.grid.shape for obs in grids}) == 1
+        assert len(
+            {(obs.data.origin.position.x, obs.data.origin.position.y) for obs in grids}
+        ) == 1
+        assert all(obs.data.agent_encode()[-1]["type"] == "image_url" for obs in grids)
+        with pytest.raises(AttributeError, match="No stream 'lidar'"):
+            list(running.recording.streams.lidar)
+
+        spy = SpyChat(reply="yes")
+        QuestionAnswer(chat_model=spy).run("Is this mapped?", running, tmp_path / "run")
+        content = spy.seen[0][-1].content
+        assert isinstance(content, list)
+        assert sum(block.get("type") == "image_url" for block in content) == 3
+    finally:
+        env.stop()
+
+
+def test_pose_trajectory_dataset_preserves_full_odom_as_one_path(
+    dataset: str, tmp_path: Path
+) -> None:
+    env = PoseTrajectoryDataset(dataset)
+    env.preflight(QuestionAnswer())
+    running = env.start("")
+    try:
+        assert running.recording.list_streams() == ["trajectory"]
+        (observation,) = list(running.recording.streams.trajectory)
+        assert len(observation.data.poses) == 5
+        assert observation.data.frame_id == "world"
+
+        spy = SpyChat(reply="yes")
+        QuestionAnswer(chat_model=spy).run("Describe this path", running, tmp_path / "run")
+        content = spy.seen[0][-1].content
+        assert isinstance(content, list)
+        assert sum(block.get("type") == "image_url" for block in content) == 1
+        assert "dimos.pose_path.v1" in _text(spy.seen[0])
+    finally:
+        env.stop()
 
 
 def test_image_file_environment(tmp_path: Path) -> None:

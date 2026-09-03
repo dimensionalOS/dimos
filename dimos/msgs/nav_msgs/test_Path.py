@@ -12,9 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
+import json
+
+import cv2
+import numpy as np
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
 
 
@@ -211,6 +217,53 @@ def test_clear() -> None:
     path.clear()
     assert len(path) == 0
     assert path.poses == []
+
+
+def test_agent_encode_includes_complete_pose_evidence_and_draws_xy_plot() -> None:
+    poses = [
+        PoseStamped(
+            ts=float(index),
+            frame_id="world",
+            position=(float(index), float(index % 2), 0.0),
+            orientation=Quaternion.from_euler(Vector3(0.1 * index, 0.0, 0.0)),
+        )
+        for index in range(3)
+    ]
+    metadata, image = Path(ts=0.0, frame_id="world", poses=poses).agent_encode()
+
+    summary = json.loads(metadata["text"].partition("Trajectory JSON: ")[2])
+    assert summary["schema"] == "dimos.pose_path.v1"
+    assert summary["pose_count"] == 3
+    assert summary["visualization"] == {
+        "image_size_px": 768,
+        "margin_px": 72,
+        "center_m": [1.0, 0.5],
+        "span_m": 2.24,
+    }
+    assert summary["columns"] == [
+        "t_s",
+        "x_m",
+        "y_m",
+        "z_m",
+        "qx",
+        "qy",
+        "qz",
+        "qw",
+        "roll_deg",
+        "pitch_deg",
+        "yaw_deg",
+    ]
+    assert len(summary["poses"]) == 3
+    assert summary["poses"][0] == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+    assert "travelled_distance_3d_m" not in summary
+    assert "max_tilt" not in summary
+    assert "max_windowed_speed" not in summary
+
+    url = image["image_url"]["url"]
+    encoded = np.frombuffer(base64.b64decode(url.partition(",")[2]), dtype=np.uint8)
+    decoded = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+    assert image["type"] == "image_url"
+    assert decoded.shape == (768, 768, 3)
 
 
 def test_lcm_encode_decode() -> None:
