@@ -33,18 +33,11 @@ pub fn stage(platform: &Platform, kernel: &Kernel) -> Stage {
 
 /// jetson_clocks resets on every boot, so it runs from a unit rather than once at install time.
 pub fn render_clocks_unit() -> String {
-    "[Unit]\n\
-     Description=DimOS Jetson max clocks\n\
-     After=nvpmodel.service\n\
-     \n\
-     [Service]\n\
-     Type=oneshot\n\
-     RemainAfterExit=yes\n\
-     ExecStart=/usr/bin/jetson_clocks\n\
-     \n\
-     [Install]\n\
-     WantedBy=multi-user.target\n"
-        .to_string()
+    system_config::oneshot_unit(
+        "DimOS Jetson max clocks",
+        "nvpmodel.service",
+        &["/usr/bin/jetson_clocks"],
+    )
 }
 
 /// aarch64 glibc below 2.34 has too few static-TLS slots for a late `dlopen` of libgomp.

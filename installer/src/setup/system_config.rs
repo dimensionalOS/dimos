@@ -120,21 +120,34 @@ pub fn render_sysctl_conf(targets: &BTreeMap<String, u64>) -> String {
     conf
 }
 
+/// The boot-time unit skeleton every unit the installer enables shares; each exec is one ExecStart.
+pub fn oneshot_unit(description: &str, after: &str, exec: &[&str]) -> String {
+    let starts: String = exec.iter().map(|e| format!("ExecStart={e}\n")).collect();
+    format!(
+        "[Unit]\n\
+         Description={description}\n\
+         After={after}\n\
+         \n\
+         [Service]\n\
+         Type=oneshot\n\
+         RemainAfterExit=yes\n\
+         {starts}\
+         \n\
+         [Install]\n\
+         WantedBy=multi-user.target\n"
+    )
+}
+
 pub fn render_multicast_unit() -> String {
-    // `-` on the route line: a route that already exists exits 2, which must not fail the unit.
-    "[Unit]\n\
-     Description=DimOS loopback multicast for LCM\n\
-     After=network.target\n\
-     \n\
-     [Service]\n\
-     Type=oneshot\n\
-     RemainAfterExit=yes\n\
-     ExecStart=/sbin/ip link set lo multicast on\n\
-     ExecStart=-/sbin/ip route add 224.0.0.0/4 dev lo\n\
-     \n\
-     [Install]\n\
-     WantedBy=multi-user.target\n"
-        .to_string()
+    oneshot_unit(
+        "DimOS loopback multicast for LCM",
+        "network.target",
+        &[
+            "/sbin/ip link set lo multicast on",
+            // `-`: a route that already exists exits 2, which must not fail the unit.
+            "-/sbin/ip route add 224.0.0.0/4 dev lo",
+        ],
+    )
 }
 
 /// pam_limits counts in KiB and applies at next login; same shape as zenoh.py `_persist`.
