@@ -64,17 +64,17 @@ def test_submit_publishes_and_checks_frames(module):
 
 
 def test_relocalize_once_stops_after_the_first_fix(module):
-    """A premap fix does not go stale, so by default one is enough."""
+    """A fix goes stale as the robot drifts, so by default the module keeps earning it."""
     tf = Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map")
 
-    once = module()
-    assert once.keep_relocalizing() and not once.placed
-    once.submit(tf)
-    assert once.placed and not once.keep_relocalizing()
-
-    forever = module(relocalize_once=False)
+    forever = module()
+    assert forever.keep_relocalizing() and not forever.placed
     forever.submit(tf)
     assert forever.placed and forever.keep_relocalizing()
+
+    once = module(relocalize_once=True)
+    once.submit(tf)
+    assert once.placed and not once.keep_relocalizing()
 
 
 def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
@@ -140,7 +140,8 @@ def test_the_match_runs_on_a_window_of_the_last_scans():
 
     from reactivex import Subject
 
-    from dimos.mapping.relocalization.lidar.module import MID360, window
+    from dimos.mapping.relocalization.lidar.module import window
+    from dimos.mapping.relocalization.lidar.relocalize import MID360
 
     cfg = MID360.model_copy(update={"min_frames": 2, "max_frames": 3})
     scans = Subject()
