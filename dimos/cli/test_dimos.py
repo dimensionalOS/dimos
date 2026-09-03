@@ -266,8 +266,9 @@ def test_python_recording_rejects_rust_encoding_threads(
     )
 
     assert result.exit_code == 2
-    assert "valid only with" in result.output
-    assert "--record-engine rust" in result.output
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "valid only with" in output_plain
+    assert "--record-engine rust" in output_plain
     assert "blueprint" not in stubbed_run
 
 
@@ -279,7 +280,8 @@ def test_python_mcap_is_rejected_before_build(
     )
 
     assert result.exit_code == 2
-    assert "MCAP recording requires --record-engine rust" in result.output
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "MCAP recording requires --record-engine rust" in output_plain
     assert "blueprint" not in stubbed_run
 
 
