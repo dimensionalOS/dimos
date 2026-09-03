@@ -71,6 +71,35 @@ def _pair_camera_infos(
     return pinholes, paired
 
 
+def _frame_first_seen(
+    renderable: list[tuple[str, Stream[Any], Observation[Any]]], frames: set[str]
+) -> dict[str, float]:
+    """ts of the first tf observation that defines each frame in ``frames``.
+
+    A Pinhole parented to a tf frame resolves at the origin until that frame
+    exists, so it must be logged when its own frame first appears, not at the
+    first tf message overall (which may be an unrelated or static edge).
+    Scans each tf stream only until every frame is found.
+    """
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+
+    seen: dict[str, float] = {}
+    for _, stream, first in renderable:
+        if not isinstance(first.data, TFMessage):
+            continue
+        missing = set(frames)
+        for obs in stream:
+            if not missing:
+                break
+            if obs.data is None:
+                continue
+            for t in obs.data.transforms:
+                if t.child_frame_id in missing:
+                    missing.discard(t.child_frame_id)
+                    seen[t.child_frame_id] = min(obs.ts, seen.get(t.child_frame_id, obs.ts))
+    return seen
+
+
 def _open_viewer(rrd: str) -> None:
     exe = shutil.which("rerun")
     if exe:
@@ -141,24 +170,31 @@ def render_store(
         print("nothing renderable in this store")
         return out
 
-    # Log pinholes at the first tf time: before that their parent frame is
-    # undefined and they would sit at the origin. Static only without tf.
-    frames_at = min((f.ts for _, _, f in renderable if isinstance(f.data, TFMessage)), default=None)
-    if seconds is not None and frames_at is not None and frames_at - t0 > seconds:
-        print("  camera pinholes skipped: first tf observation is outside the rendered window")
-        pinholes = {}
+    # Log each pinhole when its own parent frame first appears in tf: before
+    # that the frame is undefined and the pinhole would sit at the origin.
+    # Static only when the store has no tf at all.
+    has_tf = any(isinstance(f.data, TFMessage) for _, _, f in renderable)
+    frame_at = _frame_first_seen(renderable, {frame for _, frame in pinholes.values()})
 
     rerun_init("dimos mem rerun")
     rr.save(out)
 
     for image_name, (info, frame) in pinholes.items():
         pinhole = info.to_rerun_pinhole(optical_frame=frame)
-        if frames_at is None:
+        at = frame_at.get(frame)
+        if not has_tf:
             rr.log(entity(image_name), pinhole, static=True)
+            print(f"  {image_name}: pinhole from camera_info (frame {frame!r}, static: no tf)")
+        elif at is None:
+            print(f"  {image_name}: pinhole skipped, frame {frame!r} never appears in tf")
+        elif seconds is not None and at - t0 > seconds:
+            print(
+                f"  {image_name}: pinhole skipped, frame {frame!r} first appears after the window"
+            )
         else:
-            rr.set_time("time", duration=frames_at - t0)
+            rr.set_time("time", duration=at - t0)
             rr.log(entity(image_name), pinhole)
-        print(f"  {image_name}: pinhole from camera_info (frame {frame!r})")
+            print(f"  {image_name}: pinhole from camera_info (frame {frame!r} at +{at - t0:.2f}s)")
 
     for name, stream, _ in renderable:
         with progress(stream.count(), label=name) as report:
