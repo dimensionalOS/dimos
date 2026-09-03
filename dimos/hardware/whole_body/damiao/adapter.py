@@ -246,7 +246,10 @@ class DamiaoWholeBodyAdapter(ABC):
                 arm.set_mode("mit")
             self._robot.enable()
             for name in self._runtime_config.passive_grippers:
-                self._grippers[name].disable()
+                gripper = self._grippers[name]
+                gripper.set_mode("mit")
+                gripper.enable()
+                gripper.mit_control(0.0, 0.0, float(gripper.motor.position), 0.0, 0.0)
             if self._runtime_config.passive_grippers:
                 self._robot.tick(self._runtime_config.tick_deadline_us)
             self._active = True
@@ -374,7 +377,10 @@ class DamiaoWholeBodyAdapter(ABC):
 
             for name in self.gripper_joints:
                 opening = commands[offset].q
-                if name not in self._runtime_config.passive_grippers:
+                if name in self._runtime_config.passive_grippers:
+                    gripper = self._grippers[name]
+                    gripper.mit_control(0.0, 0.0, float(gripper.motor.position), 0.0, 0.0)
+                else:
                     self._grippers[name].set_opening(opening)
                 offset += 1
 

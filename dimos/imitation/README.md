@@ -124,7 +124,8 @@ Before a production collection, run one hardware smoke test:
 
 1. Support the arm, start the daemon, and confirm that the arm and gripper can
    be moved by hand without position-hold resistance. The arm should retain
-   light joint damping while the gripper motor remains disabled.
+   light joint damping while the enabled gripper runs with zero stiffness,
+   zero damping, and zero feed-forward torque.
 2. Attach `dimos collect` and verify that the panel reports the gripper as
    passive.
 3. Record and save a short take, stop the daemon, then inspect the MCAP with
