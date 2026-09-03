@@ -31,18 +31,15 @@ from dimos.porcelain.dimos import Dimos
 
 _MONITOR = "EpisodeMonitorModule"
 _COORDINATOR = "ControlCoordinator"
-_GRIPPER_TASK = "arm_gripper"
-_REQUIRED_TASKS = {"teach_openyam", _GRIPPER_TASK}
+_REQUIRED_TASKS = {"teach_openyam"}
 
 
 class TeachCollectionSession:
     """RPC client for the operator controls used by the collection panel."""
 
-    def __init__(self, client: Dimos, monitor: Any, coordinator: Any) -> None:
+    def __init__(self, client: Dimos, monitor: Any) -> None:
         self._client = client
         self._monitor = monitor
-        self._coordinator = coordinator
-        self.gripper_target: float | None = None
 
     @classmethod
     def connect(cls) -> TeachCollectionSession:
@@ -52,7 +49,7 @@ class TeachCollectionSession:
             modules = {info.instance_name: info for info in client.list_modules()}
             for name, rpcs in {
                 _MONITOR: {"command", "get_status"},
-                _COORDINATOR: {"list_tasks", "task_invoke"},
+                _COORDINATOR: {"list_tasks"},
             }.items():
                 info = modules.get(name)
                 if info is None:
@@ -69,7 +66,7 @@ class TeachCollectionSession:
             if missing_tasks:
                 raise RuntimeError(f"ControlCoordinator is missing tasks: {sorted(missing_tasks)}")
             monitor.get_status()
-            return cls(client, monitor, coordinator)
+            return cls(client, monitor)
         except Exception:
             client.stop()
             raise
@@ -91,17 +88,6 @@ class TeachCollectionSession:
                 f"EpisodeMonitorModule returned {type(status).__name__}, expected EpisodeStatus"
             )
         return status
-
-    def set_gripper(self, target: float) -> None:
-        """Set and retain a normalized gripper target."""
-        accepted = self._coordinator.task_invoke(
-            _GRIPPER_TASK,
-            "set_normalized",
-            {"values": [target], "t_now": None},
-        )
-        if accepted is not True:
-            raise RuntimeError(f"arm_gripper rejected normalized target {target}")
-        self.gripper_target = target
 
     def close(self) -> None:
         """Close only this RPC client; leave the daemon and robot running."""
@@ -125,8 +111,6 @@ class TeachCollectionApp(App[None]):
     BINDINGS = [
         Binding("space", "toggle_recording", "Start / save"),
         Binding("d", "discard", "Discard"),
-        Binding("o", "open_gripper", "Open gripper"),
-        Binding("c", "close_gripper", "Close gripper"),
         Binding("q", "quit", "Detach"),
         Binding("ctrl+c", "quit", "Detach", show=False),
     ]
@@ -135,7 +119,7 @@ class TeachCollectionApp(App[None]):
         super().__init__()
         self._session = session
         self._status = session.get_status()
-        self._message = "Drag the arm by hand; press Space when the take begins."
+        self._message = "Move the arm and gripper by hand; press Space when the take begins."
         self._detached = False
 
     def compose(self) -> ComposeResult:
@@ -151,11 +135,6 @@ class TeachCollectionApp(App[None]):
     def _render(self) -> Panel:
         recording = self._status.state == "recording"
         state_style = theme.ERROR if recording else theme.SUCCESS
-        gripper = (
-            "measured position"
-            if self._session.gripper_target is None
-            else ("open (1.0)" if self._session.gripper_target == 1.0 else "closed (0.0)")
-        )
         body = Text()
         body.append("Task       ", style="bold")
         body.append(f"{self._status.task_label}\n")
@@ -166,7 +145,7 @@ class TeachCollectionApp(App[None]):
             f"{self._status.episodes_saved} saved, {self._status.episodes_discarded} discarded\n"
         )
         body.append("Gripper    ", style="bold")
-        body.append(f"{gripper}\n\n")
+        body.append("passive — move by hand\n\n")
         body.append(self._message)
         if self._detached:
             body.append(
@@ -207,27 +186,11 @@ class TeachCollectionApp(App[None]):
         except Exception as exc:
             self._fail(exc)
 
-    def _set_gripper(self, target: float) -> None:
-        if self._detached:
-            return
-        try:
-            self._session.set_gripper(target)
-            self._message = "Gripper opened." if target == 1.0 else "Gripper closed."
-            self._refresh()
-        except Exception as exc:
-            self._fail(exc)
-
     def action_toggle_recording(self) -> None:
         self._episode_command("toggle")
 
     def action_discard(self) -> None:
         self._episode_command("discard")
-
-    def action_open_gripper(self) -> None:
-        self._set_gripper(1.0)
-
-    def action_close_gripper(self) -> None:
-        self._set_gripper(0.0)
 
     def action_quit(self) -> None:  # type: ignore[override]
         if not self._detached and self._status.state == "recording":
