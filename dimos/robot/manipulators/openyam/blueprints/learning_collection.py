@@ -25,12 +25,12 @@ from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
+from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.native_recorder import NativeCollectionRecorder
 from dimos.robot.manipulators.openyam.blueprints.teleop import teleop_quest_openyam
 from dimos.robot.manipulators.openyam.config import (
-    OPENYAM_GRIPPER_JOINT,
     OPENYAM_JOINTS,
     openyam_hardware,
 )
@@ -72,9 +72,21 @@ learning_collect_quest_openyam = autoconnect(
 )
 
 
-OPENYAM_TEACH_DAMPING = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5, 0.0)
+OPENYAM_TEACH_DAMPING = (2.0, 2.0, 2.0, 0.5, 0.5, 0.5, 0.0)
+_openyam_teach_hardware = openyam_hardware()
+if _openyam_teach_hardware.adapter_type == "openyam_damiao":
+    runtime_config = _openyam_teach_hardware.adapter_kwargs["runtime_config"]
+    if not isinstance(runtime_config, DamiaoRuntimeConfig):
+        raise TypeError("OpenYAM Damiao hardware requires DamiaoRuntimeConfig")
+    _openyam_teach_hardware = replace(
+        _openyam_teach_hardware,
+        adapter_kwargs={
+            **_openyam_teach_hardware.adapter_kwargs,
+            "runtime_config": replace(runtime_config, passive_grippers=("gripper",)),
+        },
+    )
 _openyam_teach_hardware = replace(
-    openyam_hardware(),
+    _openyam_teach_hardware,
     wb_config=WholeBodyConfig(
         kp=(0.0,) * len(OPENYAM_JOINTS),
         kd=OPENYAM_TEACH_DAMPING,
@@ -96,12 +108,6 @@ learning_collect_teach_openyam = autoconnect(
                 type="teach",
                 joint_names=list(OPENYAM_JOINTS),
                 priority=10,
-            ),
-            TaskConfig(
-                name="arm_gripper",
-                type="gripper",
-                joint_names=[OPENYAM_GRIPPER_JOINT],
-                priority=20,
             ),
         ],
     ),

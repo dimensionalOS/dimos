@@ -86,7 +86,7 @@ dimos collect
 │ Task       pick up the red block                                    │
 │ State      RECORDING                                                │
 │ Episodes   2 saved, 0 discarded                                     │
-│ Gripper    closed (0.0)                                             │
+│ Gripper    passive — move by hand                                   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -94,8 +94,6 @@ dimos collect
 | --- | --- |
 | **Space** | Start an episode; press again to save it |
 | **D** | Discard the in-progress episode |
-| **O** | Open the gripper |
-| **C** | Close the gripper |
 | **Q** or **Ctrl-C** | Detach the panel while idle |
 
 The panel refuses to detach while recording. Save or discard the take first.
@@ -119,16 +117,16 @@ dimos dataprep build \
   --output data/datasets/openyam-teach
 ```
 
-The action row contains the arm's measured position at that instant plus the
-operator's current gripper target. No timing shift or alternate data profile is
-required.
+The action row contains the measured arm and gripper positions at that instant.
+No timing shift or alternate data profile is required.
 
 Before a production collection, run one hardware smoke test:
 
-1. Support the arm, start the daemon, and confirm that it can be moved by hand
-   without position-hold resistance. It should retain joint damping.
-2. Attach `dimos collect` and verify that **O** and **C** move the gripper in the
-   expected directions.
+1. Support the arm, start the daemon, and confirm that the arm and gripper can
+   be moved by hand without position-hold resistance. The arm should retain
+   light joint damping while the gripper motor remains disabled.
+2. Attach `dimos collect` and verify that the panel reports the gripper as
+   passive.
 3. Record and save a short take, stop the daemon, then inspect the MCAP with
    `dimos dataprep inspect` and `OPENYAM_LEARNING_PROFILE`.
 
