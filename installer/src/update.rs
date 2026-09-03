@@ -27,8 +27,6 @@ const INSTALLER_URL_ENV: &str = "DIMOS_INSTALLER_URL";
 const NOT_VERIFIED: &str = "verify not run in dry-run: a real `dimos update` runs the checks";
 
 const GIT_TIMEOUT_S: u64 = 600;
-/// A cold `uv sync` on an Orin NX builds wheels from source; the same budget `setup` gives it.
-const SYNC_TIMEOUT_S: u64 = 3600;
 const PIP_TIMEOUT_S: u64 = 1800;
 /// curl's own `--max-time 15`, plus process start-up.
 const LATEST_PROBE_TIMEOUT_S: u64 = 20;
@@ -138,7 +136,13 @@ pub fn dimos_stage(installed: &Installed, uv: &Path, obs: &Observed, force: bool
         InstallMode::Library => stage.push(pip_action(installed, uv)),
         InstallMode::Dev => stage
             .push(pull_action(installed))
-            .push(sync_action(installed, uv)),
+            .push(dimos_venv::sync_action(
+                &installed.dir,
+                &installed.extras,
+                false,
+                uv,
+                None,
+            )),
     }
 }
 
@@ -177,19 +181,6 @@ fn pull_action(installed: &Installed) -> Action {
         Some(&installed.dir),
         &[("GIT_LFS_SKIP_SMUDGE", "1")],
         GIT_TIMEOUT_S,
-    )
-}
-
-/// `--inexact` leaves packages the lockfile does not name, so a hand-installed SDK survives.
-fn sync_action(installed: &Installed, uv: &Path) -> Action {
-    let mut argv = vec![text(uv), "sync".to_string(), "--inexact".to_string()];
-    argv.extend(platforms::sync_args(&installed.extras));
-    Action::run_owned(
-        argv,
-        false,
-        Some(&installed.dir),
-        &[("GIT_LFS_SKIP_SMUDGE", "1")],
-        SYNC_TIMEOUT_S,
     )
 }
 

@@ -144,7 +144,7 @@ fn dev_actions(
     if *state == DirState::Absent {
         actions.push(clone_action(branch, dir));
     }
-    actions.push(sync_action(dir, extras, with_nix, uv));
+    actions.push(sync_action(dir, extras, with_nix, uv, Some(PYTHON_VERSION)));
     Ok(actions)
 }
 
@@ -168,14 +168,22 @@ fn clone_action(branch: &str, dir: &Path) -> Action {
 }
 
 /// `--inexact` leaves packages the lockfile does not name, so a hand-installed SDK survives.
-fn sync_action(dir: &Path, extras: &[String], with_nix: bool, uv: &Path) -> Action {
+pub fn sync_action(
+    dir: &Path,
+    extras: &[String],
+    with_nix: bool,
+    uv: &Path,
+    python: Option<&str>,
+) -> Action {
     let mut argv = vec![text(uv), "sync".into(), "--inexact".into()];
     argv.extend(platforms::sync_args(extras));
+    let mut env = vec![("GIT_LFS_SKIP_SMUDGE", "1")];
+    env.extend(python.map(|v| ("UV_PYTHON", v)));
     Action::run_owned(
         nix_wrap(with_nix, dir, argv),
         false,
         Some(dir),
-        &[("GIT_LFS_SKIP_SMUDGE", "1"), ("UV_PYTHON", PYTHON_VERSION)],
+        &env,
         INSTALL_TIMEOUT_S,
     )
 }
