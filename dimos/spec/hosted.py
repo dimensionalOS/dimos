@@ -124,7 +124,7 @@ class HostServer:
         self._name = name
         self._tags = tags
         self._epoch = uuid.uuid4().hex
-        self._current_fragment: HostFragment | None = None
+        self._fragments: dict[str, HostFragment] = {}
 
     @rpc
     def describe(self) -> HostDescriptor: ...

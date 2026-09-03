@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Minimal supervisor for one hosted deployment."""
+"""Supervisor for hosted deployments on one machine."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 HostState = Literal["available", "starting", "running", "stopping", "failed"]
 
-HOST_PROTOCOL_VERSION = 1
+HOST_PROTOCOL_VERSION = 2
 FRAGMENT_SCHEMA_VERSION = 1
 FRAGMENT_FORMAT = "python-blueprint"
 HOST_LIVELINESS_KEY = "dimos/hosts/{host_id}/live"
@@ -59,7 +59,7 @@ class HostDescriptor:
     tags: frozenset[str]
     versions: dict[str, str | int]
     state: HostState
-    active_run_id: str | None
+    active_run_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +94,7 @@ class _Deployment:
 
 
 class HostDaemon:
-    """Supervise at most one deployment process."""
+    """Supervise independent deployment processes for multiple runs."""
 
     def __init__(
         self,
@@ -116,22 +116,21 @@ class HostDaemon:
         self._stop_timeout = stop_timeout
         self._process_context = multiprocessing.get_context("spawn")
         self._epoch = uuid.uuid4().hex
-        self._deployment: _Deployment | None = None
+        self._deployments: dict[str, _Deployment] = {}
         self._lock = threading.RLock()
 
     @rpc
     def describe(self) -> HostDescriptor:
         with self._lock:
             self._refresh_locked()
-            deployment = self._deployment
             return HostDescriptor(
                 host_id=self._host_id,
                 epoch=self._epoch,
                 name=self._name,
                 tags=self._tags,
                 versions=dict(self._versions),
-                state=deployment.state if deployment else "available",
-                active_run_id=deployment.fragment.run_id if deployment else None,
+                state=self._host_state_locked(),
+                active_run_ids=tuple(sorted(self._deployments)),
             )
 
     @rpc
@@ -141,16 +140,16 @@ class HostDaemon:
 
         with self._lock:
             self._refresh_locked()
-            if self._deployment is not None:
-                current = self._deployment.fragment
-                if (current.run_id, current.generation) != (
-                    fragment.run_id,
-                    fragment.generation,
-                ):
-                    raise RuntimeError(f"Host {self._host_id} is running {current.run_id}")
+            existing = self._deployments.get(fragment.run_id)
+            if existing is not None:
+                current = existing.fragment
+                if current.generation != fragment.generation:
+                    raise RuntimeError(
+                        f"Run {fragment.run_id} is already running generation {current.generation}"
+                    )
                 if current.payload_digest != fragment.payload_digest:
                     raise ValueError("Fragment digest conflicts with the accepted deployment")
-                return self._status_locked()
+                return self._status_locked(fragment.run_id)
 
             log_dir = self._log_root / fragment.run_id
             log_dir.mkdir(parents=True, exist_ok=True)
@@ -161,7 +160,7 @@ class HostDaemon:
                 daemon=False,
             )
             deployment = _Deployment(fragment, "starting", log_dir, process)
-            self._deployment = deployment
+            self._deployments[fragment.run_id] = deployment
             try:
                 process.start()
             except Exception as exc:
@@ -169,7 +168,7 @@ class HostDaemon:
                 send_ready.close()
                 deployment.state = "failed"
                 deployment.error = str(exc)
-                return self._status_locked()
+                return self._status_locked(fragment.run_id)
             send_ready.close()
 
         error = self._wait_for_start(receive_ready)
@@ -178,8 +177,8 @@ class HostDaemon:
             kill_run_processes(fragment.run_id)
 
         with self._lock:
-            if self._deployment is not deployment:
-                return self._status_locked()
+            if self._deployments.get(fragment.run_id) is not deployment:
+                return self._status_locked(fragment.run_id)
             if error is not None:
                 deployment.state = "failed"
                 deployment.error = error
@@ -188,16 +187,14 @@ class HostDaemon:
                 deployment.error = f"Deployment process exited with code {process.exitcode}"
             else:
                 deployment.state = "running"
-            return self._status_locked()
+            return self._status_locked(fragment.run_id)
 
     @rpc
     def status(self, epoch: str, run_id: str) -> DeploymentStatus:
         self._check_epoch(epoch)
         with self._lock:
             self._refresh_locked()
-            if self._deployment and self._deployment.fragment.run_id != run_id:
-                raise ValueError(f"Host is assigned to {self._deployment.fragment.run_id}")
-            return self._status_locked()
+            return self._status_locked(run_id)
 
     @rpc
     def stop(
@@ -209,9 +206,9 @@ class HostDaemon:
     ) -> DeploymentStatus:
         self._check_epoch(epoch)
         with self._lock:
-            deployment = self._deployment
+            deployment = self._deployments.get(run_id)
             if deployment is None:
-                return self._status_locked()
+                return self._status_locked(run_id)
             fragment = deployment.fragment
             if (fragment.run_id, fragment.generation, fragment.payload_digest) != (
                 run_id,
@@ -220,23 +217,23 @@ class HostDaemon:
             ):
                 raise ValueError("Stop request does not match the active deployment")
             if deployment.state == "stopping":
-                return self._status_locked()
+                return self._status_locked(run_id)
             deployment.state = "stopping"
 
         _terminate(deployment.process, self._stop_timeout)
         kill_run_processes(run_id)
 
         with self._lock:
-            if self._deployment is deployment:
-                self._deployment = None
-            return self._status_locked()
+            if self._deployments.get(run_id) is deployment:
+                del self._deployments[run_id]
+            return self._status_locked(run_id)
 
     def shutdown(self) -> None:
-        """Stop the active deployment when the Host service exits."""
+        """Stop every active deployment when the Host service exits."""
         with self._lock:
-            deployment = self._deployment
-            self._deployment = None
-        if deployment is not None:
+            deployments = tuple(self._deployments.values())
+            self._deployments.clear()
+        for deployment in deployments:
             _terminate(deployment.process, self._stop_timeout)
             kill_run_processes(deployment.fragment.run_id)
 
@@ -266,15 +263,24 @@ class HostDaemon:
             ready.close()
 
     def _refresh_locked(self) -> None:
-        deployment = self._deployment
-        if deployment is None or deployment.state not in {"starting", "running"}:
-            return
-        if deployment.process.exitcode is not None:
-            deployment.state = "failed"
-            deployment.error = f"Deployment process exited with code {deployment.process.exitcode}"
+        for deployment in self._deployments.values():
+            if deployment.state not in {"starting", "running"}:
+                continue
+            if deployment.process.exitcode is not None:
+                deployment.state = "failed"
+                deployment.error = (
+                    f"Deployment process exited with code {deployment.process.exitcode}"
+                )
 
-    def _status_locked(self) -> DeploymentStatus:
-        deployment = self._deployment
+    def _host_state_locked(self) -> HostState:
+        states = {deployment.state for deployment in self._deployments.values()}
+        for state in ("failed", "stopping", "starting", "running"):
+            if state in states:
+                return state
+        return "available"
+
+    def _status_locked(self, run_id: str) -> DeploymentStatus:
+        deployment = self._deployments.get(run_id)
         if deployment is None:
             return DeploymentStatus("available", None, None, None, None, None)
         return DeploymentStatus(

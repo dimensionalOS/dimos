@@ -132,7 +132,7 @@ local runtime.
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Application          | One logical blueprint graph that may span several Hosts.                                                                         |
 | Controller           | The `dimos run` process that compiles, places, and coordinates an application.                                                   |
-| Host                 | One advertised execution service. Usually one per machine, although several may sit behind one router or even share a machine.   |
+| Host                 | The single advertised execution service on one machine. Several Hosts may sit behind one router.                                |
 | Host ID              | A stable, opaque, automatically generated identity used in protocol keys and run records.                                        |
 | Host name            | A discoverable, human-readable label, defaulting to the machine hostname and optionally overridden. It is not a network address. |
 | Host tags            | User- or provider-supplied labels such as `gpu`, `g1`, or `warehouse-a` used as placement constraints.                           |
@@ -196,10 +196,11 @@ it creates an isolated local run process, and that process creates the existing
 `ModuleCoordinator`. Isolation avoids sharing mutable global configuration,
 module state, and logs with the Host service.
 
-The first implementation may advertise one deployment slot and allow only one
-active distributed deployment per Host. The descriptor and protocol should
-still include capacity, `run_id`, and lease/generation fields so multi-run Hosts
-can be added later without changing placement semantics.
+One Host service can supervise multiple active deployments concurrently. Each
+accepted run gets an isolated child process and local coordinator, and all
+status and lifecycle operations remain scoped by `run_id`. The descriptor and
+protocol include active runs, capacity, and lease/generation fields so resource
+limits can be enforced without returning to a single-deployment Host model.
 
 ## Host identity, discovery, and advertisement
 
@@ -383,7 +384,7 @@ small, explainable, and deterministic:
 4. Take one discovery snapshot of live Host descriptors.
 5. For each unit, filter candidates by exact Host selector, required tags,
    platform and plan compatibility, required code revision, advertised devices,
-   available resources, and deployment slots.
+   and available resources.
 6. Intersect constraints within every co-location unit. Conflicting exact Hosts,
    an explicit local constraint combined with a remote constraint, or an empty
    candidate set is a compile/placement error.
@@ -407,12 +408,12 @@ No Host satisfies placement for MarkerDetectionStreamModule
   required tags: [gpu]
   discovered:
     g1-01 (4ec2...): missing tag gpu
-    gpu-lab (8aa1...): busy, 0/1 deployment slots available
+    gpu-lab (8aa1...): requires 12 GiB GPU memory, 8 GiB available
 ```
 
-An exact selector that is absent, duplicated, incompatible, or busy is also an
-error. The controller does not wait forever for a matching Host by default;
-an explicit placement timeout can be added for automation.
+An exact selector that is absent, duplicated, incompatible, or lacks required
+resources is also an error. The controller does not wait forever for a matching
+Host by default; an explicit placement timeout can be added for automation.
 
 Because discovery races with other controllers, selection alone does not claim
 capacity. A Host accepts work only after `prepare` revalidates the descriptor and
