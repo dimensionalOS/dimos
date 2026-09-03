@@ -89,6 +89,20 @@ LIDAR_CAMERA_SPECS: tuple[tuple[str, float], ...] = (
 _LIDAR_CAM_POS = (0.0, 0.0, 0.08)
 _LIDAR_CAM_FOVY = 140.0
 
+# Forward-facing first-person camera: what the duck sees.
+#
+# The robot MJCF ships a `head_camera` on the jaw, but it is rotated
+# `quat="0 0 -1 0"` and so looks along body -x - backwards, straight into the
+# duck's own jaw (measured: 16 of its own geoms in front of the lens, the
+# nearest at 0.000 m). Anything rendering it gets a close-up of the inside of
+# a beak, including the agent's `observe` skill. This camera sits at the same
+# place, on the trunk (steadier than the jaw, which the head policies move)
+# and pointing where the duck walks.
+POV_CAMERA_NAME = "pov_camera"
+# The stock head_camera's position expressed in the trunk frame.
+_POV_CAM_POS = (0.081, 0.0, 0.131)
+_POV_CAM_FOVY = 70.0
+
 # Third-person camera following the trunk; published on ``chase_image``.
 CHASE_CAMERA_NAME = "chase_camera"
 _CHASE_OPTICAL_FRAME = f"{CHASE_CAMERA_NAME}_optical_frame"
@@ -537,6 +551,12 @@ class MicroduckSimModule(MujocoSimModule):
                 quat=list(_camera_quat_wxyz(yaw)),
                 fovy=_LIDAR_CAM_FOVY,
             )
+        trunk.add_camera(
+            name=POV_CAMERA_NAME,
+            pos=list(_POV_CAM_POS),
+            quat=list(_camera_quat_wxyz(0.0)),
+            fovy=_POV_CAM_FOVY,
+        )
         if self.config.chase_cam:
             # TRACK: the offset and the orientation stay fixed in the world
             # frame while the camera follows the trunk's position.

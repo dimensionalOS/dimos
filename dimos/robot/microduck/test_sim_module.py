@@ -33,6 +33,7 @@ from dimos.robot.microduck.sim_module import (
     CHASE_CAMERA_NAME,
     LIDAR_CAMERA_SPECS,
     PHYSICS_TIMESTEP,
+    POV_CAMERA_NAME,
     MicroduckSimModule,
     MicroduckSimModuleConfig,
     _ball_spawn_xy,
@@ -543,6 +544,21 @@ def test_compose_model_adds_chase_camera_and_ball_to_four_room_scene() -> None:
         for name, _ in LIDAR_CAMERA_SPECS:
             assert model.camera(name).id >= 0
         assert model.camera("head_camera").id >= 0
+
+        # The POV camera is the one worth asserting on: the MJCF's stock
+        # head_camera looks along body -x, i.e. backwards into the duck's own
+        # jaw, so the first-person view (and the observe skill) uses ours.
+        data = mujoco.MjData(model)
+        mujoco.mj_forward(model, data)
+        pov = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, POV_CAMERA_NAME)
+        head = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
+        assert pov >= 0
+        # MuJoCo cameras look along their own -z.
+        forward = -data.cam_xmat[pov].reshape(3, 3)[:, 2]
+        assert forward[0] == pytest.approx(1.0, abs=1e-6)  # body +x, where it walks
+        assert -data.cam_xmat[head].reshape(3, 3)[:, 2][0] == pytest.approx(-1.0, abs=1e-6)
+        # Same eye position as the stock camera, just facing the other way.
+        assert data.cam_xpos[pov] == pytest.approx(data.cam_xpos[head], abs=2e-3)
 
         assert model.vis.global_.offwidth >= 1280
         assert model.vis.global_.offheight >= 720

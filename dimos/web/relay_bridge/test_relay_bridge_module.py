@@ -1599,9 +1599,12 @@ MICRODUCK_RX = (
     "mode",
     "policy_state",
     "nav_state",
-    "chase_image",
+    # Built-ins first (BUILTIN_CHANNELS order), then the authored ones in
+    # first-declaration order - which is panel order, so chase_image sits
+    # where its small second-view panel does.
     "path",
     "places",
+    "chase_image",
     "agent",
     "agent_idle",
 )
@@ -2173,12 +2176,15 @@ def test_chase_image_uses_its_own_quality(microduck_bridge, monkeypatch) -> None
     # The chase cam's rate and quality are authored twice - on its Video panel
     # and on the Channel that gives the stream its port - and cockpit()'s
     # merge would have rejected any disagreement, so the compiled spec is
-    # both halves at once. The head cam next to it keeps the panel default.
+    # both halves at once, not the Video panel's 75 default.
     module, clients = microduck_bridge
     (chase,) = microduck_channels("chase_image")
     spec = spec_of(module, "chase_image")
     assert spec.params == dict(chase.params)
-    assert spec.params != spec_of(module, "color_image").params
+    assert spec.params["quality"] != Video().quality
+    # The head cam is a built-in port with no Channel, so it is authored by
+    # its panel alone - and the two cameras are free to differ.
+    assert spec_of(module, "color_image").params["quality"] != Video().quality
     assert module._min_interval["chase_image"] == pytest.approx(1.0 / chase.max_hz)
 
     qualities: list[int] = []

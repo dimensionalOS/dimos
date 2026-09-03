@@ -61,7 +61,11 @@ from dimos.robot.microduck.places import (
     MICRODUCK_OBJECTS,
     MICRODUCK_ROOMS,
 )
-from dimos.robot.microduck.sim_module import LIDAR_CAMERA_SPECS, MicroduckSimModule
+from dimos.robot.microduck.sim_module import (
+    LIDAR_CAMERA_SPECS,
+    POV_CAMERA_NAME,
+    MicroduckSimModule,
+)
 from dimos.robot.microduck.skills import MicroduckSkillContainer
 from dimos.web.cockpit import (
     Channel,
@@ -106,7 +110,7 @@ _TELEOP_MAX_ANGULAR = 0.6
 # Two separate budgets bound these numbers, and the second one bites first.
 #
 # Render: each 640 x 360 frame costs ~11 ms on the SIM THREAD (see
-# MicroduckSimModuleConfig.cast_shadows). At 30 fps the chase cam alone
+# MicroduckSimModuleConfig.cast_shadows). At 30 fps the head cam alone
 # spends ~0.33 s of every second rendering. That is affordable here - the
 # sim's real-time factor stays 1.00 and the gait, policies and nav all pass
 # end to end - but render cost scales with PIXELS, so shrink the frame before
@@ -118,21 +122,28 @@ _TELEOP_MAX_ANGULAR = 0.6
 # across every latest channel - measured, and independent of frame size: a
 # 500 byte state frame costs the same as a 15 kB JPEG. That is why the state
 # channels above are `reliable` (one persistent stream, no per-frame cost)
-# and why the head cam is deliberately slower than the chase cam: the big
-# panel should get the budget. Raising these past the ceiling does not add
-# frames, it just splits the same ~30 fps more ways.
+# and why the chase cam is deliberately slower than the head cam: the big
+# panel - the duck's own view - should get the budget. Raising these past the
+# ceiling does not add frames, it just splits the same ~30 fps more ways.
 #
 # Frame SIZE is the weaker lever of the two and it is not free: the cockpit's
 # video canvas scales down to its panel but never up (VideoPanel.module.css
 # `max-width: 100%`), so a smaller frame just leaves dead space around a
 # smaller picture. 480 x 270 measured only ~7% more delivered fps than
-# 640 x 360 and looked worse, so the chase cam keeps its size.
-_CHASE_CAM_SIZE = (640, 360)
-_CHASE_CAM_FPS = 30.0
-_CHASE_CAM_MAX_HZ = 40.0
+# 640 x 360 and looked worse, so the primary camera keeps 640 x 360.
+#
+# The head camera is the primary view: it is what the duck actually sees, and
+# it is the same frame the agent's `observe` skill reads. The chase camera is
+# the small second view - useful for driving, since a first-person duck
+# cannot see its own feet - so it takes the leftover budget.
+_HEAD_CAM_SIZE = (640, 360)
+_HEAD_CAM_FPS = 30
+_HEAD_CAM_MAX_HZ = 40.0
+_HEAD_CAM_QUALITY = 70
+_CHASE_CAM_SIZE = (320, 180)
+_CHASE_CAM_FPS = 6.0
+_CHASE_CAM_MAX_HZ = 12.0
 _CHASE_CAM_QUALITY = 70
-_HEAD_CAM_FPS = 6
-_HEAD_CAM_MAX_HZ = 12.0
 
 MICRODUCK_COCKPIT_SYSTEM_PROMPT = """\
 You are the brain of Microduck, a tiny (25 cm tall) two-legged duck robot
@@ -170,19 +181,25 @@ actions finish.
 MICRODUCK_COCKPIT_LAYOUT = Col(
     Control(),
     Row(
-        # Rate/quality are pinned here and mirrored by the chase_image
-        # Channel below (a panel and a channel for one stream must agree on
-        # everything but max_hz).
+        # The duck's own view is the big panel. Rate/quality are pinned here
+        # and mirrored by the chase_image Channel below (a panel and a
+        # channel for one stream must agree on everything but max_hz);
+        # color_image is a built-in bridge port, so it needs no Channel.
         Video(
-            "chase_image",
-            title="Chase cam",
-            max_hz=_CHASE_CAM_MAX_HZ,
-            quality=_CHASE_CAM_QUALITY,
+            "color_image",
+            title="Duck view (head cam)",
+            max_hz=_HEAD_CAM_MAX_HZ,
+            quality=_HEAD_CAM_QUALITY,
         ),
         Col(
             NavMap(),
             Row(
-                Video("color_image", title="Head cam", max_hz=_HEAD_CAM_MAX_HZ),
+                Video(
+                    "chase_image",
+                    title="Chase cam",
+                    max_hz=_CHASE_CAM_MAX_HZ,
+                    quality=_CHASE_CAM_QUALITY,
+                ),
                 Teleop(
                     max_linear=_TELEOP_MAX_LINEAR,
                     max_angular=_TELEOP_MAX_ANGULAR,
@@ -287,9 +304,13 @@ def _stack(mcp_client_kwargs: dict[str, object]):  # type: ignore[no-untyped-def
             headless=True,
             spawn_xy=(0.0, 0.0),
             variant=_VARIANT,
-            # Head camera for the cockpit and the observe skill.
-            width=320,
-            height=240,
+            # First-person camera: the cockpit's primary view and the frame
+            # the observe skill reads. NOT the MJCF's stock `head_camera`,
+            # which is mounted backwards and renders the duck's own jaw (see
+            # POV_CAMERA_NAME in sim_module.py).
+            camera_name=POV_CAMERA_NAME,
+            width=_HEAD_CAM_SIZE[0],
+            height=_HEAD_CAM_SIZE[1],
             fps=_HEAD_CAM_FPS,
             enable_color=True,
             enable_depth=False,
