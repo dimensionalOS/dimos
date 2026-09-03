@@ -51,7 +51,7 @@ logger = setup_logger()
 
 
 def _clip(x: float, lo: float, hi: float) -> float:
-    return lo if x < lo else hi if x > hi else x
+    return lo if x < lo else min(x, hi)
 
 
 @dataclass
@@ -356,10 +356,9 @@ class UnitreeGo2TwistAdapter:
         session = self._get_session()
 
         if enable:
-            if not session.locomotion_ready:
-                if not self._initialize_locomotion():
-                    logger.error("[Go2] Failed to initialize locomotion")
-                    return False
+            if not session.locomotion_ready and not self._initialize_locomotion():
+                logger.error("[Go2] Failed to initialize locomotion")
+                return False
             session.enabled = True
             logger.info("[Go2] Enabled")
             return True

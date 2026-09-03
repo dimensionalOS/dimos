@@ -25,7 +25,7 @@ import time
 from typing import TYPE_CHECKING, cast
 
 import mujoco
-import mujoco.viewer as viewer  # type: ignore[import-untyped]
+from mujoco import viewer  # type: ignore[import-untyped]
 import numpy as np
 from numpy.typing import NDArray
 

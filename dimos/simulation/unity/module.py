@@ -291,7 +291,7 @@ class UnityBridgeModule(Module):
     @staticmethod
     def rerun_suppress_camera_info(_: Any) -> None:
         """Suppress CameraInfo logging — the static pinhole handles 3D projection."""
-        return None
+        return
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

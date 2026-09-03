@@ -1115,27 +1115,27 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
 
     def initialize(self, session: VisualizationSession) -> None:
         """Embedded Meshcat observes the Drake world directly; no extra sync needed."""
-        return None
+        return
 
     def add_vis_obstacle(self, obstacle_id: str, obstacle: Obstacle) -> None:
         """Embedded Meshcat observes native WorldSpec obstacle mutations."""
-        return None
+        return
 
     def update_vis_obstacle(self, obstacle: Obstacle) -> None:
         """Embedded Meshcat observes native WorldSpec obstacle replacement."""
-        return None
+        return
 
     def update_vis_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> None:
         """Embedded Meshcat observes native WorldSpec obstacle pose updates."""
-        return None
+        return
 
     def remove_vis_obstacle(self, obstacle_id: str) -> None:
         """Embedded Meshcat observes native WorldSpec obstacle mutations."""
-        return None
+        return
 
     def clear_vis_obstacles(self) -> None:
         """Embedded Meshcat observes native WorldSpec obstacle mutations."""
-        return None
+        return
 
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""

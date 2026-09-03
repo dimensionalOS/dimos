@@ -1080,9 +1080,7 @@ class TestArbitration:
             if values is None:
                 continue
             for i, joint in enumerate(output.joint_names):
-                if joint not in winners:
-                    winners[joint] = (claim.priority, values[i], output.mode, task.name)
-                elif claim.priority > winners[joint][0]:
+                if joint not in winners or claim.priority > winners[joint][0]:
                     winners[joint] = (claim.priority, values[i], output.mode, task.name)
 
         assert winners["j1"][3] == "high_priority"
