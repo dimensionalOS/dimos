@@ -308,7 +308,7 @@ jobs:
         run: bash docker/ros/install-nix.sh
       - name: Build Rust memory recorder Nix package
         run: |
-          cd native/rust
+          cd dimos/experimental/memory/rust
           nix build .#dimos-memory-recorder --no-write-lock-file --print-build-logs
           test -x result/bin/dimos-memory-recorder
       # PCL, GTSAM and the SLAM cores come from each module's flake, not apt.

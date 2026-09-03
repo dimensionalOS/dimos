@@ -19,7 +19,6 @@ from typing import Any, TypeVar
 
 import pytest
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.stream import In
 from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
@@ -186,13 +185,10 @@ def test_default_store_path_is_resolved_from_the_project_root() -> None:
 
 def test_native_recorder_is_built_and_run_from_the_nix_package() -> None:
     config = RustRecorderConfig()
-    rust_workspace = DIMOS_PROJECT_ROOT / "native" / "rust"
 
-    assert config.cwd == str(rust_workspace)
-    assert config.build_command == (
-        "nix --extra-experimental-features 'nix-command flakes' build -L .#dimos-memory-recorder"
-    )
-    assert config.executable == str(rust_workspace / "result" / "bin" / "dimos-memory-recorder")
+    assert config.cwd == "rust"
+    assert config.build_command == "nix build -L .#dimos-memory-recorder"
+    assert config.executable == "result/bin/dimos-memory-recorder"
 
 
 def test_invalid_codec_fails_during_preflight(tmp_path: Path, make_recorder: Any) -> None:
@@ -205,6 +201,19 @@ def test_invalid_codec_fails_during_preflight(tmp_path: Path, make_recorder: Any
     connect(recorder, odometry="/odom")
 
     with pytest.raises(ValueError, match="Unsupported native codec"):
+        recorder._stream_specs()
+
+
+def test_jpeg_requires_an_image_stream(tmp_path: Path, make_recorder: Any) -> None:
+    recorder = make_recorder(
+        SampleRustRecorder,
+        store=RustSqliteStoreConfig(path=str(tmp_path / "recording.db")),
+        record_tf=False,
+        stream_codecs={"odometry": "jpeg"},
+    )
+    connect(recorder, odometry="/odom")
+
+    with pytest.raises(TypeError, match="JPEG codec requires Image"):
         recorder._stream_specs()
 
 

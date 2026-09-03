@@ -20,10 +20,10 @@
       dimos-memory-recorder = pkgs.rustPlatform.buildRustPackage {
         pname = "dimos-memory-recorder";
         version = "0.1.0";
-        src = ../..;
+        src = ../../../..;
 
         cargoLock = {
-          lockFile = ../../Cargo.lock;
+          lockFile = ../../../../Cargo.lock;
           outputHashes = {
             "dimos-lcm-0.1.0" = "sha256-GGkx4Mn6NYP6KZecmoRLKGWIih/+y8OgNn12DeXX6n8=";
           };

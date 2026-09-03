@@ -53,8 +53,8 @@ from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 
 pytestmark = pytest.mark.self_hosted_large
 
-_RUST_WORKSPACE = DIMOS_PROJECT_ROOT / "native" / "rust"
-_EXECUTABLE = _RUST_WORKSPACE / "result" / "bin" / "dimos-memory-recorder"
+_RUST_PACKAGE = DIMOS_PROJECT_ROOT / "dimos" / "experimental" / "memory" / "rust"
+_EXECUTABLE = _RUST_PACKAGE / "result" / "bin" / "dimos-memory-recorder"
 _MCAP_AVAILABLE = importlib.util.find_spec("mcap") is not None
 
 
@@ -83,7 +83,7 @@ def rust_recorder_executable() -> Path:
             ".#dimos-memory-recorder",
             "--no-write-lock-file",
         ],
-        cwd=_RUST_WORKSPACE,
+        cwd=_RUST_PACKAGE,
         check=True,
     )
     assert _EXECUTABLE.is_file()
@@ -171,7 +171,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
     env = {**os.environ, "DIMOS_TRANSPORT": "lcm", "RUST_LOG": "debug"}
     process = subprocess.Popen(
         [str(rust_recorder_executable)],
-        cwd=_RUST_WORKSPACE,
+        cwd=_RUST_PACKAGE,
         env=env,
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
@@ -194,8 +194,12 @@ def test_rust_artifact_is_readable_by_python_memory2(
             frame_id="camera",
             ts=12.75,
         )
-        publisher.broadcast(None, expected)
-        image_publisher.broadcast(None, expected_image)
+        # LCM is lossy UDP and the native subscriptions may still be joining
+        # the multicast group when the process first reports ready.
+        for _ in range(20):
+            publisher.broadcast(None, expected)
+            image_publisher.broadcast(None, expected_image)
+            time.sleep(0.05)
         _wait_for_log(process, "memory recorder batch written")
 
         process.send_signal(signal.SIGTERM)
@@ -255,7 +259,7 @@ def test_tf_records_over_zenoh_and_replays_through_python(
     )
     session_pool = ZenohSessionPool()
     topic = ZenohTopic(f"dimos/rr_tf_{uuid.uuid4().hex[:8]}", TFMessage)
-    publisher = ZenohTransport(
+    publisher: ZenohTransport[TFMessage] = ZenohTransport(
         topic,
         session_pool=session_pool,
         mode="client",
@@ -273,7 +277,7 @@ def test_tf_records_over_zenoh_and_replays_through_python(
     env = {**os.environ, "DIMOS_TRANSPORT": "zenoh", "RUST_LOG": "debug"}
     process = subprocess.Popen(
         [str(rust_recorder_executable)],
-        cwd=_RUST_WORKSPACE,
+        cwd=_RUST_PACKAGE,
         env=env,
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
@@ -313,7 +317,9 @@ def test_tf_records_over_zenoh_and_replays_through_python(
         recorder.stop()
 
     with SqliteStore(path=str(artifact)) as memory:
-        observations: list[Observation[TFMessage]] = memory.stream("tf").order_by("ts").to_list()
+        observations = cast(
+            "list[Observation[TFMessage]]", memory.stream("tf").order_by("ts").to_list()
+        )
         assert [observation.ts for observation in observations] == [10.25, 11.5]
         assert [len(observation.data.transforms) for observation in observations] == [1, 1]
         assert [observation.data.transforms[0].child_frame_id for observation in observations] == [

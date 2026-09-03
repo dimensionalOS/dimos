@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -81,30 +81,6 @@ pub struct RecorderConfig {
     pub streams: Vec<StreamConfig>,
 }
 
-impl RecorderConfig {
-    pub fn validate(&self) -> Result<()> {
-        if self.encoding_threads == 0 {
-            return Err(anyhow!("encoding_threads must be at least 1"));
-        }
-        let mut names = HashSet::new();
-        for stream in &self.streams {
-            if !names.insert(&stream.name) {
-                return Err(anyhow!("duplicate recorded stream name {:?}", stream.name));
-            }
-            if stream.codec == Codec::Jpeg && stream.payload_type != IMAGE_PAYLOAD_TYPE {
-                return Err(anyhow!(
-                    "JPEG codec requires Image, got {:?}",
-                    stream.payload_type
-                ));
-            }
-            if stream.is_tf() && stream.codec != Codec::Lcm {
-                return Err(anyhow!("tf only supports the lcm codec"));
-            }
-        }
-        Ok(())
-    }
-}
-
 #[derive(Clone)]
 pub struct RecorderHandle {
     sender: Sender<EncodeMessage>,
@@ -146,7 +122,6 @@ pub struct RecorderEngine {
 
 impl RecorderEngine {
     pub fn start(config: RecorderConfig) -> Result<Self> {
-        config.validate()?;
         let (encode_tx, encode_rx) = bounded(QUEUE_CAPACITY);
         let (write_tx, write_rx) = bounded(QUEUE_CAPACITY);
         let (permit_tx, permit_rx) = bounded(QUEUE_CAPACITY);
@@ -321,9 +296,6 @@ impl Module for MemoryRecorder {
     type Config = RecorderConfig;
 
     fn build(builder: &mut Builder, config: Self::Config) -> Self {
-        config
-            .validate()
-            .expect("invalid memory recorder configuration");
         let engine = RecorderEngine::start(config.clone())
             .expect("failed to start memory recorder pipeline");
         let inputs = config
@@ -832,27 +804,15 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_stream_names_fail_validation() {
+    fn zero_encoding_threads_fail_native_config_validation() {
         let config = RecorderConfig {
             store: store::RecordingStoreConfig::Sqlite {
                 path: "unused.db".to_string(),
             },
-            encoding_threads: 1,
-            streams: vec![
-                (*stream("samples", Codec::Lcm, false)).clone(),
-                StreamConfig {
-                    port: "other".to_string(),
-                    name: "samples".to_string(),
-                    payload_type: "test.Raw".to_string(),
-                    codec: Codec::Lcm,
-                },
-            ],
+            encoding_threads: 0,
+            streams: vec![],
         };
 
-        assert!(config
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .contains("duplicate recorded stream name"));
+        assert!(validator::Validate::validate(&config).is_err());
     }
 }

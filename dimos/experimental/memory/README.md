@@ -15,13 +15,13 @@ The Python module builds the package automatically on first use. To build it
 ahead of time, run:
 
 ```bash
-cd native/rust
+cd dimos/experimental/memory/rust
 nix --extra-experimental-features 'nix-command flakes' \
   build -L .#dimos-memory-recorder
 ```
 
 The resulting executable is available at
-`native/rust/result/bin/dimos-memory-recorder`. The global `--build-native`
+`dimos/experimental/memory/rust/result/bin/dimos-memory-recorder`. The global `--build-native`
 flag forces a rebuild through Nix.
 
 ## SQLite
