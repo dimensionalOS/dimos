@@ -58,6 +58,9 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
 const HANDSHAKE_ATTEMPTS: u32 =
     (HANDSHAKE_TIMEOUT.as_millis() / HANDSHAKE_RETRY.as_millis()) as u32;
 const RECV_POLL: Duration = Duration::from_millis(200);
+/// About two seconds of Mid-360 data. A stalled consumer drops packets at
+/// this bound instead of growing memory without limit.
+const QUEUE_DEPTH: usize = 4096;
 
 /// A fatal source error: the reason recorded for the module to act on, and
 /// the stop flag tripped so every loop unwinds.
@@ -90,14 +93,21 @@ impl LiveSource {
             reason: Arc::new(OnceLock::new()),
             stop: stop.clone(),
         };
-        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(QUEUE_DEPTH);
         let mut threads = Vec::new();
 
+        let lidar_ip = config.lidar_ip;
         let point = data_socket(&config, config.ports.host_point_data)?;
-        threads.push(spawn_reader("point", point, tx.clone(), failure.clone()));
+        threads.push(spawn_reader(
+            "point",
+            point,
+            lidar_ip,
+            tx.clone(),
+            failure.clone(),
+        ));
         if config.enable_imu {
             let imu = data_socket(&config, config.ports.host_imu_data)?;
-            threads.push(spawn_reader("imu", imu, tx, failure.clone()));
+            threads.push(spawn_reader("imu", imu, lidar_ip, tx, failure.clone()));
         }
 
         let cmd = UdpSocket::bind(SocketAddrV4::new(
@@ -164,16 +174,33 @@ fn data_socket(config: &LiveConfig, port: u16) -> io::Result<UdpSocket> {
 fn spawn_reader(
     label: &'static str,
     socket: UdpSocket,
-    tx: mpsc::Sender<Vec<u8>>,
+    lidar_ip: Ipv4Addr,
+    tx: mpsc::SyncSender<Vec<u8>>,
     failure: Failure,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
+        let mut dropped = 0u64;
         while !failure.stop.load(Ordering::Relaxed) {
             match socket.recv_from(&mut buf) {
-                Ok((len, _)) => {
-                    if tx.send(buf[..len].to_vec()).is_err() {
-                        return;
+                Ok((len, from)) => {
+                    // Only the configured sensor may feed the stream. Anything
+                    // else on the ports or the multicast group is ignored.
+                    if from.ip() != std::net::IpAddr::V4(lidar_ip) {
+                        continue;
+                    }
+                    match tx.try_send(buf[..len].to_vec()) {
+                        Ok(()) => {}
+                        Err(mpsc::TrySendError::Full(_)) => {
+                            dropped += 1;
+                            dimos_module::warn_throttled!(
+                                Duration::from_secs(5),
+                                label,
+                                dropped,
+                                "consumer backlogged, dropping packets"
+                            );
+                        }
+                        Err(mpsc::TrySendError::Disconnected(_)) => return,
                     }
                 }
                 Err(err)
@@ -480,6 +507,63 @@ mod tests {
                 wire::param_key::WORK_MODE,
             ]
         );
+    }
+
+    #[test]
+    fn packets_from_unexpected_senders_are_ignored() {
+        let ports = test_ports(3);
+        let stop = Arc::new(AtomicBool::new(false));
+        // A dropped loopback datagram fails the test instead of hanging it.
+        let watchdog = stop.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(10));
+            watchdog.store(true, Ordering::Relaxed);
+        });
+        let mut source = LiveSource::start(
+            LiveConfig {
+                host_ip: Ipv4Addr::LOCALHOST,
+                lidar_ip: Ipv4Addr::LOCALHOST,
+                multicast_ip: None,
+                enable_imu: false,
+                ports,
+            },
+            stop,
+        )
+        .unwrap();
+
+        let packet = |ts_ns: u64| {
+            let payload = build_points_high(&[crate::wire::PointHigh {
+                x_mm: 1,
+                y_mm: 0,
+                z_mm: 0,
+                reflectivity: 255,
+                tag: 0,
+            }]);
+            DataPacket {
+                time_interval: 0,
+                dot_num: 1,
+                udp_cnt: 0,
+                frame_cnt: 0,
+                data_type: DataType::CartesianHigh,
+                time_type: 0,
+                timestamp_ns: ts_ns,
+                payload: &payload,
+            }
+            .build()
+        };
+        let target = SocketAddrV4::new(Ipv4Addr::LOCALHOST, ports.host_point_data);
+        let forged = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 2), 0)).unwrap();
+        forged.send_to(&packet(7), target).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        let genuine = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        genuine.send_to(&packet(42), target).unwrap();
+
+        // The channel is FIFO: had the forged packet been accepted, it would
+        // arrive first.
+        let mut buf = [0u8; 4096];
+        let len = source.recv(&mut buf).expect("genuine packet delivered");
+        let delivered = DataPacket::parse(&buf[..len]).unwrap();
+        assert_eq!(delivered.timestamp_ns, 42);
     }
 
     #[test]
