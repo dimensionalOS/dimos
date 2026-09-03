@@ -13,7 +13,10 @@
 # limitations under the License.
 
 from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
-from dimos.robot.manipulators.openyam.learning import OPENYAM_LEARNING_PROFILE
+from dimos.robot.manipulators.openyam.learning import (
+    OPENYAM_LEARNING_PROFILE,
+    OPENYAM_TEACH_LEARNING_PROFILE,
+)
 
 
 def test_openyam_profile_builds_matching_observation_and_action_schema() -> None:
@@ -27,3 +30,13 @@ def test_openyam_profile_builds_matching_observation_and_action_schema() -> None
     assert config.action["action"].names == OPENYAM_JOINTS
     assert config.observation[profile.image_feature].shape == (480, 640, 3)
     assert config.output.metadata["robot_type"] == "openyam"
+
+
+def test_openyam_teach_profile_uses_measured_joint_state_as_action() -> None:
+    profile = OPENYAM_TEACH_LEARNING_PROFILE
+
+    config = profile.dataprep_config()
+
+    assert config.observation["observation.state"].names == OPENYAM_JOINTS
+    assert config.action["action"].names == OPENYAM_JOINTS
+    assert config.action["action"].stream == "coordinator_joint_state"
