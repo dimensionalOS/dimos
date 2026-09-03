@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path as FilePath
 from typing import TYPE_CHECKING, ClassVar
 
 from dimos.evals.types import Agent, RunningEnvironment
@@ -53,7 +52,7 @@ class PoseTrajectoryDataset:
         finally:
             source.stop()
 
-    def start(self, modules: str, trace_dir: FilePath | None = None) -> RunningEnvironment:
+    def start(self, modules: str) -> RunningEnvironment:
         from dimos.memory.cli.dataset import open_dataset, resolve_dataset
         from dimos.memory.store.memory import MemoryStore
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -78,10 +77,11 @@ class PoseTrajectoryDataset:
         frame_id = frames.pop()
         trajectory = Path(ts=poses[0].ts, frame_id=frame_id, poses=poses)
         self._recording = MemoryStore()
-        self._recording.stream("trajectory", Path).append(trajectory, ts=trajectory.ts)
+        stream = self._recording.stream("trajectory", Path)
+        stream.append(trajectory, ts=trajectory.ts)
         return RunningEnvironment(
             mcp_url="",
-            recording=self._recording,
+            streams=(stream,),
             artifacts={"recording": resolve_dataset(self.name)},
         )
 

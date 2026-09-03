@@ -19,7 +19,6 @@ from pathlib import Path
 from dimos.evals.environments.pose_trajectory_dataset import PoseTrajectoryDataset
 from dimos.evals.types import EvalCase, Suite
 
-
 _DATASET = str(
     Path.home() / "Documents/2026-08-27_sf_office_8mins_moshi/go2_SF_office_8mins_moshi.db"
 )

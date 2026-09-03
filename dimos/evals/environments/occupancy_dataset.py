@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import numpy as np
@@ -112,7 +111,7 @@ class OccupancyDataset:
         finally:
             source.stop()
 
-    def start(self, modules: str, trace_dir: Path | None = None) -> RunningEnvironment:
+    def start(self, modules: str) -> RunningEnvironment:
         from dimos.mapping.pointclouds.occupancy import OCCUPANCY_ALGOS
         from dimos.mapping.voxels.module import VoxelMapTransformer
         from dimos.memory.cli.dataset import open_dataset, resolve_dataset
@@ -148,7 +147,7 @@ class OccupancyDataset:
         self._recording = recording
         return RunningEnvironment(
             mcp_url="",
-            recording=recording,
+            streams=(target,),
             artifacts={"recording": resolve_dataset(self.name)},
         )
 

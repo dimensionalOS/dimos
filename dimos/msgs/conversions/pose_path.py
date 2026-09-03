@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import base64
+from itertools import pairwise
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -73,12 +74,12 @@ def _path_image(positions: np.ndarray, center: np.ndarray, span: float) -> bytes
     scale = usable / span
 
     def pixel(point: np.ndarray) -> tuple[int, int]:
-        px = int(round(_IMAGE_SIZE / 2 + (point[0] - center[0]) * scale))
-        py = int(round(_IMAGE_SIZE / 2 - (point[1] - center[1]) * scale))
+        px = round(_IMAGE_SIZE / 2 + (point[0] - center[0]) * scale)
+        py = round(_IMAGE_SIZE / 2 - (point[1] - center[1]) * scale)
         return px, py
 
     for fraction in np.linspace(-0.5, 0.5, 11):
-        offset = int(round(fraction * usable))
+        offset = round(fraction * usable)
         cv2.line(
             canvas,
             (_IMAGE_SIZE // 2 + offset, _IMAGE_MARGIN),
@@ -96,7 +97,7 @@ def _path_image(positions: np.ndarray, center: np.ndarray, span: float) -> bytes
 
     pixels = [pixel(point) for point in xy]
     denominator = max(len(pixels) - 1, 1)
-    for index, (start, end) in enumerate(zip(pixels, pixels[1:], strict=False)):
+    for index, (start, end) in enumerate(pairwise(pixels)):
         fraction = index / denominator
         color = (int(255 * (1 - fraction)), int(170 + 70 * fraction), int(255 * fraction))
         cv2.line(canvas, start, end, color, 3, cv2.LINE_AA)

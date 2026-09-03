@@ -344,19 +344,18 @@ def test_occupancy_dataset_exposes_only_derived_costmaps(
     env.preflight(QuestionAnswer())
     running = env.start("")
     try:
-        assert running.recording.list_streams() == ["global_costmap"]
-        grids = list(running.recording.streams.global_costmap)
+        assert [stream.name for stream in running.streams] == ["global_costmap"]
+        grids = list(running.streams[0])
         assert len(grids) == 3
         assert len({obs.data.grid.shape for obs in grids}) == 1
         assert len(
             {(obs.data.origin.position.x, obs.data.origin.position.y) for obs in grids}
         ) == 1
         assert all(obs.data.agent_encode()[-1]["type"] == "image_url" for obs in grids)
-        with pytest.raises(AttributeError, match="No stream 'lidar'"):
-            list(running.recording.streams.lidar)
-
         spy = SpyChat(reply="yes")
-        QuestionAnswer(chat_model=spy).run("Is this mapped?", running, tmp_path / "run")
+        QuestionAnswer(chat_model=spy).run(
+            "Is this mapped?", running, tmp_path / "run", timeout_s=60.0
+        )
         content = spy.seen[0][-1].content
         assert isinstance(content, list)
         assert sum(block.get("type") == "image_url" for block in content) == 3
@@ -371,13 +370,15 @@ def test_pose_trajectory_dataset_preserves_full_odom_as_one_path(
     env.preflight(QuestionAnswer())
     running = env.start("")
     try:
-        assert running.recording.list_streams() == ["trajectory"]
-        (observation,) = list(running.recording.streams.trajectory)
+        assert [stream.name for stream in running.streams] == ["trajectory"]
+        (observation,) = list(running.streams[0])
         assert len(observation.data.poses) == 5
         assert observation.data.frame_id == "world"
 
         spy = SpyChat(reply="yes")
-        QuestionAnswer(chat_model=spy).run("Describe this path", running, tmp_path / "run")
+        QuestionAnswer(chat_model=spy).run(
+            "Describe this path", running, tmp_path / "run", timeout_s=60.0
+        )
         content = spy.seen[0][-1].content
         assert isinstance(content, list)
         assert sum(block.get("type") == "image_url" for block in content) == 1
@@ -503,7 +504,7 @@ def test_question_answer_encodes_the_recording_into_one_call(dataset: str, tmp_p
     assert [s.source for s in trajectory.steps] == ["user", "agent"] and len(spy.seen) == 1
     assert trajectory.steps[0].message == "how far?"
     text = _text(spy.seen[0])
-    assert "stream 'odom'" in text and "4.000" in text and "how far?" in text
+    assert "stream 'odom'" in text and '"position_m": [4.0' in text and "how far?" in text
     # every call is recorded whole; a fake model has no wire, so normalized
     extra = trajectory.steps[1].extra
     assert extra and extra.request.exists() and extra.response.exists()
