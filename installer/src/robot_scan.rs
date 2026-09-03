@@ -9,9 +9,11 @@ use anyhow::Result;
 use serde::Serialize;
 use socket2::{Domain, Protocol, Socket, Type};
 
+use crate::action::text;
 use crate::cli::ScanArgs;
-use crate::plan::{say, text, Ctx, Mode};
 use crate::probe::{capture, Os, Probes};
+use crate::run_context::{Ctx, Mode};
+use crate::say;
 
 const GROUP: Ipv4Addr = Ipv4Addr::new(231, 1, 1, 1);
 const QUERY_PORT: u16 = 10131;
@@ -49,14 +51,14 @@ const WIRED_NET: [u8; 3] = [192, 168, 123];
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Kind {
+enum Kind {
     Lan,
     Wired,
     Ble,
 }
 
 impl Kind {
-    pub fn name(self) -> &'static str {
+    fn name(self) -> &'static str {
         match self {
             Kind::Lan => "lan",
             Kind::Wired => "wired",
@@ -67,14 +69,14 @@ impl Kind {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Identity {
+enum Identity {
     Serial(String),
     Mac(String),
     Unknown,
 }
 
 impl Identity {
-    pub fn text(&self) -> &str {
+    fn text(&self) -> &str {
         match self {
             Identity::Serial(value) | Identity::Mac(value) => value,
             Identity::Unknown => "-",
@@ -83,7 +85,7 @@ impl Identity {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct Found {
+struct Found {
     pub kind: Kind,
     pub vendor: String,
     pub model: Option<String>,
@@ -106,7 +108,7 @@ pub fn run(args: &ScanArgs, ctx: &Ctx, probes: &Probes) -> Result<i32> {
     Ok(0)
 }
 
-pub fn scan(args: &ScanArgs, probes: &Probes) -> Vec<Found> {
+fn scan(args: &ScanArgs, probes: &Probes) -> Vec<Found> {
     let all = args.all_kinds();
     let mut found = Vec::new();
     if all || args.lan {
@@ -135,7 +137,7 @@ fn lan(ifaces: &[(String, Ipv4Addr)], timeout_s: u64) -> Vec<Found> {
 }
 
 /// Non-loopback, non-VPN interfaces, first IPv4 address each.
-pub fn lan_ifaces(ifaces: &[(String, Ipv4Addr)]) -> Vec<(String, Ipv4Addr)> {
+fn lan_ifaces(ifaces: &[(String, Ipv4Addr)]) -> Vec<(String, Ipv4Addr)> {
     let mut usable: Vec<(String, Ipv4Addr)> = Vec::new();
     for (name, ip) in ifaces {
         let skipped = SKIP_IFACES.iter().any(|p| name.starts_with(p)) || ip.is_loopback();
@@ -194,7 +196,7 @@ fn collect_replies(sock: &UdpSocket, iface: &str, window: Duration) -> Vec<Found
 }
 
 /// A reply carries `sn`; `ip` is optional and falls back to the datagram's source address.
-pub fn parse_reply(payload: &str, src: &str, iface: &str) -> Option<Found> {
+fn parse_reply(payload: &str, src: &str, iface: &str) -> Option<Found> {
     let msg: serde_json::Value = serde_json::from_str(payload).ok()?;
     let serial = msg.get("sn")?.as_str().filter(|s| !s.is_empty())?;
     Some(Found {
@@ -225,7 +227,7 @@ fn wired(ifaces: &[(String, Ipv4Addr)], os: &Os) -> Vec<Found> {
 }
 
 /// Interfaces holding a 192.168.123.0/24 address — the wired link to a Unitree robot.
-pub fn wired_ifaces(ifaces: &[(String, Ipv4Addr)]) -> Vec<(String, Ipv4Addr)> {
+fn wired_ifaces(ifaces: &[(String, Ipv4Addr)]) -> Vec<(String, Ipv4Addr)> {
     ifaces
         .iter()
         .filter(|(_, ip)| ip.octets()[..3] == WIRED_NET)
@@ -256,7 +258,7 @@ fn alive(os: &Os, addr: Ipv4Addr) -> bool {
 }
 
 /// `-W` is whole seconds on iputils and milliseconds on macOS.
-pub fn ping_wait_arg(os: &Os) -> &'static str {
+fn ping_wait_arg(os: &Os) -> &'static str {
     match os {
         Os::Linux { .. } => "1",
         Os::MacOs { .. } => "1000",
@@ -308,7 +310,7 @@ fn ble(probes: &Probes, timeout_s: u64) -> Vec<Found> {
 }
 
 /// `dimos go2tool discover` prints `SOURCE NAME IP MAC SERIAL`; only its BLE rows are ours.
-pub fn parse_ble_row(line: &str) -> Option<Found> {
+fn parse_ble_row(line: &str) -> Option<Found> {
     let fields: Vec<&str> = line.split_whitespace().collect();
     let ["BLE", name, _ip, mac, serial] = fields[..] else {
         return None;
@@ -327,7 +329,7 @@ pub fn parse_ble_row(line: &str) -> Option<Found> {
     })
 }
 
-pub fn table(found: &[Found]) -> String {
+fn table(found: &[Found]) -> String {
     let mut out = row(
         "kind", "vendor", "model", "identity", "address", "iface", "note",
     );

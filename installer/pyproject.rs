@@ -1,4 +1,4 @@
-// Shared by build.rs (include!) and tests/build_support.rs so the parsers have one definition.
+// Shared by build.rs (include!) and tests/pyproject.rs so the parsers have one definition.
 
 /// Sorted names of `[project.optional-dependencies]`; `[dependency-groups]` are not extras.
 pub fn extras(pyproject: &str) -> Vec<String> {

@@ -13,14 +13,28 @@ verbatim.
 
 ```
 installer/                 Rust crate `dimos-installer`, binary `dimos`, workspace member
-  src/plan.rs              Action / Stage / Plan; `run` is the ONLY fn that mutates the machine or prompts
-  src/probe.rs             read the machine once into Probes; `capture` is the one bounded spawn; parsers pure over &str
+  src/action.rs            Action — the one thing a stage does, and the text it renders as
+  src/plan.rs              Stage / Plan / Outcome — the shape of a run every stage builder speaks
+  src/run.rs               the executor: gate each stage, apply it, report what the machine did
+  src/run_context.rs       Mode / Ctx — the run's settings, the consent prompt, the ONE stdin read
+  src/spawn.rs             one program under a deadline, keeping the tail of its output
+  src/file_actions.rs      the ONLY file writer outside install_record.rs and action_log.rs
+  src/say.rs               `-> ok !! xx` on stderr plus the plan and stage lines; colour only on a TTY
+  src/probe.rs             read the machine once into Probes; `capture` is the one bounded spawn
+  src/probe_parse.rs       the parsers behind Probes, pure over &str so a fixture tests each one
   src/sudo.rs              Root | Passwordless | Askpass | Stdin(DIMOS_SUDO_PASSWORD) | Tty | Unavailable
-  src/state.rs             ~/.config/dimos/installer.json + ~/.local/state/dimos/installer.jsonl
-  src/pkgs.rs              platforms.toml + extras from pyproject (build.rs); cuda refused on aarch64
+  src/install_record.rs    installer paths + ~/.config/dimos/installer.json
+  src/action_log.rs        the redacted ~/.local/state/dimos/installer.jsonl
+  src/platforms.rs         platforms.toml + extras from pyproject (build.rs); cuda refused on aarch64
   src/cli.rs               clap surface
-  src/setup/{mod,self_install,deps,install,sysconfig,jetson,g1,verify}.rs
-  src/{update,service,uninstall,robot,hardware,forward}.rs
+  src/setup/{mod,self_install,system_packages,dimos_venv,system_config,verify}.rs
+  src/wizards/mod.rs       the Robot registry: preflight, the shared checks and notes, the hardware record
+  src/wizards/unitree/g1.rs        everything Unitree G1
+  src/wizards/nvidia/jetson.rs     nvpmodel, jetson_clocks, the static-TLS LD_PRELOAD fix
+  src/update.rs            doctor and update in one: observe, plan, run, record
+  src/self_update.rs       swapping the installer binary itself, and the rollback that undoes it
+  src/version.rs           PEP 440-lite compare and the release URLs the artifacts come from
+  src/{systemd_service,uninstall,robot_scan,venv_forward}.rs
   platforms.toml           apt/brew packages per extra; sysctl + memlock values, with the WHY
   WIZARDS.md               how an agent adds a wizard for a new robot
   README.md                command surface + v1/v2/v3 roadmap
@@ -30,7 +44,7 @@ installer/                 Rust crate `dimos-installer`, binary `dimos`, workspa
   tests/container.sh       ubuntu:22.04 amd64/arm64 harness (not run yet — see Testing)
 scripts/install.sh         the bootstrapper (rewritten in place; README/quickstart curl lines unchanged)
 .github/workflows/installer.yml   3 targets + sha256 on v* tags; crate checks on PRs
-dimos/cli/forward.py       inside the venv, `dimos setup|update|service|uninstall|robot` exec the binary
+dimos/cli/installer_cli.py inside the venv, `dimos setup|update|service|uninstall|robot` exec the binary
 ```
 
 ## Decisions that shape it (full text: installer/docs/design-brief.md)
@@ -83,7 +97,7 @@ this branch's Python-side change exists. **Until then test in dev mode from this
 ## Testing — where things stand
 
 Done on this Mac (macOS 14, arm64): `cargo fmt`, `cargo clippy -D warnings`, `cargo test`,
-`pytest dimos/cli/test_forward.py`, `bash -n` + shellcheck on install.sh, cross-builds for
+`pytest dimos/cli/test_installer_cli.py`, `bash -n` + shellcheck on install.sh, cross-builds for
 `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` via `cargo zigbuild`, and the local
 dry-run sanity. Results are in the log below.
 
@@ -209,7 +223,7 @@ always `--rerun-open none`; MAXN mode runs hot, so keep the robot on the charger
   a ticket that expires during the 30-minute cyclonedds build re-prompts before `nvpmodel`, not
   inside its 60 s budget. Untested on a terminal yet.
 - Library mode (`--mode library`) needs a PyPI release built from a branch that includes
-  `dimos/cli/forward.py`; until then it is unit-tested only.
+  `dimos/cli/installer_cli.py`; until then it is unit-tested only.
 - `installer/WIZARDS.md` was written but not yet proven by having a fresh agent follow it
   (planned acceptance test, cut for time).
 - v2: `~/.config/dimos/robots.json`, `robot list|show|rename|rm`, tags, `--robot <name>`, and the
@@ -244,7 +258,7 @@ the earlier PRD (Paul, Ivan, Jeff, Stash, Jetson Wu) are dispositioned in the kn
 - 2026-09-01 — scaffold committed (workspace member, build.rs version+extras from pyproject, platforms.toml).
 - 2026-09-01 — full crate + bootstrapper + forwarder built, integrated and committed. On this Mac
   (arm64): `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` (245 unit +
-  7 build-script tests) green; `pytest dimos/cli/test_forward.py dimos/cli/test_cli_startup.py`
+  7 build-script tests) green; `pytest dimos/cli/test_installer_cli.py dimos/cli/test_cli_startup.py`
   14 passed; `bash -n` + shellcheck clean on `scripts/install.sh` and `installer/tests/container.sh`;
   `cargo zigbuild --release` for `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl` both
   `statically linked`; `cargo build --release` for the Mac. Sanity: `dimos --version` → `dimos 0.0.14b1`;
@@ -263,7 +277,7 @@ the earlier PRD (Paul, Ivan, Jeff, Stash, Jetson Wu) are dispositioned in the kn
   are picked by the login shell (zsh → `.zprofile`) and a test proves `rc_files` and the `-l` probe
   agree; `Sudo::Tty` refreshes `sudo -v` outside every deadline; every probe spawns through
   `probe::capture` with a deadline (dup `capture`/`text`/`run_in` copies deleted; `Action::run_owned`,
-  `plan::owned`, `plan::text` are the one home); `hardware g1|jetson setup` forward from the venv CLI;
+  `action::owned`, `action::text` are the one home); `hardware g1|jetson setup` forward from the venv CLI;
   torch is a warn-only `verify-torch` stage whose last line is the LD_PRELOAD fix; the numpy pin, rc
   block and `.env` stages are probe-gated so a configured G1 plans nothing but the checks;
   `apt-get update` is a best-effort warn-only stage; the G1 verify ends with a live `rt/lowstate` read
@@ -272,8 +286,8 @@ the earlier PRD (Paul, Ivan, Jeff, Stash, Jetson Wu) are dispositioned in the kn
   `hardware` without installer.json exits 2; `.161` is labelled `control computer (no ssh)` and the
   LAN query re-sends every second; `--transport` is a `ValueEnum`; sudo evaluates root/passwordless
   before the env password and the fix text uses `read -rs`; dead `Probes.dotenv` deleted; docs no
-  longer claim `plan::run` is the only spawn. Same gate re-run green on this Mac: fmt, clippy `-D
-  warnings`, 268 unit tests, `pytest dimos/cli/test_forward.py` 13 passed, `bash -n` + shellcheck,
+  longer claim `run::run` is the only spawn. Same gate re-run green on this Mac: fmt, clippy `-D
+  warnings`, 268 unit tests, `pytest dimos/cli/test_installer_cli.py` 13 passed, `bash -n` + shellcheck,
   `cargo build --release`. Smoke on this Mac: `setup --dry-run --non-interactive --mode dev --branch
   aaryan/installer --extras base --dir /tmp/dimos-dryrun` still stops at the disk gate (7 GiB free,
   12 needed) — the gate, not the plan; `update --dry-run` → exit 2 `run dimos setup first`;
@@ -282,7 +296,7 @@ the earlier PRD (Paul, Ivan, Jeff, Stash, Jetson Wu) are dispositioned in the kn
   the container harness, which is still not run.
 - 2026-09-01 — orchestrator re-ran every gate independently after the review fixes, all green:
   `cargo test` 268 + 4 + 3 passed, `cargo clippy --all-targets -- -D warnings` clean, `cargo fmt
-  --check` clean, `cargo build --release` → `dimos 0.0.14b1`, `pytest dimos/cli/test_forward.py
+  --check` clean, `cargo build --release` → `dimos 0.0.14b1`, `pytest dimos/cli/test_installer_cli.py
   dimos/cli/test_cli_startup.py` 16 passed, `cargo zigbuild` for aarch64 and x86_64 musl both
   `statically linked, stripped`. Merged `origin/main` in (3 new commits there, no overlapping
   files; merge rather than rebase so the branch never needs a force-push) and pushed to
@@ -355,3 +369,44 @@ the earlier PRD (Paul, Ivan, Jeff, Stash, Jetson Wu) are dispositioned in the kn
   executor then logs that action, so a 2-line log survives (2 of the 17 above). Mac `10.0.0.167`:
   ssh refused the supplied password, not run. Review Desktop on this box needs `chrome-sandbox`
   root-owned (Ubuntu 24.04 restricts unprivileged user namespaces).
+- 2026-09-02 — layout, on `aaryan/installer-layout` stacked on this branch: files named by what they
+  hold. `plan.rs` → `plan.rs` (types) + `run.rs` (executor, gates, `Report`, `Ctx`) + `say.rs`;
+  `state.rs` → `install_record.rs` + `action_log.rs`; `pkgs.rs` → `platforms.rs`;
+  `setup/{deps,install,sysconfig}.rs` → `setup/{system_packages,dimos_venv,system_config}.rs`;
+  `hardware.rs` + `setup/{g1,jetson}.rs` → `wizards/mod.rs` (registry) + `wizards/unitree/g1.rs` +
+  `wizards/nvidia/jetson.rs`; `service.rs` → `systemd_service.rs`; `robot.rs` → `robot_scan.rs`;
+  `forward.rs` → `venv_forward.rs`; `build_support.rs` → `pyproject.rs`; `dimos/cli/forward.py` →
+  `installer_cli.py`. Moves only: 15 recorded as renames, no re-exports; the command surface, terminal
+  output, exit codes and both state files are unchanged. Gates green (269 + 4 + 3 tests, clippy, fmt,
+  16 pytest). The layout binary re-ran `setup` on `dimensional-67oe` against the install the previous
+  binary made: only self-install applied, every other stage already, verify passed, the record read
+  back. `update --dry-run` exits 1 from both binaries alike, because that clone sits one commit behind.
+- 2026-09-02 — same branch, two more passes. **Split the four oversized files** along the seams already
+  inside them: `run.rs` 777 → `run.rs` 292 (executor) + `run_context.rs` (`Ctx`, the only stdin read) +
+  `spawn.rs` (one program under a deadline, tail kept) + `file_actions.rs` (the filesystem effects),
+  with the plan printing moved into `say.rs`; `probe.rs` 564 → `probe.rs` 410 + `probe_parse.rs`
+  (every pure parser and its fixtures); `update.rs` 504 → `update.rs` 331 + `self_update.rs` +
+  `version.rs`; `plan.rs` 403 → `action.rs` 271 + `plan.rs` 136. The two file-walking guard tests got stricter as a result:
+  their allowed homes narrowed from `run.rs` (777 lines) to `file_actions.rs` (145), and they now live
+  in `tests/source_invariants.rs` so one `sources()` walker serves both. **Then simplified:**
+  `sync_action` was defined twice, in `setup/dimos_venv.rs` and `update.rs`, same docstring word for
+  word and both timeouts 3600 — now one function taking the nix wrap and `UV_PYTHON` as parameters;
+  the loopback-multicast and jetson-clocks units render from one `oneshot_unit` skeleton; and every
+  item narrowed to the visibility it is actually used at, `pub` 282 → 85 (each of the 85 reachable
+  from `main.rs`). No behavior change: with an isolated `$HOME`, the `setup --dry-run` plan is
+  byte-identical before and after, 28 lines, exit 0, and `update --dry-run` likewise. Counting rule
+  for every figure here: lines before `#[cfg(test)]`, and `pub` items at any indent excluding
+  `pub(crate)`, measured base `d67d2637` to head. Largest files now: probe.rs 410, g1.rs 392 (one
+  file per robot, deliberate), robot_scan.rs 361, setup/mod.rs 335. `cli.rs` changes only three
+  lines, all visibility keywords; the `Command` enum, every verb and flag, is untouched.
+  Gates on every commit: 267 + 4 + 3 + 2 tests, clippy `-D warnings`, fmt, release build, 16 pytest.
+  Open, deliberately not done: `dimos_venv::library_actions` and `update::pip_action` build the same
+  `uv pip install` with different budgets (3600 vs 1800) — decide whether that gap is intent or drift,
+  then merge. `installer/README.md` and `WIZARDS.md` follow the new names.
+- 2026-09-02 — the refactored binary on real hardware. Cross-built aarch64 musl from this Linux box
+  (static, stripped, SHA-256 `ea1c32a2e02f35f6da2f82f470916ca3623ddb1a48f1723c35137f85c3e1b79a`) and
+  run on `orin-nx-7837` against the install the pre-refactor binary made: `setup` exit 0 with every
+  stage already except self-install (the binary's own sha changed, so it copies), `hardware jetson
+  setup` exit 0 with all four stages already, MAXN_SUPER held and both units still active. `update
+  --dry-run` exits 1 there because that clone sits behind `origin/aaryan/installer` and so plans a
+  pull — the same exit the pre-refactor binary gives, not a regression.

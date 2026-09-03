@@ -8,15 +8,21 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::Parser;
 
+use dimos_installer::action::Action;
 use dimos_installer::cli::{
     hardware_argv, Cli, Command, HardwareTarget, RobotAction, ServiceAction,
 };
-use dimos_installer::pkgs::Platforms;
-use dimos_installer::plan::{self, say, Action, Ctx, Plan, Stage};
+use dimos_installer::install_record::{self, LastRun};
+use dimos_installer::plan::{Plan, Stage};
+use dimos_installer::platforms::Platforms;
 use dimos_installer::probe::Probes;
-use dimos_installer::setup::g1;
-use dimos_installer::state::{self, LastRun};
-use dimos_installer::{forward, hardware, robot, service, setup, uninstall, update};
+use dimos_installer::run;
+use dimos_installer::run_context::Ctx;
+use dimos_installer::say;
+use dimos_installer::wizards::unitree::g1;
+use dimos_installer::{
+    robot_scan, setup, systemd_service, uninstall, update, venv_forward, wizards,
+};
 
 const SETUP_FIRST: &str = "no DimOS install recorded: run `dimos setup` first";
 
@@ -71,7 +77,7 @@ fn dispatch(
         Command::Hardware { target } => hardware_run(target, ctx, probes, cfg, home),
         Command::Robot {
             action: RobotAction::Scan(args),
-        } => robot::run(args, ctx, probes),
+        } => robot_scan::run(args, ctx, probes),
         Command::Uninstall => uninstall::run(ctx, home),
         Command::External(argv) => forward(argv, home),
     }
@@ -81,7 +87,7 @@ fn dispatch(
 fn forwarded(command: &Command) -> Option<Vec<OsString>> {
     match command {
         Command::External(argv) => Some(argv.clone()),
-        Command::Hardware { target } if hardware::owned(target).is_none() => {
+        Command::Hardware { target } if wizards::owned(target).is_none() => {
             Some(hardware_argv(target))
         }
         _ => None,
@@ -92,11 +98,12 @@ fn forwarded(command: &Command) -> Option<Vec<OsString>> {
 fn forward(argv: &[OsString], home: &Path) -> Result<i32> {
     let cwd = std::env::current_dir().context("no working directory: cd somewhere and re-run")?;
     let venv_env = std::env::var_os("VIRTUAL_ENV").map(PathBuf::from);
-    let Some(path) = forward::venv_dimos(state::load(home)?.as_ref(), venv_env, &cwd) else {
-        say::fail(forward::NO_VENV_HINT);
+    let Some(path) = venv_forward::venv_dimos(install_record::load(home)?.as_ref(), venv_env, &cwd)
+    else {
+        say::fail(venv_forward::NO_VENV_HINT);
         return Ok(2);
     };
-    match forward::exec(&path, argv)? {}
+    match venv_forward::exec(&path, argv)? {}
 }
 
 /// `g1 setup` and `jetson setup` are ours; every other `hardware ...` verb is the Python CLI's.
@@ -107,8 +114,8 @@ fn hardware_run(
     cfg: &Platforms,
     home: &Path,
 ) -> Result<i32> {
-    match hardware::owned(target) {
-        Some((robot, args)) => hardware::run(robot, args, ctx, probes, cfg, home),
+    match wizards::owned(target) {
+        Some((robot, args)) => wizards::run(robot, args, ctx, probes, cfg, home),
         None => forward(&hardware_argv(target), home),
     }
 }
@@ -119,8 +126,8 @@ fn service_run(action: &ServiceAction, ctx: &mut Ctx, probes: &Probes, home: &Pa
         say::fail(SETUP_FIRST);
         return Ok(2);
     };
-    let steps = service::plan(action, installed, &probes.platform, cdds_home(home))?;
-    let report = plan::run(&steps, ctx)?;
+    let steps = systemd_service::plan(action, installed, &probes.platform, cdds_home(home))?;
+    let report = run::run(&steps, ctx)?;
     report.print(ctx);
     Ok(report.exit_code())
 }
@@ -133,21 +140,21 @@ fn cdds_home(home: &Path) -> Option<PathBuf> {
 
 /// installer.json keeps the last result; there is nothing to write until `setup` has created it.
 fn record(home: &Path, command: &str, code: i32) -> Result<()> {
-    let Some(mut installed) = state::load(home)? else {
+    let Some(mut installed) = install_record::load(home)? else {
         return Ok(());
     };
     installed.last = Some(LastRun {
         command: command.to_string(),
         exit_code: code,
-        at: state::now_iso(),
+        at: install_record::now_iso(),
     });
-    state::save(home, &installed)
+    install_record::save(home, &installed)
 }
 
 /// The `update` that swapped the binary is still the old process image, so only a later clean run
 /// of another verb proves the new one; the removal goes through the executor like every mutation.
 fn clear_backup(ctx: &mut Ctx, home: &Path, command: &Command) -> Result<()> {
-    let bak = state::backup_bin(home);
+    let bak = install_record::backup_bin(home);
     if matches!(command, Command::Update(_)) || !bak.exists() {
         return Ok(());
     }
@@ -159,7 +166,7 @@ fn clear_backup(ctx: &mut Ctx, home: &Path, command: &Command) -> Result<()> {
         })],
         notes: Vec::new(),
     };
-    plan::run(&steps, ctx).map(|_| ())
+    run::run(&steps, ctx).map(|_| ())
 }
 
 /// The verb installer.json's `last` records; a scan saves nothing, and a forward never returns.
@@ -250,7 +257,7 @@ mod tests {
         assert_eq!(cmd.get_name(), "dimos");
         assert_eq!(
             cmd.get_version(),
-            Some(dimos_installer::pkgs::DIMOS_VERSION)
+            Some(dimos_installer::platforms::DIMOS_VERSION)
         );
     }
 }

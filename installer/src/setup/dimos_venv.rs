@@ -6,10 +6,11 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
+use crate::action::{text, Action};
 use crate::cli::InstallMode;
-use crate::pkgs::{self, DIMOS_VERSION};
-use crate::plan::{text, Action, Stage};
-use crate::state;
+use crate::install_record;
+use crate::plan::Stage;
+use crate::platforms::{self, DIMOS_VERSION};
 
 const REPO_URL: &str = "https://github.com/dimensionalOS/dimos";
 const PYTHON_VERSION: &str = "3.12";
@@ -20,14 +21,14 @@ const VENV_TIMEOUT_S: u64 = 300;
 const INSTALL_TIMEOUT_S: u64 = 3600;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum DirState {
+pub(crate) enum DirState {
     Absent,
     Clone { branch: Option<String> },
     NotAClone,
 }
 
 /// The only I/O in this file: `.git/HEAD` decides clone vs not; an empty directory still clones.
-pub fn dir_state(dir: &Path) -> DirState {
+pub(crate) fn dir_state(dir: &Path) -> DirState {
     match fs::read_to_string(dir.join(".git/HEAD")) {
         Ok(head) => DirState::Clone {
             branch: head_branch(&head),
@@ -51,7 +52,7 @@ fn is_free(dir: &Path) -> bool {
 }
 
 /// A clone on another branch is left alone; the operator is told, never switched under them.
-pub fn branch_note(state: &DirState, wanted: &str, dir: &Path) -> Option<String> {
+pub(crate) fn branch_note(state: &DirState, wanted: &str, dir: &Path) -> Option<String> {
     let DirState::Clone { branch: Some(on) } = state else {
         return None;
     };
@@ -66,7 +67,11 @@ pub fn branch_note(state: &DirState, wanted: &str, dir: &Path) -> Option<String>
 }
 
 /// What installer.json records: a PyPI pin, or the branch and commit a dev checkout sits on.
-pub fn dimos_version_string(mode: InstallMode, branch: &str, git_rev: Option<&str>) -> String {
+pub(crate) fn dimos_version_string(
+    mode: InstallMode,
+    branch: &str,
+    git_rev: Option<&str>,
+) -> String {
     match (mode, git_rev) {
         (InstallMode::Library, _) => DIMOS_VERSION.to_string(),
         (InstallMode::Dev, Some(rev)) => format!("git:{branch}@{rev}"),
@@ -75,7 +80,7 @@ pub fn dimos_version_string(mode: InstallMode, branch: &str, git_rev: Option<&st
 }
 
 /// The critical install stage; the verify stage, with its own budget, proves the import.
-pub fn dimos_stage(
+pub(crate) fn dimos_stage(
     mode: InstallMode,
     dir: &Path,
     extras: &[String],
@@ -102,8 +107,8 @@ fn library_actions(dir: &Path, extras: &[String], with_nix: bool, uv: &Path) -> 
             "pip".into(),
             "install".into(),
             "--python".into(),
-            text(&state::venv_python(dir)),
-            pkgs::pip_spec(extras),
+            text(&install_record::venv_python(dir)),
+            platforms::pip_spec(extras),
         ],
     );
     vec![
@@ -121,7 +126,7 @@ fn venv_argv(uv: &Path, dir: &Path) -> Vec<String> {
         "--python".into(),
         PYTHON_VERSION.into(),
         "--allow-existing".into(),
-        text(&state::venv(dir)),
+        text(&install_record::venv(dir)),
     ]
 }
 
@@ -143,7 +148,7 @@ fn dev_actions(
     if *state == DirState::Absent {
         actions.push(clone_action(branch, dir));
     }
-    actions.push(sync_action(dir, extras, with_nix, uv));
+    actions.push(sync_action(dir, extras, with_nix, uv, Some(PYTHON_VERSION)));
     Ok(actions)
 }
 
@@ -167,14 +172,22 @@ fn clone_action(branch: &str, dir: &Path) -> Action {
 }
 
 /// `--inexact` leaves packages the lockfile does not name, so a hand-installed SDK survives.
-fn sync_action(dir: &Path, extras: &[String], with_nix: bool, uv: &Path) -> Action {
+pub(crate) fn sync_action(
+    dir: &Path,
+    extras: &[String],
+    with_nix: bool,
+    uv: &Path,
+    python: Option<&str>,
+) -> Action {
     let mut argv = vec![text(uv), "sync".into(), "--inexact".into()];
-    argv.extend(pkgs::sync_args(extras));
+    argv.extend(platforms::sync_args(extras));
+    let mut env = vec![("GIT_LFS_SKIP_SMUDGE", "1")];
+    env.extend(python.map(|v| ("UV_PYTHON", v)));
     Action::run_owned(
         nix_wrap(with_nix, dir, argv),
         false,
         Some(dir),
-        &[("GIT_LFS_SKIP_SMUDGE", "1"), ("UV_PYTHON", PYTHON_VERSION)],
+        &env,
         INSTALL_TIMEOUT_S,
     )
 }
@@ -197,7 +210,7 @@ fn nix_wrap(with_nix: bool, dir: &Path, argv: Vec<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::TmpDir;
+    use crate::install_record::TmpDir;
     use std::path::PathBuf;
 
     fn extras() -> Vec<String> {

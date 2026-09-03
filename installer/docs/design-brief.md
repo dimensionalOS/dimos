@@ -97,7 +97,7 @@ Source material (verified maps from seven readers; cite them, do not re-derive):
 15. **Tests are the docs**: cargo unit tests for every pure function (plan builders from fixture probe
     results, platform detection from fixture strings, sha256, version compare, extras validation, sysctl
     need computation, .env writer, unit-file rendering with escaping, verify-check snippet rendering)
-    with invariant-docstring names; one Python test co-located (test_forward.py: both-directions
+    with invariant-docstring names; one Python test co-located (test_installer_cli.py: both-directions
     invariant + recursion guard). Integration: the musl binary run in ubuntu:22.04 containers (amd64 + arm64) doing a full
     non-interactive dev install and a second idempotent run — the orchestrator runs this after build.
 16. **House rules apply to Rust too**: smallest diff, no compat shims for callers that do not exist, logic
@@ -150,15 +150,16 @@ Source material (verified maps from seven readers; cite them, do not re-derive):
 
 20. **A wizard-maker guide ships in the crate: `installer/WIZARDS.md` (Aaryan, 2026-09-01).** It is
     written for a coding agent (and an FDE driving one) integrating a new robot: how a hardware wizard is
-    one Rust file `installer/src/setup/<robot>.rs` of stage builders (`fn(&Observed) -> Stage`) composed
-    by `installer/src/hardware.rs`, beside the shared `setup/jetson.rs` and `setup/sysconfig.rs`; the
+    one Rust file `installer/src/wizards/<manufacturer>/<robot>.rs` of stage builders (`fn(&Observed) ->
+    Stage`) composed by `installer/src/wizards/mod.rs`, beside the shared `wizards/nvidia/jetson.rs`
+    and `setup/system_config.rs`; the
     Stage/Action/Probe contract with the exact types (copied from the code, not paraphrased); the rules —
     every stage has a probe so re-runs are no-ops, `--dry-run` must render the whole plan without touching
     the machine, a critical verify stage last, sudo only through the `Sudo` wrapper, secrets never in argv
-    or logs, plain-text output prefixes; where to register the subcommand (`hardware/mod.rs` dispatch +
+    or logs, plain-text output prefixes; where to register the subcommand (`wizards/mod.rs` dispatch +
     `cli.rs` enum); the `platforms.toml` entry for its extra; the tests it must add (fixture-driven plan
     tests: fresh machine → full plan, configured machine → empty plan) and the container/hardware runbook
-    lines; and a worked example that walks through `hardware/jetson.rs` line by line. One line each on
+    lines; and a worked example that walks through `wizards/nvidia/jetson.rs` line by line. One line each on
     what NOT to do (no cliclack, no shell strings, no `unwrap` on I/O, no TODO). Lean: link to code, do
     not duplicate it. **Acceptance test:** an agent that has only read WIZARDS.md adds a throwaway
     `hardware demo` wizard (two stages: write a marker file, verify it) in a scratch worktree and it

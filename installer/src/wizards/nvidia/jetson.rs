@@ -1,17 +1,23 @@
-//! Jetson performance stage, shared by `setup` and `hardware jetson|g1 setup`.
+//! The NVIDIA Jetson wizard: nvpmodel and jetson_clocks; its `stage` is shared by `setup` and the G1.
 
-use crate::plan::Stage;
-use crate::probe::{Kernel, Platform};
-use crate::setup::sysconfig;
-use crate::state::JETSON_CLOCKS_UNIT;
+use anyhow::{bail, Result};
+
+use crate::cli::HardwareSetupArgs;
+use crate::install_record::{Installed, JETSON_CLOCKS_UNIT};
+use crate::plan::{Plan, Stage};
+use crate::platforms::Platforms;
+use crate::probe::{Kernel, Platform, Probes};
+use crate::setup::{system_config, verify};
+use crate::wizards::{checks, notes, Robot};
 
 const STEP_TIMEOUT_S: u64 = 60;
 /// Preloading the two libraries claims their TLS slots before torch's late dlopen asks for them.
-pub const LD_PRELOAD_FIX: &str = "export LD_PRELOAD=/lib/aarch64-linux-gnu/libGLdispatch.so.0:\
-                                  /usr/lib/aarch64-linux-gnu/libgomp.so.1";
+pub(crate) const LD_PRELOAD_FIX: &str =
+    "export LD_PRELOAD=/lib/aarch64-linux-gnu/libGLdispatch.so.0:\
+     /usr/lib/aarch64-linux-gnu/libgomp.so.1";
 
 /// nvpmodel + a jetson_clocks unit; empty off a Jetson and empty once both are in place.
-pub fn stage(platform: &Platform, kernel: &Kernel) -> Stage {
+pub(crate) fn stage(platform: &Platform, kernel: &Kernel) -> Stage {
     let mut stage = Stage::new("jetson perf", false);
     if !platform.is_jetson() {
         return stage;
@@ -27,23 +33,16 @@ pub fn stage(platform: &Platform, kernel: &Kernel) -> Stage {
 }
 
 /// jetson_clocks resets on every boot, so it runs from a unit rather than once at install time.
-pub fn render_clocks_unit() -> String {
-    "[Unit]\n\
-     Description=DimOS Jetson max clocks\n\
-     After=nvpmodel.service\n\
-     \n\
-     [Service]\n\
-     Type=oneshot\n\
-     RemainAfterExit=yes\n\
-     ExecStart=/usr/bin/jetson_clocks\n\
-     \n\
-     [Install]\n\
-     WantedBy=multi-user.target\n"
-        .to_string()
+fn render_clocks_unit() -> String {
+    system_config::oneshot_unit(
+        "DimOS Jetson max clocks",
+        "nvpmodel.service",
+        &["/usr/bin/jetson_clocks"],
+    )
 }
 
 /// aarch64 glibc below 2.34 has too few static-TLS slots for a late `dlopen` of libgomp.
-pub fn static_tls_note(platform: &Platform) -> Option<String> {
+pub(crate) fn static_tls_note(platform: &Platform) -> Option<String> {
     platform.static_tls_risk().then(|| {
         format!(
             "torch may fail with 'cannot allocate memory in static TLS block' on this glibc; \
@@ -53,7 +52,7 @@ pub fn static_tls_note(platform: &Platform) -> Option<String> {
 }
 
 /// MAXN raises the power ceiling, so an untethered session drains and heats the robot faster.
-pub fn thermal_note(kernel: &Kernel) -> Option<String> {
+pub(crate) fn thermal_note(kernel: &Kernel) -> Option<String> {
     needs_maxn(kernel)
         .then(|| "MAXN draws more power and runs hotter: keep the robot on the charger".to_string())
 }
@@ -70,16 +69,43 @@ fn clocks_unit_enabled(kernel: &Kernel) -> bool {
 }
 
 fn install_clocks_unit(stage: Stage) -> Stage {
-    sysconfig::unit_actions(JETSON_CLOCKS_UNIT, render_clocks_unit())
+    system_config::unit_actions(JETSON_CLOCKS_UNIT, render_clocks_unit())
         .into_iter()
         .fold(stage, Stage::push)
+}
+
+pub(crate) fn ready(probes: &Probes) -> Result<()> {
+    if probes.platform.is_jetson() {
+        return Ok(());
+    }
+    bail!("not a Jetson: /etc/nv_tegra_release is missing; a plain Linux host needs `dimos setup`")
+}
+
+/// The standalone Orin (brief decision 14): performance mode and machine config, then verify.
+pub(crate) fn plan(
+    args: &HardwareSetupArgs,
+    probes: &Probes,
+    cfg: &Platforms,
+    installed: &Installed,
+) -> Plan {
+    let mut stages = vec![
+        stage(&probes.platform, &probes.kernel),
+        system_config::stage(&probes.platform, &probes.kernel, cfg),
+    ];
+    stages.extend(checks(verify::Target::Jetson, installed, args));
+    Plan {
+        command: Robot::Jetson.command(),
+        stages,
+        notes: notes(probes),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::Action;
-    use crate::probe::{nvpmodel_is_maxn, Arch, Gpu, Jetson, Os, PkgManager};
+    use crate::action::Action;
+    use crate::probe::{Arch, Gpu, Jetson, Os, PkgManager};
+    use crate::probe_parse::nvpmodel_is_maxn;
     use std::path::PathBuf;
 
     /// JetPack 6 on an Orin NX already at max performance.

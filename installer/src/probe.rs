@@ -1,5 +1,4 @@
-//! Read-only detection. Every spawn goes through `capture`, bounded by a deadline; every parser
-//! is pure over a `&str` so a fixture tests it without the machine it came from.
+//! Read-only detection: the machine as `Probes`, read once through `capture` and `probe_parse`.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -12,16 +11,15 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 
-use crate::plan;
-use crate::state::{self, Installed, PlatformSummary};
-
-/// L4T release prefix -> JetPack, from NVIDIA's L4T archive; a longer prefix must come first.
-const JETPACK: [(&str, &str); 4] = [
-    ("R35.3.1", "5.1.1"),
-    ("R35.4.1", "5.1.2"),
-    ("R36.3", "6.0"),
-    ("R36.4", "6.2"),
-];
+use crate::action;
+use crate::install_record::{self, Installed, PlatformSummary};
+use crate::probe_parse::{
+    detect_gpu, is_musl_loader, jetpack_for_l4t, memlock_conf_bytes, multicast_ok,
+    nvpmodel_is_maxn, parse_device_tree_model, parse_glibc, parse_iface_ipv4,
+    parse_nv_tegra_release, parse_os_release, parse_sysctl_value, parse_unit_files, passwd_shell,
+    path_lists_dir,
+};
+use crate::spawn;
 
 /// torch's TLS block needs glibc's static-TLS surplus, raised to 4 slots only in 2.34.
 const STATIC_TLS_GLIBC: (u32, u32) = (2, 34);
@@ -44,7 +42,7 @@ pub enum Arch {
 }
 
 impl Arch {
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Arch::X86_64 => "x86_64",
             Arch::Aarch64 => "aarch64",
@@ -132,7 +130,7 @@ pub struct Probes {
 }
 
 /// The one bounded read-only spawn: trimmed stdout on exit 0, None on failure or at the deadline.
-pub fn capture(
+pub(crate) fn capture(
     program: &str,
     args: &[&str],
     env: &[(&str, &str)],
@@ -154,150 +152,12 @@ pub fn capture(
         let _ = pipe.read_to_string(&mut out);
         out
     });
-    let status = plan::wait_until(&mut child, Duration::from_secs(timeout_s)).ok()??;
+    let status = spawn::wait_until(&mut child, Duration::from_secs(timeout_s)).ok()??;
     let out = reader.join().ok()?;
     status.success().then(|| out.trim().to_string())
 }
 
-pub fn parse_os_release(text: &str) -> (String, String) {
-    let field = |key: &str| {
-        text.lines()
-            .find_map(|l| l.trim().strip_prefix(key))
-            .map(|v| v.trim_matches('"').to_string())
-            .unwrap_or_default()
-    };
-    (field("ID="), field("VERSION_ID="))
-}
-
-/// `# R35 (release), REVISION: 3.1, GCID: ...` -> `R35.3.1`.
-pub fn parse_nv_tegra_release(text: &str) -> Option<String> {
-    let major = text.split_whitespace().find(|t| {
-        t.len() > 1 && t.starts_with('R') && t[1..].chars().all(|c| c.is_ascii_digit())
-    })?;
-    let revision = text.split("REVISION:").nth(1)?.split(',').next()?.trim();
-    Some(format!("{major}.{revision}"))
-}
-
-pub fn jetpack_for_l4t(l4t: &str) -> Option<&'static str> {
-    JETPACK
-        .iter()
-        .find(|(prefix, _)| l4t.starts_with(prefix))
-        .map(|(_, jetpack)| *jetpack)
-}
-
-/// `ldd (Ubuntu GLIBC 2.31-0ubuntu9.9) 2.31` -> (2, 31).
-pub fn parse_glibc(ldd_first_line: &str) -> Option<(u32, u32)> {
-    let last = ldd_first_line.split_whitespace().last()?;
-    let (major, rest) = last.split_once('.')?;
-    let minor: String = rest.chars().take_while(char::is_ascii_digit).collect();
-    Some((major.parse().ok()?, minor.parse().ok()?))
-}
-
-pub fn is_musl_loader(file_name: &str) -> bool {
-    file_name.starts_with("ld-musl-") && file_name.ends_with(".so.1")
-}
-
-pub fn parse_sysctl_value(text: &str) -> Option<u64> {
-    text.rsplit('=')
-        .next()?
-        .split_whitespace()
-        .next()?
-        .parse()
-        .ok()
-}
-
-/// (`lo` carries MULTICAST, a 224.0.0.0/4 route exists) — both are needed for LCM on one host.
-pub fn multicast_ok(ip_link_lo: &str, ip_route_224: &str) -> (bool, bool) {
-    (
-        ip_link_lo.contains("MULTICAST"),
-        ip_route_224.contains("224.0.0.0/4"),
-    )
-}
-
-/// The largest memlock line for `user` or `*`, in bytes; limits.d counts in KiB.
-pub fn memlock_conf_bytes(limits_conf: &str, user: &str) -> Option<u64> {
-    limits_conf
-        .lines()
-        .filter(|l| !l.trim_start().starts_with('#'))
-        .filter_map(|l| {
-            let f: Vec<&str> = l.split_whitespace().collect();
-            (f.len() == 4 && (f[0] == user || f[0] == "*") && f[2] == "memlock").then(|| f[3])
-        })
-        .filter_map(|value| match value {
-            "unlimited" => Some(u64::MAX),
-            kib => kib.parse::<u64>().ok().map(|k| k * 1024),
-        })
-        .max()
-}
-
-pub fn nvpmodel_is_maxn(nvpmodel_q: &str) -> bool {
-    nvpmodel_q.contains("MAXN") || nvpmodel_q.contains("ID=0") || nvpmodel_q.contains("ID: 0")
-}
-
-/// /proc/device-tree strings are NUL-terminated.
-pub fn parse_device_tree_model(raw: &str) -> String {
-    raw.trim_end_matches('\0').trim().to_string()
-}
-
-/// First token of each `systemctl list-unit-files --state=enabled --no-legend` line.
-pub fn parse_unit_files(text: &str) -> Vec<String> {
-    text.lines()
-        .filter_map(|l| l.split_whitespace().next())
-        .map(str::to_string)
-        .collect()
-}
-
-pub fn parse_iface_ipv4(text: &str, os: &Os) -> Vec<(String, Ipv4Addr)> {
-    match os {
-        Os::Linux { .. } => parse_ip_o_4(text),
-        Os::MacOs { .. } => parse_ifconfig(text),
-    }
-}
-
-fn parse_ip_o_4(text: &str) -> Vec<(String, Ipv4Addr)> {
-    text.lines()
-        .filter_map(|line| {
-            let fields: Vec<&str> = line.split_whitespace().collect();
-            let at = fields.iter().position(|f| *f == "inet")?;
-            let addr = fields.get(at + 1)?.split('/').next()?;
-            Some((fields.get(1)?.to_string(), addr.parse().ok()?))
-        })
-        .collect()
-}
-
-fn parse_ifconfig(text: &str) -> Vec<(String, Ipv4Addr)> {
-    let mut found = Vec::new();
-    let mut iface = String::new();
-    for line in text.lines() {
-        if let Some(name) = line
-            .split(':')
-            .next()
-            .filter(|_| !line.starts_with(char::is_whitespace))
-        {
-            iface = name.to_string();
-        }
-        if let Some(rest) = line.trim_start().strip_prefix("inet ") {
-            if let Ok(addr) = rest.split_whitespace().next().unwrap_or("").parse() {
-                found.push((iface.clone(), addr));
-            }
-        }
-    }
-    found
-}
-
-/// Tegra wins on a Jetson, which ships no nvidia-smi on JetPack 5.
-pub fn detect_gpu(arch: Arch, os: &Os, jetson: bool, nvidia_smi: Option<&str>) -> Gpu {
-    if jetson {
-        return Gpu::Tegra;
-    }
-    match os {
-        Os::MacOs { .. } if arch == Arch::Aarch64 => Gpu::AppleSilicon,
-        _ if nvidia_smi.is_some_and(|t| t.contains("NVIDIA-SMI")) => Gpu::Nvidia,
-        _ => Gpu::None,
-    }
-}
-
-pub fn pkg_manager(os: &Os) -> PkgManager {
+fn pkg_manager(os: &Os) -> PkgManager {
     match os {
         Os::MacOs { .. } if which::which("brew").is_ok() => PkgManager::Brew,
         Os::Linux { .. } if which::which("apt-get").is_ok() => PkgManager::Apt,
@@ -305,30 +165,17 @@ pub fn pkg_manager(os: &Os) -> PkgManager {
     }
 }
 
-/// `dir` must be a whole PATH entry: `/home/u/.local/bin2` must not satisfy `/home/u/.local/bin`.
-fn path_lists_dir(path: &str, dir: &Path) -> bool {
-    path.split(':').any(|entry| Path::new(entry) == dir)
-}
-
-fn passwd_shell(passwd: &str, user: &str) -> Option<String> {
-    passwd
-        .lines()
-        .find(|l| l.starts_with(&format!("{user}:")))
-        .and_then(|l| l.rsplit(':').next())
-        .map(str::to_string)
-}
-
 /// A fresh login shell under `home` tests what the rc files actually do, instead of parsing them.
-pub fn login_shell_path(shell: &Path, home: &Path) -> Option<String> {
+fn login_shell_path(shell: &Path, home: &Path) -> Option<String> {
     capture(
-        &plan::text(shell),
+        &action::text(shell),
         &["-l", "-c", "echo $PATH"],
-        &[("PATH", "/usr/bin:/bin"), ("HOME", &plan::text(home))],
+        &[("PATH", "/usr/bin:/bin"), ("HOME", &action::text(home))],
         LOGIN_SHELL_TIMEOUT_S,
     )
 }
 
-pub fn user_shell(user: &str) -> PathBuf {
+fn user_shell(user: &str) -> PathBuf {
     passwd_shell(&fs::read_to_string("/etc/passwd").unwrap_or_default(), user)
         .or_else(|| dscl_shell(user))
         .or_else(|| std::env::var("SHELL").ok())
@@ -346,7 +193,7 @@ fn dscl_shell(user: &str) -> Option<String> {
 }
 
 impl Platform {
-    pub fn detect() -> Result<Platform> {
+    fn detect() -> Result<Platform> {
         let os = read_os()?;
         let arch = read_arch()?;
         let jetson = read_jetson();
@@ -366,7 +213,7 @@ impl Platform {
     }
 
     /// The release-asset suffix: `dimos-<target>` and `dimos-<target>.sha256`.
-    pub fn target(&self) -> Result<&'static str> {
+    pub(crate) fn target(&self) -> Result<&'static str> {
         match (&self.os, self.arch) {
             (Os::Linux { .. }, Arch::X86_64) => Ok("x86_64-linux-musl"),
             (Os::Linux { .. }, Arch::Aarch64) => Ok("aarch64-linux-musl"),
@@ -379,17 +226,17 @@ impl Platform {
         }
     }
 
-    pub fn is_jetson(&self) -> bool {
+    pub(crate) fn is_jetson(&self) -> bool {
         self.jetson.is_some()
     }
 
-    pub fn static_tls_risk(&self) -> bool {
+    pub(crate) fn static_tls_risk(&self) -> bool {
         self.arch == Arch::Aarch64
             && matches!(self.os, Os::Linux { .. })
             && self.glibc.is_some_and(|v| v < STATIC_TLS_GLIBC)
     }
 
-    pub fn summary(&self) -> PlatformSummary {
+    pub(crate) fn summary(&self) -> PlatformSummary {
         let (os, distro, version) = match &self.os {
             Os::Linux { id, version } => ("linux", id.clone(), version.clone()),
             Os::MacOs { version } => ("macos", "macos".to_string(), version.clone()),
@@ -406,7 +253,7 @@ impl Platform {
 }
 
 impl Kernel {
-    pub fn detect(sysctl_keys: &[&str], user: &str) -> Kernel {
+    fn detect(sysctl_keys: &[&str], user: &str) -> Kernel {
         if cfg!(target_os = "macos") {
             return Kernel::default();
         }
@@ -419,12 +266,12 @@ impl Kernel {
             lo_multicast,
             multicast_route,
             memlock_conf_bytes: memlock_conf_bytes(
-                &fs::read_to_string(state::MEMLOCK_CONF).unwrap_or_default(),
+                &fs::read_to_string(install_record::MEMLOCK_CONF).unwrap_or_default(),
                 user,
             ),
             nvpmodel_maxn: capture("nvpmodel", &["-q"], &[], PROBE_TIMEOUT_S)
                 .map(|t| nvpmodel_is_maxn(&t)),
-            sysctl_conf: fs::read_to_string(state::SYSCTL_CONF).ok(),
+            sysctl_conf: fs::read_to_string(install_record::SYSCTL_CONF).ok(),
             enabled_units: parse_unit_files(&run_text(
                 "systemctl",
                 &["list-unit-files", "--state=enabled", "--no-legend"],
@@ -434,7 +281,7 @@ impl Kernel {
 }
 
 impl Tools {
-    pub fn detect(home: &Path, shell: &Path, pkg: PkgManager) -> Tools {
+    fn detect(home: &Path, shell: &Path, pkg: PkgManager) -> Tools {
         let vendored_uv = home.join(".local/bin/uv");
         Tools {
             uv: which::which("uv")
@@ -460,7 +307,7 @@ impl Tools {
 impl Probes {
     pub fn detect(sysctl_keys: &[&str], home: &Path) -> Result<Probes> {
         let platform = Platform::detect()?;
-        let installed = state::load(home)?;
+        let installed = install_record::load(home)?;
         Ok(Probes {
             kernel: Kernel::detect(sysctl_keys, &platform.user),
             tools: Tools::detect(home, &platform.shell, platform.pkg),
@@ -541,7 +388,7 @@ fn read_sysctl(keys: &[&str]) -> BTreeMap<String, u64> {
 
 /// An absent rc file reads as empty, so the block that creates it is still planned once.
 fn read_rc(home: &Path, shell: &Path) -> Vec<RcFile> {
-    state::rc_files(home, shell)
+    install_record::rc_files(home, shell)
         .into_iter()
         .map(|path| {
             let text = fs::read_to_string(&path).unwrap_or_default();
@@ -564,134 +411,13 @@ fn run_text(program: &str, args: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const UBUNTU_20_04: &str = "NAME=\"Ubuntu\"\nVERSION_ID=\"20.04\"\nID=ubuntu\nID_LIKE=debian\n";
-    const R35: &str = "# R35 (release), REVISION: 3.1, GCID: 32798077, BOARD: t186ref\n";
-    const R36: &str = "# R36 (release), REVISION: 4.3, GCID: 38968081, BOARD: generic\n";
+    use crate::probe_parse::path_lists_dir;
 
     fn ubuntu() -> Os {
         Os::Linux {
             id: "ubuntu".into(),
             version: "20.04".into(),
         }
-    }
-
-    #[test]
-    fn os_release_ubuntu_20_04_gives_id_and_version() {
-        assert_eq!(
-            parse_os_release(UBUNTU_20_04),
-            ("ubuntu".to_string(), "20.04".to_string())
-        );
-    }
-
-    #[test]
-    fn nv_tegra_release_r35_3_1_parses_to_jetpack_5_1_1() {
-        let l4t = parse_nv_tegra_release(R35).unwrap();
-        assert_eq!(l4t, "R35.3.1");
-        assert_eq!(jetpack_for_l4t(&l4t), Some("5.1.1"));
-    }
-
-    #[test]
-    fn r36_revision_4_3_is_jetpack_6_2() {
-        let l4t = parse_nv_tegra_release(R36).unwrap();
-        assert_eq!(l4t, "R36.4.3");
-        assert_eq!(jetpack_for_l4t(&l4t), Some("6.2"));
-    }
-
-    #[test]
-    fn an_unknown_l4t_has_no_jetpack_rather_than_a_guess() {
-        assert_eq!(jetpack_for_l4t("R32.7.1"), None);
-    }
-
-    #[test]
-    fn jetson_is_detected_without_nvidia_smi_as_tegra() {
-        assert_eq!(detect_gpu(Arch::Aarch64, &ubuntu(), true, None), Gpu::Tegra);
-        assert_eq!(detect_gpu(Arch::Aarch64, &ubuntu(), false, None), Gpu::None);
-        assert_eq!(
-            detect_gpu(
-                Arch::X86_64,
-                &ubuntu(),
-                false,
-                Some("NVIDIA-SMI 535.183.01  Driver Version: 535.183.01")
-            ),
-            Gpu::Nvidia
-        );
-        assert_eq!(
-            detect_gpu(
-                Arch::Aarch64,
-                &Os::MacOs {
-                    version: "15.0".into()
-                },
-                false,
-                None
-            ),
-            Gpu::AppleSilicon
-        );
-    }
-
-    #[test]
-    fn glibc_parsed_from_ubuntu_ldd_first_line() {
-        assert_eq!(
-            parse_glibc("ldd (Ubuntu GLIBC 2.31-0ubuntu9.9) 2.31"),
-            Some((2, 31))
-        );
-        assert_eq!(parse_glibc("ldd (GNU libc) 2.39"), Some((2, 39)));
-    }
-
-    #[test]
-    fn musl_loader_present_means_glibc_none() {
-        assert!(is_musl_loader("ld-musl-aarch64.so.1"));
-        assert!(is_musl_loader("ld-musl-x86_64.so.1"));
-        assert!(!is_musl_loader("ld-linux-aarch64.so.1"));
-    }
-
-    #[test]
-    fn multicast_needed_when_lo_lacks_flag_or_route_missing() {
-        let up = "1: lo: <LOOPBACK,MULTICAST,UP,LOWER_UP> mtu 65536";
-        let bare = "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536";
-        assert_eq!(
-            multicast_ok(up, "224.0.0.0/4 dev lo scope link"),
-            (true, true)
-        );
-        assert_eq!(multicast_ok(bare, ""), (false, false));
-    }
-
-    #[test]
-    fn memlock_conf_accepts_user_or_star_line_in_kib() {
-        let conf = "# dimos\nunitree hard memlock 65536\n* soft memlock 32768\n";
-        assert_eq!(memlock_conf_bytes(conf, "unitree"), Some(65536 * 1024));
-        assert_eq!(memlock_conf_bytes(conf, "other"), Some(32768 * 1024));
-        assert_eq!(memlock_conf_bytes("# nothing\n", "unitree"), None);
-    }
-
-    #[test]
-    fn nvpmodel_maxn_recognized_in_all_three_spellings() {
-        assert!(nvpmodel_is_maxn("NV Power Mode: MAXN\n0\n"));
-        assert!(nvpmodel_is_maxn("NVPM VERB: PM_ID=0\n"));
-        assert!(nvpmodel_is_maxn("NV Power Mode ID: 0\n"));
-        assert!(!nvpmodel_is_maxn("NV Power Mode: 15W\n2\n"));
-    }
-
-    #[test]
-    fn sysctl_value_parses_bare_and_key_equals_forms() {
-        assert_eq!(parse_sysctl_value("212992\n"), Some(212992));
-        assert_eq!(
-            parse_sysctl_value("net.core.rmem_max = 67108864\n"),
-            Some(67108864)
-        );
-    }
-
-    #[test]
-    fn login_path_probe_matches_home_local_bin_only() {
-        let home = Path::new("/home/u");
-        assert!(path_lists_dir(
-            "/usr/bin:/home/u/.local/bin",
-            &home.join(".local/bin")
-        ));
-        assert!(!path_lists_dir(
-            "/usr/bin:/home/u/.local/bin2",
-            &home.join(".local/bin")
-        ));
     }
 
     #[test]
@@ -748,66 +474,6 @@ mod tests {
     }
 
     #[test]
-    fn ip_o_4_addr_gives_one_ipv4_per_interface() {
-        let text = "1: lo    inet 127.0.0.1/8 scope host lo\\       valid_lft forever\n\
-                    3: eth0    inet 192.168.123.51/24 brd 192.168.123.255 scope global eth0\\   valid\n";
-        assert_eq!(
-            parse_iface_ipv4(text, &ubuntu()),
-            [
-                ("lo".to_string(), Ipv4Addr::new(127, 0, 0, 1)),
-                ("eth0".to_string(), Ipv4Addr::new(192, 168, 123, 51)),
-            ]
-        );
-    }
-
-    #[test]
-    fn ifconfig_pairs_each_inet_with_the_interface_above_it() {
-        let text = "lo0: flags=8049<UP,LOOPBACK> mtu 16384\n\
-                    \tinet 127.0.0.1 netmask 0xff000000\n\
-                    en0: flags=8863<UP,BROADCAST> mtu 1500\n\
-                    \tinet6 fe80::1%en0 prefixlen 64\n\
-                    \tinet 10.0.0.7 netmask 0xffffff00 broadcast 10.0.0.255\n";
-        let mac = Os::MacOs {
-            version: "15.0".into(),
-        };
-        assert_eq!(
-            parse_iface_ipv4(text, &mac),
-            [
-                ("lo0".to_string(), Ipv4Addr::new(127, 0, 0, 1)),
-                ("en0".to_string(), Ipv4Addr::new(10, 0, 0, 7)),
-            ]
-        );
-    }
-
-    #[test]
-    fn unit_files_are_the_first_token_of_each_line() {
-        let text = "dimos-multicast.service                enabled\nssh.service   enabled\n";
-        assert_eq!(
-            parse_unit_files(text),
-            ["dimos-multicast.service", "ssh.service"]
-        );
-    }
-
-    #[test]
-    fn passwd_shell_reads_the_last_field_of_the_users_line() {
-        let passwd =
-            "root:x:0:0:root:/root:/bin/bash\nunitree:x:1000:1000::/home/unitree:/bin/zsh\n";
-        assert_eq!(
-            passwd_shell(passwd, "unitree"),
-            Some("/bin/zsh".to_string())
-        );
-        assert_eq!(passwd_shell(passwd, "nobody"), None);
-    }
-
-    #[test]
-    fn device_tree_model_drops_the_trailing_nul() {
-        assert_eq!(
-            parse_device_tree_model("NVIDIA Jetson Orin NX Engineering Reference\0"),
-            "NVIDIA Jetson Orin NX Engineering Reference"
-        );
-    }
-
-    #[test]
     fn capture_returns_stdout_on_success_and_none_on_failure_or_at_the_deadline() {
         assert_eq!(capture("echo", &["hi"], &[], 5).as_deref(), Some("hi"));
         assert_eq!(capture("false", &[], &[], 5), None);
@@ -827,17 +493,17 @@ mod tests {
         assert!(text.len() > 190_000, "got {} bytes", text.len());
     }
 
-    /// The rc files `state::rc_files` picks are the ones the same shell reads in login mode.
+    /// The rc files `install_record::rc_files` picks are the ones the same shell reads in login mode.
     #[test]
     fn rc_files_and_the_login_shell_probe_agree() {
         for shell in ["/bin/bash", "/bin/zsh"].map(Path::new) {
             if !shell.exists() {
                 continue;
             }
-            let home = state::TmpDir::new("probe-rc");
+            let home = install_record::TmpDir::new("probe-rc");
             let lines = ["export PATH=\"$HOME/.local/bin:$PATH\"".to_string()];
-            for file in state::rc_files(home.path(), shell) {
-                let (text, _) = plan::ensure_block("", "path", &lines);
+            for file in install_record::rc_files(home.path(), shell) {
+                let (text, _) = action::ensure_block("", "path", &lines);
                 fs::write(&file, text).expect("write rc fixture");
             }
             let path = login_shell_path(shell, home.path()).expect("the login shell runs");

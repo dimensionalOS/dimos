@@ -7,7 +7,7 @@ Where this file and the plan disagree, THIS FILE WINS. Brief: /Users/aaryan/.cla
 ## D1 — No `doctor` anywhere
 - Delete from the plan: `installer/src/doctor.rs`, `dimos doctor` in cli.rs, and ALL Python doctor files:
   `dimos/cli/hardware/checks.py`, `g1.py`, `jetson.py`, `test_g1.py`, `test_jetson.py`, and the
-  `hardware_cli.py` edit. The Python side is ONLY `dimos/cli/forward.py` + `test_forward.py` + the two-line
+  `hardware_cli.py` edit. The Python side is ONLY `dimos/cli/installer_cli.py` + `test_installer_cli.py` + the two-line
   registration in `dimos/cli/dimos.py`.
 - Verification lives in Rust: new file `installer/src/setup/verify.rs` builds the critical verify Stage
   for a target (`Target::Host | Target::G1 | Target::Jetson`) as `Action::Run` items that shell
@@ -19,7 +19,7 @@ Where this file and the plan disagree, THIS FILE WINS. Brief: /Users/aaryan/.cla
   whose "static TLS" stderr becomes a WARN line with the LD_PRELOAD fix (never a failure; torch absent =
   skipped line). Each check is one `Action::Run`; the stage is `critical: true`; its plan text shows the
   exact python one-liners so `--dry-run` documents what "verified" means.
-- `hardware.rs` ends every target with `verify::stage(target, ...)` instead of a Python doctor call.
+- `wizards/mod.rs` ends every target with `verify::stage(target, ...)` instead of a Python doctor call.
 
 ## D2 — `dimos update` is doctor + update in one command (brief decision 19)
 - `update.rs` becomes: read installer.json (exit 2 `run dimos setup first` when absent) → stages:
@@ -35,18 +35,18 @@ Where this file and the plan disagree, THIS FILE WINS. Brief: /Users/aaryan/.cla
 
 ## D3 — Plain text, no TUI (brief decision 18)
 - Remove cliclack/console/indicatif from Cargo.toml and from every file contract. `Ui` in plan.rs becomes a
-  20-line `say` module inside plan.rs (or `installer/src/say.rs`, one home): `info(msg)` prints `-> msg`,
+  20-line `say` module in `installer/src/say.rs`: `info(msg)` prints `-> msg`,
   `ok(msg)` prints `ok msg`, `warn(msg)` prints `!! msg`, `fail(msg)` prints `xx msg`; colour only when stdout
   is a TTY and NO_COLOR is unset, and only on the prefix. `confirm(question, default) -> bool` prints
   `question [Y/n]: ` and reads one stdin line (empty = default; non-interactive → default without printing
   the question; `--yes` → true). `choose(question, options) -> usize` prints numbered options and reads a
   number. Failure recovery menu is `[c]ontinue / [s]hell / [h]elp`. No banner, no spinner, no box drawing.
   Long-running actions print `-> running: <argv>` before and `ok (<secs>s)` after.
-- The plan's "grep test that only Ui uses cliclack" becomes: a test that no file other than plan.rs
-  reads stdin or calls `print!`/`println!` for prompts (`grep -rn "stdin()" src/ | grep -v plan.rs` is empty).
+- The plan's "grep test that only Ui uses cliclack" becomes: a test that no file other than run_context.rs
+  reads stdin or calls `print!`/`println!` for prompts (`grep -rn "stdin()" src/ | grep -v run_context.rs` is empty).
 
 ## D4 — `dimos robot scan` (v1, brief decision 17)
-- New file `installer/src/robot.rs`: `scan(opts) -> Vec<Found>` where
+- New file `installer/src/robot_scan.rs`: `scan(opts) -> Vec<Found>` where
   `Found { kind: Lan|Wired|Ble, vendor: String, model: Option<String>, identity: Identity{Serial(String)|Mac(String)|Unknown}, addr: String, iface: String }`
   (identity and addr are separate fields on purpose — v2 keys a registry by identity).
   - LAN: mirror dimos/robot/unitree/go2/cli/landiscovery.py:129-166 — for every non-loopback IPv4
@@ -66,17 +66,17 @@ Where this file and the plan disagree, THIS FILE WINS. Brief: /Users/aaryan/.cla
   - Tests: reply-JSON parsing from fixture strings; interface filter; wired subnet detection from fixture
     `ip -o -4 addr` output; a fake UDP responder on localhost for the LAN probe round trip.
 - cli.rs: `Robot { Scan { lan: bool, wired: bool, ble: bool, timeout_s: u64 } }` (all false = all kinds).
-- forward.py FORWARDED = ("setup", "update", "service", "uninstall", "robot"); `hardware g1|jetson setup`
+- installer_cli.py FORWARDED = ("setup", "update", "service", "uninstall", "robot"); `hardware g1|jetson setup`
   still forwarded as in the plan (they are external subcommands on the Rust side).
 
 ## D5 — `installer/WIZARDS.md` (brief decision 20)
-- Written LAST, by the agent that wrote hardware.rs, after the code is final, so every type and path in it is
+- Written LAST, by the agent that wrote wizards/mod.rs, after the code is final, so every type and path in it is
   real. Structure: 1) what a wizard is (one file, `fn stages(obs: &Observed, opts) -> Vec<Stage>`), 2) the
   contract (paste the real `Action`, `Stage`, `Probe`/`Observed`, `Sudo::wrap` signatures from plan.rs /
   probe.rs / sudo.rs), 3) the rules (probe per stage, dry-run must render everything, critical verify last,
   sudo only via Ctx, secrets never in argv/log, plain-text prefixes, ≤25-line fns, no unwrap on I/O, no TODO),
-  4) registering it (cli.rs enum + hardware.rs dispatch + platforms.toml extra), 5) the tests it must add
-  (fresh → full plan; configured → empty plan; verify snippet rendering), 6) worked example: `setup/jetson.rs`
+  4) registering it (cli.rs enum + wizards/mod.rs dispatch + platforms.toml extra), 5) the tests it must add
+  (fresh → full plan; configured → empty plan; verify snippet rendering), 6) worked example: `wizards/nvidia/jetson.rs`
   explained line by line, 7) the runbook lines to add to context.md. Lean; link, don't duplicate.
 - Acceptance (verify phase): an agent that has read ONLY WIZARDS.md adds `hardware demo setup` (two stages:
   WriteFile a marker under $TMPDIR, verify it exists) in a scratch worktree; it must compile, pass
@@ -87,6 +87,6 @@ Where this file and the plan disagree, THIS FILE WINS. Brief: /Users/aaryan/.cla
 - `context.md` at the dimos repo root (branch aaryan/installer) is the handoff file (task 5).
 
 ## Unchanged from the plan
-Everything else: crate layout, plan-then-exec, Sudo ladder, probes, state files, sysconfig/jetson/g1 stages,
-service, uninstall, forward.rs, install.sh, installer.yml, container.sh, build order, version single-homed in
+Everything else: crate layout, plan-then-exec, Sudo ladder, probes, record files, system_config/jetson/g1
+stages, systemd_service, uninstall, venv_forward.rs, install.sh, installer.yml, container.sh, build order, version single-homed in
 pyproject via build.rs, tests per file.

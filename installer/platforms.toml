@@ -1,5 +1,5 @@
 # System packages (what PEP 621 cannot express) and Linux machine settings.
-# Keys under [extras] must be [project.optional-dependencies] names; pkgs.rs tests fail on any other key.
+# Keys under [extras] must be [project.optional-dependencies] names; platforms.rs tests fail on any other key.
 
 [always]  # every install: the core `dependencies` set needs these (scripts/install.sh:32-33 minus python and pre-commit)
 apt  = ["curl", "git", "git-lfs", "g++", "python3-dev", "portaudio19-dev", "libturbojpeg", "libgl1", "libegl1"]

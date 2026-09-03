@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 
-pub const FORWARD_NOTE: &str = "\
+const FORWARD_NOTE: &str = "\
 Any other command runs the DimOS Python CLI, e.g. `dimos run unitree-go2`.
 Installer flags go after the verb (`dimos setup --agent`); before it they are forwarded too.
 `dimos hardware g1|jetson setup` runs here, every other `hardware ...` verb runs the Python CLI.";
@@ -177,7 +177,7 @@ pub enum Transport {
 }
 
 impl Transport {
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Transport::Lcm => "lcm",
             Transport::Zenoh => "zenoh",
@@ -208,7 +208,7 @@ pub struct ScanArgs {
 
 impl ScanArgs {
     /// No flag means every kind.
-    pub fn all_kinds(&self) -> bool {
+    pub(crate) fn all_kinds(&self) -> bool {
         !self.lan && !self.wired && !self.ble
     }
 }

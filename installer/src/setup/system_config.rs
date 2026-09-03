@@ -4,10 +4,11 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::pkgs::{self, Platforms};
-use crate::plan::{Action, Stage};
+use crate::action::Action;
+use crate::install_record;
+use crate::plan::Stage;
+use crate::platforms::{self, Platforms};
 use crate::probe::{Kernel, Os, Platform};
-use crate::state;
 
 /// sysctl, ip and systemctl all return immediately; the budget only bounds a hung sudo.
 const CONFIG_TIMEOUT_S: u64 = 30;
@@ -16,7 +17,7 @@ const NO_SYSTEMD: &str =
     "no systemd: machine config not persisted; the runtime configurators apply it per run";
 
 /// Non-critical: sudo actions only where a probe shows a gap, so a re-run plans nothing.
-pub fn stage(platform: &Platform, kernel: &Kernel, cfg: &Platforms) -> Stage {
+pub(crate) fn stage(platform: &Platform, kernel: &Kernel, cfg: &Platforms) -> Stage {
     let stage = Stage::new("sysconfig", false);
     if !persistable(platform) {
         return stage;
@@ -37,7 +38,7 @@ fn persistable(platform: &Platform) -> bool {
     matches!(platform.os, Os::Linux { .. }) && platform.systemd
 }
 
-pub fn no_systemd_note(platform: &Platform) -> Option<String> {
+pub(crate) fn no_systemd_note(platform: &Platform) -> Option<String> {
     let linux = matches!(platform.os, Os::Linux { .. });
     (linux && !platform.systemd).then(|| NO_SYSTEMD.to_string())
 }
@@ -53,7 +54,7 @@ fn write_root(path: PathBuf, contents: String) -> Action {
 
 fn sysctl_actions(kernel: &Kernel, target: &BTreeMap<String, u64>) -> Vec<Action> {
     let conf = render_sysctl_conf(target);
-    let mut actions: Vec<Action> = pkgs::sysctl_updates(&kernel.sysctl, target)
+    let mut actions: Vec<Action> = platforms::sysctl_updates(&kernel.sysctl, target)
         .iter()
         .map(|(key, value)| {
             let setting = format!("{key}={value}");
@@ -61,14 +62,14 @@ fn sysctl_actions(kernel: &Kernel, target: &BTreeMap<String, u64>) -> Vec<Action
         })
         .collect();
     if kernel.sysctl_conf.as_deref() != Some(conf.as_str()) {
-        actions.push(write_root(PathBuf::from(state::SYSCTL_CONF), conf));
+        actions.push(write_root(PathBuf::from(install_record::SYSCTL_CONF), conf));
     }
     actions
 }
 
 /// The unit persists across reboots; the two `ip` calls close the gap in the running kernel now.
 fn multicast_actions(kernel: &Kernel) -> Vec<Action> {
-    let unit = format!("{}.service", state::MULTICAST_UNIT);
+    let unit = format!("{}.service", install_record::MULTICAST_UNIT);
     let mut actions = Vec::new();
     if !kernel.lo_multicast {
         actions.push(Action::sudo(
@@ -83,15 +84,18 @@ fn multicast_actions(kernel: &Kernel) -> Vec<Action> {
         ));
     }
     if !kernel.enabled_units.contains(&unit) {
-        actions.extend(unit_actions(state::MULTICAST_UNIT, render_multicast_unit()));
+        actions.extend(unit_actions(
+            install_record::MULTICAST_UNIT,
+            render_multicast_unit(),
+        ));
     }
     actions
 }
 
 /// Write a unit as root, reload, `enable --now`: what every unit the installer owns needs.
-pub fn unit_actions(name: &str, contents: String) -> Vec<Action> {
+pub(crate) fn unit_actions(name: &str, contents: String) -> Vec<Action> {
     vec![
-        write_root(state::unit_path(name), contents),
+        write_root(install_record::unit_path(name), contents),
         Action::sudo(&["systemctl", "daemon-reload"], CONFIG_TIMEOUT_S),
         Action::sudo(&["systemctl", "enable", "--now", name], CONFIG_TIMEOUT_S),
     ]
@@ -103,12 +107,12 @@ fn memlock_actions(user: &str, kernel: &Kernel, bytes: u64) -> Vec<Action> {
         return Vec::new();
     }
     vec![write_root(
-        PathBuf::from(state::MEMLOCK_CONF),
+        PathBuf::from(install_record::MEMLOCK_CONF),
         render_memlock_conf(user, bytes),
     )]
 }
 
-pub fn render_sysctl_conf(targets: &BTreeMap<String, u64>) -> String {
+pub(crate) fn render_sysctl_conf(targets: &BTreeMap<String, u64>) -> String {
     let mut conf = String::from("# Written by dimos: LCM's UDP receive buffers.\n");
     for (key, value) in targets {
         conf.push_str(&format!("{key}={value}\n"));
@@ -116,25 +120,38 @@ pub fn render_sysctl_conf(targets: &BTreeMap<String, u64>) -> String {
     conf
 }
 
-pub fn render_multicast_unit() -> String {
-    // `-` on the route line: a route that already exists exits 2, which must not fail the unit.
-    "[Unit]\n\
-     Description=DimOS loopback multicast for LCM\n\
-     After=network.target\n\
-     \n\
-     [Service]\n\
-     Type=oneshot\n\
-     RemainAfterExit=yes\n\
-     ExecStart=/sbin/ip link set lo multicast on\n\
-     ExecStart=-/sbin/ip route add 224.0.0.0/4 dev lo\n\
-     \n\
-     [Install]\n\
-     WantedBy=multi-user.target\n"
-        .to_string()
+/// The boot-time unit skeleton every unit the installer enables shares; each exec is one ExecStart.
+pub(crate) fn oneshot_unit(description: &str, after: &str, exec: &[&str]) -> String {
+    let starts: String = exec.iter().map(|e| format!("ExecStart={e}\n")).collect();
+    format!(
+        "[Unit]\n\
+         Description={description}\n\
+         After={after}\n\
+         \n\
+         [Service]\n\
+         Type=oneshot\n\
+         RemainAfterExit=yes\n\
+         {starts}\
+         \n\
+         [Install]\n\
+         WantedBy=multi-user.target\n"
+    )
+}
+
+fn render_multicast_unit() -> String {
+    oneshot_unit(
+        "DimOS loopback multicast for LCM",
+        "network.target",
+        &[
+            "/sbin/ip link set lo multicast on",
+            // `-`: a route that already exists exits 2, which must not fail the unit.
+            "-/sbin/ip route add 224.0.0.0/4 dev lo",
+        ],
+    )
 }
 
 /// pam_limits counts in KiB and applies at next login; same shape as zenoh.py `_persist`.
-pub fn render_memlock_conf(user: &str, bytes: u64) -> String {
+fn render_memlock_conf(user: &str, bytes: u64) -> String {
     format!(
         "# Written by dimos: zenoh's SHM pool must be lockable.\n{user}\t-\tmemlock\t{}\n",
         bytes / 1024
@@ -184,7 +201,7 @@ mod tests {
             memlock_conf_bytes: Some(cfg.linux.memlock_bytes),
             nvpmodel_maxn: None,
             sysctl_conf: Some(render_sysctl_conf(&cfg.linux.sysctl)),
-            enabled_units: vec![format!("{}.service", state::MULTICAST_UNIT)],
+            enabled_units: vec![format!("{}.service", install_record::MULTICAST_UNIT)],
         }
     }
 
@@ -226,7 +243,7 @@ mod tests {
             assert!(text.contains(&format!("sysctl -w {key}={value}")), "{text}");
         }
         assert!(
-            text.contains(&format!("write {}", state::SYSCTL_CONF)),
+            text.contains(&format!("write {}", install_record::SYSCTL_CONF)),
             "{text}"
         );
         let conf = render_sysctl_conf(&cfg.linux.sysctl);
@@ -241,7 +258,7 @@ mod tests {
             ..configured(&cfg)
         };
         let text = displays(&stage(&ubuntu(true), &low, &cfg));
-        assert!(!text.contains(state::SYSCTL_CONF), "{text}");
+        assert!(!text.contains(install_record::SYSCTL_CONF), "{text}");
         assert!(text.contains("sysctl -w"), "{text}");
     }
 
@@ -262,12 +279,15 @@ mod tests {
         );
         assert!(text.contains("systemctl daemon-reload"), "{text}");
         assert!(
-            text.contains(&format!("systemctl enable --now {}", state::MULTICAST_UNIT)),
+            text.contains(&format!(
+                "systemctl enable --now {}",
+                install_record::MULTICAST_UNIT
+            )),
             "{text}"
         );
         assert!(
             text.contains(
-                &state::unit_path(state::MULTICAST_UNIT)
+                &install_record::unit_path(install_record::MULTICAST_UNIT)
                     .display()
                     .to_string()
             ),
@@ -308,7 +328,7 @@ mod tests {
         };
         let text = displays(&stage(&ubuntu(true), &short, &cfg));
         assert!(
-            text.contains(&format!("sudo write {}", state::MEMLOCK_CONF)),
+            text.contains(&format!("sudo write {}", install_record::MEMLOCK_CONF)),
             "{text}"
         );
     }

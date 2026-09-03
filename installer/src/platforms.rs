@@ -15,14 +15,14 @@ pub const DIMOS_VERSION: &str = env!("DIMOS_VERSION");
 
 #[derive(Debug, Deserialize)]
 pub struct Platforms {
-    pub always: Pkgs,
+    always: Pkgs,
     #[serde(default)]
-    pub extras: BTreeMap<String, Extra>,
+    extras: BTreeMap<String, Extra>,
     pub linux: Linux,
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct Pkgs {
+struct Pkgs {
     #[serde(default)]
     pub apt: Vec<String>,
     #[serde(default)]
@@ -30,7 +30,7 @@ pub struct Pkgs {
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct Extra {
+struct Extra {
     #[serde(default)]
     pub apt: Vec<String>,
     #[serde(default)]
@@ -95,7 +95,11 @@ fn check_extra(extra: &str, arch: Arch, cfg: &Platforms) -> Result<()> {
 }
 
 /// Trimmed, de-duplicated, `["base"]` when empty; an unknown or wrong-arch extra is a hard error.
-pub fn validate_extras(extras: &[String], arch: Arch, cfg: &Platforms) -> Result<Vec<String>> {
+pub(crate) fn validate_extras(
+    extras: &[String],
+    arch: Arch,
+    cfg: &Platforms,
+) -> Result<Vec<String>> {
     let wanted = normalize(extras);
     for extra in &wanted {
         check_extra(extra, arch, cfg)?;
@@ -103,7 +107,7 @@ pub fn validate_extras(extras: &[String], arch: Arch, cfg: &Platforms) -> Result
     Ok(wanted)
 }
 
-pub fn system_packages(extras: &[String], pm: PkgManager, cfg: &Platforms) -> Vec<String> {
+pub(crate) fn system_packages(extras: &[String], pm: PkgManager, cfg: &Platforms) -> Vec<String> {
     let mut wanted = for_manager(&cfg.always.apt, &cfg.always.brew, pm).to_vec();
     for extra in extras.iter().filter_map(|e| cfg.extras.get(e)) {
         wanted.extend_from_slice(for_manager(&extra.apt, &extra.brew, pm));
@@ -114,7 +118,7 @@ pub fn system_packages(extras: &[String], pm: PkgManager, cfg: &Platforms) -> Ve
 }
 
 /// Pure over `dpkg-query -W -f='${Package} ${Status}\n'`; only `install ok installed` counts.
-pub fn missing_apt(wanted: &[String], dpkg_status: &str) -> Vec<String> {
+pub(crate) fn missing_apt(wanted: &[String], dpkg_status: &str) -> Vec<String> {
     let installed: Vec<&str> = dpkg_status
         .lines()
         .filter(|l| l.contains("install ok installed"))
@@ -129,7 +133,7 @@ pub fn missing_apt(wanted: &[String], dpkg_status: &str) -> Vec<String> {
 }
 
 /// Pure over `brew list --versions`.
-pub fn missing_brew(wanted: &[String], brew_list: &str) -> Vec<String> {
+pub(crate) fn missing_brew(wanted: &[String], brew_list: &str) -> Vec<String> {
     let installed: Vec<&str> = brew_list
         .lines()
         .filter_map(|l| l.split_whitespace().next())
@@ -142,7 +146,7 @@ pub fn missing_brew(wanted: &[String], brew_list: &str) -> Vec<String> {
 }
 
 /// Only keys the kernel currently holds below target; a bigger value is somebody else's tuning.
-pub fn sysctl_updates(
+pub(crate) fn sysctl_updates(
     current: &BTreeMap<String, u64>,
     target: &BTreeMap<String, u64>,
 ) -> Vec<(String, u64)> {
@@ -153,11 +157,11 @@ pub fn sysctl_updates(
         .collect()
 }
 
-pub fn pip_spec(extras: &[String]) -> String {
+pub(crate) fn pip_spec(extras: &[String]) -> String {
     format!("dimos[{}]=={DIMOS_VERSION}", extras.join(","))
 }
 
-pub fn sync_args(extras: &[String]) -> Vec<String> {
+pub(crate) fn sync_args(extras: &[String]) -> Vec<String> {
     extras
         .iter()
         .flat_map(|e| ["--extra".to_string(), e.clone()])
@@ -168,7 +172,7 @@ pub fn sync_args(extras: &[String]) -> Vec<String> {
 mod tests {
     use super::*;
 
-    include!("../build_support.rs"); // the same pyproject parser build.rs used, so the test is honest
+    include!("../pyproject.rs"); // the same pyproject parser build.rs used, so the test is honest
 
     const PYPROJECT: &str = include_str!("../../pyproject.toml");
 

@@ -30,7 +30,7 @@ Exit codes: `0` ok, `1` a critical stage failed, `2` a human is needed and the r
 
 ## How it is built
 
-Every command builds a `Plan` of `Stage`s of `Action`s from `probe::Probes`; `plan::run` is the only
+Every command builds a `Plan` of `Stage`s of `Action`s from `probe::Probes`; `run::run` is the only
 function that mutates the machine or reads stdin, and every probe spawns through `probe::capture`
 with a deadline. A stage with no actions means the machine is already there, so a second run is
 free and `--dry-run` is trustworthy. Adding a robot: [WIZARDS.md](WIZARDS.md).

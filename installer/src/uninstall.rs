@@ -5,11 +5,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use crate::plan::{self, Action, Ctx, Plan, Stage};
-use crate::service;
-use crate::setup::g1::CDDS_MARKER;
+use crate::action::{self, Action};
+use crate::action_log::action_log_path;
+use crate::install_record;
+use crate::plan::{Plan, Stage};
+use crate::run;
+use crate::run_context::Ctx;
 use crate::setup::self_install::PATH_MARKER;
-use crate::state;
+use crate::systemd_service;
+use crate::wizards::unitree::g1::CDDS_MARKER;
 
 /// systemctl and rm return immediately; the budget only bounds a hung sudo.
 const REMOVE_TIMEOUT_S: u64 = 30;
@@ -20,7 +24,7 @@ const STAYS: &str = "kept: the DimOS project dir, ~/cyclonedds, the Unitree SDK 
                      uv, and the apt/brew packages";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Existing {
+struct Existing {
     pub bin: bool,
     pub bak: bool,
     pub json: bool,
@@ -32,22 +36,22 @@ pub struct Existing {
 }
 
 /// The only I/O in this file; read-only, so `--dry-run` may call it.
-pub fn observe(home: &Path) -> Existing {
+fn observe(home: &Path) -> Existing {
     Existing {
-        bin: state::installed_bin(home).exists(),
-        bak: state::backup_bin(home).exists(),
-        json: state::installer_json(home).exists(),
-        log: state::action_log_path(home).exists(),
+        bin: install_record::installed_bin(home).exists(),
+        bak: install_record::backup_bin(home).exists(),
+        json: install_record::installer_json(home).exists(),
+        log: action_log_path(home).exists(),
         rc_files_with_blocks: rc_files_with_blocks(home),
-        units: service::installed_units(),
-        sysctl_conf: Path::new(state::SYSCTL_CONF).exists(),
-        memlock_conf: Path::new(state::MEMLOCK_CONF).exists(),
+        units: systemd_service::installed_units(),
+        sysctl_conf: Path::new(install_record::SYSCTL_CONF).exists(),
+        memlock_conf: Path::new(install_record::MEMLOCK_CONF).exists(),
     }
 }
 
 /// Every candidate, not the current shell's: the block landed under whatever shell `setup` saw.
 fn rc_files_with_blocks(home: &Path) -> Vec<PathBuf> {
-    state::RC_CANDIDATES
+    install_record::RC_CANDIDATES
         .iter()
         .map(|name| home.join(name))
         .filter(|file| std::fs::read_to_string(file).is_ok_and(|text| has_block(&text)))
@@ -58,10 +62,10 @@ fn rc_files_with_blocks(home: &Path) -> Vec<PathBuf> {
 fn has_block(text: &str) -> bool {
     MARKERS
         .iter()
-        .any(|marker| plan::ensure_block(text, marker, &[]).1)
+        .any(|marker| action::ensure_block(text, marker, &[]).1)
 }
 
-pub fn plan(existing: &Existing, home: &Path) -> Plan {
+fn plan(existing: &Existing, home: &Path) -> Plan {
     Plan {
         command: "uninstall".to_string(),
         stages: vec![
@@ -119,8 +123,8 @@ fn unit_removal(unit: &Path) -> Vec<Action> {
 
 fn conf_removals(existing: &Existing) -> Vec<Action> {
     [
-        (existing.sysctl_conf, state::SYSCTL_CONF),
-        (existing.memlock_conf, state::MEMLOCK_CONF),
+        (existing.sysctl_conf, install_record::SYSCTL_CONF),
+        (existing.memlock_conf, install_record::MEMLOCK_CONF),
     ]
     .into_iter()
     .filter(|(present, _)| *present)
@@ -139,10 +143,10 @@ fn daemon_reload(existing: &Existing) -> Option<Action> {
 /// The binary, its backup, and the two state files.
 fn installer_stage(existing: &Existing, home: &Path) -> Stage {
     [
-        (existing.bin, state::installed_bin(home)),
-        (existing.bak, state::backup_bin(home)),
-        (existing.json, state::installer_json(home)),
-        (existing.log, state::action_log_path(home)), // re-created by this run's own records
+        (existing.bin, install_record::installed_bin(home)),
+        (existing.bak, install_record::backup_bin(home)),
+        (existing.json, install_record::installer_json(home)),
+        (existing.log, action_log_path(home)), // re-created by this run's own records
     ]
     .into_iter()
     .filter(|(present, _)| *present)
@@ -152,7 +156,7 @@ fn installer_stage(existing: &Existing, home: &Path) -> Stage {
 }
 
 pub fn run(ctx: &mut Ctx, home: &Path) -> Result<i32> {
-    let report = plan::run(&plan(&observe(home), home), ctx)?;
+    let report = run::run(&plan(&observe(home), home), ctx)?;
     report.print(ctx);
     Ok(report.exit_code())
 }
@@ -160,7 +164,7 @@ pub fn run(ctx: &mut Ctx, home: &Path) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::TmpDir;
+    use crate::install_record::TmpDir;
 
     const RC: &str = "export EDITOR=vim\n\
                       # DIMOS-ADDED: path start\n\
@@ -181,8 +185,8 @@ mod tests {
             log: true,
             rc_files_with_blocks: vec![home.join(".bashrc")],
             units: vec![
-                state::unit_path(state::MULTICAST_UNIT),
-                state::unit_path(OTHER_UNIT),
+                install_record::unit_path(install_record::MULTICAST_UNIT),
+                install_record::unit_path(OTHER_UNIT),
             ],
             sysctl_conf: true,
             memlock_conf: true,
@@ -198,15 +202,15 @@ mod tests {
         let tmp = TmpDir::new("uninstall-scope");
         let home = tmp.path();
         let written = [
-            state::installed_bin(home),
-            state::backup_bin(home),
-            state::installer_json(home),
-            state::action_log_path(home),
+            install_record::installed_bin(home),
+            install_record::backup_bin(home),
+            install_record::installer_json(home),
+            action_log_path(home),
             home.join(".bashrc"),
-            state::unit_path(state::MULTICAST_UNIT),
-            state::unit_path(OTHER_UNIT),
-            PathBuf::from(state::SYSCTL_CONF),
-            PathBuf::from(state::MEMLOCK_CONF),
+            install_record::unit_path(install_record::MULTICAST_UNIT),
+            install_record::unit_path(OTHER_UNIT),
+            PathBuf::from(install_record::SYSCTL_CONF),
+            PathBuf::from(install_record::MEMLOCK_CONF),
         ];
         let built = plan(&full(home), home);
         assert_eq!(actions(&built).len(), 13);
@@ -236,7 +240,7 @@ mod tests {
         let mut text = RC.to_string();
         for action in actions(&built) {
             if let Action::EnsureBlock { marker, lines, .. } = action {
-                text = plan::ensure_block(&text, marker, lines).0;
+                text = action::ensure_block(&text, marker, lines).0;
             }
         }
         assert_eq!(text, "export EDITOR=vim\nalias k=kubectl\n");
@@ -252,7 +256,7 @@ mod tests {
             .iter()
             .find(|s| s.name == "system")
             .expect("system stage");
-        let unit = state::unit_path(state::MULTICAST_UNIT);
+        let unit = install_record::unit_path(install_record::MULTICAST_UNIT);
         let disable = ["systemctl", "disable", "--now", "dimos-multicast.service"];
         assert_eq!(system.actions[0], Action::sudo(&disable, REMOVE_TIMEOUT_S));
         assert_eq!(

@@ -1,4 +1,4 @@
-include!("../build_support.rs");
+include!("../pyproject.rs");
 
 const FIXTURE: &str = r#"
 [project]

@@ -8,8 +8,9 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 
-use crate::plan::{self, Mode};
 use crate::probe;
+use crate::run_context::Mode;
+use crate::spawn;
 
 const NO_SUDO: &str =
     "sudo is not installed: run as root, or install sudo (apt-get install -y sudo)";
@@ -24,7 +25,7 @@ const VALIDATE_TIMEOUT_S: u64 = 30;
 pub struct Secret(String);
 
 impl Secret {
-    pub fn new(value: String) -> Secret {
+    pub(crate) fn new(value: String) -> Secret {
         Secret(value)
     }
 
@@ -57,14 +58,14 @@ pub enum Sudo {
 
 impl Sudo {
     /// Probe the machine once, then pick by the pure priority in `choose`.
-    pub fn resolve(mode: Mode) -> Sudo {
+    pub(crate) fn resolve(mode: Mode) -> Sudo {
         Sudo::pick(
             euid(),
             which::which("sudo").is_ok(),
             sudo_n_ok(),
             askpass(),
             env_password(),
-            mode == Mode::Interactive && crate::plan::stdin_is_tty(),
+            mode == Mode::Interactive && crate::run_context::stdin_is_tty(),
             validate,
         )
     }
@@ -93,7 +94,7 @@ impl Sudo {
         }
     }
 
-    pub fn choose(
+    fn choose(
         euid: u32,
         sudo_installed: bool,
         sudo_n_ok: bool,
@@ -122,12 +123,12 @@ impl Sudo {
         Sudo::Unavailable(NO_ROOT.to_string())
     }
 
-    pub fn available(&self) -> bool {
+    pub(crate) fn available(&self) -> bool {
         !matches!(self, Sudo::Unavailable(_))
     }
 
     /// A terminal prompt happens here, on the human's clock, never inside an action's deadline.
-    pub fn refresh(&self) -> Result<()> {
+    pub(crate) fn refresh(&self) -> Result<()> {
         if !matches!(self, Sudo::Tty) {
             return Ok(());
         }
@@ -139,14 +140,14 @@ impl Sudo {
     }
 
     /// A `Tty` that cannot get a ticket becomes `Unavailable`, so every sudo stage is an exit 2.
-    pub fn refresh_or_demote(&mut self) {
+    pub(crate) fn refresh_or_demote(&mut self) {
         if let Err(why) = self.refresh() {
             *self = Sudo::Unavailable(format!("{why:#}"));
         }
     }
 
     /// The argv to spawn plus the bytes to feed its stdin; the password is only ever in those bytes.
-    pub fn wrap(&self, argv: &[String]) -> (Vec<String>, Option<Vec<u8>>) {
+    pub(crate) fn wrap(&self, argv: &[String]) -> (Vec<String>, Option<Vec<u8>>) {
         let prefix: &[&str] = match self {
             Sudo::Root | Sudo::Unavailable(_) => &[],
             Sudo::Passwordless => &["sudo", "-n", "--"],
@@ -164,7 +165,7 @@ impl Sudo {
     }
 
     /// The exit-2 text: what the operator types so the same run works next time.
-    pub fn human_fix(&self) -> String {
+    pub(crate) fn human_fix(&self) -> String {
         match self {
             Sudo::Unavailable(why) => format!(
                 "{why}\n  fix any one of:\n\
@@ -215,7 +216,7 @@ fn validate(secret: &Secret) -> bool {
     if let Some(mut pipe) = child.stdin.take() {
         let _ = pipe.write_all(format!("{}\n", secret.expose()).as_bytes());
     }
-    plan::wait_until(&mut child, Duration::from_secs(VALIDATE_TIMEOUT_S))
+    spawn::wait_until(&mut child, Duration::from_secs(VALIDATE_TIMEOUT_S))
         .ok()
         .flatten()
         .is_some_and(|s| s.success())

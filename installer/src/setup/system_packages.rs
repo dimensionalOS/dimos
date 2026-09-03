@@ -3,10 +3,11 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::pkgs::{self, Platforms};
-use crate::plan::{owned, text, Action, Stage};
+use crate::action::{owned, text, Action};
+use crate::install_record;
+use crate::plan::Stage;
+use crate::platforms::{self, Platforms};
 use crate::probe::{PkgManager, Probes, Tools};
-use crate::state;
 
 const APT_UPDATE_TIMEOUT_S: u64 = 600;
 const PKG_INSTALL_TIMEOUT_S: u64 = 1800;
@@ -19,8 +20,8 @@ const NIX_INSTALLER_URL: &str = "https://nixos.org/nix/install";
 
 fn missing_packages(wanted: &[String], pm: PkgManager, tools: &Tools) -> Vec<String> {
     match pm {
-        PkgManager::Apt => pkgs::missing_apt(wanted, &tools.dpkg_status),
-        PkgManager::Brew => pkgs::missing_brew(wanted, &tools.brew_list),
+        PkgManager::Apt => platforms::missing_apt(wanted, &tools.dpkg_status),
+        PkgManager::Brew => platforms::missing_brew(wanted, &tools.brew_list),
         PkgManager::None => Vec::new(),
     }
 }
@@ -60,9 +61,9 @@ fn install_action(pm: PkgManager, missing: &[String]) -> Option<Action> {
 }
 
 /// The list refresh and the install, both empty when nothing is missing.
-pub fn packages_stages(extras: &[String], probes: &Probes, cfg: &Platforms) -> Vec<Stage> {
+pub(crate) fn packages_stages(extras: &[String], probes: &Probes, cfg: &Platforms) -> Vec<Stage> {
     let pm = probes.platform.pkg;
-    let wanted = pkgs::system_packages(extras, pm, cfg);
+    let wanted = platforms::system_packages(extras, pm, cfg);
     let missing = missing_packages(&wanted, pm, &probes.tools);
     vec![apt_update_stage(pm, &missing), packages_stage(pm, &missing)]
 }
@@ -96,7 +97,7 @@ fn packages_stage(pm: PkgManager, missing: &[String]) -> Stage {
 }
 
 /// Where uv is, or where `uv_stage` will put it; a planned absolute path, never a PATH lookup at exec.
-pub fn uv_bin(tools: &Tools, home: &Path) -> PathBuf {
+pub(crate) fn uv_bin(tools: &Tools, home: &Path) -> PathBuf {
     tools
         .uv
         .clone()
@@ -106,7 +107,7 @@ pub fn uv_bin(tools: &Tools, home: &Path) -> PathBuf {
 /// A downloaded installer lives under the user's own state dir, never a shared /tmp name a
 /// neighbour could plant, and is removed once it has run.
 fn script_path(home: &Path, name: &str) -> PathBuf {
-    state::state_dir(home).join(name)
+    install_record::state_dir(home).join(name)
 }
 
 /// curl to a path; nix's own instructions pin TLS 1.2 and https, astral's do not.
@@ -124,7 +125,7 @@ fn remove(path: PathBuf) -> Action {
 }
 
 /// Downloads astral's installer and runs it into ~/.local/bin; empty when uv is already there.
-pub fn uv_stage(tools: &Tools, home: &Path) -> Stage {
+pub(crate) fn uv_stage(tools: &Tools, home: &Path) -> Stage {
     let stage = Stage::new("uv", true);
     if tools.uv.is_some() {
         return stage;
@@ -147,7 +148,7 @@ pub fn uv_stage(tools: &Tools, home: &Path) -> Stage {
 }
 
 /// Opt-in only (`--with-nix`); non-critical because DimOS installs from system packages without it.
-pub fn nix_stage(tools: &Tools, home: &Path, with_nix: bool) -> Stage {
+pub(crate) fn nix_stage(tools: &Tools, home: &Path, with_nix: bool) -> Stage {
     let stage = Stage::new("nix", false);
     if !with_nix || tools.nix {
         return stage;
@@ -170,8 +171,8 @@ pub fn nix_stage(tools: &Tools, home: &Path, with_nix: bool) -> Stage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::sudo_env_violations;
     use crate::probe::{Arch, Gpu, Os, Platform, Probes};
+    use crate::run::sudo_env_violations;
     use std::path::PathBuf;
 
     fn platform(pkg: PkgManager) -> Platform {
@@ -216,7 +217,7 @@ mod tests {
     }
 
     fn every_package_installed() -> String {
-        pkgs::system_packages(&["base".to_string()], PkgManager::Apt, &Platforms::load())
+        platforms::system_packages(&["base".to_string()], PkgManager::Apt, &Platforms::load())
             .iter()
             .map(|p| format!("{p} install ok installed\n"))
             .collect()
@@ -348,7 +349,7 @@ mod tests {
             };
             let script = PathBuf::from(argv.last().expect("curl -o <script>"));
             assert!(
-                script.starts_with(state::state_dir(home)),
+                script.starts_with(install_record::state_dir(home)),
                 "{}",
                 script.display()
             );

@@ -1,27 +1,31 @@
 //! `dimos setup` as a list of calls: resolve what to install, refuse a machine that cannot hold it,
 //! build the ordered stage list, run it, and record what landed.
 
-pub mod deps;
-pub mod g1;
-pub mod install;
-pub mod jetson;
-pub mod self_install;
-pub mod sysconfig;
-pub mod verify;
+pub(crate) mod dimos_venv;
+pub(crate) mod self_install;
+pub(crate) mod system_config;
+pub(crate) mod system_packages;
+pub(crate) mod verify;
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
+use crate::action::text;
 use crate::cli::{InstallMode, SetupArgs};
-use crate::pkgs::{self, Platforms, DIMOS_VERSION, EXTRAS};
-use crate::plan::{self, say, text, Ctx, Plan, Stage};
+use crate::file_actions;
+use crate::install_record::{self, Installed};
+use crate::plan::{Plan, Stage};
+use crate::platforms::{self, Platforms, DIMOS_VERSION, EXTRAS};
 use crate::probe::{self, Arch, Os, PkgManager, Platform, Probes};
-use crate::state::{self, Installed};
+use crate::run;
+use crate::run_context::Ctx;
+use crate::say;
+use crate::wizards::nvidia::jetson;
 
 const GIB: u64 = 1024 * 1024 * 1024;
 /// A dev install with the base extras unpacks ~10 GiB of wheels, torch included.
-pub const MIN_DISK_BYTES: u64 = 12 * GIB;
+const MIN_DISK_BYTES: u64 = 12 * GIB;
 const DF_TIMEOUT_S: u64 = 20;
 
 const DEFAULT_DIR: &str = "dimos-app";
@@ -31,7 +35,7 @@ const UNITREE_EXTRA: &str = "unitree";
 
 /// What this run installs, resolved once from the flags, the prior install and the prompts.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Target {
+struct Target {
     pub mode: InstallMode,
     pub extras: Vec<String>,
     pub branch: String,
@@ -41,7 +45,7 @@ pub struct Target {
 }
 
 /// Flags win, then installer.json, then a prompt; a non-interactive prompt takes its default.
-pub fn resolve_target(
+fn resolve_target(
     args: &SetupArgs,
     prior: Option<&Installed>,
     cwd: &Path,
@@ -88,7 +92,7 @@ fn extras_of(
             .map(str::to_string)
             .collect(),
     };
-    pkgs::validate_extras(&wanted, arch, cfg)
+    platforms::validate_extras(&wanted, arch, cfg)
 }
 
 fn branch_of(args: &SetupArgs, prior: Option<&Installed>) -> String {
@@ -147,8 +151,8 @@ fn parse_df_kib(text: &str) -> Option<u64> {
 }
 
 /// The whole run as one plan; a stage whose probe says the machine is ready comes back empty.
-pub fn plan(target: &Target, probes: &Probes, cfg: &Platforms, home: &Path) -> Result<Plan> {
-    let dir_state = install::dir_state(&target.dir);
+fn plan(target: &Target, probes: &Probes, cfg: &Platforms, home: &Path) -> Result<Plan> {
+    let dir_state = dimos_venv::dir_state(&target.dir);
     Ok(Plan {
         command: "setup".to_string(),
         stages: stages(target, probes, cfg, home, &dir_state)?,
@@ -162,21 +166,25 @@ fn stages(
     probes: &Probes,
     cfg: &Platforms,
     home: &Path,
-    dir_state: &install::DirState,
+    dir_state: &dimos_venv::DirState,
 ) -> Result<Vec<Stage>> {
-    let uv = deps::uv_bin(&probes.tools, home);
+    let uv = system_packages::uv_bin(&probes.tools, home);
     let mut out = vec![self_install_stage(probes, home)];
-    out.extend(deps::packages_stages(&target.extras, probes, cfg));
+    out.extend(system_packages::packages_stages(
+        &target.extras,
+        probes,
+        cfg,
+    ));
     out.extend([
-        deps::uv_stage(&probes.tools, home),
-        deps::nix_stage(&probes.tools, home, target.with_nix),
+        system_packages::uv_stage(&probes.tools, home),
+        system_packages::nix_stage(&probes.tools, home, target.with_nix),
         install_stage(target, &uv, dir_state, probes.installed.as_ref())?,
-        sysconfig::stage(&probes.platform, &probes.kernel, cfg),
+        system_config::stage(&probes.platform, &probes.kernel, cfg),
         jetson::stage(&probes.platform, &probes.kernel),
     ]);
     out.extend(verify::stages(
         &checks(probes),
-        &state::venv(&target.dir),
+        &install_record::venv(&target.dir),
         &target.dir,
         target.blueprint.as_deref(),
     ));
@@ -185,8 +193,8 @@ fn stages(
 
 /// An unreadable binary hashes to nothing, so the copy is planned rather than silently skipped.
 fn self_install_stage(probes: &Probes, home: &Path) -> Stage {
-    let own = plan::sha256_hex(&probes.current_exe).unwrap_or_default();
-    let installed = plan::sha256_hex(&state::installed_bin(home)).ok();
+    let own = file_actions::sha256_hex(&probes.current_exe).unwrap_or_default();
+    let installed = file_actions::sha256_hex(&install_record::installed_bin(home)).ok();
     self_install::stage(
         &probes.current_exe,
         home,
@@ -200,13 +208,13 @@ fn self_install_stage(probes: &Probes, home: &Path) -> Stage {
 fn install_stage(
     target: &Target,
     uv: &Path,
-    dir_state: &install::DirState,
+    dir_state: &dimos_venv::DirState,
     prior: Option<&Installed>,
 ) -> Result<Stage> {
     if install_is_current(target, dir_state, prior) {
         return Ok(Stage::new("dimos", true));
     }
-    install::dimos_stage(
+    dimos_venv::dimos_stage(
         target.mode,
         &target.dir,
         &target.extras,
@@ -219,7 +227,7 @@ fn install_stage(
 
 fn install_is_current(
     target: &Target,
-    dir_state: &install::DirState,
+    dir_state: &dimos_venv::DirState,
     prior: Option<&Installed>,
 ) -> bool {
     let Some(prior) = prior else {
@@ -231,7 +239,7 @@ fn install_is_current(
             prior.branch.as_deref() == Some(&target.branch)
                 && matches!(
                     dir_state,
-                    install::DirState::Clone { branch: Some(branch) } if branch == &target.branch
+                    dimos_venv::DirState::Clone { branch: Some(branch) } if branch == &target.branch
                 )
         }
     };
@@ -239,8 +247,10 @@ fn install_is_current(
         && prior.dir == target.dir
         && prior.extras == target.extras
         && branch_matches
-        && state::venv_python(&target.dir).is_file()
-        && state::venv(&target.dir).join("bin/dimos").is_file()
+        && install_record::venv_python(&target.dir).is_file()
+        && install_record::venv(&target.dir)
+            .join("bin/dimos")
+            .is_file()
 }
 
 /// `setup` verifies the host it runs on; the G1's DDS stack is `dimos hardware g1 setup`.
@@ -252,15 +262,15 @@ fn checks(probes: &Probes) -> verify::Target {
     }
 }
 
-fn notes(target: &Target, probes: &Probes, dir_state: &install::DirState) -> Vec<String> {
+fn notes(target: &Target, probes: &Probes, dir_state: &dimos_venv::DirState) -> Vec<String> {
     [
         (target.mode == InstallMode::Dev)
-            .then(|| install::branch_note(dir_state, &target.branch, &target.dir))
+            .then(|| dimos_venv::branch_note(dir_state, &target.branch, &target.dir))
             .flatten(),
         unmanaged_note(&probes.platform),
         jetson::static_tls_note(&probes.platform),
         jetson::thermal_note(&probes.kernel),
-        sysconfig::no_systemd_note(&probes.platform),
+        system_config::no_systemd_note(&probes.platform),
     ]
     .into_iter()
     .flatten()
@@ -279,9 +289,9 @@ fn unmanaged_note(platform: &Platform) -> Option<String> {
 /// `hardware` and `last` are other commands' writes, so a re-run carries them over untouched.
 fn record(target: &Target, probes: &Probes, prior: Option<&Installed>) -> Installed {
     Installed {
-        schema: state::SCHEMA,
+        schema: install_record::SCHEMA,
         installer_version: DIMOS_VERSION.to_string(),
-        dimos_version: install::dimos_version_string(target.mode, &target.branch, None),
+        dimos_version: dimos_venv::dimos_version_string(target.mode, &target.branch, None),
         mode: target.mode,
         dir: target.dir.clone(),
         branch: (target.mode == InstallMode::Dev).then(|| target.branch.clone()),
@@ -312,10 +322,10 @@ pub fn run(
     let target = resolve_target(args, prior, &cwd, probes.platform.arch, cfg, ctx)?;
     preflight(&target, probes)?;
     let steps = plan(&target, probes, cfg, home)?;
-    let report = plan::run(&steps, ctx)?;
+    let report = run::run(&steps, ctx)?;
     report.print(ctx);
     if !ctx.dry_run {
-        state::save(home, &record(&target, probes, prior))?;
+        install_record::save(home, &record(&target, probes, prior))?;
     }
     if report.exit_code() == 0 {
         next_steps(&target, probes);
@@ -326,9 +336,10 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::Mode;
+    use crate::action_log::ActionLog;
+    use crate::install_record::{PlatformSummary, TmpDir};
     use crate::probe::{Gpu, Kernel, Tools};
-    use crate::state::{ActionLog, PlatformSummary, TmpDir};
+    use crate::run_context::Mode;
     use crate::sudo::Sudo;
 
     fn ctx(home: &Path) -> Ctx {
@@ -389,7 +400,7 @@ mod tests {
 
     fn installed(dir: &Path) -> Installed {
         Installed {
-            schema: state::SCHEMA,
+            schema: install_record::SCHEMA,
             installer_version: DIMOS_VERSION.to_string(),
             dimos_version: DIMOS_VERSION.to_string(),
             mode: InstallMode::Dev,
@@ -423,11 +434,11 @@ mod tests {
     /// Every package the plan wants, reported by dpkg as already installed.
     fn configured(home: &Path, cfg: &Platforms) -> Probes {
         let mut probes = probes(home);
-        probes.current_exe = state::installed_bin(home);
+        probes.current_exe = install_record::installed_bin(home);
         probes.tools = Tools {
             uv: Some(home.join(".local/bin/uv")),
             login_path_has_local_bin: true,
-            dpkg_status: pkgs::system_packages(&["base".to_string()], PkgManager::Apt, cfg)
+            dpkg_status: platforms::system_packages(&["base".to_string()], PkgManager::Apt, cfg)
                 .iter()
                 .map(|p| format!("{p} install ok installed\n"))
                 .collect(),
@@ -438,8 +449,8 @@ mod tests {
             lo_multicast: true,
             multicast_route: true,
             memlock_conf_bytes: Some(cfg.linux.memlock_bytes),
-            sysctl_conf: Some(sysconfig::render_sysctl_conf(&cfg.linux.sysctl)),
-            enabled_units: vec![format!("{}.service", state::MULTICAST_UNIT)],
+            sysctl_conf: Some(system_config::render_sysctl_conf(&cfg.linux.sysctl)),
+            enabled_units: vec![format!("{}.service", install_record::MULTICAST_UNIT)],
             nvpmodel_maxn: None,
         };
         probes
@@ -587,9 +598,9 @@ mod tests {
         let dir = target(home.path()).dir;
         std::fs::create_dir_all(dir.join(".git")).unwrap();
         std::fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
-        std::fs::create_dir_all(state::venv(&dir).join("bin")).unwrap();
-        std::fs::write(state::venv_python(&dir), "").unwrap();
-        std::fs::write(state::venv(&dir).join("bin/dimos"), "").unwrap();
+        std::fs::create_dir_all(install_record::venv(&dir).join("bin")).unwrap();
+        std::fs::write(install_record::venv_python(&dir), "").unwrap();
+        std::fs::write(install_record::venv(&dir).join("bin/dimos"), "").unwrap();
         let mut probes = configured(home.path(), &cfg);
         probes.installed = Some(Installed {
             mode: InstallMode::Dev,
@@ -630,7 +641,7 @@ mod tests {
         let mut prior = installed(&home.path().join(DEFAULT_DIR));
         prior.hardware.insert(
             "g1".to_string(),
-            crate::state::HardwareRun {
+            crate::install_record::HardwareRun {
                 at: "2026-09-01T00:00:00Z".to_string(),
                 result: "applied".to_string(),
                 robot_ip: None,
