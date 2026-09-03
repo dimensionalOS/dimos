@@ -166,6 +166,25 @@
   color: var(--fg-faint);
 }
 
+.switchRobot {
+  background: none;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-s);
+  color: var(--fg-muted);
+  cursor: pointer;
+  flex: none;
+  font-size: 11px;
+  line-height: 18px;
+  padding: 0 7px;
+  transition: border-color var(--dur), color var(--dur);
+  white-space: nowrap;
+}
+
+.switchRobot:hover {
+  border-color: var(--fg-faint);
+  color: var(--fg);
+}
+
 .error {
   color: var(--danger);
   font-size: 11px;
