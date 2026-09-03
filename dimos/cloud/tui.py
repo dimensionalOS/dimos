@@ -21,6 +21,7 @@ their column (auto-height rows) instead of truncating."""
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from rich.pretty import Pretty
@@ -28,9 +29,9 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import DataTable, Footer, Static
+from textual.widgets import DataTable, Footer, Label, ProgressBar, Static
 
 from dimos.cloud.data import CloudData
 
@@ -80,12 +81,21 @@ class DataBrowser(App[None]):
         self._rows: list[dict[str, Any]] = []
         self._expanded: set[str] = set()
 
+    CSS = """
+    #pull-status { height: 1; padding: 0 1; }
+    #pull-status Label { margin-right: 1; }
+    """
+
     def compose(self) -> ComposeResult:
         yield DataTable[Text](cursor_type="row", zebra_stripes=True)
+        with Horizontal(id="pull-status"):
+            yield Label(id="pull-label")
+            yield ProgressBar(id="pull-bar")
         yield Static(id="quota")
         yield Footer()
 
     def on_mount(self) -> None:
+        self.query_one("#pull-status").display = False
         self.action_refresh()
 
     def on_resize(self, _: events.Resize) -> None:
@@ -189,12 +199,32 @@ class DataBrowser(App[None]):
         if row["state"] != "complete":
             self.notify(f"{row['filename']} is {row['state']} — not pullable", severity="warning")
             return
-        self.notify(f"pulling {row['filename']}…")
         self.run_worker(lambda: self._pull(row), thread=True)
 
     def _pull(self, row: dict[str, Any]) -> None:
+        last = 0.0
+
+        def tick(phase: str, done: int, total: int) -> None:
+            nonlocal last
+            if phase == "download" and done != total and time.monotonic() - last < 0.1:
+                return  # a 40GB pull ticks per MB; don't flood the UI thread
+            last = time.monotonic()
+            self.call_from_thread(self._pull_progress, row["filename"], phase, done, total)
+
         try:
-            out = self._cloud.pull(str(row["id"]))
-            self.call_from_thread(self.notify, f"pulled to {out}")
+            out = self._cloud.pull(str(row["id"]), progress=tick)
+            self.call_from_thread(self._pull_finished, f"pulled to {out}", False)
         except (RuntimeError, OSError) as e:
-            self.call_from_thread(self.notify, str(e), severity="error")
+            self.call_from_thread(self._pull_finished, str(e), True)
+
+    def _pull_progress(self, filename: str, phase: str, done: int, total: int) -> None:
+        from rich.filesize import decimal
+
+        self.query_one("#pull-status").display = True
+        of = f" {decimal(done)} / {decimal(total)}" if total else ""
+        self.query_one("#pull-label", Label).update(f"{phase} {filename}{of}")
+        self.query_one("#pull-bar", ProgressBar).update(total=total or None, progress=done)
+
+    def _pull_finished(self, message: str, failed: bool) -> None:
+        self.query_one("#pull-status").display = False
+        self.notify(message, severity="error" if failed else "information")

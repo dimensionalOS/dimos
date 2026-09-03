@@ -152,7 +152,11 @@ def ls() -> None:
 @handle_fail
 def pull(upload_id: str | None, dest: Path | None) -> None:
     upload_id = None if upload_id == "latest" else upload_id
-    typer.echo(f"pulled to {CloudData().pull(upload_id, dest)}")
+    cloud = CloudData()
+    row = cloud.resolve(upload_id)
+    with _bar(row["filename"]) as tick:
+        out = cloud.pull(str(row["id"]), dest, progress=tick)
+    typer.echo(f"pulled to {out}")
 
 
 @handle_fail
