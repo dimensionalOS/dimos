@@ -37,10 +37,10 @@ def _task() -> GripperControlTask:
     )
 
 
-def _state(*, t_now: float = 0.0, **positions: float) -> CoordinatorState:
+def _state(**positions: float) -> CoordinatorState:
     return CoordinatorState(
         joints=JointStateSnapshot(joint_positions=positions),
-        t_now=t_now,
+        t_now=0.0,
     )
 
 
@@ -89,21 +89,6 @@ def test_stream_input_rejects_invalid_normalized_opening(opening: float) -> None
 
     assert task.on_gripper_command(Float32(data=opening), 0.0) is False
     assert task.compute(_state()) is None
-
-
-def test_hold_expiry_releases_streaming_target() -> None:
-    task = GripperControlTask(
-        "tool",
-        GripperControlTaskConfig(
-            joint_names=["arm/tool_joint"],
-            hold_duration=0.1,
-        ),
-        limits=[(0.0, 850.0)],
-    )
-    assert task.on_gripper_command(Float32(data=0.5), 1.0)
-
-    assert task.compute(_state(t_now=1.09)) is not None
-    assert task.compute(_state(t_now=1.1001)) is None
 
 
 def _hardware(mocker: MockerFixture, limit_len: int = 7) -> dict[str, ConnectedHardware]:

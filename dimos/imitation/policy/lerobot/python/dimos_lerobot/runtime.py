@@ -108,7 +108,8 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
 
     @rpc
     def stop(self) -> None:
-        self._stop_policy()
+        if not self._stop_policy():
+            self._cancel_after_stop_timeout()
         super().stop()
 
     @rpc
@@ -137,8 +138,8 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
 
     @rpc
     def stop_rollout(self) -> RolloutStatus:
-        self._cancel_trajectory()
-        self._stop_policy()
+        if not self._stop_policy():
+            self._cancel_after_stop_timeout()
         return self.rollout_status()
 
     @rpc
@@ -390,15 +391,21 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                     self._chunks_accepted += 1
                 self._stop_event.wait(loaded_policy.n_action_steps / self.config.fps)
         except Exception as exc:
-            self._cancel_trajectory()
             with self._lock:
                 self._last_error = str(exc)
             logger.exception("LeRobot policy execution stopped", error=str(exc))
         finally:
             self._stop_event.set()
+            cancellation_error = self._cancel_trajectory()
             if loaded_policy is not None:
                 self._reset_policy(loaded_policy)
             with self._lock:
+                if cancellation_error is not None:
+                    self._last_error = (
+                        f"{self._last_error}; {cancellation_error}"
+                        if self._last_error is not None
+                        else cancellation_error
+                    )
                 self._active = False
 
     @staticmethod
@@ -410,13 +417,21 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
     def _stop_policy(self) -> bool:
         with self._lock:
             thread = self._thread
-            was_running = thread is not None and thread.is_alive()
             self._stop_event.set()
-            self._active = False
             self._observation_changed.notify_all()
         if thread is not None and thread is not current_thread():
             thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        return was_running
+        return thread is None or not thread.is_alive()
+
+    def _cancel_after_stop_timeout(self) -> None:
+        timeout_error = f"policy rollout did not stop within {DEFAULT_THREAD_JOIN_TIMEOUT} seconds"
+        cancellation_error = self._cancel_trajectory()
+        with self._lock:
+            self._last_error = (
+                f"{timeout_error}; {cancellation_error}"
+                if cancellation_error is not None
+                else timeout_error
+            )
 
     def _trajectory(
         self,
@@ -451,14 +466,24 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
                 )
             )
 
-    def _cancel_trajectory(self) -> None:
+    def _cancel_trajectory(self) -> str | None:
         try:
-            self._control.cancel_trajectory(task_name=self.config.trajectory_task_name)
-        except Exception:
+            result = self._control.cancel_trajectory(task_name=self.config.trajectory_task_name)
+        except Exception as exc:
             logger.exception(
                 "Failed to cancel policy trajectory",
                 task_name=self.config.trajectory_task_name,
             )
+            return f"Failed to cancel policy trajectory: {exc}"
+        if result.safe:
+            return None
+        message = result.message or "Policy trajectory cancellation was uncertain"
+        logger.error(
+            "Policy trajectory cancellation was uncertain",
+            error=message,
+            task_name=self.config.trajectory_task_name,
+        )
+        return message
 
 
 def _checkpoint_action_bounds(

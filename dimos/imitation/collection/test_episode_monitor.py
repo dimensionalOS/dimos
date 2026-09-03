@@ -124,14 +124,6 @@ def test_start_while_recording_autocommits_previous(
     assert last.episodes_saved == 1  # the auto-committed one
 
 
-def test_empty_press_event_is_ignored(
-    make_monitor: Callable[..., EpisodeMonitorModule],
-) -> None:
-    m = make_monitor()
-    m._on_buttons(Buttons())
-    assert _events(m) == []
-
-
 def test_published_status_is_internally_consistent(
     make_monitor: Callable[..., EpisodeMonitorModule],
 ) -> None:

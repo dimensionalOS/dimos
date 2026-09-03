@@ -243,8 +243,8 @@ class HandTeleopModule(ArmTeleopModule):
             left=left.trigger if left is not None else 0.0,
             right=right.trigger if right is not None else 0.0,
         )
-        buttons.left_primary = self._is_engaged[Hand.LEFT]
-        buttons.right_primary = self._is_engaged[Hand.RIGHT]
+        buttons.left_grip = self._is_engaged[Hand.LEFT]
+        buttons.right_grip = self._is_engaged[Hand.RIGHT]
         self._publish_buttons(buttons)
         self._publish_gripper_commands(left, right, buttons)
 

@@ -209,7 +209,7 @@ class JointTrajectoryTask(BaseControlTask):
         self._config = config
         self._joint_names = frozenset(config.joint_names)
         self._joint_names_list = list(config.joint_names)
-        self._hardware = hardware
+        self._hardware = tuple(hardware.values())
 
         # State machine
         self._state = TrajectoryState.IDLE
@@ -420,11 +420,7 @@ class JointTrajectoryTask(BaseControlTask):
         """Resolve complete finite position limits in each adapter's joint order."""
         resolved: dict[str, tuple[float, float]] = {}
         for joint_name in joint_names:
-            owners = [
-                hardware
-                for hardware in self._hardware.values()
-                if joint_name in hardware.joint_names
-            ]
+            owners = [hardware for hardware in self._hardware if joint_name in hardware.joint_names]
             if len(owners) != 1:
                 raise ValueError(
                     f"joint {joint_name!r} must belong to exactly one connected hardware component"
