@@ -998,6 +998,104 @@ pub fn update_map(
     }
 }
 
+/// Health seeded voxels start at. Just healthy, so they emit and count as
+/// support, while a couple of live misses can still carve stale geometry.
+const SEED_HEALTH: VoxelHealth = 1;
+
+/// Bulk-load a world-frame premap cloud. Creates only voxels no live data has
+/// observed, at `SEED_HEALTH`, and accumulates the cloud's moments into them.
+/// Existing voxels keep their health and moments, since live data is fresher
+/// than an ICP-aligned premap. Support counts, the healthy-chunk index, and
+/// pooled normal fits are brought up to date in one batched pass. Returns the
+/// created keys.
+pub fn seed_points(
+    map: &mut VoxelMap,
+    points: &[(f32, f32, f32)],
+    cfg: &Config,
+) -> AHashSet<VoxelKey> {
+    let inv = 1.0 / cfg.voxel_size;
+    let fine = cfg.fine_layer().map(|(d, _)| d as i32);
+
+    let mut created: AHashSet<VoxelKey> = AHashSet::new();
+    for &(x, y, z) in points {
+        if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+            continue;
+        }
+        let key = world_to_voxel(x, y, z, inv);
+        if !map.voxels.contains_key(&key) {
+            map.voxels.insert(key, Voxel::with_health(SEED_HEALTH));
+            created.insert(key);
+        } else if !created.contains(&key) {
+            continue;
+        }
+        map.accumulate((x, y, z), cfg.voxel_size, fine);
+    }
+    if created.is_empty() {
+        return created;
+    }
+
+    // One batched pass over the created voxels: each counts its healthy
+    // neighbors, and each pre-existing neighbor gains one support per
+    // adjacent created voxel. Created pairs cover each other through their
+    // own counts.
+    let voxels = &map.voxels;
+    let (supports, bumps) = created
+        .par_iter()
+        .fold(
+            || (Vec::new(), AHashMap::new()),
+            |(mut supports, mut bumps), &key| {
+                let mut support = 0u32;
+                for dx in -1..=1 {
+                    for dy in -1..=1 {
+                        for dz in -1..=1 {
+                            if (dx, dy, dz) == (0, 0, 0) {
+                                continue;
+                            }
+                            let nk = (key.0 + dx, key.1 + dy, key.2 + dz);
+                            let Some(c) = voxels.get(&nk) else {
+                                continue;
+                            };
+                            if c.health > 0 {
+                                support += 1;
+                            }
+                            if !created.contains(&nk) {
+                                *bumps.entry(nk).or_insert(0u32) += 1;
+                            }
+                        }
+                    }
+                }
+                supports.push((key, support));
+                (supports, bumps)
+            },
+        )
+        .reduce(
+            || (Vec::new(), AHashMap::new()),
+            |(mut supports, mut bumps), (s, b)| {
+                supports.extend(s);
+                for (key, delta) in b {
+                    *bumps.entry(key).or_insert(0) += delta;
+                }
+                (supports, bumps)
+            },
+        );
+
+    for (key, support) in supports {
+        map.voxels.get_mut(&key).unwrap().support = support;
+    }
+    for (key, delta) in bumps {
+        map.voxels.get_mut(&key).unwrap().support += delta;
+    }
+    for &key in &created {
+        map.healthy_chunks
+            .entry(chunk_of(key))
+            .or_default()
+            .insert(key);
+    }
+
+    refresh_voxels(map, &created, &[], cfg.voxel_size);
+    created
+}
+
 #[inline]
 fn world_to_voxel(x: f32, y: f32, z: f32, inv: f32) -> VoxelKey {
     (

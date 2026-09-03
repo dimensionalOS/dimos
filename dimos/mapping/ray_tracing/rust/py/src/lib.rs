@@ -184,6 +184,14 @@ impl VoxelRayMapper {
         Ok(())
     }
 
+    /// Bulk-seed a world-frame premap cloud, creating only absent voxels.
+    /// Returns how many voxels were created.
+    fn seed_points(&mut self, py: Python<'_>, points: &Bound<'_, PyAny>) -> PyResult<usize> {
+        let pts = extract_tuples(points, "points")?;
+        let mapper = &mut self.mapper;
+        Ok(py.allow_threads(move || mapper.seed_points(&pts)))
+    }
+
     /// The last frame's registered points as (N, 3) float32.
     fn registered_points<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
         points_to_array(py, self.mapper.registered_points())

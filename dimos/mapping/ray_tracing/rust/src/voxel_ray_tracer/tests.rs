@@ -1445,3 +1445,232 @@ fn clear_voxels_takes_the_fine_layer_with_it() {
 
     assert!(emit_points_fine(&map, 1.0, 2, None, 0, &no_live).is_empty());
 }
+
+/// Seeding a cloud into an empty map must build exactly what the maintained
+/// incremental path builds: same voxels, health, moments, support counts,
+/// chunk index, and normals.
+#[test]
+fn seed_matches_from_scratch_build() {
+    let mut state = 6364136223846793005_u64;
+    let mut next_u64 = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut next_coord = move || (next_u64() % 1200) as f32 / 100.0 - 6.0;
+    let cfg = basic_config();
+    let points: Vec<(f32, f32, f32)> = (0..600)
+        .map(|_| (next_coord(), next_coord(), next_coord()))
+        .collect();
+
+    let mut seeded = VoxelMap::default();
+    let created = seed_points(&mut seeded, &points, &cfg);
+    let (reference, keys) = build_surface(&points, cfg.voxel_size, SEED_HEALTH);
+
+    let mut created_sorted: Vec<VoxelKey> = created.iter().copied().collect();
+    created_sorted.sort();
+    assert_eq!(created_sorted, keys);
+    assert_eq!(seeded.voxels.len(), reference.voxels.len());
+    for (&key, want) in reference.voxels.iter() {
+        let got = &seeded.voxels[&key];
+        assert_eq!(got.health, want.health, "health at {key:?}");
+        assert_eq!(got.num_pts, want.num_pts, "num_pts at {key:?}");
+        assert_eq!(got.sum, want.sum, "sum at {key:?}");
+        assert_eq!(got.support, want.support, "support at {key:?}");
+        match (got.normal, want.normal) {
+            (Some(a), Some(b)) => {
+                assert!(a.dot(&b).abs() > 0.999, "normal at {key:?}: {a:?} vs {b:?}")
+            }
+            (a, b) => assert_eq!(a.is_some(), b.is_some(), "normal presence at {key:?}"),
+        }
+    }
+    assert_eq!(seeded.healthy_chunks, reference.healthy_chunks);
+
+    let no_live = AHashSet::new();
+    for support_min in [0, 3] {
+        let got = sort_points(tuples(emit_points(
+            &seeded,
+            1.0,
+            None,
+            support_min,
+            &no_live,
+        )));
+        let want = sort_points(tuples(emit_points(
+            &reference,
+            1.0,
+            None,
+            support_min,
+            &no_live,
+        )));
+        assert_eq!(got, want, "emit at support_min={support_min}");
+    }
+}
+
+/// A seed never touches a voxel live data already observed: health and
+/// moments stay exactly as they were. Only the support bookkeeping sees the
+/// new healthy neighbor.
+#[test]
+fn seed_leaves_live_voxels_untouched() {
+    let cfg = basic_config();
+    let mut map = VoxelMap::default();
+    update_map(&mut map, (0.0, 0.0, 0.0), &[(5.2, 0.2, 0.2)], &cfg);
+    let before = map.voxels[&(5, 0, 0)].clone();
+
+    let created = seed_points(&mut map, &[(5.7, 0.7, 0.7), (6.5, 0.5, 0.5)], &cfg);
+
+    assert_eq!(created.len(), 1);
+    assert!(created.contains(&(6, 0, 0)));
+    let after = &map.voxels[&(5, 0, 0)];
+    assert_eq!(after.health, before.health);
+    assert_eq!(
+        after.num_pts, before.num_pts,
+        "premap points must not pollute live moments"
+    );
+    assert_eq!(after.sum, before.sum);
+    assert_eq!(after.support, 1, "the seeded neighbor still counts");
+    assert_eq!(map.voxels[&(6, 0, 0)].support, 1);
+    assert_eq!(map.health((6, 0, 0)), Some(SEED_HEALTH));
+}
+
+/// Seeding the same cloud twice creates nothing and adds no moments.
+#[test]
+fn second_seed_is_a_no_op() {
+    let cfg = basic_config();
+    let mut map = VoxelMap::default();
+    let points = [(1.5, 1.5, 0.5), (2.5, 1.5, 0.5)];
+    assert_eq!(seed_points(&mut map, &points, &cfg).len(), 2);
+    let num_pts_before = map.voxels[&(1, 1, 0)].num_pts;
+    let support_before = map.voxels[&(1, 1, 0)].support;
+
+    let again = seed_points(&mut map, &points, &cfg);
+
+    assert!(again.is_empty());
+    assert_eq!(map.voxels.len(), 2);
+    assert_eq!(map.voxels[&(1, 1, 0)].num_pts, num_pts_before);
+    assert_eq!(map.voxels[&(1, 1, 0)].support, support_before);
+}
+
+/// Seeded wall voxels get pooled normal fits, so a grazing ray spares them
+/// where a moment-less wall of the same shape is carved.
+#[test]
+fn seeded_wall_normals_spare_grazing_rays() {
+    let cfg = basic_config();
+    let mut wall: Vec<(f32, f32, f32)> = Vec::new();
+    for iy in 0..16 {
+        for iz in 0..16 {
+            wall.push((5.5, 0.25 + iy as f32 * 0.5, 0.25 + iz as f32 * 0.5));
+        }
+    }
+
+    let mut seeded = VoxelMap::default();
+    seed_points(&mut seeded, &wall, &cfg);
+    assert!(
+        seeded.voxels[&(5, 4, 4)].planar_normal().is_some(),
+        "seeded wall voxel must carry a normal"
+    );
+
+    // The same wall occupied without moments, so nothing fits a plane.
+    let mut bare = VoxelMap::default();
+    for key in metric_voxel_keys(wall.iter().copied(), cfg.voxel_size) {
+        bare.set_health(key, SEED_HEALTH);
+    }
+
+    // A ray running along the wall plane inside one wall voxel column.
+    let origin = (5.5, -2.5, 4.5);
+    let hit = [(5.5, 10.5, 4.5)];
+    update_map(&mut seeded, origin, &hit, &cfg);
+    update_map(&mut bare, origin, &hit, &cfg);
+
+    assert_eq!(
+        seeded.health((5, 4, 4)),
+        Some(SEED_HEALTH),
+        "the normal earns the grazing spare"
+    );
+    assert_eq!(
+        bare.health((5, 4, 4)),
+        None,
+        "without a normal the graze carves"
+    );
+}
+
+/// With a fine layer on, seeding marks the observed fine cells.
+#[test]
+fn seed_sets_fine_bits_when_layer_is_on() {
+    let cfg = fine_config(2);
+    let mut map = VoxelMap::default();
+    seed_points(&mut map, &[(5.1, 0.1, 0.1)], &cfg);
+
+    let no_live = AHashSet::new();
+    assert_eq!(
+        tuples(emit_points_fine(&map, 1.0, 2, None, 0, &no_live)),
+        vec![(5.25, 0.25, 0.25)]
+    );
+}
+
+/// Seeding into a live map must leave every pre-existing voxel's health
+/// alone while keeping the support counts and the healthy-chunk index
+/// exactly what a from-scratch scan would produce.
+#[test]
+fn seed_into_live_map_keeps_indexes_consistent() {
+    let mut state = 1442695040888963407_u64;
+    let mut next_u64 = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut next_coord = move || (next_u64() % 800) as f32 / 100.0 - 4.0;
+    let cfg = Config {
+        min_health: -1,
+        max_health: 3,
+        ..basic_config()
+    };
+
+    for trial in 0..5 {
+        let mut map = VoxelMap::default();
+        for _ in 0..3 {
+            let frame: Vec<(f32, f32, f32)> = (0..150)
+                .map(|_| (next_coord(), next_coord(), next_coord()))
+                .collect();
+            update_map(&mut map, (0.0, 0.0, 10.0), &frame, &cfg);
+        }
+        let cloud: Vec<(f32, f32, f32)> = (0..400)
+            .map(|_| (next_coord(), next_coord(), next_coord()))
+            .collect();
+        let healths_before: AHashMap<VoxelKey, VoxelHealth> =
+            map.voxels.iter().map(|(&k, v)| (k, v.health)).collect();
+
+        let created = seed_points(&mut map, &cloud, &cfg);
+
+        for (key, health) in healths_before {
+            assert_eq!(
+                map.voxels[&key].health, health,
+                "trial {trial}: pre-existing {key:?} changed"
+            );
+        }
+        for &key in created.iter() {
+            assert_eq!(map.voxels[&key].health, SEED_HEALTH, "trial {trial}");
+        }
+        let keys: Vec<VoxelKey> = map.voxels.keys().copied().collect();
+        for k in keys {
+            assert_eq!(
+                map.voxels[&k].support,
+                map.count_healthy_neighbors(k),
+                "trial {trial}: support({k:?})"
+            );
+        }
+        let indexed: AHashSet<VoxelKey> = map
+            .healthy_chunks
+            .values()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        let healthy: AHashSet<VoxelKey> = map
+            .voxels
+            .iter()
+            .filter(|(_, v)| v.health > 0)
+            .map(|(&k, _)| k)
+            .collect();
+        assert_eq!(indexed, healthy, "trial {trial}: chunk index");
+    }
+}

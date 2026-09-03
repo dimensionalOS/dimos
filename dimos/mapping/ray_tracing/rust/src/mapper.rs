@@ -20,7 +20,7 @@ use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
     batch_local_bounds, coarse_of_fine, emit_points, emit_points_fine, global_normal_fits,
-    metric_voxel_keys, update_map, Config, Cylinder, FrameHits, LocalBounds, VoxelMap,
+    metric_voxel_keys, seed_points, update_map, Config, Cylinder, FrameHits, LocalBounds, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -90,6 +90,15 @@ impl Mapper {
     /// Fold an already world-frame cloud into the map, raycasting from `origin`.
     pub fn add_frame_world(&mut self, world_points: Vec<Point>, origin: Point) {
         self.ingest(world_points, origin);
+    }
+
+    /// Bulk-seed a world-frame premap cloud, creating only voxels no live
+    /// data has observed. No rays are cast and nothing enters the local
+    /// region batch. Returns how many voxels were created.
+    pub fn seed_points(&mut self, points: &[Point]) -> usize {
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| seed_points(&mut self.map, points, &self.config))
+            .len()
     }
 
     fn ingest(&mut self, points: Vec<Point>, origin: Point) {
@@ -382,6 +391,29 @@ mod tests {
 
         assert!(mapper.global_points().is_empty());
         assert_eq!(mapper.clear_metric([(5.5, 0.5, 0.5)]), 0);
+    }
+
+    /// Seeded voxels reach both emitters, and the seed stays out of the
+    /// frame batch that sizes the local region.
+    #[test]
+    fn seed_points_emits_without_batching_regions() {
+        let mut mapper = Mapper::new(config());
+        assert_eq!(mapper.seed_points(&[(5.5, 0.5, 0.5), (6.5, 0.5, 0.5)]), 2);
+
+        assert_eq!(mapper.global_points().len(), 6);
+        let bounds = LocalBounds {
+            origin_x: 5.0,
+            origin_y: 0.0,
+            r_xy_max_sq: 100.0,
+            z_min: -5.0,
+            z_max: 5.0,
+        };
+        assert_eq!(mapper.local_points(&bounds).len(), 6);
+
+        let c = mapper.take_local_bounds();
+        assert_eq!(c.radius, 0.0, "a seed must not feed the region batch");
+
+        assert_eq!(mapper.seed_points(&[(5.5, 0.5, 0.5)]), 0);
     }
 
     #[test]
