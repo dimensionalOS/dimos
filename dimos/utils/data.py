@@ -378,6 +378,10 @@ class LfsPath(type(Path())):  # type: ignore[misc]
         """Return filesystem path, downloading from LFS if needed."""
         return str(self._ensure_downloaded())
 
+    def __hash__(self) -> int:
+        """Hash the resolved path instead of pathlib's placeholder state."""
+        return hash(self._ensure_downloaded())
+
     def __truediv__(self, other: object) -> "LfsPath":
         """Path division operator - returns a new lazy LfsPath (no download)."""
         filename = object.__getattribute__(self, "_lfs_filename")
