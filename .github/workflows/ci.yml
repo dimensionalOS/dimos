@@ -250,7 +250,8 @@ jobs:
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
 
-  cpp:
+  native:
+    name: Native builds (C++ and Rust)
     timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
@@ -970,7 +971,7 @@ jobs:
     needs:
     - lint
     - rust
-    - cpp
+    - native
     - md-babel
     - web
     - tests
