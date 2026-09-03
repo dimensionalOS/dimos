@@ -108,7 +108,7 @@ def _view() -> Any:
 
     return rrb.Blueprint(
         rrb.Spatial3DView(
-            origin=WORLD,
+            origin="world",
             background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
             line_grid=rrb.LineGrid3D(plane=rr.components.Plane3D.XY.with_distance(0.5)),
             overrides={path: rrb.EntityBehavior(visible=False) for path in HIDDEN},
