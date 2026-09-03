@@ -4,7 +4,7 @@
       "name": "hello_robot",
       "message": {
         "t": "hello",
-        "v": 5,
+        "v": 6,
         "role": "robot",
         "robot": {
           "id": "go2-lab",
@@ -56,24 +56,24 @@
           "pages": []
         }
       },
-      "b64": "eyJ0IjoiaGVsbG8iLCJ2Ijo1LCJyb2xlIjoicm9ib3QiLCJyb2JvdCI6eyJpZCI6ImdvMi1sYWIiLCJuYW1lIjoiR28yIExhYm9yYXRvciDOsiIsIm1vZGVsIjoidW5pdHJlZS1nbzIifSwibWFuaWZlc3QiOnsidmVyc2lvbiI6MSwiY2hhbm5lbHMiOlt7ImNoIjoiY29sb3JfaW1hZ2UiLCJkaXIiOiJyeCIsImVuY29kaW5nIjoianBlZy52MSIsImRlbGl2ZXJ5IjoibGF0ZXN0IiwibWF4SHoiOjE1LjUsInBhcmFtcyI6eyJxdWFsaXR5Ijo3NS41fSwicHVibGlzaCI6Im5vbmUiLCJyZXF1aXJlZFNjb3BlIjpudWxsfSx7ImNoIjoib2RvbSIsImRpciI6InJ4IiwiZW5jb2RpbmciOiJwb3NlLmpzb24udjEiLCJkZWxpdmVyeSI6InJlbGlhYmxlIiwibWF4SHoiOjIwLjUsInBhcmFtcyI6e30sInB1Ymxpc2giOiJub25lIiwicmVxdWlyZWRTY29wZSI6bnVsbH1dLCJwYW5lbHMiOlt7ImlkIjoicDAiLCJraW5kIjoidmlkZW8iLCJ0aXRsZSI6IkNhbWVyYSDOsiIsImNoYW5uZWxzIjpbImNvbG9yX2ltYWdlIl0sInBhcmFtcyI6e319XSwibGF5b3V0Ijp7InJvdyI6WyJwMCJdfSwicGFnZXMiOltdfX0="
+      "b64": "eyJ0IjoiaGVsbG8iLCJ2Ijo2LCJyb2xlIjoicm9ib3QiLCJyb2JvdCI6eyJpZCI6ImdvMi1sYWIiLCJuYW1lIjoiR28yIExhYm9yYXRvciDOsiIsIm1vZGVsIjoidW5pdHJlZS1nbzIifSwibWFuaWZlc3QiOnsidmVyc2lvbiI6MSwiY2hhbm5lbHMiOlt7ImNoIjoiY29sb3JfaW1hZ2UiLCJkaXIiOiJyeCIsImVuY29kaW5nIjoianBlZy52MSIsImRlbGl2ZXJ5IjoibGF0ZXN0IiwibWF4SHoiOjE1LjUsInBhcmFtcyI6eyJxdWFsaXR5Ijo3NS41fSwicHVibGlzaCI6Im5vbmUiLCJyZXF1aXJlZFNjb3BlIjpudWxsfSx7ImNoIjoib2RvbSIsImRpciI6InJ4IiwiZW5jb2RpbmciOiJwb3NlLmpzb24udjEiLCJkZWxpdmVyeSI6InJlbGlhYmxlIiwibWF4SHoiOjIwLjUsInBhcmFtcyI6e30sInB1Ymxpc2giOiJub25lIiwicmVxdWlyZWRTY29wZSI6bnVsbH1dLCJwYW5lbHMiOlt7ImlkIjoicDAiLCJraW5kIjoidmlkZW8iLCJ0aXRsZSI6IkNhbWVyYSDOsiIsImNoYW5uZWxzIjpbImNvbG9yX2ltYWdlIl0sInBhcmFtcyI6e319XSwibGF5b3V0Ijp7InJvdyI6WyJwMCJdfSwicGFnZXMiOltdfX0="
     },
     {
       "name": "hello_viewer",
       "message": {
         "t": "hello",
-        "v": 5,
+        "v": 6,
         "role": "viewer"
       },
-      "b64": "eyJ0IjoiaGVsbG8iLCJ2Ijo1LCJyb2xlIjoidmlld2VyIn0="
+      "b64": "eyJ0IjoiaGVsbG8iLCJ2Ijo2LCJyb2xlIjoidmlld2VyIn0="
     },
     {
       "name": "welcome",
       "message": {
         "t": "welcome",
-        "v": 5
+        "v": 6
       },
-      "b64": "eyJ0Ijoid2VsY29tZSIsInYiOjV9"
+      "b64": "eyJ0Ijoid2VsY29tZSIsInYiOjZ9"
     },
     {
       "name": "ping",
@@ -98,9 +98,9 @@
       "message": {
         "t": "error",
         "code": "version_mismatch",
-        "message": "protocol v5 required, versiune neacceptată"
+        "message": "protocol v6 required, versiune neacceptată"
       },
-      "b64": "eyJ0IjoiZXJyb3IiLCJjb2RlIjoidmVyc2lvbl9taXNtYXRjaCIsIm1lc3NhZ2UiOiJwcm90b2NvbCB2NSByZXF1aXJlZCwgdmVyc2l1bmUgbmVhY2NlcHRhdMSDIn0="
+      "b64": "eyJ0IjoiZXJyb3IiLCJjb2RlIjoidmVyc2lvbl9taXNtYXRjaCIsIm1lc3NhZ2UiOiJwcm90b2NvbCB2NiByZXF1aXJlZCwgdmVyc2l1bmUgbmVhY2NlcHRhdMSDIn0="
     },
     {
       "name": "robots_two",

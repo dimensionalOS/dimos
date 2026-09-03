@@ -23,6 +23,31 @@ Using `--local-relay` spawns a relay on `http://127.0.0.1:7780` and bridges the 
 
 The local relay binds loopback and deliberately trusts local browser clients (wildcard CORS on the routes above), so a page from any local origin can connect without configuration. This is a local development mode, not the remote deployment story.
 
+## Relay started by hand
+
+`--local-relay` spawns the relay for you. Start one yourself to work on the relay without restarting the robot, or to share one relay between robots. Build the web dists once (and after changes under `web/`), then run the relay from `web/`:
+
+```bash
+cd web
+deno install --frozen
+deno task -r build
+deno task dev --cockpit-dir cockpit/dist --sdk-dir sdk/dist
+```
+
+Attach a robot with `--relay-url` and the relay's HTTP URL:
+
+```bash
+uv run dimos --replay run unitree-go2 --relay-url http://localhost:7780
+```
+
+The bridge discovers the WebTransport endpoint (an ephemeral QUIC port and certificate) through `/api/info` on every connect, like the browser does. Open `http://localhost:7780/` for the cockpit. Things to know:
+
+- Restart the relay whenever you like: the bridge and the page reconnect on their own.
+- A bridge killed without a clean close keeps its robot id registered until the relay's 30 s idle timeout. Restarting it inside that window waits the conflict out.
+- `--serve-dir` belongs to the relay here (`deno task dev --serve-dir DIR`). `dimos run --serve-dir` is rejected together with `--relay-url`.
+- A second robot on the same relay needs its own `--robot-id`. A synthetic one: `uv run python -m dimos.web.relay_bridge.demo_smoke --url http://localhost:7780`.
+- Another machine cannot use this relay yet: its certificate is ephemeral and self-signed, which only loopback may trust.
+
 ## Your first page
 
 Create `ui/index.html`:
