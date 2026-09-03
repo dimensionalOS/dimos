@@ -31,54 +31,34 @@ def _status(state: str = "idle") -> EpisodeStatus:
     )
 
 
-def _session(mocker: MockerFixture) -> tuple[TeachCollectionSession, Any, Any, Any]:
+def _session(mocker: MockerFixture) -> tuple[TeachCollectionSession, Any, Any]:
     client = mocker.Mock()
     monitor = mocker.Mock()
-    coordinator = mocker.Mock()
     monitor.get_status.return_value = _status()
     monitor.command.side_effect = [_status("recording"), _status("idle")]
-    coordinator.task_invoke.return_value = True
-    return TeachCollectionSession(client, monitor, coordinator), client, monitor, coordinator
+    return TeachCollectionSession(client, monitor), client, monitor
 
 
-def test_session_routes_episode_and_gripper_commands(mocker: MockerFixture) -> None:
-    session, _, monitor, coordinator = _session(mocker)
+def test_session_routes_episode_commands(mocker: MockerFixture) -> None:
+    session, _, monitor = _session(mocker)
 
     assert session.command("toggle").state == "recording"
-    session.set_gripper(1.0)
-    session.set_gripper(0.0)
 
     monitor.command.assert_called_once_with("toggle")
-    assert coordinator.task_invoke.call_args_list == [
-        mocker.call(
-            "arm_gripper",
-            "set_normalized",
-            {"values": [1.0], "t_now": None},
-        ),
-        mocker.call(
-            "arm_gripper",
-            "set_normalized",
-            {"values": [0.0], "t_now": None},
-        ),
-    ]
-    assert session.gripper_target == 0.0
 
 
 def test_panel_actions_route_keys_and_guard_quit(mocker: MockerFixture) -> None:
-    session, _, monitor, coordinator = _session(mocker)
+    session, _, monitor = _session(mocker)
     app = TeachCollectionApp(session)
     mocker.patch.object(app, "_refresh")
     exit_mock = mocker.patch.object(app, "exit")
 
     app.action_toggle_recording()
     app.action_quit()
-    app.action_open_gripper()
-    app.action_close_gripper()
     app.action_discard()
     app.action_quit()
 
     assert monitor.command.call_args_list == [mocker.call("toggle"), mocker.call("discard")]
-    assert coordinator.task_invoke.call_count == 2
     exit_mock.assert_called_once_with()
 
 
@@ -86,15 +66,13 @@ def test_panel_binds_the_documented_keys() -> None:
     assert {binding.key: binding.action for binding in TeachCollectionApp.BINDINGS} == {
         "space": "toggle_recording",
         "d": "discard",
-        "o": "open_gripper",
-        "c": "close_gripper",
         "q": "quit",
         "ctrl+c": "quit",
     }
 
 
 def test_rpc_failure_detaches_without_stopping_the_daemon(mocker: MockerFixture) -> None:
-    session, client, monitor, _ = _session(mocker)
+    session, client, monitor = _session(mocker)
     app = TeachCollectionApp(session)
     mocker.patch.object(app, "_refresh")
     monitor.command.side_effect = RuntimeError("stack disappeared")
