@@ -9,15 +9,15 @@ use crate::action_log::ActionView;
 use crate::plan::{Outcome, Plan, Stage};
 use crate::run_context::{Ctx, Mode};
 
-pub fn info(msg: &str) {
+pub(crate) fn info(msg: &str) {
     line("->", "\x1b[34m", msg);
 }
 
-pub fn ok(msg: &str) {
+pub(crate) fn ok(msg: &str) {
     line("ok", "\x1b[32m", msg);
 }
 
-pub fn warn(msg: &str) {
+pub(crate) fn warn(msg: &str) {
     line("!!", "\x1b[33m", msg);
 }
 
@@ -71,7 +71,7 @@ impl<'a> PlanView<'a> {
     }
 }
 
-pub fn print_plan(plan: &Plan, ctx: &Ctx) {
+pub(crate) fn print_plan(plan: &Plan, ctx: &Ctx) {
     if ctx.mode == Mode::Agent {
         println!(
             "{}",

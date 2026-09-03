@@ -48,7 +48,7 @@ pub enum Action {
 
 impl Action {
     /// The one Run constructor; `run`, `sudo` and `run_in` are its borrowed spellings.
-    pub fn run_owned(
+    pub(crate) fn run_owned(
         argv: Vec<String>,
         sudo: bool,
         cwd: Option<&Path>,
@@ -67,16 +67,16 @@ impl Action {
         }
     }
 
-    pub fn run(argv: &[&str], timeout_s: u64) -> Action {
+    pub(crate) fn run(argv: &[&str], timeout_s: u64) -> Action {
         Action::run_owned(owned(argv), false, None, &[], timeout_s)
     }
 
-    pub fn sudo(argv: &[&str], timeout_s: u64) -> Action {
+    pub(crate) fn sudo(argv: &[&str], timeout_s: u64) -> Action {
         Action::run_owned(owned(argv), true, None, &[], timeout_s)
     }
 
     /// A Run with a working directory and environment; never sudo, which would drop the env.
-    pub fn run_in(
+    pub(crate) fn run_in(
         argv: &[&str],
         cwd: Option<&Path>,
         env: &[(&str, &str)],
@@ -86,7 +86,7 @@ impl Action {
     }
 
     /// The redacted shape written to the action log.
-    pub fn view(&self) -> ActionView<'_> {
+    pub(crate) fn view(&self) -> ActionView<'_> {
         match self {
             Action::Run {
                 argv,
@@ -114,7 +114,7 @@ impl Action {
     }
 
     /// One line for `--dry-run` and the consent prompt; a sudo password is added at exec, not here.
-    pub fn display(&self) -> String {
+    pub(crate) fn display(&self) -> String {
         match self {
             Action::Run {
                 argv,
@@ -232,17 +232,17 @@ pub(crate) fn display_argv(argv: &[String]) -> String {
         .join(" ")
 }
 
-pub fn owned(argv: &[&str]) -> Vec<String> {
+pub(crate) fn owned(argv: &[&str]) -> Vec<String> {
     argv.iter().map(|a| (*a).to_string()).collect()
 }
 
 /// The one spelling of a path as an argv word.
-pub fn text(path: &Path) -> String {
+pub(crate) fn text(path: &Path) -> String {
     path.display().to_string()
 }
 
 /// Replace a stale block in place, append when absent, remove when `lines` is empty.
-pub fn ensure_block(text: &str, marker: &str, lines: &[String]) -> (String, bool) {
+pub(crate) fn ensure_block(text: &str, marker: &str, lines: &[String]) -> (String, bool) {
     let start = format!("# DIMOS-ADDED: {marker} start");
     let end = format!("# DIMOS-ADDED: {marker} end");
     let block = if lines.is_empty() {

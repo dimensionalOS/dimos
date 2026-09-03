@@ -16,17 +16,17 @@ use crate::setup::{system_config, system_packages, verify};
 use crate::wizards::nvidia::jetson;
 use crate::wizards::{checks, interface_ready, notes, setup_first, Robot};
 
-pub const UNITREE_EXTRA: &str = "unitree";
-pub const CYCLONEDDS_REPO: &str = "https://github.com/eclipse-cyclonedds/cyclonedds";
+pub(crate) const UNITREE_EXTRA: &str = "unitree";
+const CYCLONEDDS_REPO: &str = "https://github.com/eclipse-cyclonedds/cyclonedds";
 /// unitree_sdk2py's bindings only build against the 0.10 line; main is ABI-incompatible.
-pub const CYCLONEDDS_BRANCH: &str = "releases/0.10.x";
-pub const CYCLONEDDS_PIP: &str = "cyclonedds==0.10.2";
-pub const NUMPY_PIN: &str = "numpy<2,>=1.26";
-pub const SDK_REPO: &str = "https://github.com/unitreerobotics/unitree_sdk2_python.git";
-pub const CDDS_MARKER: &str = "cyclonedds";
+const CYCLONEDDS_BRANCH: &str = "releases/0.10.x";
+const CYCLONEDDS_PIP: &str = "cyclonedds==0.10.2";
+const NUMPY_PIN: &str = "numpy<2,>=1.26";
+const SDK_REPO: &str = "https://github.com/unitreerobotics/unitree_sdk2_python.git";
+pub(crate) const CDDS_MARKER: &str = "cyclonedds";
 
 const CDDS_HOME_REL: &str = "cyclonedds/install";
-pub const OPT_SDK: &str = "/opt/unitree_sdk2_python";
+const OPT_SDK: &str = "/opt/unitree_sdk2_python";
 const GIT_INSTEADOF_KEY: &str = "url.https://github.com/.insteadOf";
 const GIT_SSH_URL: &str = "ssh://git@github.com/";
 /// Reads the dist metadata, not the extension, so it answers before CYCLONEDDS_HOME is set.
@@ -43,7 +43,7 @@ const PROBE_TIMEOUT_S: u64 = 20;
 const IMPORT_TIMEOUT_S: u64 = 120;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct G1Observed {
+pub(crate) struct G1Observed {
     pub cyclonedds_lib: bool,
     pub cyclonedds_clone: bool,
     pub sdk_present: bool,
@@ -56,7 +56,7 @@ pub struct G1Observed {
 }
 
 /// The only I/O in this file, all of it read-only through `capture`, so `--dry-run` may call it.
-pub fn observe(home: &Path, venv_python: &Path, sdk: &Path, dir: &Path) -> G1Observed {
+fn observe(home: &Path, venv_python: &Path, sdk: &Path, dir: &Path) -> G1Observed {
     let cdds = text(&cyclonedds_home(home));
     let python = text(venv_python);
     G1Observed {
@@ -80,7 +80,7 @@ pub fn observe(home: &Path, venv_python: &Path, sdk: &Path, dir: &Path) -> G1Obs
 }
 
 /// Where the SDK is or goes, then what the robot already has; the one call `hardware` and `update` share.
-pub fn detect(
+pub(crate) fn detect(
     home: &Path,
     installed: &Installed,
     sdk_override: Option<PathBuf>,
@@ -90,7 +90,7 @@ pub fn detect(
     (sdk, obs)
 }
 
-pub fn numpy_major(venv_python: &Path) -> Option<u32> {
+fn numpy_major(venv_python: &Path) -> Option<u32> {
     parse_major(&capture(
         &text(venv_python),
         &["-c", NUMPY_CODE],
@@ -100,7 +100,7 @@ pub fn numpy_major(venv_python: &Path) -> Option<u32> {
 }
 
 /// `1.26.4` -> 1.
-pub fn parse_major(version: &str) -> Option<u32> {
+fn parse_major(version: &str) -> Option<u32> {
     version.trim().split('.').next()?.parse().ok()
 }
 
@@ -109,7 +109,7 @@ pub fn cyclonedds_home(home: &Path) -> PathBuf {
 }
 
 /// `$SDK2_PATH`, else an existing `/opt` checkout, else `~` — never a sudo clone into `/opt`.
-pub fn sdk_path(env_sdk2: Option<PathBuf>, opt_exists: bool, home: &Path) -> PathBuf {
+fn sdk_path(env_sdk2: Option<PathBuf>, opt_exists: bool, home: &Path) -> PathBuf {
     match env_sdk2 {
         Some(path) => path,
         None if opt_exists => PathBuf::from(OPT_SDK),
@@ -117,7 +117,7 @@ pub fn sdk_path(env_sdk2: Option<PathBuf>, opt_exists: bool, home: &Path) -> Pat
     }
 }
 
-pub fn cyclonedds_stage(home: &Path, obs: &G1Observed) -> Stage {
+fn cyclonedds_stage(home: &Path, obs: &G1Observed) -> Stage {
     let mut stage = Stage::new("cyclonedds build", true);
     if obs.cyclonedds_lib {
         return stage;
@@ -140,7 +140,7 @@ pub fn cyclonedds_stage(home: &Path, obs: &G1Observed) -> Stage {
         )
 }
 
-pub fn sdk_clone_stage(sdk: &Path, obs: &G1Observed) -> Stage {
+fn sdk_clone_stage(sdk: &Path, obs: &G1Observed) -> Stage {
     let stage = Stage::new("unitree sdk clone", false);
     if obs.sdk_present {
         return stage;
@@ -156,7 +156,7 @@ fn clone(repo: &str, into: &str, branch: Option<&str>) -> Action {
     Action::run(&argv, CLONE_TIMEOUT_S)
 }
 
-pub fn sdk_install_stage(
+fn sdk_install_stage(
     uv: &Path,
     venv_python: &Path,
     sdk: &Path,
@@ -191,7 +191,7 @@ fn uv_pip(uv: &str, python: &str, rest: &[&str], env: &[(&str, &str)], timeout_s
 
 /// `uv sync` and `uv pip` re-apply pyproject's `numpy>=2` override (pyproject.toml:547), so the pin
 /// is re-asserted after every install into the venv, and whenever the probe finds numpy 2.
-pub fn numpy_pin_stage(
+fn numpy_pin_stage(
     uv: &Path,
     venv_python: &Path,
     numpy_major: Option<u32>,
@@ -211,7 +211,7 @@ pub fn numpy_pin_stage(
 }
 
 /// Empty once every rc file the login shell reads already holds the block.
-pub fn rc_stage(rc: &[RcFile]) -> Stage {
+fn rc_stage(rc: &[RcFile]) -> Stage {
     let lines = vec![format!("export CYCLONEDDS_HOME=\"$HOME/{CDDS_HOME_REL}\"")];
     rc.iter()
         .filter(|file| action::ensure_block(&file.text, CDDS_MARKER, &lines).1)
@@ -224,7 +224,7 @@ pub fn rc_stage(rc: &[RcFile]) -> Stage {
         })
 }
 
-pub fn git_https_stage(obs: &G1Observed) -> Stage {
+fn git_https_stage(obs: &G1Observed) -> Stage {
     let stage = Stage::new("git https rewrite", false);
     if obs.git_insteadof_set {
         return stage;
@@ -236,7 +236,7 @@ pub fn git_https_stage(obs: &G1Observed) -> Stage {
 }
 
 /// Empty when `.env` already says exactly this, so a re-run plans nothing.
-pub fn dotenv_stage(dir: &Path, obs: &G1Observed, args: &HardwareSetupArgs) -> Stage {
+fn dotenv_stage(dir: &Path, obs: &G1Observed, args: &HardwareSetupArgs) -> Stage {
     let mut kv = vec![
         ("ROBOT_IP", args.robot_ip.as_str()),
         ("ROBOT_INTERFACE", args.interface.as_str()),
@@ -258,7 +258,7 @@ pub fn dotenv_stage(dir: &Path, obs: &G1Observed, args: &HardwareSetupArgs) -> S
 }
 
 /// Rewrites each `KEY=` line where it stands, appends the missing ones, keeps every other line.
-pub fn merge_dotenv(existing: &str, kv: &[(&str, &str)]) -> String {
+fn merge_dotenv(existing: &str, kv: &[(&str, &str)]) -> String {
     let mut seen = vec![false; kv.len()];
     let mut out = String::new();
     for line in existing.lines() {
@@ -334,7 +334,7 @@ pub(crate) fn setup(
     plan(args, probes, cfg, installed, &obs, &sdk)
 }
 
-pub fn plan(
+pub(crate) fn plan(
     args: &HardwareSetupArgs,
     probes: &Probes,
     cfg: &Platforms,
@@ -353,7 +353,7 @@ pub fn plan(
 
 /// The G1 bring-up (brief decision 13), shared with `update`. The numpy pin follows the SDK
 /// install because every `uv pip`/`uv sync` before it re-applies pyproject's numpy>=2 override.
-pub fn stages(
+pub(crate) fn stages(
     args: &HardwareSetupArgs,
     probes: &Probes,
     cfg: &Platforms,
@@ -383,7 +383,7 @@ pub fn stages(
 }
 
 /// What the G1 verify needs: where libddsc lives and which NIC the robot answers on.
-pub fn target(home: &Path, args: &HardwareSetupArgs) -> verify::Target {
+pub(crate) fn target(home: &Path, args: &HardwareSetupArgs) -> verify::Target {
     verify::Target::G1 {
         cyclonedds_home: cyclonedds_home(home),
         interface: args.interface.clone(),

@@ -38,7 +38,7 @@ impl Report {
         0
     }
 
-    pub fn needs_human(&self) -> Vec<String> {
+    fn needs_human(&self) -> Vec<String> {
         self.stages
             .iter()
             .filter_map(|(_, o)| match o {
@@ -65,7 +65,7 @@ impl Report {
 }
 
 /// sudo's env_reset drops an Action's env, so a sudo Run must carry its pairs in argv (`env K=V ...`).
-pub fn sudo_env_violations(plan: &Plan) -> Vec<String> {
+pub(crate) fn sudo_env_violations(plan: &Plan) -> Vec<String> {
     plan.stages
         .iter()
         .flat_map(|stage| stage.actions.iter().map(move |a| (stage.name, a)))

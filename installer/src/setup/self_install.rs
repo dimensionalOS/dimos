@@ -7,15 +7,15 @@ use crate::install_record;
 use crate::plan::Stage;
 use crate::probe::{RcFile, Tools};
 
-pub const PATH_MARKER: &str = "path";
+pub(crate) const PATH_MARKER: &str = "path";
 
 /// The line a login shell needs before `dimos` resolves in a new terminal.
-pub fn path_lines() -> Vec<String> {
+fn path_lines() -> Vec<String> {
     vec!["export PATH=\"$HOME/.local/bin:$PATH\"".to_string()]
 }
 
 /// Install this binary and put `~/.local/bin` on PATH; empty when both already hold.
-pub fn stage(
+pub(crate) fn stage(
     current_exe: &Path,
     home: &Path,
     tools: &Tools,

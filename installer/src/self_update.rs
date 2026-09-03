@@ -20,7 +20,7 @@ const SHA_TIMEOUT_S: u64 = 120;
 const SWAP_TIMEOUT_S: u64 = 30;
 
 /// The swap renames a sibling file over the binary, so it only works on the installed copy.
-pub fn require_installed_exe(home: &Path, current_exe: &Path) -> Result<PathBuf> {
+fn require_installed_exe(home: &Path, current_exe: &Path) -> Result<PathBuf> {
     let installed = install_record::installed_bin(home);
     if current_exe != installed {
         bail!(
@@ -34,7 +34,7 @@ pub fn require_installed_exe(home: &Path, current_exe: &Path) -> Result<PathBuf>
 
 /// Downloads beside the binary (one filesystem, so the swap is an atomic rename) and swaps only
 /// after the sha256 and a `--version` run on the new file both pass.
-pub fn self_update_stage(base: &str, target: &str, bin: &Path, bak: &Path) -> Stage {
+fn self_update_stage(base: &str, target: &str, bin: &Path, bak: &Path) -> Stage {
     let (new, sums) = (bin.with_extension("new"), bin.with_extension("new.sha256"));
     fetch_actions(base, &artifact(target), &new, &sums)
         .into_iter()
@@ -112,7 +112,7 @@ pub(crate) fn self_update_or_note(
 }
 
 /// Puts the kept `.bak` back through the same executor, so `--dry-run --rollback` prints the swap.
-pub fn rollback(ctx: &mut Ctx, home: &Path) -> Result<i32> {
+pub(crate) fn rollback(ctx: &mut Ctx, home: &Path) -> Result<i32> {
     let (bin, bak) = (
         install_record::installed_bin(home),
         install_record::backup_bin(home),

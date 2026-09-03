@@ -42,7 +42,7 @@ pub enum Arch {
 }
 
 impl Arch {
-    pub fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Arch::X86_64 => "x86_64",
             Arch::Aarch64 => "aarch64",
@@ -130,7 +130,7 @@ pub struct Probes {
 }
 
 /// The one bounded read-only spawn: trimmed stdout on exit 0, None on failure or at the deadline.
-pub fn capture(
+pub(crate) fn capture(
     program: &str,
     args: &[&str],
     env: &[(&str, &str)],
@@ -157,7 +157,7 @@ pub fn capture(
     status.success().then(|| out.trim().to_string())
 }
 
-pub fn pkg_manager(os: &Os) -> PkgManager {
+fn pkg_manager(os: &Os) -> PkgManager {
     match os {
         Os::MacOs { .. } if which::which("brew").is_ok() => PkgManager::Brew,
         Os::Linux { .. } if which::which("apt-get").is_ok() => PkgManager::Apt,
@@ -166,7 +166,7 @@ pub fn pkg_manager(os: &Os) -> PkgManager {
 }
 
 /// A fresh login shell under `home` tests what the rc files actually do, instead of parsing them.
-pub fn login_shell_path(shell: &Path, home: &Path) -> Option<String> {
+fn login_shell_path(shell: &Path, home: &Path) -> Option<String> {
     capture(
         &action::text(shell),
         &["-l", "-c", "echo $PATH"],
@@ -175,7 +175,7 @@ pub fn login_shell_path(shell: &Path, home: &Path) -> Option<String> {
     )
 }
 
-pub fn user_shell(user: &str) -> PathBuf {
+fn user_shell(user: &str) -> PathBuf {
     passwd_shell(&fs::read_to_string("/etc/passwd").unwrap_or_default(), user)
         .or_else(|| dscl_shell(user))
         .or_else(|| std::env::var("SHELL").ok())
@@ -193,7 +193,7 @@ fn dscl_shell(user: &str) -> Option<String> {
 }
 
 impl Platform {
-    pub fn detect() -> Result<Platform> {
+    fn detect() -> Result<Platform> {
         let os = read_os()?;
         let arch = read_arch()?;
         let jetson = read_jetson();
@@ -213,7 +213,7 @@ impl Platform {
     }
 
     /// The release-asset suffix: `dimos-<target>` and `dimos-<target>.sha256`.
-    pub fn target(&self) -> Result<&'static str> {
+    pub(crate) fn target(&self) -> Result<&'static str> {
         match (&self.os, self.arch) {
             (Os::Linux { .. }, Arch::X86_64) => Ok("x86_64-linux-musl"),
             (Os::Linux { .. }, Arch::Aarch64) => Ok("aarch64-linux-musl"),
@@ -226,17 +226,17 @@ impl Platform {
         }
     }
 
-    pub fn is_jetson(&self) -> bool {
+    pub(crate) fn is_jetson(&self) -> bool {
         self.jetson.is_some()
     }
 
-    pub fn static_tls_risk(&self) -> bool {
+    pub(crate) fn static_tls_risk(&self) -> bool {
         self.arch == Arch::Aarch64
             && matches!(self.os, Os::Linux { .. })
             && self.glibc.is_some_and(|v| v < STATIC_TLS_GLIBC)
     }
 
-    pub fn summary(&self) -> PlatformSummary {
+    pub(crate) fn summary(&self) -> PlatformSummary {
         let (os, distro, version) = match &self.os {
             Os::Linux { id, version } => ("linux", id.clone(), version.clone()),
             Os::MacOs { version } => ("macos", "macos".to_string(), version.clone()),
@@ -253,7 +253,7 @@ impl Platform {
 }
 
 impl Kernel {
-    pub fn detect(sysctl_keys: &[&str], user: &str) -> Kernel {
+    fn detect(sysctl_keys: &[&str], user: &str) -> Kernel {
         if cfg!(target_os = "macos") {
             return Kernel::default();
         }
@@ -281,7 +281,7 @@ impl Kernel {
 }
 
 impl Tools {
-    pub fn detect(home: &Path, shell: &Path, pkg: PkgManager) -> Tools {
+    fn detect(home: &Path, shell: &Path, pkg: PkgManager) -> Tools {
         let vendored_uv = home.join(".local/bin/uv");
         Tools {
             uv: which::which("uv")

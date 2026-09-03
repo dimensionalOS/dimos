@@ -14,7 +14,7 @@ const LOWSTATE_WAIT_S: u32 = 5;
 const STAGE_NAMES: [&str; 3] = ["verify-shell", "verify-torch", "verify"];
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Target {
+pub(crate) enum Target {
     Host,
     /// The G1 is a Jetson, so its checks are the Jetson ones plus the DDS stack and a live read.
     G1 {
@@ -25,7 +25,7 @@ pub enum Target {
 }
 
 /// What `dimos list` must show when `--blueprint` is absent.
-pub fn default_blueprint(target: &Target) -> Option<&'static str> {
+fn default_blueprint(target: &Target) -> Option<&'static str> {
     match target {
         Target::G1 { .. } => Some("unitree-g1"),
         Target::Host | Target::Jetson => None,
@@ -33,12 +33,17 @@ pub fn default_blueprint(target: &Target) -> Option<&'static str> {
 }
 
 /// A stage this file built; `update --dry-run` reports them as not run rather than as pending.
-pub fn is_check(name: &str) -> bool {
+pub(crate) fn is_check(name: &str) -> bool {
     STAGE_NAMES.contains(&name)
 }
 
 /// The verify stages for a target; the critical one is always last.
-pub fn stages(target: &Target, venv: &Path, dir: &Path, blueprint: Option<&str>) -> Vec<Stage> {
+pub(crate) fn stages(
+    target: &Target,
+    venv: &Path,
+    dir: &Path,
+    blueprint: Option<&str>,
+) -> Vec<Stage> {
     let mut out = Vec::new();
     if let Target::G1 {
         cyclonedds_home, ..

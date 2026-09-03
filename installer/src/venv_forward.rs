@@ -11,9 +11,6 @@ use anyhow::{bail, Context, Result};
 
 use crate::install_record::Installed;
 
-/// Verbs the installer owns; `dimos/cli/installer_cli.py` FORWARDED mirrors this literally.
-pub const RESERVED: &[&str] = &["setup", "update", "service", "uninstall", "robot"];
-
 pub const NO_VENV_HINT: &str = "no DimOS install found: run `dimos setup` \
 (looked in the installer.json dir, $VIRTUAL_ENV, then ./.venv)";
 
@@ -154,6 +151,9 @@ mod tests {
         assert!(is_self(me, me));
         assert!(!is_self(Path::new("/home/u/dimos/.venv/bin/dimos"), me));
     }
+
+    /// Verbs the installer owns; `dimos/cli/installer_cli.py` FORWARDED mirrors this literally.
+    const RESERVED: &[&str] = &["setup", "update", "service", "uninstall", "robot"];
 
     /// Reads a repo file on purpose: this list is the contract between the Rust and Python CLIs.
     #[test]

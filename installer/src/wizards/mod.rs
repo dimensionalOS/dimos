@@ -2,7 +2,7 @@
 //! checks and `installer.json` record every wizard shares. Every other `hardware ...` verb belongs
 //! to the DimOS Python CLI, so `owned` returns None and main forwards it.
 
-pub mod nvidia;
+pub(crate) mod nvidia;
 pub mod unitree;
 
 use std::path::Path;
@@ -29,7 +29,7 @@ pub enum Robot {
 }
 
 impl Robot {
-    pub fn key(self) -> &'static str {
+    pub(crate) fn key(self) -> &'static str {
         match self {
             Robot::G1 => "g1",
             Robot::Jetson => "jetson",
@@ -81,7 +81,7 @@ pub fn run(
 }
 
 /// The refusals that must happen before a plan exists, each naming what the operator does next.
-pub fn preflight(
+fn preflight(
     robot: Robot,
     args: &HardwareSetupArgs,
     probes: &Probes,

@@ -15,12 +15,12 @@ use crate::probe::Platform;
 const SYSTEMCTL_TIMEOUT_S: u64 = 60;
 const UNIT_PREFIX: &str = "dimos-";
 
-pub fn unit_name(blueprint: &str) -> String {
+fn unit_name(blueprint: &str) -> String {
     format!("{UNIT_PREFIX}{blueprint}")
 }
 
 /// A blueprint name is lowercase letters, digits and dashes, the same shape `dimos list` prints.
-pub fn validate_blueprint(name: &str) -> Result<()> {
+fn validate_blueprint(name: &str) -> Result<()> {
     let ok = !name.is_empty()
         && name
             .chars()
@@ -32,7 +32,7 @@ pub fn validate_blueprint(name: &str) -> Result<()> {
 }
 
 /// Split each `--env K=V` into its pair.
-pub fn parse_env(pairs: &[String]) -> Result<Vec<(String, String)>> {
+fn parse_env(pairs: &[String]) -> Result<Vec<(String, String)>> {
     pairs
         .iter()
         .map(|pair| {
@@ -46,7 +46,7 @@ pub fn parse_env(pairs: &[String]) -> Result<Vec<(String, String)>> {
 }
 
 /// Escape a value for a quoted `Environment=` line.
-pub fn escape_env(value: &str) -> Result<String> {
+fn escape_env(value: &str) -> Result<String> {
     if value.contains('\n') {
         bail!("env value contains a newline");
     }
@@ -64,7 +64,7 @@ pub fn escape_env(value: &str) -> Result<String> {
 }
 
 /// Render the unit that runs one blueprint as the installing user.
-pub fn render_unit(
+fn render_unit(
     blueprint: &str,
     user: &str,
     home: &Path,
@@ -256,7 +256,7 @@ fn remove_stage(unit: &str, path: &Path, present: bool) -> Stage {
 }
 
 /// Every unit the installer may have written, for `uninstall` to disable and remove.
-pub fn installed_units() -> Vec<PathBuf> {
+pub(crate) fn installed_units() -> Vec<PathBuf> {
     let mut units: Vec<PathBuf> = std::fs::read_dir(install_record::UNIT_DIR)
         .into_iter()
         .flatten()

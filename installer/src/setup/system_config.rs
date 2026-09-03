@@ -17,7 +17,7 @@ const NO_SYSTEMD: &str =
     "no systemd: machine config not persisted; the runtime configurators apply it per run";
 
 /// Non-critical: sudo actions only where a probe shows a gap, so a re-run plans nothing.
-pub fn stage(platform: &Platform, kernel: &Kernel, cfg: &Platforms) -> Stage {
+pub(crate) fn stage(platform: &Platform, kernel: &Kernel, cfg: &Platforms) -> Stage {
     let stage = Stage::new("sysconfig", false);
     if !persistable(platform) {
         return stage;
@@ -38,7 +38,7 @@ fn persistable(platform: &Platform) -> bool {
     matches!(platform.os, Os::Linux { .. }) && platform.systemd
 }
 
-pub fn no_systemd_note(platform: &Platform) -> Option<String> {
+pub(crate) fn no_systemd_note(platform: &Platform) -> Option<String> {
     let linux = matches!(platform.os, Os::Linux { .. });
     (linux && !platform.systemd).then(|| NO_SYSTEMD.to_string())
 }
@@ -93,7 +93,7 @@ fn multicast_actions(kernel: &Kernel) -> Vec<Action> {
 }
 
 /// Write a unit as root, reload, `enable --now`: what every unit the installer owns needs.
-pub fn unit_actions(name: &str, contents: String) -> Vec<Action> {
+pub(crate) fn unit_actions(name: &str, contents: String) -> Vec<Action> {
     vec![
         write_root(install_record::unit_path(name), contents),
         Action::sudo(&["systemctl", "daemon-reload"], CONFIG_TIMEOUT_S),
@@ -112,7 +112,7 @@ fn memlock_actions(user: &str, kernel: &Kernel, bytes: u64) -> Vec<Action> {
     )]
 }
 
-pub fn render_sysctl_conf(targets: &BTreeMap<String, u64>) -> String {
+pub(crate) fn render_sysctl_conf(targets: &BTreeMap<String, u64>) -> String {
     let mut conf = String::from("# Written by dimos: LCM's UDP receive buffers.\n");
     for (key, value) in targets {
         conf.push_str(&format!("{key}={value}\n"));
@@ -121,7 +121,7 @@ pub fn render_sysctl_conf(targets: &BTreeMap<String, u64>) -> String {
 }
 
 /// The boot-time unit skeleton every unit the installer enables shares; each exec is one ExecStart.
-pub fn oneshot_unit(description: &str, after: &str, exec: &[&str]) -> String {
+pub(crate) fn oneshot_unit(description: &str, after: &str, exec: &[&str]) -> String {
     let starts: String = exec.iter().map(|e| format!("ExecStart={e}\n")).collect();
     format!(
         "[Unit]\n\
@@ -138,7 +138,7 @@ pub fn oneshot_unit(description: &str, after: &str, exec: &[&str]) -> String {
     )
 }
 
-pub fn render_multicast_unit() -> String {
+fn render_multicast_unit() -> String {
     oneshot_unit(
         "DimOS loopback multicast for LCM",
         "network.target",
@@ -151,7 +151,7 @@ pub fn render_multicast_unit() -> String {
 }
 
 /// pam_limits counts in KiB and applies at next login; same shape as zenoh.py `_persist`.
-pub fn render_memlock_conf(user: &str, bytes: u64) -> String {
+fn render_memlock_conf(user: &str, bytes: u64) -> String {
     format!(
         "# Written by dimos: zenoh's SHM pool must be lockable.\n{user}\t-\tmemlock\t{}\n",
         bytes / 1024

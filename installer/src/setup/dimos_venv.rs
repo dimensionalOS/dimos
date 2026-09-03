@@ -21,14 +21,14 @@ const VENV_TIMEOUT_S: u64 = 300;
 const INSTALL_TIMEOUT_S: u64 = 3600;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum DirState {
+pub(crate) enum DirState {
     Absent,
     Clone { branch: Option<String> },
     NotAClone,
 }
 
 /// The only I/O in this file: `.git/HEAD` decides clone vs not; an empty directory still clones.
-pub fn dir_state(dir: &Path) -> DirState {
+pub(crate) fn dir_state(dir: &Path) -> DirState {
     match fs::read_to_string(dir.join(".git/HEAD")) {
         Ok(head) => DirState::Clone {
             branch: head_branch(&head),
@@ -52,7 +52,7 @@ fn is_free(dir: &Path) -> bool {
 }
 
 /// A clone on another branch is left alone; the operator is told, never switched under them.
-pub fn branch_note(state: &DirState, wanted: &str, dir: &Path) -> Option<String> {
+pub(crate) fn branch_note(state: &DirState, wanted: &str, dir: &Path) -> Option<String> {
     let DirState::Clone { branch: Some(on) } = state else {
         return None;
     };
@@ -67,7 +67,11 @@ pub fn branch_note(state: &DirState, wanted: &str, dir: &Path) -> Option<String>
 }
 
 /// What installer.json records: a PyPI pin, or the branch and commit a dev checkout sits on.
-pub fn dimos_version_string(mode: InstallMode, branch: &str, git_rev: Option<&str>) -> String {
+pub(crate) fn dimos_version_string(
+    mode: InstallMode,
+    branch: &str,
+    git_rev: Option<&str>,
+) -> String {
     match (mode, git_rev) {
         (InstallMode::Library, _) => DIMOS_VERSION.to_string(),
         (InstallMode::Dev, Some(rev)) => format!("git:{branch}@{rev}"),
@@ -76,7 +80,7 @@ pub fn dimos_version_string(mode: InstallMode, branch: &str, git_rev: Option<&st
 }
 
 /// The critical install stage; the verify stage, with its own budget, proves the import.
-pub fn dimos_stage(
+pub(crate) fn dimos_stage(
     mode: InstallMode,
     dir: &Path,
     extras: &[String],
@@ -168,7 +172,7 @@ fn clone_action(branch: &str, dir: &Path) -> Action {
 }
 
 /// `--inexact` leaves packages the lockfile does not name, so a hand-installed SDK survives.
-pub fn sync_action(
+pub(crate) fn sync_action(
     dir: &Path,
     extras: &[String],
     with_nix: bool,

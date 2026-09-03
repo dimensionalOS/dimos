@@ -124,7 +124,7 @@ fn verify_sha256(file: &Path, sums_file: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn sha256_hex(path: &Path) -> Result<String> {
+pub(crate) fn sha256_hex(path: &Path) -> Result<String> {
     let mut file = fs::File::open(path).with_context(|| format!("read {}", path.display()))?;
     let mut hasher = Sha256::new();
     std::io::copy(&mut file, &mut hasher).with_context(|| format!("hash {}", path.display()))?;
@@ -136,7 +136,7 @@ pub fn sha256_hex(path: &Path) -> Result<String> {
 }
 
 /// The first 64-hex token, so `sha256sum` and `shasum -a 256` files both parse.
-pub fn parse_sha_file(text: &str) -> Result<String> {
+fn parse_sha_file(text: &str) -> Result<String> {
     text.split_whitespace()
         .find(|t| t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit()))
         .map(|t| t.to_ascii_lowercase())

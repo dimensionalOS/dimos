@@ -41,30 +41,30 @@ impl Stage {
         self
     }
 
-    pub fn run(self, argv: &[&str], timeout_s: u64) -> Stage {
+    pub(crate) fn run(self, argv: &[&str], timeout_s: u64) -> Stage {
         self.push(Action::run(argv, timeout_s))
     }
 
-    pub fn sudo(self, argv: &[&str], timeout_s: u64) -> Stage {
+    pub(crate) fn sudo(self, argv: &[&str], timeout_s: u64) -> Stage {
         self.push(Action::sudo(argv, timeout_s))
     }
 
-    pub fn post(mut self, argv: &[&str]) -> Stage {
+    pub(crate) fn post(mut self, argv: &[&str]) -> Stage {
         self.post = Some(owned(argv));
         self
     }
 
-    pub fn consent(mut self) -> Stage {
+    pub(crate) fn consent(mut self) -> Stage {
         self.consent = true;
         self
     }
 
-    pub fn warn_only(mut self) -> Stage {
+    pub(crate) fn warn_only(mut self) -> Stage {
         self.warn_only = true;
         self
     }
 
-    pub fn check(mut self) -> Stage {
+    pub(crate) fn check(mut self) -> Stage {
         self.check = true;
         self
     }
@@ -81,7 +81,7 @@ impl Stage {
             .map_or(POST_TIMEOUT_S, |slowest| slowest.max(POST_TIMEOUT_S))
     }
 
-    pub fn needs_sudo(&self) -> bool {
+    pub(crate) fn needs_sudo(&self) -> bool {
         self.actions.iter().any(|a| {
             matches!(
                 a,
@@ -114,14 +114,14 @@ pub enum Outcome {
 
 impl Outcome {
     /// The machine is where the stage wanted it, or a dry run said what would get it there.
-    pub fn done(&self) -> bool {
+    pub(crate) fn done(&self) -> bool {
         matches!(
             self,
             Outcome::Applied | Outcome::Checked | Outcome::Already | Outcome::DryRun
         )
     }
 
-    pub fn label(&self) -> &'static str {
+    pub(crate) fn label(&self) -> &'static str {
         match self {
             Outcome::Applied => "applied",
             Outcome::Checked => "checked",

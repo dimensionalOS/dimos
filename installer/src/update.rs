@@ -36,7 +36,7 @@ const LS_REMOTE_TIMEOUT_S: u64 = 30;
 
 /// What the probes saw; `--dry-run` fills it exactly as a real run does.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Observed {
+pub(crate) struct Observed {
     /// The release to install, or None when GitHub was unreachable or a URL override is set.
     pub latest: Option<String>,
     pub head: Option<String>,
@@ -46,7 +46,7 @@ pub struct Observed {
 }
 
 /// The only I/O in this file, and all of it read-only, so `--dry-run` runs every probe.
-pub fn observe(
+fn observe(
     installed: &Installed,
     args: &UpdateArgs,
     override_url: Option<&str>,
@@ -126,7 +126,7 @@ fn g1_record(installed: &Installed) -> Option<HardwareSetupArgs> {
 }
 
 /// Library re-pins from PyPI, dev fast-forwards and re-syncs; empty when the probe says it is there.
-pub fn dimos_stage(installed: &Installed, uv: &Path, obs: &Observed, force: bool) -> Stage {
+fn dimos_stage(installed: &Installed, uv: &Path, obs: &Observed, force: bool) -> Stage {
     // non-critical: a checkout with local commits must not stop the machine-config repair.
     let stage = Stage::new("dimos", false);
     if !force && at_wanted_version(installed, obs) {
@@ -235,7 +235,7 @@ fn notes(installed: &Installed, probes: &Probes, skipped: Option<String>) -> Vec
     .collect()
 }
 
-pub fn plan(
+fn plan(
     installed: &Installed,
     args: &UpdateArgs,
     probes: &Probes,
@@ -263,7 +263,7 @@ pub fn plan(
 }
 
 /// Exit 0 only when every stage but the checks is already there; the checks did not run.
-pub fn dry_run_exit(report: &Report) -> i32 {
+fn dry_run_exit(report: &Report) -> i32 {
     let pending = report
         .stages
         .iter()

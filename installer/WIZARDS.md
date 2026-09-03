@@ -25,9 +25,9 @@ rest — which is what makes `--dry-run` trustworthy and re-runs free.
 
 ```rust
 // src/wizards/<manufacturer>/<robot>.rs — pure over its inputs, one struct of everything it needed to look at
-pub struct Observed { /* what is already installed, built, configured */ }
-pub fn observe(home: &Path, venv_python: &Path, dir: &Path) -> Observed;   // the only I/O
-pub fn <thing>_stage(home: &Path, obs: &Observed) -> Stage;                // one per stage
+struct Observed { /* what is already installed, built, configured */ }
+fn observe(home: &Path, venv_python: &Path, dir: &Path) -> Observed;   // the only I/O
+fn <thing>_stage(home: &Path, obs: &Observed) -> Stage;                // one per stage
 ```
 
 `observe` is read-only, so it runs under `--dry-run` too, and every command it runs goes through
@@ -57,17 +57,17 @@ pub enum Action {
 
 impl Action {
     /// The one Run constructor; `run`, `sudo` and `run_in` are its borrowed spellings.
-    pub fn run_owned(argv: Vec<String>, sudo: bool, cwd: Option<&Path>, env: &[(&str, &str)], timeout_s: u64) -> Action;
-    pub fn run(argv: &[&str], timeout_s: u64) -> Action;
-    pub fn sudo(argv: &[&str], timeout_s: u64) -> Action;
+    pub(crate) fn run_owned(argv: Vec<String>, sudo: bool, cwd: Option<&Path>, env: &[(&str, &str)], timeout_s: u64) -> Action;
+    pub(crate) fn run(argv: &[&str], timeout_s: u64) -> Action;
+    pub(crate) fn sudo(argv: &[&str], timeout_s: u64) -> Action;
     /// A Run with a working directory and environment; never sudo, which would drop the env.
-    pub fn run_in(argv: &[&str], cwd: Option<&Path>, env: &[(&str, &str)], timeout_s: u64) -> Action;
-    pub fn display(&self) -> String;            // the `--dry-run` line and the consent prompt
-    pub fn view(&self) -> action_log::ActionView<'_>; // the redacted shape the action log gets
+    pub(crate) fn run_in(argv: &[&str], cwd: Option<&Path>, env: &[(&str, &str)], timeout_s: u64) -> Action;
+    pub(crate) fn display(&self) -> String;            // the `--dry-run` line and the consent prompt
+    pub(crate) fn view(&self) -> action_log::ActionView<'_>; // the redacted shape the action log gets
 }
 
-pub fn owned(argv: &[&str]) -> Vec<String>;   // the one way to build an owned argv
-pub fn text(path: &Path) -> String;           // the one spelling of a path as an argv word
+pub(crate) fn owned(argv: &[&str]) -> Vec<String>;   // the one way to build an owned argv
+pub(crate) fn text(path: &Path) -> String;           // the one spelling of a path as an argv word
 ```
 
 A sudo action that needs an environment carries it in argv (`["env", "K=V", "cmd", ...]`) — see the
@@ -93,12 +93,12 @@ pub struct Stage {
 impl Stage {
     pub fn new(name: &'static str, critical: bool) -> Stage;
     pub fn push(self, action: Action) -> Stage;
-    pub fn run(self, argv: &[&str], timeout_s: u64) -> Stage;
-    pub fn sudo(self, argv: &[&str], timeout_s: u64) -> Stage;
-    pub fn post(self, argv: &[&str]) -> Stage;
-    pub fn consent(self) -> Stage;
-    pub fn warn_only(self) -> Stage;
-    pub fn needs_sudo(&self) -> bool;
+    pub(crate) fn run(self, argv: &[&str], timeout_s: u64) -> Stage;
+    pub(crate) fn sudo(self, argv: &[&str], timeout_s: u64) -> Stage;
+    pub(crate) fn post(self, argv: &[&str]) -> Stage;
+    pub(crate) fn consent(self) -> Stage;
+    pub(crate) fn warn_only(self) -> Stage;
+    pub(crate) fn needs_sudo(&self) -> bool;
 }
 
 pub struct Plan { pub command: String, pub stages: Vec<Stage>, pub notes: Vec<String> }
@@ -127,7 +127,7 @@ pub struct Probes {
 impl Probes { pub fn detect(sysctl_keys: &[&str], home: &Path) -> Result<Probes>; }
 
 /// The one bounded read-only spawn: trimmed stdout on exit 0, None on failure or at the deadline.
-pub fn capture(program: &str, args: &[&str], env: &[(&str, &str)], timeout_s: u64) -> Option<String>;
+pub(crate) fn capture(program: &str, args: &[&str], env: &[(&str, &str)], timeout_s: u64) -> Option<String>;
 ```
 
 `Probes::detect` runs once in `main`. If your robot needs a fact nobody probes yet, add a parse
@@ -137,9 +137,9 @@ function to `probe_parse.rs` (pure, fixture-tested) and read the machine through
 ### Verify — `src/setup/verify.rs:16`
 
 ```rust
-pub enum Target { Host, G1 { cyclonedds_home: PathBuf, interface: String }, Jetson }
-pub fn stages(target: &Target, venv: &Path, dir: &Path, blueprint: Option<&str>) -> Vec<Stage>;
-pub fn is_check(name: &str) -> bool;   // `update --dry-run` reports these as not run, not pending
+pub(crate) enum Target { Host, G1 { cyclonedds_home: PathBuf, interface: String }, Jetson }
+pub(crate) fn stages(target: &Target, venv: &Path, dir: &Path, blueprint: Option<&str>) -> Vec<Stage>;
+pub(crate) fn is_check(name: &str) -> bool;   // `update --dry-run` reports these as not run, not pending
 ```
 
 Every check is one `Action::Run` of `bash -lc '<venv>/bin/python -c "..."'`, so what it proves is
@@ -154,9 +154,9 @@ give it a live check too: a plan that only proves imports is the "green install,
 pub enum Sudo { Root, Passwordless, Askpass(PathBuf), Stdin(Secret), Tty, Unavailable(String) }
 impl Sudo {
     /// The argv to spawn plus the bytes to feed its stdin; the password is only ever in those bytes.
-    pub fn wrap(&self, argv: &[String]) -> (Vec<String>, Option<Vec<u8>>);
-    pub fn available(&self) -> bool;
-    pub fn human_fix(&self) -> String;
+    pub(crate) fn wrap(&self, argv: &[String]) -> (Vec<String>, Option<Vec<u8>>);
+    pub(crate) fn available(&self) -> bool;
+    pub(crate) fn human_fix(&self) -> String;
 }
 ```
 
@@ -166,7 +166,7 @@ an exit-2 `NeedsHuman` carrying `human_fix()` when root is not reachable.
 ### Output — `src/say.rs`
 
 ```rust
-pub fn info(msg: &str);  pub fn ok(msg: &str);  pub fn warn(msg: &str);  pub fn fail(msg: &str);
+pub(crate) fn info(msg: &str);  pub(crate) fn ok(msg: &str);  pub(crate) fn warn(msg: &str);  pub fn fail(msg: &str);
 ```
 
 `-> ok !! xx` on stderr; colour only on the prefix, only on a TTY with `NO_COLOR` unset. No other
@@ -222,14 +222,14 @@ use crate::wizards::{checks, notes, Robot};
 
 pub(crate) fn ready(probes: &Probes) -> Result<()> { ... }
 
-pub fn plan(args: &HardwareSetupArgs, probes: &Probes, cfg: &Platforms, installed: &Installed) -> Plan {
+pub(crate) fn plan(args: &HardwareSetupArgs, probes: &Probes, cfg: &Platforms, installed: &Installed) -> Plan {
     let mut stages = vec![marker_stage(&probes.platform.home)];
     stages.extend(checks(verify::Target::Host, installed, args));
     Plan { command: Robot::Demo.command(), stages, notes: notes(probes) }
 }
 ```
 
-**3. `src/wizards/mod.rs`** — `pub mod acme;`, then a `Robot` variant, its `key` (which is also the
+**3. `src/wizards/mod.rs`** — `pub(crate) mod acme;`, then a `Robot` variant, its `key` (which is also the
 `installer.json` hardware key), an `owned` arm, a `ready` arm and a `run` arm:
 
 ```rust
@@ -242,9 +242,9 @@ pub enum Robot { G1, Jetson, Demo }
 
 `Robot` is matched exhaustively in `key`, `run`, `ready` and `setup_first`, so the compiler names
 every place the new variant has to be handled. `run` answers exit 2 with `setup_first` when there
-is no `installer.json`, before `preflight`. The G1 keeps its stage list in a `pub fn stages`
+is no `installer.json`, before `preflight`. The G1 keeps its stage list in a `pub(crate) fn stages`
 because `update` rebuilds it from the `installer.json` record; do the same when `update` must be
-able to repair your robot. `src/wizards/acme/mod.rs` is one line: `pub mod demo;`.
+able to repair your robot. `src/wizards/acme/mod.rs` is one line: `pub(crate) mod demo;`.
 
 **4. `installer/platforms.toml`** — the system packages your extra needs, keyed by the
 `[project.optional-dependencies]` name in `pyproject.toml` (`platforms.rs` tests fail on any other key):
@@ -289,7 +289,7 @@ throwaway `HOME` when a test genuinely needs one — do not write a second one.
 
 ## 6. Worked example: `src/wizards/nvidia/jetson.rs`
 
-The smallest complete wizard in the crate: 107 lines of runtime code, and every decision a bigger
+The smallest complete wizard in the crate: 101 lines of runtime code, and every decision a bigger
 one makes.
 
 **`:1`** — one-line module docstring naming who calls it: `setup`, `hardware jetson setup`, and
@@ -298,45 +298,45 @@ one makes.
 **`:3-11`** — imports from `cli`, `plan`, `probe`, `install_record`, the shared
 `setup::{system_config, verify}`, and the registry's `checks`, `notes` and `Robot`.
 
-**`:13-16`** — `STEP_TIMEOUT_S = 60` and `LD_PRELOAD_FIX`. Units in the name; a bare `60` in an
+**`:13-17`** — `STEP_TIMEOUT_S = 60` and `LD_PRELOAD_FIX`. Units in the name; a bare `60` in an
 argv is unreviewable. The fix text lives here once and `verify.rs` imports it, so the note and the
 check can never disagree.
 
-**`:19`** — `pub fn stage(platform: &Platform, kernel: &Kernel) -> Stage`. Pure, two probe structs
+**`:20`** — `pub(crate) fn stage(platform: &Platform, kernel: &Kernel) -> Stage`. Pure, two probe structs
 in, one `Stage` out. There is no `home`, no `Ctx`, no `&mut` anything.
 
-**`:20`** — `Stage::new("jetson perf", false)` — non-critical. Performance mode is a tuning step;
+**`:21`** — `Stage::new("jetson perf", false)` — non-critical. Performance mode is a tuning step;
 a machine without `nvpmodel` still runs DimOS, so it must not stop the run.
 
-**`:21-23`** — the platform guard. Off a Jetson the stage is empty, which the runner reports as
+**`:22-24`** — the platform guard. Off a Jetson the stage is empty, which the runner reports as
 `ok already`. This is why `setup` and `update` can call it unconditionally.
 
-**`:24-27`** — the first probe-gated action. `needs_maxn` is `kernel.nvpmodel_maxn == Some(false)`,
+**`:25-28`** — the first probe-gated action. `needs_maxn` is `kernel.nvpmodel_maxn == Some(false)`,
 so `None` (no `nvpmodel` binary) plans nothing rather than guessing. The one-line comment carries
 the WHY that naming cannot: mode 0 is MAXN on every Orin SKU and it survives a reboot.
 
-**`:28-30`** — the second, gated on `platform.systemd` as well: the unit is the persistence
+**`:29-31`** — the second, gated on `platform.systemd` as well: the unit is the persistence
 mechanism, so without systemd there is nothing to install.
 
-**`:35-48`** — `render_clocks_unit()` returns the unit text as a `String`, which makes it a pure
+**`:35-42`** — `render_clocks_unit()` returns the unit text as a `String`, which makes it a pure
 function a test asserts on directly. `jetson_clocks` resets every boot, so it runs from a oneshot
 unit rather than once at install time.
 
-**`:51-64`** — `static_tls_note` and `thermal_note`. Both return `Option<String>` and neither plans
+**`:44-58`** — `static_tls_note` and `thermal_note`. Both return `Option<String>` and neither plans
 an action: they are facts the operator needs that no command can fix. `wizards::notes` collects
 them into `Plan.notes`.
 
-**`:66-75`** — the two predicates, each one expression. `clocks_unit_enabled` trims `.service`
+**`:60-69`** — the two predicates, each one expression. `clocks_unit_enabled` trims `.service`
 because `probe::parse_unit_files` keeps the suffix `systemctl list-unit-files` prints.
 
-**`:77-81`** — `install_clocks_unit` folds `system_config::unit_actions` into the stage: write the unit
+**`:71-75`** — `install_clocks_unit` folds `system_config::unit_actions` into the stage: write the unit
 as root, `daemon-reload`, `enable --now`. The same three actions the multicast unit uses, so a unit
 is installed one way in the crate.
 
-**`:83-107`** — `ready` refuses a machine that is not a Jetson, and `plan` lists the stages: the
+**`:77-101`** — `ready` refuses a machine that is not a Jetson, and `plan` lists the stages: the
 perf stage, the shared machine config, then `checks(...)` — the critical verify, always last.
 
-**`:109+`** — the tests. Two `nvpmodel -q` fixture strings (JetPack 6 MAXN, JetPack 5.1.1 at 15 W)
+**`:103+`** — the tests. Two `nvpmodel -q` fixture strings (JetPack 6 MAXN, JetPack 5.1.1 at 15 W)
 parsed by the same `probe::nvpmodel_is_maxn` the runtime uses, so the test and the binary cannot
 disagree about what the output means.
 

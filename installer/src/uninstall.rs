@@ -24,7 +24,7 @@ const STAYS: &str = "kept: the DimOS project dir, ~/cyclonedds, the Unitree SDK 
                      uv, and the apt/brew packages";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Existing {
+struct Existing {
     pub bin: bool,
     pub bak: bool,
     pub json: bool,
@@ -36,7 +36,7 @@ pub struct Existing {
 }
 
 /// The only I/O in this file; read-only, so `--dry-run` may call it.
-pub fn observe(home: &Path) -> Existing {
+fn observe(home: &Path) -> Existing {
     Existing {
         bin: install_record::installed_bin(home).exists(),
         bak: install_record::backup_bin(home).exists(),
@@ -65,7 +65,7 @@ fn has_block(text: &str) -> bool {
         .any(|marker| action::ensure_block(text, marker, &[]).1)
 }
 
-pub fn plan(existing: &Existing, home: &Path) -> Plan {
+fn plan(existing: &Existing, home: &Path) -> Plan {
     Plan {
         command: "uninstall".to_string(),
         stages: vec![

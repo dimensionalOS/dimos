@@ -13,7 +13,7 @@ const JETPACK: [(&str, &str); 4] = [
     ("R36.4", "6.2"),
 ];
 
-pub fn parse_os_release(text: &str) -> (String, String) {
+pub(crate) fn parse_os_release(text: &str) -> (String, String) {
     let field = |key: &str| {
         text.lines()
             .find_map(|l| l.trim().strip_prefix(key))
@@ -24,7 +24,7 @@ pub fn parse_os_release(text: &str) -> (String, String) {
 }
 
 /// `# R35 (release), REVISION: 3.1, GCID: ...` -> `R35.3.1`.
-pub fn parse_nv_tegra_release(text: &str) -> Option<String> {
+pub(crate) fn parse_nv_tegra_release(text: &str) -> Option<String> {
     let major = text.split_whitespace().find(|t| {
         t.len() > 1 && t.starts_with('R') && t[1..].chars().all(|c| c.is_ascii_digit())
     })?;
@@ -32,7 +32,7 @@ pub fn parse_nv_tegra_release(text: &str) -> Option<String> {
     Some(format!("{major}.{revision}"))
 }
 
-pub fn jetpack_for_l4t(l4t: &str) -> Option<&'static str> {
+pub(crate) fn jetpack_for_l4t(l4t: &str) -> Option<&'static str> {
     JETPACK
         .iter()
         .find(|(prefix, _)| l4t.starts_with(prefix))
@@ -40,18 +40,18 @@ pub fn jetpack_for_l4t(l4t: &str) -> Option<&'static str> {
 }
 
 /// `ldd (Ubuntu GLIBC 2.31-0ubuntu9.9) 2.31` -> (2, 31).
-pub fn parse_glibc(ldd_first_line: &str) -> Option<(u32, u32)> {
+pub(crate) fn parse_glibc(ldd_first_line: &str) -> Option<(u32, u32)> {
     let last = ldd_first_line.split_whitespace().last()?;
     let (major, rest) = last.split_once('.')?;
     let minor: String = rest.chars().take_while(char::is_ascii_digit).collect();
     Some((major.parse().ok()?, minor.parse().ok()?))
 }
 
-pub fn is_musl_loader(file_name: &str) -> bool {
+pub(crate) fn is_musl_loader(file_name: &str) -> bool {
     file_name.starts_with("ld-musl-") && file_name.ends_with(".so.1")
 }
 
-pub fn parse_sysctl_value(text: &str) -> Option<u64> {
+pub(crate) fn parse_sysctl_value(text: &str) -> Option<u64> {
     text.rsplit('=')
         .next()?
         .split_whitespace()
@@ -61,7 +61,7 @@ pub fn parse_sysctl_value(text: &str) -> Option<u64> {
 }
 
 /// (`lo` carries MULTICAST, a 224.0.0.0/4 route exists) — both are needed for LCM on one host.
-pub fn multicast_ok(ip_link_lo: &str, ip_route_224: &str) -> (bool, bool) {
+pub(crate) fn multicast_ok(ip_link_lo: &str, ip_route_224: &str) -> (bool, bool) {
     (
         ip_link_lo.contains("MULTICAST"),
         ip_route_224.contains("224.0.0.0/4"),
@@ -69,7 +69,7 @@ pub fn multicast_ok(ip_link_lo: &str, ip_route_224: &str) -> (bool, bool) {
 }
 
 /// The largest memlock line for `user` or `*`, in bytes; limits.d counts in KiB.
-pub fn memlock_conf_bytes(limits_conf: &str, user: &str) -> Option<u64> {
+pub(crate) fn memlock_conf_bytes(limits_conf: &str, user: &str) -> Option<u64> {
     limits_conf
         .lines()
         .filter(|l| !l.trim_start().starts_with('#'))
@@ -84,24 +84,24 @@ pub fn memlock_conf_bytes(limits_conf: &str, user: &str) -> Option<u64> {
         .max()
 }
 
-pub fn nvpmodel_is_maxn(nvpmodel_q: &str) -> bool {
+pub(crate) fn nvpmodel_is_maxn(nvpmodel_q: &str) -> bool {
     nvpmodel_q.contains("MAXN") || nvpmodel_q.contains("ID=0") || nvpmodel_q.contains("ID: 0")
 }
 
 /// /proc/device-tree strings are NUL-terminated.
-pub fn parse_device_tree_model(raw: &str) -> String {
+pub(crate) fn parse_device_tree_model(raw: &str) -> String {
     raw.trim_end_matches('\0').trim().to_string()
 }
 
 /// First token of each `systemctl list-unit-files --state=enabled --no-legend` line.
-pub fn parse_unit_files(text: &str) -> Vec<String> {
+pub(crate) fn parse_unit_files(text: &str) -> Vec<String> {
     text.lines()
         .filter_map(|l| l.split_whitespace().next())
         .map(str::to_string)
         .collect()
 }
 
-pub fn parse_iface_ipv4(text: &str, os: &Os) -> Vec<(String, Ipv4Addr)> {
+pub(crate) fn parse_iface_ipv4(text: &str, os: &Os) -> Vec<(String, Ipv4Addr)> {
     match os {
         Os::Linux { .. } => parse_ip_o_4(text),
         Os::MacOs { .. } => parse_ifconfig(text),
@@ -140,7 +140,7 @@ fn parse_ifconfig(text: &str) -> Vec<(String, Ipv4Addr)> {
 }
 
 /// Tegra wins on a Jetson, which ships no nvidia-smi on JetPack 5.
-pub fn detect_gpu(arch: Arch, os: &Os, jetson: bool, nvidia_smi: Option<&str>) -> Gpu {
+pub(crate) fn detect_gpu(arch: Arch, os: &Os, jetson: bool, nvidia_smi: Option<&str>) -> Gpu {
     if jetson {
         return Gpu::Tegra;
     }

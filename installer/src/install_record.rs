@@ -10,15 +10,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::InstallMode;
 
-pub const SCHEMA: u32 = 1;
-pub const UNIT_DIR: &str = "/etc/systemd/system";
-pub const SYSCTL_CONF: &str = "/etc/sysctl.d/99-dimos.conf";
-pub const MEMLOCK_CONF: &str = "/etc/security/limits.d/99-dimos-memlock.conf";
-pub const MULTICAST_UNIT: &str = "dimos-multicast";
-pub const JETSON_CLOCKS_UNIT: &str = "dimos-jetson-clocks";
+pub(crate) const SCHEMA: u32 = 1;
+pub(crate) const UNIT_DIR: &str = "/etc/systemd/system";
+pub(crate) const SYSCTL_CONF: &str = "/etc/sysctl.d/99-dimos.conf";
+pub(crate) const MEMLOCK_CONF: &str = "/etc/security/limits.d/99-dimos-memlock.conf";
+pub(crate) const MULTICAST_UNIT: &str = "dimos-multicast";
+pub(crate) const JETSON_CLOCKS_UNIT: &str = "dimos-jetson-clocks";
 
 /// Every rc file a block may ever have landed in; `uninstall` sweeps them all.
-pub const RC_CANDIDATES: [&str; 6] = [
+pub(crate) const RC_CANDIDATES: [&str; 6] = [
     ".profile",
     ".bash_profile",
     ".bash_login",
@@ -70,25 +70,25 @@ pub struct LastRun {
 }
 
 impl Installed {
-    pub fn venv(&self) -> PathBuf {
+    pub(crate) fn venv(&self) -> PathBuf {
         venv(&self.dir)
     }
 
-    pub fn venv_python(&self) -> PathBuf {
+    pub(crate) fn venv_python(&self) -> PathBuf {
         venv_python(&self.dir)
     }
 
-    pub fn venv_dimos(&self) -> PathBuf {
+    pub(crate) fn venv_dimos(&self) -> PathBuf {
         self.venv().join("bin/dimos")
     }
 }
 
 /// The one spelling of where a project dir keeps its venv.
-pub fn venv(dir: &Path) -> PathBuf {
+pub(crate) fn venv(dir: &Path) -> PathBuf {
     dir.join(".venv")
 }
 
-pub fn venv_python(dir: &Path) -> PathBuf {
+pub(crate) fn venv_python(dir: &Path) -> PathBuf {
     venv(dir).join("bin/python")
 }
 
@@ -100,12 +100,12 @@ fn base(xdg: Option<OsString>, fallback: PathBuf) -> PathBuf {
 }
 
 /// `$XDG_CONFIG_HOME/dimos`, else `~/.config/dimos` — the same dir as dimos/constants.py CONFIG_DIR.
-pub fn config_dir(home: &Path) -> PathBuf {
+fn config_dir(home: &Path) -> PathBuf {
     base(std::env::var_os("XDG_CONFIG_HOME"), home.join(".config")).join("dimos")
 }
 
 /// `$XDG_STATE_HOME/dimos`, else `~/.local/state/dimos` — dimos/constants.py STATE_DIR.
-pub fn state_dir(home: &Path) -> PathBuf {
+pub(crate) fn state_dir(home: &Path) -> PathBuf {
     base(
         std::env::var_os("XDG_STATE_HOME"),
         home.join(".local/state"),
@@ -113,7 +113,7 @@ pub fn state_dir(home: &Path) -> PathBuf {
     .join("dimos")
 }
 
-pub fn installed_bin(home: &Path) -> PathBuf {
+pub(crate) fn installed_bin(home: &Path) -> PathBuf {
     home.join(".local/bin/dimos")
 }
 
@@ -121,16 +121,16 @@ pub fn backup_bin(home: &Path) -> PathBuf {
     home.join(".local/bin/dimos.bak")
 }
 
-pub fn installer_json(home: &Path) -> PathBuf {
+pub(crate) fn installer_json(home: &Path) -> PathBuf {
     config_dir(home).join("installer.json")
 }
 
-pub fn unit_path(name: &str) -> PathBuf {
+pub(crate) fn unit_path(name: &str) -> PathBuf {
     PathBuf::from(UNIT_DIR).join(format!("{name}.service"))
 }
 
 /// The rc files `shell` reads at login, by that shell's own lookup, so a block lands where it counts.
-pub fn rc_files(home: &Path, shell: &Path) -> Vec<PathBuf> {
+pub(crate) fn rc_files(home: &Path, shell: &Path) -> Vec<PathBuf> {
     match shell.file_name().and_then(|n| n.to_str()) {
         Some("zsh") => vec![home.join(".zprofile")],
         // bash -l reads the first of these three and no other; a plain terminal reads .bashrc.

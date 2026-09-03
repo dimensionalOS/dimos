@@ -1,11 +1,11 @@
 //! `dimos setup` as a list of calls: resolve what to install, refuse a machine that cannot hold it,
 //! build the ordered stage list, run it, and record what landed.
 
-pub mod dimos_venv;
-pub mod self_install;
-pub mod system_config;
-pub mod system_packages;
-pub mod verify;
+pub(crate) mod dimos_venv;
+pub(crate) mod self_install;
+pub(crate) mod system_config;
+pub(crate) mod system_packages;
+pub(crate) mod verify;
 
 use std::path::{Path, PathBuf};
 
@@ -25,7 +25,7 @@ use crate::wizards::nvidia::jetson;
 
 const GIB: u64 = 1024 * 1024 * 1024;
 /// A dev install with the base extras unpacks ~10 GiB of wheels, torch included.
-pub const MIN_DISK_BYTES: u64 = 12 * GIB;
+const MIN_DISK_BYTES: u64 = 12 * GIB;
 const DF_TIMEOUT_S: u64 = 20;
 
 const DEFAULT_DIR: &str = "dimos-app";
@@ -35,7 +35,7 @@ const UNITREE_EXTRA: &str = "unitree";
 
 /// What this run installs, resolved once from the flags, the prior install and the prompts.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Target {
+struct Target {
     pub mode: InstallMode,
     pub extras: Vec<String>,
     pub branch: String,
@@ -45,7 +45,7 @@ pub struct Target {
 }
 
 /// Flags win, then installer.json, then a prompt; a non-interactive prompt takes its default.
-pub fn resolve_target(
+fn resolve_target(
     args: &SetupArgs,
     prior: Option<&Installed>,
     cwd: &Path,
@@ -151,7 +151,7 @@ fn parse_df_kib(text: &str) -> Option<u64> {
 }
 
 /// The whole run as one plan; a stage whose probe says the machine is ready comes back empty.
-pub fn plan(target: &Target, probes: &Probes, cfg: &Platforms, home: &Path) -> Result<Plan> {
+fn plan(target: &Target, probes: &Probes, cfg: &Platforms, home: &Path) -> Result<Plan> {
     let dir_state = dimos_venv::dir_state(&target.dir);
     Ok(Plan {
         command: "setup".to_string(),

@@ -61,7 +61,7 @@ fn install_action(pm: PkgManager, missing: &[String]) -> Option<Action> {
 }
 
 /// The list refresh and the install, both empty when nothing is missing.
-pub fn packages_stages(extras: &[String], probes: &Probes, cfg: &Platforms) -> Vec<Stage> {
+pub(crate) fn packages_stages(extras: &[String], probes: &Probes, cfg: &Platforms) -> Vec<Stage> {
     let pm = probes.platform.pkg;
     let wanted = platforms::system_packages(extras, pm, cfg);
     let missing = missing_packages(&wanted, pm, &probes.tools);
@@ -97,7 +97,7 @@ fn packages_stage(pm: PkgManager, missing: &[String]) -> Stage {
 }
 
 /// Where uv is, or where `uv_stage` will put it; a planned absolute path, never a PATH lookup at exec.
-pub fn uv_bin(tools: &Tools, home: &Path) -> PathBuf {
+pub(crate) fn uv_bin(tools: &Tools, home: &Path) -> PathBuf {
     tools
         .uv
         .clone()
@@ -125,7 +125,7 @@ fn remove(path: PathBuf) -> Action {
 }
 
 /// Downloads astral's installer and runs it into ~/.local/bin; empty when uv is already there.
-pub fn uv_stage(tools: &Tools, home: &Path) -> Stage {
+pub(crate) fn uv_stage(tools: &Tools, home: &Path) -> Stage {
     let stage = Stage::new("uv", true);
     if tools.uv.is_some() {
         return stage;
@@ -148,7 +148,7 @@ pub fn uv_stage(tools: &Tools, home: &Path) -> Stage {
 }
 
 /// Opt-in only (`--with-nix`); non-critical because DimOS installs from system packages without it.
-pub fn nix_stage(tools: &Tools, home: &Path, with_nix: bool) -> Stage {
+pub(crate) fn nix_stage(tools: &Tools, home: &Path, with_nix: bool) -> Stage {
     let stage = Stage::new("nix", false);
     if !with_nix || tools.nix {
         return stage;

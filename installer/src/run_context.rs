@@ -19,7 +19,7 @@ pub enum Mode {
 }
 
 impl Mode {
-    pub fn from_flags(non_interactive: bool, agent: bool, stdin_is_tty: bool) -> Mode {
+    fn from_flags(non_interactive: bool, agent: bool, stdin_is_tty: bool) -> Mode {
         match (agent, non_interactive || !stdin_is_tty) {
             (true, _) => Mode::Agent,
             (false, true) => Mode::NonInteractive,
@@ -52,7 +52,7 @@ impl Ctx {
         })
     }
 
-    pub fn confirm(&self, question: &str, default: bool) -> Result<bool> {
+    pub(crate) fn confirm(&self, question: &str, default: bool) -> Result<bool> {
         if self.yes {
             return Ok(true);
         }
@@ -67,7 +67,7 @@ impl Ctx {
         })
     }
 
-    pub fn choose(&self, question: &str, options: &[&str], default: usize) -> Result<usize> {
+    pub(crate) fn choose(&self, question: &str, options: &[&str], default: usize) -> Result<usize> {
         if self.mode != Mode::Interactive {
             return Ok(default);
         }
@@ -84,7 +84,7 @@ impl Ctx {
             .map_or(default, |n| n - 1))
     }
 
-    pub fn input(&self, question: &str, default: &str) -> Result<String> {
+    pub(crate) fn input(&self, question: &str, default: &str) -> Result<String> {
         if self.mode != Mode::Interactive {
             return Ok(default.to_string());
         }
@@ -107,7 +107,7 @@ fn ask(prompt: &str) -> Result<String> {
     Ok(line)
 }
 
-pub fn stdin_is_tty() -> bool {
+pub(crate) fn stdin_is_tty() -> bool {
     std::io::stdin().is_terminal()
 }
 

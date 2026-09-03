@@ -1,18 +1,18 @@
 //! Version comparison and the release URLs the artifacts are fetched from.
 
-pub const RELEASES: &str = "https://github.com/dimensionalOS/dimos/releases";
+pub(crate) const RELEASES: &str = "https://github.com/dimensionalOS/dimos/releases";
 /// A pre-release ranks below every marker, so a final release takes the highest rank.
 const FINAL: u8 = 3;
 
 /// `https://github.com/x/y/releases/tag/v0.0.15` -> `0.0.15`.
-pub fn parse_latest_tag(url: &str) -> Option<String> {
+pub(crate) fn parse_latest_tag(url: &str) -> Option<String> {
     let (_, tag) = url.trim().rsplit_once("/tag/")?;
     let version = normalize(tag);
     (!version.is_empty()).then_some(version)
 }
 
 /// The 40-hex object id `git ls-remote` prints before the ref name.
-pub fn parse_ls_remote(text: &str) -> Option<String> {
+pub(crate) fn parse_ls_remote(text: &str) -> Option<String> {
     let sha = text.split_whitespace().next()?;
     (sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit())).then(|| sha.to_string())
 }
@@ -22,7 +22,7 @@ pub(crate) fn normalize(tag: &str) -> String {
 }
 
 /// PEP 440-lite: the release numbers, then a rank that sorts `0.0.14b1` below `0.0.14`.
-pub fn version_key(v: &str) -> (Vec<u32>, (u8, u32)) {
+fn version_key(v: &str) -> (Vec<u32>, (u8, u32)) {
     let stripped = normalize(v);
     let (release, pre) = split_pre(&stripped);
     let numbers = release.split('.').map(|p| p.parse().unwrap_or(0)).collect();
@@ -39,11 +39,11 @@ fn split_pre(v: &str) -> (&str, (u8, u32)) {
     (v, (FINAL, 0))
 }
 
-pub fn newer(current: &str, candidate: &str) -> bool {
+pub(crate) fn newer(current: &str, candidate: &str) -> bool {
     version_key(candidate) > version_key(current)
 }
 
-pub fn release_base(version: Option<&str>, override_url: Option<&str>) -> String {
+pub(crate) fn release_base(version: Option<&str>, override_url: Option<&str>) -> String {
     match (override_url, version) {
         (Some(url), _) => url.trim_end_matches('/').to_string(),
         (None, Some(v)) => format!("{RELEASES}/download/v{}", normalize(v)),
@@ -51,7 +51,7 @@ pub fn release_base(version: Option<&str>, override_url: Option<&str>) -> String
     }
 }
 
-pub fn artifact(target: &str) -> String {
+pub(crate) fn artifact(target: &str) -> String {
     format!("dimos-{target}")
 }
 

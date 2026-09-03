@@ -9,14 +9,14 @@ use serde::Serialize;
 
 use crate::install_record::state_dir;
 
-pub fn action_log_path(home: &Path) -> PathBuf {
+pub(crate) fn action_log_path(home: &Path) -> PathBuf {
     state_dir(home).join("installer.jsonl")
 }
 
 /// Redacted log view: a Run keeps env KEYS only and a WriteFile keeps a byte count, never contents.
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ActionView<'a> {
+pub(crate) enum ActionView<'a> {
     Run {
         argv: &'a [String],
         sudo: bool,
@@ -53,7 +53,7 @@ pub enum ActionView<'a> {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ActionRecord<'a> {
+pub(crate) struct ActionRecord<'a> {
     pub ts: String,
     pub run: &'a str,
     pub command: &'a str,
@@ -69,7 +69,7 @@ pub struct ActionLog {
 }
 
 impl ActionLog {
-    pub fn open(home: &Path) -> Result<ActionLog> {
+    pub(crate) fn open(home: &Path) -> Result<ActionLog> {
         let dir = state_dir(home);
         fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
         Ok(ActionLog {
@@ -77,11 +77,11 @@ impl ActionLog {
         })
     }
 
-    pub fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
-    pub fn append(&self, rec: &ActionRecord) -> Result<()> {
+    pub(crate) fn append(&self, rec: &ActionRecord) -> Result<()> {
         let line = serde_json::to_string(rec)?;
         let mut f = OpenOptions::new()
             .create(true)
@@ -93,7 +93,7 @@ impl ActionLog {
 }
 
 /// `20260901T180140Z-7f3a` — sorts by time and separates concurrent runs.
-pub fn run_id() -> String {
+pub(crate) fn run_id() -> String {
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
     format!("{stamp}-{:04x}", std::process::id() & 0xffff)
 }
