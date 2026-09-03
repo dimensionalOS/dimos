@@ -36,6 +36,7 @@ from dimos.robot.manipulators.openyam.config import (
     OPENYAM_GRIPPER_JOINT,
     OPENYAM_HARDWARE_ID,
     OPENYAM_JOINTS,
+    OPENYAM_MODEL_PATH,
     make_openyam_model_config,
     openyam_hardware,
 )
@@ -56,9 +57,11 @@ def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
 def test_make_openyam_model_config_uses_canonical_arm_joints() -> None:
     config = make_openyam_model_config()
 
+    assert OPENYAM_MODEL_PATH.parts[-2:] == ("i2rt", "yam.urdf")
+    assert config.model.source_path == OPENYAM_MODEL_PATH
     assert config.joint_names == OPENYAM_ARM_JOINTS
-    assert config.base_link == "yam_base_link"
-    assert config.planning_groups[0].tip_link == "yam_hand_tcp"
+    assert config.base_link == "base"
+    assert config.planning_groups[0].tip_link == "gripper_tip"
     assert config.gripper_hardware_id == "arm"
 
 
@@ -186,6 +189,6 @@ def test_quest_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
     teleop = next(task for task in tasks if task.type == "teleop_ik")
     gripper = next(task for task in tasks if task.type == "gripper")
 
-    assert teleop.params["bindings"] == [{"hand": "right", "target_frame": "yam_hand_tcp"}]
+    assert teleop.params["bindings"] == [{"hand": "right", "target_frame": "gripper_tip"}]
     assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
     assert gripper.stream_bind == {"gripper_command": "right_gripper_command"}
