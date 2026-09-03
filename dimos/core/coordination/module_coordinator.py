@@ -126,12 +126,16 @@ class ModuleCoordinator(Resource):
 
         safe_thread_map(tuple(self._managers.values()), _stop_manager)
 
-    def start_rpc_service(self) -> None:
-        """Expose the coordinator's API as @rpc methods over LCM."""
+    def start_rpc_service(self, *, name: str | None = None) -> None:
+        """Expose the coordinator's API as RPC methods under an optional name."""
         with self._rpc_lock:
             if self._coordinator_rpc is not None:
+                if name is not None and self._coordinator_rpc.name != name:
+                    raise RuntimeError(
+                        f"Coordinator RPC is already running as {self._coordinator_rpc.name!r}"
+                    )
                 return
-            self._coordinator_rpc = CoordinatorRPC.serve(self)
+            self._coordinator_rpc = CoordinatorRPC.serve(self, name=name)
 
     @property
     def rpcs(self) -> dict[str, Callable[..., Any]]:

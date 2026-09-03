@@ -1023,6 +1023,13 @@ def test_start_rpc_service_is_idempotent(dynamic_coordinator) -> None:
     assert dynamic_coordinator._coordinator_rpc is first_service
 
 
+def test_start_rpc_service_rejects_a_different_name_after_start(dynamic_coordinator) -> None:
+    dynamic_coordinator.start_rpc_service(name="test-coordinator")
+
+    with pytest.raises(RuntimeError, match="already running as 'test-coordinator'"):
+        dynamic_coordinator.start_rpc_service(name="another-coordinator")
+
+
 def test_loop_starts_rpc_service_and_stops_on_interrupt(dynamic_coordinator, mocker) -> None:
     start_rpc = mocker.patch.object(dynamic_coordinator, "start_rpc_service")
     stop = mocker.patch.object(dynamic_coordinator, "stop")

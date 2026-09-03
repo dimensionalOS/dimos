@@ -36,6 +36,7 @@ from dimos.hosted.fragment import (
     FRAGMENT_FORMAT,
     FRAGMENT_SCHEMA_VERSION,
     HostFragment,
+    run_coordinator_rpc_name,
 )
 from dimos.utils.logging_config import set_run_log_dir
 
@@ -325,7 +326,9 @@ def _run_fragment(fragment: HostFragment, log_dir: Path, ready: Connection) -> N
             payload.config,
             remote_module_refs=remote_module_refs,
         )
-        coordinator.start_rpc_service()
+        coordinator.start_rpc_service(
+            name=run_coordinator_rpc_name(fragment.run_id, fragment.host_id)
+        )
         if not coordinator.health_check():
             raise RuntimeError("Deployment failed its initial health check")
         ready.send((True, None))

@@ -75,11 +75,6 @@ def compile_fragments(
         )
 
     resolved_references = _resolve_module_references(blueprint)
-    remote_provider_names = {
-        provider.name
-        for (consumer_name, _), provider in resolved_references.items()
-        if assignments[consumer_name] != assignments[provider.name]
-    }
     stream_endpoints = _stream_endpoints(blueprint)
     boundary_keys = {
         key
@@ -93,7 +88,7 @@ def compile_fragments(
     fragments: dict[str, HostFragment] = {}
     for host_id in host_ids:
         local_atoms = tuple(
-            _with_rpc_name(atom, run_id, host_id) if atom.name in remote_provider_names else atom
+            _with_rpc_name(atom, run_id, host_id)
             for atom in atoms
             if assignments[atom.name] == host_id
         )
