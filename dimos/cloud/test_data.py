@@ -54,7 +54,16 @@ class FakeTransport:
             )
             return self._pending(uid)
         if path.endswith("/quota"):
-            return {"state": "ok"}
+            # The real /v1/data/quota always returns the full shape (quota_status
+            # in dimos-cloud); a minimal stub here would hide contract breaks.
+            return {
+                "state": "ok",
+                "pct": 0.0,
+                "used_total": 0,
+                "used_today": 0,
+                "limits": {"total_gb": 250, "daily_gb": 25, "max_file_gb": 50, "trust": "new"},
+                "message": "storage at 0% of quota",
+            }
         if path.endswith("/uploads"):
             return {"uploads": [dict(id=k, **v) for k, v in self.uploads.items()]}
         uid = path.split("/")[4]

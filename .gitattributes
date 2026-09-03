@@ -3,6 +3,12 @@
 * text=auto eol=lf
 # Ensure Python files always use LF for line endings.
 *.py text eol=lf
+# Keep dependency lockfiles tracked without including their generated contents in diffs.
+Cargo.lock -diff linguist-generated
+uv.lock -diff linguist-generated
+deno.lock -diff linguist-generated
+flake.lock -diff linguist-generated
+package-lock.json -diff linguist-generated
 # Treat designated file types as binary and do not alter their contents or line endings.
 *.png filter=lfs diff=lfs merge=lfs -text binary
 *.jpg filter=lfs diff=lfs merge=lfs -text binary
