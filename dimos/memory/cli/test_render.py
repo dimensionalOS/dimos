@@ -96,9 +96,6 @@ def test_no_infos() -> None:
     assert paired == set()
 
 
-# --- render_store end to end -------------------------------------------------
-
-
 def _tf(child: str, ts: float) -> TFMessage:
     return TFMessage(
         Transform(
