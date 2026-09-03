@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from dimos_lerobot.dataprep import write
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from mcap.writer import Writer as McapWriter
 import numpy as np
 
@@ -197,3 +198,7 @@ def test_mcap_converts_to_lerobot_dataset(tmp_path: Path) -> None:
     assert info["total_frames"] == 3
     assert info["fps"] == 30
     assert info["features"]["action"]["names"] == JOINTS
+
+    dataset = LeRobotDataset("local/openyam-mcap", root=root)
+    frame = dataset[0]
+    assert tuple(frame["observation.images.wrist"].shape) == (3, 64, 64)
