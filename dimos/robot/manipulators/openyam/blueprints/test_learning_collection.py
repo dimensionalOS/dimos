@@ -78,14 +78,14 @@ def test_openyam_teach_collection_uses_gravity_compensation_and_zero_stiffness()
     assert hardware.joints == OPENYAM_JOINTS
     assert hardware.wb_config is not None
     assert hardware.wb_config.kp == (0.0,) * len(OPENYAM_JOINTS)
-    assert hardware.wb_config.kd == (5.0, 5.0, 5.0, 1.5, 1.5, 1.5, 0.0)
+    assert hardware.wb_config.kd == (2.0, 2.0, 2.0, 0.5, 0.5, 0.5, 0.0)
     if hardware.adapter_type == "openyam_damiao":
         assert hardware.adapter_kwargs["runtime_config"].gravity_comp is True
+        assert hardware.adapter_kwargs["runtime_config"].passive_grippers == ("gripper",)
 
     tasks = coordinator.kwargs["tasks"]
     assert [(task.name, task.type, task.joint_names, task.priority) for task in tasks] == [
         ("teach_openyam", "teach", OPENYAM_JOINTS, 10),
-        ("arm_gripper", "gripper", [OPENYAM_JOINTS[-1]], 20),
     ]
 
 
