@@ -9,6 +9,7 @@ pub mod install_record;
 pub mod plan;
 pub mod platforms;
 pub mod probe;
+pub mod probe_parse;
 pub mod robot_scan;
 pub mod run;
 pub mod run_context;

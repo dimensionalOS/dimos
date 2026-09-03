@@ -110,7 +110,7 @@ on with exit 0, so write the check so its last line is the operator's fix. `note
 a stage builder reaches the operator with something it did not plan — a warning, a manual step, a
 reason a stage is empty. Push them in `<robot>_plan`, not in the stage.
 
-### Probes — `src/probe.rs:124`
+### Probes — `src/probe.rs:121`
 
 ```rust
 pub struct Probes {
@@ -131,7 +131,7 @@ pub fn capture(program: &str, args: &[&str], env: &[(&str, &str)], timeout_s: u6
 ```
 
 `Probes::detect` runs once in `main`. If your robot needs a fact nobody probes yet, add a parse
-function to `probe.rs` (pure, fixture-tested) and read the machine through `capture` in your
+function to `probe_parse.rs` (pure, fixture-tested) and read the machine through `capture` in your
 `observe` — never a `Command` inside a stage builder, never a spawn without a deadline.
 
 ### Verify — `src/setup/verify.rs:16`

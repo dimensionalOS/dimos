@@ -134,7 +134,7 @@ fn blueprint_check(venv: &Path, blueprint: Option<&str>) -> String {
     }
 }
 
-/// probe::parse_nv_tegra_release owns the real parse; this only re-asserts the shape.
+/// probe_parse::parse_nv_tegra_release owns the real parse; this only re-asserts the shape.
 fn tegra_check() -> String {
     "grep -q REVISION: /etc/nv_tegra_release".to_string()
 }

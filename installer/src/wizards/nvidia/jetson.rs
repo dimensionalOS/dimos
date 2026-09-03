@@ -110,7 +110,8 @@ pub fn plan(
 mod tests {
     use super::*;
     use crate::plan::Action;
-    use crate::probe::{nvpmodel_is_maxn, Arch, Gpu, Jetson, Os, PkgManager};
+    use crate::probe::{Arch, Gpu, Jetson, Os, PkgManager};
+    use crate::probe_parse::nvpmodel_is_maxn;
     use std::path::PathBuf;
 
     /// JetPack 6 on an Orin NX already at max performance.

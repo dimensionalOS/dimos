@@ -19,7 +19,8 @@ installer/                 Rust crate `dimos-installer`, binary `dimos`, workspa
   src/spawn.rs             one program under a deadline, keeping the tail of its output
   src/file_actions.rs      the ONLY file writer outside install_record.rs and action_log.rs
   src/say.rs               `-> ok !! xx` on stderr plus the plan and stage lines; colour only on a TTY
-  src/probe.rs             read the machine once into Probes; `capture` is the one bounded spawn; parsers pure over &str
+  src/probe.rs             read the machine once into Probes; `capture` is the one bounded spawn
+  src/probe_parse.rs       the parsers behind Probes, pure over &str so a fixture tests each one
   src/sudo.rs              Root | Passwordless | Askpass | Stdin(DIMOS_SUDO_PASSWORD) | Tty | Unavailable
   src/install_record.rs    installer paths + ~/.config/dimos/installer.json
   src/action_log.rs        the redacted ~/.local/state/dimos/installer.jsonl
