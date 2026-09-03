@@ -1,0 +1,2 @@
+X500 meshes: PX4/PX4-gazebo-models, BSD-3-Clause.
+Fetched and decimated by tools/fetch_x500_meshes.py -- do not edit by hand.

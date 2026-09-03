@@ -334,3 +334,34 @@ def test_instant_holder_conflict_waits_then_runs() -> None:
         app.state.skills_by_name = saved_skills
         app.state.cap_registry = saved_registry
         app.state.cap_acquire_timeout = saved_timeout
+
+
+def test_tool_names_qualified_aliases() -> None:
+    """A unique skill lists bare but stays callable by its qualified RPC-topic
+    name, so fleet scripts (dog1/go2firstcontact/safe_move) keep working when
+    only one robot offers the skill. Duplicates stay qualified-only."""
+    from dimos.agents.mcp.mcp_server import tool_names, with_qualified_aliases
+
+    schema = json.dumps({"type": "object", "properties": {}})
+    skills = [
+        SkillInfo(class_name="dog1/go2firstcontact", func_name="safe_move", args_schema=schema),
+        SkillInfo(class_name="dog1/go2connection", func_name="stand_up", args_schema=schema),
+    ]
+
+    named = tool_names(skills)
+    assert set(named) == {"safe_move", "stand_up"}  # unique skills list bare
+
+    callable_names = with_qualified_aliases(named)
+    assert callable_names["safe_move"] is callable_names["dog1/go2firstcontact/safe_move"]
+    assert callable_names["stand_up"] is callable_names["dog1/go2connection/stand_up"]
+
+    # Two instances offering the same skill: bare name is ambiguous and gone,
+    # aliasing adds nothing beyond the already-qualified canonical names.
+    duplicated = skills + [
+        SkillInfo(class_name="dog2/go2firstcontact", func_name="safe_move", args_schema=schema)
+    ]
+    named_dup = tool_names(duplicated)
+    assert "safe_move" not in named_dup
+    assert set(with_qualified_aliases(named_dup)) == set(named_dup) | {
+        "dog1/go2connection/stand_up"
+    }

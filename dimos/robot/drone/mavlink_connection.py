@@ -17,6 +17,7 @@
 
 import functools
 import logging
+import threading
 import time
 from typing import Any
 
@@ -40,6 +41,7 @@ class MavlinkConnection:
         connection_string: str = "udp:0.0.0.0:14550",
         outdoor: bool = False,
         max_velocity: float = 5.0,
+        target_system: int | None = None,
     ) -> None:
         """Initialize drone connection.
 
@@ -47,10 +49,18 @@ class MavlinkConnection:
             connection_string: MAVLink connection string
             outdoor: Use GPS only mode (no velocity integration)
             max_velocity: Maximum velocity in m/s
+            target_system: Optional MAVLink system id to expect on this link. When
+                provided (as in PX4 SITL multi-vehicle, where each instance maps
+                to ``sys_id = instance + 1``), ``connect()`` will use this value
+                instead of waiting for a HEARTBEAT to discover it. This is the
+                canonical MAVSDK-style multi-vehicle pattern and routes around
+                PX4 SITL's quirk where Onboard-mode HEARTBEAT only streams to
+                already-active peers.
         """
         self.connection_string = connection_string
         self.outdoor = outdoor
         self.max_velocity = max_velocity
+        self._expected_target_system = target_system
         self.mavlink: Any = None  # MAVLink connection object
         self.connected = False
         self.telemetry: dict[str, Any] = {}
@@ -68,20 +78,117 @@ class MavlinkConnection:
         # Flag to prevent concurrent fly_to commands
         self.flying_to_target = False
 
+        # GCS heartbeat thread — PX4 SITL refuses to arm without a registered GCS link.
+        # We satisfy that by impersonating a GCS at 1 Hz (standard MAVLink rate).
+        self._gcs_hb_stop = threading.Event()
+        self._gcs_hb_thread: threading.Thread | None = None
+
     def connect(self) -> bool:
         """Connect to drone via MAVLink."""
         try:
             logger.info(f"Connecting to {self.connection_string}")
-            self.mavlink = mavutil.mavlink_connection(self.connection_string)
-            self.mavlink.wait_heartbeat(timeout=30)
+            # source_system=255 / source_component=190 are the standard "GCS" identifiers,
+            # so PX4 sees our heartbeats as coming from a ground station and clears its
+            # "no GCS connection" arming check.
+            self.mavlink = mavutil.mavlink_connection(
+                self.connection_string,
+                source_system=255,
+                source_component=190,
+            )
+            # Two paths for picking the link's target_system:
+            #
+            # (a) `target_system` was passed in (PX4 SITL fleet, RTK swarm, anything
+            #     where the sys_id is known up front). Skip HEARTBEAT discovery —
+            #     wait for *any* MAVLink message from that sys to confirm the link
+            #     is live, then latch the id. This sidesteps PX4 SITL's bug where
+            #     instances >= 1 don't stream HEARTBEAT on their Onboard channel
+            #     until a peer is fully established (chicken-and-egg with our
+            #     own GCS heartbeats).
+            #
+            # (b) No explicit target_system. Fall back to HEARTBEAT discovery,
+            #     but skip sys=0 frames (PX4 emits a few during early init before
+            #     MAV_SYS_ID is loaded; latching sys=0 means every command goes
+            #     to broadcast and silently lands nowhere).
+            deadline = time.time() + 30.0
+            picked = False
+            if self._expected_target_system is not None:
+                want = self._expected_target_system
+                while time.time() < deadline:
+                    msg = self.mavlink.recv_match(blocking=True, timeout=1.0)
+                    if msg is None:
+                        continue
+                    if msg.get_srcSystem() == want:
+                        self.mavlink.target_system = want
+                        self.mavlink.target_component = msg.get_srcComponent() or 1
+                        picked = True
+                        break
+                if not picked:
+                    logger.error(
+                        f"No MAVLink message from sys={want} within 30s on {self.connection_string}"
+                    )
+                    return False
+            else:
+                while time.time() < deadline:
+                    hb = self.mavlink.recv_match(type="HEARTBEAT", blocking=True, timeout=1.0)
+                    if hb is None:
+                        continue
+                    src = hb.get_srcSystem()
+                    if src and src > 0:
+                        self.mavlink.target_system = src
+                        self.mavlink.target_component = hb.get_srcComponent() or 1
+                        picked = True
+                        break
+                if not picked:
+                    logger.error(
+                        f"No HEARTBEAT with sys_id > 0 within 30s on {self.connection_string}"
+                    )
+                    return False
+
             self.connected = True
             logger.info(f"Connected to system {self.mavlink.target_system}")
 
+            self._start_gcs_heartbeat()
             self.update_telemetry()
             return True
         except Exception as e:
             logger.error(f"Connection failed: {e}")
             return False
+
+    def _start_gcs_heartbeat(self) -> None:
+        """Publish a 1 Hz GCS heartbeat on this link, forever.
+
+        The loop is deliberately unkillable: the shared MAVLink connection
+        races the offboard streamer thread, and an early version that returned
+        on the first send exception silently disabled arming for the rest of
+        the session once a datalink-loss failsafe (NAV_DLL_ACT) was
+        configured. A missed beat at 1 Hz is harmless; a dead loop is not.
+
+        Fleet-level GCS presence on PX4's GCS port (the thing the arming check
+        actually credits) lives in SwarmCoordinator._gcs_presence_loop; this
+        per-link heartbeat only marks the offboard channel as alive.
+        """
+        if self._gcs_hb_thread and self._gcs_hb_thread.is_alive():
+            return
+        self._gcs_hb_stop.clear()
+
+        def _loop() -> None:
+            while not self._gcs_hb_stop.is_set():
+                try:
+                    self.mavlink.mav.heartbeat_send(
+                        mavutil.mavlink.MAV_TYPE_GCS,
+                        mavutil.mavlink.MAV_AUTOPILOT_INVALID,
+                        0,
+                        0,
+                        0,
+                    )
+                except Exception:
+                    pass  # shared-link race; skip this beat, never die
+                self._gcs_hb_stop.wait(1.0)
+
+        self._gcs_hb_thread = threading.Thread(
+            target=_loop, name="dimos-mavlink-gcs-hb", daemon=True
+        )
+        self._gcs_hb_thread.start()
 
     def update_telemetry(self, timeout: float = 0.1) -> None:
         """Update telemetry data from available messages."""
@@ -547,19 +654,31 @@ class MavlinkConnection:
         return False
 
     def arm(self) -> bool:
-        """Arm the drone."""
+        """Arm the drone.
+
+        Sends MAV_CMD_COMPONENT_ARM_DISARM and waits for the HEARTBEAT armed
+        bit to flip. Polls ``self.telemetry["HEARTBEAT"]`` (kept fresh by a
+        separate telemetry loop, e.g. ``Px4DroneModule._telemetry_loop``)
+        instead of calling ``recv_match`` directly. ``recv_match`` would race
+        with the fleet's telemetry consumer for the same MAVLink message
+        stream — both reading the same socket, each stealing messages from the
+        other — and that race can silently miss the COMMAND_ACK and HEARTBEAT
+        frames that confirm arming, returning False even when arming succeeded.
+
+        Returns True only once HEARTBEAT shows the armed bit set; otherwise
+        False after ``timeout_s``.
+        """
         if not self.connected:
             return False
 
         logger.info("Arming motors...")
-        self.update_telemetry()
 
         self.mavlink.mav.command_long_send(
             self.mavlink.target_system,
             self.mavlink.target_component,
             mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
             0,
-            1,
+            1,  # param1: 1 = arm
             0,
             0,
             0,
@@ -568,24 +687,18 @@ class MavlinkConnection:
             0,
         )
 
-        # Wait for ACK
-        ack = self.mavlink.recv_match(type="COMMAND_ACK", blocking=True, timeout=5)
-        if ack and ack.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM:
-            if ack.result == mavutil.mavlink.MAV_RESULT_ACCEPTED:
-                logger.info("Arm command accepted")
+        # Poll the telemetry dict (updated by the consumer thread) for the
+        # armed flag. 7 s is comfortably above the 1 Hz heartbeat cadence even
+        # if a few frames are dropped.
+        deadline = time.time() + 7.0
+        while time.time() < deadline:
+            hb = self.telemetry.get("HEARTBEAT", {})
+            if hb.get("armed"):
+                logger.info("Motors ARMED")
+                return True
+            time.sleep(0.1)
 
-                # Verify armed status
-                for _i in range(10):
-                    msg = self.mavlink.recv_match(type="HEARTBEAT", blocking=True, timeout=1)
-                    if msg:
-                        armed = msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
-                        if armed:
-                            logger.info("Motors ARMED successfully!")
-                            return True
-                    time.sleep(0.5)
-            else:
-                logger.error(f"Arm failed with result: {ack.result}")
-
+        logger.warning("Arm timeout — HEARTBEAT armed bit never set within 7s")
         return False
 
     def disarm(self) -> bool:
@@ -1004,6 +1117,7 @@ class MavlinkConnection:
 
     def disconnect(self) -> None:
         """Disconnect from drone."""
+        self._gcs_hb_stop.set()
         if self.mavlink:
             self.mavlink.close()
         self.connected = False
