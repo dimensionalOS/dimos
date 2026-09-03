@@ -64,17 +64,17 @@ def test_submit_publishes_and_checks_frames(module):
 
 
 def test_relocalize_once_stops_after_the_first_fix(module):
-    """A fix goes stale as the robot drifts, so by default the module keeps earning it."""
+    """What the flag does, either way. Which one is the default is a policy call."""
     tf = Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map")
 
-    forever = module()
-    assert forever.keep_relocalizing() and not forever.placed
-    forever.submit(tf)
-    assert forever.placed and forever.keep_relocalizing()
-
     once = module(relocalize_once=True)
+    assert once.keep_relocalizing() and not once.placed
     once.submit(tf)
     assert once.placed and not once.keep_relocalizing()
+
+    forever = module(relocalize_once=False)
+    forever.submit(tf)
+    assert forever.placed and forever.keep_relocalizing()
 
 
 def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):

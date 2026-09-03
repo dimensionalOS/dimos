@@ -70,12 +70,12 @@ class Config(ModuleConfig):
     # this stack roots its tf at. The fix is published as an edge from it.
     world_frame: str = "world"
     publish_loaded_map: bool = False
-    # Stop attempting once a fix is accepted. Off by default: a robot drifts,
-    # and a fix that is never re-earned is a fix that quietly goes stale. Set
-    # True to keep the first accepted answer - it saves the CPU every later
-    # attempt costs, and denies a worse attempt the chance to overwrite a good
-    # answer.
-    relocalize_once: bool = False
+    # Stop attempting once a fix is accepted. A premap fix does not go stale
+    # the way odometry does - the accepted transform keeps being republished
+    # either way - so carrying on only spends CPU and gives a later, worse
+    # attempt a chance to overwrite a good answer. Set False where the robot
+    # is expected to drift far enough that the fix must be re-earned.
+    relocalize_once: bool = True
 
 
 class RelocalizationModule(Module):
