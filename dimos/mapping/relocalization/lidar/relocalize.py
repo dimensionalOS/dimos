@@ -39,9 +39,12 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
-from dimos.mapping.relocalization.module import FRAME_MAP, FRAME_WORLD
+from dimos.mapping.relocalization.module import FRAME_MAP
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.protocol.service.spec import BaseConfig
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 if TYPE_CHECKING:
     # open3d is imported lazily inside the methods that need it - it is a
@@ -245,8 +248,8 @@ class LidarRelocalizer:
         ]
         return max(scored, key=lambda r: r.fitness)
 
-    def relocalize(self, local_map: PointCloud) -> Transform | None:
-        """The ``world -> map`` transform, or ``None`` when nothing was good enough.
+    def relocalize(self, local_map: PointCloud, world_frame: str) -> Transform | None:
+        """The ``world_frame -> map`` transform, or ``None`` when nothing was good enough.
 
         Ready to publish: stamped with the frames the TF tree expects, and
         already inverted from the placement open3d computes. Refusing is a
@@ -256,9 +259,10 @@ class LidarRelocalizer:
         configures it once and checks whether it got a transform.
         """
         result = self.align(local_map)
+        logger.info(f"align: fitness={result.fitness:.3f} rmse={result.inlier_rmse:.3f}")
         if result.fitness < self.config.fitness_threshold:
             return None
         placement = Transform.from_matrix(
-            np.asarray(result.transformation), frame_id=FRAME_MAP, child_frame_id=FRAME_WORLD
+            np.asarray(result.transformation), frame_id=FRAME_MAP, child_frame_id=world_frame
         )
         return placement.inverse()

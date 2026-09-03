@@ -17,8 +17,8 @@
 from reactivex import combine_latest
 
 from dimos.core.core import rpc
-from dimos.core.stream import Out
-from dimos.mapping.relocalization.lidar.module import LidarConfig, LidarRelocalization
+from dimos.core.stream import In, Out
+from dimos.mapping.relocalization.lidar.module import LidarConfig, LidarWindowRelocalization
 from dimos.mapping.voxels.grid import VoxelGrid
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -29,10 +29,12 @@ class Go2Config(LidarConfig):
     use_carving: bool = True
 
 
-class Go2Relocalization(LidarRelocalization):
+class Go2Relocalization(LidarWindowRelocalization):
     """Lidar relocalization that also publishes premap + live scan as `merged_map` for the Go2 costmap."""
 
     config: Go2Config
+    # The costmap wants everything mapped so far, not the relocalizer's window.
+    global_map: In[PointCloud2]
     merged_map: Out[PointCloud2]
 
     @rpc

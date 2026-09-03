@@ -56,7 +56,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 FRAME_MAP = "map"
-FRAME_WORLD = "world"
 
 PUBLISH_INTERVAL = 2.0  # TF and loaded_map republish period
 MAP_SUFFIX = ".pc2.lcm"
@@ -67,13 +66,16 @@ class Config(ModuleConfig):
     # `.pc2.lcm` is appended if absent. Without one the module runs but never
     # attempts a fix.
     map_file: str | None = None
+    # What the live fixed frame is called - whatever the odometry that feeds
+    # this stack roots its tf at. The fix is published as an edge from it.
+    world_frame: str = "world"
     publish_loaded_map: bool = False
     # Stop attempting once a fix is accepted. A premap fix does not go stale
     # the way odometry does - the accepted transform keeps being republished
     # either way - so carrying on only spends CPU and gives a later, worse
     # attempt a chance to overwrite a good answer. Set False where the robot
     # is expected to drift far enough that the fix must be re-earned.
-    relocalize_once: bool = True
+    relocalize_once: bool = False
 
 
 class RelocalizationModule(Module):
@@ -127,12 +129,13 @@ class RelocalizationModule(Module):
         return not (self._placed and self.config.relocalize_once)
 
     def submit(self, tf: Transform, source: str = "") -> None:
-        """Publish a ``world -> map`` fix the implementation already decided to believe."""
-        assert (tf.frame_id, tf.child_frame_id) == (FRAME_WORLD, FRAME_MAP), (
-            f"relocalize {source}: expected {FRAME_WORLD!r} -> {FRAME_MAP!r}, "
+        """Publish a ``world_frame -> map`` fix the implementation already decided to believe."""
+        world = self.config.world_frame
+        assert (tf.frame_id, tf.child_frame_id) == (world, FRAME_MAP), (
+            f"relocalize {source}: expected {world!r} -> {FRAME_MAP!r}, "
             f"got {tf.frame_id!r} -> {tf.child_frame_id!r}"
         )
-        logger.info(f"relocalize {source}: TF {FRAME_WORLD!r} -> {FRAME_MAP!r} t={tf.translation}")
+        logger.info(f"relocalize {source}: TF {world!r} -> {FRAME_MAP!r} t={tf.translation}")
         self._world_to_map.on_next(tf)
         if not self._placed and self.config.relocalize_once:
             logger.info(f"relocalize {source}: placed, no further attempts (relocalize_once)")

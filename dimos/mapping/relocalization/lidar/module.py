@@ -12,20 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lidar relocalization runtime: the live voxel map against the premap's points.
-
-What is here is what only a pointcloud matcher needs - the ``global_map``
-input, how often to attempt a match, how sparse a cloud is too sparse, and
-the aligner. Loading the premap and publishing what comes back is the base
-module's; the alignment itself is ``relocalize.py``'s.
-"""
-
 from __future__ import annotations
 
+from collections import deque
+from functools import reduce
+import operator
 import time
 from typing import Any
 
-from reactivex import operators as ops
+from reactivex import Observable, operators as ops
 
 from dimos.core.core import rpc
 from dimos.core.stream import In
@@ -42,6 +37,24 @@ from dimos.utils.reactive import backpressure
 logger = setup_logger()
 
 
+def window(
+    scans: Observable[PointCloud2], cfg: RelocalizeConfig, interval: float
+) -> Observable[PointCloud2]:
+    """The last ``max_frames`` scans merged, at most one merge every ``interval`` s.
+
+    Every scan enters the window and only the throttle decides when one is
+    matched, so the scans that arrive during a failed attempt are the next
+    attempt's evidence - which is how ``tune.py`` scores a retry too.
+    """
+    held: deque[PointCloud2] = deque(maxlen=cfg.max_frames)
+    return scans.pipe(
+        ops.do_action(held.append),
+        ops.throttle_first(interval),
+        ops.filter(lambda _: len(held) >= cfg.min_frames),
+        ops.map(lambda _: reduce(operator.add, held)),
+    )
+
+
 class LidarConfig(Config):
     reloc_interval: float = 2.0
     # Sanity check, skip a cloud too sparse to be worth a match,
@@ -54,16 +67,22 @@ class LidarConfig(Config):
     relocalize: RelocalizeConfig = MID360
 
 
-class LidarRelocalization(RelocalizationModule):
-    """Coarse FPFH+RANSAC then ICP of the live voxel map against a pointcloud premap."""
+class CloudRelocalization(RelocalizationModule):
+    """Coarse FPFH+RANSAC then ICP of a windowed live cloud against a pointcloud premap.
+
+    A subclass names where that window comes from, and nothing else.
+    """
 
     config: LidarConfig
-    global_map: In[PointCloud2]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._relocalizer: LidarRelocalizer | None = None
         self._last_skip_log = 0.0
+
+    def clouds(self) -> Observable[PointCloud2]:
+        """The windowed live cloud to match, at most one every ``reloc_interval``."""
+        raise NotImplementedError
 
     @rpc
     def start(self) -> None:
@@ -75,10 +94,9 @@ class LidarRelocalization(RelocalizationModule):
         self._relocalizer = LidarRelocalizer(self.premap.pointcloud, self.config.relocalize)
         self.register_disposable(
             backpressure(
-                self.global_map.observable().pipe(  # type: ignore[no-untyped-call]
-                    ops.throttle_first(self.config.reloc_interval),
+                self.clouds().pipe(
+                    ops.filter(lambda _: self.keep_relocalizing()),
                     ops.do_action(self._maybe_log_skip),
-                    ops.filter(lambda msg: self.keep_relocalizing()),
                     ops.filter(self._has_enough_points),
                 )
             ).subscribe(self._relocalize)
@@ -102,7 +120,7 @@ class LidarRelocalization(RelocalizationModule):
         assert self._relocalizer is not None
         t0 = time.monotonic()
         try:
-            tf = self._relocalizer.relocalize(msg.pointcloud)
+            tf = self._relocalizer.relocalize(msg.pointcloud, self.config.world_frame)
         except Exception:
             logger.exception("relocalize() failed")
             return
@@ -115,3 +133,27 @@ class LidarRelocalization(RelocalizationModule):
             return
         logger.info(f"relocalize lidar: time_cost={dt:.1f}s n_pts={len(msg)}")
         self.submit(tf, "lidar")
+
+
+class LidarWindowRelocalization(CloudRelocalization):
+    """Matches the last `max_frames` scans, the way tune.py's probes are built."""
+
+    lidar: In[PointCloud2]
+
+    def clouds(self) -> Observable[PointCloud2]:
+        return window(
+            self.lidar.observable(),
+            self.config.relocalize,
+            self.config.reloc_interval,
+        )
+
+
+class LocalMapRelocalization(CloudRelocalization):
+    """Matches the ray-tracing mapper's local map, a window in space, already carved."""
+
+    local_map: In[PointCloud2]
+
+    def clouds(self) -> Observable[PointCloud2]:
+        return self.local_map.observable().pipe(  # type: ignore[no-untyped-call]
+            ops.throttle_first(self.config.reloc_interval)
+        )
