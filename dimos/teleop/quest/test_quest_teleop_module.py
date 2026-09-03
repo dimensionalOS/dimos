@@ -477,6 +477,26 @@ def test_arm_teleop_publishes_normalized_gripper_opening_for_engaged_hand(
         module.stop()
 
 
+@pytest.mark.parametrize(("grip", "enabled"), [(0.5, False), (0.5001, True)])
+def test_arm_gripper_gate_uses_the_classified_grip_bit(
+    mocker: pytest_mock.MockerFixture,
+    grip: float,
+    enabled: bool,
+) -> None:
+    module = ArmTeleopModule()
+    try:
+        publish = mocker.patch.object(module.right_gripper_command, "publish")
+
+        module._publish_button_state(
+            None,
+            QuestControllerState(is_left=False, trigger=0.25, grip=grip),
+        )
+
+        assert publish.called is enabled
+    finally:
+        module.stop()
+
+
 def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture) -> None:
     module = HandTeleopModule()
     try:

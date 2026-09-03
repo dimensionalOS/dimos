@@ -178,26 +178,28 @@ class ArmTeleopModule(QuestTeleopModule):
             right=right.trigger if right is not None else 0.0,
         )
         self._publish_buttons(buttons)
-        self._publish_gripper_commands(left, right)
+        self._publish_gripper_commands(left, right, buttons)
 
     def _publish_gripper_commands(
         self,
         left: QuestControllerState | None,
         right: QuestControllerState | None,
+        buttons: Buttons,
     ) -> None:
-        """Publish normalized opening while the hand's deadman is held."""
+        """Publish normalized opening while the classified deadman is held."""
         controllers = {Hand.LEFT: left, Hand.RIGHT: right}
         outputs = {
             Hand.LEFT: self.left_gripper_command,
             Hand.RIGHT: self.right_gripper_command,
         }
         for hand, controller in controllers.items():
-            if controller is None or not self._gripper_is_enabled(hand, controller):
+            if controller is None or not self._gripper_is_enabled(hand, buttons):
                 continue
             outputs[hand].publish(Float32(data=1.0 - float(controller.trigger)))
 
-    def _gripper_is_enabled(self, hand: Hand, controller: QuestControllerState) -> bool:
-        return controller.grip > 0.5
+    def _gripper_is_enabled(self, hand: Hand, buttons: Buttons) -> bool:
+        """Use the same classified grip bit consumed by TeleopIKTask."""
+        return buttons.left_grip if hand == Hand.LEFT else buttons.right_grip
 
 
 class HandTeleopModule(ArmTeleopModule):
@@ -227,7 +229,7 @@ class HandTeleopModule(ArmTeleopModule):
     def _should_publish(self, hand: Hand) -> bool:
         return self._is_engaged[hand]
 
-    def _gripper_is_enabled(self, hand: Hand, controller: QuestControllerState) -> bool:
+    def _gripper_is_enabled(self, hand: Hand, buttons: Buttons) -> bool:
         return self._is_engaged[hand]
 
     def _publish_button_state(
@@ -244,7 +246,7 @@ class HandTeleopModule(ArmTeleopModule):
         buttons.left_primary = self._is_engaged[Hand.LEFT]
         buttons.right_primary = self._is_engaged[Hand.RIGHT]
         self._publish_buttons(buttons)
-        self._publish_gripper_commands(left, right)
+        self._publish_gripper_commands(left, right, buttons)
 
 
 class VideoArmTeleopConfig(QuestTeleopConfig):
