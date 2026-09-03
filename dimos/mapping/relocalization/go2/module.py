@@ -46,7 +46,7 @@ class Go2Relocalization(LidarWindowRelocalization):
             backpressure(
                 combine_latest(
                     self.global_map.observable(),  # type: ignore[no-untyped-call]
-                    self._world_to_map,
+                    self.fixes,
                 )
             ).subscribe(self._on_merge_input)
         )

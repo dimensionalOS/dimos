@@ -120,7 +120,9 @@ class CloudRelocalization(RelocalizationModule):
         assert self._relocalizer is not None
         t0 = time.monotonic()
         try:
-            tf = self._relocalizer.relocalize(msg.pointcloud, self.config.world_frame)
+            tf = self._relocalizer.relocalize(
+                msg.pointcloud, self.config.world_frame, self.config.map_frame
+            )
         except Exception:
             logger.exception("relocalize() failed")
             return

@@ -117,7 +117,7 @@ relocalize_mid360 = autoconnect(
     # LocalMapRelocalization and not LidarWindowRelocalization: these recordings
     # carry the scans in the sensor frame, as the sensor published them, and the
     # window one wants them registered. The mapper is what registers them here.
-    LocalMapRelocalization.blueprint(world_frame=WORLD, publish_loaded_map=True),
+    LocalMapRelocalization.blueprint(world_frame=WORLD),
     vis_module(
         "rerun",
         {"visual_override": {"world/loaded_map": _fine_points}, "blueprint": _view},

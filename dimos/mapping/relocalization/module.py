@@ -42,7 +42,7 @@ from __future__ import annotations
 from typing import Any
 
 import reactivex as rx
-from reactivex import Subject, operators as ops
+from reactivex import Observable, Subject, operators as ops
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -55,10 +55,17 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-FRAME_MAP = "map"
-
-PUBLISH_INTERVAL = 2.0  # TF and loaded_map republish period
 MAP_SUFFIX = ".pc2.lcm"
+
+
+def fix_stream(fixes: Observable[Transform], interval: float) -> Observable[Transform]:
+    """Every accepted fix as it lands, then again every ``interval`` s (once only if <= 0)."""
+
+    def now_and_again(fix: Transform) -> Observable[Transform]:
+        again = rx.interval(interval).pipe(ops.map(lambda _: fix)) if interval > 0 else rx.empty()
+        return rx.concat(rx.of(fix), again)
+
+    return fixes.pipe(ops.switch_map(now_and_again))
 
 
 class Config(ModuleConfig):
@@ -66,15 +73,18 @@ class Config(ModuleConfig):
     # `.pc2.lcm` is appended if absent. Without one the module runs but never
     # attempts a fix.
     map_file: str | None = None
-    # What the live fixed frame is called - whatever the odometry that feeds
-    # this stack roots its tf at. The fix is published as an edge from it.
+    # What the live fixed frame is called, whatever the odometry is in
     world_frame: str = "world"
-    publish_loaded_map: bool = False
-    # Stop attempting once a fix is accepted. A premap fix does not go stale
-    # the way odometry does - the accepted transform keeps being republished
-    # either way - so carrying on only spends CPU and gives a later, worse
-    # attempt a chance to overwrite a good answer. Set False where the robot
-    # is expected to drift far enough that the fix must be re-earned.
+    # frame for a loaded premap
+    map_frame: str = "map"
+    # Seconds between tf republishes of the accepted fix. The fix itself does
+    # not change but tf is not latched,
+    tf_interval: float = 10.0
+    # Seconds between `loaded_map` republishes. A premap does not change, so
+    # one publish is all the information there is - but the topic is not
+    # latched. Zero for the one publish.
+    republish_loaded_map: float = 0.0
+    # Stop attempting once a fix is accepted.
     relocalize_once: bool = True
 
 
@@ -87,17 +97,16 @@ class RelocalizationModule(Module):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._world_to_map: Subject[Transform] = Subject()
-        # The prior map, for implementations to match against. Set by start().
+        self.fixes: Subject[Transform] = Subject()
         self.premap: PointCloud2 | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
         self.register_disposable(
-            rx.interval(PUBLISH_INTERVAL)
-            .pipe(ops.with_latest_from(self._world_to_map))
-            .subscribe(lambda pair: self.tf.publish(TFMessage(pair[1].now())))
+            fix_stream(self.fixes, self.config.tf_interval).subscribe(
+                lambda tf: self.tf.publish(TFMessage(tf.now()))
+            )
         )
         if not self.config.map_file:
             logger.info("Relocalization module disabled (no map_file configured)")
@@ -110,17 +119,15 @@ class RelocalizationModule(Module):
         # rather than reported missing.
         name = map_file if map_file.endswith(MAP_SUFFIX) else map_file + MAP_SUFFIX
         premap = PointCloud2.lcm_decode(get_data(name).read_bytes())
-        # The premap *is* the map frame - it defines where `map` is.
-        premap.frame_id = FRAME_MAP
+
+        premap.frame_id = self.config.map_frame
         self.premap = premap
-        if self.config.publish_loaded_map:
-            # Gated on a fix: until one ties `map` to `world` there is nothing
-            # downstream that can resolve the frame this cloud is stamped with.
-            self.register_disposable(
-                rx.interval(PUBLISH_INTERVAL)
-                .pipe(ops.with_latest_from(self._world_to_map))
-                .subscribe(lambda _: self.loaded_map.publish(premap))
+
+        self.register_disposable(
+            fix_stream(self.fixes, self.config.republish_loaded_map).subscribe(
+                lambda _: self.loaded_map.publish(premap)
             )
+        )
 
     @property
     def placed(self) -> bool:
@@ -133,13 +140,13 @@ class RelocalizationModule(Module):
 
     def submit(self, tf: Transform, source: str = "") -> None:
         """Publish a ``world_frame -> map`` fix the implementation already decided to believe."""
-        world = self.config.world_frame
-        assert (tf.frame_id, tf.child_frame_id) == (world, FRAME_MAP), (
-            f"relocalize {source}: expected {world!r} -> {FRAME_MAP!r}, "
+        world, map_frame = self.config.world_frame, self.config.map_frame
+        assert (tf.frame_id, tf.child_frame_id) == (world, map_frame), (
+            f"relocalize {source}: expected {world!r} -> {map_frame!r}, "
             f"got {tf.frame_id!r} -> {tf.child_frame_id!r}"
         )
-        logger.info(f"relocalize {source}: TF {world!r} -> {FRAME_MAP!r} t={tf.translation}")
-        self._world_to_map.on_next(tf)
+        logger.info(f"relocalize {source}: TF {world!r} -> {map_frame!r} t={tf.translation}")
+        self.fixes.on_next(tf)
         if not self._placed and self.config.relocalize_once:
             logger.info(f"relocalize {source}: placed, no further attempts (relocalize_once)")
         self._placed = True

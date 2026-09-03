@@ -45,7 +45,7 @@ def module():
 def fixes(m):
     """Collect the transforms a module accepts."""
     got = []
-    m._world_to_map.subscribe(got.append)
+    m.fixes.subscribe(got.append)
     return got
 
 
@@ -77,13 +77,28 @@ def test_relocalize_once_stops_after_the_first_fix(module):
     assert forever.placed and forever.keep_relocalizing()
 
 
+@pytest.mark.parametrize("interval", [3600.0, 0.0])
+def test_the_fix_goes_out_the_moment_it_is_accepted(interval):
+    """Not on the next interval tick, and with or without republishing (<= 0 = once per fix)."""
+    from reactivex import Subject
+
+    from dimos.mapping.relocalization.module import fix_stream
+
+    fixes, sent = Subject(), []
+    disposable = fix_stream(fixes, interval=interval).subscribe(sent.append)
+    tf = Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map")
+    fixes.on_next(tf)
+    assert sent == [tf]
+    disposable.dispose()
+
+
 def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
     """Loading is the base's: every strategy reads a premap and publishes it, once placed."""
     path = tmp_path / "somewhere.pc2.lcm"
     path.write_bytes(
         PointCloud2.from_numpy(np.zeros((5, 3), dtype=np.float32), timestamp=0.0).lcm_encode()
     )
-    m = module(publish_loaded_map=True)
+    m = module()
     published, disposables = [], []
     # The one collaborator worth faking: a real Out port would publish onto a
     # bus nothing in this test is listening to.
@@ -93,9 +108,11 @@ def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
     m._load_premap(str(path))
     assert m.premap is not None and len(m.premap) == 5
     assert m.premap.frame_id == "map"
-    assert len(disposables) == 1  # the gated republish
+    assert len(disposables) == 1  # the gated publish
     assert published == []  # ... which stays silent until a fix lands
-    disposables[0].dispose()  # rx.interval runs on a thread
+    m.submit(Transform.from_matrix(np.eye(4), frame_id="world", child_frame_id="map"))
+    assert published == [m.premap]  # republish_loaded_map=0: once, on that fix
+    disposables[0].dispose()
 
 
 def test_relocalizer_refuses_below_its_own_threshold(monkeypatch):
@@ -113,11 +130,11 @@ def test_relocalizer_refuses_below_its_own_threshold(monkeypatch):
             None, lidar.MID360.model_copy(update={"fitness_threshold": threshold})
         )
 
-    assert relocalizer(0.5).relocalize(None, "world") is None
+    assert relocalizer(0.5).relocalize(None, "world", "map") is None
 
     # Accepted: open3d places the live cloud in the map, the TF tree wants the
     # other direction, and relocalize() is what turns one into the other.
-    tf = relocalizer(0.3).relocalize(None, "world")
+    tf = relocalizer(0.3).relocalize(None, "world", "map")
     assert (tf.frame_id, tf.child_frame_id) == ("world", "map")
     np.testing.assert_allclose(tf.to_matrix(), np.linalg.inv(placement), atol=1e-9)
 
