@@ -12,17 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Linux CAN interface management commands."""
+"""CAN interface discovery and Linux SocketCAN management commands."""
 
 from __future__ import annotations
 
 import os
 import shlex
 import subprocess
+import sys
 
 import typer
 
-app = typer.Typer(help="Configure and inspect Linux CAN interfaces", no_args_is_help=True)
+if sys.platform in {"linux", "darwin"}:
+    import can_motor_control
+
+app = typer.Typer(help="Discover and configure CAN interfaces", no_args_is_help=True)
+
+GS_USB_VENDOR_ID = 0x1D50
+GS_USB_PRODUCT_ID = 0x606F
 
 
 def _run_ip(*args: str, privileged: bool = False) -> subprocess.CompletedProcess[str]:
@@ -48,6 +55,41 @@ def _run_ip(*args: str, privileged: bool = False) -> subprocess.CompletedProcess
         detail = stderr or stdout or f"exit code {exc.returncode}"
         typer.echo(f"CAN interface command failed: {detail}", err=True)
         raise typer.Exit(1) from exc
+
+
+@app.command("list")
+def list_devices() -> None:
+    """List selectable CAN devices for this host."""
+    if sys.platform == "linux":
+        result = _run_ip("-brief", "link", "show", "type", "can")
+        output = result.stdout.rstrip()
+        typer.echo(output or "No SocketCAN interfaces found")
+        return
+    if sys.platform == "darwin":
+        try:
+            devices = can_motor_control.list_gs_usb_devices(
+                vendor_id=GS_USB_VENDOR_ID,
+                product_id=GS_USB_PRODUCT_ID,
+            )
+        except can_motor_control.TransportError as exc:
+            typer.echo(f"CAN device discovery failed: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        if not devices:
+            typer.echo("No gs_usb adapters found (expected USB ID 1d50:606f)")
+            return
+        typer.echo("INDEX  SERIAL")
+        for device in devices:
+            typer.echo(f"{device.index:<5}  {device.serial_number or '<missing>'}")
+        serials = [device.serial_number for device in devices]
+        if not all(serials) or len(serials) != len(set(serials)):
+            typer.echo(
+                "Adapters cannot be assigned reliably unless their firmware exposes "
+                "unique, non-empty USB serials.",
+                err=True,
+            )
+        return
+    typer.echo(f"CAN discovery is unsupported on {sys.platform}", err=True)
+    raise typer.Exit(1)
 
 
 @app.command("status")
