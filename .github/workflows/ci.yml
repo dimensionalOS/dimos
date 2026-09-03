@@ -200,7 +200,7 @@ jobs:
           SKIP: cargo-fmt,cargo-clippy
 
   rust:
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     permissions:
       contents: read  # For checkout
@@ -224,6 +224,57 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: cargo test
         run: cargo test --workspace --all-features --locked
+
+      - name: Find Rust crates with their own flake
+        # These carry system deps (gtsam, PCL, ...) the root shell lacks, so
+        # they are excluded from the root workspace and the steps above skip
+        # them entirely. Check them in their own dev shell instead.
+        id: find-flake-crates
+        run: |
+          crates=$(git ls-files '*Cargo.toml' | while read -r manifest; do
+            cargo locate-project --manifest-path "$manifest" --workspace --message-format plain
+          done | sort -u | while read -r root; do
+            dir=$(dirname "$root")
+            [ "$dir" = "$PWD" ] && continue
+            [ -f "$dir/flake.nix" ] && echo "${dir#"$PWD"/}"
+          done)
+          if [ -z "$crates" ]; then
+            echo "::error::No flake-backed Rust crates found - the discovery glob is wrong"
+            exit 1
+          fi
+          echo "Found flake-backed Rust crates:"
+          echo "$crates"
+          {
+            echo "crates<<EOF"
+            echo "$crates"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Free runner disk space
+        uses: BRAINSia/free-disk-space@v2.1.3
+      - name: Install Nix
+        # Substituting needs only the public key, so no auth token is used here
+        # and this stays safe on fork PRs.
+        env:
+          INPUT_EXTRA_NIX_CONFIG: |
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          INPUT_SET_AS_TRUSTED_USER: "true"
+        run: bash docker/ros/install-nix.sh
+      - name: Check Rust crates with their own flake
+        env:
+          CRATES: ${{ steps.find-flake-crates.outputs.crates }}
+        run: |
+          for crate in $CRATES; do
+            echo "::group::$crate"
+            (cd "$crate" && nix develop path:. --command bash -c '
+              set -euo pipefail
+              cargo fmt --all -- --check
+              cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+              cargo test --workspace --all-features --locked
+            ')
+            echo "::endgroup::"
+          done
+
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
         with:

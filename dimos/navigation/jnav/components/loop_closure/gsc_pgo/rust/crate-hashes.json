@@ -1,0 +1,4 @@
+{
+  "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#dimos-lcm@0.1.0": "102fcgba6l4z9a9pms3b45k6d52nrh7mr8yxlmx7ranpzr6qadg0",
+  "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#lcm-msgs@0.1.0": "102fcgba6l4z9a9pms3b45k6d52nrh7mr8yxlmx7ranpzr6qadg0"
+}

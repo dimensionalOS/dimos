@@ -5,6 +5,9 @@
   #   cd dimos/navigation/jnav/components/loop_closure/gsc_pgo/rust
   #   nix develop path:. --command cargo test
   #
+  # `nix build` must use `.#default` rather than `path:.`: the package pulls in
+  # the native/rust path deps, which sit above this directory.
+  #
   # The dev shell exports GTSAM_INCLUDE_DIR / GTSAM_LIB_DIR /
   # EIGEN_INCLUDE_DIR / BOOST_INCLUDE_DIR, which build.rs consumes directly.
   description = "dimos-gsc-pgo: Rust port of the gsc_pgo PGO core (gtsam FFI shim + Scan Context)";
@@ -19,9 +22,13 @@
       url = "github:jeff-hykin/gtsam-extended/f4572a80b6339181693aee6029ca28153e59a993";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    crate2nix = {
+      url = "github:nix-community/crate2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, gtsam-extended, ... }:
+  outputs = { self, nixpkgs, flake-utils, gtsam-extended, crate2nix, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -61,11 +68,31 @@
           cp ${./Cargo.toml} "$out/${crateSubdir}/Cargo.toml"
           cp ${./Cargo.lock} "$out/${crateSubdir}/Cargo.lock"
           cp ${./build.rs} "$out/${crateSubdir}/build.rs"
+          cp ${./crate-hashes.json} "$out/${crateSubdir}/crate-hashes.json"
 
           mkdir -p "$out/native/rust"
           cp -r ${../../../../../../../native/rust/dimos-module} "$out/native/rust/dimos-module"
           cp -r ${../../../../../../../native/rust/dimos-module-macros} "$out/native/rust/dimos-module-macros"
         '';
+
+        # crate2nix turns Cargo.lock into one derivation per crate, so there is
+        # no vendor-tarball `cargoHash` to regenerate whenever a dependency
+        # moves. `crate-hashes.json` pins the git dependency (lcm-msgs);
+        # refresh it with `crate2nix generate` when that ref changes.
+        cargoNix = pkgs.callPackage
+          (crate2nix.tools.${system}.generatedCargoNix {
+            name = "dimos-gsc-pgo";
+            inherit src;
+            cargoToml = "${crateSubdir}/Cargo.toml";
+          })
+          {
+            defaultCrateOverrides = pkgs.defaultCrateOverrides // {
+              dimos-gsc-pgo = _attrs: {
+                nativeBuildInputs = [ pkgs.pkg-config ];
+                buildInputs = [ gtsam pkgs.eigen pkgs.boost pkgs.tbb ];
+              } // buildEnv;
+            };
+          };
       in {
         devShells.default = pkgs.mkShell {
           # clippy + rustfmt come from the same nixpkgs pin as cargo/rustc so the
@@ -76,23 +103,8 @@
           env = buildEnv;
         };
 
-        packages.default = pkgs.rustPlatform.buildRustPackage ({
-          pname = "dimos-gsc-pgo";
-          version = "0.1.0";
-
-          inherit src;
-          cargoRoot = crateSubdir;
-          buildAndTestSubdir = crateSubdir;
-          cargoHash = "sha256-OcoRRTsYQBjxNJ4p4l4Nr93Z4NSMcr3JYTXKPnsew3M=";
-
-          nativeBuildInputs = [ pkgs.pkg-config ];
-          buildInputs = [ gtsam pkgs.eigen pkgs.boost pkgs.tbb ];
-
-          # Tests replay recorded databases / need runtime fixtures, so they
-          # don't belong in the sandboxed build.
-          doCheck = false;
-
-          meta.mainProgram = "gsc-pgo";
-        } // buildEnv);
+        packages.default = cargoNix.rootCrate.build.overrideAttrs (old: {
+          meta = (old.meta or { }) // { mainProgram = "gsc-pgo"; };
+        });
       });
 }
