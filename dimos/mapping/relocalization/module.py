@@ -50,7 +50,7 @@ from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.utils.data import resolve_named_path
+from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -106,7 +106,10 @@ class RelocalizationModule(Module):
         logger.info(f"Relocalization module started: map_file={self.config.map_file!r}")
 
     def _load_premap(self, map_file: str) -> None:
-        premap = PointCloud2.lcm_decode(resolve_named_path(map_file, MAP_SUFFIX).read_bytes())
+        # get_data, so a premap that is only in LFS is pulled and decompressed
+        # rather than reported missing.
+        name = map_file if map_file.endswith(MAP_SUFFIX) else map_file + MAP_SUFFIX
+        premap = PointCloud2.lcm_decode(get_data(name).read_bytes())
         # The premap *is* the map frame - it defines where `map` is.
         premap.frame_id = FRAME_MAP
         self.premap = premap

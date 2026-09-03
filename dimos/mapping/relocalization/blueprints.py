@@ -47,16 +47,11 @@ logger = setup_logger()
 
 # The walk, and a premap built from the same walk's second half. Overlapping
 # but not identical: the relocalizer has to place the live scans, not
-# recognize a copy of them.
-DATASET = "go2_mid360_sf_office_outdoors_2026-05-29"
-
-# What the recordings' LIO roots its tf at, and so the fixed frame the whole
-# demo runs in - the mapper registers into it and the fix is an edge from it.
 WORLD = "odom"
 
 
 class RecordingPlayerConfig(ModuleConfig):
-    dataset: str = DATASET  # recording stem or path; `.db`, LFS-fetched on miss
+    dataset: str = "go2_mid360_sf_office_outdoors_2026-05-29"  # recording stem or path; `.db`, LFS-fetched on miss
     stream: str = "pointlio_lidar"
     speed: float = 1.0
     seek: float | None = None
@@ -98,7 +93,7 @@ def _fine_points(cloud: Any) -> Any:
 
 
 # Off until asked for.
-HIDDEN = tuple(f"{WORLD}/{name}" for name in ("global_map", "lidar", "region_bounds"))
+HIDDEN = tuple(f"world/{name}" for name in ("global_map", "lidar", "region_bounds"))
 
 
 def _view() -> Any:
@@ -122,9 +117,9 @@ relocalize_mid360 = autoconnect(
     # LocalMapRelocalization and not LidarWindowRelocalization: these recordings
     # carry the scans in the sensor frame, as the sensor published them, and the
     # window one wants them registered. The mapper is what registers them here.
-    LocalMapRelocalization.blueprint(map_file=DATASET, world_frame=WORLD, publish_loaded_map=True),
+    LocalMapRelocalization.blueprint(world_frame=WORLD, publish_loaded_map=True),
     vis_module(
         "rerun",
-        {"visual_override": {f"{WORLD}/loaded_map": _fine_points}, "blueprint": _view},
+        {"visual_override": {"world/loaded_map": _fine_points}, "blueprint": _view},
     ),
 ).global_config(n_workers=5, robot_model="relocalize_mid360")
