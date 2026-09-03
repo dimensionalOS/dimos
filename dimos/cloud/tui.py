@@ -149,11 +149,14 @@ class DataBrowser(App[None]):
         table = self.query_one(DataTable)
         selected = self._selected()
         table.clear(columns=True)
+        from dimos.cloud.cli import local_time, tz_label
+
         widths = self._widths()
         order = ["id", "file", "uploaded", "kind", "uploader", "blueprint", "robot"]
         order += ["topics", "size", "state"]
         for name in order:
-            table.add_column(name, width=widths[name])
+            label = f"uploaded ({tz_label()})" if name == "uploaded" else name
+            table.add_column(label, width=widths[name])
         from rich.filesize import decimal
 
         for u in self._rows:
@@ -162,7 +165,7 @@ class DataBrowser(App[None]):
             table.add_row(
                 Text(u["id"][:12], style="cyan"),
                 Text(u["filename"], style="bold"),
-                Text(str(u.get("created_at") or "")[:16].replace("T", " ") or "—", style="dim"),
+                Text(local_time(str(u.get("created_at") or "")) or "—", style="dim"),
                 Text(u.get("kind", "")),
                 Text(u.get("uploader_email") or "—", style="dim"),
                 Text((u.get("manifest") or {}).get("blueprint") or "—", style="magenta"),
