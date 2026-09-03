@@ -31,7 +31,7 @@ import pytest
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
-from dimos.core.transport import LCMTransport, ZenohTransport
+from dimos.core.transport import ZenohTransport
 from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
     RustRecorder,
@@ -93,20 +93,24 @@ def rust_recorder_executable() -> Path:
 def _wait_for_log(process: subprocess.Popen[bytes], message: str) -> None:
     assert process.stderr is not None
     deadline = time.monotonic() + 10.0
-    output: list[str] = []
-    while process.poll() is None:
+    output = bytearray()
+    expected = message.encode()
+    while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
         readable, _, _ = select.select([process.stderr], [], [], remaining)
         if not readable:
             break
-        line = process.stderr.readline().decode(errors="replace")
-        output.append(line)
-        if message in line:
+        chunk = os.read(process.stderr.fileno(), 65536)
+        if not chunk:
+            break
+        output.extend(chunk)
+        if expected in output:
             return
     pytest.fail(
-        f"Rust recorder did not log {message!r}; exit={process.poll()}, stderr={''.join(output)!r}"
+        f"Rust recorder did not log {message!r}; exit={process.poll()}, "
+        f"stderr={output.decode(errors='replace')!r}"
     )
 
 
@@ -130,6 +134,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
     tmp_path: Path,
     rust_recorder_executable: Path,
     store_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     suffix = ".db" if store_kind == "sqlite" else ".mcap"
     artifact = tmp_path / f"recording{suffix}"
@@ -139,28 +144,45 @@ def test_rust_artifact_is_readable_by_python_memory2(
         store = RustSqliteStoreConfig(path=str(artifact))
     else:
         store = RustMcapStoreConfig(path=str(artifact))
+    endpoint = f"tcp/127.0.0.1:{_free_port()}"
+    monkeypatch.setattr(global_config, "transport", "zenoh")
     recorder = InteropRustRecorder(
         executable=str(rust_recorder_executable),
         store=store,
         record_tf=False,
         encoding_threads=2,
         stream_codecs={"imu": "lz4+lcm"},
+        session=ZenohConfig(
+            mode="peer",
+            connect=[],
+            listen=[endpoint],
+            multicast=False,
+            gossip=False,
+            connect_timeout=0,
+        ),
     )
-    # LCM appends the payload type to the channel and caps the combined name.
+    session_pool = ZenohSessionPool()
     channel_suffix = uuid.uuid4().hex[:8]
-    # The pure-Rust LCM transport currently uses the standard LCM bus directly.
-    publisher: LCMTransport[Imu] = LCMTransport(
-        f"/rr_imu_{channel_suffix}",
-        Imu,
-        url="udpm://239.255.76.67:7667?ttl=0",
+    publisher: ZenohTransport[Imu] = ZenohTransport(
+        ZenohTopic(f"dimos/rr_imu_{channel_suffix}", Imu),
+        session_pool=session_pool,
+        mode="client",
+        connect=[endpoint],
+        multicast=False,
+        gossip=False,
+        connect_timeout=5,
     )
-    image_publisher: LCMTransport[Image] = LCMTransport(
-        f"/rr_image_{channel_suffix}",
-        Image,
-        url="udpm://239.255.76.67:7667?ttl=0",
+    image_publisher: ZenohTransport[Image] = ZenohTransport(
+        ZenohTopic(f"dimos/rr_image_{channel_suffix}", Image),
+        session_pool=session_pool,
+        mode="client",
+        connect=[endpoint],
+        multicast=False,
+        gossip=False,
+        connect_timeout=5,
     )
-    imu_topic = str(publisher.topic)
-    image_topic = str(image_publisher.topic)
+    imu_topic = publisher.channel
+    image_topic = image_publisher.channel
     recorder.imu.transport = FakeTransport(imu_topic)  # type: ignore[assignment]
     recorder.color_image.transport = FakeTransport(image_topic)  # type: ignore[assignment]
     specs = recorder._stream_specs()
@@ -168,7 +190,11 @@ def test_rust_artifact_is_readable_by_python_memory2(
     recorder.config.streams = specs
     launch = recorder._stdin_blob({"imu": imu_topic, "color_image": image_topic})
 
-    env = {**os.environ, "DIMOS_TRANSPORT": "lcm", "RUST_LOG": "debug"}
+    env = {
+        **os.environ,
+        "DIMOS_TRANSPORT": "zenoh",
+        "RUST_LOG": "info,dimos_memory_recorder=debug",
+    }
     process = subprocess.Popen(
         [str(rust_recorder_executable)],
         cwd=_RUST_PACKAGE,
@@ -194,12 +220,8 @@ def test_rust_artifact_is_readable_by_python_memory2(
             frame_id="camera",
             ts=12.75,
         )
-        # LCM is lossy UDP and the native subscriptions may still be joining
-        # the multicast group when the process first reports ready.
-        for _ in range(20):
-            publisher.broadcast(None, expected)
-            image_publisher.broadcast(None, expected_image)
-            time.sleep(0.05)
+        publisher.broadcast(None, expected)
+        image_publisher.broadcast(None, expected_image)
         _wait_for_log(process, "memory recorder batch written")
 
         process.send_signal(signal.SIGTERM)
@@ -207,6 +229,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
     finally:
         publisher.stop()
         image_publisher.stop()
+        session_pool.close_all()
         if process.poll() is None:
             process.kill()
             process.wait(timeout=10.0)
@@ -274,7 +297,11 @@ def test_tf_records_over_zenoh_and_replays_through_python(
     recorder.config.streams = specs
     launch = recorder._stdin_blob({"tf": publisher.channel})
 
-    env = {**os.environ, "DIMOS_TRANSPORT": "zenoh", "RUST_LOG": "debug"}
+    env = {
+        **os.environ,
+        "DIMOS_TRANSPORT": "zenoh",
+        "RUST_LOG": "info,dimos_memory_recorder=debug",
+    }
     process = subprocess.Popen(
         [str(rust_recorder_executable)],
         cwd=_RUST_PACKAGE,
