@@ -93,6 +93,46 @@ def test_toggle_starts_then_saves(make_monitor: Callable[..., EpisodeMonitorModu
     assert events[-1].task_label == "pick up the block"
 
 
+def test_rpc_commands_use_the_same_state_machine(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+
+    recording = m.command("toggle")
+    saved = m.command("toggle")
+
+    assert [event.last_event for event in _events(m)] == ["start", "save"]
+    assert recording.state == "recording"
+    assert saved.state == "idle"
+    assert saved.episodes_saved == 1
+
+
+def test_get_status_does_not_publish(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+    m.command("start")
+    event_count = len(_events(m))
+
+    status = m.get_status()
+
+    assert status.state == "recording"
+    assert status.last_event == "start"
+    assert len(_events(m)) == event_count
+
+
+def test_invalid_rpc_command_is_rejected_without_changing_state(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
+    m = make_monitor()
+
+    with pytest.raises(ValueError, match="unknown episode command"):
+        m.command("pause")  # type: ignore[arg-type]
+
+    assert m.get_status().state == "idle"
+    assert _events(m) == []
+
+
 def test_task_is_required(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
     with pytest.raises(ValidationError, match="task"):
         EpisodeMonitorModule()

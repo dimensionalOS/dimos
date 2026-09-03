@@ -53,6 +53,7 @@ from dimos.cli.commands.apriltag import apriltag
 from dimos.cli.commands.bake import bake
 from dimos.cli.commands.cameracalibrate import cameracalibrate
 from dimos.cli.commands.data import data_app
+from dimos.cli.commands.collect import collect
 from dimos.cli.commands.dataprep import dataprep_app
 from dimos.cli.commands.docs import docs
 from dimos.cli.commands.global_options import create_dynamic_callback
@@ -128,6 +129,7 @@ main.command(
 )(bake)
 main.command(name="list")(list_blueprints)
 main.command()(docs)
+main.command()(collect)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(spy)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(lcmspy)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(agentspy)
