@@ -29,6 +29,7 @@ FRAGMENT_SCHEMA_VERSION = 1
 FRAGMENT_FORMAT = "python-blueprint"
 RUN_STREAM_KEY = "dimos/runs/{run_id}/streams/{stream}/{message_type}"
 RUN_MODULE_RPC_NAME = "runs/{run_id}/hosts/{host_id}/modules/{module}"
+RUN_COORDINATOR_RPC_NAME = "runs/{run_id}/hosts/{host_id}/coordinator"
 
 
 def message_type_name(message_type: type) -> str:
@@ -63,6 +64,11 @@ def run_module_rpc_name(run_id: str, host_id: str, module_name: str) -> str:
         host_id=host_id,
         module=module_name.lstrip("/"),
     )
+
+
+def run_coordinator_rpc_name(run_id: str, host_id: str) -> str:
+    """Return the run- and Host-scoped Coordinator RPC name."""
+    return RUN_COORDINATOR_RPC_NAME.format(run_id=run_id, host_id=host_id)
 
 
 @dataclass(frozen=True, slots=True)

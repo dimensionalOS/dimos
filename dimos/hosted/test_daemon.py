@@ -295,7 +295,9 @@ def test_run_fragment_loads_identity_bound_payload(
     built_blueprint, built_config = build.call_args.args
     built_config.assert_matches(built_blueprint)
     assert build.call_args.kwargs == {"remote_module_refs": {}}
-    coordinator.start_rpc_service.assert_called_once_with()
+    coordinator.start_rpc_service.assert_called_once_with(
+        name="runs/run-1/hosts/host-1/coordinator"
+    )
     stop_requested.wait.assert_called_once_with()
     ready.send.assert_called_once_with((True, None))
     coordinator.stop.assert_called_once_with()

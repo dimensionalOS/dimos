@@ -157,7 +157,7 @@ def test_compiler_emits_cross_host_module_reference_and_provider_rpc_name() -> N
     )
 
 
-def test_compiler_keeps_same_host_module_reference_on_local_rpc_name() -> None:
+def test_compiler_keeps_same_host_module_reference_local_with_hosted_rpc_names() -> None:
     blueprint = autoconnect(ProviderModule.blueprint(), ConsumerModule.blueprint())
     config = BlueprintConfigParser(blueprint).parse(environ={})
 
@@ -178,6 +178,10 @@ def test_compiler_keeps_same_host_module_reference_on_local_rpc_name() -> None:
     provider = next(
         atom for atom in payload.blueprint.active_blueprints if atom.name == "providermodule"
     )
+    consumer = next(
+        atom for atom in payload.blueprint.active_blueprints if atom.name == "consumermodule"
+    )
 
     assert payload.remote_module_references == ()
-    assert "rpc_name" not in provider.kwargs
+    assert provider.kwargs["rpc_name"] == run_module_rpc_name("run-1", "host-a", "providermodule")
+    assert consumer.kwargs["rpc_name"] == run_module_rpc_name("run-1", "host-a", "consumermodule")

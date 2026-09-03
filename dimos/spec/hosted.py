@@ -22,6 +22,7 @@ This file is only for documentation purposes and is not meant to be executed.
 from __future__ import annotations
 
 from dimos.hosted.fragment import (
+    RUN_COORDINATOR_RPC_NAME as RUN_COORDINATOR_RPC_NAME,
     RUN_MODULE_RPC_NAME as RUN_MODULE_RPC_NAME,
     RUN_STREAM_KEY as RUN_STREAM_KEY,
 )
