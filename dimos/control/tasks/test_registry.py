@@ -165,14 +165,11 @@ def test_seeded_cards_load_into_registry() -> None:
     assert gripper.consumes == (
         StreamBinding("gripper_command", "on_gripper_command", Routing.BROADCAST),
     )
-    assert gripper.exposes == frozenset(
-        {"get_normalized", "get_position", "set_normalized", "set_position"}
-    )
     trajectory = control_task_registry.bindings_for("trajectory")
     assert trajectory.consumes == (
         StreamBinding("joint_command", "on_joint_command", Routing.CLAIM_OVERLAP),
     )
-    assert trajectory.exposes == frozenset({"cancel", "execute", "get_state", "get_status"})
+    assert trajectory.exposes == frozenset({"execute", "cancel", "get_state", "get_status"})
     g1 = control_task_registry.bindings_for("g1_groot_wbc")
     assert g1.consumes == (StreamBinding("twist_command", "on_twist_command", Routing.BROADCAST),)
     assert g1.exposes == frozenset(

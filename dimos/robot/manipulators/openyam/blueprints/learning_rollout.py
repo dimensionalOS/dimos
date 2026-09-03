@@ -41,9 +41,7 @@ from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 _policy_task = TaskConfig(
     name=POLICY_ROLLOUT_TASK_NAME,
-    type="trajectory",
     joint_names=list(OPENYAM_JOINTS),
-    priority=10,
 )
 
 learning_rollout_quest_openyam = (
@@ -63,7 +61,6 @@ learning_rollout_quest_openyam = (
         CameraModule.blueprint(
             instance_name="WristCamera",
             hardware=WebcamConfig(
-                camera_index=0,
                 width=OPENYAM_LEARNING_PROFILE.camera_width,
                 height=OPENYAM_LEARNING_PROFILE.camera_height,
                 fps=OPENYAM_LEARNING_PROFILE.fps,

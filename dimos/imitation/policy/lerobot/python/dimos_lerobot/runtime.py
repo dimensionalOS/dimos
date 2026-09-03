@@ -562,36 +562,6 @@ def _checkpoint_action_bounds(
     return lower, upper
 
 
-def _checkpoint_action_bounds(
-    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
-    expected_width: int,
-) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
-    lower_tensor: torch.Tensor | None = None
-    upper_tensor: torch.Tensor | None = None
-    for step in postprocessor.steps:
-        state = step.state_dict()
-        if "action.min" in state and "action.max" in state:
-            lower_tensor = state["action.min"]
-            upper_tensor = state["action.max"]
-            break
-    if lower_tensor is None or upper_tensor is None:
-        raise ValueError("Policy postprocessor has no action min/max statistics")
-
-    lower = np.asarray(lower_tensor.detach().cpu().numpy(), dtype=np.float32)
-    upper = np.asarray(upper_tensor.detach().cpu().numpy(), dtype=np.float32)
-    expected_shape = (expected_width,)
-    if lower.shape != expected_shape or upper.shape != expected_shape:
-        raise ValueError(
-            "Policy action range shape does not match configured joints: "
-            f"min={lower.shape}, max={upper.shape}, expected={expected_shape}"
-        )
-    if not np.all(np.isfinite(lower)) or not np.all(np.isfinite(upper)):
-        raise ValueError("Policy action range contains non-finite values")
-    if np.any(lower > upper):
-        raise ValueError("Policy action range has min greater than max")
-    return lower, upper
-
-
 def _reset(instance: object) -> None:
     reset = getattr(instance, "reset", None)
     if not callable(reset):
