@@ -36,6 +36,8 @@ class FakeTransport:
         self.parts: dict[str, dict[int, bytes]] = {}
         self.part_size = 128 * 1024
         self.fail_at = 0  # fail the Nth put, once
+        self.epoch = 0  # presign generation; URLs from older epochs are expired
+        self.expire_at = 0  # bump epoch before the Nth put, once
 
     def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         if path.endswith("/uploads") and method == "POST":
@@ -91,12 +93,20 @@ class FakeTransport:
             "state": "pending",
             "upload_id": uid,
             "part_size": self.part_size,
-            "part_urls": [{"part_number": i, "url": f"{uid}/{i}"} for i in range(1, n + 1)],
+            "part_urls": [
+                {"part_number": i, "url": f"{uid}/{i}?e={self.epoch}"} for i in range(1, n + 1)
+            ],
             "quota": {"state": "ok"},
         }
 
     def put(self, url: str, body: bytes) -> None:
-        uid, n = url.split("/")
+        path, _, epoch = url.partition("?e=")
+        uid, n = path.split("/")
+        if self.expire_at and len(self.parts[uid]) + 1 == self.expire_at:
+            self.expire_at = 0
+            self.epoch += 1
+        if int(epoch) != self.epoch:
+            raise OSError("403 Forbidden: Request has expired")
         if self.fail_at and len(self.parts[uid]) + 1 == self.fail_at:
             self.fail_at = 0
             raise OSError("link dropped")
@@ -159,12 +169,22 @@ def test_resume_sends_only_missing_parts(tmp_path: Path, monkeypatch: pytest.Mon
     real_put = t.put
 
     def spying_put(url: str, body: bytes) -> None:
-        sent.append(int(url.split("/")[1]))
+        sent.append(int(url.split("/")[1].partition("?")[0]))
         real_put(url, body)
 
     monkeypatch.setattr(t, "put", spying_put)
     assert cloud.upload(db)["state"] == "complete"
     assert before and set(sent).isdisjoint(before)
+
+
+def test_upload_refreshes_expired_part_urls(env: tuple[CloudData, FakeTransport, Path]) -> None:
+    """An upload slower than the presign TTL: URLs from create die mid-run; the
+    client must re-create (same sha256 -> fresh URLs) and finish, not abort."""
+    cloud, t, db = env
+    t.expire_at = 2  # URLs signed at create expire before part 2 lands
+    r = cloud.upload(db)
+    assert r["state"] == "complete" and not r["skipped"]
+    assert t.epoch == 1  # completed on re-signed URLs, not the originals
 
 
 @pytest.mark.parametrize(

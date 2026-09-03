@@ -87,17 +87,35 @@ def upload(
 
 @handle_fail
 def ls() -> None:
+    from datetime import datetime, timezone
+
     from rich import box
     from rich.console import Console
     from rich.filesize import decimal
     from rich.table import Table
+
+    tz_now = datetime.now().astimezone().tzname()
+
+    def local(ts: str) -> str:
+        try:
+            d = datetime.fromisoformat(ts)
+        except ValueError:
+            return ts[:16].replace("T", " ")
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        d = d.astimezone()
+        # A row across a DST boundary carries its own label (PST vs the PDT header).
+        suffix = "" if d.tzname() == tz_now else f" {d.tzname()}"
+        return d.strftime("%Y-%m-%d %H:%M") + suffix
 
     rows = CloudData().ls()
     org = any(u.get("uploader_email") for u in rows)
     table = Table(box=box.SIMPLE_HEAVY, header_style="bold")
     table.add_column("id", style="cyan", no_wrap=True)
     table.add_column("file", style="bold")
-    table.add_column("uploaded", style="dim", no_wrap=True)
+    table.add_column(
+        f"uploaded ({datetime.now().astimezone().tzname()})", style="dim", no_wrap=True
+    )
     table.add_column("kind")
     if org:
         table.add_column("uploader", style="dim")
@@ -112,7 +130,7 @@ def ls() -> None:
         table.add_row(
             u["id"][:12],
             u["filename"],
-            str(u.get("created_at") or "")[:16].replace("T", " ") or "—",
+            local(str(u.get("created_at") or "")) or "—",
             u.get("kind", ""),
             *([u.get("uploader_email") or "—"] if org else []),
             mani.get("blueprint") or "—",
