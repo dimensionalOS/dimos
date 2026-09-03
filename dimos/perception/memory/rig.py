@@ -12,29 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The sensor rig behind a recording: intrinsics, poses, and 3D geometry.
+"""The sensor rig behind a run: intrinsics, poses, and 3D geometry.
 
-Two independent axes generalize the perception stack beyond one robot:
+Three independent axes generalize the stack beyond one robot: pose from a
+``tf`` stream or from stamped world poses plus a static mount; geometry from
+an aligned ``depth`` stream or a world-frame pointcloud; and intrinsics and
+mounts keyed by optical frame, each lookup taking the frame off the image it
+resolves rather than off a single rig-wide field.
 
-* **Pose source.** The world-to-optical transform comes from a recorded
-  ``tf`` stream, or - for recordings without one - from the world pose
-  stamped on each observation plus a static base-to-optical mount.
-* **Geometry source.** 3D geometry comes from an aligned ``depth`` stream,
-  unprojected per detection mask, or from a world-frame pointcloud stream
-  (a registered lidar), projected through the camera per detection mask.
-  The cloud at a timestamp merges the scans in a short window around it:
-  fresh scans concatenate whole; snapshots re-reporting each other's exact
-  points (a rolling map) merge nearest-first with cleared cells honored
-  (see ``Rig.cloud_at``).
-
-``Rig.from_store`` recognizes both recording shapes; every field can also
-be supplied directly for live stores whose streams are still filling.
+:meth:`Rig.from_store` recognizes a recording's shape and self-calibrates what
+it omits; a robot that knows its calibration builds a ``Rig`` field by field
+and never touches it.
 """
 
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -42,24 +36,20 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from dimos.memory.tf import StreamTF
-from dimos.memory.transform import Transformer
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.perception.detection.project import sees as project_sees
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 from dimos.perception.detection.type.detection3d.pointcloud import lattice_quantum
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     range_cluster,
     statistical,
 )
-from dimos.perception.memory import gates
-from dimos.perception.memory.gates import SPEED_MAX, STILL_ENVELOPE, TF_TOLERANCE
 from dimos.perception.memory.support_plane import PLANE_DISTANCE_CLOUD
-from dimos.perception.memory.types import InventoryPolicy, LocalizePolicy
+from dimos.perception.memory.types import LocalizePolicy
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
-
     from dimos_lcm.sensor_msgs import CameraInfo
 
     from dimos.memory.type.observation import Observation
@@ -73,50 +63,52 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# Pose-stamped rigs ride per-frame odometry, so walking does not stale the
-# projection the way a sweeping wrist stales interpolated tf; the gate only
-# drops speed glitches and sprints.
-WALK_SPEED_MAX = 1.5
+OPTICAL_FRAME = "camera_color_optical_frame"  # only when a store carries no calibration
+WORLD_FRAME = "world"
+TF_TOLERANCE = 0.12  # s - one world-pose period plus margin
 
 DEPTH_TOLERANCE = 0.06  # s - temporal join color->depth
-# Scans within this of a frame form its geometry. Wide enough that a
-# spinning lidar's near-floor blind ring is filled by scans taken from
-# earlier and later poses - the scene is static in world frame.
+# Scans within this of a frame form its geometry. Wide enough that a spinning
+# lidar's near-floor blind ring is filled by scans taken from earlier and
+# later poses - the scene is static in world frame.
 CLOUD_ACCUM_S = 4.0
+FRAME_TOLERANCE = 0.02  # s - an index timestamp back to its own color frame
 
 _SCAN_CACHE_MAX = 256  # registered scans held per rig; a window needs a few dozen
+_CLOUD_CACHE_MAX = 8  # merged windows held; adjacent frames re-ask for the same one
 
-EMBED_HZ = 1.0  # index density for a wrist camera parked over a workspace
-# A walking robot changes viewpoint every frame and its frames blur
-# unevenly, so the index must sample denser for retrieval to catch the
-# sharp sightings.
-WALK_EMBED_HZ = 3.0
-
-# Color-stream delay estimation: image timestamps stamped at receive lag the
-# pose source by a constant the recording itself reveals - the lag that best
-# correlates optical-flow yaw rate with the camera's heading rate. The grid
-# is the searched span and its resolution; a true delay outside the span
-# lands on an edge and is refused rather than clamped.
-DELAY_LAGS = np.arange(-0.5, 0.5001, 0.01)
-# Flow is sampled in short windows spread over the recording - a compute
-# budget, like the pose samples of _camera_span.
-DELAY_WINDOWS = 12
-DELAY_WINDOW_S = 2.5
+EMBED_HZ = 1.0  # index density for a camera parked over a workspace
+WALK_EMBED_HZ = 3.0  # a walking robot changes viewpoint every frame
+MOBILE_SPAN_M = 3.0  # camera translation beyond this means a mobile base
 
 # Sparse projected clouds: split off background seen through the mask, then a
-# loose outlier trim. The dense-cloud defaults (raycast + radius) assume a
-# density registered lidar does not have.
+# loose outlier trim. The dense-cloud defaults assume a density a registered
+# lidar does not have.
 _CLOUD_TRIM_NEIGHBORS = 12
 _CLOUD_LIFT_FILTERS = [
     range_cluster(),
     statistical(nb_neighbors=_CLOUD_TRIM_NEIGHBORS, std_ratio=2.0),
 ]
-# The projected lift's evidence floor. Depth-pixel counts and lattice-cell
-# counts do not compare - a bottle-sized object can never cover thirty 5 cm
-# cells - so a policy's depth-scale floor does not apply to a projected
-# cloud; the floor there is the smallest cloud the trim can vet, its own
-# neighborhood.
+# A projected lift's evidence floor is the smallest cloud the trim can vet,
+# its own neighborhood: lattice-cell counts and depth-pixel counts do not
+# compare, so a depth-scale floor does not apply to one.
 CLOUD_MIN_POINTS = _CLOUD_TRIM_NEIGHBORS + 1
+
+# Room-scale defaults for mobile rigs: objects are furniture-sized, viewpoints
+# meters apart, odometry drifts centimeters, and registered lidar is noisier
+# and sparser than wrist-camera depth.
+ROOM_LOCALIZE_POLICY = LocalizePolicy(
+    candidate_floor=0.18,
+    accept_score=0.32,
+    cluster_radius_m=0.30,
+    verify_radius_m=5.0,
+    max_object_extent_m=2.0,
+    surface_patch_max_rise_m=0.08,
+    surface_patch_min_drop_m=-0.06,
+    min_points=30,
+    min_camera_range_m=0.5,
+    fuse_voxel_m=0.03,
+)
 
 
 def _column_keys(points: np.ndarray, quantum: float, anchor: np.ndarray) -> np.ndarray:
@@ -126,59 +118,17 @@ def _column_keys(points: np.ndarray, quantum: float, anchor: np.ndarray) -> np.n
     return keys
 
 
-# Room-scale policies for mobile-robot rigs: objects are furniture-sized,
-# viewpoints meters apart, odometry drifts centimeters between passes, and
-# registered lidar is noisier and sparser than wrist-camera depth.
-ROOM_LOCALIZE_POLICY = LocalizePolicy(
-    candidate_floor=0.18,
-    accept_score=0.32,
-    cluster_radius_m=0.30,
-    verify_radius_m=5.0,
-    max_object_extent_m=2.0,
-    surface_patch_max_rise_m=0.08,
-    surface_patch_min_drop_m=-0.06,
-    min_depth_points=30,
-    min_camera_range_m=0.5,
-    fuse_voxel_m=0.03,
-)
-
-
-MOBILE_SPAN_M = 3.0  # camera translation beyond this means a mobile base
-
-
 ROOT_PROBES = 24  # instants a frame is probed at before it counts as unreachable
+# Color timestamps stamped at receive lag the pose source by a constant the
+# recording reveals: the lag that best correlates optical-flow yaw rate with
+# the camera's heading rate. The grid is the searched span and its resolution;
+# a true delay outside it lands on an edge and is refused rather than clamped.
+DELAY_LAGS = np.arange(-0.5, 0.5001, 0.01)
+DELAY_WINDOWS = 12  # flow is sampled in short windows spread over the recording
+DELAY_WINDOW_S = 2.5
 
 
-def _tf_root(store: Any, tf_name: str, tf: StreamTF, optical_frame: str) -> str | None:
-    """The tf tree's root frame: a parent that is never a child, among the
-    frames the camera actually reaches.
-
-    A recording can carry an anchor edge published once at each end of the
-    run, above the frame every other transform is stamped in. It is a root the
-    camera never reaches through, and taking it strands every pose lookup, so
-    frames no probe resolves are dropped before the root is taken. Probes sit
-    at bin midpoints, where an anchor stamped at the ends cannot answer.
-    """
-    edges: set[tuple[str, str]] = set()
-    for obs in store.stream(tf_name):
-        for transform in obs.data.transforms:
-            edges.add((transform.frame_id, transform.child_frame_id))
-    if not edges:
-        return None  # live store, nothing recorded yet
-    frames = {frame for edge in edges for frame in edge}
-    t0, t1 = store.stream(tf_name).get_time_range()
-    reached = {optical_frame}
-    for k in range(ROOT_PROBES):
-        ts = t0 + (t1 - t0) * (k + 0.5) / ROOT_PROBES
-        for frame in frames - reached:
-            if tf.get(optical_frame, frame, ts, TF_TOLERANCE, warn=False) is not None:
-                reached.add(frame)
-    linked = [(p, c) for p, c in edges if p in reached and c in reached]
-    roots = {p for p, _ in linked} - {c for _, c in linked}
-    return roots.pop() if len(roots) == 1 else None
-
-
-def _stream_rate(stream: Any) -> float:
+def _rate(stream: Any) -> float:
     count: int = stream.count()
     if count < 2:
         return float(count)
@@ -186,19 +136,42 @@ def _stream_rate(stream: Any) -> float:
     return count / max(float(t1 - t0), 1e-6)
 
 
+def _tf_root(store: Any, tf_name: str, tf: StreamTF, optical: str) -> str | None:
+    """The tf root: a parent that is never a child, among reachable frames.
+
+    A recording can carry an anchor edge published once at each end of the run,
+    above the frame everything else is stamped in. Taking it strands every pose
+    lookup, so frames no probe resolves are dropped first; probes sit at bin
+    midpoints, where an anchor stamped at the ends cannot answer.
+    """
+    edges = {
+        (t.frame_id, t.child_frame_id) for obs in store.stream(tf_name) for t in obs.data.transforms
+    }
+    if not edges:
+        return None  # live store, nothing recorded yet
+    frames = {frame for edge in edges for frame in edge}
+    t0, t1 = store.stream(tf_name).get_time_range()
+    reached = {optical}
+    for k in range(ROOT_PROBES):
+        ts = t0 + (t1 - t0) * (k + 0.5) / ROOT_PROBES
+        for frame in frames - reached:
+            if tf.get(optical, frame, ts, TF_TOLERANCE, warn=False) is not None:
+                reached.add(frame)
+    linked = [(p, c) for p, c in edges if p in reached and c in reached]
+    roots = {p for p, _ in linked} - {c for _, c in linked}
+    return roots.pop() if len(roots) == 1 else None
+
+
 def _camera_span(rig: Rig) -> float:
     """Diagonal of the camera positions' bounding box over the recording."""
     if rig.tf is None and rig.poses is None:
-        return 0.0  # no pose source at all: an embed-only store being seeded
+        return 0.0
     try:
         t0, t1 = rig.color.get_time_range()
     except LookupError:
         return 0.0  # live store, nothing recorded yet
-    positions = []
-    for k in range(12):
-        pose = rig.camera_pose(t0 + (t1 - t0) * k / 11)
-        if pose is not None:
-            positions.append([pose.position.x, pose.position.y, pose.position.z])
+    seen = [rig.camera_pose(t0 + (t1 - t0) * k / 11) for k in range(12)]
+    positions = [[p.position.x, p.position.y, p.position.z] for p in seen if p is not None]
     if len(positions) < 2:
         return 0.0
     spread = np.array(positions)
@@ -206,12 +179,11 @@ def _camera_span(rig: Rig) -> float:
 
 
 def _heading_series(rig: Rig, spans: list[tuple[float, float]]) -> tuple[np.ndarray, np.ndarray]:
-    """Camera heading rate over the given time spans: (rate midpoints, rates).
+    """Camera heading rate over the given spans: (rate midpoints, rates).
 
-    A poses stream is read directly - a rigid mount adds a constant offset,
-    so the base yaw rate is the camera heading rate. A tf rig has no pose
-    stream to iterate; the optical axis is sampled through tf on each span's
-    frame-period grid instead.
+    A rigid mount adds a constant offset, so a poses stream's base yaw rate is
+    the camera heading rate. A tf rig has no pose stream; the optical axis is
+    sampled through tf on each span's frame-period grid instead.
     """
     times: list[float] = []
     headings: list[float] = []
@@ -243,26 +215,22 @@ def _heading_series(rig: Rig, spans: list[tuple[float, float]]) -> tuple[np.ndar
 
 
 def estimate_color_delay(rig: Rig) -> float:
-    """Constant lag of color timestamps behind the rig's pose source, in seconds.
+    """Constant lag of color timestamps behind the pose source, in seconds.
 
-    Optical-flow yaw rate between consecutive frames is compared against the
-    camera heading rate at a grid of candidate lags; the lag maximizing
-    their absolute correlation is the delay (the sign of the relation is
-    mount-dependent). The estimate validates itself on the recording: the
-    full sample and its two interleaved halves must estimate mutually equal
-    lags to within one frame period - each flow sample integrates motion
-    over a frame period, so that is the measurement's own resolution - and
-    every peak must be interior to the searched span. A recording without
-    usable rotation fails that and keeps 0.0.
+    Optical-flow yaw rate is correlated against camera heading rate over a grid
+    of candidate lags; the strongest is the delay. The estimate validates
+    itself: the full sample and its two interleaved halves must agree to within
+    one frame period - the measurement's own resolution - and every peak must
+    be interior to the searched span. Without usable rotation it keeps 0.
     """
     import cv2
 
     try:
         t0, t1 = rig.color.get_time_range()
     except LookupError:
-        return 0.0  # live store, nothing recorded yet
+        return 0.0
 
-    fx = rig.camera_info.K[0]
+    fx = rig.cameras[rig.optical_frame].K[0]
     flow_ts: list[float] = []
     flow_rate: list[float] = []
     flow_dt: list[float] = []
@@ -331,98 +299,105 @@ def estimate_color_delay(rig: Rig) -> float:
     return estimates[0]
 
 
-class RegisterScans(Transformer["PointCloud2", "PointCloud2"]):
-    """Map sensor-frame scans into a world frame through tf, one transform per scan.
+def _images(store: Any, names: list[str]) -> tuple[dict[str, str], list[tuple[str, str]]]:
+    """Color stream per optical frame, and every metric-depth stream as (frame, name).
 
-    A plain stream transformer, so the registered cloud is a derived stream:
-    ``scans.transform(RegisterScans(tf, world))`` yields world-frame clouds,
-    ``.save(...)`` persists them, and a live pipeline can tail-register the
-    same way the embed pipeline does. Scans already in the world frame pass
-    through untouched; scans with no transform at their time are dropped.
+    Several color streams in one frame (a recording that also stored a derived
+    feed) resolve to the highest-rate one.
     """
-
-    def __init__(self, tf: TFLookup, world_frame: str, tolerance: float = TF_TOLERANCE) -> None:
-        self.tf = tf
-        self.world_frame = world_frame
-        self.tolerance = tolerance
-
-    def __call__(
-        self, upstream: Iterator[Observation[PointCloud2]]
-    ) -> Iterator[Observation[PointCloud2]]:
-        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-        for obs in upstream:
-            if obs.data.frame_id == self.world_frame:
-                yield obs
-                continue
-            transform = self.tf.get(self.world_frame, obs.data.frame_id, obs.ts, self.tolerance)
-            if transform is None:
-                continue
-            matrix = transform.to_matrix()
-            points = obs.data.as_numpy()[0] @ matrix[:3, :3].T + matrix[:3, 3]
-            yield obs.derive(
-                data=PointCloud2.from_numpy(points, frame_id=self.world_frame, timestamp=obs.ts)
-            )
+    color: dict[str, str] = {}
+    depth: list[tuple[str, str]] = []
+    for name in names:
+        stream = store.stream(name)
+        if stream.count() == 0:
+            continue
+        image = stream.first().data
+        frame, data = image.frame_id, image.data
+        if data.dtype == np.uint16 or data.dtype.kind == "f":
+            depth.append((frame, name))
+        elif (
+            data.ndim == 3
+            and data.shape[2] == 3
+            and not np.array_equal(data[..., 0], data[..., 1])
+        ):
+            held = color.get(frame)
+            if held is None or _rate(stream) > _rate(store.stream(held)):
+                color[frame] = name
+        else:
+            logger.info(f"rig: image stream {name!r} is neither color nor metric depth")
+    return color, depth
 
 
-ROOM_INVENTORY_POLICY = InventoryPolicy(
-    keyframe_stride_s=1.25,
-    min_mask_area_px=900,
-    min_depth_points=30,
-    max_object_extent_m=2.0,
-    min_height_above_plane_m=0.08,
-    band_above_plane_m=(-0.05, 1.5),
-    min_camera_range_m=0.5,
-    envelope_pad_m=0.12,
-    search_radius_m=0.8,
-    size_gap_max_m=0.8,
-    support_explained=0.25,
-    name_attach_iou=0.20,
-    same_frame_merge_gap_m=0.10,
-    split_extent_m=1.2,
-    split_height_m=0.9,
-    split_eps_m=0.10,
-)
+def _cameras(store: Any, roles: dict[str, Any], names: list[str], types: dict[str, type]):
+    """Intrinsics per optical frame: an inline manifest dict, or every
+    CameraInfo stream keyed by the frame it calibrates.
+
+    Several infos in one frame (a colour/depth pair) resolve by name order, so
+    the colour one wins; infos in different frames are different cameras.
+    """
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as CameraInfoMsg
+
+    role = roles.get("camera_info")
+    if isinstance(role, dict):
+        info = CameraInfoMsg(
+            height=role["height"],
+            width=role["width"],
+            distortion_model=role.get("distortion_model", ""),
+            D=role.get("D"),
+            K=role["K"],
+            R=role.get("R"),
+            P=role.get("P"),
+            frame_id=role["frame_id"],
+        )
+        return {info.frame_id: info}
+    found = (
+        [role]
+        if isinstance(role, str)
+        else sorted(n for n in names if types[n] is CameraInfoMsg and store.stream(n).count())
+    )
+    cameras = {}
+    for name in found:  # sorted, so a color info wins over its depth twin
+        info = store.stream(name).first().data
+        cameras.setdefault(info.frame_id, info)
+    return cameras
 
 
 @dataclass
 class Rig:
-    """Everything the stack needs to go from a 2D mask to world geometry.
+    """2D mask to world geometry.
 
-    Exactly one of ``tf`` / (``base_to_optical`` + ``poses``) provides the
-    world-to-optical transform, and exactly one of ``depth`` / ``cloud``
-    provides 3D geometry.
+    Exactly one of ``tf`` / (``mounts`` + ``poses``) gives the world-to-optical
+    transform, and one of ``depth`` / ``cloud`` gives geometry. ``cameras`` and
+    ``mounts`` key on optical frame id, resolved per image by
+    :meth:`camera_frame`. ``color`` is one stream, so a rig with several
+    cameras needs their frames registered here and their feeds interleaved
+    into it by whoever builds the rig.
     """
 
-    camera_info: CameraInfo
+    cameras: dict[str, CameraInfo]
     color: Any  # color_image stream
     world_frame: str
-    optical_frame: str
     tf: TFLookup | None = None
-    base_to_optical: Transform | None = None
+    mounts: dict[str, Transform] = field(default_factory=dict)
     poses: Any = None  # stream carrying world base poses (e.g. odom)
     depth: Any = None  # aligned depth stream, lifted via from_depth
     cloud: Any = None  # pointcloud stream, lifted via from_2d after registration
     tf_tolerance: float = TF_TOLERANCE
     cloud_accum_s: float = CLOUD_ACCUM_S
-    speed_max: float = SPEED_MAX
     color_delay: float = 0.0  # s - color timestamps lag the pose stream by this
-    scene_gate: bool = True
     embed_hz: float = EMBED_HZ
-    mobile: bool = False  # camera rides a mobile base: room-scale policies
-    # (ts, merged cloud, the rolling map's pitch; None for scan sources)
-    _cloud_memo: tuple[float, PointCloud2, float | None] | None = field(
-        default=None, repr=False, init=False
-    )
-    # (ts, plane, per-column floor table of the frame's merged cloud)
-    _shell_memo: tuple[float, Any, tuple[np.ndarray, np.ndarray, float, np.ndarray]] | None = field(
-        default=None, repr=False, init=False
-    )
-    _scan_cache: OrderedDict[float, np.ndarray | None] = field(
+    mobile: bool = False  # camera rides a mobile base: room-scale defaults
+    plane_cache: dict[tuple[int, int], SupportPlane] = field(default_factory=dict, repr=False)
+    # ts -> (merged cloud, the rolling map's pitch; None for scan sources)
+    _clouds: OrderedDict[float, tuple[PointCloud2, float | None]] = field(
         default_factory=OrderedDict, repr=False, init=False
     )
-    _plane_cache: dict[tuple[int, int], SupportPlane] = field(
-        default_factory=dict, repr=False, init=False
+    # (ts, plane) -> per-column floor table of that frame's merged cloud
+    _shells: OrderedDict[tuple[float, int], tuple[np.ndarray, np.ndarray, float, np.ndarray]] = (
+        field(default_factory=OrderedDict, repr=False, init=False)
+    )
+    _scans: OrderedDict[float, np.ndarray | None] = field(
+        default_factory=OrderedDict, repr=False, init=False
     )
 
     @classmethod
@@ -434,24 +409,13 @@ class Rig:
     ) -> Rig:
         """Recognize the store's shape without depending on stream names.
 
-        Resolution order per role: ``overrides`` (explicit stream names from
-        a caller or CLI), then ``manifest`` (passed in, or the ``<db>.rig.json``
-        sidecar next to the recording), then discovery by stream data type
-        and content: TFMessage-typed stream as tf, Image streams classified
-        by their frames (uint16/float is depth, distinct-channel uint8 is
-        color; a lossy-coded gray stream is neither), a PointCloud2 stream as
-        geometry when there is no metric depth, and - when tf is absent - the
-        highest-rate pose-stamped stream as pose source. On tf rigs the world
-        frame is the tf tree's root; ambiguity or missing calibration raises
-        with the candidates rather than guessing.
-
-        The manifest carries roles as stream names plus, for recordings whose
-        calibration was never recorded, an inline ``camera_info`` dict and a
-        ``base_to_optical`` mount.
+        Per role: ``overrides``, then ``manifest`` (passed in, or the
+        ``<db>.rig.json`` sidecar), then discovery. Cameras key on the optical
+        frame they calibrate and their colour and depth streams are the Image
+        streams stamped in that frame, so resolution is frame-driven rather than a
+        cascade of name tie-breaks. Ambiguity the frames cannot settle, and
+        missing calibration, raise with the candidates.
         """
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
-        from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as CameraInfoMsg
         from dimos.msgs.sensor_msgs.Image import Image as ImageMsg
         from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as PointCloudMsg
         from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -461,176 +425,124 @@ class Rig:
 
         if manifest is None:
             path = getattr(store.config, "path", None)
-            if path:
-                sidecar = Path(f"{path}.rig.json")
-                if sidecar.exists():
-                    manifest = json.loads(sidecar.read_text())
-                    logger.info(f"rig: manifest {sidecar}")
-        roles: dict[str, Any] = dict(manifest or {})
-        roles.update(overrides or {})
-
-        claimed = {value for value in roles.values() if isinstance(value, str)}
-        color_name: str | None = roles.get("color")
-        depth_name: str | None = roles.get("depth")
-        cloud_name: str | None = roles.get("cloud")
-        poses_name: str | None = roles.get("poses")
+            sidecar = Path(f"{path}.rig.json") if path else None
+            if sidecar is not None and sidecar.exists():
+                manifest = json.loads(sidecar.read_text())
+                logger.info(f"rig: manifest {sidecar}")
+        roles: dict[str, Any] = {**(manifest or {}), **(overrides or {})}
+        claimed = {v for v in roles.values() if isinstance(v, str)}
 
         tf_names = [n for n in names if types[n] is TFMessage]
         tf_name = tf_names[0] if len(tf_names) == 1 else ("tf" if "tf" in tf_names else None)
         tf = StreamTF.from_store(store, tf_name) if tf_name is not None else None
 
-        # image streams classify by content: metric depth or genuine color
+        cameras = _cameras(store, roles, names, types)
         image_names = [n for n in names if types[n] is ImageMsg and n not in claimed]
-        color_candidates: list[str] = []
-        depth_candidates: list[str] = []
-        empty_images: list[str] = []
-        image_frames: dict[str, str] = {}
-        for name in image_names:
-            stream = store.stream(name)
-            if stream.count() == 0:
-                empty_images.append(name)
-                continue
-            image = stream.first().data
-            image_frames[name] = image.frame_id
-            frame = image.data
-            if frame.dtype == np.uint16 or frame.dtype.kind == "f":
-                depth_candidates.append(name)
-            elif (
-                frame.ndim == 3
-                and frame.shape[2] == 3
-                and not np.array_equal(frame[..., 0], frame[..., 1])
-            ):
-                color_candidates.append(name)
-            else:
-                logger.info(f"rig: image stream {name!r} is neither color nor metric depth")
-        if color_name is None and depth_name is not None:
-            depth_frame = store.stream(depth_name).first().data.frame_id
-            matching = [name for name in color_candidates if image_frames[name] == depth_frame]
-            if len(matching) == 1:
-                color_name = matching[0]
-                logger.info(f"rig: paired depth {depth_name!r} with color {color_name!r}")
+        by_frame_color, depth_streams = _images(store, image_names)
+
+        color_name = roles.get("color")
         if color_name is None:
-            if len(color_candidates) > 1:
-                color_name = max(color_candidates, key=lambda n: _stream_rate(store.stream(n)))
-                logger.info(f"rig: several color streams, using highest-rate {color_name!r}")
-            elif color_candidates:
-                color_name = color_candidates[0]
-            elif len(empty_images) == 1:
-                color_name = empty_images[0]  # a live store's not-yet-filled feed
+            # a camera's own frame first, then any colour feed, then a live store's
+            # not-yet-filled one
+            ranked = [by_frame_color[f] for f in cameras if f in by_frame_color]
+            ranked += [n for n in by_frame_color.values() if n not in ranked]
+            ranked += [n for n in image_names if store.stream(n).count() == 0]
+            color_name = next(iter(ranked), None)
         if color_name is None:
             raise ValueError(f"no color image stream among {names}; pass a manifest or --color")
         claimed.add(color_name)
-        if depth_name is None:
-            if len(depth_candidates) > 1:
-                raise ValueError(f"several depth streams {depth_candidates}; pass --depth")
-            depth_name = depth_candidates[0] if depth_candidates else None
 
+        color = store.stream(color_name)
+        color_frame = color.first().data.frame_id if color.count() else None
+        depth_name = roles.get("depth")
+        if depth_name is None:
+            # aligned depth shares the colour frame; otherwise the only depth stream
+            # stands, and a choice between several is the caller's
+            aligned = sorted(n for f, n in depth_streams if f == color_frame)
+            elsewhere = [n for f, n in depth_streams if f != color_frame]
+            if aligned:
+                depth_name = aligned[0]
+            elif len(elsewhere) > 1:
+                raise ValueError(f"several depth streams {elsewhere}; pass --depth")
+            elif elsewhere:
+                depth_name = elsewhere[0]
+
+        cloud_name = roles.get("cloud")
         if cloud_name is None and depth_name is None:
             cloud_names = [n for n in names if types[n] is PointCloudMsg and n not in claimed]
             if len(cloud_names) > 1:
                 raise ValueError(f"several pointcloud streams {cloud_names}; pass --cloud")
             cloud_name = cloud_names[0] if cloud_names else None
 
-        color = store.stream(color_name)
         depth = store.stream(depth_name) if depth_name is not None else None
         cloud = store.stream(cloud_name) if cloud_name is not None and depth is None else None
         if cloud_name is not None:
             claimed.add(cloud_name)
 
-        # intrinsics: inline manifest dict, named stream, or discovery by
-        # type with the color camera's frame deciding among several
-        camera_info = None
-        camera_info_role = roles.get("camera_info")
-        if isinstance(camera_info_role, dict):
-            camera_info = CameraInfoMsg(
-                height=camera_info_role["height"],
-                width=camera_info_role["width"],
-                distortion_model=camera_info_role.get("distortion_model", ""),
-                D=camera_info_role.get("D"),
-                K=camera_info_role["K"],
-                R=camera_info_role.get("R"),
-                P=camera_info_role.get("P"),
-                frame_id=camera_info_role["frame_id"],
-            )
+        if not cameras:
+            # embed-only stores may carry no calibration; geometry raises on use
+            cameras = {OPTICAL_FRAME: cast("CameraInfo", None)}
+        if color_frame in cameras:
+            optical = color_frame
+        elif len(cameras) == 1:
+            optical = next(iter(cameras))  # images stamped in a frame calibration never names
         else:
-            ci_name = camera_info_role if isinstance(camera_info_role, str) else None
-            if ci_name is None:
-                candidates = [
-                    n for n in names if types[n] is CameraInfoMsg and store.stream(n).count()
-                ]
-                try:
-                    color_frame = color.first().data.frame_id
-                except LookupError:
-                    color_frame = None
-                matching = [
-                    n for n in candidates if store.stream(n).first().data.frame_id == color_frame
-                ]
-                if matching:
-                    ci_name = sorted(matching)[0]
-                elif len(candidates) == 1:
-                    ci_name = candidates[0]
-                elif len(candidates) > 1:
-                    raise ValueError(f"several camera_info streams {candidates}; pass a manifest")
-            if ci_name is not None:
-                camera_info = store.stream(ci_name).first().data
+            raise ValueError(
+                f"color stream {color_name!r} is stamped {color_frame!r}, which is none of the "
+                f"cameras {sorted(cameras)}; name the right camera_info in the manifest"
+            )
+        cameras = {optical: cameras[optical], **cameras}  # the colour camera answers first
 
-        # embed-only stores (no geometry) may carry no calibration at all;
-        # every geometry API raises on use, embedding never touches it
-        optical_frame = camera_info.frame_id if camera_info is not None else gates.OPTICAL_FRAME
-
-        world_frame = gates.WORLD_FRAME
+        world_frame = WORLD_FRAME
         if tf is not None:
-            world_frame = _tf_root(store, cast("str", tf_name), tf, optical_frame) or world_frame
+            world_frame = _tf_root(store, cast("str", tf_name), tf, optical) or world_frame
         elif cloud is not None:
             try:
                 world_frame = cloud.first().data.frame_id
             except LookupError:
                 pass  # live store, nothing recorded yet
 
-        base_to_optical = None
-        mount = roles.get("base_to_optical")
-        if isinstance(mount, dict):
-            base_to_optical = Transform(
+        mounts: dict[str, Transform] = {}
+        if isinstance(mount := roles.get("base_to_optical"), dict):
+            mounts[optical] = Transform(
                 translation=Vector3(*mount["translation"]),
                 rotation=Quaternion(*mount["rotation"]),
-                frame_id="base_link",
-                child_frame_id=camera_info.frame_id if camera_info else "camera_optical",
+                frame_id=mount.get("frame_id", "base_link"),
+                child_frame_id=optical,
             )
 
         poses = None
         if tf is None:
+            poses_name = roles.get("poses")
             if poses_name is None:
                 posed = [
                     n
                     for n in names
                     if n not in claimed
-                    and n != color_name
                     and store.stream(n).count()
                     and store.stream(n).first().pose_tuple is not None
                 ]
-                if posed:
-                    poses_name = max(posed, key=lambda n: _stream_rate(store.stream(n)))
+                poses_name = max(posed, key=lambda n: _rate(store.stream(n))) if posed else None
             poses = store.stream(poses_name) if poses_name is not None else None
 
         if depth is not None or cloud is not None:
-            if camera_info is None:
+            if cameras[optical] is None:
                 raise ValueError(
-                    "store has 3D geometry but no camera calibration; add a CameraInfo "
-                    "stream role or an inline camera_info to the <db>.rig.json manifest"
+                    "store has 3D geometry but no camera calibration; add a CameraInfo stream "
+                    "role or an inline camera_info to the <db>.rig.json manifest"
                 )
-            if tf is None and (poses is None or base_to_optical is None):
+            if tf is None and (poses is None or not mounts):
                 raise ValueError(
                     "store has no tf; a pose-stamped rig needs a poses stream and a "
                     "base_to_optical mount in the <db>.rig.json manifest"
                 )
 
         rig = cls(
-            camera_info=cast("CameraInfo", camera_info),
+            cameras=cameras,
             color=color,
             world_frame=world_frame,
-            optical_frame=optical_frame,
             tf=tf,
-            base_to_optical=base_to_optical,
+            mounts=mounts,
             poses=poses,
             depth=depth,
             cloud=cloud,
@@ -639,37 +551,59 @@ class Rig:
         span = _camera_span(rig)
         rig.mobile = span > MOBILE_SPAN_M
         if rig.mobile:
-            rig.speed_max = WALK_SPEED_MAX
-            rig.scene_gate = False
             rig.embed_hz = WALK_EMBED_HZ
-            if camera_info is not None:
+            if cameras[optical] is not None:
                 rig.color_delay = estimate_color_delay(rig)
         logger.info(
-            f"rig: color={color_name!r} depth={depth_name!r} cloud={cloud_name!r} "
-            f"tf={tf_name!r} world={world_frame!r} span={span:.1f}m mobile={rig.mobile} "
+            f"rig: color={color_name!r} depth={depth_name!r} cloud={cloud_name!r} tf={tf_name!r} "
+            f"world={world_frame!r} span={span:.1f}m mobile={rig.mobile} "
             f"color_delay={rig.color_delay * 1000:.0f}ms"
         )
         return rig
 
+    @property
+    def optical_frame(self) -> str:
+        """The default camera: the one the rig's ``color`` stream feeds.
+
+        Discovery registers it first; a hand-built rig orders its own dict.
+        """
+        return next(iter(self.cameras))
+
+    def camera_frame(self, frame: str | None) -> str:
+        """Which camera resolves a lookup: the image's own, if the rig has it.
+
+        A recording can stamp its images in a frame its calibration never
+        names, so on a one-camera rig any frame falls to that camera. With
+        several, nothing says which one took the image, and folding would
+        silently project through the wrong model, so it is an error.
+        """
+        if frame is None or frame in self.cameras:
+            return frame or self.optical_frame
+        if len(self.cameras) > 1:
+            raise KeyError(
+                f"image frame {frame!r} is none of the rig's cameras {sorted(self.cameras)}"
+            )
+        return self.optical_frame
+
     # pose
 
-    def world_to_optical(self, ts: float) -> Transform | None:
+    def world_to_optical(self, ts: float, frame: str | None = None) -> Transform | None:
+        frame = self.camera_frame(frame)
         ts -= self.color_delay  # color stamps lag; the capture instant is earlier
         if self.tf is not None:
-            return self.tf.get(self.optical_frame, self.world_frame, ts, self.tf_tolerance)
+            return self.tf.get(frame, self.world_frame, ts, self.tf_tolerance)
         pose = self.pose_at(ts)
         if pose is None:
             return None
-        mount = cast("Transform", self.base_to_optical)
-        return -(Transform.from_pose("base_link", pose) + mount)
+        mount = self.mounts[frame]
+        return -(Transform.from_pose(mount.frame_id, pose) + mount)
 
     def pose_at(self, ts: float) -> PoseStamped | None:
-        """World base pose at ts, interpolated between the bracketing samples.
+        """World base pose at ts, interpolated between bracketing samples.
 
-        A walking robot covers centimeters and degrees per pose period, so
-        snapping to a recorded sample misplaces the projection; interpolation
-        follows the motion. Outside the bracketed span the nearest sample in
-        the tolerance window stands.
+        A walking robot covers centimeters per pose period, so snapping to a
+        sample misplaces the projection. Outside the bracketed span the
+        nearest sample in the tolerance window stands.
         """
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
@@ -697,57 +631,32 @@ class Rig:
             orientation=(float(q[0]), float(q[1]), float(q[2]), float(q[3])),
         )
 
-    def camera_pose(self, ts: float) -> PoseStamped | None:
-        """World pose of the camera optical frame at ts."""
-        transform = self.world_to_optical(ts)
+    def camera_pose(self, ts: float, frame: str | None = None) -> PoseStamped | None:
+        """World pose of a camera's optical frame at ts."""
+        transform = self.world_to_optical(ts, frame)
         return (-transform).to_pose() if transform is not None else None
 
     def index_pose(self, obs: Observation[Any]) -> Pose | PoseStamped | None:
-        """The pose an embedded index observation carries.
-
-        tf rigs stamp the derived optical pose; pose-stamped rigs keep the
-        recorded base pose, which is what ``sees`` expects to find on an
-        observation when it resolves the transform through the mount.
-        """
+        """tf rigs stamp the optical pose; pose-stamped rigs keep the base one."""
         if self.tf is not None:
-            return self.camera_pose(obs.ts)
+            return self.camera_pose(obs.ts, obs.data.frame_id)
         return obs.pose
 
-    def camera_speed(self, ts: float, dt: float = 0.06) -> float | None:
-        """Linear camera speed (m/s) around ts, from pose differencing."""
-        a = self.camera_pose(ts - dt)
-        b = self.camera_pose(ts + dt)
-        if a is None or b is None:
-            return None
-        return float((b.position - a.position).magnitude() / (2 * dt))
-
-    def camera_still(self, ts: float, envelope: float = STILL_ENVELOPE) -> bool:
-        """Camera below the rig's speed gate over the whole capture envelope."""
-        for offset in (-envelope, 0.0, envelope):
-            speed = self.camera_speed(ts + offset)
-            if speed is None or speed > self.speed_max:
-                return False
-        return True
-
-    def still_intervals(self, t0: float, t1: float) -> list[tuple[float, float]]:
-        """Maximal camera-still intervals inside [t0, t1], sampled at 0.25 s."""
-        step = 0.25
-        times = np.arange(t0, t1 + step, step)
-        intervals: list[tuple[float, float]] = []
-        run_start: float | None = None
-        for t in times:
-            speed = self.camera_speed(float(t))
-            still = speed is not None and speed <= self.speed_max
-            if still and run_start is None:
-                run_start = float(t)
-            elif not still and run_start is not None:
-                intervals.append((run_start, float(t) - step))
-                run_start = None
-        if run_start is not None:
-            intervals.append((run_start, float(times[-1])))
-        return [(a, b) for a, b in intervals if b >= a]
-
     # geometry
+
+    def frame_at(self, obs: Observation[Any]) -> Image:
+        """The colour frame an index observation refers to.
+
+        A live index carries the image itself; a replay index carries only what
+        frame selection needs, so its pixels come back from the colour stream,
+        which must still hold the frame the index was built from.
+        """
+        from dimos.msgs.sensor_msgs.Image import Image
+
+        if isinstance(obs.data, Image):
+            return obs.data
+        image: Image = self.color.at(obs.ts, FRAME_TOLERANCE).first().data
+        return image
 
     def depth_at(self, ts: float) -> Image | None:
         """Temporal join: aligned depth frame for a color timestamp."""
@@ -758,16 +667,11 @@ class Rig:
         return depth
 
     def registered_scan(self, scan: Observation[PointCloud2]) -> np.ndarray | None:
-        """A scan's points in the world frame, registered via tf when needed.
-
-        Decode and registration run once per scan per run: accumulation
-        windows of neighboring frames overlap almost entirely, and every
-        query of a multi-label run shares every window.
-        """
+        """A scan's world-frame points, registered via tf, decoded once per run."""
         key = scan.ts
-        if key in self._scan_cache:
-            self._scan_cache.move_to_end(key)
-            return self._scan_cache[key]
+        if key in self._scans:
+            self._scans.move_to_end(key)
+            return self._scans[key]
         points: np.ndarray | None = scan.data.as_numpy()[0]
         frame = scan.data.frame_id
         if frame != self.world_frame:
@@ -781,28 +685,28 @@ class Rig:
             else:
                 matrix = transform.to_matrix()
                 points = points @ matrix[:3, :3].T + matrix[:3, 3]
-        self._scan_cache[key] = points
-        if len(self._scan_cache) > _SCAN_CACHE_MAX:
-            self._scan_cache.popitem(last=False)
+        self._scans[key] = points
+        if len(self._scans) > _SCAN_CACHE_MAX:
+            self._scans.popitem(last=False)
         return points
 
     def cloud_at(self, ts: float) -> PointCloud2 | None:
         """World-frame geometry at ts: the window's scans merged.
 
-        The merge rule follows the source's shape, measured per window from
-        the points themselves. A stream whose next snapshot re-reports the
-        majority of the nearest one's exact points is a rolling occupancy
-        map: each snapshot is already temporally integrated over the area
-        it covers and the map clears what moved away, so snapshots merge
-        nearest-ts first, a farther snapshot contributing only cells
-        outside the XY coverage of every nearer one - plain accumulation
-        would resurrect every moved object's trail. Scans that never repeat
-        are fresh samples of a scene static in world frame, so they
-        accumulate whole; coordinate quantization alone proves nothing, a
-        mm-integer wire format grids a scan without making it a map.
+        A stream whose next snapshot re-reports the majority of the nearest
+        one's exact points is a rolling occupancy map, already integrated over
+        the area it covers and cleared of what moved away: those merge
+        nearest-ts first, a farther snapshot contributing only cells outside
+        every nearer one's XY coverage, since plain accumulation would
+        resurrect each moved object's trail. Scans that never repeat are fresh
+        samples of a static scene and accumulate whole; quantization alone
+        proves nothing, a mm-integer wire format grids a scan without making
+        it a map.
         """
-        if self._cloud_memo is not None and self._cloud_memo[0] == ts:
-            return self._cloud_memo[1]
+        held = self._clouds.get(ts)
+        if held is not None:
+            self._clouds.move_to_end(ts)
+            return held[0]
         from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
         scans = self.cloud.after(ts - self.cloud_accum_s).before(ts + self.cloud_accum_s)
@@ -845,27 +749,35 @@ class Rig:
                 ] = True
             points = np.vstack(kept)
         merged = PointCloud2.from_numpy(points, frame_id=self.world_frame, timestamp=ts)
-        self._cloud_memo = (ts, merged, quantum)
+        self._clouds[ts] = (merged, quantum)
+        if len(self._clouds) > _CLOUD_CACHE_MAX:
+            self._clouds.popitem(last=False)
         return merged
+
+    def _quantum(self, ts: float) -> float | None:
+        """The lattice pitch of the merged cloud at ts; None for scan sources."""
+        self.cloud_at(ts)
+        return self._clouds[ts][1]
 
     def _shell_table(
         self, ts: float, plane: SupportPlane
     ) -> tuple[np.ndarray, np.ndarray, float, np.ndarray] | None:
-        """Per-column floor of the frame's merged cloud; None for continuous sources.
+        """Per-column floor of the merged cloud; None for continuous sources.
 
-        A rolling map registers each snapshot with its own odometry error,
-        so the support surface sits at a different absolute level per
-        region. The floor of a point's own XY column is the local reference
-        a single global plane cannot be.
+        A rolling map registers each snapshot with its own odometry error, so
+        the support sits at a different absolute level per region; a point's
+        own XY column is the local reference one global plane cannot be.
         """
         cloud = self.cloud_at(ts)
-        if cloud is None or self._cloud_memo[2] is None:  # type: ignore[index]
+        quantum = self._clouds[ts][1] if cloud is not None else None
+        if quantum is None:
             return None
-        memo = self._shell_memo
-        if memo is not None and memo[0] == ts and memo[1] is plane:
-            return memo[2]
-        quantum = cast("float", self._cloud_memo[2])  # type: ignore[index]
-        points = cloud.as_numpy()[0]
+        key = (ts, id(plane))
+        held = self._shells.get(key)
+        if held is not None:
+            self._shells.move_to_end(key)
+            return held
+        points = cloud.as_numpy()[0]  # type: ignore[union-attr]
         anchor = points[0, :2]
         keys = _column_keys(points, quantum, anchor)
         heights = plane.height_above(points)
@@ -873,17 +785,17 @@ class Rig:
         keys_sorted = keys[order]
         starts = np.nonzero(np.concatenate(([True], np.diff(keys_sorted) != 0)))[0]
         table = (keys_sorted[starts], np.minimum.reduceat(heights[order], starts), quantum, anchor)
-        self._shell_memo = (ts, plane, table)
+        self._shells[key] = table
+        if len(self._shells) > _CLOUD_CACHE_MAX:
+            self._shells.popitem(last=False)
         return table
 
     def support_heights(self, ts: float, plane: SupportPlane, points: np.ndarray) -> np.ndarray:
-        """Signed heights of points above the frame's support shell.
+        """Signed heights above the frame's support shell.
 
-        Depth rigs and continuous-scan sources measure against the fitted
-        plane directly. A rolling-map source measures against the local
-        column floor of the frame's own merged cloud (see ``_shell_table``);
-        ``points`` must come from that cloud, which is what every projected
-        lift produces.
+        Depth and continuous-scan sources measure against the fitted plane; a
+        rolling map measures against its own column floor, so ``points`` must
+        come from that frame's merged cloud, which every projected lift is.
         """
         heights = plane.height_above(points)
         if self.cloud is None:
@@ -897,16 +809,13 @@ class Rig:
         return local
 
     def _support_strip(self, ts: float, plane: SupportPlane, shell: float, gap: float = 0.3) -> Any:
-        """Filter dropping support-shell points outside the object's own stance.
+        """Drop support-shell points outside the object's own stance.
 
-        A misaligned mask row collects the support surface along the whole
-        view ray; shell points survive only within the camera-range span of
-        the detection's above-shell structure - under the object, not along
-        the approach. The stance is the dominant range cluster of the
-        above-shell points (the same ``gap`` split as ``range_cluster``), so
-        background caught on the mask rim cannot widen it. Points below the
-        shell (mirror returns through a glossy surface) never survive. A
-        detection with no structure above the shell passes untouched.
+        A misaligned mask row collects the support along the whole view ray;
+        shell points survive only within the camera-range span of the
+        detection's above-shell structure - under the object, not along the
+        approach. Points below the shell never survive; a detection with no
+        structure above it passes untouched.
         """
 
         def filter_func(det: Any, pc: Any, ci: Any, tf: Any) -> Any:
@@ -936,32 +845,32 @@ class Rig:
     def lift(
         self, detections: ImageDetections2D, plane: SupportPlane | None = None
     ) -> ImageDetections3DPC | None:
-        """2D detections to world-frame 3D clouds, or None without geometry/pose.
+        """2D detections to world-frame clouds, or None without geometry/pose.
 
-        With a support ``plane``, a projected lift strips support-shell
-        points outside each detection's stance before the generic filters.
-        The shell is the support surface's own occupied band: a plane
-        crossing a lattice straddles at most two adjacent levels, so a
-        rolling map's shell ends halfway to the third; a continuous source's
-        shell is the plane fit's inlier distance.
+        The shell is the support's own occupied band: a plane crossing a
+        lattice straddles at most two levels, so a rolling map's shell ends
+        halfway to the third, and a continuous source's is the fit's inlier
+        distance.
         """
-        transform = self.world_to_optical(detections.ts)
+        frame = self.camera_frame(detections.image.frame_id)
+        transform = self.world_to_optical(detections.ts, frame)
         if transform is None:
             return None
+        camera_info = self.cameras[frame]
         if self.depth is not None:
             depth = self.depth_at(detections.ts)
             if depth is None:
                 return None
-            return ImageDetections3DPC.from_depth(detections, depth, self.camera_info, transform)
+            return ImageDetections3DPC.from_depth(detections, depth, camera_info, transform)
         cloud = self.cloud_at(detections.ts)
         if cloud is None:
             return None
         filters = _CLOUD_LIFT_FILTERS
         if plane is not None:
-            quantum = cast("float | None", self._cloud_memo[2])  # type: ignore[index]
+            quantum = self._clouds[detections.ts][1]
             shell = 1.5 * quantum if quantum is not None else PLANE_DISTANCE_CLOUD
             filters = [self._support_strip(detections.ts, plane, shell), *_CLOUD_LIFT_FILTERS]
-        return ImageDetections3DPC.from_2d(detections, cloud, self.camera_info, transform, filters)
+        return ImageDetections3DPC.from_2d(detections, cloud, camera_info, transform, filters)
 
     def backdrop(self, ts: float, depth_trunc: float = 1.5) -> PointCloud2 | None:
         """World-frame scene cloud around ts, for plane fits and rendering."""
@@ -970,97 +879,22 @@ class Rig:
         from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
         depth = self.depth_at(ts)
-        transform = self.world_to_optical(ts)
-        if depth is None or transform is None:
+        if depth is None:
             return None
         try:
             color = self.color.at(ts, 0.1).first().data
         except LookupError:
             return None
+        frame = self.camera_frame(color.frame_id)
+        transform = self.world_to_optical(ts, frame)
+        if transform is None:
+            return None
         return PointCloud2.from_rgbd(
-            color, depth, self.camera_info, depth_scale=0.001, depth_trunc=depth_trunc
+            color, depth, self.cameras[frame], depth_scale=0.001, depth_trunc=depth_trunc
         ).transform(-transform)
 
-    # predicates
-
-    def sees(
-        self,
-        point: Any,
-        *,
-        extent: Any | None = None,
-        min_fraction: float = 1.0,
-        max_range: float | None = None,
-    ) -> Callable[[Observation[Any]], bool]:
-        """Predicate: does an observation's camera see the world point.
-
-        Occlusion checking through measured depth only exists on depth rigs;
-        projected-cloud rigs rely on the geometric visibility test alone.
-        """
-        return project_sees(
-            point,
-            self.camera_info,
-            tf=self.tf,
-            base_to_optical=self.base_to_optical,
-            world_frame=self.world_frame,
-            optical_frame=self.optical_frame,
-            time_tolerance=self.tf_tolerance,
-            extent=extent,
-            min_fraction=min_fraction,
-            max_range=max_range,
-            depth=(lambda obs: self.depth_at(obs.ts)) if self.depth is not None else None,
-        )
-
-    def keyframes(
-        self,
-        t0: float,
-        t1: float,
-        stride: float,
-        motion_threshold: float = gates.MOTION_THRESHOLD,
-    ) -> list[Observation[Image]]:
-        """Camera-still (and, on scene-gated rigs, scene-still) frames on a grid.
-
-        For each grid point the nearest passing frame within half a stride is
-        selected, so a grid point landing mid-sweep snaps to the neighboring
-        pause instead of being lost.
-        """
-        intervals = self.still_intervals(t0, t1) if self.scene_gate else []
-        gray: dict[float, np.ndarray | None] = {}
-        selected: list[Observation[Image]] = []
-        seen: set[float] = set()
-        offsets = [0.0]
-        probe = 0.35
-        while probe <= stride / 2:
-            offsets.extend([probe, -probe])
-            probe += 0.35
-
-        t = t0 + 0.5
-        while t < t1:
-            for offset in offsets:
-                ts = t + offset
-                if ts < t0 or ts > t1:
-                    continue
-                if not self.camera_still(ts):
-                    continue
-                if self.scene_gate and not gates.scene_still(
-                    self.color, ts, intervals, gray, motion_threshold
-                ):
-                    continue
-                try:
-                    obs = self.color.at(ts, 0.1).first()
-                except LookupError:
-                    continue
-                if obs.ts in seen:
-                    break
-                if self.world_to_optical(obs.ts) is None:
-                    continue
-                seen.add(obs.ts)
-                selected.append(obs)
-                break
-            t += stride
-        return selected
-
     def default_localize_policy(self) -> LocalizePolicy:
-        return ROOM_LOCALIZE_POLICY if self.mobile else LocalizePolicy()
-
-    def default_inventory_policy(self) -> InventoryPolicy:
-        return ROOM_INVENTORY_POLICY if self.mobile else InventoryPolicy()
+        base = ROOM_LOCALIZE_POLICY if self.mobile else LocalizePolicy()
+        if self.cloud is None:
+            return base
+        return replace(base, min_points=CLOUD_MIN_POINTS)

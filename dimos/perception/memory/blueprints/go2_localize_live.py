@@ -15,7 +15,7 @@
 """A go2 recording looped as a live feed, with localize behind an agent skill.
 
 This is the deployment shape of the perception memory stack: one module owns
-a store and the models, ``DanDetector.embed(live=True)`` keeps a background
+a store and the models, ``DanDetector.embed_live`` keeps a background
 tail filling the index while the robot runs, and a ``@skill`` answers
 ``localize`` calls against whatever has been embedded so far.
 
@@ -73,7 +73,7 @@ from dimos.perception.detection.type.detection3d.pointcloud import (
     lattice_quantum,
 )
 from dimos.perception.memory.dandetect import DanDetector
-from dimos.perception.memory.identity_store import IdentityStore
+from dimos.perception.memory.localize import Groups
 from dimos.perception.memory.rig import Rig
 from dimos.robot.unitree.go2.connection import BASE_TO_OPTICAL, GO2Connection
 from dimos.utils.logging_config import setup_logger
@@ -170,7 +170,7 @@ class LoopFeeder(MemoryModule):
         # another worker backfills once and then never sees another append.
         self._embedder = self.register_disposable(DanDetector())
         self._embedder.start()
-        self._embedder.embed(live, live=True, rig=_live_rig(Rig.from_store(source), live))
+        self._embedder.embed_live(live, rig=_live_rig(Rig.from_store(source), live))
         logger.info(
             f"loop feeder: {self.config.dataset} ({span - LAP_GAP_S:.1f}s) -> {self.config.db_path}"
         )
@@ -257,19 +257,16 @@ def _live_rig(source: Rig, live: Any) -> Rig:
     and carries the measured color delay over instead of re-estimating it.
     """
     return Rig(
-        camera_info=source.camera_info,
+        cameras=source.cameras,
         color=live.stream("color_image", source.color.data_type),
         world_frame=source.world_frame,
-        optical_frame=source.optical_frame,
         tf=StreamTF(live.stream("tf", TFMessage)) if source.tf is not None else None,
-        base_to_optical=source.base_to_optical,
+        mounts=source.mounts,
         poses=live.stream("odom", source.poses.data_type) if source.poses is not None else None,
         cloud=live.stream("lidar", source.cloud.data_type) if source.cloud is not None else None,
         tf_tolerance=source.tf_tolerance,
         cloud_accum_s=source.cloud_accum_s,
-        speed_max=source.speed_max,
         color_delay=source.color_delay,
-        scene_gate=source.scene_gate,
         embed_hz=source.embed_hz,
         mobile=source.mobile,
     )
@@ -296,7 +293,7 @@ class LocalizeModule(MemoryModule):
         super().start()
         self._ready = threading.Event()
         self._stage = "starting"
-        self._identity = IdentityStore()
+        self._groups: dict[str, Groups] = {}
         self._thread = threading.Thread(target=self._warm, name="localize-warmup", daemon=True)
         self._thread.start()
 
@@ -379,7 +376,7 @@ class LocalizeModule(MemoryModule):
             index=index,
             rig=self.rig,
             policy=tuning,
-            identity_store=self._identity,
+            groups=self._groups,
         )
         self.detections.publish(_as_detection_array(queries, results, self.rig.world_frame))
 
