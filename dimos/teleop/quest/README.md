@@ -93,12 +93,6 @@ disconnecting the control client releases held buttons immediately. Lifecycle
 consumers should subscribe to the edge streams instead of detecting edges from
 raw levels independently.
 
-`teleop_buttons` publishes raw button levels. `button_pressed` and
-`button_released` publish digital-only edges after 50 ms of stable input;
-disconnecting the control client releases held buttons immediately. Lifecycle
-consumers should subscribe to the edge streams instead of detecting edges from
-raw levels independently.
-
 ## Subclassing
 
 | Method | Purpose |
