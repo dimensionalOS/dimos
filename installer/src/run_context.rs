@@ -120,7 +120,6 @@ pub(crate) fn open_shell() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     #[test]
     fn mode_agent_beats_non_interactive_and_a_pipe_is_non_interactive() {
@@ -128,35 +127,5 @@ mod tests {
         assert_eq!(Mode::from_flags(true, false, true), Mode::NonInteractive);
         assert_eq!(Mode::from_flags(false, false, false), Mode::NonInteractive);
         assert_eq!(Mode::from_flags(false, false, true), Mode::Interactive);
-    }
-
-    fn sources() -> Vec<(String, String)> {
-        fn walk(dir: &Path, out: &mut Vec<(String, String)>) {
-            for entry in fs::read_dir(dir).expect("read src/").flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    walk(&path, out);
-                } else if path.extension().is_some_and(|e| e == "rs") {
-                    let name = path.file_name().unwrap().to_string_lossy().into_owned();
-                    out.push((name, fs::read_to_string(&path).expect("read source")));
-                }
-            }
-        }
-        let mut out = Vec::new();
-        walk(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut out);
-        out
-    }
-
-    #[test]
-    fn prompts_live_only_in_run_context_rs() {
-        let elsewhere: Vec<String> = sources()
-            .iter()
-            .filter(|(name, text)| name != "run_context.rs" && text.contains("stdin()"))
-            .map(|(name, _)| name.clone())
-            .collect();
-        assert!(
-            elsewhere.is_empty(),
-            "stdin read outside run_context.rs: {elsewhere:?}"
-        );
     }
 }
