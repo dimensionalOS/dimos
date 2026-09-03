@@ -56,7 +56,7 @@ impl Validate for NoConfig {
     }
 }
 
-pub(crate) fn init_tracing() {
+pub fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let _ = tracing_subscriber::fmt()
         .json()
@@ -486,7 +486,7 @@ pub(crate) fn propagate_task_failure(name: &str, res: Result<(), tokio::task::Jo
 }
 
 /// Read the launch config the coordinator writes to stdin as one JSON line.
-pub(crate) async fn read_launch_config() -> io::Result<serde_json::Value> {
+pub async fn read_launch_config() -> io::Result<serde_json::Value> {
     let mut line = String::new();
     BufReader::new(tokio::io::stdin())
         .read_line(&mut line)

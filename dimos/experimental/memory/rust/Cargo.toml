@@ -5,6 +5,14 @@ edition = "2021"
 description = "Experimental native stream recorder for DimOS memory stores"
 license = "Apache-2.0"
 
+[[bin]]
+name = "dimos-memory-recorder"
+path = "src/main.rs"
+
+[[bin]]
+name = "dimos-memory-recorder-cli"
+path = "src/bin/dimos-memory-recorder-cli.rs"
+
 [dependencies]
 anyhow = "1"
 crossbeam-channel = "0.5"

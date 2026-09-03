@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``--record``: subscribe to every stream transport in the blueprint and write one store.
+"""``--record`` stream selection and recording-engine lifecycle.
 
-Runs in the ``dimos run`` process. Each stream is tapped on its own transport (LCM,
-Zenoh, SHM, ...), so whatever carries it is what gets recorded. One ``memory.db`` per
-run at ``recordings/<run-id>/``, streams named by their blueprint stream name.
-Poses are not resolved here; ``tf`` is recorded like any other stream and
+The stable Python SQLite engine runs in the ``dimos run`` process and taps each
+selected transport directly. The experimental Rust engine is owned as a
+standalone subprocess. Both name artifact streams by their blueprint stream
+name. Poses are not resolved here; ``tf`` is recorded like any other stream and
 ``dimos map pose-fill`` derives poses on read.
 """
 
@@ -31,7 +31,7 @@ from pathlib import Path
 import queue
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
@@ -122,25 +122,91 @@ class TransportRecorder:
         return transport.subscribe(on_msg)
 
 
+class RecordingSession(Protocol):
+    """Lifecycle signal shared by the Python and experimental Rust engines."""
+
+    failure_event: threading.Event
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
+
+    def raise_if_failed(self) -> None: ...
+
+
+class _InactiveRecordingSession:
+    failure_event = threading.Event()
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+    def raise_if_failed(self) -> None:
+        pass
+
+
+class _PythonRecordingSession:
+    """Own one stable in-process SQLite recorder."""
+
+    def __init__(self, transports: Mapping[tuple[str, type], Transport[Any]]) -> None:
+        self.failure_event = threading.Event()
+        self._transports = transports
+        self._store = SqliteStore(path=str(recording_dir() / "memory.db"))
+        self._recorder: TransportRecorder | None = None
+        self._unsubscribes: list[Callable[[], None]] = []
+        self._stopped = False
+
+    def start(self) -> None:
+        self._store.start()
+        self._recorder = TransportRecorder(self._store, global_config.record_topics)
+        self._unsubscribes = [
+            unsubscribe
+            for (name, payload_type), transport in self._transports.items()
+            if (unsubscribe := self._recorder.tap(name, payload_type, transport)) is not None
+        ]
+        logger.info("Recording to %s", recording_dir() / "memory.db")
+
+    def stop(self) -> None:
+        if self._stopped:
+            return
+        self._stopped = True
+        for unsubscribe in self._unsubscribes:
+            unsubscribe()
+        self._unsubscribes.clear()
+        if self._recorder is not None:
+            self._recorder.close()
+            self._recorder = None
+        self._store.stop()
+
+    def raise_if_failed(self) -> None:
+        pass
+
+
 @contextmanager
-def recording(transports: Mapping[tuple[str, type], Transport[Any]]) -> Iterator[None]:
+def recording(
+    transports: Mapping[tuple[str, type], Transport[Any]],
+) -> Iterator[RecordingSession]:
     """Record every stream in *transports* for the duration of the block when ``--record`` is set."""
     if not global_config.record or global_config.replay:
-        yield
+        yield _InactiveRecordingSession()
         return
     check_topics(global_config.record_topics, {n for n, _ in transports})
-    path = recording_dir() / "memory.db"
-    store = SqliteStore(path=str(path))
-    store.start()
-    recorder = TransportRecorder(store, global_config.record_topics)
-    unsubscribes = [
-        u for (name, t), tr in transports.items() if (u := recorder.tap(name, t, tr)) is not None
-    ]
-    logger.info("Recording to %s", path)
+    if global_config.record_engine == "rust":
+        from dimos.experimental.memory.rust_cli_recorder import (
+            RustRecordingSession,
+            make_plan,
+        )
+
+        session: RecordingSession = RustRecordingSession(make_plan(dict(transports)))
+    else:
+        if global_config.record != "sqlite":
+            raise ValueError("MCAP recording requires --record mcap --record-engine rust")
+        session = _PythonRecordingSession(transports)
+
     try:
-        yield
+        session.start()
+        yield session
     finally:
-        for unsubscribe in unsubscribes:
-            unsubscribe()
-        recorder.close()
-        store.stop()
+        session.stop()

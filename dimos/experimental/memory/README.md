@@ -20,9 +20,20 @@ nix --extra-experimental-features 'nix-command flakes' \
   build -L .#dimos-memory-recorder
 ```
 
-The resulting executable is available at
-`dimos/experimental/memory/rust/result/bin/dimos-memory-recorder`. The global `--build-native`
-flag forces a rebuild through Nix.
+The package installs two executables:
+
+- `dimos-memory-recorder` is the existing blueprint-integrated native module.
+- `dimos-memory-recorder-cli` is the internal standalone process used by
+  `dimos --record-engine rust`.
+
+Both binaries use the same `RecorderEngine`, ordering, codecs, and SQLite/MCAP
+stores. The standalone binary is a machine-facing subprocess protocol, not a
+public human CLI. The global `--build-native` flag forces a rebuild through Nix.
+
+The CLI integration is deliberately staged. Python remains the default recorder;
+Rust is selected only with `--record-engine rust`. Its bounded queue never blocks
+a transport callback: it drops the newest message under overload, emits
+throttled warnings, and logs total and per-stream drop counts at finalization.
 
 ## SQLite
 

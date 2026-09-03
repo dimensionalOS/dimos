@@ -1002,6 +1002,18 @@ def test_loop_starts_rpc_service_and_stops_on_interrupt(dynamic_coordinator, moc
     stop.assert_called_once_with()
 
 
+def test_loop_can_return_on_external_failure_without_stopping(dynamic_coordinator, mocker) -> None:
+    start_rpc = mocker.patch.object(dynamic_coordinator, "start_rpc_service")
+    stop = mocker.patch.object(dynamic_coordinator, "stop")
+    failure = mocker.Mock(spec=threading.Event)
+
+    dynamic_coordinator.loop(failure, stop_on_exit=False)
+
+    start_rpc.assert_called_once_with()
+    failure.wait.assert_called_once_with()
+    stop.assert_not_called()
+
+
 def test_list_module_names(dynamic_coordinator) -> None:
     assert dynamic_coordinator.list_module_names() == []
     dynamic_coordinator.load_module(ModuleA)

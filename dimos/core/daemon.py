@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import os
 import signal
@@ -113,6 +114,7 @@ def install_signal_handlers(
     coordinator: ModuleCoordinator,
     *,
     sigint: bool = True,
+    before_stop: Callable[[], None] | None = None,
 ) -> None:
     """Install SIGTERM/SIGINT handlers that stop the coordinator and clean the registry.
 
@@ -123,6 +125,11 @@ def install_signal_handlers(
 
     def _shutdown(signum: int, frame: object) -> None:
         logger.info("Received signal, shutting down", signal=signum)
+        if before_stop is not None:
+            try:
+                before_stop()
+            except Exception:
+                logger.error("Error during pre-stop cleanup", exc_info=True)
         try:
             coordinator.stop()
         except Exception:
