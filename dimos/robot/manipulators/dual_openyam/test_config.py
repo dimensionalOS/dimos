@@ -70,3 +70,8 @@ def test_dual_openyam_hardware_rejects_partial_can_configuration(
 ) -> None:
     with pytest.raises(ValueError, match="requires both"):
         dual_openyam_hardware(left_can_port=left, right_can_port=right)
+
+
+def test_dual_openyam_hardware_rejects_duplicate_can_configuration() -> None:
+    with pytest.raises(ValueError, match="requires distinct"):
+        dual_openyam_hardware(left_can_port="same", right_can_port="same")

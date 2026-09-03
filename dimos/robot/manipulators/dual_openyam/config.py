@@ -62,6 +62,8 @@ def dual_openyam_hardware(
         return dual_openyam_mock_hardware()
     if left_can_port is None or right_can_port is None:
         raise ValueError("Dual OpenYAM hardware requires both left and right CAN ports")
+    if left_can_port == right_can_port:
+        raise ValueError("Dual OpenYAM hardware requires distinct left and right CAN ports")
     return _hardware_component(
         DUAL_OPENYAM_ADAPTER_TYPE,
         {

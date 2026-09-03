@@ -289,7 +289,7 @@ manipulation = [
     "xarm-python-sdk>=1.17.0",
     "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
-    "can-motor-control>=0.0.7; sys_platform == 'linux' or sys_platform == 'darwin'",
+    "can-motor-control>=0.0.8; sys_platform == 'linux' or sys_platform == 'darwin'",
 
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
@@ -419,7 +419,7 @@ project-deps = [
     "langchain-openai>=1,<2",
     "ollama>=0.6.0",
     # The generic Damiao whole-body adapter imports upstream types directly.
-    "can-motor-control>=0.0.7; sys_platform == 'linux' or sys_platform == 'darwin'",
+    "can-motor-control>=0.0.8; sys_platform == 'linux' or sys_platform == 'darwin'",
 ]
 
 tests = [
