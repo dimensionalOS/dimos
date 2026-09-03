@@ -30,7 +30,10 @@ installer/                 Rust crate `dimos-installer`, binary `dimos`, workspa
   src/wizards/mod.rs       the Robot registry: preflight, the shared checks and notes, the hardware record
   src/wizards/unitree/g1.rs        everything Unitree G1
   src/wizards/nvidia/jetson.rs     nvpmodel, jetson_clocks, the static-TLS LD_PRELOAD fix
-  src/{update,systemd_service,uninstall,robot_scan,venv_forward}.rs
+  src/update.rs            doctor and update in one: observe, plan, run, record
+  src/self_update.rs       swapping the installer binary itself, and the rollback that undoes it
+  src/version.rs           PEP 440-lite compare and the release URLs the artifacts come from
+  src/{systemd_service,uninstall,robot_scan,venv_forward}.rs
   platforms.toml           apt/brew packages per extra; sysctl + memlock values, with the WHY
   WIZARDS.md               how an agent adds a wizard for a new robot
   README.md                command surface + v1/v2/v3 roadmap
