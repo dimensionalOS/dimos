@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from contextlib import ExitStack
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -26,6 +25,7 @@ import time
 import traceback
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
 import typer
 
 from dimos.constants import CONFIG_DIR, LOG_DIR
@@ -74,15 +74,6 @@ def _with_relay_bridge(blueprint: Blueprint) -> Blueprint:
         ) from e
 
     return with_relay_bridge(blueprint)
-
-
-def _prepare_recording_engine() -> None:
-    """Build the experimental native recorder without importing it on stable runs."""
-    if global_config.record_engine != "rust" or not global_config.record:
-        return
-    from dimos.experimental.memory.rust_cli_recorder import prepare_rust_recorder
-
-    prepare_rust_recorder()
 
 
 @cache_usage_locked
@@ -162,30 +153,11 @@ def run(
         raise typer.Exit(2) from error
     # Some blueprint modules select their composition at import time, so all
     # global sources must be visible before resolving the requested names.
-    global_config.update(**preparsed_global_config)
-
-    encoding_threads_explicit = (
-        "RECORD_ENCODING_THREADS" in os.environ
-        or "DIMOS_RECORD_ENCODING_THREADS" in os.environ
-        or "record_encoding_threads" in global_option_overrides
-        or global_config.record_encoding_threads != 4
-        or any(
-            token == "--record-encoding-threads" or token.startswith("--record-encoding-threads=")
-            for token in config_tokens
-        )
-    )
-    if global_config.record_engine == "python" and encoding_threads_explicit:
-        typer.echo(
-            "Error: --record-encoding-threads is valid only with --record-engine rust",
-            err=True,
-        )
-        raise typer.Exit(2)
-    if global_config.record == "mcap" and global_config.record_engine == "python":
-        typer.echo(
-            "Error: MCAP recording requires --record-engine rust",
-            err=True,
-        )
-        raise typer.Exit(2)
+    try:
+        global_config.update(**preparsed_global_config)
+    except ValidationError as error:
+        typer.echo(f"Error: {error.errors()[0]['msg']}", err=True)
+        raise typer.Exit(2) from error
 
     blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names))
 
@@ -280,10 +252,7 @@ def run(
 
         # Daemon grandchild — stdio still attached so build output streams.
         coordinator = None
-        recorder_stack = ExitStack()
-        record_session = None
         try:
-            _prepare_recording_engine()
             coordinator = ModuleCoordinator.build(blueprint, parsed_config)
             if not coordinator.health_check():
                 write_daemon_status(
@@ -297,7 +266,6 @@ def run(
             # Idempotent with loop(); serving now means the success status below
             # guarantees Coordinator RPC is actually reachable.
             coordinator.start_rpc_service()
-            record_session = recorder_stack.enter_context(recording(coordinator.transports))
             entry = RunEntry(
                 run_id=run_id,
                 pid=os.getpid(),
@@ -310,12 +278,11 @@ def run(
             )
             entry.save()
             spawn_watchdog(run_id, log_dir=log_dir)
-            install_signal_handlers(entry, coordinator, before_stop=record_session.stop)
+            install_signal_handlers(entry, coordinator)
             redirect_stdio_to_devnull()
         except Exception as exc:
             traceback.print_exc()
             write_daemon_status(status_fd, {"ok": False, "error": f"{type(exc).__name__}: {exc}"})
-            recorder_stack.close()
             if coordinator is not None:
                 try:
                     coordinator.stop()
@@ -330,18 +297,12 @@ def run(
         # The launcher's exit released the pre-fork cache-usage marker (shared
         # flock); hold a fresh one for the daemon's lifetime.
         try:
-            with cache_usage_guard():
-                assert record_session is not None
-                coordinator.loop(record_session.failure_event, stop_on_exit=False)
-        finally:
-            recorder_stack.close()
+            with cache_usage_guard(), recording(coordinator.transports):
+                coordinator.loop()
+        except Exception:
             coordinator.stop()
-        try:
-            record_session.raise_if_failed()
-        finally:
-            entry.remove()
+            raise
     else:
-        _prepare_recording_engine()
         coordinator = ModuleCoordinator.build(blueprint, parsed_config)
         entry = RunEntry(
             run_id=run_id,
@@ -355,20 +316,17 @@ def run(
         )
         entry.save()
         spawn_watchdog(run_id, log_dir=log_dir)
+        # Foreground: only SIGTERM goes through the handler. SIGINT stays at
+        # default so Ctrl+C raises KeyboardInterrupt and the try/finally below
+        # runs with a visible traceback.
+        install_signal_handlers(entry, coordinator, sigint=False)
         try:
-            with recording(coordinator.transports) as record_session:
-                # Foreground: only SIGTERM goes through the handler. SIGINT stays at
-                # default so Ctrl+C unwinds this context and flushes the recorder.
-                install_signal_handlers(
-                    entry,
-                    coordinator,
-                    sigint=False,
-                    before_stop=record_session.stop,
-                )
-                coordinator.loop(record_session.failure_event, stop_on_exit=False)
-            record_session.raise_if_failed()
-        finally:
+            with recording(coordinator.transports):
+                coordinator.loop()
+        except Exception:
             coordinator.stop()
+            raise
+        finally:
             entry.remove()
 
 

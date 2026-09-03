@@ -42,14 +42,7 @@
           };
         };
 
-        cargoBuildFlags = [
-          "-p"
-          "dimos-memory-recorder"
-          "--bin"
-          "dimos-memory-recorder"
-          "--bin"
-          "dimos-memory-recorder-cli"
-        ];
+        cargoBuildFlags = ["-p" "dimos-memory-recorder"];
         cargoTestFlags = ["-p" "dimos-memory-recorder"];
         strictDeps = true;
 

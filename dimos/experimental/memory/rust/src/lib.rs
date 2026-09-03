@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io;
+use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,15 +20,13 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
-use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender, TrySendError};
+use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender};
 use crossbeam_utils::sync::WaitGroup;
-use dimos_module::{
-    worker_pool, Builder, Dispatch, Input, LcmTransport, Module, Transport, ZenohTransport,
-};
+use dimos_module::{worker_pool, Builder, Input, Module};
 use rayon::ThreadPool;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::encoding::StoredObservation;
 use crate::store::{Observation, RecordingStore};
@@ -87,73 +84,11 @@ pub struct RecorderConfig {
     pub streams: Vec<StreamConfig>,
 }
 
-impl RecorderConfig {
-    pub fn validate(&self) -> Result<()> {
-        if self.encoding_threads == 0 {
-            return Err(anyhow!("encoding_threads must be at least 1"));
-        }
-        if self.streams.is_empty() {
-            return Err(anyhow!("at least one stream is required"));
-        }
-        let mut names = HashSet::new();
-        for stream in &self.streams {
-            if !names.insert(&stream.name) {
-                return Err(anyhow!("duplicate recorded stream name {:?}", stream.name));
-            }
-        }
-        Ok(())
-    }
-}
-
 #[derive(Clone)]
 pub struct RecorderHandle {
     submission: Arc<Mutex<Option<Submission>>>,
     permits: Sender<()>,
     sequence: Arc<AtomicU64>,
-    drops: Arc<DropCounters>,
-}
-
-#[derive(Debug, Default)]
-struct DropCounters {
-    total: AtomicU64,
-    streams: Mutex<BTreeMap<String, u64>>,
-}
-
-impl DropCounters {
-    fn record(&self, stream: &str) {
-        let total = self.total.fetch_add(1, Ordering::Relaxed) + 1;
-        let stream_drops = {
-            let mut streams = self.streams.lock().expect("drop counter lock poisoned");
-            let count = streams.entry(stream.to_string()).or_default();
-            *count += 1;
-            *count
-        };
-        if total == 1 || total.is_multiple_of(1000) {
-            warn!(
-                dropped = total,
-                stream,
-                stream_dropped = stream_drops,
-                "memory recorder queue full; dropping newest message"
-            );
-        }
-    }
-
-    fn snapshot(&self) -> DropStats {
-        DropStats {
-            total: self.total.load(Ordering::Relaxed),
-            streams: self
-                .streams
-                .lock()
-                .expect("drop counter lock poisoned")
-                .clone(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct DropStats {
-    pub total: u64,
-    pub streams: BTreeMap<String, u64>,
 }
 
 #[derive(Clone)]
@@ -181,13 +116,8 @@ impl RecorderHandle {
         else {
             return;
         };
-        match self.permits.try_send(()) {
-            Ok(()) => {}
-            Err(TrySendError::Full(())) => {
-                self.drops.record(&stream.name);
-                return;
-            }
-            Err(TrySendError::Disconnected(())) => return,
+        if self.permits.send(()).is_err() {
+            return;
         }
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
         let reception_ts = wall_time();
@@ -211,13 +141,10 @@ pub struct RecorderEngine {
     handle: RecorderHandle,
     writer: Option<JoinHandle<Result<WriterStats>>>,
     failure: Receiver<String>,
-    drops: Arc<DropCounters>,
 }
 
 impl RecorderEngine {
     pub fn start(config: RecorderConfig) -> Result<Self> {
-        config.validate()?;
-        let store = store::open(&config.store, &config.streams, config.encoding_threads)?;
         let (write_tx, write_rx) = bounded(QUEUE_CAPACITY);
         let (permit_tx, permit_rx) = bounded(QUEUE_CAPACITY);
         let (failure_tx, failure_rx) = bounded(1);
@@ -229,18 +156,17 @@ impl RecorderEngine {
             sender: write_tx,
             pending: WaitGroup::new(),
         })));
-        let drops = Arc::new(DropCounters::default());
         let handle = RecorderHandle {
             submission,
             permits: permit_tx,
             sequence: Arc::new(AtomicU64::new(0)),
-            drops: Arc::clone(&drops),
         };
 
+        let writer_config = config.clone();
         let writer = thread::Builder::new()
             .name("mem2-writer".to_string())
             .spawn(move || {
-                let result = writer_loop(store, write_rx, permit_rx);
+                let result = writer_loop(writer_config, write_rx, permit_rx);
                 if let Err(error) = &result {
                     let _ = failure_tx.send(format!("{error:#}"));
                 }
@@ -252,7 +178,6 @@ impl RecorderEngine {
             handle,
             writer: Some(writer),
             failure: failure_rx,
-            drops,
         })
     }
 
@@ -280,21 +205,11 @@ impl RecorderEngine {
             drop(sender);
             pending.wait();
         }
-        let mut stats = self
-            .writer
+        self.writer
             .take()
             .expect("writer handle is present")
             .join()
-            .map_err(|_| anyhow!("writer thread panicked"))??;
-        stats.drops = self.drops.snapshot();
-        if stats.drops.total > 0 {
-            warn!(
-                dropped = stats.drops.total,
-                streams = ?stats.drops.streams,
-                "memory recorder finalized with dropped messages"
-            );
-        }
-        Ok(stats)
+            .map_err(|_| anyhow!("writer thread panicked"))?
     }
 }
 
@@ -306,12 +221,11 @@ struct EncodedBatch {
     observations: Result<Vec<StoredObservation>, String>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WriterStats {
     pub received: u64,
     pub written: u64,
     pub encode_errors: u64,
-    pub drops: DropStats,
 }
 
 fn process(
@@ -330,120 +244,6 @@ fn wall_time() -> f64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64()
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LaunchConfig {
-    topics: HashMap<String, String>,
-    config: RecorderConfig,
-    #[serde(default)]
-    session: serde_json::Value,
-}
-
-/// Run the standalone, stdin-configured recorder used by ``dimos --record``.
-pub async fn run_cli() -> Result<()> {
-    dimos_module::init_tracing();
-    let launch_value = dimos_module::read_launch_config().await?;
-    let launch: LaunchConfig =
-        serde_json::from_value(launch_value.clone()).context("invalid memory recorder config")?;
-    match std::env::var("DIMOS_TRANSPORT").as_deref() {
-        Ok("lcm") => run_cli_with(LcmTransport::new().await?, launch).await,
-        Ok("zenoh") => {
-            run_cli_with(ZenohTransport::from_launch(&launch_value).await?, launch).await
-        }
-        other => Err(anyhow!(
-            "DIMOS_TRANSPORT must be 'lcm' or 'zenoh', got {other:?}"
-        )),
-    }
-}
-
-async fn run_cli_with<T: Transport>(transport: T, launch: LaunchConfig) -> Result<()> {
-    launch.config.validate()?;
-    let _session = launch.session;
-    let engine = RecorderEngine::start(launch.config.clone())?;
-    let handle = engine.handle();
-
-    for stream in &launch.config.streams {
-        let topic = launch
-            .topics
-            .get(&stream.port)
-            .with_context(|| format!("no topic supplied for recorder port {:?}", stream.port))?;
-        let stream = Arc::new(stream.clone());
-        let callback_stream = Arc::clone(&stream);
-        let callback_handle = handle.clone();
-        let callback: Dispatch =
-            Arc::new(move |data| callback_handle.record(Arc::clone(&callback_stream), data));
-        if let Err(error) = transport.subscribe(topic, callback).await {
-            let subscription_error = anyhow!(error).context(format!(
-                "failed to subscribe recorder port {:?} to {topic:?}",
-                stream.port
-            ));
-            return match engine.shutdown() {
-                Ok(_) => Err(subscription_error),
-                Err(shutdown_error) => Err(subscription_error.context(format!(
-                    "recorder shutdown after subscription failure also failed: {shutdown_error:#}"
-                ))),
-            };
-        }
-        info!(
-            port = %stream.port,
-            topic = %topic,
-            store_stream = %stream.name,
-            codec = ?stream.codec,
-            "recording stream"
-        );
-    }
-
-    info!(
-        event = "recorder_ready",
-        streams = launch.config.streams.len(),
-        "memory recorder ready"
-    );
-    let failure = engine.failure_receiver();
-    let pipeline_failed = tokio::task::spawn_blocking(move || failure.recv());
-    tokio::pin!(pipeline_failed);
-    tokio::select! {
-        result = shutdown_signal() => result.context("failed to listen for shutdown")?,
-        result = &mut pipeline_failed => {
-            let message = result
-                .context("pipeline failure monitor panicked")?
-                .context("pipeline failure monitor disconnected")?;
-            return match engine.shutdown() {
-                Ok(_) => Err(anyhow!(message)),
-                Err(shutdown_error) => Err(anyhow!(
-                    "{message}; recorder shutdown also failed: {shutdown_error:#}"
-                )),
-            };
-        }
-    }
-    let stats = engine.shutdown()?;
-    info!(
-        event = "recorder_finalized",
-        received = stats.received,
-        written = stats.written,
-        encode_errors = stats.encode_errors,
-        dropped = stats.drops.total,
-        stream_drops = ?stats.drops.streams,
-        "memory recorder finalized"
-    );
-    Ok(())
-}
-
-#[cfg(unix)]
-async fn shutdown_signal() -> io::Result<()> {
-    use tokio::signal::unix::{signal, SignalKind};
-
-    let mut terminate = signal(SignalKind::terminate())?;
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result,
-        _ = terminate.recv() => Ok(()),
-    }
-}
-
-#[cfg(not(unix))]
-async fn shutdown_signal() -> io::Result<()> {
-    tokio::signal::ctrl_c().await
 }
 
 struct RecorderInput {
@@ -542,10 +342,12 @@ impl Module for MemoryRecorder {
 }
 
 fn writer_loop(
-    mut store: Box<dyn RecordingStore>,
+    config: RecorderConfig,
     receiver: Receiver<EncodedBatch>,
     permits: Receiver<()>,
 ) -> Result<WriterStats> {
+    let mut store = store::open(&config.store, &config.streams, config.encoding_threads)?;
+
     let mut pending = BTreeMap::new();
     let mut ready = Vec::with_capacity(WRITE_BATCH_SIZE);
     let mut next_sequence = 0;
@@ -673,35 +475,6 @@ mod tests {
     }
 
     #[test]
-    fn full_queue_drops_without_allocating_a_sequence() {
-        let (permit_tx, _permit_rx) = bounded(1);
-        permit_tx.try_send(()).unwrap();
-        let (write_tx, _write_rx) = bounded(1);
-        let drops = Arc::new(DropCounters::default());
-        let handle = RecorderHandle {
-            submission: Arc::new(Mutex::new(Some(Submission {
-                pool: worker_pool(1),
-                sender: write_tx,
-                pending: WaitGroup::new(),
-            }))),
-            permits: permit_tx,
-            sequence: Arc::new(AtomicU64::new(0)),
-            drops: Arc::clone(&drops),
-        };
-
-        handle.record(stream("odom", Codec::Lcm, false), b"payload");
-
-        assert_eq!(handle.sequence.load(Ordering::Relaxed), 0);
-        assert_eq!(
-            drops.snapshot(),
-            DropStats {
-                total: 1,
-                streams: BTreeMap::from([("odom".to_string(), 1)]),
-            }
-        );
-    }
-
-    #[test]
     fn lz4_codec_uses_the_frame_format_python_reads() {
         let compressed = encoding::lz4_frame(b"a payload worth compressing").unwrap();
         let mut decoded = Vec::new();
@@ -817,8 +590,8 @@ mod tests {
         };
         let (sender, receiver) = bounded(8);
         let (permit_sender, permit_receiver) = bounded(8);
-        let store = store::open(&config.store, &config.streams, config.encoding_threads).unwrap();
-        let writer = thread::spawn(move || writer_loop(store, receiver, permit_receiver));
+        let writer_config = config.clone();
+        let writer = thread::spawn(move || writer_loop(writer_config, receiver, permit_receiver));
         for sequence in [1, 0, 2] {
             permit_sender.send(()).unwrap();
             sender

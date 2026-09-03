@@ -266,26 +266,6 @@ class TestSignalHandler:
         # Entry still removed even if stop() throws
         assert not entry.registry_path.exists()
 
-    def test_signal_handler_runs_pre_stop_cleanup_first(self, tmp_registry: Path):
-        entry = _make_entry()
-        entry.save()
-        calls: list[str] = []
-        coord = mock.MagicMock()
-        coord.stop.side_effect = lambda: calls.append("coordinator")
-
-        with mock.patch("signal.signal") as mock_signal:
-            install_signal_handlers(
-                entry,
-                coord,
-                before_stop=lambda: calls.append("recorder"),
-            )
-            handler = mock_signal.call_args_list[0][0][1]
-
-        with pytest.raises(SystemExit):
-            handler(signal.SIGTERM, None)
-
-        assert calls == ["recorder", "coordinator"]
-
 
 class TestStatusCommand:
     """Tests for `dimos status` CLI command."""

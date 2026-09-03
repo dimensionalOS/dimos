@@ -39,9 +39,11 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 _RUST_DIR = Path(__file__).resolve().parent / "rust"
-_EXECUTABLE = _RUST_DIR / "result/bin/dimos-memory-recorder-cli"
+_EXECUTABLE = _RUST_DIR / "result/bin/dimos-memory-recorder"
 _BUILD_COMMAND = ("nix", "build", "-L", ".#dimos-memory-recorder")
 _READY_TIMEOUT = 10.0
+_DEFAULT_ENCODING_THREADS = 4
+_READY_MESSAGE = "memory recorder ready"
 
 
 @dataclass(frozen=True)
@@ -56,7 +58,7 @@ class RustRecordingPlan:
 
 
 def prepare_rust_recorder() -> None:
-    """Build the CLI recorder before module startup when it is unavailable or requested."""
+    """Build the native recorder when it is unavailable or explicitly requested."""
     if global_config.record_engine != "rust" or not global_config.record or global_config.replay:
         return
     if _EXECUTABLE.exists() and not global_config.build_native:
@@ -172,7 +174,6 @@ class RustRecordingSession:
 
     def __init__(self, plan: RustRecordingPlan) -> None:
         self.plan = plan
-        self.failure_event = threading.Event()
         self._ready = threading.Event()
         self._stopping = threading.Event()
         self._failure: str | None = None
@@ -180,13 +181,15 @@ class RustRecordingSession:
         self._threads: list[threading.Thread] = []
 
     def start(self) -> None:
+        prepare_rust_recorder()
         _prepare_artifact(self.plan)
         store = {"kind": global_config.record, "path": str(self.plan.path)}
         launch = {
             "topics": self.plan.topics,
             "config": {
                 "store": store,
-                "encoding_threads": global_config.record_encoding_threads,
+                "encoding_threads": global_config.record_encoding_threads
+                or _DEFAULT_ENCODING_THREADS,
                 "streams": [stream.model_dump() for stream in self.plan.streams],
             },
             "session": session_config().to_wire() if self.plan.backend == "zenoh" else {},
@@ -242,13 +245,10 @@ class RustRecordingSession:
                 data = json.loads(line)
                 fields = data.pop("fields", {})
                 message = fields.pop("message", line)
-                event = fields.pop("event", None)
-                if event is not None:
-                    fields["native_event"] = event
                 level = data.pop("level", fallback_level).lower()
                 log = logger.warning if level in {"warn", "warning"} else getattr(logger, level)
                 log(message, module="rust-recorder", **fields, **data)
-                if event == "recorder_ready":
+                if message == _READY_MESSAGE:
                     self._ready.set()
             except (json.JSONDecodeError, TypeError, AttributeError):
                 getattr(logger, fallback_level)(line, module="rust-recorder")
@@ -257,10 +257,11 @@ class RustRecordingSession:
     def _watch_process(self) -> None:
         assert self._process is not None
         returncode = self._process.wait()
-        if not self._stopping.is_set() or returncode != 0:
+        if not self._stopping.is_set() and not self._ready.is_set():
             self._failure = f"process exited with status {returncode}"
-            self.failure_event.set()
             self._ready.set()
+        elif not self._stopping.is_set():
+            logger.error("Experimental Rust recorder exited", status=returncode)
 
     def stop(self) -> None:
         process = self._process
@@ -274,17 +275,13 @@ class RustRecordingSession:
             except subprocess.TimeoutExpired:
                 logger.warning("Rust recorder did not flush in time; sending SIGKILL")
                 process.kill()
-                process.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-                self._failure = "process did not flush before the shutdown timeout"
-                self.failure_event.set()
+                try:
+                    process.wait(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+                except subprocess.TimeoutExpired:
+                    logger.error("Rust recorder could not be reaped after SIGKILL")
         for thread in self._threads:
             if thread is not threading.current_thread():
                 thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-        if process.returncode != 0 and self._failure is None:
-            self._failure = f"process exited with status {process.returncode}"
-            self.failure_event.set()
+        if process.returncode not in (None, 0):
+            logger.warning("Rust recorder stopped with an error", status=process.returncode)
         self._process = None
-
-    def raise_if_failed(self) -> None:
-        if self._failure is not None:
-            raise RuntimeError(f"Rust recorder failed: {self._failure}")

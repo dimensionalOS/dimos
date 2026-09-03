@@ -17,7 +17,7 @@ from pathlib import Path
 import re
 from typing import Literal, TypeAlias
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.constants import DEFAULT_BUILD_NATIVE
@@ -55,9 +55,9 @@ class GlobalConfig(BaseSettings):
     replay: bool = False
     replay_db: str = "go2_short"
     record: Literal["", "sqlite", "mcap"] = ""
-    record_engine: Literal["python", "rust"] = "python"
+    record_engine: Literal["python", "rust"] = Field(default="python", validate_default=True)
     record_topics: str = "*"  # comma-separated globs on the topic slug (/a/b -> a_b)
-    record_encoding_threads: int = Field(default=4, ge=1)
+    record_encoding_threads: int | None = Field(default=None, ge=1)
     new_memory: bool = False
     # How every zenoh session this process opens joins the network.
     zenoh_mode: ZenohProcessMode = "peer"
@@ -138,6 +138,22 @@ class GlobalConfig(BaseSettings):
         extra="ignore",
         validate_assignment=True,
     )
+
+    @field_validator("record_engine")
+    @classmethod
+    def _validate_record_engine(cls, value: str, info: ValidationInfo) -> str:
+        if info.data.get("record") == "mcap" and value != "rust":
+            raise ValueError("MCAP recording requires --record-engine rust")
+        return value
+
+    @field_validator("record_encoding_threads")
+    @classmethod
+    def _validate_record_encoding_threads(
+        cls, value: int | None, info: ValidationInfo
+    ) -> int | None:
+        if value is not None and info.data.get("record_engine") != "rust":
+            raise ValueError("--record-encoding-threads is valid only with --record-engine rust")
+        return value
 
     def update(self, **kwargs: object) -> None:
         """Update config fields in place."""

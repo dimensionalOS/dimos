@@ -193,7 +193,7 @@ def stubbed_run(
         def suppress_console(self) -> None:
             return None
 
-        def loop(self, *args: Any, **kwargs: Any) -> None:
+        def loop(self) -> None:
             return None
 
     class FakeEntry:
@@ -266,7 +266,8 @@ def test_python_recording_rejects_rust_encoding_threads(
     )
 
     assert result.exit_code == 2
-    assert "valid only with --record-engine rust" in result.output
+    assert "valid only with" in result.output
+    assert "--record-engine rust" in result.output
     assert "blueprint" not in stubbed_run
 
 

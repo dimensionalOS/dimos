@@ -35,10 +35,11 @@ other specialized transports before creating an artifact. Narrow
 `--record-topics` or use the Python engine when a selection contains one of
 those transports. Payloads must also be dimOS LCM message types.
 
-The native process must report ready within 10 seconds. A startup, subscription,
-writer, or runtime failure stops the whole `dimos run` with a nonzero status;
-there is no automatic fallback to Python. Daemon mode reports success only after
-the native recorder is ready.
+The native process must report ready within 10 seconds, so build, configuration,
+and subscription failures stop startup. If it exits unexpectedly after startup,
+the error is logged and the rest of `dimos run` continues. Normal shutdown sends
+SIGTERM and lets the existing native module runtime flush the artifact. There is
+no automatic fallback to Python.
 
 ## Choosing streams
 
@@ -94,14 +95,7 @@ dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 ## Behavior
 
 - Off unless `--record`; never active under `--replay`.
-- Transport callbacks only enqueue. A full queue drops the newest message instead
-  of blocking the publisher. Both engines warn about drops; the Rust engine also
-  reports total and per-stream counts when it finalizes.
+- The Python recorder uses one writer thread. Its queue holds 1000 messages, then
+  drops and warns. The Rust recorder uses its existing native encoding pool and
+  ordered writer pipeline.
 - We also still have explicit recorder modules (`unitree-go2-memory`, `unitree-go2-mid360-record`, `unitree-g1-record`) that are unaffected and still record their own streams. These will be deprecated shortly.
-
-## Rust promotion gate
-
-The Rust engine will replace the Python default only after the real binary passes
-SQLite and MCAP tests over both LCM and Zenoh, Nix builds on every supported
-platform, and the canonical high-rate benchmark records with zero drops at
-throughput no worse than Python. This staged change does not alter the default.
