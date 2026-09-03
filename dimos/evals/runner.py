@@ -25,6 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -66,6 +67,10 @@ class EvalRunnerConfig(BaseConfig):
     mcp_url: str | None = None  # None -> localhost:{global_config.mcp_port}/mcp
     live_db: str = "recording.db"  # store the Recorder writes (interactive)
     blind: bool = False  # ablation: context withheld (SPACE guessing check)
+    # "" sends no system message at all, which is what an external benchmark
+    # whose questions carry their own instructions needs: the default would
+    # otherwise contradict them.
+    system_prompt: str = EVAL_SYSTEM_PROMPT
     threshold: float = 1.0  # passed = score >= threshold
     strict: bool = False  # preflight failure aborts the whole run
     context_budget: int = 8  # max observations encoded per context Select
@@ -167,9 +172,19 @@ class EvalRunner(Configurable, CompositeResource):
         return self._run_dir
 
     def _new_run_dir(self) -> Path:
-        run_dir = self.config.out_dir / time.strftime("run-%Y%m%d-%H%M%S")
-        run_dir.mkdir(parents=True, exist_ok=True)
-        return run_dir
+        # The pid keeps runners launched in the same second — parallel suite
+        # sweeps — from silently sharing one directory; exclusive creation with
+        # a collision suffix covers runners in the same process too.
+        stamp = f"{time.strftime('run-%Y%m%d-%H%M%S')}-{os.getpid()}"
+        self.config.out_dir.mkdir(parents=True, exist_ok=True)
+        for n in range(100):
+            run_dir = self.config.out_dir / (stamp if n == 0 else f"{stamp}-{n}")
+            try:
+                run_dir.mkdir(exist_ok=False)
+            except FileExistsError:
+                continue
+            return run_dir
+        raise RuntimeError(f"could not allocate a run directory under {stamp}")
 
     def _write_artifacts(self, results: list[EvalResult]) -> None:
         lines = [json.dumps(asdict(r)) for r in results]
@@ -246,12 +261,19 @@ class EvalRunner(Configurable, CompositeResource):
                 blocks.append({"type": "text", "text": f"{stamp} {data}"})
         return blocks
 
+    def _system_messages(self) -> list[Any]:
+        """The leading system message, or none when the prompt is empty."""
+        from langchain_core.messages import SystemMessage
+
+        return [SystemMessage(self.config.system_prompt)] if self.config.system_prompt else []
+
     def ask(self, context: Sequence[dict[str, Any]], question: str) -> str:
-        from langchain_core.messages import HumanMessage, SystemMessage
+        from langchain_core.messages import BaseMessage, HumanMessage
 
         blocks = list(context) if context else [BLIND_BLOCK]
-        message = HumanMessage(content=[*blocks, {"type": "text", "text": question}])
-        response = self.model.invoke([SystemMessage(EVAL_SYSTEM_PROMPT), message])
+        messages: list[BaseMessage] = self._system_messages()
+        messages.append(HumanMessage(content=[*blocks, {"type": "text", "text": question}]))
+        response = self.model.invoke(messages)
         return str(response.text)
 
     def ask_structured(
@@ -305,7 +327,7 @@ class EvalRunner(Configurable, CompositeResource):
         """Fresh create_agent per case over the MCP toolset — the McpClient loop
         minus its queue/thread shell. Transcript -> <run_dir>/<case_id>.jsonl."""
         from langchain.agents import create_agent
-        from langchain_core.messages import HumanMessage, SystemMessage
+        from langchain_core.messages import HumanMessage
         from langchain_core.tools import StructuredTool
 
         from dimos.agents.mcp.mcp_adapter import McpAdapter
@@ -321,7 +343,7 @@ class EvalRunner(Configurable, CompositeResource):
             for t in adapter.list_tools()
         ]
         graph: Any = create_agent(self.model, tools)
-        messages: list[Any] = [SystemMessage(EVAL_SYSTEM_PROMPT), HumanMessage(case.inputs)]
+        messages: list[Any] = [*self._system_messages(), HumanMessage(case.inputs)]
         transcript = self.run_dir / f"{case.id}.jsonl"
         final_text = ""
         with transcript.open("w") as fh:

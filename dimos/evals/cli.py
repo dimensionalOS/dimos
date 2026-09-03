@@ -35,6 +35,9 @@ def run(
     attach: bool = typer.Option(False, help="Drive an already-running dimos (interactive cases)"),
     limit: int = typer.Option(0, help="Run at most N cases"),
     live_db: str = typer.Option("recording.db", help="Live Recorder db (interactive cases)"),
+    system_prompt: str | None = typer.Option(
+        None, help='Override the eval system prompt; "" sends none (external benchmarks)'
+    ),
 ) -> None:
     from dimos.evals.runner import EvalRunner, summarize
 
@@ -42,6 +45,8 @@ def run(
     overrides: dict[str, object] = {"blind": blind, "attach": attach, "live_db": live_db}
     if model:
         overrides["model"] = model
+    if system_prompt is not None:
+        overrides["system_prompt"] = system_prompt
     runner = EvalRunner(**overrides)
     results = runner.run(
         cases,

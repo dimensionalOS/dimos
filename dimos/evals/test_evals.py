@@ -25,6 +25,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import BaseModel
 import pytest
 
@@ -351,6 +354,71 @@ def test_runner_encode_budget(dataset: str, tmp_path: Path) -> None:
     assert len(blocks) == 4
     assert all(b["type"] == "text" for b in blocks)
     assert "pos=" in blocks[1]["text"]
+
+
+class _SpyChat(BaseChatModel):
+    """Captures the exact message list the runner sends; replies with a constant."""
+
+    reply: str = "4"
+
+    @property
+    def _llm_type(self) -> str:
+        return "spy"
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        self.seen.append(messages)
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.reply))])
+
+    @property
+    def seen(self) -> list[list[BaseMessage]]:
+        # per-instance, unlike a class attribute shared across tests
+        if not hasattr(self, "_seen"):
+            object.__setattr__(self, "_seen", [])
+        return self._seen  # type: ignore[attr-defined,no-any-return]
+
+
+def test_same_second_runners_get_distinct_run_dirs(tmp_path: Path) -> None:
+    """Same process, same second, same pid — directories must still not collide."""
+    from dimos.evals.runner import EvalRunner
+
+    runner = EvalRunner(chat_model=None, out_dir=tmp_path)  # type: ignore[arg-type]
+    dirs = {runner._new_run_dir() for _ in range(3)}
+    assert len(dirs) == 3
+    assert all(d.is_dir() for d in dirs)
+
+
+def test_system_prompt_override(tmp_path: Path) -> None:
+    from dimos.evals.runner import EVAL_SYSTEM_PROMPT, EvalRunner
+
+    default = _SpyChat()
+    EvalRunner(chat_model=default, out_dir=tmp_path).ask([], "q")
+    assert default.seen[-1][0].content == EVAL_SYSTEM_PROMPT
+
+    custom = _SpyChat()
+    EvalRunner(chat_model=custom, system_prompt="be terse", out_dir=tmp_path).ask([], "q")
+    assert custom.seen[-1][0].content == "be terse"
+
+    # "" drops the system message entirely: an external benchmark whose prompt
+    # already states its own protocol must not have ours contradicting it.
+    suppressed = _SpyChat()
+    EvalRunner(chat_model=suppressed, system_prompt="", out_dir=tmp_path).ask([], "q")
+    assert len(suppressed.seen[-1]) == 1
+
+
+def test_list_suites_finds_nested_and_skips_private() -> None:
+    """A benchmark directory's suites are listed; its _config/_bench are not."""
+    from dimos.evals.module import list_suites
+
+    names = list_suites()
+    assert "dimos.evals.suites.go2_smoke" in names
+    assert "dimos.evals.suites.space.distance" in names
+    assert not any(name.rsplit(".", 1)[1].startswith("_") for name in names)
 
 
 def test_suites_importable() -> None:
