@@ -136,7 +136,7 @@ def _descriptor_dict(descriptor: HostDescriptor) -> dict[str, Any]:
         "tags": sorted(descriptor.tags),
         "versions": descriptor.versions,
         "state": descriptor.state,
-        "active_run_id": descriptor.active_run_id,
+        "active_run_ids": list(descriptor.active_run_ids),
     }
 
 
@@ -215,11 +215,11 @@ def list_hosts(
                 item.name,
                 ",".join(sorted(item.tags)) or "-",
                 item.state,
-                item.active_run_id or "-",
+                ",".join(item.active_run_ids) or "-",
                 str(item.versions.get("dimos", "-")),
             )
         )
-    typer.echo(_format_table(("ID", "NAME", "TAGS", "STATE", "RUN", "DIMOS"), rows))
+    typer.echo(_format_table(("ID", "NAME", "TAGS", "STATE", "RUNS", "DIMOS"), rows))
 
 
 @host_app.command()
@@ -263,7 +263,7 @@ def describe(
     typer.echo(f"Name:          {descriptor.name}")
     typer.echo(f"Tags:          {','.join(sorted(descriptor.tags)) or '-'}")
     typer.echo(f"State:         {descriptor.state}")
-    typer.echo(f"Active run ID: {descriptor.active_run_id or '-'}")
+    typer.echo(f"Active run IDs: {','.join(descriptor.active_run_ids) or '-'}")
     typer.echo("Versions:")
     for name, value in sorted(descriptor.versions.items()):
         typer.echo(f"  {name}: {value}")
