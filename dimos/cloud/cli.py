@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 import contextlib
+from datetime import datetime, timezone
 import functools
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,26 @@ from typing import Any
 import typer
 
 from dimos.cloud.data import CloudData, recordings
+
+
+def tz_label() -> str:
+    """The zone the table header advertises, e.g. PDT."""
+    return datetime.now().astimezone().tzname() or ""
+
+
+def local_time(ts: str, label: str | None = None) -> str:
+    """ISO timestamp (UTC when naive) -> local wall time; a row whose zone differs
+    from `label` (a DST boundary) carries its own."""
+    try:
+        d = datetime.fromisoformat(ts)
+    except ValueError:
+        return ts[:16].replace("T", " ")
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    d = d.astimezone()
+    label = tz_label() if label is None else label
+    suffix = "" if d.tzname() == label else f" {d.tzname()}"
+    return d.strftime("%Y-%m-%d %H:%M") + suffix
 
 
 def handle_fail(fn: Callable[..., None]) -> Callable[..., None]:
@@ -103,7 +124,6 @@ def upload(
 
 @handle_fail
 def ls() -> None:
-    from datetime import datetime, timezone
     import sys
 
     if sys.stdout.isatty() and sys.stdin.isatty():  # Textual needs a real TTY
@@ -117,28 +137,13 @@ def ls() -> None:
     from rich.filesize import decimal
     from rich.table import Table
 
-    tz_now = datetime.now().astimezone().tzname()
-
-    def local(ts: str) -> str:
-        try:
-            d = datetime.fromisoformat(ts)
-        except ValueError:
-            return ts[:16].replace("T", " ")
-        if d.tzinfo is None:
-            d = d.replace(tzinfo=timezone.utc)
-        d = d.astimezone()
-        # A row across a DST boundary carries its own label (PST vs the PDT header).
-        suffix = "" if d.tzname() == tz_now else f" {d.tzname()}"
-        return d.strftime("%Y-%m-%d %H:%M") + suffix
-
+    tz_now = tz_label()
     rows = CloudData().ls()
     org = any(u.get("uploader_email") for u in rows)
     table = Table(box=box.SIMPLE_HEAVY, header_style="bold")
     table.add_column("id", style="cyan", no_wrap=True)
     table.add_column("file", style="bold")
-    table.add_column(
-        f"uploaded ({datetime.now().astimezone().tzname()})", style="dim", no_wrap=True
-    )
+    table.add_column(f"uploaded ({tz_now})", style="dim", no_wrap=True)
     table.add_column("kind")
     if org:
         table.add_column("uploader", style="dim")
@@ -153,7 +158,7 @@ def ls() -> None:
         table.add_row(
             u["id"][:12],
             u["filename"],
-            local(str(u.get("created_at") or "")) or "—",
+            local_time(str(u.get("created_at") or ""), tz_now) or "—",
             u.get("kind", ""),
             *([u.get("uploader_email") or "—"] if org else []),
             mani.get("blueprint") or "—",
