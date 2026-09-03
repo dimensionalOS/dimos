@@ -51,6 +51,8 @@ class FakeHooks implements TeleopHooks {
   }
 }
 
+let seq = 1;
+
 describe("TeleopPanel", () => {
   let container: HTMLElement;
   let root: Root;
@@ -86,6 +88,60 @@ describe("TeleopPanel", () => {
       pad().dispatchEvent(new KeyboardEvent(type, { code, bubbles: true, cancelable: true }));
     });
   }
+
+  it("refuses to arm in agent mode, and drops the lease if the mode flips", () => {
+    // A pad bound to a mode stream must not go green on a robot that
+    // discards teleop in agent mode - the keys would do nothing.
+    const store = new ChannelStore();
+    const spec: PanelSpec = { ...SPEC, params: { mode: "mode" } };
+    const modeHooks = new FakeHooks();
+    modeHooks.status.update({ transport: { phase: "connected" }, manifest: MANIFEST });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const modeRoot = createRoot(host);
+    const ingestMode = (mode: string) =>
+      act(() => {
+        store.ingest(
+          "mode",
+          { ch: "mode", seq: seq++, ts: 1, delivery: "reliable" },
+          { mode, t: 1 },
+          true,
+        );
+        store.publishUi();
+      });
+    try {
+      act(() => modeRoot.render(<TeleopPanel spec={spec} store={store} teleop={modeHooks} />));
+      const el = () => host.querySelector<HTMLElement>(`[data-testid="teleop-${CH}"]`)!;
+
+      ingestMode("agent");
+      expect(el().dataset.state).toBe("agent");
+      expect(host.textContent).toContain("agent mode");
+      act(() => el().focus());
+      expect(modeHooks.controls).toEqual([]); // never asked for the lease
+
+      ingestMode("teleop");
+      expect(el().dataset.state).toBe("disarmed");
+      // The agent-mode disarm must not linger as an explanation once the
+      // switch says Teleop again.
+      expect(host.textContent).toContain("click to arm");
+      expect(host.textContent).not.toContain("agent mode");
+      // Re-focusing an already-focused element fires nothing; leave and
+      // come back the way a person would.
+      act(() => el().blur());
+      act(() => el().focus());
+      act(() => modeHooks.reply({ t: "teleop_started" }));
+      expect(el().dataset.state).toBe("armed");
+
+      // Flipping to agent while armed releases the lease instead of leaving
+      // a green pad driving a robot that stopped listening.
+      ingestMode("agent");
+      expect(modeHooks.controls.at(-1)).toEqual({ t: "teleop_stop" });
+      expect(el().dataset.state).toBe("agent");
+    } finally {
+      act(() => modeRoot.unmount());
+      host.remove();
+    }
+  });
 
   it("arms on focus only after the relay grants the lease", () => {
     expect(pad().dataset.state).toBe("disarmed");

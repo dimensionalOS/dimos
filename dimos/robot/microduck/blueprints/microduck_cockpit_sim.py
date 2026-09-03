@@ -122,12 +122,12 @@ _TELEOP_MAX_ANGULAR = 0.6
 # panel should get the budget. Raising these past the ceiling does not add
 # frames, it just splits the same ~30 fps more ways.
 #
-# Both budgets point the same way: fewer pixels. A latest channel's delivered
-# rate is 1 / (fixed per-stream cost + time to write the payload), so a
-# smaller frame is worth more fps than a higher requested rate, and it cuts
-# the sim-thread render cost at the same time. 480 x 270 is 44% fewer pixels
-# than 640 x 360 and still fills the cockpit's largest panel.
-_CHASE_CAM_SIZE = (480, 270)
+# Frame SIZE is the weaker lever of the two and it is not free: the cockpit's
+# video canvas scales down to its panel but never up (VideoPanel.module.css
+# `max-width: 100%`), so a smaller frame just leaves dead space around a
+# smaller picture. 480 x 270 measured only ~7% more delivered fps than
+# 640 x 360 and looked worse, so the chase cam keeps its size.
+_CHASE_CAM_SIZE = (640, 360)
 _CHASE_CAM_FPS = 30.0
 _CHASE_CAM_MAX_HZ = 40.0
 _CHASE_CAM_QUALITY = 70
@@ -186,6 +186,9 @@ MICRODUCK_COCKPIT_LAYOUT = Col(
                 Teleop(
                     max_linear=_TELEOP_MAX_LINEAR,
                     max_angular=_TELEOP_MAX_ANGULAR,
+                    # DuckControl drops teleop twists in agent mode; naming
+                    # the stream lets the pad say so instead of arming.
+                    mode="mode",
                     title="Teleop (WASDQE)",
                 ),
                 shares=[1, 1],

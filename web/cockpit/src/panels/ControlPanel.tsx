@@ -1,6 +1,7 @@
 // Control strip: mode switch (Teleop | Agent), the policy buttons grouped
 // Base / Posture / Actions, and status chips (variant, fallen, locked, last
-// error, navigation with a cancel). Every command is one ui_command tx; the
+// error). Navigation state belongs to the map panel, next to the goal marker
+// it describes. Every command is one ui_command tx; the
 // clicked button shows as pending for PENDING_MS unless the policy state
 // catches up first (derivePolicyUi). No keyboard shortcuts: WASD belongs to
 // the teleop pad, and every button preventDefaults mousedown so a click here
@@ -13,16 +14,15 @@ import {
   derivePolicyUi,
   GROUPS,
   livePending,
-  navCancellable,
   PENDING_MS,
   type PendingRequest,
   type PolicyButton,
-  readNavState,
   readPolicyState,
 } from "./controlPolicy.ts";
 import { useOptionalSlot } from "./hooks.ts";
 import { paramChannel, readString } from "./panelParams.ts";
 import type { PanelProps } from "./registry.tsx";
+import { txReasonText } from "./txReason.ts";
 
 export type Mode = "teleop" | "agent";
 
@@ -37,12 +37,10 @@ const keepFocus = (e: MouseEvent<HTMLButtonElement>): void => e.preventDefault()
 export function ControlPanel({ spec, store, teleop }: PanelProps) {
   const modeCh = paramChannel(spec, "mode", 0);
   const policiesCh = paramChannel(spec, "policies", 1);
-  const navCh = paramChannel(spec, "navState", 2);
   const commandCh = paramChannel(spec, "command", 3);
 
   const mode = readMode(useOptionalSlot(store, modeCh)?.value);
   const policy = readPolicyState(useOptionalSlot(store, policiesCh)?.value);
-  const nav = readNavState(useOptionalSlot(store, navCh)?.value);
 
   const [pending, setPending] = useState<PendingRequest[]>([]);
   const [pendingMode, setPendingMode] = useState<{ mode: Mode; at: number } | null>(null);
@@ -75,7 +73,7 @@ export function ControlPanel({ spec, store, teleop }: PanelProps) {
     if (teleop === undefined || commandCh === undefined) return false;
     const result = teleop.tx(commandCh, data);
     if (!result.ok) {
-      setError(`command not sent (${result.reason})`);
+      setError(`command not sent: ${txReasonText(result.reason)}`);
       return false;
     }
     setError(null);
@@ -90,10 +88,6 @@ export function ControlPanel({ spec, store, teleop }: PanelProps) {
       setPending((p) => [...p, { policy: b.name, action: b.action, at: Date.now() }]);
     }
   };
-  const cancelNav = (): void => {
-    send({ name: "cancel_nav" });
-  };
-
   return (
     <PanelFrame spec={spec}>
       <div className={styles.strip} data-testid={`control-${spec.id}`}>
@@ -160,29 +154,11 @@ export function ControlPanel({ spec, store, teleop }: PanelProps) {
               {policy.last_error}
             </span>
           )}
-          {nav !== null && (
-            <span
-              className={navCancellable(nav) ? styles.chipNav : styles.chip}
-              data-testid="chip-nav"
-              data-nav-state={nav.state}
-            >
-              nav: {nav.state.replace(/_/g, " ")}
-              {nav.goal !== null && ` → (${nav.goal.x.toFixed(2)}, ${nav.goal.y.toFixed(2)})`}
-              {navCancellable(nav) && (
-                <button
-                  type="button"
-                  className={styles.cancel}
-                  aria-label="cancel navigation"
-                  data-testid="chip-nav-cancel"
-                  disabled={!canSend}
-                  onMouseDown={keepFocus}
-                  onClick={cancelNav}
-                >
-                  ✕
-                </button>
-              )}
-            </span>
-          )}
+          {
+            /* Nav state and its cancel live on the map, beside the goal
+              marker and the path they describe; a second copy here read as
+              two different controls. */
+          }
           {error !== null && (
             <span className={styles.chipBad} role="alert" data-testid="control-error">{error}</span>
           )}

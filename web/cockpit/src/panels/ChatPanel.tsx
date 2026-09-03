@@ -24,6 +24,7 @@ import styles from "./ChatPanel.module.css";
 import { useOptionalSlot } from "./hooks.ts";
 import { paramChannel, readString } from "./panelParams.ts";
 import type { PanelProps } from "./registry.tsx";
+import { txReasonText } from "./txReason.ts";
 
 /** Bridge cap for human_input text (relay_bridge_module._CHAT_IN_MAX_CHARS). */
 export const CHAT_INPUT_MAX_CHARS = 900;
@@ -60,15 +61,6 @@ function readMode(v: unknown): string | null {
   if (typeof v !== "object" || v === null) return null;
   return readString((v as Record<string, unknown>).mode);
 }
-
-const TX_REASON: Record<string, string> = {
-  disconnected: "not connected",
-  no_manifest: "not connected",
-  unknown_channel: "input channel missing from manifest",
-  not_tx: "input channel is not writable",
-  too_large: "message too long",
-  bad_channel: "bad input channel",
-};
 
 export function ChatPanel({ spec, store, teleop }: PanelProps) {
   const chans = chatChannels(spec);
@@ -118,7 +110,7 @@ function ChatView({ spec, store, teleop, chans }: PanelProps & { chans: ChatChan
     }
     const result = teleop.tx(chans.input, { text });
     if (!result.ok) {
-      setError(TX_REASON[result.reason] ?? result.reason);
+      setError(txReasonText(result.reason));
       return false;
     }
     setError(null);

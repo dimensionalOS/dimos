@@ -20,7 +20,7 @@ import {
 import { type ChannelStore } from "@dimos/sdk";
 import { useStoreChannel } from "@dimos/sdk/react";
 import { Badge, type DrawHealth, PanelFrame } from "../layout/PanelFrame.tsx";
-import { navCancellable, type NavState, readNavState } from "./controlPolicy.ts";
+import { navCancellable, type NavState, navTone, readNavState } from "./controlPolicy.ts";
 import { useOptionalSlot } from "./hooks.ts";
 import { MAP_STALE_MS, type MapSinkDeps, startMapSink } from "./MapPanel.tsx";
 import {
@@ -45,6 +45,7 @@ import {
 import styles from "./NavMapPanel.module.css";
 import { paramChannel } from "./panelParams.ts";
 import type { PanelProps } from "./registry.tsx";
+import { txReasonText } from "./txReason.ts";
 
 export interface NavMapChannels {
   costmap: string;
@@ -76,6 +77,15 @@ function readPose(v: unknown): Pose2d | null {
   if (typeof x !== "number" || typeof y !== "number" || typeof yaw !== "number") return null;
   return { x, y, yaw };
 }
+
+/** How long a click's note stays under the map before it clears itself. */
+export const NOTE_LINGER_MS = 4000;
+
+const NAV_CHIP_CLASS = {
+  bad: styles.chipBad,
+  active: styles.chipNav,
+  neutral: styles.chip,
+} as const;
 
 const ROOM_STROKE = "rgba(47, 129, 247, 0.75)";
 const LABEL_FILL = "rgba(20, 23, 26, 0.85)";
@@ -349,6 +359,15 @@ function NavMapView({ spec, store, teleop, chans }: PanelProps & { chans: NavMap
   const nav = readNavState(useOptionalSlot(store, chans.navState)?.value);
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
 
+  // A note reports one click; without this it would sit under the map for the
+  // rest of the session, describing a goal several goals ago. Every setNote
+  // stores a fresh object, so a repeated identical note restarts the timer.
+  useEffect(() => {
+    if (note === null) return;
+    const id = setTimeout(() => setNote(null), NOTE_LINGER_MS);
+    return () => clearTimeout(id);
+  }, [note]);
+
   // Channel names are the effect's identity (chans is rebuilt per render).
   const { costmap, pose, path, places, navState } = chans;
   useEffect(() => {
@@ -375,8 +394,9 @@ function NavMapView({ spec, store, teleop, chans }: PanelProps & { chans: NavMap
       return;
     }
     const result = teleop.tx(ch, data);
-    if (!result.ok) setNote({ text: `${what} not sent (${result.reason})`, error: true });
-    else setNote({ text: what, error: false });
+    if (!result.ok) {
+      setNote({ text: `${what} not sent: ${txReasonText(result.reason)}`, error: true });
+    } else setNote({ text: what, error: false });
   };
 
   const onClick = (e: ReactMouseEvent<HTMLCanvasElement>): void => {
@@ -458,7 +478,7 @@ function NavMapView({ spec, store, teleop, chans }: PanelProps & { chans: NavMap
         <div className={styles.chips}>
           {nav !== null && (
             <span
-              className={navCancellable(nav) ? styles.chipNav : styles.chip}
+              className={NAV_CHIP_CLASS[navTone(nav)]}
               data-testid="navmap-chip"
               data-nav-state={nav.state}
             >

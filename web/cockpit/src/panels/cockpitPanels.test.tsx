@@ -8,7 +8,7 @@ import type { TeleopHooks, TxResult } from "@dimos/sdk/internal/teleop";
 import { AGENT_MODE_NOTICE, ChatPanel, THINKING_TEXT } from "./ChatPanel.tsx";
 import { ControlPanel } from "./ControlPanel.tsx";
 import { PENDING_MS } from "./controlPolicy.ts";
-import { NavMapPanel, startNavOverlay } from "./NavMapPanel.tsx";
+import { NavMapPanel, NOTE_LINGER_MS, startNavOverlay } from "./NavMapPanel.tsx";
 import { getPanel } from "./registry.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -391,28 +391,27 @@ describe("cockpit panels", () => {
       expect(q("policy-stand").dataset.state).toBe("idle");
     });
 
-    it("shows the nav chip with a cancel that sends cancel_nav, and fallen", () => {
+    it("shows fallen, and leaves nav state to the map", () => {
+      ingest(store, "policy_state", { ...POLICY_STATE, fallen: true });
+      expect(q("chip-fallen").textContent).toBe("fallen");
+      // Nav state and its cancel belong to the map panel (which is where the
+      // goal marker is); a second copy in the strip read as two controls.
       ingest(store, "nav_state", {
         state: "following_path",
         goal: { x: 1.2, y: 1, yaw: 0 },
         since: 1,
         t: 2,
       });
-      expect(q("chip-nav").textContent).toContain("nav: following path → (1.20, 1.00)");
-      const cancel = q<HTMLButtonElement>("chip-nav-cancel");
-      expect(mouseDownIsPrevented(cancel)).toBe(true);
-      click(cancel);
-      expect(hooks.sent).toEqual([{ ch: "ui_command", data: { name: "cancel_nav" } }]);
-      ingest(store, "nav_state", { state: "reached", goal: null, since: 3, t: 4 });
+      expect(container.querySelector('[data-testid="chip-nav"]')).toBeNull();
       expect(container.querySelector('[data-testid="chip-nav-cancel"]')).toBeNull();
-      ingest(store, "policy_state", { ...POLICY_STATE, fallen: true });
-      expect(q("chip-fallen").textContent).toBe("fallen");
     });
 
     it("surfaces a refused command", () => {
       hooks.result = { ok: false, reason: "not_tx" };
       click(q("control-mode-agent"));
-      expect(q("control-error").textContent).toBe("command not sent (not_tx)");
+      // The SDK's code ("not_tx") is an internal name; the strip says what
+      // it means.
+      expect(q("control-error").textContent).toBe("command not sent: channel is not writable");
       expect(q("control-mode-agent").getAttribute("aria-pressed")).toBe("false");
     });
   });
@@ -526,7 +525,22 @@ describe("cockpit panels", () => {
       hooks.result = { ok: false, reason: "unknown_channel" };
       ingest(store, "places", { ...PLACES, rooms: [] });
       click(overlay, { clientX: 200, clientY: 150 });
-      expect(q("navmap-note").textContent).toContain("not sent (unknown_channel)");
+      expect(q("navmap-note").textContent).toContain("not sent: channel missing from manifest");
+    });
+
+    it("clears the click note instead of leaving it under the map forever", () => {
+      vi.useFakeTimers();
+      ingest(store, "places", { ...PLACES, rooms: [] });
+      click(overlay, { clientX: 200, clientY: 150 });
+      expect(q("navmap-note").textContent).toContain("goal");
+      act(() => {
+        vi.advanceTimersByTime(NOTE_LINGER_MS - 1);
+      });
+      expect(container.querySelector('[data-testid="navmap-note"]')).not.toBeNull();
+      act(() => {
+        vi.advanceTimersByTime(2);
+      });
+      expect(container.querySelector('[data-testid="navmap-note"]')).toBeNull();
     });
   });
 });

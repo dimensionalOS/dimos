@@ -13,6 +13,7 @@ import {
 } from "@dimos/sdk/internal/teleop";
 import { useStatus } from "@dimos/sdk/react";
 import { PanelFrame } from "../layout/PanelFrame.tsx";
+import { useOptionalSlot } from "./hooks.ts";
 import type { PanelProps } from "./registry.tsx";
 import styles from "./TeleopPanel.module.css";
 
@@ -33,7 +34,26 @@ function pressedClass(snap: TeleopSnapshot, code: string): string {
   return snap.pressed.has(code) ? styles.keyDown : styles.key;
 }
 
-export function TeleopPanel({ spec, teleop }: PanelProps) {
+/** The mode stream this pad watches, if the blueprint named one. Read from
+ * params directly: paramChannel's positional fallback would hand back the
+ * twist channel, and an unbound pad must stay mode-blind. */
+function modeChannel(spec: PanelProps["spec"]): string | undefined {
+  const mode = spec.params.mode;
+  return typeof mode === "string" && mode !== "" ? mode : undefined;
+}
+
+/** "agent" from a mode frame; anything else (including no frame) is falsy. */
+function isAgent(value: unknown): boolean {
+  return typeof value === "object" && value !== null &&
+    (value as { mode?: unknown }).mode === "agent";
+}
+
+/** Why the pad disarmed itself when it entered agent mode. Shown only while
+ * still in agent mode: back in teleop it would read as "you are in agent
+ * mode" beside a mode switch that says otherwise. */
+const AGENT_DISARM_REASON = "agent mode";
+
+export function TeleopPanel({ spec, store, teleop }: PanelProps) {
   const ch = spec.channels[0] as string | undefined;
   if (ch === undefined || teleop === undefined) {
     // No channel is a bridge authoring mistake; no teleop hooks means a
@@ -44,16 +64,20 @@ export function TeleopPanel({ spec, teleop }: PanelProps) {
       </PanelFrame>
     );
   }
-  return <TeleopControls spec={spec} teleop={teleop} ch={ch} />;
+  return <TeleopControls spec={spec} store={store} teleop={teleop} ch={ch} />;
 }
 
-function TeleopControls({ spec, teleop, ch }: {
+function TeleopControls({ spec, store, teleop, ch }: {
   spec: PanelProps["spec"];
+  store: PanelProps["store"];
   teleop: NonNullable<PanelProps["teleop"]>;
   ch: string;
 }) {
   const status = useStatus(teleop);
   const connected = status.transport.phase === "connected";
+  // The robot drops teleop twists in agent mode, so the pad must not offer
+  // to drive: an armed-looking pad whose keys do nothing reads as broken.
+  const agent = isAgent(useOptionalSlot(store, modeChannel(spec))?.value);
   // Config is read once per mount: a manifest edit changes the channel
   // params, which changes the manifest, which remounts via the App epoch.
   const [machine] = useState(() =>
@@ -66,6 +90,11 @@ function TeleopControls({ spec, teleop, ch }: {
 
   useEffect(() => teleop.onMsg((msg) => machine.onRelayMsg(msg)), [teleop, machine]);
   useEffect(() => machine.connectionChanged(connected), [machine, connected]);
+  // Switching to agent mode while armed: drop the lease and zero rather than
+  // leave a green pad driving a robot that has stopped listening.
+  useEffect(() => {
+    if (agent) machine.disarm(AGENT_DISARM_REASON);
+  }, [agent, machine]);
   useEffect(() => {
     // Missed keyups and background tabs must never keep driving.
     const onBlur = () => machine.disarm("window blurred");
@@ -86,7 +115,7 @@ function TeleopControls({ spec, teleop, ch }: {
   // still hold focus, and clicking an already-focused element fires no focus
   // event. arm() no-ops unless disarmed, so the pair never double-sends.
   const arm = () => {
-    if (connected) machine.arm();
+    if (connected && !agent) machine.arm();
   };
   const onBlur = (e: FocusEvent<HTMLDivElement>) => {
     // Focus moves within the panel (relatedTarget still inside) do not
@@ -113,10 +142,14 @@ function TeleopControls({ spec, teleop, ch }: {
     machine.keyUp(e.code);
   };
 
-  const state = !connected ? "stopped" : snap.phase;
+  const state = !connected ? "stopped" : agent ? "agent" : snap.phase;
+  // Back in teleop, the agent-mode disarm is history, not a live explanation.
+  const reason = snap.reason === AGENT_DISARM_REASON ? null : snap.reason;
   let banner;
   if (state === "stopped") {
     banner = <span className={styles.stopped}>connection lost</span>;
+  } else if (state === "agent") {
+    banner = <span className={styles.hint}>agent mode - switch to Teleop to drive</span>;
   } else if (state === "arming") {
     banner = <span className={styles.hint}>requesting teleop...</span>;
   } else if (state === "armed") {
@@ -124,7 +157,7 @@ function TeleopControls({ spec, teleop, ch }: {
   } else {
     banner = (
       <span className={styles.hint}>
-        click to arm{snap.reason !== null ? ` (${snap.reason})` : ""}
+        click to arm{reason !== null ? ` (${reason})` : ""}
       </span>
     );
   }

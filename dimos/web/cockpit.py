@@ -317,6 +317,14 @@ class Teleop(Panel):
     All params ride the tx channel in the manifest: the Cockpit machine
     reads speeds and cadence from there, the bridge reads watchdog_ms (its
     deadman window) and clamps incoming twists to max * boost.
+
+    `mode` names a mode stream some other panel in the cockpit already
+    subscribes (the store is keyed by channel, so the pad can read it without
+    requesting it). Naming it lets the pad refuse to arm on a robot that
+    ignores teleop in agent mode, instead of going green while the robot
+    discards every key. Unset - every robot but the duck - keeps the pad
+    exactly as it was: one tx channel, no extra slot, so the "teleop binds
+    exactly one channel" manifest rule is untouched.
     """
 
     kind: ClassVar[str] = "teleop"
@@ -326,6 +334,7 @@ class Teleop(Panel):
     boost: float = field(default=2.0, kw_only=True)
     publish_hz: float = field(default=15.0, kw_only=True)
     watchdog_ms: float = field(default=300.0, kw_only=True)
+    mode: str | None = field(default=None, kw_only=True)
     title: str = field(default="", kw_only=True)
 
     def __post_init__(self) -> None:
@@ -335,6 +344,8 @@ class Teleop(Panel):
         _check_rate("boost", self.boost)
         _check_rate("publish_hz", self.publish_hz)
         _check_rate("watchdog_ms", self.watchdog_ms)
+        if self.mode is not None:
+            _check_stream("mode", self.mode)
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
         return (
@@ -352,6 +363,9 @@ class Teleop(Panel):
                 delivery="latest",
             ),
         )
+
+    def _panel_params(self) -> dict[str, Any]:
+        return {} if self.mode is None else {"mode": self.mode}
 
 
 # The three panels below bind several streams each. Their role -> channel

@@ -216,7 +216,22 @@ export function readNavState(v: unknown): NavState | null {
   };
 }
 
-/** A goal is in progress and worth a cancel button. */
+/** A goal is in progress and worth a cancel button.
+ *
+ * "idle" with a goal counts: the robot publishes that between accepting a
+ * goal and the planner picking it up, and a goal you just sent has to be
+ * cancellable in that window too. Terminal phases clear the goal first, so
+ * they can never match. */
 export function navCancellable(nav: NavState | null): boolean {
-  return nav !== null && (nav.state === "following_path" || nav.state === "recovery");
+  if (nav === null) return false;
+  if (nav.state === "following_path" || nav.state === "recovery") return true;
+  return nav.state === "idle" && nav.goal !== null;
+}
+
+/** How the nav chip should read: "no_path" is a failure and must not look
+ * like "idle", and an active goal should stand out from a finished one. */
+export function navTone(nav: NavState | null): "bad" | "active" | "neutral" {
+  if (nav === null) return "neutral";
+  if (nav.state === "no_path") return "bad";
+  return navCancellable(nav) ? "active" : "neutral";
 }

@@ -175,6 +175,25 @@ def test_unknown_tx_stream_raises() -> None:
         cockpit(layout=Teleop(stream="cmd_vel"))
 
 
+def test_teleop_mode_is_a_param_not_a_channel() -> None:
+    # The pad reads a mode stream some other panel already subscribes, so it
+    # can refuse to arm on a robot that ignores teleop in agent mode. It must
+    # stay a params-only role: "a teleop panel binds exactly one channel" is
+    # enforced by manifest.py and mirrored in manifest.ts.
+    plain = manifest_of(cockpit(layout=Teleop()))
+    (panel,) = plain["panels"]
+    assert panel["channels"] == ["tele_cmd_vel"] and panel["params"] == {}
+
+    bound = manifest_of(cockpit(layout=Row(Teleop(mode="odom"), Video("color_image"))))
+    teleop_panel = next(p for p in bound["panels"] if p["kind"] == "teleop")
+    assert teleop_panel["channels"] == ["tele_cmd_vel"]
+    assert teleop_panel["params"] == {"mode": "odom"}
+    assert parse_manifest(bound).model_dump() == bound
+
+    with pytest.raises(ValueError, match="mode"):
+        Teleop(mode="")
+
+
 def test_wrong_tx_encoding_raises() -> None:
     class Sender(Panel):
         kind = "sender"
