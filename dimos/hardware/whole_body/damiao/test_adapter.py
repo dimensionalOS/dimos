@@ -65,8 +65,12 @@ class FakeArm:
 class FakeGripper:
     def __init__(self, opening: float) -> None:
         self.opening = opening
+        self.motor = Mock(position=opening)
         self.command_error: Exception | None = None
         self.commands: list[float] = []
+        self.modes: list[str] = []
+        self.mit_commands: list[tuple[float, float, float, float, float]] = []
+        self.enable_count = 0
         self.disable_count = 0
 
     def set_opening(self, opening: float) -> None:
@@ -76,6 +80,15 @@ class FakeGripper:
 
     def disable(self) -> None:
         self.disable_count += 1
+
+    def enable(self) -> None:
+        self.enable_count += 1
+
+    def set_mode(self, mode: str) -> None:
+        self.modes.append(mode)
+
+    def mit_control(self, kp: float, kd: float, q: float, dq: float, tau: float) -> None:
+        self.mit_commands.append((kp, kd, q, dq, tau))
 
 
 class FakeTransport:
@@ -584,7 +597,7 @@ def test_activate_enable_failure_disables_robot(
     assert dual_robot.disable_count == 1
 
 
-def test_activate_disables_configured_passive_gripper(
+def test_activate_enables_zero_impedance_for_configured_passive_gripper(
     dual_robot: FakeRobot,
     adapter_factory: Callable[..., DualAdapter],
 ) -> None:
@@ -599,8 +612,15 @@ def test_activate_disables_configured_passive_gripper(
 
     assert adapter.activate()
 
-    assert cast("FakeGripper", dual_robot["left_gripper"]).disable_count == 1
-    assert cast("FakeGripper", dual_robot["right_gripper"]).disable_count == 0
+    left_gripper = cast("FakeGripper", dual_robot["left_gripper"])
+    right_gripper = cast("FakeGripper", dual_robot["right_gripper"])
+    assert left_gripper.disable_count == 0
+    assert left_gripper.modes == ["mit"]
+    assert left_gripper.enable_count == 1
+    assert left_gripper.mit_commands == [(0.0, 0.0, 0.5, 0.0, 0.0)]
+    assert right_gripper.modes == []
+    assert right_gripper.enable_count == 0
+    assert right_gripper.mit_commands == []
 
 
 def test_deactivate_connected_adapter_disables_robot(
@@ -789,7 +809,7 @@ def test_write_motor_commands_grippers_routes_normalized_openings(
     assert cast("FakeGripper", dual_robot["right_gripper"]).commands == [0.75]
 
 
-def test_write_motor_commands_ignores_passive_gripper_target(
+def test_write_motor_commands_keeps_passive_gripper_at_zero_impedance(
     dual_robot: FakeRobot,
     adapter_factory: Callable[..., DualAdapter],
 ) -> None:
@@ -806,7 +826,12 @@ def test_write_motor_commands_ignores_passive_gripper_target(
 
     assert adapter.write_motor_commands(commands)
 
-    assert cast("FakeGripper", dual_robot["left_gripper"]).commands == []
+    left_gripper = cast("FakeGripper", dual_robot["left_gripper"])
+    assert left_gripper.commands == []
+    assert left_gripper.mit_commands == [
+        (0.0, 0.0, 0.5, 0.0, 0.0),
+        (0.0, 0.0, 0.5, 0.0, 0.0),
+    ]
     assert cast("FakeGripper", dual_robot["right_gripper"]).commands == [0.75]
 
 
