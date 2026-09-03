@@ -57,8 +57,13 @@ _GRADIENT = ["#00e5ff", "#00c4ff", "#3d9bff", "#5c7cff", "#7a5cff", "#9b40ff"]
 
 
 def _logo() -> Text:
+    """DIMENSIONAL wordmark when the terminal fits it, the compact DIMOS mark below."""
+    from dimos.cli import theme
+
+    wide = [ln for ln in theme.ascii_logo.splitlines() if ln.strip()]
+    lines = wide if _console.width >= max(map(len, wide)) else _LOGO.splitlines()
     art = Text()
-    for line, color in zip(_LOGO.splitlines(), _GRADIENT, strict=True):
+    for line, color in zip(lines, _GRADIENT, strict=True):
         art.append(line + "\n", style=f"bold {color}")
     return art
 
@@ -129,8 +134,26 @@ def api_key() -> str | None:
     return _load()
 
 
+def _key_owner(key: str) -> dict[str, Any] | None:
+    """Who the key belongs to, or None if it is invalid or the cloud is unreachable."""
+    req = urllib.request.Request(
+        f"{_base()}/auth/whoami", headers={"Authorization": f"Bearer {key}"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=global_config.dimos_http_timeout) as r:
+            return cast("dict[str, Any]", json.load(r))
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return None
+
+
 def login() -> None:
     """Sign this machine in to Dimensional cloud."""
+    if (key := api_key()) and (who := _key_owner(key)):
+        _console.print(
+            f"[bold green]✔ Already logged in[/] as [bold]{who['email']}[/] "
+            "[dim]— `dimos logout` first to switch accounts[/]"
+        )
+        return
     d = _post("/auth/device", label=socket.gethostname())
     _console.print(
         Panel(
