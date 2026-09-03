@@ -127,7 +127,9 @@ class Groups:
         )
         return hit
 
-    def _fuse(self, i: int, ts: float, points: np.ndarray, centroid: np.ndarray, voxel: float):
+    def _fuse(
+        self, i: int, ts: float, points: np.ndarray, centroid: np.ndarray, voxel: float
+    ) -> None:
         """Voxel-average a sighting into the group's union.
 
         Each fused point carries the raw points behind it, so the union is a
@@ -162,6 +164,10 @@ class Groups:
         return np.asarray(self.members[i]).reshape(-1, M_WIDTH)
 
 
+def _similarity(obs: Any) -> float:
+    return float(obs.similarity)
+
+
 def _settled(index: Stream[Any, Any], spacing: float) -> set[int]:
     """Ids left once sub-spacing duplicates are dropped.
 
@@ -190,7 +196,9 @@ def _lift(
 ) -> list[Detection3DPC]:
     """Gate a frame's lifted detections."""
     pose = rig.camera_pose(detections.ts, detections.image.frame_id)
-    lifted = rig.lift(detections, plane) if pose is not None else None
+    if pose is None:
+        return []
+    lifted = rig.lift(detections, plane)
     if lifted is None:
         return []
     camera = np.array([pose.position.x, pose.position.y, pose.position.z])
@@ -297,12 +305,12 @@ def localize(
 
     for q in queries:
         query_embedding = siglip.embed_text(q)
-        sightings = list(
+        sightings: list[Any] = list(
             source.search(query_embedding)
             .order_by("ts")
             .transform(
                 peaks(
-                    key=lambda obs: float(obs.similarity),
+                    key=_similarity,
                     prominence=policy.peak_prominence,
                     distance=policy.peak_distance_s,
                     width=policy.peak_width_s,
