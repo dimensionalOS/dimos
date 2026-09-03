@@ -316,9 +316,7 @@ def _images(store: Any, names: list[str]) -> tuple[dict[str, str], list[tuple[st
         if data.dtype == np.uint16 or data.dtype.kind == "f":
             depth.append((frame, name))
         elif (
-            data.ndim == 3
-            and data.shape[2] == 3
-            and not np.array_equal(data[..., 0], data[..., 1])
+            data.ndim == 3 and data.shape[2] == 3 and not np.array_equal(data[..., 0], data[..., 1])
         ):
             held = color.get(frame)
             if held is None or _rate(stream) > _rate(store.stream(held)):
@@ -328,7 +326,9 @@ def _images(store: Any, names: list[str]) -> tuple[dict[str, str], list[tuple[st
     return color, depth
 
 
-def _cameras(store: Any, roles: dict[str, Any], names: list[str], types: dict[str, type]):
+def _cameras(
+    store: Any, roles: dict[str, Any], names: list[str], types: dict[str, type]
+) -> dict[str, CameraInfo]:
     """Intrinsics per optical frame: an inline manifest dict, or every
     CameraInfo stream keyed by the frame it calibrates.
 
@@ -355,7 +355,7 @@ def _cameras(store: Any, roles: dict[str, Any], names: list[str], types: dict[st
         if isinstance(role, str)
         else sorted(n for n in names if types[n] is CameraInfoMsg and store.stream(n).count())
     )
-    cameras = {}
+    cameras: dict[str, CameraInfo] = {}
     for name in found:  # sorted, so a color info wins over its depth twin
         info = store.stream(name).first().data
         cameras.setdefault(info.frame_id, info)
@@ -453,7 +453,7 @@ class Rig:
         claimed.add(color_name)
 
         color = store.stream(color_name)
-        color_frame = color.first().data.frame_id if color.count() else None
+        color_frame: str | None = color.first().data.frame_id if color.count() else None
         depth_name = roles.get("depth")
         if depth_name is None:
             # aligned depth shares the colour frame; otherwise the only depth stream
@@ -482,7 +482,8 @@ class Rig:
         if not cameras:
             # embed-only stores may carry no calibration; geometry raises on use
             cameras = {OPTICAL_FRAME: cast("CameraInfo", None)}
-        if color_frame in cameras:
+        optical: str
+        if color_frame is not None and color_frame in cameras:
             optical = color_frame
         elif len(cameras) == 1:
             optical = next(iter(cameras))  # images stamped in a frame calibration never names
