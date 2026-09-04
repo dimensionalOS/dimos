@@ -9,13 +9,17 @@ TUI attaches to its episode-control interface; it does not own the robot.
 | --- | --- | --- |
 | `openyam-teach-collection` | Wrist RGB | Measured 7-D joints for both |
 | `openyam-quest-collection` | Wrist RGB | Measured state, accepted commands |
+| `dual-openyam-quest-collection` | Two wrist RGB cameras | Measured state, accepted commands; 14-D |
 
 ```bash
-dimos --can-port follower_l run openyam-teach-collection --daemon \
-  --recorder.recording recordings/session-001 \
+dimos run dual-openyam-quest-collection --daemon \
+  --recorder.recording recordings/fold-001 \
   --recorder.format mcap \
-  --episodes.task "pick up the cube" \
-  --wrist.hardware.camera-index /dev/video0
+  --episodes.task "fold the towel" \
+  --controlcoordinator.left-can-port follower_l \
+  --controlcoordinator.right-can-port follower_r \
+  --left-wrist.hardware.camera-index /dev/video0 \
+  --right-wrist.hardware.camera-index /dev/video2
 
 dimos imitation collect
 ```
@@ -29,10 +33,14 @@ episode, Q asks for confirmation: **recording and the robot continue after the
 TUI exits**. Use `dimos stop` separately to stop the stack; stopping real
 hardware may de-torque the arms, so support them first.
 
+The dual profile uses 640×480 RGB images at 30 Hz with a 20 ms alignment
+tolerance anchored on the left wrist. Joint order is left arm joints 1–6,
+right arm joints 1–6, left gripper, right gripper.
+
 ## Recording directories
 
 ```text
-recordings/session-001/
+recordings/fold-001/
 ├── schema.json
 └── recording.mcap
 ```
@@ -105,13 +113,13 @@ The controller class must be importable in the client.
 ## Prepare and train
 
 ```bash
-dimos imitation inspect recordings/session-001
-dimos imitation prepare recordings/session-001 --output datasets/session-001
+dimos imitation inspect recordings/fold-001
+dimos imitation prepare recordings/fold-001 --output datasets/fold
 dimos imitation train \
-  --dataset.repo_id=local/openyam-teach \
-  --dataset.root=datasets/session-001 \
+  --dataset.repo_id=local/dual-openyam-quest \
+  --dataset.root=datasets/fold \
   --policy.type=act \
-  --output_dir=outputs/openyam-act
+  --output_dir=outputs/dual-openyam-act
 ```
 
 Preparation reads the saved schema, not the current robot blueprint. Python
