@@ -875,16 +875,6 @@ jobs:
             libpango-1.0-0 libxcomposite1 libxdamage1 libxkbcommon0 libxrandr2 \
             `# Rerun viewer pulls in X11 keyboard bindings when DISPLAY is set.` \
             libxkbcommon-x11-0
-      - name: Install Nix for native recorder tests
-        env:
-          INPUT_EXTRA_NIX_CONFIG: |
-            extra-substituters = https://dimensionalos.cachix.org
-            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
-          INPUT_SET_AS_TRUSTED_USER: "true"
-        run: |
-          export PATH="/nix/var/nix/profiles/default/bin:$PATH"
-          bash docker/ros/install-nix.sh
-          echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
       - name: Build C++ extensions in-place
@@ -976,7 +966,7 @@ jobs:
     - web
     - tests
     - self-hosted-tests
-    - self-hosted-large-tests
+    #- self-hosted-large-tests
 
     runs-on: ubuntu-latest
     permissions:

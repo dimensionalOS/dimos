@@ -51,7 +51,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohSessionPool
 
-pytestmark = pytest.mark.self_hosted_large
+pytestmark = pytest.mark.self_hosted
 
 _RUST_PACKAGE = DIMOS_PROJECT_ROOT / "dimos" / "experimental" / "memory" / "rust"
 _EXECUTABLE = _RUST_PACKAGE / "result" / "bin" / "dimos-memory-recorder"
