@@ -20,7 +20,7 @@ from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
-from dimos.manipulation.planning.spec.validation import validate_robot_model_config
+from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
     openyam_planner_coordinator,
@@ -67,7 +67,7 @@ def test_make_openyam_model_config_uses_canonical_arm_joints() -> None:
 @pytest.mark.self_hosted
 def test_openyam_model_contains_canonical_arm_joints() -> None:
     config = make_openyam_model_config()
-    model = validate_robot_model_config(config)
+    model = prepare_robot_model(config).description
 
     assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
         OPENYAM_ARM_JOINTS

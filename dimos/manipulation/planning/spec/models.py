@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from dimos.manipulation.planning.groups.models import PlanningGroup
-    from dimos.manipulation.planning.spec.config import RobotModelConfig
+    from dimos.manipulation.planning.spec.validation import PreparedRobotModel
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.sensor_msgs.JointState import JointState
@@ -63,8 +63,8 @@ class PlanningSceneInfo:
     backend handles, mutable world contexts, GUI state, or execution state.
     """
 
-    model: RobotModelConfig
-    """The configured logical robot model."""
+    model: PreparedRobotModel
+    """The materialized and validated logical robot model."""
 
     planning_groups: tuple[PlanningGroup, ...] = ()
     """Resolved immutable planning groups for the initialized scene."""

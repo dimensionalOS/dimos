@@ -34,6 +34,7 @@ from dimos.manipulation.planning.planners.selected_joint_space import (
     normalize_selection_target,
 )
 from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.joint_space import CoordinateTopology
 from dimos.manipulation.planning.spec.models import (
     CartesianTarget,
     JointPath,
@@ -112,7 +113,10 @@ class RRTConnectPlanner:
         if world.check_edge_collision_free(start, goal, self._collision_step_size):
             return _create_success_result([start, goal], time.time() - start_time, 0)
 
-        lower, upper = world.get_joint_limits()
+        joint_space = world.get_prepared_model().joint_space
+        lower, upper = joint_space.finite_sampling_domain(
+            joint_space.configuration(q_start), joint_space.configuration(q_goal), 1.0
+        )
         start_tree = [TreeNode(config=q_start.copy())]
         goal_tree = [TreeNode(config=q_goal.copy())]
         trees_swapped = False
@@ -230,58 +234,101 @@ class RRTConnectPlanner:
             q_goal,
             self._collision_step_size,
         ):
-            return _create_success_result(
-                [normalized_start, normalized_goal], time.time() - start_time, 0
-            )
-
-        start_tree = [TreeNode(config=q_start.copy())]
-        goal_tree = [TreeNode(config=q_goal.copy())]
-        trees_swapped = False
-
-        for iteration in range(max_iterations):
-            if time.time() - start_time > timeout:
-                return _create_failure_result(
-                    PlanningStatus.TIMEOUT,
-                    f"Timeout after {iteration} iterations",
-                    time.time() - start_time,
-                    iteration,
-                )
-
-            sample = np.random.uniform(lower, upper)
-            extended = self._extend_selected_tree(
+            direct_path = selected_space.lift_path([normalized_start, normalized_goal])
+            return _create_selected_success_result(
                 selected_space,
-                world,
-                start_tree,
-                sample,
-                self._step_size,
+                direct_path,
+                time.time() - start_time,
+                0,
+                "Direct path found",
             )
-            if extended is not None:
-                connected = self._connect_selected_tree(
+
+        has_line_coordinate = any(
+            coordinate.topology is CoordinateTopology.LINE
+            for coordinate in selected_space.joint_space.coordinates
+        )
+        margins = (1.0, 2.0, 4.0, 8.0, 16.0) if has_line_coordinate else (1.0,)
+        iterations = 0
+        attempts = 0
+        for attempt, margin in enumerate(margins, start=1):
+            remaining = max_iterations - iterations
+            if remaining <= 0:
+                break
+            attempts = attempt
+            attempt_budget = min(1000, remaining) if has_line_coordinate else remaining
+            try:
+                domain_lower, domain_upper = selected_space.planning_domain(q_start, q_goal, margin)
+            except ValueError as exc:
+                return _create_failure_result(PlanningStatus.NO_SOLUTION, str(exc))
+            logger.info(
+                "RRT planning-domain attempt",
+                attempt=attempt,
+                margin_m=margin,
+                node_budget=attempt_budget,
+            )
+            start_tree = [TreeNode(config=q_start.copy())]
+            goal_tree = [TreeNode(config=q_goal.copy())]
+            trees_swapped = False
+            nodes = 2
+
+            for _ in range(attempt_budget):
+                if nodes >= attempt_budget:
+                    break
+                if time.time() - start_time > timeout:
+                    return _create_failure_result(
+                        PlanningStatus.TIMEOUT,
+                        f"Timeout after {iterations} iterations and {attempt} domain attempts",
+                        time.time() - start_time,
+                        iterations,
+                    )
+
+                sample = np.random.uniform(domain_lower, domain_upper)
+                extended = self._extend_selected_tree(
                     selected_space,
                     world,
-                    goal_tree,
-                    extended.config,
-                    self._connect_step_size,
+                    start_tree,
+                    sample,
+                    self._step_size,
                 )
-                if connected is not None:
-                    path = self._extract_path(extended, connected, selected_joint_names)
-                    if trees_swapped:
-                        path = list(reversed(path))
-                    path = selected_space.simplify_path(
+                iterations += 1
+                if extended is not None:
+                    nodes += 1
+                    connected, connected_nodes = self._connect_selected_tree(
+                        selected_space,
                         world,
-                        path,
-                        self._collision_step_size,
+                        goal_tree,
+                        extended.config,
+                        self._connect_step_size,
+                        attempt_budget - nodes,
                     )
-                    return _create_success_result(path, time.time() - start_time, iteration + 1)
+                    nodes += connected_nodes
+                    iterations += connected_nodes
+                    if connected is not None:
+                        path = self._extract_path(extended, connected, selected_joint_names)
+                        if trees_swapped:
+                            path = list(reversed(path))
+                        path = selected_space.simplify_path(
+                            world,
+                            path,
+                            self._collision_step_size,
+                        )
+                        path = selected_space.lift_path(path)
+                        return _create_selected_success_result(
+                            selected_space,
+                            path,
+                            time.time() - start_time,
+                            iterations,
+                            f"Path found after {attempt} domain attempts at {margin:g} m margin",
+                        )
 
-            start_tree, goal_tree = goal_tree, start_tree
-            trees_swapped = not trees_swapped
+                start_tree, goal_tree = goal_tree, start_tree
+                trees_swapped = not trees_swapped
 
         return _create_failure_result(
             PlanningStatus.NO_SOLUTION,
-            f"No path found after {max_iterations} iterations",
+            f"No path found after {iterations} iterations and {attempts} domain attempts",
             time.time() - start_time,
-            max_iterations,
+            iterations,
         )
 
     def plan_cartesian_path(
@@ -310,11 +357,11 @@ class RRTConnectPlanner:
         step_size: float,
     ) -> TreeNode | None:
         """Extend a tree in selected-joint space."""
-        nearest = min(tree, key=lambda node: float(np.linalg.norm(node.config - target)))
-        diff = target - nearest.config
-        dist = float(np.linalg.norm(diff))
+        nearest = min(tree, key=lambda node: selected_space.distance(node.config, target))
+        diff = selected_space.delta(nearest.config, target)
+        dist = selected_space.distance(nearest.config, target)
         if dist <= step_size:
-            new_config = target.copy()
+            new_config = nearest.config + diff
         else:
             new_config = nearest.config + step_size * (diff / dist)
 
@@ -337,9 +384,11 @@ class RRTConnectPlanner:
         tree: list[TreeNode],
         target: NDArray[np.float64],
         step_size: float,
-    ) -> TreeNode | None:
+        max_new_nodes: int,
+    ) -> tuple[TreeNode | None, int]:
         """Try to connect a selected-joint tree to a target."""
-        while True:
+        added = 0
+        while added < max_new_nodes:
             result = self._extend_selected_tree(
                 selected_space,
                 world,
@@ -348,9 +397,11 @@ class RRTConnectPlanner:
                 step_size,
             )
             if result is None:
-                return None
-            if float(np.linalg.norm(result.config - target)) < self._goal_tolerance:
-                return result
+                return None, added
+            added += 1
+            if selected_space.distance(result.config, target) < self._goal_tolerance:
+                return result, added
+        return None, added
 
     def _validate_inputs(
         self,
@@ -381,7 +432,7 @@ class RRTConnectPlanner:
             )
 
         # Check limits with small tolerance for driver floating-point drift
-        lower, upper = world.get_joint_limits()
+        lower, upper = world.get_prepared_model().joint_space.position_limits()
         q_start = np.array(start.position, dtype=np.float64)
         q_goal = np.array(goal.position, dtype=np.float64)
         limit_eps = 1e-3  # ~0.06 degrees
@@ -519,6 +570,24 @@ def _create_success_result(
         path_length=compute_path_length(path),
         iterations=iterations,
         message="Path found",
+    )
+
+
+def _create_selected_success_result(
+    selected_space: SelectedJointSpace,
+    path: JointPath,
+    planning_time: float,
+    iterations: int,
+    message: str,
+) -> PlanningResult:
+    """Create a success result with selected-space distance semantics."""
+    return PlanningResult(
+        status=PlanningStatus.SUCCESS,
+        path=path,
+        planning_time=planning_time,
+        path_length=selected_space.path_length(path),
+        iterations=iterations,
+        message=message,
     )
 
 

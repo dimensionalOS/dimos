@@ -283,6 +283,11 @@ def test_create_planning_stack_defaults_to_roboplan(
         "dimos.manipulation.planning.factory.create_trajectory_parametrizer",
         return_value=mocker.MagicMock(name="trajectory_parametrizer"),
     )
+    prepared = object()
+    mock_prepare = mocker.patch(
+        "dimos.manipulation.planning.factory.prepare_robot_model",
+        return_value=prepared,
+    )
 
     result = create_planning_stack(robot_config)
 
@@ -294,7 +299,8 @@ def test_create_planning_stack_defaults_to_roboplan(
         world=world,
         world_backend="roboplan",
     )
-    world.load_model.assert_called_once_with(robot_config)
+    mock_prepare.assert_called_once_with(robot_config)
+    world.load_model.assert_called_once_with(prepared)
     world.finalize.assert_called_once()
 
 

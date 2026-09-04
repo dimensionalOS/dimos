@@ -32,6 +32,7 @@ from yourdfpy import URDF  # type: ignore[import-untyped]
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import DEFAULT_OBSTACLE_RGBA, Obstacle
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.visualization.viser.animation import (
     PreviewAnimation,
@@ -397,8 +398,8 @@ class ViserManipulationScene:
         collision_scene = model.collision_scene
         return collision_scene is not None and bool(getattr(collision_scene, "geometry", True))
 
-    def _load_robot_model(self, config: RobotModelConfig) -> URDF:
-        description = self.loaded_robot_description(config)
+    def _load_robot_model(self, prepared: PreparedRobotModel) -> URDF:
+        description = self.loaded_robot_description(prepared)
         return URDF.load(
             BytesIO(description.xml.encode()),
             mesh_dir=str(description.source_path.parent),
@@ -417,13 +418,14 @@ class ViserManipulationScene:
         self._grid_visible = visible
         self._set_handle_visibility(self._grid_handle, visible)
 
-    def register_model(self, config: RobotModelConfig) -> None:
+    def register_model(self, prepared: PreparedRobotModel) -> None:
         """Register the one configured model."""
+        config = prepared.config
         if self._model_config is not None and self._model_config != config:
             raise ValueError("A different model is already registered")
         self._model_config = config
         if self._model is None:
-            self._model = self._load_robot_model(config)
+            self._model = self._load_robot_model(prepared)
         self._ensure_robot_urdfs(config)
 
     def set_target_active(self, active: bool) -> None:
@@ -729,9 +731,10 @@ class ViserManipulationScene:
                 mode in {RobotDisplayMode.COLLISION, RobotDisplayMode.BOTH},
             )
 
-    def loaded_robot_description(self, config: RobotModelConfig) -> LoadedRobotModel:
+    def loaded_robot_description(self, prepared: PreparedRobotModel) -> LoadedRobotModel:
+        config = prepared.config
         description = prepare_urdf_for_drake(
-            config.model.load(),
+            prepared.description,
             convert_meshes=bool(config.auto_convert_meshes),
         )
         description = self._strip_visualization_world_root_attachment(config, description)

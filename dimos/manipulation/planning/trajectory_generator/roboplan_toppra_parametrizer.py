@@ -24,6 +24,7 @@ import roboplan.core as roboplan_core
 import roboplan.toppra as roboplan_toppra
 
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
+from dimos.manipulation.planning.spec.joint_space import JointSpace
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.trajectory_generator.config import (
     RoboPlanTOPPRAParametrizationConfig,
@@ -43,6 +44,7 @@ from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 class _GroupParametrizer:
     group: RoboPlanGroup
     native: Any
+    has_continuous_dofs: bool
 
 
 class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
@@ -67,14 +69,23 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
         try:
             with world.parametrization_model() as model:
                 resolved = self._resolve_group(model, selection)
-                native_path = self._native_path(resolved.group, selection, path)
+                native_path = self._native_path(
+                    model.scene,
+                    resolved.group,
+                    selection,
+                    path,
+                    resolved.has_continuous_dofs,
+                )
                 native_trajectory = resolved.native.generate(
                     native_path, self._options(speed_scale)
                 )
                 return self._canonical_result(
+                    model.scene,
                     resolved,
                     selection,
                     native_trajectory,
+                    world.get_prepared_model().joint_space.select(selection.joint_names),
+                    resolved.has_continuous_dofs,
                 )
         except TrajectoryParametrizationError:
             raise
@@ -115,6 +126,7 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
         resolved = _GroupParametrizer(
             group=group,
             native=roboplan_toppra.PathParameterizerTOPPRA(model.scene, group.name),
+            has_continuous_dofs=bool(model.scene.getJointGroupInfo(group.name).has_continuous_dofs),
         )
         self._groups[key] = resolved
         return resolved
@@ -141,20 +153,28 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
 
     @staticmethod
     def _native_path(
+        scene: Any,
         group: RoboPlanGroup,
         selection: PlanningGroupSelection,
         path_states: tuple[JointState, ...],
+        has_continuous_dofs: bool,
     ) -> Any:
         public_index = {name: index for index, name in enumerate(selection.joint_names)}
         path = roboplan_core.JointPath()
         path.joint_names = list(group.native_names)
-        path.positions = [
+        positions = [
             np.asarray(
                 [state.position[public_index[public_name]] for public_name in group.public_names],
                 dtype=np.float64,
             )
             for state in path_states
         ]
+        if has_continuous_dofs:
+            positions = [
+                roboplan_core.expandContinuousJointPositions(scene, group.name, position)
+                for position in positions
+            ]
+        path.positions = positions
         return path
 
     def _options(self, speed_scale: float) -> Any:
@@ -168,9 +188,12 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
 
     @staticmethod
     def _canonical_result(
+        scene: Any,
         resolved: _GroupParametrizer,
         selection: PlanningGroupSelection,
         native_trajectory: Any,
+        joint_space: JointSpace,
+        has_continuous_dofs: bool,
     ) -> JointTrajectory:
         native_names = tuple(native_trajectory.joint_names)
         if set(native_names) != set(resolved.group.native_names):
@@ -191,13 +214,34 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
             raise TrajectoryParametrizationError(
                 "RoboPlan TOPP-RA returned inconsistent trajectory fields"
             )
+        collapsed_positions = [np.asarray(position, dtype=np.float64) for position in positions]
+        if has_continuous_dofs:
+            collapsed_positions = [
+                roboplan_core.collapseContinuousJointPositions(
+                    scene,
+                    resolved.group.name,
+                    position,
+                )
+                for position in collapsed_positions
+            ]
+        canonical_positions = [
+            [float(position[index]) for index in output_indices] for position in collapsed_positions
+        ]
+        lifted_positions = joint_space.lifted_positions(
+            [joint_space.configuration(position) for position in canonical_positions]
+        )
         points = [
             TrajectoryPoint(
                 time_from_start=time,
-                positions=[float(position[index]) for index in output_indices],
+                positions=list(position),
                 velocities=[float(velocity[index]) for index in output_indices],
             )
-            for time, position, velocity in zip(times, positions, velocities, strict=True)
+            for time, position, velocity in zip(
+                times,
+                lifted_positions,
+                velocities,
+                strict=True,
+            )
         ]
         return JointTrajectory(
             joint_names=list(selection.joint_names),

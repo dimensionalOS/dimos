@@ -24,6 +24,7 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import Obstacle
+from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.manipulation.planning.world.drake_world import DRAKE_AVAILABLE, DrakeWorld
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -121,7 +122,7 @@ def _config(
     path: Path, groups: list[PlanningGroupDefinition], joints: list[str] | None = None
 ) -> RobotModelConfig:
     return RobotModelConfig(
-        model=RobotModel.from_file(path),
+        model=RobotModel.from_file(path).with_default_joint_acceleration_limit(2.0),
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=joints or ["joint1", "joint2"],
         base_link="base_link",
@@ -137,12 +138,16 @@ def _arm_group(
     )
 
 
+def _load(world: DrakeWorld, config: RobotModelConfig) -> None:
+    world.load_model(prepare_robot_model(config))
+
+
 @requires_drake
 def test_drake_loads_canonical_slash_names_natively(tmp_path: Path) -> None:
     urdf = tmp_path / "canonical.urdf"
     _write_canonical_urdf(urdf)
     config = RobotModelConfig(
-        model=RobotModel.from_file(urdf),
+        model=RobotModel.from_file(urdf).with_default_joint_acceleration_limit(2.0),
         joint_names=["left/j1"],
         base_link="left/base",
         planning_groups=[
@@ -156,10 +161,10 @@ def test_drake_loads_canonical_slash_names_natively(tmp_path: Path) -> None:
     )
     world = DrakeWorld()
 
-    world.load_model(config)
+    _load(world, config)
     world.finalize()
 
-    assert world.get_model_config().joint_names == ["left/j1"]
+    assert world.get_prepared_model().joint_space.names == ("left/j1",)
 
 
 def test_drake_config_group_helpers_resolve_groups_without_drake_runtime(tmp_path: Path) -> None:
@@ -204,7 +209,7 @@ def test_drake_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    world.load_model(_config(urdf, [_arm_group("joint1", "joint2")]))
+    _load(world, _config(urdf, [_arm_group("joint1", "joint2")]))
 
     obstacle = Obstacle(
         name="box",
@@ -262,7 +267,7 @@ def test_drake_obstacle_replacement_failure_invalidates_world(
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    world.load_model(_config(urdf, [_arm_group("joint1", "joint2")]))
+    _load(world, _config(urdf, [_arm_group("joint1", "joint2")]))
     world.finalize()
     obstacle = Obstacle(
         name="box",
@@ -288,7 +293,7 @@ def test_drake_group_fk_uses_tip_link_and_unique_pose_group(tmp_path: Path) -> N
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    world.load_model(_config(urdf, [_arm_group("joint1", "joint2")]))
+    _load(world, _config(urdf, [_arm_group("joint1", "joint2")]))
     world.finalize()
     ctx = world.get_live_context()
     world.set_joint_state(ctx, JointState({"name": ["joint1", "joint2"], "position": [0.0, 0.0]}))
@@ -308,14 +313,15 @@ def test_drake_applies_config_base_pose_when_urdf_has_world_base_joint(
     urdf = tmp_path / "robot_with_world.urdf"
     _write_urdf_with_world_base_joint(urdf)
     world = DrakeWorld(enable_viz=False)
-    world.load_model(
+    _load(
+        world,
         RobotModelConfig(
-            model=RobotModel.from_file(urdf),
+            model=RobotModel.from_file(urdf).with_default_joint_acceleration_limit(2.0),
             base_pose=PoseStamped(position=[0, 0.5, 0], orientation=[0, 0, 0, 1]),
             joint_names=["joint1", "joint2"],
             base_link="base_link",
             planning_groups=[_arm_group("joint1", "joint2")],
-        )
+        ),
     )
     world.finalize()
     ctx = world.get_live_context()
@@ -330,16 +336,19 @@ def test_drake_planar_base_coordinates_move_original_robot_root(tmp_path: Path) 
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     planar_base = PlanarBaseDefinition(
-        workspace_lower=(-2.0, -2.0, -3.14),
-        workspace_upper=(2.0, 2.0, 3.14),
         velocity_limits=(1.0, 1.0, 2.0),
         acceleration_limits=(2.0, 2.0, 4.0),
     )
     joint_names = [*planar_base.joint_names, "joint1", "joint2"]
     world = DrakeWorld(enable_viz=False)
-    world.load_model(
+    _load(
+        world,
         RobotModelConfig(
-            model=RobotModel.from_file(urdf).with_planar_base(planar_base),
+            model=(
+                RobotModel.from_file(urdf)
+                .with_default_joint_acceleration_limit(2.0)
+                .with_planar_base(planar_base)
+            ),
             base_pose=PoseStamped(position=[0, 0, 0.5], orientation=[0, 0, 0, 1]),
             joint_names=joint_names,
             base_link=planar_base.root_link,
@@ -351,7 +360,7 @@ def test_drake_planar_base_coordinates_move_original_robot_root(tmp_path: Path) 
                     tip_link="tool0",
                 )
             ],
-        )
+        ),
     )
     world.finalize()
     context = world.get_live_context()
@@ -374,14 +383,15 @@ def test_drake_group_jacobian_shape_and_group_local_order(tmp_path: Path) -> Non
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    world.load_model(
+    _load(
+        world,
         _config(
             urdf,
             [
                 _arm_group("joint1", "joint2", name="wrist_forward"),
                 _arm_group("joint2", "joint1", name="wrist_reverse"),
             ],
-        )
+        ),
     )
     world.finalize()
     ctx = world.get_live_context()
@@ -400,20 +410,21 @@ def test_drake_default_pose_methods_fail_for_no_or_ambiguous_pose(tmp_path: Path
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     no_pose = DrakeWorld()
-    no_pose.load_model(_config(urdf, [_arm_group("joint1", tip_link=None)]))
+    _load(no_pose, _config(urdf, [_arm_group("joint1", tip_link=None)]))
     no_pose.finalize()
     with pytest.raises(ValueError, match="no pose-targetable"):
         no_pose.get_ee_pose(no_pose.get_live_context())
 
     ambiguous = DrakeWorld()
-    ambiguous.load_model(
+    _load(
+        ambiguous,
         _config(
             urdf,
             [
                 _arm_group("joint1", tip_link="link1", name="a"),
                 _arm_group("joint2", tip_link="tool0", name="b"),
             ],
-        )
+        ),
     )
     ambiguous.finalize()
     with pytest.raises(ValueError, match="multiple pose"):
@@ -426,7 +437,7 @@ def test_drake_load_rejects_group_joints_outside_controllable_set(tmp_path: Path
     _write_urdf(urdf)
     world = DrakeWorld()
     with pytest.raises(ValueError, match="outside the controllable model set"):
-        world.load_model(_config(urdf, [_arm_group("joint1", "joint2")], joints=["joint1"]))
+        _load(world, _config(urdf, [_arm_group("joint1", "joint2")], joints=["joint1"]))
 
 
 @requires_drake
@@ -436,7 +447,7 @@ def test_drake_animate_trajectory_projects_selected_joints_on_shared_ticks(
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    world.load_model(_config(urdf, [_arm_group("joint1")]))
+    _load(world, _config(urdf, [_arm_group("joint1")]))
     world.finalize()
     world._meshcat = object()  # type: ignore[assignment]
     world.set_joint_state(
@@ -469,7 +480,7 @@ def test_drake_animate_trajectory_validates_before_visibility_and_cleans_up(
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    world.load_model(_config(urdf, [_arm_group("joint1")]))
+    _load(world, _config(urdf, [_arm_group("joint1")]))
     world.finalize()
     world._meshcat = object()  # type: ignore[assignment]
     world.set_joint_state(
@@ -500,7 +511,7 @@ def test_drake_cancel_preview_hides_model_before_animation_resumes(
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    world.load_model(_config(urdf, [_arm_group("joint1")]))
+    _load(world, _config(urdf, [_arm_group("joint1")]))
     world.finalize()
     world._meshcat = object()  # type: ignore[assignment]
     world.set_joint_state(
@@ -530,7 +541,7 @@ def test_drake_animate_trajectory_cancellation_stops_stale_frames(
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    world.load_model(_config(urdf, [_arm_group("joint1")]))
+    _load(world, _config(urdf, [_arm_group("joint1")]))
     world.finalize()
     world._meshcat = object()  # type: ignore[assignment]
     world.set_joint_state(

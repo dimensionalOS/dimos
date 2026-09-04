@@ -79,14 +79,15 @@ class SimpleTrapezoidParametrizer(BaseTrajectoryParametrizer):
         world: WorldSpec,
         selection: PlanningGroupSelection,
     ) -> tuple[tuple[float, ...], tuple[float, ...]]:
-        config = world.get_model_config()
+        joint_space = world.get_prepared_model().joint_space
         velocities: list[float] = []
         accelerations: list[float] = []
         for joint_name in selection.joint_names:
-            if joint_name not in config.joint_names:
+            if joint_name not in joint_space.names:
                 raise TrajectoryParametrizationError(f"Unknown model joint '{joint_name}'")
-            velocity = float(config.max_velocity)
-            acceleration = float(config.max_acceleration)
+            coordinate = joint_space.coordinate(joint_name)
+            velocity = coordinate.max_velocity
+            acceleration = coordinate.max_acceleration
             if not math.isfinite(velocity) or velocity <= 0.0:
                 raise TrajectoryParametrizationError(f"Invalid velocity limit for '{joint_name}'")
             if not math.isfinite(acceleration) or acceleration <= 0.0:

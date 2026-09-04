@@ -35,6 +35,8 @@ except ImportError as exc:
 
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.joint_space import CoordinateTopology, JointSpace
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -53,6 +55,8 @@ class _JointMapping:
     model_joint_names: list[str]
     idx_q: list[int]
     idx_v: list[int]
+    periodic_indices: tuple[int, ...] = ()
+    translation_indices: tuple[int, ...] = ()
 
 
 @dataclass
@@ -62,6 +66,7 @@ class _PinkRobotContext:
     frame_id: int
     frame_name: str
     mapping: _JointMapping
+    joint_space: JointSpace
 
 
 _CURRENT_POSTURE_TASK = "posture/current"
@@ -223,7 +228,12 @@ class _PinkSolverCore:
             dtype=np.float64,
         )
         for row, (local_index, position) in enumerate(locked_joint_positions.items()):
-            reference_q[robot_context.mapping.idx_q[local_index]] = position
+            _write_dimos_position(
+                reference_q,
+                robot_context.mapping,
+                local_index,
+                position,
+            )
             constraint_matrix[row, robot_context.mapping.idx_v[local_index]] = 1.0
 
         return (
@@ -236,23 +246,32 @@ class _PinkSolverCore:
 
     def _build_robot_context(
         self,
-        config: RobotModelConfig,
+        prepared: PreparedRobotModel,
         frame_name: str,
         controlled_joints: Sequence[str] | None = None,
     ) -> _PinkRobotContext:
-        description = prepare_urdf_for_drake(config.model.load(), convert_meshes=False)
+        config = prepared.config
+        description = prepare_urdf_for_drake(prepared.description, convert_meshes=False)
         model = pinocchio.buildModelFromXML(description.xml)
+
+        for coordinate in prepared.joint_space.coordinates:
+            if coordinate.topology is CoordinateTopology.LINE:
+                joint_name = coordinate.name
+                joint = model.joints[_get_joint_id(model, joint_name)]
+                model.lowerPositionLimit[int(joint.idx_q)] = -np.inf
+                model.upperPositionLimit[int(joint.idx_q)] = np.inf
 
         data = model.createData()
         _assert_base_link_is_model_root(model, config.base_link)
         frame_id = _get_frame_id(model, frame_name)
-        mapping = _build_joint_mapping(model, config, controlled_joints)
+        mapping = _build_joint_mapping(model, prepared.joint_space, controlled_joints)
         return _PinkRobotContext(
             model=model,
             data=data,
             frame_id=frame_id,
             frame_name=frame_name,
             mapping=mapping,
+            joint_space=prepared.joint_space.select(tuple(mapping.dimos_joint_names)),
         )
 
     def _q_from_dimos_positions(
@@ -265,14 +284,20 @@ class _PinkSolverCore:
             raise ValueError(
                 f"Seed has {len(positions)} positions for {len(context.mapping.idx_q)} joints"
             )
-        for value, idx_q in zip(positions, context.mapping.idx_q, strict=True):
-            q[idx_q] = value
+        for local_index, value in enumerate(positions):
+            _write_dimos_position(q, context.mapping, local_index, float(value))
         return q
 
     def _q_to_dimos_positions(
         self, context: _PinkRobotContext, q: NDArray[np.float64]
     ) -> NDArray[np.float64]:
-        return np.array([q[idx_q] for idx_q in context.mapping.idx_q], dtype=np.float64)
+        return np.array(
+            [
+                _read_dimos_position(q, context.mapping, local_index)
+                for local_index in range(len(context.mapping.idx_q))
+            ],
+            dtype=np.float64,
+        )
 
     def _current_frame_matrix(
         self, context: _PinkRobotContext, q: NDArray[np.float64]
@@ -298,23 +323,26 @@ class _PinkSolverCore:
 
 def _build_joint_mapping(
     model: pinocchio.Model,
-    config: RobotModelConfig,
+    joint_space: JointSpace,
     controlled_joints: Sequence[str] | None = None,
 ) -> _JointMapping:
     idx_q: list[int] = []
     idx_v: list[int] = []
     model_joint_names: list[str] = []
-    dimos_joint_names = list(controlled_joints or config.joint_names)
+    dimos_joint_names = list(controlled_joints or joint_space.names)
+    periodic_indices: list[int] = []
+    translation_indices: list[int] = []
 
     for dimos_name in dimos_joint_names:
         model_joint_name = dimos_name
         joint_id = _get_joint_id(model, model_joint_name)
         joint = model.joints[joint_id]
         nq = int(getattr(joint, "nq", 1))
-        if nq != 1:
+        topology = joint_space.coordinate(dimos_name).topology
+        is_periodic = topology is CoordinateTopology.CIRCLE
+        if nq != (2 if is_periodic else 1):
             raise ValueError(
-                f"PinkIK currently supports one-DoF controlled joints; "
-                f"joint '{model_joint_name}' has nq={nq}"
+                f"PinkIK joint '{model_joint_name}' has nq={nq}; expected {2 if is_periodic else 1}"
             )
         nv = int(getattr(joint, "nv", 1))
         if nv != 1:
@@ -325,13 +353,41 @@ def _build_joint_mapping(
         idx_q.append(int(joint.idx_q))
         idx_v.append(int(joint.idx_v))
         model_joint_names.append(model_joint_name)
+        local_index = len(idx_q) - 1
+        if is_periodic:
+            periodic_indices.append(local_index)
+        if topology is CoordinateTopology.LINE:
+            translation_indices.append(local_index)
 
     return _JointMapping(
         dimos_joint_names=dimos_joint_names,
         model_joint_names=model_joint_names,
         idx_q=idx_q,
         idx_v=idx_v,
+        periodic_indices=tuple(periodic_indices),
+        translation_indices=tuple(translation_indices),
     )
+
+
+def _write_dimos_position(
+    q: NDArray[np.float64],
+    mapping: _JointMapping,
+    local_index: int,
+    value: float,
+) -> None:
+    idx_q = mapping.idx_q[local_index]
+    if local_index in mapping.periodic_indices:
+        q[idx_q] = np.cos(value)
+        q[idx_q + 1] = np.sin(value)
+    else:
+        q[idx_q] = value
+
+
+def _read_dimos_position(q: NDArray[np.float64], mapping: _JointMapping, local_index: int) -> float:
+    idx_q = mapping.idx_q[local_index]
+    if local_index in mapping.periodic_indices:
+        return float(np.arctan2(q[idx_q + 1], q[idx_q]))
+    return float(q[idx_q])
 
 
 def _get_joint_id(model: pinocchio.Model, joint_name: str) -> int:

@@ -65,11 +65,8 @@ class FakeWorld:
         self.calls.append(("load_model", config))
         self.config = config
 
-    def get_model_config(self):
+    def get_prepared_model(self):
         return self.config
-
-    def get_joint_limits(self):
-        return ([], [])
 
     def add_obstacle(self, obstacle):
         self.calls.append(("add_obstacle", obstacle))
@@ -207,8 +204,23 @@ class FakeViz:
 
 
 def _robot_config() -> RobotModelConfig:
+    model_path = Path("/tmp/dimos_world_monitor_test_arm.urdf")
+    model_path.write_text(
+        """
+<robot name="arm">
+  <link name="base"/><link name="l1"/><link name="l2"/><link name="ee"/>
+  <link name="ee1"/><link name="ee2"/>
+  <joint name="j1" type="revolute"><parent link="base"/><child link="l1"/>
+    <limit lower="-1" upper="1" effort="1" velocity="1" acceleration="2"/></joint>
+  <joint name="j2" type="revolute"><parent link="l1"/><child link="l2"/>
+    <limit lower="-1" upper="1" effort="1" velocity="1" acceleration="2"/></joint>
+  <joint name="j3" type="revolute"><parent link="l2"/><child link="ee"/>
+    <limit lower="-1" upper="1" effort="1" velocity="1" acceleration="2"/></joint>
+</robot>
+"""
+    )
     return RobotModelConfig(
-        model=RobotModel.from_file(Path("/tmp/arm.urdf")),
+        model=RobotModel.from_file(model_path),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion([0, 0, 0, 1])),
         joint_names=["j1", "j2"],
         base_link="base",
@@ -250,7 +262,7 @@ def test_world_monitor_load_model_records_scene_without_visualization_probe() ->
     monitor.load_model(config)
     assert fake_world.calls[0][0] == "load_model"
     assert fake_viz.calls == []
-    assert monitor.planning_scene_info().model is config
+    assert monitor.planning_scene_info().model.config is config
 
 
 def test_world_monitor_syncs_planning_scene_to_visualization() -> None:
@@ -270,7 +282,7 @@ def test_world_monitor_syncs_planning_scene_to_visualization() -> None:
     assert session.operator is operator
     scene = session.scene
     assert isinstance(scene, PlanningSceneInfo)
-    assert scene.model is config
+    assert scene.model.config is config
     assert scene.planning_groups[0].id == "manipulator"
 
 

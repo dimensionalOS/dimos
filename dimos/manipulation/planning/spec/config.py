@@ -39,15 +39,10 @@ class RobotModelConfig(ModuleConfig):
             namespace. This is not a planning group.
         base_link: Robot-scoped link that base_pose places in the world and
             current backends use for weld/placement.
-        joint_limits_lower: Lower limits in each joint's native coordinate unit
-        joint_limits_upper: Upper limits in each joint's native coordinate unit
-        velocity_limits: Velocity limits in each joint's native coordinate unit per second
         auto_convert_meshes: Auto-convert DAE/STL meshes to OBJ for Drake
         collision_exclusion_pairs: List of (link1, link2) pairs to exclude from collision.
             Useful for parallel linkage mechanisms like grippers where non-adjacent
             links may legitimately overlap (e.g., mimic joints).
-        max_velocity: Maximum native-coordinate velocity for trajectory generation
-        max_acceleration: Maximum native-coordinate acceleration for trajectory generation
     """
 
     model: RobotModel
@@ -56,14 +51,8 @@ class RobotModelConfig(ModuleConfig):
     joint_names: list[str]
     base_link: str = "base_link"
     planning_groups: list[PlanningGroupDefinition] = Field(default_factory=list)
-    joint_limits_lower: list[float] | None = None
-    joint_limits_upper: list[float] | None = None
-    velocity_limits: list[float] | None = None
     auto_convert_meshes: bool = False
     collision_exclusion_pairs: list[tuple[str, str]] = Field(default_factory=list)
-    # Motion constraints for trajectory generation
-    max_velocity: float = 1.0
-    max_acceleration: float = 2.0
     gripper_hardware_id: str | None = None
     # TF publishing for extra links (e.g., camera mount)
     tf_extra_links: list[str] = Field(default_factory=list)
