@@ -95,6 +95,10 @@ OBSTACLE_DEFAULT_RGBA = DEFAULT_OBSTACLE_RGBA
 OBSTACLE_FALLBACK_COLOR = (55, 190, 210)
 OBSTACLE_FALLBACK_OPACITY = 0.55
 OBSTACLE_PROXY_COLOR = (255, 45, 25)
+GROUND_TRUTH_NAMESPACE = "/manipulation/ground_truth"
+GROUND_TRUTH_COLOR = (55, 210, 235)
+GROUND_TRUTH_OPACITY = 0.22
+GROUND_TRUTH_RADIUS = 0.035
 
 
 class RobotDisplayMode(StrEnum):
@@ -114,7 +118,11 @@ class ViserManipulationScene:
     """Viser scene graph helpers for current robot, ghost robot, and path rendering."""
 
     def __init__(
-        self, server: ViserServer, viser_urdf: type[ViserUrdf], preview_fps: float | None = None
+        self,
+        server: ViserServer,
+        viser_urdf: type[ViserUrdf],
+        preview_fps: float | None = None,
+        ground_truth_overlay: bool = False,
     ) -> None:
         self.server = server
         self.viser_urdf = viser_urdf
@@ -139,6 +147,10 @@ class ViserManipulationScene:
         self._obstacles_visible = True
         self._obstacle_gui_handles: list[object] = []
         self._obstacle_warning_handle: Any | None = None
+        self._ground_truth_enabled = ground_truth_overlay
+        self._ground_truth_visible = True
+        self._ground_truth_handles: dict[str, list[Any]] = {}
+        self._ground_truth_report_handle: Any | None = None
         self._closed = False
         self._ensure_obstacle_control()
         self._ensure_reference_grid()
@@ -280,6 +292,107 @@ class ViserManipulationScene:
             for obstacle_id in list(self._obstacle_handles):
                 self.remove_vis_obstacle(obstacle_id)
 
+    def set_ground_truth_poses(
+        self,
+        poses: dict[str, PoseStamped],
+        belief: dict[str, PoseStamped],
+    ) -> list[tuple[str, str | None, float | None]]:
+        """Render faint sim-truth ghosts and update the truth-vs-belief table."""
+        with self._scene_lock:
+            if self._closed or not self._ground_truth_enabled:
+                return []
+            stale = set(self._ground_truth_handles) - set(poses)
+            for name in stale:
+                for handle in self._ground_truth_handles.pop(name):
+                    self._remove_scene_handle(handle)
+            for name, pose in poses.items():
+                position, wxyz = self._pose_components(pose)
+                handles = self._ground_truth_handles.get(name)
+                if handles is None:
+                    path = f"{GROUND_TRUTH_NAMESPACE}/{name}"
+                    handles = [
+                        self.server.scene.add_icosphere(
+                            path,
+                            radius=GROUND_TRUTH_RADIUS,
+                            color=GROUND_TRUTH_COLOR,
+                            opacity=GROUND_TRUTH_OPACITY,
+                            wireframe=True,
+                            position=position,
+                            wxyz=wxyz,
+                            visible=self._ground_truth_visible,
+                        ),
+                        self.server.scene.add_frame(
+                            f"{path}/pose",
+                            axes_length=0.06,
+                            axes_radius=0.002,
+                            position=position,
+                            wxyz=wxyz,
+                            visible=self._ground_truth_visible,
+                        ),
+                        self.server.scene.add_label(
+                            f"{path}/label",
+                            f"{name} (truth)",
+                            position=(position[0], position[1], position[2] + 0.06),
+                            visible=self._ground_truth_visible,
+                        ),
+                    ]
+                    self._ground_truth_handles[name] = handles
+                else:
+                    for handle in handles:
+                        handle.position = position
+                        handle.wxyz = wxyz
+                    handles[-1].position = (position[0], position[1], position[2] + 0.06)
+            rows = self._truth_belief_rows(poses, belief)
+            if self._ground_truth_report_handle is not None:
+                self._ground_truth_report_handle.content = self._format_truth_report(rows)
+            return rows
+
+    def set_ground_truth_visible(self, visible: bool) -> None:
+        with self._scene_lock:
+            self._ground_truth_visible = bool(visible)
+            for handles in self._ground_truth_handles.values():
+                for handle in handles:
+                    self._set_handle_visibility(handle, self._ground_truth_visible)
+
+    @staticmethod
+    def _truth_belief_rows(
+        truth: dict[str, PoseStamped], belief: dict[str, PoseStamped]
+    ) -> list[tuple[str, str | None, float | None]]:
+        available = dict(belief)
+        rows: list[tuple[str, str | None, float | None]] = []
+        for truth_name, truth_pose in sorted(truth.items()):
+            if not available:
+                rows.append((truth_name, None, None))
+                continue
+            belief_name, belief_pose = min(
+                available.items(),
+                key=lambda item: np.linalg.norm(
+                    item[1].position.to_numpy() - truth_pose.position.to_numpy()
+                ),
+            )
+            delta = float(
+                np.linalg.norm(belief_pose.position.to_numpy() - truth_pose.position.to_numpy())
+            )
+            rows.append((truth_name, belief_name, delta))
+            available.pop(belief_name)
+        return rows
+
+    @staticmethod
+    def _format_truth_report(rows: Sequence[tuple[str, str | None, float | None]]) -> str:
+        lines = [
+            "Ghost cyan = simulator truth; solid markers = planner belief.",
+            "",
+            "| Truth | Belief | Δ (m) |",
+            "|---|---|---:|",
+        ]
+        lines.extend(
+            f"| {truth} | {belief or '—'} | {delta:.4f} |"
+            if delta is not None
+            else f"| {truth} | — | — |"
+            for truth, belief, delta in rows
+        )
+        return "\n".join(lines)
+
     def show_obstacle_warning(self, message: str) -> None:
         """Expose a persistent renderer warning in the frontend when available."""
         with self._scene_lock:
@@ -298,8 +411,20 @@ class ViserManipulationScene:
             self._obstacle_gui_handles.append(folder)
             with folder:
                 handle = self.server.gui.add_checkbox("manipulation.obstacles", initial_value=True)
+                if self._ground_truth_enabled:
+                    truth_handle = self.server.gui.add_checkbox(
+                        "sim ground truth", initial_value=True
+                    )
+                    self._ground_truth_report_handle = self.server.gui.add_markdown(
+                        "Waiting for simulator truth."
+                    )
             handle.on_update(lambda event: self.set_obstacles_visible(event.target.value))
             self._obstacle_gui_handles.append(handle)
+            if self._ground_truth_enabled:
+                truth_handle.on_update(
+                    lambda event: self.set_ground_truth_visible(event.target.value)
+                )
+                self._obstacle_gui_handles.extend([truth_handle, self._ground_truth_report_handle])
         except (AttributeError, TypeError):
             self._obstacle_gui_handles.clear()
 
@@ -308,6 +433,20 @@ class ViserManipulationScene:
         obstacle: Obstacle,
     ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
         pose = obstacle.pose
+        return (
+            (float(pose.position.x), float(pose.position.y), float(pose.position.z)),
+            (
+                float(pose.orientation.w),
+                float(pose.orientation.x),
+                float(pose.orientation.y),
+                float(pose.orientation.z),
+            ),
+        )
+
+    @staticmethod
+    def _pose_components(
+        pose: PoseStamped,
+    ) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
         return (
             (float(pose.position.x), float(pose.position.y), float(pose.position.z)),
             (
@@ -601,6 +740,10 @@ class ViserManipulationScene:
             self._obstacle_handles.clear()
             self._obstacles.clear()
             self._obstacle_render_failures.clear()
+            for handles in self._ground_truth_handles.values():
+                for handle in handles:
+                    self._remove_scene_handle(handle)
+            self._ground_truth_handles.clear()
             for key in list(self._handles):
                 self._remove_handle(key)
             if self._grid_handle is not None:

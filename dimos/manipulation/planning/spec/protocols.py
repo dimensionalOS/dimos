@@ -215,6 +215,14 @@ class VisualizationSpec(Protocol):
         """Clear obstacle representations from the visualization."""
         ...
 
+    def set_ground_truth_poses(
+        self,
+        poses: dict[str, PoseStamped],
+        belief: dict[str, PoseStamped],
+    ) -> None:
+        """Replace the sim-only truth overlay and its planner-belief comparison."""
+        ...
+
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""
         ...

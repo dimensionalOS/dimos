@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from threading import Lock
 from typing import TYPE_CHECKING
 
 from dimos.manipulation.visualization.viser.animation import (
@@ -75,18 +76,34 @@ class ViserManipulationVisualizer:
         self._operator: object | None = None
         self._current_state: JointState | None = None
         self._model_config: RobotModelConfig | None = None
+        self._last_ground_truth_report: tuple[tuple[str, str | None, float | None], ...] = ()
+        self._start_lock = Lock()
         self._closed = False
 
     def _ensure_started(self) -> None:
         if self._closed or self._runtime is not None:
             return
+        with self._start_lock:
+            if self._closed or self._runtime is not None:
+                return
+            self._start_runtime()
+
+    def _start_runtime(self) -> None:
+        """Start Viser after the caller has serialized lazy initialization."""
         runtime = ViserRuntime(self.config)
         scene: ViserManipulationScene | None = None
         gui: ViserPanelGui | None = None
         try:
             server = runtime.start()
             apply_dimos_theme(server)
-            scene = ViserManipulationScene(server, ViserUrdf)
+            if self.config.ground_truth_overlay:
+                scene = ViserManipulationScene(
+                    server,
+                    ViserUrdf,
+                    ground_truth_overlay=True,
+                )
+            else:
+                scene = ViserManipulationScene(server, ViserUrdf)
             gui = (
                 ViserPanelGui(
                     server,
@@ -215,6 +232,36 @@ class ViserManipulationVisualizer:
         self._ensure_started()
         if self._scene is not None:
             self._scene.clear_vis_obstacles()
+
+    def set_ground_truth_poses(
+        self,
+        poses: dict[str, PoseStamped],
+        belief: dict[str, PoseStamped],
+    ) -> None:
+        """Replace the live sim-truth ghosts and compare them with planner belief."""
+        if self._closed or not self.config.ground_truth_overlay:
+            return
+        self._ensure_started()
+        if self._scene is None:
+            return
+        rows = tuple(self._scene.set_ground_truth_poses(poses, belief))
+        rounded = tuple(
+            (truth, matched, None if delta is None else round(delta, 4))
+            for truth, matched, delta in rows
+        )
+        if rounded != self._last_ground_truth_report:
+            self._last_ground_truth_report = rounded
+            logger.info(
+                "Truth-vs-belief deltas",
+                deltas=[
+                    {
+                        "truth": truth,
+                        "belief": matched,
+                        "delta_m": delta,
+                    }
+                    for truth, matched, delta in rounded
+                ],
+            )
 
     def update_state(self, frame: VisualizationStateFrame) -> None:
         """Update current robot render state from a pushed state frame."""

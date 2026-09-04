@@ -253,6 +253,8 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     reset_joint_positions: list[float] | None = None
     headless: bool = False
     dof: int = 7
+    ground_truth_body_names: list[str] = Field(default_factory=list)
+    ground_truth_fps: float = Field(default=2.0, gt=0.0)
 
     # Camera config (matches former MujocoCameraConfig).
     camera_name: str = "wrist_camera"
@@ -332,6 +334,7 @@ class MujocoSimModule(
     # root. Published every step; consumers like the viser viewer use
     # this to translate the robot in world space.
     odom: Out[PoseStamped]
+    ground_truth_poses: Out[dict[str, PoseStamped]]
     tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -348,6 +351,7 @@ class MujocoSimModule(
         self._camera_info_base: CameraInfo | None = None
         self._shm_ready_signaled = False
         self._latest_frame_ts: float | None = None
+        self._last_ground_truth_publish = 0.0
 
         # IMU sensor slices into MjData.sensordata, resolved once at start.
         # None if the MJCF has no recognized IMU sensors (e.g. arm-only sims).
@@ -778,6 +782,7 @@ class MujocoSimModule(
         """
         if self._sim_hooks is not None:
             self._sim_hooks.post_step(engine)
+        self._publish_ground_truth_poses(engine)
         shm = self._shm
         if shm is None:
             return
@@ -846,6 +851,33 @@ class MujocoSimModule(
         if not self._shm_ready_signaled:
             shm.signal_ready(num_joints=len(engine.joint_names), arm_joints=self.config.dof)
             self._shm_ready_signaled = True
+
+    def _publish_ground_truth_poses(self, engine: MujocoEngine) -> None:
+        names = self.config.ground_truth_body_names
+        if not names:
+            return
+        now = time.monotonic()
+        if now - self._last_ground_truth_publish < 1.0 / self.config.ground_truth_fps:
+            return
+        poses: dict[str, PoseStamped] = {}
+        for name in names:
+            body_id = mujoco.mj_name2id(engine.model, mujoco.mjtObj.mjOBJ_BODY, name)
+            if body_id < 0:
+                logger.warning("Ground-truth body not found", body_name=name)
+                continue
+            position = engine.data.xpos[body_id]
+            wxyz = engine.data.xquat[body_id]
+            poses[name] = PoseStamped(
+                ts=time.time(),
+                frame_id="world",
+                position=Vector3(float(position[0]), float(position[1]), float(position[2])),
+                orientation=Quaternion(
+                    float(wxyz[1]), float(wxyz[2]), float(wxyz[3]), float(wxyz[0])
+                ),
+            )
+        self._last_ground_truth_publish = now
+        if poses:
+            self.ground_truth_poses.publish(poses)
 
     def _build_camera_info(self) -> None:
         if self._engine is None:

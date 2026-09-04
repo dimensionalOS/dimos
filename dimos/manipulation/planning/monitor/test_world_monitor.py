@@ -205,6 +205,13 @@ class FakeViz:
     def clear_vis_obstacles(self) -> None:
         self.calls.append(("clear_vis_obstacles",))
 
+    def set_ground_truth_poses(
+        self,
+        poses: dict[str, PoseStamped],
+        belief: dict[str, PoseStamped],
+    ) -> None:
+        self.calls.append(("set_ground_truth_poses", poses, belief))
+
 
 def _robot_config() -> RobotModelConfig:
     return RobotModelConfig(

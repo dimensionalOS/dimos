@@ -190,6 +190,7 @@ class ManipulationModule(Module):
     # message is a complete map, so it replaces the obstacle rather than adding.
     voxel_map: In[PointCloud2]
     objects: In[list[DetObject]]
+    ground_truth_poses: In[dict[str, PoseStamped]]
     tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -1266,6 +1267,12 @@ class ManipulationModule(Module):
         """Cache the latest perception objects for an explicit obstacle refresh."""
         if self._world_monitor is not None:
             self._world_monitor.on_objects(objects)
+
+    async def handle_ground_truth_poses(self, poses: dict[str, PoseStamped]) -> None:
+        """Forward sim-only truth poses to the configured visualization."""
+        if self._world_monitor is None or self._world_monitor.visualization is None:
+            return
+        self._world_monitor.visualization.set_ground_truth_poses(poses, self.get_obstacles())
 
     @rpc
     def refresh_obstacles(self, min_duration: float = 0.0) -> int:
