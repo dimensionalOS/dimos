@@ -53,7 +53,7 @@ def test_r1pro_quest_blueprint_controls_only_arms_and_torso() -> None:
     assert coordinator["hardware"][0].joints == list(R1PRO_UPPER_BODY_PLANNING_JOINTS)
     assert task.name == R1PRO_QUEST_TASK_NAME
     assert task.type == "teleop_ik"
-    assert task.joint_names == R1PRO_UPPER_BODY_PLANNING_JOINTS
+    assert task.joint_names == list(R1PRO_UPPER_BODY_PLANNING_JOINTS)
     assert set(task.joint_names).isdisjoint(R1PRO_PLANAR_BASE.joint_names)
     assert task.params["bindings"] == [
         {"hand": "left", "target_frame": "left_gripper_link"},
