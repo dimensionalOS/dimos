@@ -15,9 +15,12 @@
 from collections.abc import Iterator
 import runpy
 
-import can_motor_control
 import pytest
 from pytest_mock import MockerFixture
+
+pytest.importorskip("can_motor_control", reason="can-motor-control is a Linux-only dependency")
+
+import can_motor_control
 
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig

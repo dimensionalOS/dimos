@@ -21,6 +21,11 @@ from dimos.core.coordination.python_worker import PythonWorker
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.rpc_client import ModuleProxyProtocol, RPCClient
+from dimos.protocol.service.zenohservice import (
+    allocate_mesh_endpoint,
+    configure_zenoh_mesh,
+    release_zenoh_mesh,
+)
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
 
@@ -41,14 +46,35 @@ class WorkerManagerPython:
         self._started = False
         self._stats_monitor: StatsMonitor | None = None
 
+    def _mesh_endpoints(self) -> tuple[str, ...]:
+        return tuple(w.listen_endpoint for w in self._workers if w.listen_endpoint)
+
+    def _spawn_worker(self) -> PythonWorker:
+        """Spawn a worker process wired into the explicit loopback zenoh mesh.
+
+        Sibling discovery cannot rely on multicast scouting (macOS never
+        delivers multicast pinned to lo0), so each worker listens on a
+        coordinator-allocated loopback port and dials the workers spawned
+        before it, while coordinator-side sessions dial every live worker.
+        Spawn order closes the mesh: whatever exists when a session opens is
+        in its dial list, and everything newer dials it.
+        """
+        worker = PythonWorker()
+        if self._cfg.transport == "zenoh":
+            worker.start_process((allocate_mesh_endpoint(), self._mesh_endpoints()), self._cfg)
+        else:
+            worker.start_process()
+        self._workers.append(worker)
+        if worker.listen_endpoint is not None:
+            configure_zenoh_mesh(None, self._mesh_endpoints())
+        return worker
+
     def start(self) -> None:
         if self._started:
             return
         self._started = True
         for _ in range(self._n_workers):
-            worker = PythonWorker()
-            worker.start_process()
-            self._workers.append(worker)
+            self._spawn_worker()
         logger.info("Worker pool started.", n_workers=self._n_workers)
 
         if self._cfg.dtop:
@@ -64,9 +90,7 @@ class WorkerManagerPython:
         if not self._started:
             raise RuntimeError("WorkerManager not started; call start() first")
         for _ in range(n):
-            worker = PythonWorker()
-            worker.start_process()
-            self._workers.append(worker)
+            self._spawn_worker()
         self._n_workers += n
         logger.info("Added workers to pool.", added=n, total=self._n_workers)
 
@@ -104,9 +128,7 @@ class WorkerManagerPython:
         if not self._started:
             self.start()
 
-        worker = PythonWorker()
-        worker.start_process()
-        self._workers.append(worker)
+        worker = self._spawn_worker()
         self._n_workers += 1
         if module_class.dedicated_worker:
             worker.dedicated = True
@@ -134,6 +156,10 @@ class WorkerManagerPython:
             target.shutdown()
             self._workers.remove(target)
             self._n_workers = max(0, self._n_workers - 1)
+            if target.listen_endpoint is not None:
+                # Future workers and coordinator sessions must not dial the
+                # departed worker's port; it may be reused by anyone.
+                configure_zenoh_mesh(None, self._mesh_endpoints())
 
     def deploy_parallel(self, specs: Iterable[ModuleSpec]) -> list[ModuleProxyProtocol]:
         if self._closed:
@@ -213,6 +239,7 @@ class WorkerManagerPython:
                 logger.error(f"Error shutting down worker: {e}", exc_info=True)
 
         self._workers.clear()
+        release_zenoh_mesh()
 
         logger.info("All workers shut down")
 
