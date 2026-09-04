@@ -549,13 +549,16 @@ Construct the stream and assign it as an attribute.
 module has `inputs`/`outputs`/`io()` attributes and is a ble to discover streams attached.
 
 ```python ansi=false
+from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.std_msgs.String import String
 
 class Dyn(Module):
-    def start(self):
+    @rpc
+    def start(self) -> None:
+        super().start()
         # module can add a random input
         self.echo = In(String, "echo", m)
         print("Externally attached output:", self.words)
