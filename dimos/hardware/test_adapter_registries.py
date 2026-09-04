@@ -198,3 +198,13 @@ def test_conflicting_manifest_paths_raise() -> None:
     registry = AdapterRegistry()
     with pytest.raises(ValueError, match="Duplicate"):
         registry.register_path("xarm", "somewhere.else:Thing")
+
+
+@pytest.mark.parametrize(
+    "factory_path",
+    ["", "somewhere.else", ":Thing", "somewhere.else:", "somewhere.else:Thing:extra"],
+)
+def test_register_path_rejects_malformed_factory_path(factory_path: str) -> None:
+    registry = AdapterRegistry()
+    with pytest.raises(ValueError, match="Invalid adapter factory path"):
+        registry.register_path("external", factory_path)

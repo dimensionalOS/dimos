@@ -2,6 +2,8 @@
 
 This guide walks through integrating a new robot arm with dimOS, from writing the hardware adapter to creating blueprints for planning and control.
 
+If you are packaging an arm outside the DimOS repository, start with [External Robot Packages](/docs/capabilities/external_robot_packages.md). That guide shows how to register adapters and control tasks from an installed package without placing files under `dimos/hardware/` or `dimos/robot/`.
+
 ## Architecture Overview
 
 dimOS uses a **Protocol-based adapter pattern**. No base class inheritance is required. Your adapter wraps the vendor SDK and exposes a standard interface that the rest of the system consumes:
