@@ -47,7 +47,26 @@ The bridge discovers the WebTransport endpoint (an ephemeral QUIC port and certi
 - `--serve-dir` belongs to the relay here (`deno task dev --serve-dir DIR`). `dimos run --serve-dir` is rejected together with `--relay-url`.
 - A second robot on the same relay needs its own `--robot-id`. A synthetic one: `uv run python -m dimos.web.relay_bridge.demo_smoke --url http://localhost:7780`.
 - With several robots on the relay the cockpit lists them; pick one to watch it. "switch robot" in the status bar reopens the list.
-- Another machine requires a relay started with `--cert PEM --key PEM`; pass `--relay-ca` to the robot for a private CA. Non-loopback binding still requires `--unsafe-non-loopback` until relay auth lands.
+- Another machine requires a relay with TLS and auth (next section); pass `--relay-ca` to the robot for a private CA.
+
+## Relay with auth
+
+A relay that other machines reach needs `--cert PEM --key PEM` and `--auth-file auth.json` (`--unsafe-non-loopback` skips both, at your own risk). The file holds robot keys bound to robot ids and viewer tokens, 16 to 256 characters each and no secret twice (`openssl rand -hex 32`):
+
+```json
+{
+  "robots": { "go2-lab": "<key>" },
+  "viewers": { "paul": "<token>" }
+}
+```
+
+The robot sends its key in hello. Put it in the environment or `.env` as `RELAY_KEY` (the `--relay-key` flag works too, but shows in the process list):
+
+```bash
+RELAY_KEY=<key> uv run dimos run unitree-go2 --relay-url https://dimos-relay.example.com --robot-id go2-lab
+```
+
+The cockpit asks for the viewer token, keeps it in `localStorage`, and "log out" in the status bar forgets it. Your own page passes it to `connect({ url, token })`. `/api/stats` wants it as `Authorization: Bearer <token>` and drops its CORS header. A wrong key or token fails with `auth_failed` and neither client retries: fix the secret and restart. Edits to the file need a relay restart.
 
 ## Your first page
 
@@ -122,6 +141,8 @@ import { connect } from "http://127.0.0.1:7780/sdk.js";
 
 const session = connect({ url: "http://127.0.0.1:7780" });
 ```
+
+A relay with auth also takes the viewer token: `connect({ url, token })`.
 
 Inside the dimos repository you can also import the SDK source directly: `web/sdk` is the `@dimos/sdk` Deno workspace package, and `web/sdk/fixture/` is a small Vite consumer you can copy (`deno task fixture`). React bindings live on the `@dimos/sdk/react` subpath and read UI-tick snapshots through `useSyncExternalStore`:
 

@@ -58,6 +58,7 @@ class FakeClient:
 
     def __init__(self, hello_error: Exception | None = None) -> None:
         self.hello_args: tuple[Any, Any] | None = None
+        self.hello_token: str | None = None
         self.hello_error = hello_error
         self.control_msgs: asyncio.Queue[Msg | DataFrame] = asyncio.Queue()
         self.closed = asyncio.Event()
@@ -67,8 +68,16 @@ class FakeClient:
         self.control_frames: list[Msg] = []
         self.close_count = 0
 
-    async def hello(self, timeout: float = 5.0, *, robot: Any = None, manifest: Any = None) -> None:
+    async def hello(
+        self,
+        timeout: float = 5.0,
+        *,
+        robot: Any = None,
+        manifest: Any = None,
+        token: str | None = None,
+    ) -> None:
         self.hello_args = (robot, manifest)
+        self.hello_token = token
         if self.hello_error is not None:
             raise self.hello_error
 
