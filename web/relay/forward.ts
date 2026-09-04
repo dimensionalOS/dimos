@@ -336,7 +336,19 @@ export class LatestChannel implements ChannelPolicy {
  *
  * Bounded latency is what separates this from ReliableChannel: that one keeps
  * a 64-deep FIFO and would sit a viewer three seconds behind a walking robot
- * before kicking it. Here a slow viewer sees dropped frames, never lag.
+ * before kicking it.
+ *
+ * Bounded, not zero - be precise about this, because the depth-1 queue alone
+ * does not buy it. `writer.write()` resolving means the frame was accepted
+ * into QUIC's send buffer, not delivered, and frames on one ordered stream
+ * cannot be superseded once they are in that buffer: a reader slower than the
+ * producer must receive the stale bytes before it reaches the fresh ones. So
+ * a slow viewer does see lag. What bounds it is QUIC flow control - the
+ * window fills, write() stops resolving, #pending starts superseding, and the
+ * watchdog below resets the stream - not the queue depth. Measured by
+ * "a slow reader falls only boundedly behind" in server_test.ts: a reader ~4x
+ * too slow peaks around 67 frames (~2 s at 30 fps) and stays there, shedding
+ * the rest. A viewer that keeps up sees no lag at all.
  *
  * `delivery` stays "latest": the wire format and the (frozen) manifest are
  * unchanged, and the viewer never reads the field - it is the relay's own
@@ -347,10 +359,10 @@ export class LatestChannel implements ChannelPolicy {
  * free, so reap() rebuilds both. A viewer that stops reading (a suspended
  * tab) parks the write in `writer.write` indefinitely:
  *
- *   1. `aborted` stays the suspended-viewer signal - it counts reap ticks
- *      spent with a write outstanding past staleMs, rather than stale streams
- *      reset. Still 0 when healthy, still the "this viewer is stuck" gauge in
- *      /api/stats.
+ *   1. `aborted` stays the suspended-viewer signal, and keeps the interface's
+ *      meaning: streams reset because the viewer stopped draining. One stall
+ *      is one abort, not one per watchdog tick. Still 0 when healthy, still
+ *      the "this viewer is stuck" gauge in /api/stats.
  *   2. Past RESET_MS the persistent stream is reset and reopened. That is
  *      README bug 12's reason for resetting stale latest streams: the reset
  *      discards buffered-but-undelivered bytes on both ends, so a resuming
@@ -362,7 +374,11 @@ export class LatestPersistentChannel implements ChannelPolicy {
   readonly delivery: Delivery = "latest";
   sent = 0;
   dropped = 0;
-  aborted = 0; // no per-frame streams to reset; fixed 0
+  /** Persistent streams reset by the stall watchdog. Keeps the interface's
+   * meaning - streams reset because the viewer stopped draining - rather than
+   * counting the reap ticks spent waiting, which would report one stall as
+   * several "aborts". Still 0 when healthy. */
+  aborted = 0;
   expired = 0; // ditto
   bytesOut = 0;
   readonly rate = new Rate();
@@ -374,11 +390,9 @@ export class LatestPersistentChannel implements ChannelPolicy {
   #writeStartedAt: number | null = null;
   /** reap() reset the stream: the drain must reopen, not kick the viewer. */
   #resetting = false;
-  readonly #staleMs: number;
   readonly #now: () => number;
 
   constructor(readonly sink: ViewerSink, opts: PolicyOptions = {}) {
-    this.#staleMs = opts.staleMs ?? LATEST_STALE_MS;
     this.#now = opts.now ?? Date.now;
   }
 
@@ -397,16 +411,16 @@ export class LatestPersistentChannel implements ChannelPolicy {
     this.#drain();
   }
 
-  /** Stall watchdog (see the class doc): count a stuck write, and past
-   * RESET_MS reset the stream so the backlog cannot follow the viewer into
-   * its resume. No per-frame streams to reap. */
+  /** Stall watchdog (see the class doc): once a write has been outstanding
+   * past RESET_MS the viewer has stopped draining, so reset the stream - that
+   * discards the backlog rather than letting it follow the viewer into its
+   * resume - and count one abort. No per-frame streams to reap. */
   reap(nowMs: number): void {
     const startedAt = this.#writeStartedAt;
     if (startedAt === null || this.#disposed || this.#resetting) return;
     const stalledFor = nowMs - startedAt;
-    if (stalledFor < this.#staleMs) return;
-    this.aborted++;
     if (stalledFor < LATEST_PERSISTENT_RESET_MS) return;
+    this.aborted++;
     // Abort rather than close, for the reason ReliableChannel.dispose gives:
     // close would still flush the stale frames the reset exists to discard.
     // #resetting makes the drain's rejection a reopen instead of a kick; the

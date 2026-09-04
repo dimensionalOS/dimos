@@ -243,25 +243,27 @@ Deno.test("latest-persistent: a settled write is never counted as a stall", asyn
   assertEquals(ch.sent, 2);
 });
 
-Deno.test("latest-persistent: a stalled viewer is counted, then its stream reset", async () => {
+Deno.test("latest-persistent: a stalled viewer's stream is reset, once", async () => {
   const sink = new FakeSink(false); // writes park: a viewer that stopped reading
   let now = 1000;
-  const ch = new LatestPersistentChannel(sink, { staleMs: 500, now: () => now });
+  const ch = new LatestPersistentChannel(sink, { now: () => now });
   ch.offer(frame(1));
   await tick();
   ch.offer(frame(2)); // parks behind the stuck write, displacing nothing yet
 
-  now += 600; // past staleMs: the stall signal starts counting
+  now += 600; // stalled, but not yet long enough to call the viewer dead
   ch.reap(now);
-  assertEquals(ch.aborted, 1);
-  assertEquals(sink.streamsAborted, 0); // counted, not yet reset
+  assertEquals(ch.aborted, 0);
+  assertEquals(sink.streamsAborted, 0);
   now += 600;
   ch.reap(now);
-  assertEquals(ch.aborted, 2);
+  assertEquals(ch.aborted, 0);
 
   now += 1000; // past LATEST_PERSISTENT_RESET_MS: drop the stale backlog
   ch.reap(now);
-  assertEquals(ch.aborted, 3);
+  // One stall is one abort - the counter means "streams reset", per the
+  // ChannelPolicy contract, not "watchdog ticks spent waiting".
+  assertEquals(ch.aborted, 1);
   assertEquals(sink.streamsAborted, 1);
   // The reset is ours, so the viewer is kept and the channel stays usable:
   // the next frame opens a fresh stream rather than kicking.

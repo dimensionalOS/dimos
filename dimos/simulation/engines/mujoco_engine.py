@@ -627,18 +627,23 @@ class MujocoEngine(SimulationEngine):
         cam_renderers = self._init_cameras()
         lidar_states = self._init_raycast_lidars()
 
-        # Wall-clock time this iteration was due to start. Cameras render
-        # inline on this thread (see _render_cameras), so without a schedule
-        # to measure against, a slow render silently steals from the
-        # simulation clock instead of from the frame rate.
-        next_step_at = time.time()
+        # When this iteration was due to start, on the MONOTONIC clock: pacing
+        # must not be steerable by NTP or a manual clock change, which on
+        # time.time() would show up as the loop sleeping for minutes or
+        # sprinting through its debt. Frame/sensor timestamps stay wall-clock;
+        # only the schedule is monotonic. Cameras render inline on this thread
+        # (see _render_cameras), so without a schedule to measure against a
+        # slow render silently steals from the simulation clock instead of
+        # from the frame rate.
+        next_step_at = time.monotonic()
         skipped_renders = 0
         last_skip_report = next_step_at
 
         def _step_once(sync_viewer: bool) -> None:
             nonlocal next_step_at, skipped_renders, last_skip_report
-            loop_start = time.time()
-            lag = loop_start - next_step_at
+            loop_start = time.time()  # wall clock: stamps frames and sensors
+            loop_started_at = time.monotonic()  # monotonic: paces the loop
+            lag = loop_started_at - next_step_at
             reset_done_events: list[threading.Event] = []
             with self._lock:
                 if self._reset_requested:
@@ -682,7 +687,7 @@ class MujocoEngine(SimulationEngine):
             self._raycast_lidars(loop_start, lidar_states)
 
             next_step_at += dt
-            now = time.time()
+            now = time.monotonic()
             sleep_time = next_step_at - now
             if sleep_time > 0:
                 time.sleep(sleep_time)

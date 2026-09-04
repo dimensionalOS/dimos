@@ -473,9 +473,9 @@ def test_sim_loop_holds_real_time_with_no_cameras(tmp_path: Path) -> None:
     assert engine.connect() is True
     try:
         time.sleep(0.5)
-        t0, sim0 = time.time(), float(engine.data.time)
+        t0, sim0 = time.monotonic(), float(engine.data.time)
         time.sleep(3.0)
-        rtf = (float(engine.data.time) - sim0) / (time.time() - t0)
+        rtf = (float(engine.data.time) - sim0) / (time.monotonic() - t0)
     finally:
         engine.disconnect()
     assert rtf > 0.95, f"sim loop cannot hold real time even when idle (RTF={rtf:.3f})"
@@ -525,9 +525,9 @@ def test_slow_renders_cost_frame_rate_not_simulated_time(tmp_path: Path) -> None
         engine._render_cameras = _slow_render  # type: ignore[method-assign]
 
         time.sleep(0.5)  # let the loop settle before sampling
-        t0, sim0 = time.time(), float(engine.data.time)
+        t0, sim0 = time.monotonic(), float(engine.data.time)
         time.sleep(4.0)
-        wall = time.time() - t0
+        wall = time.monotonic() - t0
         sim = float(engine.data.time) - sim0
     finally:
         engine.disconnect()
