@@ -36,9 +36,9 @@ The groot MuJoCo sim publishes no color camera, so sim sessions record
 joints/commands only (point DataPrep's sync anchor at joint state, or
 enable a sim color camera, if you need images from sim).
 
-Export afterwards with ``dimos dataprep build`` — measured joint state,
-the commanded wrist poses, and episode status are all in the DB, so
-action semantics (next-state vs commanded) are a DataPrep config choice.
+The measured joint state, commanded wrist poses, and episode status are all in
+the DB, so action semantics (next-state vs commanded) are a DataPrep Profile
+choice. G1 has no built-in Imitation Workflow in this preview.
 
 Usage:
     dimos --simulation mujoco --scene-package office run unitree-g1-teleop

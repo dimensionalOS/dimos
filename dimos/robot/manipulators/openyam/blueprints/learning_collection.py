@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Native OpenYAM data collection."""
+"""Native OpenYAM data-collection builders."""
 
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
+from pathlib import Path
 
-from dimos.constants import STATE_DIR
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
@@ -37,21 +36,11 @@ from dimos.robot.manipulators.openyam.config import (
 from dimos.robot.manipulators.openyam.learning import OPENYAM_LEARNING_PROFILE
 
 
-def _session_mcap() -> str:
-    return str(STATE_DIR / "recordings" / f"session_openyam_{datetime.now():%Y%m%d_%H%M%S}.mcap")
-
-
-def _teach_session_mcap() -> str:
-    return str(
-        STATE_DIR / "recordings" / f"session_openyam_teach_{datetime.now():%Y%m%d_%H%M%S}.mcap"
-    )
-
-
-def _wrist_camera() -> Blueprint:
+def _wrist_camera(camera_device: int | str) -> Blueprint:
     return CameraModule.blueprint(
         instance_name="WristCamera",
         hardware=WebcamConfig(
-            camera_index=0,
+            camera_index=camera_device,
             width=OPENYAM_LEARNING_PROFILE.camera_width,
             height=OPENYAM_LEARNING_PROFILE.camera_height,
             fps=OPENYAM_LEARNING_PROFILE.fps,
@@ -59,17 +48,6 @@ def _wrist_camera() -> Blueprint:
         ),
         frame_id=OPENYAM_LEARNING_PROFILE.camera_frame_id,
     )
-
-
-learning_collect_quest_openyam = autoconnect(
-    NativeCollectionRecorder.blueprint(
-        store=RustMcapStoreConfig(path=_session_mcap()),
-        record_tf=False,
-    ),
-    EpisodeMonitorModule.blueprint(),
-    teleop_quest_openyam,
-    _wrist_camera(),
-)
 
 
 OPENYAM_TEACH_DAMPING = (2.0, 2.0, 2.0, 0.5, 0.5, 0.5, 0.0)
@@ -93,24 +71,44 @@ _openyam_teach_hardware = replace(
     ),
 )
 
-learning_collect_teach_openyam = autoconnect(
-    NativeCollectionRecorder.blueprint(
-        store=RustMcapStoreConfig(path=_teach_session_mcap()),
-        record_tf=False,
-    ),
-    EpisodeMonitorModule.blueprint(),
-    ControlCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        hardware=[_openyam_teach_hardware],
-        tasks=[
-            TaskConfig(
-                name="teach_openyam",
-                type="trajectory",
-                joint_names=list(OPENYAM_JOINTS),
-                priority=10,
-                params={"hold_position_when_idle": True},
-            ),
-        ],
-    ),
-    _wrist_camera(),
-)
+
+def build_quest_collection(
+    *, recording: Path, task: str, camera_device: int | str = 0
+) -> Blueprint:
+    """Build one Quest-controlled OpenYAM collection session."""
+    return autoconnect(
+        NativeCollectionRecorder.blueprint(
+            store=RustMcapStoreConfig(path=str(recording)),
+            record_tf=False,
+        ),
+        EpisodeMonitorModule.blueprint(task=task),
+        teleop_quest_openyam,
+        _wrist_camera(camera_device),
+    )
+
+
+def build_teach_collection(
+    *, recording: Path, task: str, camera_device: int | str = 0
+) -> Blueprint:
+    """Build one gravity-compensated OpenYAM collection session."""
+    return autoconnect(
+        NativeCollectionRecorder.blueprint(
+            store=RustMcapStoreConfig(path=str(recording)),
+            record_tf=False,
+        ),
+        EpisodeMonitorModule.blueprint(task=task),
+        ControlCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            hardware=[_openyam_teach_hardware],
+            tasks=[
+                TaskConfig(
+                    name="teach_openyam",
+                    type="trajectory",
+                    joint_names=list(OPENYAM_JOINTS),
+                    priority=10,
+                    params={"hold_position_when_idle": True},
+                ),
+            ],
+        ),
+        _wrist_camera(camera_device),
+    )

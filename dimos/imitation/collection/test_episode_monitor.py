@@ -187,16 +187,18 @@ def test_published_status_is_internally_consistent(
     assert events[-1].episodes_discarded == 1
 
 
-def test_shutdown_discards_recording(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
+def test_shutdown_leaves_recording_incomplete(
+    make_monitor: Callable[..., EpisodeMonitorModule],
+) -> None:
     m = make_monitor()
     _press(m, "B")
 
     m.stop()
 
     last = _events(m)[-1]
-    assert last.last_event == "discard"
-    assert last.state == "idle"
-    assert last.episodes_discarded == 1
+    assert last.last_event == "start"
+    assert last.state == "recording"
+    assert last.episodes_discarded == 0
 
 
 def test_invalid_button_mapping_fails_at_startup(

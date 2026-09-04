@@ -51,6 +51,8 @@ class PolicyControlSpec(Spec, Protocol):
 
     def cancel_trajectory(self, task_name: str) -> TrajectoryCancellationResult: ...
 
+    def list_tasks(self) -> list[str]: ...
+
 
 class RolloutStatus(TypedDict):
     """Operator-facing state of the configured policy rollout."""
@@ -59,6 +61,7 @@ class RolloutStatus(TypedDict):
     policy_path: str
     task: str
     device: str | None
+    policy_ready: bool
     observations_ready: bool
     chunks_accepted: int
     last_error: str | None
@@ -68,11 +71,13 @@ class LeRobotPolicyModuleConfig(IsolatedPythonModuleConfig):
     """Configuration for one checkpoint shared with the isolated runtime."""
 
     policy_path: str = Field(min_length=1)
-    task: str = ""
+    task: str = Field(min_length=1)
     device: str | None = None
     joint_names: list[str] = Field(min_length=1)
     fps: float = Field(default=30.0, gt=0)
     robot_type: str = ""
+    image_width: int = Field(default=640, gt=0)
+    image_height: int = Field(default=480, gt=0)
     max_observation_age_s: float = Field(default=0.5, gt=0)
     trajectory_task_name: str = POLICY_ROLLOUT_TASK_NAME
     rollout_button: str = "A"
@@ -118,6 +123,11 @@ class LeRobotPolicyModule(IsolatedPythonModule):
     button_pressed: In[Buttons]
 
     _control: PolicyControlSpec
+
+    @rpc
+    def preflight_rollout(self) -> RolloutStatus:
+        """Load and validate the policy and live inputs without moving the robot."""
+        raise NotImplementedError
 
     @rpc
     def start_rollout(self) -> RolloutStatus:
