@@ -644,7 +644,7 @@ dependencies = [
  "crossbeam-channel",
  "crossbeam-utils",
  "dimos-module",
- "lcm-msgs 0.1.0 (git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen)",
+ "lcm-msgs",
  "lz4_flex 0.14.0",
  "mcap",
  "rayon",
@@ -664,7 +664,7 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "dimos-module",
- "lcm-msgs 0.1.0 (git+https://github.com/dimensionalOS/dimos-lcm.git?rev=dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5)",
+ "lcm-msgs",
  "rayon",
  "serde",
  "tokio",
@@ -690,7 +690,7 @@ version = "0.1.0"
 dependencies = [
  "dimos-lcm",
  "dimos-module-macros",
- "lcm-msgs 0.1.0 (git+https://github.com/dimensionalOS/dimos-lcm.git?rev=dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5)",
+ "lcm-msgs",
  "nalgebra",
  "rayon",
  "serde",
@@ -719,7 +719,7 @@ name = "dimos-native-module-examples"
 version = "0.1.0"
 dependencies = [
  "dimos-module",
- "lcm-msgs 0.1.0 (git+https://github.com/dimensionalOS/dimos-lcm.git?rev=dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5)",
+ "lcm-msgs",
  "serde",
  "tokio",
  "tracing",
@@ -733,7 +733,7 @@ dependencies = [
  "ahash",
  "arrayvec",
  "dimos-module",
- "lcm-msgs 0.1.0 (git+https://github.com/dimensionalOS/dimos-lcm.git?rev=dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5)",
+ "lcm-msgs",
  "nalgebra",
  "rayon",
  "serde",
@@ -1595,14 +1595,6 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
-
-[[package]]
-name = "lcm-msgs"
-version = "0.1.0"
-source = "git+https://github.com/dimensionalOS/dimos-lcm.git?branch=rust-codegen#04d78e8622500244123ba9cefa4c51b4cb454549"
-dependencies = [
- "byteorder",
-]
 
 [[package]]
 name = "lcm-msgs"

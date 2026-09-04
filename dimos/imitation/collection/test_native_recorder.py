@@ -66,6 +66,15 @@ def test_native_collection_profile_accepts_mcap_store(tmp_path: Path) -> None:
     recorder.stop()
 
 
+def test_native_collection_uses_the_recorder_build_directory(
+    recorder: NativeCollectionRecorder,
+) -> None:
+    recorder_root = Path(__file__).parents[2] / "experimental" / "memory" / "rust"
+
+    assert Path(recorder.config.cwd) == recorder_root
+    assert Path(recorder.config.executable) == recorder_root / "result/bin/dimos-memory-recorder"
+
+
 @pytest.mark.parametrize(
     ("record_tf", "expected_ports"),
     [
