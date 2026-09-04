@@ -173,20 +173,24 @@ impl RayTracingVoxelMap {
     /// Seed the map from the first loaded cloud and emit the full map once.
     /// Later clouds are ignored: reseeding would resurrect voxels live rays
     /// have carved. The lookup takes the latest transform, since the cloud
-    /// keeps its original stamp.
+    /// keeps its original stamp, and waits for it: the cloud and the
+    /// transform that places it are published together on separate topics.
     async fn on_loaded_map(&mut self, msg: PointCloud2) {
         if self.seeded {
             return;
         }
+        // FIXME: we should add an indefinite wait for transforms for cases like this.
+        // in the meantime a long .within is fine
         let Some(tf_pose) = self
             .tf
-            .get_latest(&self.config.world_frame, &msg.header.frame_id)
+            .lookup(&self.config.world_frame, &msg.header.frame_id)
+            .within(LOADED_MAP_TF_WAIT_TIMEOUT)
+            .await
         else {
-            warn_throttled!(
-                Duration::from_secs(5),
+            warn!(
                 world_frame = %self.config.world_frame,
                 cloud_frame = %msg.header.frame_id,
-                "No transform for the loaded map yet, dropped a cloud.",
+                "No transform for the loaded map, dropped a cloud.",
             );
             return;
         };
@@ -267,6 +271,9 @@ impl RayTracingVoxelMap {
 
 /// How long to wait for a late transform before dropping a cloud.
 const TF_WAIT_TIMEOUT: Duration = Duration::from_millis(50);
+
+/// How long a loaded map waits for the transform that places it.
+const LOADED_MAP_TF_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn time_secs(t: &Time) -> f64 {
     t.sec as f64 + t.nsec as f64 * 1e-9
