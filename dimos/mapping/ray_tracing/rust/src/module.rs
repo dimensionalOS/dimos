@@ -12,18 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::mapper::{Mapper, Pose};
-use crate::voxel_ray_tracer::Config;
+use crate::mapper::{register, Mapper, Pose};
+use crate::voxel_ray_tracer::{partition_seed, Config, SeedTile};
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf, Transform};
 use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
-use tracing::{info, warn};
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TryRecvError;
+use tokio::task::JoinHandle;
+use tracing::{debug, info, warn};
+
+/// Messages queued to the worker in arrival order.
+enum Job {
+    Lidar(PointCloud2),
+    ClearMask(PointCloud2),
+    LoadedMap(PointCloud2),
+    /// A loaded map placed in the world and split into tiles, or None when
+    /// it could not be placed.
+    SeedPrepared(Option<Vec<SeedTile>>),
+}
+
+/// Messages the handlers can queue ahead of the worker before they wait.
+const JOB_QUEUE_CAPACITY: usize = 256;
 
 #[derive(Module)]
-#[module(name = "ray_tracing", setup = init_mapper)]
+#[module(name = "ray_tracing", setup = spawn_worker, teardown = stop_worker)]
 pub struct RayTracingVoxelMap {
     #[input(decode = PointCloud2::decode, handler = on_lidar)]
     lidar: Input<PointCloud2>,
@@ -61,23 +77,150 @@ pub struct RayTracingVoxelMap {
     #[config]
     config: Config,
 
-    // Built once at startup by init_mapper. All mapping state lives inside.
-    mapper: Option<Mapper>,
-
-    // Stamp of the last applied clear mask, so a late one cannot erase voxels a
-    // newer mask already accounted for.
-    last_clear_mask_stamp: f64,
-
-    // Whether a loaded map has been seeded.
-    seeded: bool,
+    // Handlers only enqueue. The worker owns the mapper and does every
+    // lookup, map mutation, and publish, so the handle loop never blocks.
+    jobs: Option<mpsc::Sender<Job>>,
+    worker: Option<JoinHandle<()>>,
 }
 
 impl RayTracingVoxelMap {
-    async fn init_mapper(&mut self) {
-        self.mapper = Some(Mapper::new(self.config.clone()));
+    async fn spawn_worker(&mut self) {
+        let (tx, rx) = mpsc::channel(JOB_QUEUE_CAPACITY);
+        let worker = Worker {
+            jobs: rx,
+            job_sender: tx.clone(),
+            tf: self.tf.clone(),
+            config: self.config.clone(),
+            global_map: self.global_map.clone(),
+            local_map: self.local_map.clone(),
+            local_map_fine: self.local_map_fine.clone(),
+            full_map: self.full_map.clone(),
+            region_bounds: self.region_bounds.clone(),
+        };
+        self.jobs = Some(tx);
+        self.worker = Some(tokio::spawn(worker.run()));
+    }
+
+    async fn stop_worker(&mut self) {
+        self.jobs = None;
+        if let Some(handle) = self.worker.take() {
+            handle.abort();
+        }
     }
 
     async fn on_lidar(&mut self, msg: PointCloud2) {
+        self.enqueue(Job::Lidar(msg)).await;
+    }
+
+    async fn on_voxel_clear_mask(&mut self, msg: PointCloud2) {
+        self.enqueue(Job::ClearMask(msg)).await;
+    }
+
+    async fn on_loaded_map(&mut self, msg: PointCloud2) {
+        self.enqueue(Job::LoadedMap(msg)).await;
+    }
+
+    async fn enqueue(&self, job: Job) {
+        let Some(jobs) = &self.jobs else {
+            return;
+        };
+        if jobs.send(job).await.is_err() {
+            error_throttled!(
+                Duration::from_secs(1),
+                "Ray tracing worker is gone, dropped a message.",
+            );
+        }
+    }
+}
+
+/// A seed load in progress, applied one tile per idle pass of the worker.
+struct SeedLoad {
+    tiles: Vec<SeedTile>,
+    next: usize,
+    created: usize,
+    started: Instant,
+}
+
+/// Everything the worker mutates across jobs.
+struct State {
+    mapper: Mapper,
+    // Stamp of the last applied clear mask, so a late one cannot erase voxels
+    // a newer mask already accounted for.
+    last_clear_mask_stamp: f64,
+    seeded: bool,
+    // A loaded map is being placed or loaded. Repeats are ignored meanwhile.
+    seed_pending: bool,
+    load: Option<SeedLoad>,
+}
+
+/// Owns the mapper and does every map mutation and publish off the handle
+/// loop. Queued jobs take priority: a seed load advances one tile at a time,
+/// only while the queue is empty.
+struct Worker {
+    jobs: mpsc::Receiver<Job>,
+    // Handed to the seed placement task so its result re-enters the queue.
+    job_sender: mpsc::Sender<Job>,
+    tf: Tf,
+    config: Config,
+    global_map: Output<PointCloud2>,
+    local_map: Output<PointCloud2>,
+    local_map_fine: Output<PointCloud2>,
+    full_map: Output<PointCloud2>,
+    region_bounds: Output<PoseStamped>,
+}
+
+impl Worker {
+    async fn run(mut self) {
+        let mut state = State {
+            mapper: Mapper::new(self.config.clone()),
+            last_clear_mask_stamp: 0.0,
+            seeded: false,
+            seed_pending: false,
+            load: None,
+        };
+        loop {
+            let job = if state.load.is_some() {
+                match self.jobs.try_recv() {
+                    Ok(job) => Some(job),
+                    Err(TryRecvError::Empty) => None,
+                    Err(TryRecvError::Disconnected) => return,
+                }
+            } else {
+                match self.jobs.recv().await {
+                    Some(job) => Some(job),
+                    None => return,
+                }
+            };
+            match job {
+                Some(job) => self.handle(&mut state, job).await,
+                None => {
+                    self.seed_step(&mut state).await;
+                    tokio::task::yield_now().await;
+                }
+            }
+        }
+    }
+
+    async fn handle(&self, state: &mut State, job: Job) {
+        match job {
+            Job::Lidar(msg) => self.ingest_frame(state, msg).await,
+            Job::ClearMask(msg) => self.apply_clear_mask(state, msg),
+            Job::LoadedMap(msg) => self.place_loaded_map(state, msg),
+            Job::SeedPrepared(None) => state.seed_pending = false,
+            Job::SeedPrepared(Some(tiles)) => {
+                info!(tiles = tiles.len(), "Seed load started.");
+                state.load = Some(SeedLoad {
+                    tiles,
+                    next: 0,
+                    created: 0,
+                    started: Instant::now(),
+                });
+            }
+        }
+    }
+
+    /// Fold one lidar frame into the map and publish whatever is due.
+    async fn ingest_frame(&self, state: &mut State, msg: PointCloud2) {
         // Register with the transform nearest the cloud stamp, waiting briefly
         // for one still in flight rather than dropping the cloud.
         let stamp = time_secs(&msg.header.stamp);
@@ -112,19 +255,20 @@ impl RayTracingVoxelMap {
             return;
         }
 
-        let mapper = self.mapper.as_mut().expect("built in setup");
-        mapper.add_frame(points, tf_to_pose(&tf_pose));
-
-        let region = mapper.local_due().then(|| mapper.take_local_bounds());
-        let cylinder = region.map(|c| c.bounds());
-
-        let global_points = mapper.global_due().then(|| mapper.global_points());
-        let local_points = cylinder.as_ref().map(|cyl| mapper.local_points(cyl));
-        let fine_points = self
-            .config
-            .emit_fine
-            .then(|| cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl)))
-            .flatten();
+        let mapper = &mut state.mapper;
+        let emit_fine = self.config.emit_fine;
+        let (region, global_points, local_points, fine_points) =
+            tokio::task::block_in_place(|| {
+                mapper.add_frame(points, tf_to_pose(&tf_pose));
+                let region = mapper.local_due().then(|| mapper.take_local_bounds());
+                let cylinder = region.map(|c| c.bounds());
+                let global_points = mapper.global_due().then(|| mapper.global_points());
+                let local_points = cylinder.as_ref().map(|cyl| mapper.local_points(cyl));
+                let fine_points = emit_fine
+                    .then(|| cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl)))
+                    .flatten();
+                (region, global_points, local_points, fine_points)
+            });
 
         let out_frame_id = self.config.world_frame.as_str();
         let stamp = msg.header.stamp;
@@ -174,54 +318,6 @@ impl RayTracingVoxelMap {
         }
     }
 
-    /// Seed the map from the first loaded cloud and emit the full map once.
-    /// Later clouds are ignored: reseeding would resurrect voxels live rays
-    /// have carved. The lookup takes the latest transform, since the cloud
-    /// keeps its original stamp, and waits for it: the cloud and the
-    /// transform that places it are published together on separate topics.
-    async fn on_loaded_map(&mut self, msg: PointCloud2) {
-        if self.seeded {
-            return;
-        }
-        // FIXME: we should add an indefinite wait for transforms for cases like this.
-        // in the meantime a long .within is fine
-        let Some(tf_pose) = self
-            .tf
-            .lookup(&self.config.world_frame, &msg.header.frame_id)
-            .within(LOADED_MAP_TF_WAIT_TIMEOUT)
-            .await
-        else {
-            warn!(
-                world_frame = %self.config.world_frame,
-                cloud_frame = %msg.header.frame_id,
-                "No transform for the loaded map, dropped a cloud.",
-            );
-            return;
-        };
-        let points = match extract_xyz(&msg) {
-            Ok(p) => p,
-            Err(e) => {
-                warn_throttled!(
-                    Duration::from_secs(1),
-                    error = %e,
-                    "Failed to get loaded map points, dropped a cloud.",
-                );
-                return;
-            }
-        };
-        if points.is_empty() {
-            return;
-        }
-        let mapper = self.mapper.as_mut().expect("built in setup");
-        let num_created = mapper.seed_frame(points, tf_to_pose(&tf_pose));
-        let full = mapper.full_points();
-        self.seeded = true;
-        info!(num_created, "Seeded the voxel map from a loaded map cloud.");
-
-        let cloud = points_to_cloud(&full, &self.config.world_frame, now());
-        publish_cloud(&self.full_map, &cloud).await;
-    }
-
     /// Delete the voxels covering a cloud of world-frame points a sensor knows
     /// to be empty.
     ///
@@ -230,13 +326,13 @@ impl RayTracingVoxelMap {
     /// clear the volume its arm hides. It deposits voxels of itself there and
     /// walls itself in. A publisher that knows those points are free says so
     /// here.
-    async fn on_voxel_clear_mask(&mut self, msg: PointCloud2) {
+    fn apply_clear_mask(&self, state: &mut State, msg: PointCloud2) {
         let stamp = time_secs(&msg.header.stamp);
-        if stamp < self.last_clear_mask_stamp {
+        if stamp < state.last_clear_mask_stamp {
             warn_throttled!(
                 Duration::from_secs(1),
                 stamp,
-                last_stamp = self.last_clear_mask_stamp,
+                last_stamp = state.last_clear_mask_stamp,
                 "Out-of-order voxel clear mask dropped",
             );
             return;
@@ -264,13 +360,110 @@ impl RayTracingVoxelMap {
                 return;
             }
         };
-        self.last_clear_mask_stamp = stamp;
+        state.last_clear_mask_stamp = stamp;
         if points.is_empty() {
             return;
         }
-        let mapper = self.mapper.as_mut().expect("built in setup");
-        mapper.clear_metric(points);
+        let mapper = &mut state.mapper;
+        tokio::task::block_in_place(|| mapper.clear_metric(points));
     }
+
+    /// Place the first loaded map on its own task, waiting for the transform
+    /// there and splitting the cloud into tiles off the worker. Later maps are
+    /// ignored: reseeding would resurrect voxels live rays have carved. The
+    /// lookup takes the latest transform, since the cloud keeps its original
+    /// stamp.
+    fn place_loaded_map(&self, state: &mut State, msg: PointCloud2) {
+        if state.seeded || state.seed_pending {
+            return;
+        }
+        state.seed_pending = true;
+        let tf = self.tf.clone();
+        let sender = self.job_sender.clone();
+        let world_frame = self.config.world_frame.clone();
+        let voxel_size = self.config.voxel_size;
+        let origin = state.mapper.last_origin();
+        tokio::spawn(async move {
+            let placed = tf
+                .lookup(&world_frame, &msg.header.frame_id)
+                .within(LOADED_MAP_TF_WAIT_TIMEOUT)
+                .await;
+            let tiles = match placed {
+                Some(t) => {
+                    let pose = tf_to_pose(&t);
+                    tokio::task::spawn_blocking(move || {
+                        prepare_seed(&msg, pose, voxel_size, origin)
+                    })
+                    .await
+                    .unwrap_or(None)
+                }
+                None => {
+                    warn!(
+                        world_frame = %world_frame,
+                        cloud_frame = %msg.header.frame_id,
+                        "No transform for the loaded map, dropped a cloud.",
+                    );
+                    None
+                }
+            };
+            let _ = sender.send(Job::SeedPrepared(tiles)).await;
+        });
+    }
+
+    /// Apply the next seed tile, then emit the full map once the load ends.
+    async fn seed_step(&self, state: &mut State) {
+        let Some(load) = state.load.as_mut() else {
+            return;
+        };
+        if let Some(tile) = load.tiles.get(load.next) {
+            let mapper = &mut state.mapper;
+            let tile_start = Instant::now();
+            load.created += tokio::task::block_in_place(|| mapper.seed_tile(tile));
+            debug!(
+                tile = load.next,
+                tile_ms = tile_start.elapsed().as_secs_f64() * 1e3,
+                "seed tile applied"
+            );
+            load.next += 1;
+        }
+        if load.next < load.tiles.len() {
+            return;
+        }
+        let num_created = load.created;
+        let load_s = load.started.elapsed().as_secs_f64();
+        state.load = None;
+        state.seeded = true;
+        let mapper = &state.mapper;
+        let full = tokio::task::block_in_place(|| mapper.full_points());
+        info!(
+            num_created,
+            load_s, "Seeded the voxel map from a loaded map cloud."
+        );
+        let cloud = points_to_cloud(&full, &self.config.world_frame, now());
+        publish_cloud(&self.full_map, &cloud).await;
+    }
+}
+
+/// Register a loaded cloud into the world by `pose` and split it into seed
+/// tiles, nearest `origin` first. None when the cloud is unusable.
+fn prepare_seed(
+    msg: &PointCloud2,
+    pose: Pose,
+    voxel_size: f32,
+    origin: (f32, f32, f32),
+) -> Option<Vec<SeedTile>> {
+    let mut points = match extract_xyz(msg) {
+        Ok(p) => p,
+        Err(e) => {
+            warn!(error = %e, "Failed to get loaded map points, dropped a cloud.");
+            return None;
+        }
+    };
+    if points.is_empty() {
+        return None;
+    }
+    register(&mut points, pose);
+    Some(partition_seed(&points, voxel_size, origin))
 }
 
 /// How long to wait for a late transform before dropping a cloud.

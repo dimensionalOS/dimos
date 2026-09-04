@@ -20,7 +20,8 @@ use nalgebra::{Quaternion, UnitQuaternion, Vector3};
 
 use crate::voxel_ray_tracer::{
     batch_local_bounds, coarse_of_fine, emit_points, emit_points_fine, global_normal_fits,
-    metric_voxel_keys, seed_points, update_map, Config, Cylinder, FrameHits, LocalBounds, VoxelMap,
+    metric_voxel_keys, seed_points, seed_tile, update_map, Config, Cylinder, FrameHits,
+    LocalBounds, VoxelMap,
 };
 
 pub type Point = (f32, f32, f32);
@@ -97,6 +98,19 @@ impl Mapper {
     pub fn seed_frame(&mut self, mut points: Vec<Point>, pose: Pose) -> usize {
         register(&mut points, pose);
         self.seed_points(&points)
+    }
+
+    /// Seed one tile of a partitioned world-frame cloud. Returns how many
+    /// voxels were created.
+    pub fn seed_tile(&mut self, tile: &[Point]) -> usize {
+        let pool = Arc::clone(&self.pool);
+        pool.install(|| seed_tile(&mut self.map, tile, &self.config))
+            .len()
+    }
+
+    /// The last frame's sensor origin in the world frame.
+    pub fn last_origin(&self) -> Point {
+        self.last_origin
     }
 
     fn ingest(&mut self, points: Vec<Point>, origin: Point) {
@@ -252,7 +266,7 @@ impl Mapper {
 }
 
 /// Map points into the world frame by the pose, in place.
-fn register(points: &mut [Point], pose: Pose) {
+pub fn register(points: &mut [Point], pose: Pose) {
     let (px, py, pz) = pose.position;
     let (qx, qy, qz, qw) = pose.orientation;
     let translation = Vector3::new(px, py, pz);

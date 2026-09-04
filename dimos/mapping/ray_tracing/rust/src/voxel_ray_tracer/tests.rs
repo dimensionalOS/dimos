@@ -1681,3 +1681,76 @@ fn seed_into_live_map_keeps_indexes_consistent() {
         assert_eq!(indexed, healthy, "trial {trial}: chunk index");
     }
 }
+
+/// Tiles land nearest the origin first, so a load applied one tile per idle
+/// pass brings up the sensor's surroundings before the far end of the map.
+#[test]
+fn partition_seed_orders_tiles_nearest_the_origin_first() {
+    let voxel_size = 1.0;
+    let edge = CHUNK_SIZE as f32 * voxel_size;
+    let points: Vec<(f32, f32, f32)> = (0..6).map(|i| (i as f32 * edge + 0.5, 0.5, 0.5)).collect();
+    let origin = points[3];
+
+    let tiles = partition_seed(&points, voxel_size, origin);
+
+    assert_eq!(tiles.len(), points.len(), "one tile per chunk");
+    assert_eq!(tiles[0], vec![points[3]]);
+    let distances: Vec<f32> = tiles.iter().map(|t| (t[0].0 - origin.0).abs()).collect();
+    assert!(distances.windows(2).all(|w| w[0] <= w[1]), "{distances:?}");
+}
+
+/// Live frames between seed tiles never see a half-updated map: support
+/// counts and the healthy-chunk index stay exact after every tile.
+#[test]
+fn seed_tiles_interleaved_with_live_frames_keep_indexes_consistent() {
+    let mut state = 1442695040888963407_u64;
+    let mut next_u64 = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut next_coord = move || (next_u64() % 4000) as f32 / 100.0 - 20.0;
+    let cfg = Config {
+        min_health: -1,
+        max_health: 3,
+        ..basic_config()
+    };
+    let cloud: Vec<(f32, f32, f32)> = (0..1500)
+        .map(|_| (next_coord(), next_coord(), next_coord()))
+        .collect();
+    let tiles = partition_seed(&cloud, cfg.voxel_size, (0.0, 0.0, 0.0));
+    assert!(tiles.len() > 4, "the cloud must span several chunks");
+
+    let mut map = VoxelMap::default();
+    let mut created_total = 0;
+    for (i, tile) in tiles.iter().enumerate() {
+        created_total += seed_tile(&mut map, tile, &cfg).len();
+        let frame: Vec<(f32, f32, f32)> = (0..200)
+            .map(|_| (next_coord(), next_coord(), next_coord()))
+            .collect();
+        update_map(&mut map, (0.0, 0.0, 30.0), &frame, &cfg);
+
+        let keys: Vec<VoxelKey> = map.voxels.keys().copied().collect();
+        for k in keys {
+            assert_eq!(
+                map.voxels[&k].support,
+                map.count_healthy_neighbors(k),
+                "after tile {i}: support({k:?})"
+            );
+        }
+        let indexed: AHashSet<VoxelKey> = map
+            .healthy_chunks
+            .values()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        let healthy: AHashSet<VoxelKey> = map
+            .voxels
+            .iter()
+            .filter(|(_, v)| v.health > 0)
+            .map(|(&k, _)| k)
+            .collect();
+        assert_eq!(indexed, healthy, "after tile {i}: chunk index");
+    }
+    assert!(created_total > 0);
+}

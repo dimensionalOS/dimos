@@ -34,6 +34,7 @@ from dimos.mapping.ray_tracing.module import TF_MATCH_TOLERANCE_S
 from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.tf import StreamTF
+from dimos.memory.type.observation import Observation
 from dimos.memory.vis.utils import DEFAULT_RENDER_VOXEL, default_render_voxel
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import resolve_named_path
@@ -148,6 +149,11 @@ def main(
     from_time: float | None = typer.Option(
         None, "--from-time", help="Start replay at this stream timestamp (s)"
     ),
+    loaded_map_stream: str = typer.Option(
+        "loaded_map",
+        "--loaded-map-stream",
+        help="Stream holding a world-frame map cloud to seed at its timestamp, when present",
+    ),
     viewer_memory: str = typer.Option(
         "25%",
         "--viewer-memory",
@@ -198,6 +204,14 @@ def main(
         if tf is None:
             raise typer.BadParameter(f"{db_path} has no tf stream to register clouds from")
 
+        loaded_map: Observation[PointCloud2] | None
+        try:
+            loaded_map = store.stream(loaded_map_stream, PointCloud2).order_by("ts").first()
+        except LookupError:
+            loaded_map = None
+        if loaded_map is not None:
+            print(f"loaded_map at ts={loaded_map.ts:.3f}; seeding when reached")
+
         trajectory: list[tuple[float, float, float]] = []
         count = 0
         dropped = 0
@@ -218,6 +232,17 @@ def main(
             for mapper in mappers.values():
                 mapper.add_frame(raw, (x, y, z), (qx, qy, qz, qw))
             count += 1
+
+            if loaded_map is not None and obs.ts >= loaded_map.ts:
+                seed_pts = loaded_map.data.points_f32()
+                created = {name: m.seed_points(seed_pts) for name, m in mappers.items()}
+                rr.set_time(TIMELINE, timestamp=obs.ts)
+                rr.log(
+                    "world/loaded_map",
+                    rr.Points3D(seed_pts, colors=[[130, 130, 130]], radii=0.008),
+                )
+                print(f"\nseeded {created} voxels from {len(seed_pts)} points")
+                loaded_map = None
 
             if count % emit_every != 0:
                 continue
