@@ -102,16 +102,22 @@ class StreamedMotionMerger:
         decoded arrays keyed by wire name."""
         result = MergeResult()
 
-        protocol = infer_protocol_version(fields)
-        if protocol == 0:
+        # The protocol version is a property of the sender (which field set it
+        # streams: v1 joints, v2 SMPL, v3 both), so it is established once from
+        # the first chunk and held until reset(). It only ever "changes" when a
+        # different source starts streaming without a reset in between - the
+        # C++ endpoint treats that as an unrecoverable error, and so do we.
+        incoming = infer_protocol_version(fields)
+        if incoming == 0:
             result.error = "pose message has neither joint nor SMPL data"
             return result
         if self._active_protocol is None:
-            self._active_protocol = protocol
-        elif self._active_protocol != protocol:
-            result.error = f"protocol version changed {self._active_protocol} -> {protocol}"
-            result.protocol_version = protocol
+            self._active_protocol = incoming
+        elif self._active_protocol != incoming:
+            result.error = f"protocol version changed {self._active_protocol} -> {incoming}"
+            result.protocol_version = incoming
             return result
+        protocol = self._active_protocol
 
         frame_indices = fields.get("frame_index")
         # The pico teleop server names this field body_quat_w; the reference
