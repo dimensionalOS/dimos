@@ -109,8 +109,6 @@ class PlanarBaseDefinition:
     coordinates use meters and angular coordinates use radians.
     """
 
-    # TODO(manipulation): Remove fixed workspace bounds when the query-local
-    # unbounded design in docs/capabilities/manipulation/unbounded-planar-base.md lands.
     workspace_lower: _FiniteVector3
     workspace_upper: _FiniteVector3
     velocity_limits: _PositiveVector3
