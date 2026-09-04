@@ -148,6 +148,20 @@ packages do not edit that file; they expose blueprints through Python package en
 points. See [blueprints](/docs/usage/blueprints.md) for composition and external
 publishing details.
 
+### `dimos graph`
+
+Render a Blueprint's stream flow as a Graphviz SVG without starting the Blueprint or
+opening its runtime transports. RPC relationships are hidden by default; pass `--rpc`
+to include RPC contracts and their declared Spec methods as dashed edges.
+
+```bash
+dimos graph unitree-go2-agentic
+dimos graph unitree-go2-agentic --rpc --output go2-agentic.svg
+```
+
+The default output is `<blueprint>.svg` in the current directory. Graphviz's `dot`
+executable must be installed.
+
 ### `dimos shell`
 
 Open an IPython session attached to the coordinator on the configured transport bus:
@@ -335,6 +349,21 @@ dimos spy                     # everything, all transports
 dimos spy --transport zenoh   # filter to one transport (repeatable flag)
 dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
 ```
+
+### `dimos login`
+
+Device-code sign-in for the hosted platform; `dimos logout` and `dimos whoami` manage the stored key.
+
+### `dimos data`
+
+Upload recordings (or any file) to hosted storage and pull them back. See [Cloud data](/docs/usage/cloud_data.md).
+
+| Subcommand | Description |
+|------------|-------------|
+| `upload [PATH\|latest] [--since 1h] [--robot ID] [--kind KIND] [--chunk MB]` | Upload; no argument means the newest recording |
+| `ls` | List uploads: id, date, kind, blueprint, topics, size, state |
+| `pull [ID-PREFIX\|latest] [--dest PATH]` | Download to `downloads/`, sha256-verified |
+| `status ID` / `quota` | Upload state and parts on server / storage quota |
 
 ## Agent & MCP Commands
 

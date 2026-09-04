@@ -176,6 +176,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Install lint dependencies
         run: uv sync --only-group lint --frozen
       - name: Mypy
@@ -227,6 +228,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Install dependency for pyaudio
         run: |
           sudo apt-get update
@@ -248,7 +250,8 @@ jobs:
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
 
-  cpp:
+  native:
+    name: Native builds (C++ and Rust)
     timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
@@ -303,6 +306,11 @@ jobs:
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           INPUT_SET_AS_TRUSTED_USER: "true"
         run: bash docker/ros/install-nix.sh
+      - name: Build Rust memory recorder Nix package
+        run: |
+          cd dimos/experimental/memory/rust
+          nix build .#dimos-memory-recorder --no-write-lock-file --print-build-logs
+          test -x result/bin/dimos-memory-recorder
       # PCL, GTSAM and the SLAM cores come from each module's flake, not apt.
       - name: Build C++ native modules
         env:
@@ -344,6 +352,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - uses: actions/setup-node@v7
         with:
           node-version: 'lts/*'
@@ -460,6 +469,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Setup Python
         uses: actions/setup-python@v7.0.0
         with:
@@ -477,7 +487,8 @@ jobs:
       - name: Cockpit + SDK browser e2e
         run: >-
           uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py
-          dimos/e2e_tests/test_sdk_browser.py --no-cov
+          dimos/e2e_tests/test_sdk_browser.py
+          dimos/e2e_tests/test_custom_channel_browser.py --no-cov
 
   tests:
     if: |
@@ -518,6 +529,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Setup Python
         uses: actions/setup-python@v7.0.0
         with:
@@ -949,7 +961,7 @@ jobs:
     needs:
     - lint
     - rust
-    - cpp
+    - native
     - md-babel
     - web
     - tests
