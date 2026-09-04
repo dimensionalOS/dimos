@@ -118,6 +118,12 @@ def _make_qos() -> Any:
     )
 
 
+def _stamp_secs(msg: Any) -> float:
+    """Header stamp in seconds, falling back to wall clock if the driver left it 0."""
+    ts = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+    return ts if ts > 0 else time.time()
+
+
 def _ros_stamp_now() -> Any:
     from builtin_interfaces.msg import Time as RosTime
 
@@ -200,6 +206,9 @@ class R1ProConnection(Module):
         self._latest_right_dq: list[float] = [0.0] * 7
         self._latest_right_eff: list[float] = [0.0] * 7
         self._torso_seen = False
+        self._ts_torso = 0.0
+        self._ts_left = 0.0
+        self._ts_right = 0.0
         self._left_seen = False
         self._right_seen = False
         self._latest_imu_chassis: Imu | None = None
@@ -553,6 +562,7 @@ class R1ProConnection(Module):
             self._copy_segment(
                 msg, self._latest_torso_q, self._latest_torso_dq, self._latest_torso_eff
             )
+            self._ts_torso = _stamp_secs(msg)
             self._torso_seen = True
 
     def _on_feedback_left(self, msg: Any, _topic: Any) -> None:
@@ -560,6 +570,7 @@ class R1ProConnection(Module):
             self._copy_segment(
                 msg, self._latest_left_q, self._latest_left_dq, self._latest_left_eff
             )
+            self._ts_left = _stamp_secs(msg)
             self._left_seen = True
 
     def _on_feedback_right(self, msg: Any, _topic: Any) -> None:
@@ -567,6 +578,7 @@ class R1ProConnection(Module):
             self._copy_segment(
                 msg, self._latest_right_q, self._latest_right_dq, self._latest_right_eff
             )
+            self._ts_right = _stamp_secs(msg)
             self._right_seen = True
 
     @staticmethod
@@ -671,12 +683,14 @@ class R1ProConnection(Module):
                     )
                     imu_chassis = self._latest_imu_chassis
                     imu_torso = self._latest_imu_torso
+                    # Oldest of the three segments: the fused snapshot is only
+                    # as fresh as its stalest part.
+                    ts = min(self._ts_torso, self._ts_left, self._ts_right)
 
             if bootstrapped:
-                now = time.time()
                 self.motor_states.publish(
                     JointState(
-                        ts=now,
+                        ts=ts,
                         frame_id=frame_id,
                         name=R1PRO_UPPER_BODY_JOINTS,
                         position=positions,  # type: ignore[arg-type]
