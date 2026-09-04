@@ -78,6 +78,7 @@ all_blueprints = {
     "learning-collect-quest-openyam": "dimos.robot.manipulators.openyam.blueprints.learning_collection:learning_collect_quest_openyam",
     "learning-collect-quest-piper": "dimos.imitation.collection.blueprint:learning_collect_quest_piper",
     "learning-collect-quest-xarm7": "dimos.imitation.collection.blueprint:learning_collect_quest_xarm7",
+    "learning-rollout-quest-openyam": "dimos.robot.manipulators.openyam.blueprints.learning_rollout:learning_rollout_quest_openyam",
     "mid360": "dimos.hardware.sensors.lidar.livox.livox_blueprints:mid360",
     "mid360-fastlio": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio",
     "mid360-fastlio-ray-trace": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio_ray_trace",

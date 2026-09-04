@@ -32,9 +32,7 @@ from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
     DUAL_OPENYAM_QUEST_TASK_NAME,
     teleop_quest_dual_openyam,
 )
-from dimos.robot.manipulators.dual_openyam.config import (
-    DUAL_OPENYAM_ARM_JOINTS,
-)
+from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_ARM_JOINTS
 from dimos.robot.manipulators.dual_openyam.teleop_ik import (
     DualOpenYamPinkPoseTargetSolver,
 )
@@ -91,9 +89,8 @@ def test_mock_quest_coordinator_commands_both_arms_and_grippers(
         task = cast("TeleopIKTask", coordinator._tasks[DUAL_OPENYAM_QUEST_TASK_NAME])
         assert set(task.claim().joints) == set(DUAL_OPENYAM_ARM_JOINTS)
         buttons = Buttons()
-        buttons.left_primary = True
-        buttons.right_primary = True
-        buttons.pack_analog_triggers(left=0.25, right=0.75)
+        buttons.left_grip = True
+        buttons.right_grip = True
         coordinator._dispatch("teleop_buttons", buttons)
         coordinator._dispatch("left_gripper_command", Float32(data=0.75))
         coordinator._dispatch("right_gripper_command", Float32(data=0.25))

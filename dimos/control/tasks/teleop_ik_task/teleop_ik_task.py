@@ -189,13 +189,13 @@ class TeleopIKTask(PoseTargetIKTask):
 
     def on_teleop_buttons(self, msg: Buttons, t_now: float) -> bool:
         """Update the all-bound-hands deadman condition."""
-        primary_by_hand = {
-            OperatorHand.LEFT: msg.left_primary,
-            OperatorHand.RIGHT: msg.right_primary,
+        grip_by_hand = {
+            OperatorHand.LEFT: msg.left_grip,
+            OperatorHand.RIGHT: msg.right_grip,
         }
         with self._lock:
             self._last_button_update_time = t_now
-            condition = all(primary_by_hand[hand] for hand in self._bindings)
+            condition = all(grip_by_hand[hand] for hand in self._bindings)
             if self._session_state is _SessionState.ESTOPPED:
                 return True
             if condition and self._session_state is _SessionState.DISENGAGED:

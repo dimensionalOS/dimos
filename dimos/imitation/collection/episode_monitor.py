@@ -85,7 +85,7 @@ class EpisodeMonitorModuleConfig(ModuleConfig):
 class EpisodeMonitorModule(Module):
     config: EpisodeMonitorModuleConfig
 
-    teleop_buttons: In[Buttons]
+    button_pressed: In[Buttons]
     status: Out[EpisodeStatus]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -93,7 +93,6 @@ class EpisodeMonitorModule(Module):
         self._state: RecordingState = "idle"
         self._saved: int = 0
         self._discarded: int = 0
-        self._prev_bits: dict[str, bool] = {}
         self._lock = threading.Lock()
         self._transition_lock = threading.Lock()
         self._stopping = False
@@ -104,7 +103,7 @@ class EpisodeMonitorModule(Module):
         super().start()
         # Registered so the base Module.stop() disposes them on shutdown.
         self._input_subscriptions = [
-            self.register_disposable(Disposable(self.teleop_buttons.subscribe(self._on_buttons))),
+            self.register_disposable(Disposable(self.button_pressed.subscribe(self._on_buttons))),
         ]
         # Emit an initial idle status so subscribers (and recorders) have a
         # known starting point in the timeline.
@@ -136,22 +135,15 @@ class EpisodeMonitorModule(Module):
     # ── port handlers ────────────────────────────────────────────────────────
 
     def _on_buttons(self, msg: Buttons) -> None:
-        """Rising-edge detect against `config.button_map`; advance state machine."""
+        """Advance the state machine for configured button-press edges."""
         ts = time.time()
-        # Edge-detect under the lock, then fire transitions outside it.
         fired: list[EpisodeCommand] = []
         with self._lock:
             if self._stopping:
                 return
             for event_name, alias_or_attr in self.config.button_map.items():
                 attr = BUTTON_ALIASES.get(alias_or_attr, alias_or_attr)
-                try:
-                    pressed = bool(getattr(msg, attr))
-                except AttributeError:
-                    continue
-                prev = self._prev_bits.get(attr, False)
-                self._prev_bits[attr] = pressed
-                if pressed and not prev:  # rising edge
+                if bool(getattr(msg, attr)):
                     fired.append(event_name)
         for event_name in fired:
             self._transition(event_name, ts)
