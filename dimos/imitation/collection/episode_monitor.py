@@ -116,22 +116,12 @@ class EpisodeMonitorModule(Module):
     def stop(self) -> None:
         with self._transition_lock:
             with self._lock:
-                if self._stopping:
-                    status = None
-                else:
-                    self._stopping = True
-                    if self._state == "recording":
-                        self._discarded += 1
-                        self._state = "idle"
-                        self._last_event = "discard"
-                        status = self._snapshot("discard", time.time())
-                    else:
-                        status = None
+                self._stopping = True
             for subscription in self._input_subscriptions:
                 subscription.dispose()
             self._input_subscriptions.clear()
-            if status is not None:
-                self._emit(status)
+            # Do not synthesize a save or discard. If the process is interrupted
+            # mid-take, DataPrep must see the unmatched start as incomplete.
         super().stop()
 
     # ── port handlers ────────────────────────────────────────────────────────

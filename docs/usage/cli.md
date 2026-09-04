@@ -60,6 +60,26 @@ Environment variables and `.env` values use the field name in uppercase, for exa
 
 ## Commands
 
+### `dimos imitation`
+
+Run the complete manipulation imitation-learning workflow through one command
+group:
+
+```bash
+dimos imitation list
+dimos imitation collect WORKFLOW --task TEXT
+dimos imitation prepare WORKFLOW RECORDING
+dimos imitation inspect ARTIFACT [--workflow WORKFLOW]
+dimos imitation train [LEROBOT_ARGS...]
+dimos imitation run WORKFLOW CHECKPOINT --task TEXT [--quest-control]
+```
+
+Collection and rollout own their robot stacks from startup through shutdown.
+Quest is optional and rollout performs a non-moving checkpoint and live-input
+preflight before enabling policy motion. See the
+[imitation-learning guide](/docs/capabilities/manipulation/imitation-learning.md)
+for hardware safety, controls, artifact paths, and compatibility limits.
+
 ### `dimos run`
 
 Start one or more robot blueprints. Built-in dimOS blueprints use bare names such as
