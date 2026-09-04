@@ -254,7 +254,8 @@ jobs:
           cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
           uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
 
-  cpp:
+  native:
+    name: Native builds (C++ and Rust)
     timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
@@ -309,6 +310,11 @@ jobs:
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           INPUT_SET_AS_TRUSTED_USER: "true"
         run: bash docker/ros/install-nix.sh
+      - name: Build Rust memory recorder Nix package
+        run: |
+          cd dimos/experimental/memory/rust
+          nix build .#dimos-memory-recorder --no-write-lock-file --print-build-logs
+          test -x result/bin/dimos-memory-recorder
       # PCL, GTSAM and the SLAM cores come from each module's flake, not apt.
       - name: Build C++ native modules
         env:
@@ -970,7 +976,7 @@ jobs:
     needs:
     - lint
     - rust
-    - cpp
+    - native
     - md-babel
     - web
     - tests

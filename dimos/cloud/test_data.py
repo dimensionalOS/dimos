@@ -112,8 +112,14 @@ class FakeTransport:
             raise OSError("link dropped")
         self.parts[uid][int(n)] = body
 
-    def download(self, url: str, dst: Path) -> None:
-        dst.write_bytes(self.uploads[url]["blob"])
+    def download(
+        self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
+    ) -> None:
+        blob = self.uploads[url]["blob"]
+        dst.write_bytes(blob)
+        if progress:
+            progress(len(blob) // 2, len(blob))
+            progress(len(blob), len(blob))
 
 
 def recording(dir_: Path, age_s: float = 3600) -> Path:
@@ -328,7 +334,13 @@ def test_progress_prefix_and_default_pull(env: tuple[CloudData, FakeTransport, P
     assert cloud.resolve(uid[:6])["id"] == uid == cloud.resolve(None)["id"]
     with pytest.raises(RuntimeError, match="no upload matching"):
         cloud.resolve("zz")
-    assert cloud.pull(uid[:6], dest=db.parent / "p.db").read_bytes() == db.read_bytes()
+    pulls: list[tuple[str, int, int]] = []
+    got = cloud.pull(uid[:6], dest=db.parent / "p.db", progress=lambda *a: pulls.append(a))
+    assert got.read_bytes() == db.read_bytes()
+    phases = [p[0] for p in pulls]
+    assert phases[0] == "download" and "verify" in phases
+    dl = [p for p in pulls if p[0] == "download" and p[2]]
+    assert dl[-1][1] == dl[-1][2] > 0
     out = cloud.pull(None)
     assert out.name == f"20260830-120000-{uid}-{db.name}"
     assert out.read_bytes() == db.read_bytes()
@@ -343,6 +355,18 @@ def test_upload_refuses_when_staging_partition_is_full(
     monkeypatch.setattr(shutil, "disk_usage", lambda p: shutil._ntuple_diskusage(10, 9, 1))  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError, match="free, need"):
         cloud.upload(db)
+
+
+def test_pull_refuses_when_disk_is_full(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cloud, _, db = env
+    uid = cloud.upload(db)["upload_id"]
+    import shutil
+
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: shutil._ntuple_diskusage(10, 9, 1))  # type: ignore[attr-defined]
+    with pytest.raises(RuntimeError, match="free, need"):
+        cloud.pull(uid)
 
 
 def test_missing_staging_dir_is_created(tmp_path: Path) -> None:
@@ -412,3 +436,16 @@ def test_upload_cli_exits_nonzero_on_server_error(
     with pytest.raises(typer.Exit) as e:
         cli.upload(db, None, None, None, None)
     assert e.value.exit_code == 1
+
+
+def test_matching_suffix_uploads_raw_and_unstamped(
+    env: tuple[CloudData, FakeTransport, Path],
+) -> None:
+    """A file already named *.lz4 is sent as-is: no encoding stamp, byte-identical pull."""
+    cloud, t, db = env
+    raw = db.parent / "artifact.lz4"  # arbitrary bytes, NOT lz4-compressed
+    raw.write_bytes(b"not actually lz4" * 1024)
+    r = cloud.upload(raw)
+    assert t.uploads[r["upload_id"]]["content_encoding"] is None
+    out = cloud.pull(r["upload_id"], dest=db.parent / "artifact.back.lz4")
+    assert out.read_bytes() == raw.read_bytes()

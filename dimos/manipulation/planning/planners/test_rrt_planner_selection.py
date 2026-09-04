@@ -162,7 +162,7 @@ def test_plan_selected_joint_path_rejects_bad_targets(
     assert message in result.message
 
 
-def test_plan_selected_joint_path_rejects_local_names_for_multi_group_selection() -> None:
+def test_plan_selected_joint_path_rejects_noncanonical_names() -> None:
     selection = PlanningGroupSelection.from_groups(
         (_group("arm", ("joint_a",)), _group("gripper", ("gripper",)))
     )

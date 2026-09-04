@@ -30,7 +30,7 @@ import math
 import threading
 import time
 import traceback
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, TypeAlias
 
 import numpy as np
 from pydantic import Field
@@ -60,7 +60,6 @@ from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGro
 from dimos.manipulation.planning.groups.utils import (
     filter_joint_state_to_selected_joints,
     normalize_joint_target,
-    planning_group_id_from_selector,
 )
 from dimos.manipulation.planning.kinematics.config import (
     ManipulationKinematicsConfig,
@@ -771,16 +770,7 @@ class ManipulationModule(Module):
             logger.warning("Pose planning unavailable", error=str(exc))
             self._record_error(str(exc))
             return False
-        return self.plan_to_pose_targets({selected_group_id: pose})
-
-    @rpc
-    def plan_to_pose_targets(
-        self,
-        pose_targets: Mapping[PlanningGroupID | PlanningGroup, Pose],
-        auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
-    ) -> bool:
-        """Plan to one or more group pose targets with optional auxiliary groups."""
-        return self.generate_plan_to_pose_targets(pose_targets, auxiliary_groups) is not None
+        return self.generate_plan_to_pose_targets({selected_group_id: pose}) is not None
 
     @rpc
     def plan_to_joints(
@@ -792,10 +782,7 @@ class ManipulationModule(Module):
         self._clear_pending_plan()
         if not targets:
             return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
-        plan = self.generate_plan_to_joint_targets(
-            cast("Mapping[PlanningGroupID | PlanningGroup, JointState]", targets),
-            speed_scale=speed_scale,
-        )
+        plan = self.generate_plan_to_joint_targets(targets, speed_scale=speed_scale)
         if plan is None:
             return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
         return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
@@ -810,24 +797,14 @@ class ManipulationModule(Module):
         self._clear_pending_plan()
         if not targets:
             return PlanResult(PlanStatus.INVALID_TARGET, "At least one target is required")
-        plan = self.generate_plan_to_pose_targets(
-            cast("Mapping[PlanningGroupID | PlanningGroup, Pose]", targets),
-            speed_scale=speed_scale,
-        )
+        plan = self.generate_plan_to_pose_targets(targets, speed_scale=speed_scale)
         if plan is None:
             return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
         return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
 
-    @rpc
-    def plan_to_joint_targets(
-        self, joint_targets: Mapping[PlanningGroupID | PlanningGroup, JointState]
-    ) -> bool:
-        """Plan to joint targets keyed by planning group."""
-        return self.generate_plan_to_joint_targets(joint_targets) is not None
-
     def generate_plan_to_joint_targets(
         self,
-        joint_targets: Mapping[PlanningGroupID | PlanningGroup, JointState],
+        joint_targets: Mapping[PlanningGroupID, JointState],
         speed_scale: float | None = None,
     ) -> GeneratedPlan | None:
         """Plan to joint targets and return the exact stored GeneratedPlan."""
@@ -837,9 +814,7 @@ class ManipulationModule(Module):
             self._fail("At least one joint target is required")
             return None
 
-        group_ids = tuple(
-            dict.fromkeys(planning_group_id_from_selector(group) for group in joint_targets)
-        )
+        group_ids = tuple(joint_targets)
         planning = self._begin_group_planning(speed_scale)
         if planning is None:
             return None
@@ -852,17 +827,16 @@ class ManipulationModule(Module):
 
         goal_names: list[str] = []
         goal_positions: list[float] = []
-        for group, target in joint_targets.items():
-            group_id = planning_group_id_from_selector(group)
+        for group_id, target in joint_targets.items():
             try:
                 target_group = self._world_monitor.planning_groups.get(group_id)
-                target_global = normalize_joint_target(target_group, target)
+                normalized_target = normalize_joint_target(target_group, target)
             except (KeyError, ValueError) as exc:
                 logger.error(str(exc))
                 self._fail_planning_epoch(planning_epoch, f"Invalid joint target for '{group_id}'")
                 return None
-            goal_names.extend(target_global.name)
-            goal_positions.extend(target_global.position)
+            goal_names.extend(normalized_target.name)
+            goal_positions.extend(normalized_target.position)
 
         goal = JointState(name=goal_names, position=goal_positions)
         return self._plan_selected_path(
@@ -871,8 +845,8 @@ class ManipulationModule(Module):
 
     def generate_plan_to_pose_targets(
         self,
-        pose_targets: Mapping[PlanningGroupID | PlanningGroup, Pose],
-        auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
+        pose_targets: Mapping[PlanningGroupID, Pose],
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
         speed_scale: float | None = None,
     ) -> GeneratedPlan | None:
         """Plan to pose targets and return the exact stored GeneratedPlan."""
@@ -882,14 +856,14 @@ class ManipulationModule(Module):
             self._fail("At least one pose target is required")
             return None
         stamped_targets = {
-            planning_group_id_from_selector(group): PoseStamped(
+            group_id: PoseStamped(
                 frame_id="world",
                 position=pose.position,
                 orientation=pose.orientation,
             )
-            for group, pose in pose_targets.items()
+            for group_id, pose in pose_targets.items()
         }
-        auxiliary_ids = tuple(planning_group_id_from_selector(group) for group in auxiliary_groups)
+        auxiliary_ids = tuple(auxiliary_groups)
         group_ids = tuple(dict.fromkeys((*stamped_targets.keys(), *auxiliary_ids)))
         planning = self._begin_group_planning(speed_scale)
         if planning is None:
@@ -913,30 +887,11 @@ class ManipulationModule(Module):
             group_ids, start, ik.joint_state, planning_epoch, resolved_speed_scale
         )
 
-    @rpc
-    def plan_cartesian_targets(
-        self,
-        targets: Mapping[PlanningGroupID | PlanningGroup, CartesianTarget],
-        config: CartesianPathConfig,
-        auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
-        check_collision: bool = True,
-    ) -> bool:
-        """Plan TCP motion through absolute or relative Cartesian waypoints."""
-        return (
-            self.generate_cartesian_plan(
-                targets,
-                config,
-                auxiliary_groups,
-                check_collision=check_collision,
-            )
-            is not None
-        )
-
     def generate_cartesian_plan(
         self,
-        targets: Mapping[PlanningGroupID | PlanningGroup, CartesianTarget],
+        targets: Mapping[PlanningGroupID, CartesianTarget],
         config: CartesianPathConfig,
-        auxiliary_groups: Sequence[PlanningGroupID | PlanningGroup] = (),
+        auxiliary_groups: Sequence[PlanningGroupID] = (),
         speed_scale: float | None = None,
         check_collision: bool = True,
     ) -> GeneratedPlan | None:
@@ -946,14 +901,8 @@ class ManipulationModule(Module):
         if not targets:
             self._fail("At least one Cartesian target is required")
             return None
-        normalized_targets = {
-            planning_group_id_from_selector(group): target for group, target in targets.items()
-        }
-        if len(normalized_targets) != len(targets):
-            self._fail("Cartesian target groups must be unique")
-            return None
-        auxiliary_ids = tuple(planning_group_id_from_selector(group) for group in auxiliary_groups)
-        group_ids = tuple((*normalized_targets.keys(), *auxiliary_ids))
+        auxiliary_ids = tuple(auxiliary_groups)
+        group_ids = tuple((*targets.keys(), *auxiliary_ids))
         planning = self._begin_group_planning(speed_scale)
         if planning is None:
             return None
@@ -972,7 +921,7 @@ class ManipulationModule(Module):
             world=self._world_monitor.world,
             selection=selection,
             start=start,
-            targets=normalized_targets,
+            targets=targets,
             config=scaled_config,
             auxiliary_groups=auxiliary_ids,
             check_collision=check_collision,
@@ -1139,15 +1088,9 @@ class ManipulationModule(Module):
         """Get information about the configured logical robot model."""
         config = self.config.model
         planning_groups = self.list_planning_groups()
-        pose_tip_links = [
-            group.tip_frame for group in planning_groups if group.tip_frame is not None
-        ]
-        end_effector_link = pose_tip_links[0] if len(pose_tip_links) == 1 else None
-
         return {
             "joint_names": config.joint_names,
             "planning_groups": list(planning_groups),
-            "end_effector_link": end_effector_link,
             "base_link": config.base_link,
             "max_velocity": config.max_velocity,
             "max_acceleration": config.max_acceleration,
