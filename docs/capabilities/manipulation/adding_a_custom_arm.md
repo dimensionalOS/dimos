@@ -50,7 +50,6 @@ dimos/hardware/manipulators/
 ├── xarm/
 ├── piper/
 └── yourarm/             # ← New directory
-    ├── __init__.py
     ├── _registry.py  # Declares your adapter (name → import path)
     └── adapter.py
 ```
@@ -400,7 +399,6 @@ dimos/robot/
 │   └── g1/
 │       └── blueprints/
 └── yourarm/                 # ← New directory for your robot
-    ├── __init__.py
     └── blueprints.py
 ```
 
@@ -786,10 +784,8 @@ adapter.disconnect()
 
 Files to create:
 
-- [ ] `dimos/hardware/manipulators/yourarm/__init__.py`
 - [ ] `dimos/hardware/manipulators/yourarm/adapter.py` (implements Protocol)
 - [ ] `dimos/hardware/manipulators/yourarm/_registry.py` (declares `ADAPTER_FACTORIES`)
-- [ ] `dimos/robot/yourarm/__init__.py`
 - [ ] `dimos/robot/yourarm/blueprints.py` (coordinator + planning blueprints)
 
 Files to modify:
