@@ -124,8 +124,6 @@ def make_r1pro_model_config() -> RobotModelConfig:
         planning_groups=list(_R1PRO_UPPER_BODY_PLANNING_GROUPS),
         auto_convert_meshes=True,
         collision_exclusion_pairs=list(R1PRO_COLLISION_EXCLUSIONS),
-        max_velocity=0.5,
-        max_acceleration=1.0,
         home_joints=[0.0] * len(R1PRO_UPPER_BODY_PLANNING_JOINTS),
     )
 
@@ -146,7 +144,5 @@ def make_r1pro_planar_model_config() -> RobotModelConfig:
         ],
         auto_convert_meshes=True,
         collision_exclusion_pairs=list(R1PRO_COLLISION_EXCLUSIONS),
-        max_velocity=0.5,
-        max_acceleration=1.0,
         home_joints=[0.0] * len(R1PRO_PLANNING_JOINTS),
     )
