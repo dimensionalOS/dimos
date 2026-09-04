@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Regenerate Cargo.nix from Cargo.lock. Run after changing Cargo.lock or any
+# workspace member's Cargo.toml; the `cargo-nix-current` CI job fails when the
+# committed file no longer matches.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+# Both halves are pinned on purpose, because the output is committed and CI
+# diffs it. The generator comes from flake.lock, and cargo -- which crate2nix
+# shells out to for `cargo metadata` -- comes from the same toolchain the
+# clippy and fmt hooks use, rather than whatever happens to be on PATH. An
+# ambient cargo differing from the pinned one is a diff that appears only on
+# the machine that has it.
+crate2nix=$(nix build --no-link --print-out-paths .#crate2nix)/bin/crate2nix
+exec nix develop path:nix/rust -c "$crate2nix" generate "$@"

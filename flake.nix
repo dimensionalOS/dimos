@@ -80,6 +80,10 @@
           { vals.pkg=pkgs.uv;                             flags={}; }
           { vals.pkg=pkgs.pre-commit;                   flags={}; }
 
+          ### Rust (native module auto-builds run `nix develop path:<repo> -c cargo`)
+          { vals.pkg=pkgs.cargo;                        flags={}; }
+          { vals.pkg=pkgs.rustc;                        flags={}; }
+
           ### Runtime deps
           { vals.pkg=pkgs.portaudio;                 flags={ldLibraryGroup=true; packageConfGroup=true;}; }
           { vals.pkg=pkgs.ffmpeg_6;                  flags={}; }
@@ -307,6 +311,64 @@
         };
 
         # ------------------------------------------------------------
+        # 3b. Native modules built from the cargo workspace
+        # ------------------------------------------------------------
+        # Each module owns a `deps.nix` naming the cargo packages that are its
+        # executables. Adding a module is just a new deps.nix; nothing here has
+        # to change. Crate sources and workspace membership are not repeated
+        # there -- they come from Cargo.nix and Cargo.toml.
+        #
+        # The rule is deliberately the dumbest one possible -- every file named
+        # `deps.nix`, anywhere in the tree -- because
+        # `bin/build-native-modules --inputs-hash` has to find exactly the same
+        # set to key the Cachix publish marker, and it does that with a glob
+        # rather than by evaluating nix. Any cleverer rule here (pruning,
+        # restricted roots) would have to be mirrored there, and the two would
+        # drift. Keep them the same sentence.
+        findDepsFiles = dir:
+          let entries = builtins.readDir dir; in
+          builtins.concatMap
+            (name:
+              if entries.${name} == "directory" then
+                findDepsFiles (dir + "/${name}")
+              else if name == "deps.nix" then
+                [ (dir + "/${name}") ]
+              else
+                [ ])
+            (builtins.attrNames entries);
+        moduleDeps = map (file: import file pkgs) (findDepsFiles ./.);
+        depsField = field: builtins.concatLists (map (dep: dep.${field} or [ ]) moduleDeps);
+
+        # One derivation per crate, from hashes already in Cargo.lock, so there
+        # is no aggregate `cargoHash` to re-paste when the lock moves -- which
+        # it does on main, breaking branches that never touched rust, because
+        # CI builds the merge commit.
+        #
+        # Regenerate with `bin/regen-cargo-nix` after any Cargo.lock or member
+        # Cargo.toml change; the `cargo-nix-current` CI job fails if it is
+        # stale. Unlike a hash, a stale Cargo.nix is a diff CI can show you.
+        cargoNix = import ./Cargo.nix { inherit pkgs; };
+
+        # `binaries` names the cargo packages that are module executables. Each
+        # gets its own derivation and its own flake attr, so editing one module
+        # does not rebuild the others -- the shared crates below them are
+        # already separate store paths and come straight from Cachix.
+        moduleBinaries = depsField "binaries";
+        rustNativeModulePackages = pkgs.lib.listToAttrs (map
+          (name: {
+            name = "rust_native_module_${name}";
+            value = cargoNix.workspaceMembers.${name}.build;
+          })
+          moduleBinaries);
+
+        # Every module at once. The Cachix job builds this so one CI run warms
+        # the cache for all of them; nothing at runtime uses it.
+        rustNativeModules = pkgs.symlinkJoin {
+          name = "dimos-rust-native-modules-0.1.0";
+          paths = map (name: cargoNix.workspaceMembers.${name}.build) moduleBinaries;
+        };
+
+        # ------------------------------------------------------------
         # 4. Closure copied into the OCI image rootfs
         # ------------------------------------------------------------
         imageRoot = pkgs.buildEnv {
@@ -319,14 +381,24 @@
         ## Local dev shell
         devShells = devShells;
 
-        ## Layered docker image with DockerTools
-        packages.devcontainer = pkgs.dockerTools.buildLayeredImage {
-          name      = "dimensional/dimos-dev";
-          tag       = "latest";
-          contents  = [ imageRoot ];
-          config = {
-            WorkingDir = "/workspace";
-            Cmd        = [ "bash" ];
+        packages = rustNativeModulePackages // {
+          rust_native_modules = rustNativeModules;
+
+          # Pinned by flake.lock so `bin/regen-cargo-nix` and the
+          # `cargo-nix-current` CI job always agree; the generator stamps its
+          # own version into Cargo.nix, so a channel bump would otherwise show
+          # up as a spurious diff.
+          crate2nix = pkgs.crate2nix;
+
+          ## Layered docker image with DockerTools
+          devcontainer = pkgs.dockerTools.buildLayeredImage {
+            name      = "dimensional/dimos-dev";
+            tag       = "latest";
+            contents  = [ imageRoot ];
+            config = {
+              WorkingDir = "/workspace";
+              Cmd        = [ "bash" ];
+            };
           };
         };
       });

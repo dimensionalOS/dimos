@@ -250,6 +250,33 @@ jobs:
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
 
+  cargo-nix-current:
+    # Cargo.nix is generated from Cargo.lock and gives every crate its own
+    # derivation, which is what lets one module rebuild without the others.
+    # It is the successor to an aggregate `cargoHash`, and the reason it is an
+    # improvement is this job: a stale generated file is a diff CI can print,
+    # where a stale hash was a number a human had to re-paste from a failed
+    # build. Note this fires on lock changes from main too, because CI builds
+    # the merge commit.
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # For checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install Nix
+        run: bash docker/ros/install-nix.sh
+      - name: Regenerate Cargo.nix
+        run: bin/regen-cargo-nix
+      - name: Fail if the committed Cargo.nix is stale
+        run: |
+          if ! git diff --exit-code -- Cargo.nix; then
+            echo "::error::Cargo.nix is out of date — run bin/regen-cargo-nix and commit the result"
+            exit 1
+          fi
+
   cpp:
     timeout-minutes: 30
     runs-on: ubuntu-latest
@@ -955,6 +982,7 @@ jobs:
     needs:
     - lint
     - rust
+    - cargo-nix-current
     - cpp
     - md-babel
     - web
