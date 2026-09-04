@@ -47,7 +47,7 @@ def test_planar_preview_uses_fake_hardware_for_all_planning_joints() -> None:
     )
 
     assert manipulation.visualization.backend == "viser"
-    assert manipulation.trajectory_parametrization.backend == "roboplan_toppra"
+    assert manipulation.trajectory_parametrization is None
     prepared = prepare_robot_model(manipulation.model)
     assert prepared.joint_space.velocity_limits[:3] == R1PRO_PLANAR_BASE.velocity_limits
     assert prepared.joint_space.acceleration_limits[:3] == R1PRO_PLANAR_BASE.acceleration_limits
