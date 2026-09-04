@@ -72,7 +72,7 @@ def _run(request: Request) -> Result:
         output = result.stderr.strip() or result.stdout.strip()
         raise RuntimeError(f"LeRobot dataprep exited with status {result.returncode}: {output}")
     try:
-        return RESULT_ADAPTER.validate_json(result.stdout)
+        return RESULT_ADAPTER.validate_json(result.stdout.rstrip().rsplit("\n", 1)[-1])
     except ValueError as error:
         raise RuntimeError(
             f"LeRobot dataprep returned an invalid result: {result.stdout!r}"
@@ -81,6 +81,12 @@ def _run(request: Request) -> Result:
 
 def run_lerobot_dataprep(config: DataPrepConfig) -> Path:
     """Build a dataset in the isolated LeRobot environment."""
+    config = config.model_copy(
+        update={
+            "source": str(Path(config.source).resolve()),
+            "output": config.output.model_copy(update={"path": config.output.path.resolve()}),
+        }
+    )
     result = _run(BuildRequest(config=config))
     if not isinstance(result, BuildResult):
         raise RuntimeError(f"LeRobot dataprep returned {result.command!r} for a build request")
@@ -89,7 +95,7 @@ def run_lerobot_dataprep(config: DataPrepConfig) -> Path:
 
 def inspect_lerobot_dataset(path: Path) -> dict[str, Any]:
     """Inspect a dataset in the isolated LeRobot environment."""
-    result = _run(InspectRequest(path=path))
+    result = _run(InspectRequest(path=path.resolve()))
     if not isinstance(result, InspectResult):
         raise RuntimeError(f"LeRobot dataprep returned {result.command!r} for an inspect request")
     return result.info

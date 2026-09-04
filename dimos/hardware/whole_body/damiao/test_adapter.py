@@ -65,13 +65,30 @@ class FakeArm:
 class FakeGripper:
     def __init__(self, opening: float) -> None:
         self.opening = opening
+        self.motor = Mock(position=opening)
         self.command_error: Exception | None = None
         self.commands: list[float] = []
+        self.modes: list[str] = []
+        self.mit_commands: list[tuple[float, float, float, float, float]] = []
+        self.enable_count = 0
+        self.disable_count = 0
 
     def set_opening(self, opening: float) -> None:
         if self.command_error is not None:
             raise self.command_error
         self.commands.append(opening)
+
+    def disable(self) -> None:
+        self.disable_count += 1
+
+    def enable(self) -> None:
+        self.enable_count += 1
+
+    def set_mode(self, mode: str) -> None:
+        self.modes.append(mode)
+
+    def mit_control(self, kp: float, kd: float, q: float, dq: float, tau: float) -> None:
+        self.mit_commands.append((kp, kd, q, dq, tau))
 
 
 class FakeTransport:
@@ -296,6 +313,14 @@ def test_init_unknown_bus_override_raises_value_error(dual_robot: FakeRobot) -> 
         )
 
 
+def test_init_unknown_passive_gripper_raises_value_error(dual_robot: FakeRobot) -> None:
+    with pytest.raises(ValueError, match="unknown passive grippers"):
+        DualAdapter(
+            dual_robot,
+            runtime_config=DamiaoRuntimeConfig(passive_grippers=("missing",)),
+        )
+
+
 def test_init_duplicate_logical_bus_names_raises_value_error(dual_robot: FakeRobot) -> None:
     class DuplicateBusAdapter(DualAdapter):
         bus_names = ("left", "left")
@@ -360,12 +385,14 @@ def test_init_rehydrates_serialized_runtime_config(dual_robot: FakeRobot) -> Non
         runtime_config={
             "bus_devices": {"left": "can8"},
             "gravity_comp": False,
+            "passive_grippers": ["left_gripper"],
             "tick_deadline_us": 2_000,
         },
     )
 
     assert adapter._runtime_config.bus_devices == {"left": "can8"}
     assert adapter._runtime_config.gravity_comp is False
+    assert adapter._runtime_config.passive_grippers == ("left_gripper",)
     assert adapter._runtime_config.tick_deadline_us == 2_000
 
 
@@ -570,6 +597,32 @@ def test_activate_enable_failure_disables_robot(
     assert dual_robot.disable_count == 1
 
 
+def test_activate_enables_zero_impedance_for_configured_passive_gripper(
+    dual_robot: FakeRobot,
+    adapter_factory: Callable[..., DualAdapter],
+) -> None:
+    adapter = adapter_factory(
+        dual_robot,
+        runtime_config=DamiaoRuntimeConfig(
+            gravity_comp=False,
+            passive_grippers=("left_gripper",),
+        ),
+    )
+    assert adapter.connect()
+
+    assert adapter.activate()
+
+    left_gripper = cast("FakeGripper", dual_robot["left_gripper"])
+    right_gripper = cast("FakeGripper", dual_robot["right_gripper"])
+    assert left_gripper.disable_count == 0
+    assert left_gripper.modes == ["mit"]
+    assert left_gripper.enable_count == 1
+    assert left_gripper.mit_commands == [(0.0, 0.0, 0.5, 0.0, 0.0)]
+    assert right_gripper.modes == []
+    assert right_gripper.enable_count == 0
+    assert right_gripper.mit_commands == []
+
+
 def test_deactivate_connected_adapter_disables_robot(
     active_dual_adapter: DualAdapter,
     dual_robot: FakeRobot,
@@ -753,6 +806,32 @@ def test_write_motor_commands_grippers_routes_normalized_openings(
     assert active_dual_adapter.write_motor_commands(commands)
 
     assert cast("FakeGripper", dual_robot["left_gripper"]).commands == [0.25]
+    assert cast("FakeGripper", dual_robot["right_gripper"]).commands == [0.75]
+
+
+def test_write_motor_commands_keeps_passive_gripper_at_zero_impedance(
+    dual_robot: FakeRobot,
+    adapter_factory: Callable[..., DualAdapter],
+) -> None:
+    adapter = adapter_factory(
+        dual_robot,
+        runtime_config=DamiaoRuntimeConfig(
+            gravity_comp=False,
+            passive_grippers=("left_gripper",),
+        ),
+    )
+    assert adapter.connect()
+    assert adapter.activate()
+    commands = [MotorCommand(q=0.0)] * 4 + [MotorCommand(q=2.0), MotorCommand(q=0.75)]
+
+    assert adapter.write_motor_commands(commands)
+
+    left_gripper = cast("FakeGripper", dual_robot["left_gripper"])
+    assert left_gripper.commands == []
+    assert left_gripper.mit_commands == [
+        (0.0, 0.0, 0.5, 0.0, 0.0),
+        (0.0, 0.0, 0.5, 0.0, 0.0),
+    ]
     assert cast("FakeGripper", dual_robot["right_gripper"]).commands == [0.75]
 
 

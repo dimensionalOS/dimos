@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Single point of Quest-input → EpisodeStatus translation.
+"""Single point of operator-input → EpisodeStatus translation.
 
-Watches buttons, runs the start/save/discard state machine,
+Watches Quest buttons and accepts RPC commands, runs the episode state machine,
 publishes EpisodeStatus on every transition. RecordReplay (or whatever
 records the bus) captures that stream into session.db; DataPrep reads only
-the recorded EpisodeStatus events offline — never raw buttons.
+the recorded EpisodeStatus events offline — never raw operator input.
 """
 
 from __future__ import annotations
@@ -93,6 +93,7 @@ class EpisodeMonitorModule(Module):
         self._state: RecordingState = "idle"
         self._saved: int = 0
         self._discarded: int = 0
+        self._last_event: EpisodeEvent = "init"
         self._lock = threading.Lock()
         self._transition_lock = threading.Lock()
         self._stopping = False
@@ -122,6 +123,7 @@ class EpisodeMonitorModule(Module):
                     if self._state == "recording":
                         self._discarded += 1
                         self._state = "idle"
+                        self._last_event = "discard"
                         status = self._snapshot("discard", time.time())
                     else:
                         status = None
@@ -148,17 +150,30 @@ class EpisodeMonitorModule(Module):
         for event_name in fired:
             self._transition(event_name, ts)
 
-    def _transition(self, event: EpisodeCommand, ts: float) -> None:
+    @rpc
+    def command(self, event: EpisodeCommand) -> EpisodeStatus:
+        """Apply an episode command from an attached operator interface."""
+        return self._transition(event, time.time())
+
+    @rpc
+    def get_status(self) -> EpisodeStatus:
+        """Return the latest episode state without publishing a new event."""
+        with self._lock:
+            return self._snapshot(self._last_event, time.time())
+
+    def _transition(self, event: EpisodeCommand, ts: float) -> EpisodeStatus:
         """State-machine transition. Publishes EpisodeStatus on every change.
 
         ``toggle`` resolves to ``start`` when idle and ``save`` when recording,
         so one button can begin and end a take. The resolved event is what gets
         published (DataPrep only ever sees start/save/discard).
         """
+        if event not in ("start", "save", "discard", "toggle"):
+            raise ValueError(f"unknown episode command: {event!r}")
         with self._transition_lock:
             with self._lock:
                 if self._stopping:
-                    return
+                    return self._snapshot(self._last_event, ts)
                 if event == "toggle":
                     event = "save" if self._state == "recording" else "start"
                 if event == "start":
@@ -174,9 +189,10 @@ class EpisodeMonitorModule(Module):
                     if self._state == "recording":
                         self._discarded += 1
                     self._state = "idle"
+                self._last_event = event
                 # Snapshot under the mutation's lock so the event matches the state.
                 status = self._snapshot(event, ts)
-            self._emit(status)
+            return self._emit(status)
 
     def _snapshot(self, last_event: EpisodeEvent, ts: float) -> EpisodeStatus:
         """Build a status from current state. Caller must hold `self._lock`."""
