@@ -154,14 +154,21 @@ repos:
         entry: |
           bash -c '
             set -euo pipefail
+            top=$(git rev-parse --show-toplevel)
             git ls-files "*Cargo.toml" | while read -r m; do
               cargo locate-project --manifest-path "$m" --workspace --message-format plain
             done | sort -u | while read -r root; do
-              # A crate with its own flake carries system deps the root shell lacks.
-              if [ -f "$(dirname "$root")/flake.nix" ]; then
-                nix develop "path:$(dirname "$root")" -c cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
-              else
+              dir=$(dirname "$root")
+              # The repo root has a flake, but wrapping it copies the whole
+              # tree, target included, into the nix store.
+              if [ "$dir" = "$top" ] || [ ! -f "$dir/flake.nix" ]; then
                 cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
+              # A crate with its own dev shell carries system deps the root shell
+              # lacks. Evaluated from the crate directory so relative inputs resolve.
+              elif grep -q devShells "$dir/flake.nix"; then
+                (cd "$dir" && nix develop "path:." -c cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings)
+              else
+                echo "skipping $dir: built by nix build, no dev shell to run clippy in"
               fi
             done
           '
