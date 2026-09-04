@@ -33,10 +33,12 @@ if (DIMOS_PROJECT_ROOT / ".git").exists():
     # Running from Git repository
     LOG_DIR = DIMOS_PROJECT_ROOT / "logs"
     RECORDINGS_DIR = DIMOS_PROJECT_ROOT / "recordings"
+    DOWNLOADS_DIR = DIMOS_PROJECT_ROOT / "downloads"
 else:
     # Running from an installed package - use XDG_STATE_HOME
     LOG_DIR = STATE_DIR / "logs"
     RECORDINGS_DIR = STATE_DIR / "recordings"
+    DOWNLOADS_DIR = STATE_DIR / "downloads"
 
 CREDENTIALS_PATH = CONFIG_DIR / "credentials"
 
@@ -63,3 +65,11 @@ LCM_MAX_CHANNEL_NAME_LENGTH = 63
 DEFAULT_THREAD_JOIN_TIMEOUT = 2.0
 
 DEFAULT_BUILD_NATIVE = False
+
+# streaming compression libraries sharing the open(path, mode) API: id -> (module, suffix)
+CODEC_LIBS = {
+    "lz4": ("lz4.frame", ".lz4"),
+    "gzip": ("gzip", ".gz"),
+    "bz2": ("bz2", ".bz2"),
+    "xz": ("lzma", ".xz"),
+}

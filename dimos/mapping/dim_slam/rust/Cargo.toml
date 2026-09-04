@@ -1,0 +1,31 @@
+[package]
+name = "dim-slam-module"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[[bin]]
+name = "dim_slam"
+path = "src/main.rs"
+
+[dependencies]
+# tag, not rev: nix's fetchGit only searches the ref the url names, so a bare rev is
+# unfetchable. Cargo.lock still pins the exact commit.
+dim_slam = { git = "https://github.com/dimensionalOS/dimSLAM", tag = "v0.4.1" }
+# Unused directly, but cargo hands DEP_CUVSLAM_LIB_DIR only to immediate dependents
+# and build.rs needs it for the rpath.
+cu_vslam_rs = "0.2.0"
+dimos-module = { path = "../../../../native/rust/dimos-module" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+# native_config expands to ::serde and ::validator derives, so both must be direct deps.
+serde = { version = "1", features = ["derive"] }
+validator = { version = "0.21", features = ["derive"] }
+
+[profile.release]
+lto = true
+
+# Not a member of the repo's top-level cargo workspace: this crate builds through its
+# own flake, which copies it into a sandbox where that workspace root does not exist.
+[workspace]

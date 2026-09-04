@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from pathlib import Path
 import pickle
 import xml.etree.ElementTree as ET
@@ -78,6 +79,31 @@ def test_model_load_resolves_package_uris_without_writing_a_derived_urdf(
     assert "package://" not in loaded.xml
     assert str(mesh) in loaded.xml
     assert set(tmp_path.iterdir()) == {package, urdf}
+
+
+def test_model_load_resolves_relative_assets_from_source_directory(tmp_path: Path) -> None:
+    meshes = tmp_path / "meshes"
+    meshes.mkdir()
+    mesh = meshes / "link.stl"
+    mesh.write_text("mesh")
+    texture = tmp_path / "surface.png"
+    texture.write_text("texture")
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'><visual><geometry>"
+        '<mesh filename="meshes/link.stl"/></geometry><material name="m">'
+        '<texture filename="surface.png"/></material></visual></link></robot>'
+    )
+
+    loaded = robot_model.RobotModel.from_file(urdf).load()
+    root = ET.fromstring(loaded.xml)
+    loaded_mesh = root.find(".//mesh")
+    loaded_texture = root.find(".//texture")
+
+    assert loaded_mesh is not None
+    assert loaded_texture is not None
+    assert loaded_mesh.get("filename") == str(mesh)
+    assert loaded_texture.get("filename") == str(texture)
 
 
 def test_loaded_model_exposes_cached_urdf_topology(tmp_path: Path) -> None:
@@ -187,6 +213,230 @@ def test_with_joint_position_limits_preserves_model_content(tmp_path: Path) -> N
     assert "lower='0.018'" in urdf.read_text()
 
 
+def test_with_fixed_joints_preserves_topology_and_removes_movable_elements(
+    tmp_path: Path,
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'/><link name='finger'/>"
+        "<joint name='finger_joint' type='revolute'>"
+        "<origin xyz='0.1 0.2 0.3'/><parent link='base'/><child link='finger'/>"
+        "<axis xyz='0 0 1'/><calibration rising='0'/><dynamics damping='0.1'/>"
+        "<limit lower='0' upper='1' effort='10' velocity='2'/>"
+        "<mimic joint='driver'/><safety_controller soft_lower_limit='0'/>"
+        "</joint><gazebo reference='finger'/><ros2_control name='control'/></robot>"
+    )
+
+    loaded = robot_model.RobotModel.from_file(urdf).with_fixed_joints("finger_joint").load()
+    root = ET.fromstring(loaded.xml)
+    joint = root.find("joint[@name='finger_joint']")
+
+    assert joint is not None
+    assert joint.get("type") == "fixed"
+    assert [element.tag for element in joint] == ["origin", "parent", "child"]
+    assert joint.find("origin").attrib == {"xyz": "0.1 0.2 0.3"}
+    assert joint.find("parent").attrib == {"link": "base"}
+    assert joint.find("child").attrib == {"link": "finger"}
+    assert [element.tag for element in root if element.tag not in {"link", "joint"}] == [
+        "gazebo",
+        "ros2_control",
+    ]
+    assert "type='revolute'" in urdf.read_text()
+
+
+def test_with_subtree_rooted_at_selects_existing_descendants(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><material name='dark'/><link name='world'/><link name='pelvis'/>"
+        "<link name='leg'/><link name='torso'/><joint name='floating' type='floating'>"
+        "<parent link='world'/><child link='pelvis'/></joint>"
+        "<joint name='hip' type='revolute'><parent link='pelvis'/><child link='leg'/></joint>"
+        "<joint name='waist' type='revolute'><parent link='pelvis'/><child link='torso'/></joint>"
+        "<gazebo reference='leg'/></robot>"
+    )
+
+    loaded = robot_model.RobotModel.from_file(urdf).with_subtree_rooted_at("pelvis").load()
+    root = ET.fromstring(loaded.xml)
+
+    assert loaded.root_link == "pelvis"
+    assert [link.get("name") for link in root.findall("link")] == ["pelvis", "leg", "torso"]
+    assert [joint.get("name") for joint in root.findall("joint")] == ["hip", "waist"]
+    assert root.find("material[@name='dark']") is not None
+    assert root.find("gazebo[@reference='leg']") is not None
+    assert "<link name='world'" in urdf.read_text()
+
+
+def test_without_joint_subtrees_removes_complete_descendant_branches(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='pelvis'/><link name='hip'/><link name='knee'/>"
+        "<link name='torso'/><joint name='hip_joint' type='revolute'>"
+        "<parent link='pelvis'/><child link='hip'/></joint>"
+        "<joint name='knee_joint' type='revolute'><parent link='hip'/><child link='knee'/></joint>"
+        "<joint name='waist_joint' type='revolute'>"
+        "<parent link='pelvis'/><child link='torso'/></joint></robot>"
+    )
+
+    loaded = (
+        robot_model.RobotModel.from_file(urdf)
+        .with_subtree_rooted_at("pelvis")
+        .without_joint_subtrees("hip_joint")
+        .load()
+    )
+    root = ET.fromstring(loaded.xml)
+
+    assert loaded.root_link == "pelvis"
+    assert [link.get("name") for link in root.findall("link")] == ["pelvis", "torso"]
+    assert [joint.get("name") for joint in root.findall("joint")] == ["waist_joint"]
+
+
+@pytest.mark.parametrize(
+    ("configure", "message"),
+    [
+        (lambda model: model.with_subtree_rooted_at("missing"), "root link not found"),
+        (lambda model: model.without_joint_subtrees("missing"), "subtree not found"),
+        (
+            lambda model: model.with_subtree_rooted_at("torso").without_joint_subtrees("hip_joint"),
+            "outside selected root",
+        ),
+    ],
+)
+def test_structural_model_views_reject_unknown_or_out_of_scope_topology(
+    tmp_path: Path,
+    configure: Callable[[robot_model.RobotModel], robot_model.RobotModel],
+    message: str,
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='pelvis'/><link name='leg'/><link name='torso'/>"
+        "<joint name='hip_joint' type='revolute'>"
+        "<parent link='pelvis'/><child link='leg'/></joint>"
+        "<joint name='waist_joint' type='revolute'>"
+        "<parent link='pelvis'/><child link='torso'/></joint></robot>"
+    )
+
+    with pytest.raises(ValueError, match=message):
+        configure(robot_model.RobotModel.from_file(urdf)).load()
+
+
+def test_structural_model_view_validates_later_transformations(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='pelvis'/><link name='leg'/><link name='torso'/>"
+        "<joint name='hip_joint' type='revolute'>"
+        "<parent link='pelvis'/><child link='leg'/></joint>"
+        "<joint name='waist_joint' type='revolute'>"
+        "<parent link='pelvis'/><child link='torso'/></joint></robot>"
+    )
+    model = (
+        robot_model.RobotModel.from_file(urdf)
+        .without_joint_subtrees("hip_joint")
+        .with_fixed_joints("hip_joint")
+    )
+
+    with pytest.raises(ValueError, match="Joint not found: hip_joint"):
+        model.load()
+
+
+def test_structural_model_view_rejects_duplicate_configuration(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text("<robot name='r'><link name='pelvis'/></robot>")
+    model = robot_model.RobotModel.from_file(urdf)
+
+    with pytest.raises(ValueError, match="already selected"):
+        model.with_subtree_rooted_at("pelvis").with_subtree_rooted_at("pelvis")
+    with pytest.raises(ValueError, match="already requested"):
+        model.without_joint_subtrees("hip", "hip")
+
+
+@pytest.mark.parametrize(
+    ("joint_xml", "names", "message"),
+    [
+        ("", ("missing",), "Joint not found"),
+        (
+            "<joint name='tool_joint' type='fixed'>"
+            "<parent link='base'/><child link='tool'/></joint>",
+            ("tool_joint",),
+            "already fixed",
+        ),
+        (
+            "<joint name='tool_joint' type='revolute'>"
+            "<parent link='base'/><child link='tool'/></joint>",
+            ("tool_joint", "tool_joint"),
+            "already requested",
+        ),
+    ],
+)
+def test_with_fixed_joints_rejects_invalid_model(
+    tmp_path: Path,
+    joint_xml: str,
+    names: tuple[str, ...],
+    message: str,
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(f"<robot name='r'><link name='base'/><link name='tool'/>{joint_xml}</robot>")
+    model = robot_model.RobotModel.from_file(urdf).with_fixed_joints(*names)
+
+    with pytest.raises(ValueError, match=message):
+        model.load()
+
+
+def test_with_fixed_joints_requires_a_joint(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text("<robot name='r'><link name='base'/></robot>")
+
+    with pytest.raises(ValueError, match="At least one joint"):
+        robot_model.RobotModel.from_file(urdf).with_fixed_joints()
+
+
+def test_with_renamed_joints_updates_model_references(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'/><link name='first'/><link name='second'/>"
+        "<joint name='source' type='revolute'><parent link='base'/><child link='first'/></joint>"
+        "<joint name='follower' type='revolute'><parent link='first'/><child link='second'/>"
+        "<mimic joint='source'/></joint></robot>"
+    )
+
+    loaded = (
+        robot_model.RobotModel.from_file(urdf)
+        .with_renamed_joints({"source": "robot/source"})
+        .load()
+    )
+    root = ET.fromstring(loaded.xml)
+
+    assert [joint.get("name") for joint in root.findall("joint")] == [
+        "robot/source",
+        "follower",
+    ]
+    assert root.find("joint[@name='follower']/mimic").get("joint") == "robot/source"
+
+
+@pytest.mark.parametrize(
+    ("names", "message"),
+    [
+        ({"missing": "robot/missing"}, "Joint not found"),
+        ({"source": "follower"}, "unique"),
+        ({"source": "robot/joint", "follower": "robot/joint"}, "unique"),
+    ],
+)
+def test_with_renamed_joints_rejects_invalid_model(
+    tmp_path: Path,
+    names: dict[str, str],
+    message: str,
+) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='base'/><link name='first'/><link name='second'/>"
+        "<joint name='source' type='revolute'><parent link='base'/><child link='first'/></joint>"
+        "<joint name='follower' type='revolute'><parent link='first'/><child link='second'/></joint>"
+        "</robot>"
+    )
+
+    with pytest.raises(ValueError, match=message):
+        robot_model.RobotModel.from_file(urdf).with_renamed_joints(names).load()
+
+
 @pytest.mark.parametrize(
     ("lower", "upper", "message"),
     [
@@ -264,15 +514,18 @@ def test_with_fixed_frame_rejects_invalid_model(
 def test_pickle_keeps_model_edits_but_not_materialized_xml(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(
-        "<robot name='before'><link name='base'/><link name='slider'/>"
+        "<robot name='before'><link name='base'/><link name='slider'/><link name='camera'/>"
         "<joint name='slider_joint' type='prismatic'><parent link='base'/>"
         "<child link='slider'/><limit lower='0.1' upper='1' effort='1' velocity='1'/>"
-        "</joint></robot>"
+        "</joint><joint name='camera_joint' type='revolute'><parent link='slider'/>"
+        "<child link='camera'/><axis xyz='0 0 1'/>"
+        "<limit lower='-1' upper='1' effort='1' velocity='1'/></joint></robot>"
     )
     model = (
         robot_model.RobotModel.from_file(urdf)
         .with_joint_position_limits("slider_joint", lower=0.0, upper=1.0)
-        .with_fixed_frame("tool", "slider")
+        .with_fixed_joints("camera_joint")
+        .with_fixed_frame("tool", "camera")
     )
     assert ET.fromstring(model.load().xml).get("name") == "before"
 
@@ -283,6 +536,7 @@ def test_pickle_keeps_model_edits_but_not_materialized_xml(tmp_path: Path) -> No
     assert root.get("name") == "after"
     assert root.find("link[@name='tool']") is not None
     assert root.find("joint[@name='slider_joint']/limit").get("lower") == "0.0"
+    assert root.find("joint[@name='camera_joint']").get("type") == "fixed"
 
 
 def test_model_rejects_non_urdf_source(tmp_path: Path) -> None:

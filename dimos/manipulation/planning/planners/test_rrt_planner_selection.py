@@ -45,11 +45,8 @@ def _pose() -> PoseStamped:
 
 def _group(name: str, joints: tuple[str, ...]) -> PlanningGroup:
     return PlanningGroup(
-        id=f"arm/{name}",
-        robot_name="arm",
-        group_name=name,
+        id=name,
         joint_names=tuple(f"arm/{joint}" for joint in joints),
-        local_joint_names=joints,
         base_link="base",
         tip_link="tool",
     )
@@ -62,35 +59,37 @@ class _World:
         self.current = current or [0.0, 0.0, 0.7]
         self.projected_states: list[JointState] = []
         self.config = RobotModelConfig(
-            name="arm",
             model=RobotModel.from_file(Path("robot.urdf")),
             base_pose=_pose(),
-            joint_names=["joint_a", "joint_b", "gripper"],
+            joint_names=["arm/joint_a", "arm/joint_b", "arm/gripper"],
             base_link="base",
             planning_groups=[
-                PlanningGroupDefinition("arm", ("joint_a", "joint_b"), "base", "tool")
+                PlanningGroupDefinition("arm", ("arm/joint_a", "arm/joint_b"), "base", "tool")
             ],
         )
 
-    def get_robot_ids(self) -> list[str]:
-        return ["robot"]
-
-    def get_robot_config(self, robot_id: str) -> RobotModelConfig:
+    def get_model_config(self) -> RobotModelConfig:
         return self.config
 
     def scratch_context(self) -> nullcontext[None]:
         return nullcontext(None)
 
-    def get_joint_state(self, ctx: object, robot_id: str) -> JointState:
-        return JointState({"name": ["joint_a", "joint_b", "gripper"], "position": self.current})
+    def get_joint_state(self, ctx: object) -> JointState:
+        return JointState(
+            {"name": ["arm/joint_a", "arm/joint_b", "arm/gripper"], "position": self.current}
+        )
 
-    def get_joint_limits(self, robot_id: str) -> tuple[np.ndarray, np.ndarray]:
+    def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
         return np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
 
-    def set_joint_state(self, ctx: object, robot_id: str, joint_state: JointState) -> None:
+    def set_joint_state(self, ctx: object, joint_state: JointState) -> None:
         self.projected_states.append(joint_state)
 
-    def is_collision_free(self, ctx: object, robot_id: str) -> bool:
+    def is_collision_free(self, ctx: object) -> bool:
+        return True
+
+    def check_config_collision_free(self, joint_state: JointState) -> bool:
+        self.projected_states.append(joint_state)
         return True
 
 
@@ -106,12 +105,6 @@ class _World:
         (
             JointState({"name": ["arm/joint_b", "arm/joint_a"], "position": [0.2, 0.1]}),
             JointState({"name": ["arm/joint_b", "arm/joint_a"], "position": [0.4, 0.3]}),
-            [0.1, 0.2],
-            [0.3, 0.4],
-        ),
-        (
-            JointState({"name": ["joint_b", "joint_a"], "position": [0.2, 0.1]}),
-            JointState({"name": ["joint_b", "joint_a"], "position": [0.4, 0.3]}),
             [0.1, 0.2],
             [0.3, 0.4],
         ),
@@ -153,7 +146,7 @@ def test_plan_selected_joint_path_normalizes_target_forms(
             JointState({"name": ["arm/joint_a", "joint_b"], "position": [0.0, 0.0]}),
             JointState({"position": [0.0, 0.0]}),
             PlanningStatus.INVALID_START,
-            "mixes",
+            "missing",
         ),
     ],
 )
@@ -169,7 +162,7 @@ def test_plan_selected_joint_path_rejects_bad_targets(
     assert message in result.message
 
 
-def test_plan_selected_joint_path_rejects_local_names_for_multi_group_selection() -> None:
+def test_plan_selected_joint_path_rejects_noncanonical_names() -> None:
     selection = PlanningGroupSelection.from_groups(
         (_group("arm", ("joint_a",)), _group("gripper", ("gripper",)))
     )
@@ -182,7 +175,7 @@ def test_plan_selected_joint_path_rejects_local_names_for_multi_group_selection(
     )
 
     assert result.status == PlanningStatus.INVALID_START
-    assert "multi-group" in result.message
+    assert "missing" in result.message
 
 
 def test_plan_selected_joint_path_direct_edge_projects_full_state_with_unselected_joints() -> None:
@@ -198,7 +191,10 @@ def test_plan_selected_joint_path_direct_edge_projects_full_state_with_unselecte
 
     assert result.status == PlanningStatus.SUCCESS
     assert world.projected_states
-    assert all(state.name == ["joint_a", "joint_b", "gripper"] for state in world.projected_states)
+    assert all(
+        state.name == ["arm/joint_a", "arm/joint_b", "arm/gripper"]
+        for state in world.projected_states
+    )
     assert all(state.position[2] == 0.77 for state in world.projected_states)
 
 

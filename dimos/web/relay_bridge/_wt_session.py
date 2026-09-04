@@ -14,12 +14,15 @@
 
 """aioquic session internals for the relay bridge.
 
-The quirks this module works around are documented in web/README.md: control rides
-datagrams (the relay may never write on our bidi streams), data frames are
-one-shot bidi streams, delivery pacing uses `sender.is_finished` (ACK-based),
-and reset_stream is only ever called on ids still present in `_quic._streams`
-within one event-loop turn (resetting a discarded id corrupts aioquic's
-stream-id allocator).
+The quirks this module works around are documented in web/README.md: the v5
+robot hello rides an @control data frame on a one-shot bidi stream, the
+relay's handshake and teleop replies ride datagrams (the relay may never
+write on our bidi streams), subs snapshots arrive as @control frames on the
+relay-opened robot control carrier (one reliable uni stream per session),
+outgoing data frames are one-shot bidi streams, delivery pacing uses
+`sender.is_finished` (ACK-based), and reset_stream is only ever called on ids
+still present in `_quic._streams` within one event-loop turn (resetting a
+discarded id corrupts aioquic's stream-id allocator).
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ import ssl
 import time
 
 from aioquic.asyncio.protocol import QuicConnectionProtocol
-from aioquic.h3.connection import H3_ALPN, H3Connection
+from aioquic.h3.connection import H3_ALPN, ErrorCode, H3Connection
 from aioquic.h3.events import (
     DatagramReceived,
     H3Event,
@@ -41,6 +44,8 @@ from aioquic.quic.events import ConnectionTerminated, QuicEvent, StreamReset
 
 from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.protocol import (
+    CONTROL_CHANNEL,
+    MAX_CONTROL_PAYLOAD_BYTES,
     DataFrame,
     DataFrameStreamError,
     DataFrameStreamReader,
@@ -49,6 +54,7 @@ from dimos.web.relay_bridge.protocol import (
     Manifest,
     Msg,
     Pong,
+    Subs,
     Welcome,
     decode_datagram,
     encode_data_frame,
@@ -66,15 +72,18 @@ _FRAME_QUEUE_MAX_BYTES = 128 * 1024 * 1024
 # Realistic payload caps for channels whose encoding is known from the
 # watched robot's manifest (frames themselves carry no encoding);
 # MAX_DATA_FRAME_BYTES stays the outer bound for everything else. Generous:
-# a 4K quality-90 JPEG is ~4 MiB, a pose JSON object ~100 B.
+# a 4K quality-90 JPEG is ~4 MiB, a pose JSON object ~100 B, a compressed
+# long-run costmap ~10-30 KB (the cap leaves room for pathological grids).
 _MAX_PAYLOAD_BYTES = {
     "jpeg.v1": 8 * 1024 * 1024,
     "pose.json.v1": 64 * 1024,
+    "costmap.zlib.v1": 8 * 1024 * 1024,
 }
 
 # Relay-pushed control messages (subs snapshots, robots, manifest) waiting for
-# the consumer; drop-oldest beyond this. Snapshots are idempotent and resent,
-# so a dropped one heals on the next round.
+# the consumer; drop-oldest beyond this, except the one queued subs snapshot
+# (see _queue_control_msg: since the carrier removed the periodic resend, an
+# evicted snapshot would freeze subscriptions until the next set mutation).
 _CONTROL_QUEUE_MAX = 64
 
 # The relay's abort of its send half surfaces as a stream reset; also used
@@ -147,6 +156,12 @@ class SessionProtocol(QuicConnectionProtocol):
         self.frames_oversized = 0
         self.control_msgs: asyncio.Queue[Msg] = asyncio.Queue(maxsize=_CONTROL_QUEUE_MAX)
         self.control_dropped = 0
+        self.control_invalid = 0
+        # Robot role (set by RelayClient.connect): incoming uni streams are
+        # the relay-opened control carrier, a control dependency - corruption,
+        # reset, or an end of one fails the session instead of poisoning or
+        # dropping the stream (see _carrier_stream).
+        self.incoming_is_carrier: bool = False
         self.session_id: int | None = None
         self._pong_waiters: dict[int | float, asyncio.Future[Pong]] = {}
         self._frame_readers: dict[int, DataFrameStreamReader | None] = {}
@@ -178,8 +193,23 @@ class SessionProtocol(QuicConnectionProtocol):
             # this pop the reader map grows by one entry per latest stream.
             # A partial frame in that reader is stale by definition.
             self._frame_readers.pop(event.stream_id, None)
+            if self._carrier_stream(event.stream_id):
+                self._fail_session(f"carrier stream {event.stream_id} reset")
         for h3_event in self.h3.handle_event(event):
             self._h3_event_received(h3_event)
+
+    def _carrier_stream(self, stream_id: int) -> bool:
+        """True when `stream_id` is the relay-opened control carrier.
+
+        On the robot leg the only server-initiated uni streams (id % 4 == 3)
+        are the carrier, and the relay never replaces one: corruption, reset,
+        or an end while the connection lives has no recovery path, so it must
+        fail the session (a half-alive session would keep stale subscriptions
+        forever). Never true for the robot's own bidi streams, whose receive
+        half the relay routinely aborts (RESET) on accept, nor on viewer
+        legs, where relay-opened uni data streams end routinely.
+        """
+        return self.incoming_is_carrier and stream_id % 4 == 3
 
     def _h3_event_received(self, event: H3Event) -> None:
         if isinstance(event, HeadersReceived) and event.stream_id == self.session_id:
@@ -211,14 +241,54 @@ class SessionProtocol(QuicConnectionProtocol):
             if waiter is not None and not waiter.done():
                 waiter.set_result(msg)
         else:
-            if isinstance(msg, Manifest):
-                self._encodings.update({c.ch: c.encoding for c in msg.channels})
+            if isinstance(msg, Manifest) and msg.manifest is not None:
+                # The nested manifest is an opaque raw record at this layer;
+                # pick the encodings out defensively (payload caps are a
+                # safety net, not a validator).
+                channels = msg.manifest.get("channels")
+                if isinstance(channels, list):
+                    self._encodings.update(
+                        {
+                            c["ch"]: c["encoding"]
+                            for c in channels
+                            if isinstance(c, dict)
+                            and isinstance(c.get("ch"), str)
+                            and isinstance(c.get("encoding"), str)
+                        }
+                    )
             # Session messages (subs snapshots, robots, manifest, ...) go to
             # the consumer queue; see RelayClient.control_messages().
-            if self.control_msgs.full():
-                self.control_msgs.get_nowait()
-                self.control_dropped += 1
-            self.control_msgs.put_nowait(msg)
+            self._queue_control_msg(msg)
+
+    def _queue_control_msg(self, msg: Msg) -> None:
+        """Bounded drop-oldest enqueue that never loses subscription state.
+
+        A subs snapshot is full state with no resend since the carrier: a new
+        one supersedes any queued one (so at most one is ever queued, not
+        counted as a drop), and overflow eviction skips it - evicting the
+        snapshot under a teleop flood would freeze subscriptions until the
+        next set mutation. All same-loop and await-free, so getters cannot
+        observe the drain-and-requeue.
+        """
+        if isinstance(msg, Subs):
+            for queued in self._drain_control_msgs():
+                if not isinstance(queued, Subs):
+                    self.control_msgs.put_nowait(queued)
+        if self.control_msgs.full():
+            msgs = self._drain_control_msgs()
+            # A victim always exists: at most one queued Subs (coalesced
+            # above) among _CONTROL_QUEUE_MAX messages.
+            del msgs[next(i for i, m in enumerate(msgs) if not isinstance(m, Subs))]
+            self.control_dropped += 1
+            for queued in msgs:
+                self.control_msgs.put_nowait(queued)
+        self.control_msgs.put_nowait(msg)
+
+    def _drain_control_msgs(self) -> list[Msg]:
+        msgs: list[Msg] = []
+        while not self.control_msgs.empty():
+            msgs.append(self.control_msgs.get_nowait())
+        return msgs
 
     def _stream_data_received(self, stream_id: int, data: bytes, ended: bool) -> None:
         # A latest stream carries one frame; a reliable channel's persistent
@@ -228,6 +298,7 @@ class SessionProtocol(QuicConnectionProtocol):
         reader = self._frame_readers.get(stream_id, DataFrameStreamReader())
         if reader is not None:
             self._frame_readers[stream_id] = reader
+            corrupt = False
             try:
                 frames = reader.push(data)
             except DataFrameStreamError as e:
@@ -236,6 +307,7 @@ class SessionProtocol(QuicConnectionProtocol):
                 logger.warning(f"bad data frame on stream {stream_id}: {e}")
                 frames = e.frames
                 self._frame_readers[stream_id] = None
+                corrupt = True
             except Exception:
                 # Network ingress: no decoder bug may escape into aioquic's
                 # datagram callback and tear down the whole session.
@@ -243,6 +315,12 @@ class SessionProtocol(QuicConnectionProtocol):
                 frames = []
                 self._frame_readers[stream_id] = None
             for frame in frames:
+                if frame.header.ch == CONTROL_CHANNEL:
+                    # Robot control carrier frames feed the control consumer,
+                    # never the data-frame queue (nothing drains it on the
+                    # robot leg).
+                    self._control_frame_received(frame)
+                    continue
                 limit = _MAX_PAYLOAD_BYTES.get(self._encodings.get(frame.header.ch, ""))
                 if limit is not None and len(frame.payload) > limit:
                     self.frames_oversized += 1
@@ -252,8 +330,50 @@ class SessionProtocol(QuicConnectionProtocol):
                     )
                     continue
                 self.frames.put_nowait(frame)
+            if corrupt and self._carrier_stream(stream_id):
+                # The carrier is a control dependency: a poisoned carrier must
+                # not leave a half-alive session with frozen subscriptions.
+                self._fail_session(f"corrupt carrier framing on stream {stream_id}")
         if ended:
             self._frame_readers.pop(stream_id, None)
+            if self._carrier_stream(stream_id):
+                # Deno aborts, never FINs; an ended carrier is equally
+                # unreplaceable (complete frames above dispatched first).
+                self._fail_session(f"carrier stream {stream_id} ended")
+
+    def _control_frame_received(self, frame: DataFrame) -> None:
+        """One @control frame from the relay-opened control carrier: the
+        payload reuses the datagram encoding and joins the normal control
+        dispatch."""
+        if len(frame.payload) > MAX_CONTROL_PAYLOAD_BYTES:
+            # A compliant relay never sends one; the control path is broken.
+            self._fail_session(f"@control payload is {len(frame.payload)} B (over the control cap)")
+            return
+        msg = decode_datagram(frame.payload)
+        if msg is None:
+            # Mirrors the relay's post-registration junk-control handling:
+            # drop and count, keep the session.
+            self.control_invalid += 1
+            logger.warning("dropping undecodable @control payload")
+            return
+        self._control_msg_received(msg)
+
+    def _fail_session(self, reason: str) -> None:
+        """Terminate the session on a control-path protocol violation; the
+        module's supervisor sees the close and reconnects.
+
+        No transmit() here: the enclosing datagram_received transmits after
+        event processing (the pattern aioquic's own H3 layer uses for
+        ProtocolError closes), and unit tests drive this without a transport.
+        Consumers gated on wait_closed() exit when ConnectionTerminated lands
+        (<= ~3x PTO after a local close); the public `closed` event stops
+        producers immediately.
+        """
+        if self.closed.is_set():
+            return
+        logger.error(f"failing relay session: {reason}")
+        self._quic.close(error_code=ErrorCode.H3_GENERAL_PROTOCOL_ERROR, reason_phrase=reason)
+        self.closed.set()
 
     def send_msg(self, msg: Msg) -> None:
         assert self.session_id is not None

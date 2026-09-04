@@ -16,8 +16,10 @@ import hashlib
 import os
 from pathlib import Path
 import subprocess
+from unittest.mock import call
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.utils import data
 from dimos.utils.data import LfsPath, backup_file
@@ -26,6 +28,69 @@ from dimos.utils.data import LfsPath, backup_file
 def _make_backups(dir_path: Path, stem: str, suffix: str, timestamps: list[str]) -> None:
     for ts in timestamps:
         (dir_path / f"{stem}.{ts}{suffix}").write_text(ts)
+
+
+def test_initialize_git_lfs_configures_only_repository(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    run = mocker.patch.object(data.subprocess, "run")
+
+    data._initialize_git_lfs(tmp_path)
+
+    assert run.call_args_list == [
+        call(["git", "--version"], capture_output=True, check=True, text=True),
+        call(["git-lfs", "version"], capture_output=True, check=True, text=True),
+        call(
+            ["git", "lfs", "install", "--local", "--skip-repo"],
+            cwd=tmp_path,
+            capture_output=True,
+            check=False,
+            text=True,
+        ),
+    ]
+
+
+def test_initialize_git_lfs_ignores_configuration_error(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    install_result = subprocess.CompletedProcess(
+        ["git", "lfs", "install", "--local", "--skip-repo"],
+        2,
+        stderr="unable to write repository config",
+    )
+    run = mocker.patch.object(data.subprocess, "run", side_effect=[None, None, install_result])
+
+    data._initialize_git_lfs(tmp_path)
+
+    assert run.call_count == 3
+
+
+def test_pull_lfs_archive_initializes_lfs_before_pull(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    lfs_dir = tmp_path / "data" / ".lfs"
+    lfs_dir.mkdir(parents=True)
+    archive = lfs_dir / "sample.tar.gz"
+    archive.write_text("version https://git-lfs.github.com/spec/v1\n")
+    mocker.patch.object(data, "get_project_root", return_value=tmp_path)
+    mocker.patch.object(data, "_get_lfs_dir", return_value=lfs_dir)
+    initialize = mocker.patch.object(data, "_initialize_git_lfs")
+    pull = mocker.patch.object(
+        data,
+        "_lfs_pull",
+        side_effect=lambda *_: archive.write_bytes(b"downloaded archive"),
+    )
+    steps = mocker.Mock()
+    steps.attach_mock(initialize, "initialize")
+    steps.attach_mock(pull, "pull")
+
+    result = data._pull_lfs_archive("sample")
+
+    assert result == archive
+    assert steps.mock_calls == [
+        call.initialize(tmp_path),
+        call.pull(archive, tmp_path),
+    ]
 
 
 def test_backup_file_missing_is_noop(tmp_path: Path) -> None:
@@ -238,6 +303,16 @@ def test_lfs_path_safe_attributes() -> None:
     assert filename == "test_data_file"
     assert cache is None
     assert callable(ensure_fn)
+
+
+def test_lfs_path_hashes_as_resolved_path(mocker: MockerFixture, tmp_path: Path) -> None:
+    resolved = tmp_path / "model.urdf"
+    get_data = mocker.patch.object(data, "get_data", return_value=resolved)
+
+    lfs_path = LfsPath("model/model.urdf")
+
+    assert hash(lfs_path) == hash(resolved)
+    get_data.assert_called_once_with("model/model.urdf")
 
 
 def test_lfs_path_no_download_on_creation() -> None:

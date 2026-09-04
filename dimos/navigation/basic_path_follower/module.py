@@ -31,10 +31,8 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.tf_pose import OdomBasePose
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
 
@@ -42,6 +40,7 @@ logger = setup_logger()
 
 
 class BasicPathFollowerConfig(ModuleConfig):
+    world_frame: str = "odom"
     base_frame: str = "base_link"
     speed: float = 0.5
     control_frequency: float = 10.0
@@ -65,10 +64,13 @@ class BasicPathFollower(Module):
     goal_reached. stop_movement cancels the current path.
     """
 
+    # While the tf chain is incomplete, retry the lookup at most this often.
+    # The buffer warns on every miss, so per-tick retries would flood the log.
+    RETRY_PERIOD_S = 1.0
+
     config: BasicPathFollowerConfig
 
     path: In[Path]
-    odometry: In[Odometry]
     stop_movement: In[Bool]
     tf: In[TFMessage]
 
@@ -78,8 +80,7 @@ class BasicPathFollower(Module):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._lock = RLock()
-        self._base_pose: OdomBasePose | None = None
-        self._current_pose: PoseStamped | None = None
+        self._next_lookup = 0.0
         self._waypoints: NDArray[np.float32] | None = None
         self._stop_event = Event()
         self._thread: Thread | None = None
@@ -87,7 +88,9 @@ class BasicPathFollower(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self.register_disposable(Disposable(self.odometry.subscribe(self._on_odometry)))
+        # Build the buffer first so it is subscribed and warm before the first
+        # path arrives, else the cold-start miss arms a full retry backoff.
+        self.tfbuffer  # noqa: B018
         self.register_disposable(Disposable(self.path.subscribe(self._on_path)))
         if self.stop_movement.transport is not None:
             self.register_disposable(Disposable(self.stop_movement.subscribe(self._on_stop)))
@@ -102,14 +105,13 @@ class BasicPathFollower(Module):
         self.nav_cmd_vel.publish(Twist())
         super().stop()
 
-    def _on_odometry(self, msg: Odometry) -> None:
-        if self._base_pose is None:
-            self._base_pose = OdomBasePose(self.tfbuffer, self.config.base_frame)
-        pose = self._base_pose.resolve(msg)
+    def _lookup_pose(self) -> PoseStamped | None:
+        if time.monotonic() < self._next_lookup:
+            return None
+        pose = self.tfbuffer.get_pose(self.config.world_frame, self.config.base_frame)
         if pose is None:
-            return
-        with self._lock:
-            self._current_pose = pose
+            self._next_lookup = time.monotonic() + self.RETRY_PERIOD_S
+        return pose
 
     def _on_path(self, path: Path) -> None:
         # The planner owns path safety: it sends the route as far as it is safe,
@@ -134,8 +136,8 @@ class BasicPathFollower(Module):
         while not self._stop_event.is_set():
             start_time = time.perf_counter()
             with self._lock:
-                pose = self._current_pose
                 waypoints = self._waypoints
+            pose = self._lookup_pose() if waypoints is not None else None
             if pose is not None and waypoints is not None:
                 self._step(pose, waypoints)
             elapsed = time.perf_counter() - start_time

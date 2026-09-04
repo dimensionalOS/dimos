@@ -23,8 +23,10 @@ target/
 dist/
 build/
 *.so
+/web/.build.lock
 /web/cockpit/.build.lock
 /web/cockpit/.dist-*
+/web/sdk/.dist-*
 
 # Nix / direnv (symlink one of the tracked .envrc.* files to .envrc)
 .direnv/
@@ -94,3 +96,7 @@ yolo11n*.pt
 # Generic ignore patterns
 *.ignore
 *.ignore.*
+site/
+
+# Optuna study store, written by the relocalization eval (see lidar/eval.md)
+optuna.db
