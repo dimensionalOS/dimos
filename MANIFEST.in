@@ -11,6 +11,9 @@ global-exclude .DS_Store
 recursive-include dimos *.yaml *.yml *.json *.urdf *.html *.css *.js *.svg *.tcss
 include dimos/imitation/policy/lerobot/python/pyproject.toml
 include dimos/imitation/policy/lerobot/python/uv.lock
+include dimos/imitation/policy/abc/python/pyproject.toml
+include dimos/imitation/policy/abc/python/uv.lock
+include dimos/imitation/policy/abc/python/VENDORED.md
 
 # --- Exclusions (must come after the includes above so they win) ---
 # Test fixtures must never ship.
@@ -45,6 +48,14 @@ prune .pytest_cache
 prune .ruff_cache
 prune .vscode
 prune dimos/web/command-center-extension
+prune dimos/imitation/policy/lerobot/python/.mypy_cache
+prune dimos/imitation/policy/lerobot/python/.pytest_cache
+prune dimos/imitation/policy/lerobot/python/.ruff_cache
+prune dimos/imitation/policy/lerobot/python/.venv
+prune dimos/imitation/policy/abc/python/.mypy_cache
+prune dimos/imitation/policy/abc/python/.pytest_cache
+prune dimos/imitation/policy/abc/python/.ruff_cache
+prune dimos/imitation/policy/abc/python/.venv
 
 global-exclude test_*.py
 global-exclude conftest.py
