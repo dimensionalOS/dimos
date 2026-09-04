@@ -445,6 +445,46 @@ class ManipulationModule(Module):
         return result
 
     @rpc
+    def reset(self) -> CommandResult:
+        """Stop any motion and return to IDLE so new commands are accepted.
+
+        Execution can leave the module in FAULT, and planning only runs from
+        IDLE or COMPLETED, so without this a faulted module accepts nothing
+        further. This is the one recovery verb: it cancels an active trajectory
+        rather than refusing, because telling a caller to cancel first is a dead
+        end for anyone holding only the skill surface.
+        """
+        with self._lock:
+            executing = self._state == ManipulationState.EXECUTING
+        # cancel() takes the lock itself, so it must not be called under it.
+        cancelled = executing and self.cancel().status is not ExecutionStatus.NO_EXECUTION
+        with self._lock:
+            if self._state == ManipulationState.PLANNING:
+                self._planning_epoch += 1
+            self._state = ManipulationState.IDLE
+            self._error_message = ""
+        return CommandResult(
+            CommandStatus.SUCCEEDED,
+            "Cancelled the active motion and reset to IDLE" if cancelled else "Reset to IDLE",
+        )
+
+    @rpc
+    def set_visualization_layer(self, layer: Any) -> bool:
+        """Hand one display-only layer to the viewer, if there is one.
+
+        PickAndPlaceModule owns the grasp pipeline but not the visualizer, and on
+        this branch it is a sibling module rather than a subclass, so the layer
+        reaches the scene through here.
+        """
+        if self._world_monitor is None or self._world_monitor.visualization is None:
+            return False
+        setter = getattr(self._world_monitor.visualization, "set_layer", None)
+        if setter is None:
+            return False
+        setter(layer)
+        return True
+
+    @rpc
     def get_current_joints(self) -> list[float] | None:
         """Get the complete canonical model joint positions."""
         if self._world_monitor:

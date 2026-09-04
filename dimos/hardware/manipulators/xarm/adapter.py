@@ -44,9 +44,6 @@ XARM_GRIPPER_MAX = 850.0
 MAX_CARTESIAN_SPEED_MM = 500.0  # Max cartesian speed in mm/s
 _XARM_LIFECYCLE_SPEED_DEG = 20.0
 _XARM_LIFECYCLE_ACCEL_DEG = 500.0
-_XARM6_INITIAL_JOINTS_DEG = [0.0, -40.0, -50.0, 0.0, 90.0, 0.0]
-# TODO (CC): change this once we have 7dof arm setup
-_XARM7_INITIAL_JOINTS_DEG = [0.0, 0.0, 0.0, 0.0, 0.0, math.degrees(-0.7), 0.0]
 
 # XArm mode codes
 _XARM_MODE_POSITION = 0
@@ -63,7 +60,14 @@ class XArmAdapter(ManipulatorAdapter):
     No inheritance required - just matching method signatures.
     """
 
-    def __init__(self, address: str, dof: int = 6, arm_dof: int | None = None, **_: object) -> None:
+    def __init__(
+        self,
+        address: str,
+        dof: int = 6,
+        arm_dof: int | None = None,
+        initial_positions: list[float] | None = None,
+        **_: object,
+    ) -> None:
         if not address:
             raise ValueError("address (IP) is required for XArmAdapter")
         resolved_arm_dof = dof if arm_dof is None else arm_dof
@@ -80,6 +84,13 @@ class XArmAdapter(ManipulatorAdapter):
         self._arm: XArmAPI | None = None
         self._control_mode: ControlMode = ControlMode.POSITION
         self._gripper_enabled: bool = False
+        # Joint pose (radians) to drive to on activate and deactivate. None means
+        # do not move: bringing a blueprint up should not command the arm
+        # anywhere, and ManipulationModule already adopts wherever it is as the
+        # "init" preset from the first joint state it receives.
+        self._initial_positions = (
+            None if initial_positions is None else list(initial_positions[:resolved_arm_dof])
+        )
 
     def connect(self) -> bool:
         """Connect to XArm via TCP/IP."""
@@ -254,7 +265,7 @@ class XArmAdapter(ManipulatorAdapter):
         return ok
 
     def activate(self) -> bool:
-        """Enable motion and move the arm to its initial joint pose."""
+        """Enable motion, and move to the initial pose only if one is configured."""
         if not self._arm:
             return False
 
@@ -264,7 +275,7 @@ class XArmAdapter(ManipulatorAdapter):
         return self.set_control_mode(ControlMode.SERVO_POSITION)
 
     def deactivate(self) -> bool:
-        """Move the arm to its initial joint pose and enter stopped state."""
+        """Enter stopped state, parking at the initial pose only if one is configured."""
         if not self._arm:
             return False
 
@@ -301,11 +312,9 @@ class XArmAdapter(ManipulatorAdapter):
         return code == 0
 
     def _initial_joints_degrees(self) -> list[float] | None:
-        if self._arm_dof == 6:
-            return _XARM6_INITIAL_JOINTS_DEG
-        if self._arm_dof == 7:
-            return _XARM7_INITIAL_JOINTS_DEG
-        return None
+        if self._initial_positions is None:
+            return None
+        return [math.degrees(value) for value in self._initial_positions]
 
     def _prepare_for_position_motion(self) -> None:
         if not self._arm:

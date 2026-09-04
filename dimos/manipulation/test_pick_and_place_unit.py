@@ -52,6 +52,10 @@ def module() -> Iterator[PickAndPlaceModule]:
     )
     instance._manipulation.plan_to_poses.return_value = SimpleNamespace(succeeded=True, message="")
     instance._manipulation.execute.return_value = SimpleNamespace(succeeded=True, message="")
+    instance._manipulation.move_linear.return_value = SimpleNamespace(
+        plan=SimpleNamespace(succeeded=True, message=""),
+        execution=SimpleNamespace(succeeded=True, message=""),
+    )
     instance._manipulation.set_gripper_position.return_value = SimpleNamespace(
         succeeded=True, message=""
     )
@@ -66,7 +70,7 @@ def module() -> Iterator[PickAndPlaceModule]:
 
 @pytest.fixture(autouse=True)
 def settled_gripper(monkeypatch: pytest.MonkeyPatch) -> None:
-    def settle(read: Any, target: float, config: Any) -> GripperSettle:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
         position = 0.5 if target == config.closed_position else target
         return GripperSettle(True, position, True, 0.1)
 
@@ -214,10 +218,16 @@ def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> No
 
 def test_pick_retains_held_state_when_retract_fails(module: PickAndPlaceModule) -> None:
     manipulation: Any = module._manipulation
-    manipulation.execute.side_effect = [
-        SimpleNamespace(succeeded=True, message=""),
-        SimpleNamespace(succeeded=True, message=""),
-        SimpleNamespace(succeeded=False, message="retract failed"),
+    # Approach in, then the retract out; both legs are linear servos now.
+    manipulation.move_linear.side_effect = [
+        SimpleNamespace(
+            plan=SimpleNamespace(succeeded=True, message=""),
+            execution=SimpleNamespace(succeeded=True, message=""),
+        ),
+        SimpleNamespace(
+            plan=SimpleNamespace(succeeded=True, message=""),
+            execution=SimpleNamespace(succeeded=False, message="retract failed"),
+        ),
     ]
 
     result = module.pick_object("cup-1")
@@ -226,12 +236,22 @@ def test_pick_retains_held_state_when_retract_fails(module: PickAndPlaceModule) 
     assert module._holding_object
 
 
+def test_final_grasp_leg_skips_collision_checking(module: PickAndPlaceModule) -> None:
+    """The target is mapped geometry, so a checked plan into it always collides."""
+    manipulation: Any = module._manipulation
+
+    assert module.pick_object("cup-1").success
+    assert manipulation.move_linear.call_args_list
+    for call in manipulation.move_linear.call_args_list:
+        assert call.kwargs["check_collision"] is False
+
+
 def test_empty_grasp_reopens_before_failing(
     module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manipulation: Any = module._manipulation
 
-    def settle(read: Any, target: float, config: Any) -> GripperSettle:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
         position = 0.0 if target == config.closed_position else target
         return GripperSettle(True, position, True, 0.1)
 
@@ -247,7 +267,7 @@ def test_empty_grasp_reopens_before_failing(
 def test_pick_rejects_jaws_that_never_closed(
     module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def settle(read: Any, target: float, config: Any) -> GripperSettle:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
         position = config.open_position if target == config.closed_position else target
         return GripperSettle(True, position, True, 0.1)
 
@@ -269,7 +289,7 @@ def test_empty_grasp_reports_failed_recovery(
         SimpleNamespace(succeeded=False, message="recovery open failed"),
     ]
 
-    def settle(read: Any, target: float, config: Any) -> GripperSettle:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
         position = 0.0 if target == config.closed_position else target
         return GripperSettle(True, position, True, 0.1)
 
@@ -295,7 +315,7 @@ def test_pick_fails_when_gripper_command_is_rejected(module: PickAndPlaceModule)
 def test_pick_fails_when_gripper_feedback_is_unavailable(
     module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def settle(read: Any, target: float, config: Any) -> GripperSettle:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
         if target == config.closed_position:
             return GripperSettle(False, None, False, config.timeout)
         return GripperSettle(True, target, True, 0.1)
@@ -314,7 +334,7 @@ def test_place_retains_held_state_when_release_fails(
     module._selected_grasp = PoseStamped(frame_id="world")
     module._holding_object = True
 
-    def settle(read: Any, target: float, config: Any) -> GripperSettle:
+    def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
         return GripperSettle(True, 0.5, True, 0.1)
 
     monkeypatch.setattr("dimos.manipulation.pick_and_place_module.await_gripper_settle", settle)

@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Protocol
+from typing import Any, Protocol
 
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionResult
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningGroupID
@@ -246,6 +246,10 @@ class ManipulationSpec(Spec, Protocol):
         blocking: bool = True,
         timeout: float | None = None,
     ) -> MoveResult: ...
+
+    def set_visualization_layer(self, layer: Any) -> bool: ...
+
+    def reset(self) -> CommandResult: ...
 
     def set_gripper_position(
         self,
