@@ -149,7 +149,9 @@ class GenerationFrame:
 
 
 @dataclass(frozen=True)
-class _GeneratedFrame:
+class GeneratedFrame:
+    """Questions and evidence generated for one source frame."""
+
     index: int
     image: Image
     cases: tuple[PublicCase, ...]
@@ -182,12 +184,11 @@ def generate_dataset(
         author_model = OpenAIVlModel()
         detector_model = MoondreamVlModel()
         try:
-            detector = detector_model
             model_names = {
                 "author": author_model.config.model_name,
                 "detector": detector_model.config.model_name,
             }
-            mask_estimator = EdgeTAMObjectMaskPipeline(detector)
+            mask_estimator = EdgeTAMObjectMaskPipeline(detector_model)
 
             def pointcloud_frames() -> Iterable[GenerationFrame]:
                 for index in indices:
@@ -202,7 +203,7 @@ def generate_dataset(
                 request,
                 pointcloud_frames(),
                 OpenAIQuestionAuthor(author_model),
-                detector,
+                detector_model,
                 LidarRangeEstimator(mask_estimator),
                 mask_estimator,
                 config=config,
@@ -237,7 +238,7 @@ def generate_frames_dataset(
         rejected_count = 0
         used_family_names: set[str] = set()
         for source in frames:
-            frame = _generate_frame(source, author, detector, range_estimator, mask_estimator)
+            frame = generate_frame(source, author, detector, range_estimator, mask_estimator)
             _write_frame(staging, frame)
             all_cases.extend(frame.cases)
             all_labels.extend(frame.labels)
@@ -277,13 +278,14 @@ def generate_frames_dataset(
     return GenerationResult(output=output, cases=tuple(all_cases))
 
 
-def _generate_frame(
+def generate_frame(
     source: GenerationFrame,
     author: QuestionAuthor,
     detector: VlModel,
     range_estimator: ObjectRangeEstimator | None,
     mask_estimator: ObjectMaskEstimator | None,
-) -> _GeneratedFrame:
+) -> GeneratedFrame:
+    """Generate answerable questions for one already loaded frame."""
     image_index = source.index
     image = source.image
     families = tuple(
@@ -325,7 +327,6 @@ def _generate_frame(
                     "answer": answer.model_dump(mode="json"),
                 }
             )
-    answers = tuple(answer for _, answer in answered)
     case_ids = _case_ids(image_index, tuple(proposal for proposal, _ in answered))
     cases = tuple(
         PublicCase(
@@ -338,15 +339,15 @@ def _generate_frame(
     )
     labels = tuple(
         PrivateLabel(id=case.id, answer=answer.answer)
-        for case, answer in zip(cases, answers, strict=True)
+        for case, (_, answer) in zip(cases, answered, strict=True)
     )
-    return _GeneratedFrame(
+    return GeneratedFrame(
         index=image_index,
         image=image,
         cases=cases,
         labels=labels,
         audit_rows=tuple(audit_rows),
-        families=tuple(families),
+        families=families,
     )
 
 
@@ -388,7 +389,7 @@ def _prepare_output(output: Path) -> None:
         raise FileExistsError(f"VQA output directory is not empty: {output}")
 
 
-def _write_frame(output: Path, frame: _GeneratedFrame) -> None:
+def _write_frame(output: Path, frame: GeneratedFrame) -> None:
     (output / "assets").mkdir(parents=True, exist_ok=True)
     frame_audit = output / "audit" / f"frame-{frame.index:06d}"
     frame_audit.mkdir(parents=True, exist_ok=True)

@@ -25,6 +25,7 @@ from dimos.evals.vqa.pointcloud_frame import (
 )
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -179,12 +180,14 @@ def test_load_uses_recorded_camera_info_and_tf(
         child_frame_id="camera_optical",
         ts=10.0,
     )
+    odom = PoseStamped(ts=10.0, frame_id="world", position=[1.0, 2.0, 0.3])
 
     with SqliteStore(path=dataset) as store:
         store.stream("color_image", Image).append(image, ts=10.0)
         store.stream("lidar", PointCloud2).append(cloud, ts=10.0)
         store.stream("camera_info", CameraInfo).append(camera_info, ts=9.0)
         store.stream("tf", TFMessage).append(TFMessage(world_from_camera), ts=10.0)
+        store.stream("odom", PoseStamped).append(odom, ts=10.0)
 
     loader = PointCloudFrameLoader(dataset)
     calibrations: list[CameraInfo] = []
@@ -199,12 +202,46 @@ def test_load_uses_recorded_camera_info_and_tf(
         rectify,
     )
     with loader:
+        assert loader.topdown_available
+        raw_image = loader.load_raw_image(0)
+        assert calibrations == []
         frame = loader.load(0)
+        topdown = loader.load_topdown(0)
 
     assert calibrations == [camera_info]
+    assert raw_image.ts == image.ts
     assert frame.calibration_source == "recorded"
     assert frame.camera_info.ts == image.ts
     assert np.allclose(frame.pointcloud_to_camera.to_matrix(), (-world_from_camera).to_matrix())
+    assert topdown.lidar_map.hits.sum() == 1
+    assert topdown.pose == odom
+
+
+def test_sensor_frame_lidar_does_not_disable_editor_startup(tmp_path: Path) -> None:
+    dataset = tmp_path / "recording.db"
+    image = Image.from_numpy(np.zeros((2, 2, 3), dtype=np.uint8), frame_id="camera", ts=10.0)
+    camera_info = CameraInfo.from_intrinsics(
+        1.0, 1.0, 0.0, 0.0, image.width, image.height, frame_id="camera"
+    )
+    with SqliteStore(path=dataset) as store:
+        store.stream("color_image", Image).append(image, ts=10.0)
+        store.stream("lidar", PointCloud2).append(
+            PointCloud2.from_numpy(np.array([[0.0, 0.0, 1.0]]), frame_id="lidar", timestamp=10.0),
+            ts=10.0,
+        )
+        store.stream("camera_info", CameraInfo).append(camera_info, ts=10.0)
+        store.stream("tf", TFMessage).append(
+            TFMessage(
+                Transform(frame_id="world", child_frame_id="camera", ts=10.0),
+                Transform(frame_id="world", child_frame_id="lidar", ts=10.0),
+            ),
+            ts=10.0,
+        )
+        store.stream("odom", PoseStamped).append(PoseStamped(ts=10.0, frame_id="world"), ts=10.0)
+
+    with PointCloudFrameLoader(dataset) as loader:
+        assert loader.image_count == 1
+        assert not loader.topdown_available
 
 
 def test_load_resolves_tf_through_non_world_root(

@@ -59,6 +59,19 @@ def generate(
     typer.echo(f"Generated {len(result.cases)} VQA case(s) in {result.output}")
 
 
+@app.command("edit")
+def edit(
+    recording: str = typer.Argument(help="Memory dataset name or .db/.mcap path"),
+    output: Path = typer.Argument(help="New or existing standalone VQA dataset directory"),
+    port: int = typer.Option(8765, min=1, max=65535, help="Local editor HTTP port"),
+) -> None:
+    """Open a local interface for generating and editing VQA cases."""
+    from dimos.evals.vqa.visualizer import run_editor
+
+    typer.echo(f"Launching VQA editor and loading Moondream + EdgeTAM: http://127.0.0.1:{port}")
+    run_editor(recording, output, port)
+
+
 @app.command("run")
 def run(
     dataset: Path = typer.Argument(help="Generated standalone VQA dataset"),

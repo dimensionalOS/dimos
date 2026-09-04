@@ -1,0 +1,616 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DimOS VQA Dataset Console</title>
+  <style>
+    @font-face {
+      font-family: "Roboto Mono";
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url("https://fonts.gstatic.com/s/robotomono/v31/L0xuDF4xlVMF-BfR8bXMIhJHg45mwgGEFl0_3vq_ROW4.woff2") format("woff2");
+    }
+    @font-face {
+      font-family: "Inconsolata";
+      font-style: normal;
+      font-weight: 500;
+      font-display: swap;
+      src: url("https://fonts.gstatic.com/s/inconsolata/v37/QldgNThLqRwH-OJ1UHjlKENVzkWGVkL3GZQmAwLYxYWI2qfdm7Lpp7c8WR32lw.woff2") format("woff2");
+    }
+    :root {
+      color-scheme: dark;
+      --ink: #fff;
+      --muted: #c1c1c1;
+      --paper: #101111;
+      --panel: #151515;
+      --line: #404040;
+      --strong-line: #d9d9d9;
+      --accent: #b0e1f0;
+      --danger: #df7b7b;
+      --info: #b0e1f0;
+      font-family: "Roboto Mono", "Liberation Mono", monospace;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; }
+    body { margin: 0; overflow: hidden; color: var(--ink); background: var(--paper); }
+    button, input, select, textarea { font: inherit; }
+    button { color: var(--ink); background: transparent; border: 1px solid var(--line); cursor: pointer; }
+    button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    button:disabled { opacity: .42; cursor: wait; }
+    input, select, textarea { width: 100%; color: var(--ink); background: #151515; border: 1px solid var(--line); padding: .7rem; }
+    input:focus, select:focus, textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+    .shell { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100dvh; overflow: hidden; }
+    header { display: grid; grid-template-columns: auto 1fr auto; gap: 1.5rem; align-items: end; padding: .9rem 1.5rem; border-bottom: 1px solid #2b2b2b; background: #151515; }
+    .eyebrow { color: var(--accent); font-size: .68rem; letter-spacing: .14em; text-transform: uppercase; }
+    h1 { margin: .25rem 0 0; font-family: "Inconsolata", monospace; font-size: clamp(1.15rem, 2vw, 1.55rem); font-weight: 500; line-height: 1.2; letter-spacing: -.02em; }
+    .meta { color: var(--muted); font-size: .72rem; text-align: right; max-width: 44vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .stats { display: flex; flex-wrap: wrap; justify-content: center; gap: .6rem clamp(1rem, 3vw, 2.5rem); }
+    .stat { min-width: 5rem; }
+    .stat-value { display: block; color: var(--ink); font-size: 1rem; line-height: 1.1; }
+    .stat-label { color: var(--muted); font-size: .62rem; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+    main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); min-height: 0; overflow: hidden; }
+    .viewer { display: grid; grid-column: 1; grid-row: 1; grid-template-rows: auto minmax(0, 1fr) auto auto; gap: .65rem; min-width: 0; min-height: 0; overflow: hidden; padding: 1rem 1.5rem 1.2rem; border-right: 1px solid var(--line); }
+    .viewer > * { width: 100%; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: .55rem; align-items: center; }
+    .toolbar button { width: 2.7rem; height: 2.7rem; font-size: 1.2rem; }
+    .toolbar .primary { width: auto; }
+    .frame-input { display: flex; align-items: center; gap: .5rem; width: 13rem; }
+    .frame-input input { text-align: right; }
+    .frame-input span { color: var(--muted); white-space: nowrap; }
+    .spacer { flex: 1; }
+    .badge { border: 1px solid var(--line); padding: .35rem .55rem; font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
+    .badge.dirty { color: var(--danger); border-color: var(--danger); }
+    .image-stage { position: relative; display: grid; place-items: center; flex: 1.15 1 0; min-height: 0; overflow: hidden; background: #151515; border: 1px solid var(--strong-line); }
+    .image-stage::after { content: "RAW RECORDING"; position: absolute; left: .7rem; bottom: .6rem; color: var(--muted); font-size: .65rem; letter-spacing: .16em; }
+    #frame-image { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .frame-empty { color: var(--muted); font-size: .68rem; letter-spacing: .1em; text-align: center; text-transform: uppercase; }
+    .visual-stack { display: flex; flex-direction: column; min-height: 0; gap: .65rem; }
+    .lidar-stage { position: relative; display: grid; place-items: center; flex: .85 1 0; min-height: 0; overflow: hidden; background: #151515; border: 1px solid var(--strong-line); }
+    .lidar-stage::after { content: "GLOBAL MAP / WORLD"; position: absolute; right: .7rem; bottom: .6rem; color: var(--muted); font-size: .65rem; letter-spacing: .16em; }
+    #topdown-image { display: block; width: 100%; height: 100%; object-fit: contain; }
+    .map-empty { color: var(--muted); font-size: .68rem; letter-spacing: .1em; text-align: center; text-transform: uppercase; }
+    .timeline { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .8rem; align-items: center; }
+    .timeline input { height: 1.4rem; padding: 0; accent-color: var(--accent); cursor: pointer; }
+    .shortcut { color: var(--muted); font-size: .65rem; white-space: nowrap; }
+    .batch { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .8rem; align-items: end; padding: .65rem .75rem; border: 1px solid var(--line); background: var(--panel); }
+    .batch-title { min-width: 6rem; padding-bottom: .15rem; }
+    .batch-title .meta { display: block; margin-top: .35rem; text-align: left; }
+    .batch-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: .6rem; align-items: end; }
+    .generation-status { grid-column: 1 / -1; min-height: .85rem; overflow: hidden; color: var(--info); font-size: .65rem; letter-spacing: .06em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+    .generation-status.error { color: var(--danger); }
+    label { display: block; color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .08em; }
+    label input { margin-top: .3rem; }
+    .primary { padding: .72rem 1rem; border-color: var(--accent); color: var(--paper); background: var(--accent); font-weight: 600; }
+    .primary:hover:not(:disabled) { border-color: white; color: var(--paper); background: white; }
+    .questions { grid-column: 2; grid-row: 1; height: 100%; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 1rem 1.5rem; scrollbar-color: #404040 var(--paper); scrollbar-width: thin; }
+    .questions-head { display: flex; justify-content: space-between; align-items: center; position: sticky; top: -1rem; z-index: 4; padding: 1rem 0 .75rem; background: var(--paper); }
+    .questions-head h2 { margin: 0; font-size: 1rem; font-weight: 600; }
+    .depth-summary { display: none; margin-bottom: .8rem; padding: .75rem; border: 1px solid var(--line); color: var(--info); background: var(--panel); font-size: .75rem; line-height: 1.55; }
+    .depth-summary.show { display: block; }
+    .question { position: relative; margin-bottom: 1rem; padding: .85rem; border: 1px solid var(--line); background: var(--panel); box-shadow: 0 6px 18px #0003; }
+    .question-number { overflow: hidden; margin: -.85rem -.85rem .85rem; padding: .55rem 2.7rem .55rem .75rem; color: white; background: #404040; font-size: .68rem; letter-spacing: .1em; text-overflow: ellipsis; white-space: nowrap; }
+    .delete { position: absolute; top: .18rem; right: .35rem; border: 0; color: white; font-size: 1.1rem; }
+    .question textarea, .question input, .question select { padding: .5rem .6rem; font-size: .8rem; }
+    textarea { min-height: 3.5rem; resize: vertical; }
+    .choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .35rem; margin: .6rem 0; }
+    .choice { display: grid; grid-template-columns: 1fr auto; gap: .35rem; }
+    .choice button { width: 2.45rem; }
+    .add-choice { width: 100%; padding: .5rem; border-style: dashed; }
+    .answer { display: grid; grid-template-columns: auto minmax(0, 14rem); gap: .7rem; align-items: center; margin-top: .7rem; }
+    .empty { padding: 3rem 1rem; color: var(--muted); border: 1px dashed var(--line); text-align: center; line-height: 1.6; }
+    .footer-actions { position: sticky; bottom: -1rem; display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; padding: .9rem 0 1rem; background: linear-gradient(transparent, var(--paper) 18%); }
+    .footer-actions button { padding: .8rem; }
+    #toast { position: fixed; left: 50%; bottom: 1.2rem; z-index: 20; transform: translateX(-50%) translateY(5rem); padding: .75rem 1rem; color: var(--paper); background: var(--accent); box-shadow: 0 6px 24px #0008; transition: transform .2s; }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+    #toast.error { color: white; background: #9b4141; }
+    @media (max-width: 1100px) {
+      .batch { display: block; }
+      .batch-title { display: flex; justify-content: space-between; margin-bottom: .55rem; }
+      .batch-title .meta { margin-top: 0; text-align: right; }
+    }
+    @media (max-width: 850px) {
+      header { grid-template-columns: 1fr auto; gap: .55rem 1rem; padding: .65rem .8rem; }
+      .stats { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; }
+      .meta { max-width: 100%; text-align: left; }
+      main { grid-template-columns: 1fr; grid-template-rows: minmax(300px, 52%) minmax(0, 1fr); }
+      .viewer { grid-column: 1; grid-row: 1; gap: .55rem; overflow-y: auto; padding: .65rem .8rem; border-right: 0; border-bottom: 1px solid var(--line); }
+      .toolbar { flex-wrap: wrap; }
+      .toolbar .spacer { display: none; }
+      .frame-input { flex: 1; width: auto; }
+      .viewer { grid-template-rows: auto auto auto auto; }
+      .visual-stack { min-height: 320px; }
+      .batch-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .batch-fields button { grid-column: 1 / -1; }
+      .questions { grid-column: 1; grid-row: 2; padding: .8rem; }
+      .choices { grid-template-columns: 1fr; }
+      .questions-head { top: -.8rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div><div class="eyebrow">DimOS / VQA dataset</div><h1>VQA Dataset Console</h1></div>
+      <div class="stats" aria-label="Dataset summary">
+        <div class="stat"><span id="total-frames" class="stat-value">--</span><span class="stat-label">Recording frames</span></div>
+        <div class="stat"><span id="dataset-frames" class="stat-value">--</span><span class="stat-label">Dataset frames</span></div>
+        <div class="stat"><span id="total-questions" class="stat-value">--</span><span class="stat-label">Questions</span></div>
+        <div class="stat"><span id="pending-frames" class="stat-value">--</span><span class="stat-label">Draft frames</span></div>
+      </div>
+      <div class="meta"><div id="recording">Loading recording...</div><div id="output"></div></div>
+    </header>
+    <main>
+      <section class="viewer">
+        <div class="toolbar">
+          <button id="previous" title="Previous frame">&#8592;</button>
+          <div class="frame-input"><input id="frame" type="number" min="0" value="0" aria-label="Frame index"><span id="frame-total">/ --</span></div>
+          <button id="next" title="Next frame">&#8594;</button>
+          <div class="spacer"></div>
+          <span id="frame-state" class="badge">Empty</span>
+          <button id="generate-one" class="primary">Generate</button>
+        </div>
+        <div class="visual-stack">
+          <div class="image-stage">
+            <img id="frame-image" alt="Recording frame" hidden>
+            <div id="frame-empty" class="frame-empty" hidden></div>
+          </div>
+          <div id="lidar-stage" class="lidar-stage">
+            <img id="topdown-image" alt="Global LiDAR map and current robot footprint" hidden>
+            <div id="map-empty" class="map-empty"></div>
+          </div>
+        </div>
+        <div class="timeline"><input id="timeline" type="range" min="0" max="0" value="0" aria-label="Recording frame"><span class="shortcut">&#8592; / &#8594; navigate</span></div>
+        <div class="batch">
+          <div class="batch-title"><span class="eyebrow">Batch generation</span><span id="batch-count" class="meta" title="Stop frame is exclusive">0 frames</span></div>
+          <div class="batch-fields">
+            <label>Start<input id="start" type="number" min="0" value="0"></label>
+            <label>Stop<input id="stop" type="number" min="1" value="1"></label>
+            <label>Stride<input id="stride" type="number" min="1" value="1"></label>
+            <button id="generate-range" class="primary">Generate range</button>
+          </div>
+          <div id="generation-status" class="generation-status" role="status" aria-live="polite"></div>
+        </div>
+      </section>
+      <section class="questions">
+        <div class="questions-head"><h2><span id="question-count">0</span> questions</h2><span id="dirty-count" class="badge">Saved</span></div>
+        <div id="depth-summary" class="depth-summary"></div>
+        <div id="question-list"></div>
+        <div class="footer-actions">
+          <button id="add-question">+ Add question</button>
+          <button id="submit" class="primary">Submit dataset</button>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let session = null;
+    let current = 0;
+    let draft = {index: 0, questions: []};
+    let localDirty = false;
+    let loadedQuestionCount = 0;
+    let busy = false;
+    let navigating = false;
+    let toastTimer = null;
+    let visualRevision = 0;
+
+    async function request(url, options = {}) {
+      const response = await fetch(url, {headers: {"Content-Type": "application/json"}, ...options});
+      if (!response.ok) {
+        let message = response.statusText;
+        try { message = (await response.json()).detail || message; } catch (_) {}
+        throw new Error(Array.isArray(message) ? message.map(x => x.msg).join("; ") : message);
+      }
+      return response.status === 204 ? null : response.json();
+    }
+
+    function toast(message, error = false) {
+      const node = $("toast");
+      node.textContent = message;
+      node.className = error ? "show error" : "show";
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => node.className = "", 2800);
+    }
+
+    function syncDisabledControls() {
+      const locked = busy || navigating;
+      [".toolbar", ".timeline", ".batch-fields", ".questions"].forEach(selector => {
+        const region = document.querySelector(selector);
+        region.inert = locked;
+        region.setAttribute("aria-busy", String(locked));
+      });
+    }
+
+    function setBusy(value, label = "Working...") {
+      busy = value;
+      syncDisabledControls();
+      if (value) toast(label);
+    }
+
+    function markDirty() {
+      localDirty = true;
+      updateBadges();
+    }
+
+    function readDraft() {
+      return {
+        ...draft,
+        index: current,
+        questions: draft.questions.map(question => ({
+          ...question,
+          question: question.question.trim(),
+          choices: question.choices.map(choice => choice.trim()),
+          answer: question.answer.trim()
+        }))
+      };
+    }
+
+    function installDraft(nextDraft) {
+      draft = {
+        ...nextDraft,
+        questions: nextDraft.questions.map(question => ({...question, choices: [...question.choices]}))
+      };
+      loadedQuestionCount = draft.questions.length;
+      localDirty = false;
+    }
+
+    async function saveDraft() {
+      if (!localDirty) return;
+      const pendingDraft = readDraft();
+      draft = await request(`/api/frames/${current}`, {method: "PUT", body: JSON.stringify(pendingDraft)});
+      session.total_questions += draft.questions.length - loadedQuestionCount;
+      loadedQuestionCount = draft.questions.length;
+      localDirty = false;
+      session.dirty_frames = [...new Set([...session.dirty_frames, current])];
+      updateBadges();
+    }
+
+    function updateBadges() {
+      const exists = session.existing_frames.includes(current);
+      const changed = session.dirty_frames.includes(current) || localDirty;
+      const pendingFrames = new Set(session.dirty_frames);
+      if (localDirty) pendingFrames.add(current);
+      $("frame-state").textContent = changed ? "Draft" : exists ? "Existing" : "Empty";
+      $("frame-state").className = changed ? "badge dirty" : "badge";
+      $("dirty-count").textContent = localDirty ? "Editing draft" : session.dirty_frames.length ? `${session.dirty_frames.length} draft frame${session.dirty_frames.length === 1 ? "" : "s"}` : "On disk";
+      $("dirty-count").className = session.dirty_frames.length || localDirty ? "badge dirty" : "badge";
+      $("total-frames").textContent = session.image_count;
+      $("dataset-frames").textContent = session.existing_frames.length;
+      $("total-questions").textContent = session.total_questions + (localDirty ? draft.questions.length - loadedQuestionCount : 0);
+      $("pending-frames").textContent = pendingFrames.size;
+    }
+
+    function updateBatchCount() {
+      try {
+        const count = rangeIndices().length;
+        $("batch-count").textContent = `${count} frame${count === 1 ? "" : "s"}`;
+      } catch (_) {
+        $("batch-count").textContent = "Invalid range";
+      }
+    }
+
+    function setGenerationStatus(message, error = false) {
+      $("generation-status").textContent = message;
+      $("generation-status").className = error ? "generation-status error" : "generation-status";
+    }
+
+    function render() {
+      const list = $("question-list");
+      list.innerHTML = "";
+      $("question-count").textContent = draft.questions.length;
+      const depthSummary = $("depth-summary");
+      if (draft.depth_attempt_count) {
+        const rejected = draft.depth_attempt_count - draft.depth_answered_count;
+        const reasons = draft.depth_rejections.map(reason => `<div>&middot; ${escapeHtml(reason)}</div>`).join("");
+        depthSummary.innerHTML = `<strong>DEPTH</strong> ${draft.depth_answered_count}/${draft.depth_attempt_count} accepted, ${rejected} rejected${reasons}`;
+        depthSummary.className = "depth-summary show";
+      } else {
+        depthSummary.innerHTML = "";
+        depthSummary.className = "depth-summary";
+      }
+      if (!draft.questions.length) {
+        list.innerHTML = '<div class="empty">No questions for this frame.<br>Generate calibrated questions or add one manually.</div>';
+      }
+      draft.questions.forEach((question, index) => {
+        const card = document.createElement("article");
+        card.className = "question";
+        card.dataset.id = question.id;
+        card.innerHTML = `<div class="question-number">QUESTION ${String(index + 1).padStart(2, "0")} &middot; ${escapeHtml(question.id)}</div><button class="delete" title="Delete question">&times;</button><textarea aria-label="Question">${escapeHtml(question.question)}</textarea><div class="choices"></div><button class="add-choice">+ choice</button><label class="answer">Ground truth<select></select></label>`;
+        card.querySelector(".delete").onclick = () => { draft.questions.splice(index, 1); markDirty(); render(); };
+        card.querySelector("textarea").oninput = event => {
+          question.question = event.target.value;
+          markDirty();
+        };
+        const choices = card.querySelector(".choices");
+        question.choices.forEach((choice, choiceIndex) => addChoiceRow(choices, question, choice, choiceIndex));
+        card.querySelector(".add-choice").onclick = () => {
+          question.choices.push("");
+          markDirty(); render();
+        };
+        populateAnswers(card, question);
+        list.appendChild(card);
+      });
+      updateBadges();
+      syncDisabledControls();
+      $("previous").disabled = current === 0;
+      $("next").disabled = current === session.image_count - 1;
+    }
+
+    function addChoiceRow(container, question, value, index) {
+      const row = document.createElement("div");
+      row.className = "choice";
+      row.innerHTML = `<input aria-label="Choice ${index + 1}" value="${escapeAttr(value)}"><button title="Remove choice" ${question.choices.length <= 2 ? "disabled" : ""}>&times;</button>`;
+      row.querySelector("input").oninput = event => {
+        const previousChoice = question.choices[index];
+        question.choices[index] = event.target.value;
+        if (question.answer === previousChoice) question.answer = event.target.value;
+        markDirty(); populateAnswers(row.closest(".question"), question);
+      };
+      row.querySelector("button").onclick = () => {
+        const card = row.closest(".question");
+        const question = draft.questions.find(item => item.id === card.dataset.id);
+        question.choices.splice(index, 1); markDirty(); render();
+      };
+      container.appendChild(row);
+    }
+
+    function populateAnswers(card, question) {
+      const select = card.querySelector("select");
+      const choices = question.choices;
+      select.innerHTML = choices.map(choice => `<option value="${escapeAttr(choice)}" ${choice === question.answer ? "selected" : ""}>${escapeHtml(choice || "(empty choice)")}</option>`).join("");
+      if (!choices.includes(question.answer)) question.answer = choices[0] || "";
+      select.value = question.answer;
+      select.onchange = event => { question.answer = event.target.value; markDirty(); };
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>]/g, character => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"})[character]);
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replace(/"/g, "&quot;");
+    }
+
+    function waitForImage(url, target, onLoad, onError) {
+      return new Promise(resolve => {
+        const loader = new Image();
+        loader.id = target.id;
+        loader.alt = target.alt;
+        loader.hidden = true;
+        let settled = false;
+        const finish = callback => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          loader.onload = null;
+          loader.onerror = null;
+          callback(loader);
+          resolve();
+        };
+        const timeout = setTimeout(() => finish(onError), 5000);
+        loader.onload = () => finish(onLoad);
+        loader.onerror = () => finish(onError);
+        loader.src = url;
+      });
+    }
+
+    function showFrameVisuals(index) {
+      const revision = ++visualRevision;
+      current = Math.max(0, Math.min(session.image_count - 1, Number(index)));
+      $("frame").value = current;
+      $("timeline").value = current;
+      const frameImage = $("frame-image");
+      const frameEmpty = $("frame-empty");
+      if (frameImage.hidden) {
+        frameEmpty.hidden = false;
+        frameEmpty.textContent = "";
+      }
+      const frameReady = waitForImage(
+        `/api/frames/${current}/image?t=${Date.now()}`,
+        frameImage,
+        image => {
+          if (revision !== visualRevision) return;
+          frameImage.replaceWith(image);
+          image.hidden = false;
+          frameEmpty.hidden = true;
+        },
+        () => {
+          if (revision !== visualRevision) return;
+          frameImage.hidden = true;
+          frameEmpty.hidden = false;
+          frameEmpty.textContent = "Frame image unavailable";
+        }
+      );
+      const topdownImage = $("topdown-image");
+      const mapEmpty = $("map-empty");
+      let mapReady = Promise.resolve();
+      if (session.has_topdown) {
+        if (topdownImage.hidden) {
+          mapEmpty.hidden = false;
+          mapEmpty.textContent = "";
+        }
+        mapReady = waitForImage(
+          `/api/frames/${current}/topdown?t=${Date.now()}`,
+          topdownImage,
+          image => {
+            if (revision !== visualRevision) return;
+            topdownImage.replaceWith(image);
+            image.hidden = false;
+            mapEmpty.hidden = true;
+          },
+          () => {
+            if (revision !== visualRevision) return;
+            topdownImage.hidden = true;
+            mapEmpty.hidden = false;
+            mapEmpty.textContent = "No synchronized odometry for this frame";
+          }
+        );
+      } else {
+        topdownImage.hidden = true;
+        mapEmpty.hidden = false;
+        mapEmpty.textContent = "Global map unavailable";
+      }
+      return Promise.all([frameReady, mapReady]);
+    }
+
+    async function loadFrame(index) {
+      if (busy || navigating || !session) return;
+      navigating = true;
+      syncDisabledControls();
+      try {
+        await saveDraft();
+        if (String(index).trim() === "" || !Number.isInteger(Number(index))) {
+          throw new Error("Frame index must be an integer");
+        }
+        const target = Number(index);
+        if (target < 0 || target >= session.image_count) {
+          throw new Error(`Frame index must be within 0-${session.image_count - 1}`);
+        }
+        const nextDraft = await request(`/api/frames/${target}`);
+        installDraft(nextDraft);
+        const visualsReady = showFrameVisuals(target);
+        await visualsReady;
+      } catch (error) {
+        $("frame").value = current;
+        $("timeline").value = current;
+        toast(error.message, true);
+      }
+      finally { navigating = false; render(); }
+    }
+
+    function rangeIndices() {
+      if (["start", "stop", "stride"].some(id => $(id).value.trim() === "")) {
+        throw new Error("Start, stop, and stride are required");
+      }
+      const start = Number($("start").value);
+      const stop = Number($("stop").value);
+      const stride = Number($("stride").value);
+      if (!Number.isInteger(start) || !Number.isInteger(stop) || !Number.isInteger(stride)) {
+        throw new Error("Start, stop, and stride must be integers");
+      }
+      if (start < 0 || stop > session.image_count || stop <= start || stride < 1) {
+        throw new Error(`Select a valid range within 0-${session.image_count}`);
+      }
+      const indices = [];
+      for (let index = start; index < stop; index += stride) indices.push(index);
+      return indices;
+    }
+
+    function confirmGeneration(indices) {
+      const draftFrames = new Set(session.dirty_frames);
+      if (localDirty) draftFrames.add(current);
+      const draftCount = indices.filter(index => draftFrames.has(index)).length;
+      return !draftCount || window.confirm(`Regenerate and replace ${draftCount} existing draft frame${draftCount === 1 ? "" : "s"}?`);
+    }
+
+    async function generateFrames(indices) {
+      let completed = 0;
+      let refreshFailed = false;
+      setBusy(true, "Generating calibrated questions...");
+      try {
+        await saveDraft();
+        for (const [position, index] of indices.entries()) {
+          setGenerationStatus(`Generating ${position + 1} / ${indices.length} / frame ${index}`);
+          const generated = await request("/api/generate", {
+            method: "POST",
+            body: JSON.stringify({image_index: index})
+          });
+          installDraft(generated);
+          completed += 1;
+          session.dirty_frames = [...new Set([...session.dirty_frames, index])];
+          try { session = await request("/api/session"); refreshFailed = false; }
+          catch (_) { refreshFailed = true; }
+          const visualsReady = showFrameVisuals(index);
+          setGenerationStatus(`Generated ${completed} / ${indices.length} / frame ${index} / ${draft.questions.length} questions`);
+          render();
+          if (position === indices.length - 1) await visualsReady;
+          else await new Promise(resolve => requestAnimationFrame(resolve));
+        }
+        setGenerationStatus(`Complete / ${completed} frames${refreshFailed ? " / session refresh pending" : ""}`, refreshFailed);
+        toast(`Generated ${completed} frame${completed === 1 ? "" : "s"}`);
+      } catch (error) {
+        setGenerationStatus(`Stopped after ${completed} / ${indices.length}: ${error.message}`, true);
+        toast(error.message, true);
+      }
+      finally {
+        if (refreshFailed) {
+          try {
+            session = await request("/api/session");
+            refreshFailed = false;
+            if (completed === indices.length) setGenerationStatus(`Complete / ${completed} frames`);
+          }
+          catch (_) {}
+        }
+        setBusy(false);
+        render();
+      }
+    }
+
+    $("previous").onclick = () => loadFrame(current - 1);
+    $("next").onclick = () => loadFrame(current + 1);
+    $("frame").onchange = event => loadFrame(event.target.value);
+    $("timeline").onchange = event => loadFrame(event.target.value);
+    ["start", "stop", "stride"].forEach(id => $(id).oninput = updateBatchCount);
+    $("generate-one").onclick = () => {
+      if (confirmGeneration([current])) generateFrames([current]);
+    };
+    $("generate-range").onclick = () => {
+      try {
+        const indices = rangeIndices();
+        if (confirmGeneration(indices)) generateFrames(indices);
+      }
+      catch (error) { toast(error.message, true); }
+    };
+    $("add-question").onclick = () => {
+      const id = `frame-${String(current).padStart(6, "0")}-manual-${Date.now().toString(36)}`;
+      draft.questions.push({id, question: "", choices: ["yes", "no"], answer: "yes"});
+      markDirty(); render();
+    };
+    $("submit").onclick = async () => {
+      setBusy(true, "Updating dataset...");
+      try {
+        await saveDraft();
+        const result = await request("/api/submit", {method: "POST"});
+        session.dirty_frames = [];
+        try {
+          session = await request("/api/session");
+          toast(`Submitted ${result.question_count} questions across ${result.frame_count} frames`);
+        } catch (_) {
+          toast("Dataset submitted, but session status could not be refreshed", true);
+        }
+      } catch (error) { toast(error.message, true); }
+      finally { setBusy(false); render(); }
+    };
+    window.addEventListener("beforeunload", event => {
+      if (!localDirty && !session?.dirty_frames.length) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
+    document.addEventListener("keydown", event => {
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(event.target.tagName)) return;
+      if (event.key === "ArrowLeft") loadFrame(current - 1);
+      if (event.key === "ArrowRight") loadFrame(current + 1);
+    });
+
+    (async () => {
+      try {
+        session = await request("/api/session");
+        $("recording").textContent = session.recording;
+        $("output").textContent = session.output;
+        $("frame-total").textContent = `/ ${session.image_count - 1}`;
+        $("timeline").max = session.image_count - 1;
+        $("frame").max = session.image_count - 1;
+        $("start").max = session.image_count - 1;
+        $("stop").max = session.image_count;
+        $("stop").value = session.image_count;
+        updateBatchCount();
+        await loadFrame(0);
+      } catch (error) { toast(error.message, true); }
+    })();
+  </script>
+</body>
+</html>
