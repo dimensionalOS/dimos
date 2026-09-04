@@ -84,7 +84,15 @@ def create_or_attach_shm(
 
 def _try_attach(name: str) -> tuple[SharedMemory | None, str]:
     try:
-        return unregister(SharedMemory(name=name)), ""
+        shm = unregister(SharedMemory(name=name))
+        # Free-threaded CPython can return a handle for the shm_open ->
+        # ftruncate window instead of raising ``ValueError``. It is no more
+        # ready than the exception path: mapping it would expose an empty
+        # segment to the caller.
+        if shm.size == 0:
+            shm.close()
+            return None, "creator has not sized the segment yet"
+        return shm, ""
     except FileNotFoundError:
         return None, "segment does not exist"
     except ValueError:

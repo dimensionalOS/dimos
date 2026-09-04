@@ -99,6 +99,24 @@ def test_attach_shm_waits_out_the_race(name, slow_ftruncate):
     assert result == [SIZE], f"attacher did not survive the window: {result}"
 
 
+def test_attach_shm_retries_a_zero_sized_handle(name, monkeypatch, mocker):
+    """CPython may expose the creation window as a size-zero handle."""
+    empty = mocker.Mock(size=0)
+    ready = mocker.Mock(size=SIZE)
+    shared_memory = mocker.patch(
+        "dimos.utils.shm.SharedMemory",
+        side_effect=[empty, ready],
+    )
+    mocker.patch("dimos.utils.shm.resource_tracker.unregister")
+    monkeypatch.setattr("dimos.utils.shm._POLL_S", 0)
+
+    attached = attach_shm(name, timeout=1.0)
+
+    assert attached is ready
+    empty.close.assert_called_once_with()
+    assert shared_memory.call_count == 2
+
+
 def test_attach_shm_times_out_instead_of_hanging(name):
     started = time.monotonic()
     with pytest.raises(ShmNotReadyError) as excinfo:
