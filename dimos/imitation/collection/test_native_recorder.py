@@ -1,0 +1,112 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+import pytest_mock
+
+from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
+from dimos.imitation.collection.native_recorder import NativeCollectionRecorder
+
+
+@pytest.fixture
+def recorder(tmp_path: Path) -> Iterator[NativeCollectionRecorder]:
+    instance = NativeCollectionRecorder(
+        store={"kind": "sqlite", "path": str(tmp_path / "collection.db")},
+        record_tf=False,
+    )
+    yield instance
+    instance.stop()
+
+
+def test_native_collection_profile_resolves_dataprep_codecs(
+    recorder: NativeCollectionRecorder,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    for name in (
+        "color_image",
+        "coordinator_joint_state",
+        "applied_joint_position_command",
+        "status",
+    ):
+        getattr(recorder, name).transport = mocker.MagicMock(channel=f"dimos/{name}")
+
+    specs = recorder._stream_specs()
+
+    assert [(spec.name, spec.codec) for spec in specs] == [
+        ("color_image", "jpeg"),
+        ("coordinator_joint_state", "lcm"),
+        ("applied_joint_position_command", "lcm"),
+        ("status", "lcm"),
+    ]
+    assert recorder.config.record_tf is False
+    assert "record_tf" not in recorder.config.to_config_dict()
+
+
+def test_native_collection_profile_accepts_mcap_store(tmp_path: Path) -> None:
+    recorder = NativeCollectionRecorder(
+        store=RustMcapStoreConfig(path=str(tmp_path / "collection.mcap"))
+    )
+
+    assert recorder.config.store.kind == "mcap"
+    assert recorder.config.store.path == str(tmp_path / "collection.mcap")
+    recorder.stop()
+
+
+@pytest.mark.parametrize(
+    ("record_tf", "expected_ports"),
+    [
+        (
+            False,
+            {
+                "color_image",
+                "coordinator_joint_state",
+                "applied_joint_position_command",
+                "status",
+            },
+        ),
+        (
+            True,
+            {
+                "color_image",
+                "coordinator_joint_state",
+                "applied_joint_position_command",
+                "status",
+                "tf",
+            },
+        ),
+    ],
+)
+def test_native_collection_forwards_only_enabled_stream_topics(
+    recorder: NativeCollectionRecorder,
+    mocker: pytest_mock.MockerFixture,
+    record_tf: bool,
+    expected_ports: set[str],
+) -> None:
+    recorder.config.record_tf = record_tf
+    for name in (
+        "color_image",
+        "coordinator_joint_state",
+        "applied_joint_position_command",
+        "status",
+        "tf",
+    ):
+        getattr(recorder, name).transport = mocker.MagicMock(channel=f"dimos/{name}")
+    recorder.config.streams = recorder._stream_specs()
+
+    topics = recorder._collect_topics()
+
+    assert topics == {name: f"dimos/{name}" for name in expected_ports}

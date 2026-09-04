@@ -14,75 +14,82 @@
 
 """Implementation of the `dimos dataprep` subcommand (build + inspect).
 
-DataPrep is a one-shot batch transform, not a long-lived module, so it runs
-as a plain command over the pure helpers in `dimos.imitation.dataprep.core`
-and exits with a 0/1 status — no coordinator, no blocking loop.
-
-The obs/action stream maps are nested, so they come from a JSON
-`DataPrepConfig` via `--config`; simple flags override `source`/`output`/
-`format` on top. See `dimos/imitation/dataprep/example_config.json`.
+DataPrep is a one-shot batch transform, not a long-lived module. A profile
+supplies the schema template while the CLI supplies run-specific paths.
 """
 
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 import typer
 
-if TYPE_CHECKING:
-    from dimos.imitation.dataprep.core import DataPrepConfig
+from dimos.imitation.dataprep.core import DataPrepConfig
+
+
+def _load_profile(reference: str) -> DataPrepConfig:
+    """Load and validate a ``module:attribute`` profile reference."""
+    from dimos.imitation.dataprep.core import DataPrepProfile
+
+    module_name, separator, attribute = reference.partition(":")
+    if not separator or not module_name or not attribute:
+        raise ValueError("--profile must use module:attribute syntax")
+    module = importlib.import_module(module_name)
+    try:
+        profile = getattr(module, attribute)
+    except AttributeError as error:
+        raise ValueError(f"profile attribute {attribute!r} not found in {module_name!r}") from error
+    if not isinstance(profile, DataPrepProfile):
+        raise TypeError(f"{reference!r} does not implement DataPrepProfile")
+    config = profile.dataprep_config()
+    if not isinstance(config, DataPrepConfig):
+        raise TypeError(f"{reference!r}.dataprep_config() did not return DataPrepConfig")
+    return config
 
 
 def _load_config(
-    config_path: Path | None,
-    source: Path | None,
+    profile: str,
+    source: Path,
     output: Path | None,
-    output_format: Literal["lerobot", "hdf5"] | None,
+    quality_mode: Literal["strict", "fill"] | None,
 ) -> DataPrepConfig:
-    """Build a DataPrepConfig from an optional JSON file + flag overrides."""
-    from dimos.imitation.dataprep.core import DataPrepConfig, OutputConfig
-
-    if config_path is not None:
-        cfg = DataPrepConfig.model_validate_json(Path(config_path).read_text())
-    else:
-        cfg = DataPrepConfig()
-
-    updates: dict[str, object] = {}
-    if source is not None:
-        updates["source"] = str(source)
-    if output is not None or output_format is not None:
-        updates["output"] = OutputConfig(
-            format=output_format or cfg.output.format,
-            path=output or cfg.output.path,
-            metadata=cfg.output.metadata,
-        )
-    return cfg.model_copy(update=updates) if updates else cfg
+    """Apply one invocation's paths and quality mode to a profile template."""
+    cfg = _load_profile(profile)
+    updates: dict[str, object] = {"source": str(source)}
+    if output is not None:
+        updates["output"] = cfg.output.model_copy(update={"path": output})
+    if quality_mode is not None:
+        updates["quality"] = cfg.quality.model_copy(update={"mode": quality_mode})
+    return cfg.model_copy(update=updates)
 
 
 def build(
-    config_path: Path | None,
-    source: Path | None,
+    profile: str,
+    source: Path,
     output: Path | None,
-    output_format: Literal["lerobot", "hdf5"] | None,
+    quality_mode: Literal["strict", "fill"] | None = None,
 ) -> None:
-    from dimos.imitation.dataprep.build import run_dataprep
-
-    cfg = _load_config(config_path, source, output, output_format)
-    if not cfg.source:
-        typer.echo("error: no source given (use --source or set it in --config)", err=True)
-        raise typer.Exit(2)
+    try:
+        cfg = _load_config(profile, source, output, quality_mode)
+    except (ImportError, TypeError, ValueError) as error:
+        typer.echo(f"error: {error}", err=True)
+        raise typer.Exit(2) from error
     if not cfg.observation and not cfg.action:
-        typer.echo(
-            "error: no observation/action streams configured; pass --config with the "
-            "stream maps (see dimos/imitation/dataprep/example_config.json)",
-            err=True,
-        )
+        typer.echo("error: profile has no observation/action streams", err=True)
         raise typer.Exit(2)
 
     try:
-        path = run_dataprep(cfg)
+        if cfg.output.format == "lerobot":
+            from dimos.imitation.dataprep.lerobot import run_lerobot_dataprep
+
+            path = run_lerobot_dataprep(cfg)
+        else:
+            from dimos.imitation.dataprep.build import run_dataprep
+
+            path = run_dataprep(cfg)
     except Exception as e:
         # CLI boundary: any failure becomes a clean message + non-zero exit
         # instead of a traceback. run_dataprep raises specific errors internally.
@@ -91,18 +98,19 @@ def build(
     typer.echo(f"✓ wrote dataset to {path}")
 
 
-def inspect(dataset: Path | None, output_format: Literal["lerobot", "hdf5"] | None) -> None:
-    from dimos.imitation.dataprep.build import inspect_dataset
-
-    if dataset is None:
-        typer.echo(
-            "error: no path given (pass a recording .db, .hdf5 file, or lerobot directory)",
-            err=True,
-        )
-        raise typer.Exit(2)
+def inspect(
+    dataset: Path,
+    profile: str | None = None,
+    quality_mode: Literal["strict", "fill"] | None = None,
+) -> None:
+    from dimos.imitation.dataprep.build import inspect_dataset, inspect_recording
 
     try:
-        info = inspect_dataset(dataset, output_format)
+        if profile is not None:
+            cfg = _load_config(profile, dataset, None, quality_mode)
+            info = inspect_recording(dataset, config=cfg)
+        else:
+            info = inspect_dataset(dataset)
     except Exception as e:
         # CLI boundary: surface failures as a message + non-zero exit, not a traceback.
         typer.echo(f"dataprep inspect failed: {e}", err=True)

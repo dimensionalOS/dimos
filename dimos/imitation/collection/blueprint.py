@@ -57,7 +57,6 @@ def _camera_if_real() -> tuple[Blueprint, ...]:
 learning_collect_quest_xarm7 = autoconnect(
     CollectionRecorder.blueprint(
         db_path=_session_db("xarm7"),
-        poseless_streams=["color_image", "coordinator_joint_state", "status"],
         record_tf=False,
     ),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y
@@ -69,7 +68,6 @@ learning_collect_quest_xarm7 = autoconnect(
 learning_collect_quest_piper = autoconnect(
     CollectionRecorder.blueprint(
         db_path=_session_db("piper"),
-        poseless_streams=["color_image", "coordinator_joint_state", "status"],
         record_tf=False,
     ),
     EpisodeMonitorModule.blueprint(),  # default button_map: toggle=B, discard=Y

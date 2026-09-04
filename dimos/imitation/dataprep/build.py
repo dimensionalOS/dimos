@@ -23,28 +23,61 @@ readers/writers. Exposed by the `dimos dataprep` subcommand.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from itertools import chain
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from dimos.imitation.dataprep.core import (
     DataPrepConfig,
     Episode,
     EpisodeExtractor,
+    EpisodeQualityReport,
     Sample,
+    Writer,
     extract_episodes,
-    get_inspector,
     get_writer,
+    inspect_episode_quality,
     inspect_episodes,
     iter_episode_samples,
 )
-from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.store.base import Store
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-def _write_dimos_meta(dataset_path: Path, config: DataPrepConfig, episodes: list[Episode]) -> None:
+def _open_recording(path: str | Path) -> Store:
+    """Open a native collection artifact through its read-only Store interface."""
+    source = Path(path)
+    if source.suffix == ".db":
+        from dimos.memory.store.sqlite import SqliteStore
+
+        return SqliteStore(path=str(source), must_exist=True)
+    if source.suffix == ".mcap":
+        from dimos.memory.codecs.lcm import LcmCodec
+        from dimos.memory.store.mcap import McapStore
+        from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
+        from dimos.msgs.protocol import DimosMsg
+        from dimos.msgs.sensor_msgs.JointState import JointState
+
+        return McapStore(
+            path=str(source),
+            codecs={
+                "coordinator_joint_state": LcmCodec(JointState),
+                "applied_joint_position_command": LcmCodec(JointState),
+                "status": LcmCodec(cast("type[DimosMsg]", EpisodeStatus)),
+            },
+        )
+    raise ValueError(f"Unsupported recording {str(source)!r}: expected a .db or .mcap artifact")
+
+
+def _write_dimos_meta(
+    dataset_path: Path,
+    config: DataPrepConfig,
+    episodes: list[Episode],
+    quality_reports: list[EpisodeQualityReport],
+) -> None:
     """Sidecar describing how this dataset was built, recording the obs/action
     schema alongside the dataset."""
     meta = {
@@ -52,6 +85,8 @@ def _write_dimos_meta(dataset_path: Path, config: DataPrepConfig, episodes: list
         "observation": {k: v.model_dump() for k, v in config.observation.items()},
         "action": {k: v.model_dump() for k, v in config.action.items()},
         "sync": config.sync.model_dump(),
+        "quality": config.quality.model_dump(),
+        "quality_reports": [report.model_dump() for report in quality_reports],
         "episodes": [
             {
                 "id": e.id,
@@ -75,7 +110,7 @@ def _write_dimos_meta(dataset_path: Path, config: DataPrepConfig, episodes: list
         json.dump(meta, f, indent=2, default=str)
 
 
-def run_dataprep(config: DataPrepConfig) -> Path:
+def run_dataprep(config: DataPrepConfig, *, writer: Writer | None = None) -> Path:
     """Build a dataset from a recording and return the dataset path.
 
     Opens the source store, extracts episodes, streams samples through the
@@ -95,7 +130,7 @@ def run_dataprep(config: DataPrepConfig) -> Path:
         config.episodes.extractor,
         config.output.path,
     )
-    store = SqliteStore(path=config.source, must_exist=True)
+    store = _open_recording(config.source)
     try:
         logger.info("[dataprep] streams in source: %s", store.list_streams())
         all_eps = extract_episodes(store, config.episodes)
@@ -124,10 +159,42 @@ def run_dataprep(config: DataPrepConfig) -> Path:
             sorted(action_keys),
             config.sync.model_dump(),
         )
-        writer = get_writer(config.output.format)
+        selected_writer = writer or get_writer(config.output.format)
+        quality_reports = [
+            inspect_episode_quality(store, episode, streams, config.sync, config.quality)
+            for episode in successful
+        ]
+        valid_ids = {report.episode_id for report in quality_reports if report.valid}
+        valid_episodes = [episode for episode in successful if episode.id in valid_ids]
+        for report in quality_reports:
+            if not report.valid:
+                logger.warning(
+                    "[dataprep] excluding episode %s: %s",
+                    report.episode_id,
+                    "; ".join(report.rejection_reasons),
+                )
+        if not valid_episodes:
+            reasons = {report.episode_id: report.rejection_reasons for report in quality_reports}
+            raise RuntimeError(f"All saved episodes failed dataset validation: {reasons}")
         # fps drives written timestamps + video rate, so tie it to the resample
         # rate; an explicit metadata.fps still wins.
-        output = config.output
+        feature_schema = {
+            **{key: value.model_dump() for key, value in config.observation.items()},
+            **{key: value.model_dump() for key, value in config.action.items()},
+            "complementary_info.is_filled": {
+                "dtype": "bool",
+                "shape": [1],
+                "names": ["is_filled"],
+            },
+        }
+        output = config.output.model_copy(
+            update={
+                "metadata": {
+                    **config.output.metadata,
+                    "feature_schema": feature_schema,
+                }
+            }
+        )
         if config.sync.rate_hz > 0 and "fps" not in output.metadata:
             output = output.model_copy(
                 update={"metadata": {**output.metadata, "fps": config.sync.rate_hz}}
@@ -136,18 +203,19 @@ def run_dataprep(config: DataPrepConfig) -> Path:
 
         samples_seen = 0
         episodes_done = 0
-        total = len(successful)
+        total = len(valid_episodes)
         produced: list[Episode] = []  # episodes that yielded ≥1 sample
 
         def _all_samples() -> Iterator[Sample]:
             nonlocal samples_seen, episodes_done
-            for ep in successful:
+            for ep in valid_episodes:
                 before = samples_seen
                 for sample in iter_episode_samples(
                     store=store,
                     episode=ep,
                     streams=streams,
                     sync=config.sync,
+                    quality=config.quality,
                     obs_keys=obs_keys,
                     action_keys=action_keys,
                 ):
@@ -165,9 +233,24 @@ def run_dataprep(config: DataPrepConfig) -> Path:
                     produced.append(ep)
                 episodes_done += 1
 
-        dataset_path = Path(writer(_all_samples(), output))
+        samples = _all_samples()
+        try:
+            first_sample = next(samples)
+        except StopIteration as error:
+            recorded_streams = sorted({ref.stream for ref in streams.values()})
+            counts = ", ".join(
+                f"{stream_name}={store.stream(stream_name).count()}"
+                for stream_name in recorded_streams
+            )
+            raise RuntimeError(
+                f"No synchronized samples were produced from {total} successful episode(s). "
+                f"Recorded stream counts: {counts}. Check that every configured stream records "
+                "data during each episode before changing the synchronization contract."
+            ) from error
+
+        dataset_path = Path(selected_writer(chain((first_sample,), samples), output))
         written = [e.model_copy(update={"id": f"ep_{i:06d}"}) for i, e in enumerate(produced)]
-        _write_dimos_meta(dataset_path, config, written)
+        _write_dimos_meta(dataset_path, config, written, quality_reports)
         logger.info(
             "[dataprep] succeeded — wrote %d samples across %d episodes to %s",
             samples_seen,
@@ -179,10 +262,14 @@ def run_dataprep(config: DataPrepConfig) -> Path:
         store.stop()
 
 
-def inspect_recording(path: Path | str, status_stream: str = "status") -> dict[str, Any]:
+def inspect_recording(
+    path: Path | str,
+    status_stream: str = "status",
+    config: DataPrepConfig | None = None,
+) -> dict[str, Any]:
     """Summarize a source recording, including an episode left open at EOF."""
     p = Path(path)
-    store = SqliteStore(path=str(p), must_exist=True)
+    store = _open_recording(p)
     try:
         stream_names = store.list_streams()
         stream_counts = {name: store.stream(name).count() for name in stream_names}
@@ -192,7 +279,7 @@ def inspect_recording(path: Path | str, status_stream: str = "status") -> dict[s
             report = None
         episodes = report.episodes if report is not None else []
         incomplete = report.incomplete if report is not None else []
-        return {
+        result: dict[str, Any] = {
             "format": "recording",
             "path": str(p),
             "streams": stream_counts,
@@ -202,28 +289,39 @@ def inspect_recording(path: Path | str, status_stream: str = "status") -> dict[s
             "discarded_episodes": sum(not episode.success for episode in episodes),
             "incomplete_episodes": [episode.model_dump() for episode in incomplete],
         }
+        if config is not None:
+            streams = {**config.observation, **config.action}
+            result["quality"] = [
+                inspect_episode_quality(
+                    store, episode, streams, config.sync, config.quality
+                ).model_dump()
+                for episode in episodes
+                if episode.success
+            ]
+        return result
     finally:
         store.stop()
 
 
-def inspect_dataset(path: Path | str, fmt: str | None = None) -> dict[str, Any]:
+def inspect_dataset(path: Path | str) -> dict[str, Any]:
     """Summarize a source recording or built dataset.
 
     Recordings report stream and episode counts plus any episode left open at
     EOF. Built datasets report feature shapes/dtypes, frame counts, and shape
-    uniformity. ``fmt`` is auto-detected when omitted.
+    uniformity. The format is detected from the path.
     """
     p = Path(path)
-    if fmt is None:
-        if p.suffix == ".db":
-            return inspect_recording(p)
-        if p.suffix in (".h5", ".hdf5"):
-            fmt = "hdf5"
-        elif (p / "meta" / "info.json").exists():
-            fmt = "lerobot"
-        else:
-            raise ValueError(
-                f"Cannot detect data format at {p}: expected a recording .db, a .hdf5 file, "
-                f"or a lerobot directory with meta/info.json. Pass --format explicitly."
-            )
-    return get_inspector(fmt)(p)
+    if p.suffix in {".db", ".mcap"}:
+        return inspect_recording(p)
+    if p.suffix in (".h5", ".hdf5"):
+        from dimos.imitation.dataprep.formats.hdf5.reader import inspect
+
+        return inspect(p)
+    if (p / "meta" / "info.json").exists():
+        from dimos.imitation.dataprep.lerobot import inspect_lerobot_dataset
+
+        return inspect_lerobot_dataset(p)
+    raise ValueError(
+        f"Cannot detect data format at {p}: expected a recording .db/.mcap, "
+        "a .hdf5 file, or a lerobot directory with meta/info.json."
+    )

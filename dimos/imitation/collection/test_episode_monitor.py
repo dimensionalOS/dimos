@@ -30,11 +30,8 @@ from pydantic import ValidationError
 import pytest
 import pytest_mock
 
-from dimos.imitation.collection.episode_monitor import (
-    EpisodeMonitorModule,
-    EpisodeStatus,
-    KeyPress,
-)
+from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.teleop.quest.quest_types import BUTTON_ALIASES, Buttons
 
@@ -59,6 +56,7 @@ def make_monitor(
     built: list[EpisodeMonitorModule] = []
 
     def _make(**config: object) -> EpisodeMonitorModule:
+        config.setdefault("task", "pick up the block")
         m = EpisodeMonitorModule(**config)
         m.status = mocker.MagicMock()  # type: ignore[assignment]
         built.append(m)
@@ -94,6 +92,12 @@ def test_toggle_starts_then_saves(make_monitor: Callable[..., EpisodeMonitorModu
     assert events[-1].state == "idle"
     assert events[-1].episodes_saved == 1
     assert events[-1].episodes_discarded == 0
+    assert events[-1].task_label == "pick up the block"
+
+
+def test_task_is_required(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
+    with pytest.raises(ValidationError, match="task"):
+        EpisodeMonitorModule()
 
 
 def test_discard_does_not_count_as_saved(
@@ -112,11 +116,9 @@ def test_discard_does_not_count_as_saved(
 def test_start_while_recording_autocommits_previous(
     make_monitor: Callable[..., EpisodeMonitorModule],
 ) -> None:
-    # toggle (start), then an explicit start via keyboard while still recording:
-    # the in-progress episode auto-commits (matches the offline extractor).
-    m = make_monitor(keyboard_map={"start": "r"})
-    _press(m, "B")  # recording
-    m._on_keyboard(KeyPress(key="r", ts=2.0))  # start again → auto-commit prior
+    m = make_monitor(button_map={"start": "A"})
+    _press(m, "A")
+    _press(m, "A")
 
     last = _events(m)[-1]
     assert last.last_event == "start"
@@ -158,17 +160,6 @@ def test_published_status_is_internally_consistent(
     assert events[-1].episodes_discarded == 1
 
 
-def test_reset_counters(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
-    m = make_monitor()
-    _press(m, "B")
-    _press(m, "B")
-    status = m.reset_counters()
-    assert status.episodes_saved == 0
-    assert status.episodes_discarded == 0
-    assert status.state == "idle"
-    assert status.last_event == "init"
-
-
 def test_shutdown_discards_recording(make_monitor: Callable[..., EpisodeMonitorModule]) -> None:
     m = make_monitor()
     _press(m, "B")
@@ -204,8 +195,6 @@ def test_buttons_are_ignored_after_shutdown_begins(
     _press(m, "B")
 
     assert _events(m) == []
-    with pytest.raises(RuntimeError, match="during shutdown"):
-        m.reset_counters()
 
 
 def test_stop_waits_for_in_flight_transition_and_blocks_later_transitions(

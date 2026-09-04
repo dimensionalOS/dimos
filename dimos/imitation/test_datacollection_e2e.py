@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""End-to-end coverage from live collection through both dataset formats."""
+"""End-to-end coverage from live collection through host-side DataPrep."""
 
 from __future__ import annotations
 
@@ -21,29 +21,28 @@ import json
 from pathlib import Path
 from typing import Any
 
-import cv2
 import h5py
 import numpy as np
-import pyarrow.parquet as pq
 import pytest
 
 from dimos.core.stream import Stream, Transport
-from dimos.imitation.collection.episode_monitor import (
-    EpisodeEvent,
-    EpisodeStatus,
-    RecordingState,
-)
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.imitation.dataprep.build import inspect_dataset, run_dataprep
 from dimos.imitation.dataprep.core import (
     DataPrepConfig,
     EpisodeExtractor,
+    FeatureSpec,
     OutputConfig,
-    StreamField,
+    QualityConfig,
     SyncConfig,
     extract_episodes,
 )
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.imitation_msgs.EpisodeStatus import (
+    EpisodeEvent,
+    EpisodeStatus,
+    RecordingState,
+)
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.testing.waiting import wait_until
@@ -107,13 +106,32 @@ def _dataprep_config(db_path: Path, output: OutputConfig) -> DataPrepConfig:
         source=str(db_path),
         episodes=EpisodeExtractor(status_stream="status"),
         observation={
-            "camera": StreamField(stream="color_image"),
-            "state": StreamField(stream="coordinator_joint_state", field="position"),
+            "camera": FeatureSpec(
+                stream="color_image",
+                field="data",
+                dtype="video",
+                shape=(16, 16, 3),
+                names=["height", "width", "channels"],
+            ),
+            "state": FeatureSpec(
+                stream="coordinator_joint_state",
+                field="position",
+                dtype="float32",
+                shape=(2,),
+                names=["joint_0", "joint_1"],
+            ),
         },
         action={
-            "action": StreamField(stream="coordinator_joint_state", field="position"),
+            "action": FeatureSpec(
+                stream="coordinator_joint_state",
+                field="position",
+                dtype="float32",
+                shape=(2,),
+                names=["joint_0", "joint_1"],
+            ),
         },
-        sync=SyncConfig(anchor="camera", rate_hz=1.0, tolerance_ms=1.0, action_shift=1),
+        sync=SyncConfig(anchor="camera", rate_hz=1.0, tolerance_ms=1.0),
+        quality=QualityConfig(max_camera_gap_ms=1100.0),
         output=output,
     )
 
@@ -195,27 +213,18 @@ def _record_session(db_path: Path) -> None:
         recorder.stop()
 
 
-def _read_video(path: Path) -> list[np.ndarray[Any, Any]]:
-    capture = cv2.VideoCapture(str(path))
-    frames: list[np.ndarray[Any, Any]] = []
-    try:
-        while True:
-            ok, bgr = capture.read()
-            if not ok:
-                return frames
-            frames.append(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
-    finally:
-        capture.release()
-
-
 EXPECTED_STATE = np.asarray(
-    [[0.0, 100.0], [1.0, 101.0], [20.0, 120.0], [21.0, 121.0]],
+    [
+        [0.0, 100.0],
+        [1.0, 101.0],
+        [2.0, 102.0],
+        [20.0, 120.0],
+        [21.0, 121.0],
+        [22.0, 122.0],
+    ],
     dtype=np.float32,
 )
-EXPECTED_ACTION = np.asarray(
-    [[1.0, 101.0], [2.0, 102.0], [21.0, 121.0], [22.0, 122.0]],
-    dtype=np.float32,
-)
+EXPECTED_ACTION = EXPECTED_STATE.copy()
 
 
 @pytest.fixture(scope="module")
@@ -269,11 +278,11 @@ def test_collection_to_hdf5_roundtrip(
         )
     )
     hdf5_info = inspect_dataset(hdf5_path)
-    assert (hdf5_info["episodes"], hdf5_info["frames"], hdf5_info["fps"]) == (2, 4, 1.0)
+    assert (hdf5_info["episodes"], hdf5_info["frames"], hdf5_info["fps"]) == (2, 6, 1.0)
     assert hdf5_info["episode_lengths"] == {
-        "min": 2,
-        "max": 2,
-        "mean": 2.0,
+        "min": 3,
+        "max": 3,
+        "mean": 3.0,
         "uniform": True,
     }
 
@@ -281,8 +290,8 @@ def test_collection_to_hdf5_roundtrip(
         first = h5["episodes/episode_000000"]
         second = h5["episodes/episode_000001"]
         assert [first.attrs["start_ts"], second.attrs["start_ts"]] == [100.0, 108.0]
-        np.testing.assert_array_equal(first["timestamp"][:], [0.0, 1.0])
-        np.testing.assert_array_equal(second["timestamp"][:], [0.0, 1.0])
+        np.testing.assert_array_equal(first["timestamp"][:], [0.0, 1.0, 2.0])
+        np.testing.assert_array_equal(second["timestamp"][:], [0.0, 1.0, 2.0])
         np.testing.assert_array_equal(
             np.concatenate([first["observation/state"][:], second["observation/state"][:]]),
             EXPECTED_STATE,
@@ -293,11 +302,11 @@ def test_collection_to_hdf5_roundtrip(
         )
         np.testing.assert_array_equal(
             first["observation/camera"][:],
-            np.stack([recorded_images[100.0], recorded_images[101.0]]),
+            np.stack([recorded_images[100.0], recorded_images[101.0], recorded_images[102.0]]),
         )
         np.testing.assert_array_equal(
             second["observation/camera"][:],
-            np.stack([recorded_images[108.0], recorded_images[109.0]]),
+            np.stack([recorded_images[108.0], recorded_images[109.0], recorded_images[110.0]]),
         )
 
     hdf5_meta = json.loads((tmp_path / "dataset.dimos_meta.json").read_text())
@@ -305,51 +314,3 @@ def test_collection_to_hdf5_roundtrip(
         (episode["start_ts"], episode["end_ts"], episode["task_label"])
         for episode in hdf5_meta["episodes"]
     ] == [(100.0, 102.0, "pick"), (108.0, 110.0, "place")]
-
-
-def test_collection_to_lerobot_roundtrip(
-    tmp_path: Path,
-    recorded_session: tuple[Path, dict[float, np.ndarray[Any, Any]]],
-) -> None:
-    db_path, recorded_images = recorded_session
-    try:
-        lerobot_path = run_dataprep(
-            _dataprep_config(
-                db_path,
-                OutputConfig(
-                    format="lerobot",
-                    path=tmp_path / "lerobot",
-                    metadata={"robot": "synthetic"},
-                ),
-            )
-        )
-    except RuntimeError as exc:
-        if "VideoWriter" in str(exc):
-            pytest.skip(f"no mp4v encoder available in this environment: {exc}")
-        raise
-
-    lerobot_info = inspect_dataset(lerobot_path)
-    assert (lerobot_info["episodes"], lerobot_info["frames"], lerobot_info["fps"]) == (2, 4, 1.0)
-    data = pq.read_table(lerobot_path / "data/chunk-000/file-000.parquet")
-    assert data.column("timestamp").to_pylist() == pytest.approx([0.0, 1.0, 0.0, 1.0])
-    assert data.column("episode_index").to_pylist() == [0, 0, 1, 1]
-    assert data.column("frame_index").to_pylist() == [0, 1, 0, 1]
-    np.testing.assert_array_equal(
-        np.asarray(data.column("observation.state").to_pylist()), EXPECTED_STATE
-    )
-    np.testing.assert_array_equal(np.asarray(data.column("action").to_pylist()), EXPECTED_ACTION)
-
-    episode_rows = pq.read_table(
-        lerobot_path / "meta/episodes/chunk-000/file-000.parquet"
-    ).to_pylist()
-    assert [row["length"] for row in episode_rows] == [2, 2]
-    assert [(row["dataset_from_index"], row["dataset_to_index"]) for row in episode_rows] == [
-        (0, 2),
-        (2, 4),
-    ]
-    assert [row["tasks"] for row in episode_rows] == [["pick"], ["place"]]
-
-    video = _read_video(lerobot_path / "videos/observation.images.camera/chunk-000/file-000.mp4")
-    assert len(video) == 4
-    expected_means = [recorded_images[ts].mean() for ts in (100.0, 101.0, 108.0, 109.0)]
-    np.testing.assert_allclose([frame.mean() for frame in video], expected_means, atol=5.0)

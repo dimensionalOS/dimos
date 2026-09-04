@@ -1923,6 +1923,7 @@ graspgenx = [
 ]
 learning = [
     { name = "h5py" },
+    { name = "mcap" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pyarrow" },
@@ -2296,7 +2297,7 @@ requires-dist = [
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
-    { name = "dimos-lcm", specifier = ">=0.1.3" },
+    { name = "dimos-lcm", git = "https://github.com/dimensionalOS/dimos-lcm.git?rev=dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5" },
     { name = "dimos-viewer", specifier = "==0.32.0a2" },
     { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = "==0.32.0a2" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'manipulation'", specifier = "==1.45.0" },
@@ -2334,6 +2335,7 @@ requires-dist = [
     { name = "manifold3d", marker = "extra == 'apriltag'", specifier = ">=2.5.0" },
     { name = "matplotlib", marker = "extra == 'graspgenx'", specifier = ">=3.7.1" },
     { name = "matplotlib", marker = "extra == 'manipulation'", specifier = ">=3.7.1" },
+    { name = "mcap", marker = "extra == 'learning'", specifier = ">=1.2" },
     { name = "mcap", marker = "extra == 'unitree-dds'", specifier = ">=1.2.0" },
     { name = "moondream", marker = "extra == 'perception'" },
     { name = "mujoco", marker = "extra == 'sim'", specifier = ">=3.3.4" },
@@ -2612,17 +2614,13 @@ tests-self-hosted = [
 
 [[package]]
 name = "dimos-lcm"
-version = "0.1.3"
-source = { registry = "https://pypi.org/simple" }
+version = "0.1.4"
+source = { git = "https://github.com/dimensionalOS/dimos-lcm.git?rev=dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5#dd2159513ebfaa7ebc5fc32bf60209cd09aa1ca5" }
 dependencies = [
     { name = "foxglove-websocket" },
     { name = "lcm-dimos-fork" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/09/b2/4cdd2bce665ab633313b5d371e0a63fcae2cf77a934a2a9bf820db88a540/dimos_lcm-0.1.3.tar.gz", hash = "sha256:5f7dbd3055f299823bc0e450c59583ad5a2d093c182deec8a86073853881bb09", size = 405688, upload-time = "2026-06-03T07:20:20.552Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/95/19/2d8babf544993508359922ea59db2280d42efa0d5a80d4d0cae22ce40d67/dimos_lcm-0.1.3-py3-none-any.whl", hash = "sha256:63317225a0b4ab0f05e4b656f3f78ac9ba4e914998da2c689ca839cbbd83d57d", size = 1714087, upload-time = "2026-06-03T07:20:22.689Z" },
 ]
 
 [[package]]

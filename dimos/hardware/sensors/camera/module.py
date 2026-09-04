@@ -24,7 +24,7 @@ from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import CameraHardware
-from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.hardware.sensors.camera.webcam import Webcam, WebcamConfig
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -47,7 +47,9 @@ def default_transform() -> Transform:
 class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
     transform: Transform | None = Field(default_factory=default_transform)
-    hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
+    hardware: WebcamConfig | Callable[[], CameraHardware] | CameraHardware = Field(
+        default_factory=WebcamConfig
+    )
     frequency: float = 0.0  # Hz, 0 means no limit
 
 
@@ -63,7 +65,9 @@ class CameraModule(Module, perception.Camera):
     def start(self) -> None:
         super().start()
 
-        if callable(self.config.hardware):
+        if isinstance(self.config.hardware, WebcamConfig):
+            self.hardware = Webcam(**self.config.hardware.model_dump())
+        elif callable(self.config.hardware):
             self.hardware = self.config.hardware()
         else:
             self.hardware = self.config.hardware

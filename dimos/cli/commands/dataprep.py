@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
 import typer
 
@@ -28,25 +28,28 @@ dataprep_app = typer.Typer(help="Build and inspect learning datasets from record
 
 @dataprep_app.command("build")
 def dataprep_build(
-    source: Path | None = typer.Option(None, "--source", "-s", help="Recording .db to read"),
+    profile: str = typer.Option(..., "--profile", help="DataPrep profile as module:attribute"),
+    source: Path = typer.Option(..., "--source", "-s", help="Recording .db or .mcap to read"),
     output: Path | None = typer.Option(None, "--output", help="Dataset output directory"),
-    output_format: str = typer.Option(None, "--format", "-f", help="Output format: lerobot | hdf5"),
-    config_path: Path | None = typer.Option(
-        None, "--config", "-c", help="JSON DataPrepConfig (needed for obs/action stream maps)"
+    quality_mode: Literal["strict", "fill"] | None = typer.Option(
+        None, "--quality-mode", help="Override episode validation: strict | fill"
     ),
 ) -> None:
     """Build a dataset from a recording (lerobot/hdf5 + dimos_meta.json)."""
-    build(config_path, source, output, cast("Literal['lerobot', 'hdf5'] | None", output_format))
+    build(profile, source, output, quality_mode)
 
 
 @dataprep_app.command("inspect")
 def dataprep_inspect(
-    dataset: Path | None = typer.Argument(
-        None, help="Recording .db, built .hdf5 file, or lerobot directory"
+    dataset: Path = typer.Argument(
+        ..., help="Recording .db/.mcap, built .hdf5 file, or lerobot directory"
     ),
-    output_format: str = typer.Option(
-        None, "--format", "-f", help="lerobot | hdf5 (auto-detected from the path if omitted)"
+    profile: str | None = typer.Option(
+        None, "--profile", help="Validate a recording with this module:attribute profile"
+    ),
+    quality_mode: Literal["strict", "fill"] | None = typer.Option(
+        None, "--quality-mode", help="Override episode validation: strict | fill"
     ),
 ) -> None:
     """Summarize a recording or built dataset, including incomplete episodes."""
-    inspect(dataset, cast("Literal['lerobot', 'hdf5'] | None", output_format))
+    inspect(dataset, profile, quality_mode)

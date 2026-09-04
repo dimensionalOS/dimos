@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Single point of teleop-input → EpisodeStatus translation.
+"""Single point of Quest-input → EpisodeStatus translation.
 
-Watches buttons / keyboard, runs the start/save/discard state machine,
+Watches buttons, runs the start/save/discard state machine,
 publishes EpisodeStatus on every transition. RecordReplay (or whatever
-records the bus) captures that stream into session.db; DataPrep reads
-only the recorded EpisodeStatus events offline — never raw buttons or
-keypresses.
+records the bus) captures that stream into session.db; DataPrep reads only
+the recorded EpisodeStatus events offline — never raw buttons.
 """
 
 from __future__ import annotations
@@ -27,13 +26,18 @@ import threading
 import time
 from typing import Any, Literal, TypeAlias
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 from reactivex.abc import DisposableBase
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.imitation_msgs.EpisodeStatus import (
+    EpisodeEvent,
+    EpisodeStatus,
+    RecordingState,
+)
 from dimos.teleop.quest.quest_types import BUTTON_ALIASES, Buttons
 from dimos.utils.logging_config import setup_logger
 
@@ -42,25 +46,6 @@ logger = setup_logger()
 # A button/keyboard press requests one of these; `toggle` resolves to
 # `start`/`save` based on the current state, so it never reaches the output.
 EpisodeCommand: TypeAlias = Literal["start", "save", "discard", "toggle"]
-# What gets published as `EpisodeStatus.last_event` (`init` on boot).
-EpisodeEvent: TypeAlias = Literal["start", "save", "discard", "init"]
-RecordingState: TypeAlias = Literal["idle", "recording"]
-
-
-class EpisodeStatus(BaseModel):
-    ts: float
-    state: RecordingState
-    episodes_saved: int
-    episodes_discarded: int
-    last_event: EpisodeEvent = "init"
-    task_label: str | None = None
-
-
-class KeyPress(BaseModel):
-    """Single keypress event from a keyboard input source."""
-
-    key: str
-    ts: float
 
 
 def _default_button_map() -> dict[EpisodeCommand, str]:
@@ -69,8 +54,14 @@ def _default_button_map() -> dict[EpisodeCommand, str]:
 
 class EpisodeMonitorModuleConfig(ModuleConfig):
     button_map: dict[EpisodeCommand, str] = Field(default_factory=_default_button_map)
-    keyboard_map: dict[EpisodeCommand, str] = Field(default_factory=dict)
-    default_task_label: str | None = None
+    task: str
+
+    @field_validator("task")
+    @classmethod
+    def _validate_task(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("task must be a non-empty description")
+        return value.strip()
 
     @field_validator("button_map")
     @classmethod
@@ -95,9 +86,6 @@ class EpisodeMonitorModule(Module):
     config: EpisodeMonitorModuleConfig
 
     teleop_buttons: In[Buttons]
-    # TODO: no KeyPress producer exists yet — add a pygame keyboard module that
-    # publishes KeyPress so this port is actually fed (today only buttons drive it).
-    keyboard: In[KeyPress]
     status: Out[EpisodeStatus]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -105,7 +93,7 @@ class EpisodeMonitorModule(Module):
         self._state: RecordingState = "idle"
         self._saved: int = 0
         self._discarded: int = 0
-        self._prev_bits: dict[str, bool] = {}  # rising-edge detection for buttons
+        self._prev_bits: dict[str, bool] = {}
         self._lock = threading.Lock()
         self._transition_lock = threading.Lock()
         self._stopping = False
@@ -117,26 +105,12 @@ class EpisodeMonitorModule(Module):
         # Registered so the base Module.stop() disposes them on shutdown.
         self._input_subscriptions = [
             self.register_disposable(Disposable(self.teleop_buttons.subscribe(self._on_buttons))),
-            self.register_disposable(Disposable(self.keyboard.subscribe(self._on_keyboard))),
         ]
         # Emit an initial idle status so subscribers (and recorders) have a
         # known starting point in the timeline.
         with self._lock:
             status = self._snapshot("init", time.time())
         self._emit(status)
-
-    @rpc
-    def reset_counters(self) -> EpisodeStatus:
-        with self._transition_lock:
-            with self._lock:
-                if self._stopping:
-                    raise RuntimeError("cannot reset episode counters during shutdown")
-                self._state = "idle"
-                self._saved = 0
-                self._discarded = 0
-                self._prev_bits = {}
-                status = self._snapshot("init", time.time())
-            return self._emit(status)
 
     @rpc
     def stop(self) -> None:
@@ -164,8 +138,7 @@ class EpisodeMonitorModule(Module):
     def _on_buttons(self, msg: Buttons) -> None:
         """Rising-edge detect against `config.button_map`; advance state machine."""
         ts = time.time()
-        # Edge-detect under the lock (it shares `_prev_bits` with reset_counters),
-        # then fire transitions outside it — `_transition` takes the same lock.
+        # Edge-detect under the lock, then fire transitions outside it.
         fired: list[EpisodeCommand] = []
         with self._lock:
             if self._stopping:
@@ -182,13 +155,6 @@ class EpisodeMonitorModule(Module):
                     fired.append(event_name)
         for event_name in fired:
             self._transition(event_name, ts)
-
-    def _on_keyboard(self, msg: KeyPress) -> None:
-        """Match `msg.key` against `config.keyboard_map`; advance state machine."""
-        for event_name, key in self.config.keyboard_map.items():
-            if msg.key == key:
-                self._transition(event_name, msg.ts)
-                break
 
     def _transition(self, event: EpisodeCommand, ts: float) -> None:
         """State-machine transition. Publishes EpisodeStatus on every change.
@@ -228,7 +194,7 @@ class EpisodeMonitorModule(Module):
             episodes_saved=self._saved,
             episodes_discarded=self._discarded,
             last_event=last_event,
-            task_label=self.config.default_task_label,
+            task_label=self.config.task,
         )
 
     def _emit(self, status: EpisodeStatus) -> EpisodeStatus:

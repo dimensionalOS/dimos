@@ -42,8 +42,8 @@ from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.imitation.collection.episode_monitor import EpisodeStatus
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Joy import Joy
 
 # Hand is re-exported for back-compat; it lives in quest_types.

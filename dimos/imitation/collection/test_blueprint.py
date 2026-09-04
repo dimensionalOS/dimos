@@ -36,11 +36,6 @@ AGGREGATE = "coordinator_joint_state"
 def test_collection_streams_are_poseless(blueprint: Blueprint) -> None:
     recorder = next(atom for atom in blueprint.blueprints if atom.module is CollectionRecorder)
 
-    assert recorder.kwargs["poseless_streams"] == [
-        "color_image",
-        "coordinator_joint_state",
-        "status",
-    ]
     assert recorder.kwargs["record_tf"] is False
 
 
@@ -82,7 +77,10 @@ def _joint_streams(blueprint: Blueprint) -> dict[tuple[str, str], str]:
     }
 
 
-@pytest.mark.parametrize("blueprint", [learning_collect_quest_xarm7, learning_collect_quest_piper])
+@pytest.mark.parametrize(
+    "blueprint",
+    [learning_collect_quest_xarm7, learning_collect_quest_piper],
+)
 def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
     streams = _joint_streams(blueprint)
 
@@ -90,4 +88,3 @@ def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
     # atom carries its explicit instance_name (the RPC lookup contract).
     assert streams[("collectionrecorder", AGGREGATE)] == AGGREGATE
     assert streams[("ControlCoordinator", AGGREGATE)] == AGGREGATE
-    assert not [port for _instance, port in streams if port.endswith("_joints")]
