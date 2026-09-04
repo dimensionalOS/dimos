@@ -12,230 +12,137 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Small RPC client for a running :class:`ManipulationModule`.
+"""Typed Python client for a running manipulation blueprint.
 
-Start ``dimos run xarm7-planner-coordinator``, then run this module with
-``python -i -m dimos.manipulation.planning.examples.manipulation_client``.
+Start ``dimos run xarm-perception-sim-agent``, then run this module.
+With no arguments it demonstrates motion. Add ``--object cup --place X Y Z``
+to scan, pick, and place at a verified planning-frame position.
 """
 
 from __future__ import annotations
 
-from typing import cast
+import argparse
 
-from dimos.core.rpc_client import RPCClient
-from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
     ExecutionResult,
-    ManipulationSnapshot,
+    ExecutionStatus,
+    ManipulationSpec,
     MoveResult,
-    PlanningGroupInfo,
     PlanResult,
 )
-from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.manipulation.pick_and_place_spec import PickAndPlaceSpec, PickPlaceResult
+from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-
-_client = RPCClient(None, ManipulationModule)
-
-
-def groups() -> tuple[PlanningGroupInfo, ...]:
-    """List opaque planning-group IDs and capabilities."""
-    return cast("tuple[PlanningGroupInfo, ...]", _client.list_planning_groups())
+from dimos.porcelain.dimos import Dimos
 
 
-def state() -> ManipulationSnapshot:
-    """Get one snapshot containing every planning group."""
-    return cast("ManipulationSnapshot", _client.get_state())
+def _require(
+    result: CommandResult | ExecutionResult | MoveResult | PlanResult | PickPlaceResult,
+) -> None:
+    print(result)
+    if not result.succeeded:
+        raise RuntimeError(str(result))
 
 
-def plan_joints(
-    positions: list[float],
-    planning_group: str | None = None,
-    speed_scale: float | None = None,
-) -> PlanResult:
-    """Plan joint motion without executing it."""
-    group = _select_group(planning_group)
-    target = JointState(name=list(group.joint_names), position=positions)
-    return cast("PlanResult", _client.plan_to_joints({group.id: target}, speed_scale))
-
-
-def plan_pose(
-    x: float,
-    y: float,
-    z: float,
-    planning_group: str | None = None,
-    speed_scale: float | None = None,
-) -> PlanResult:
-    """Plan an absolute world-frame pose while preserving orientation."""
-    group = _select_group(planning_group, pose_capable=True)
-    current = state().groups[group.id].end_effector_pose
-    if current is None:
-        raise RuntimeError(f"End-effector pose is unavailable for {group.id!r}")
-    target = PoseStamped(
-        frame_id="world",
-        position=Vector3(x, y, z),
-        orientation=current.orientation,
-    )
-    return cast("PlanResult", _client.plan_to_poses({group.id: target}, speed_scale))
-
-
-def execute(blocking: bool = True, timeout: float | None = None) -> ExecutionResult:
-    """Consume and execute the pending plan."""
-    return cast("ExecutionResult", _client.execute(blocking, timeout))
-
-
-def wait(timeout: float | None = None) -> ExecutionResult:
-    """Wait for the current execution's terminal JTT status."""
-    return cast("ExecutionResult", _client.wait_for_execution(timeout))
-
-
-def move_linear(
-    dx: float = 0.0,
-    dy: float = 0.0,
-    dz: float = 0.0,
-    planning_group: str | None = None,
-    check_collision: bool = False,
-    blocking: bool = True,
-) -> MoveResult:
-    """Move an end effector by a world-frame translation."""
-    return cast(
-        "MoveResult",
-        _client.move_linear(
-            dx,
-            dy,
-            dz,
-            planning_group,
-            check_collision,
-            None,
-            blocking,
-            None,
-        ),
-    )
-
-
-def gripper(position: float, planning_group: str | None = None) -> CommandResult:
-    """Set gripper opening in metres."""
-    return cast("CommandResult", _client.set_gripper_position(position, planning_group))
-
-
-def cancel() -> ExecutionResult:
-    """Cancel planning or active execution."""
-    return cast("ExecutionResult", _client.cancel())
-
-
-def _select_group(
-    planning_group: str | None,
-    *,
-    pose_capable: bool = False,
-) -> PlanningGroupInfo:
-    candidates = tuple(
+def run_motion(motion: ManipulationSpec) -> PlanningGroupID:
+    """Demonstrate planning, preview, execution, cancellation, and gripper control."""
+    groups = tuple(
         group
-        for group in groups()
-        if (planning_group is None or group.id == planning_group)
-        and (not pose_capable or group.tip_frame is not None)
+        for group in motion.list_planning_groups()
+        if group.tip_frame is not None and group.has_gripper
     )
-    if len(candidates) != 1:
-        raise ValueError("Planning group is missing or ambiguous")
-    return candidates[0]
+    if len(groups) != 1:
+        raise RuntimeError(f"Expected one gripper-capable pose group, got {groups!r}")
+    group = groups[0]
+    snapshot = motion.get_state()
+    print(snapshot)
+    state = snapshot.groups[group.id]
+    if state.joints is None or state.end_effector_pose is None:
+        raise RuntimeError("Wait for joint state and end-effector pose before running the example")
+    initial = state.joints
+    positions = list(initial.position)
+    positions[0] += 0.02
+    target = JointState(name=list(initial.name), position=positions)
 
+    planned = motion.plan_to_joints({group.id: target}, speed_scale=0.2)
+    _require(planned)
+    _require(motion.preview_plan(planned.plan))
+    print("Preview:", motion.get_visualization_url())
+    _require(motion.execute())
 
-def add_box(
-    name: str,
-    x: float,
-    y: float,
-    z: float,
-    w: float = 0.05,
-    h: float = 0.05,
-    d: float = 0.05,
-) -> str | None:
-    """Add a box obstacle."""
-    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
-    return cast("str | None", _client.add_obstacle(name, pose, "box", [w, h, d], None))
-
-
-def update_obstacle(
-    name: str,
-    pose: Pose,
-    shape: str,
-    dimensions: list[float] | None = None,
-    mesh_path: str | None = None,
-    color: list[float] | None = None,
-) -> bool:
-    """Replace a complete obstacle."""
-    return cast("bool", _client.update_obstacle(name, pose, shape, dimensions, mesh_path, color))
-
-
-def update_box(
-    name: str,
-    x: float,
-    y: float,
-    z: float,
-    w: float,
-    h: float,
-    d: float,
-    color: list[float] | None = None,
-) -> bool:
-    """Replace a complete box obstacle."""
-    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
-    return update_obstacle(name, pose, "box", [w, h, d], color=color)
-
-
-def update_sphere(
-    name: str,
-    x: float,
-    y: float,
-    z: float,
-    radius: float,
-    color: list[float] | None = None,
-) -> bool:
-    """Replace a complete sphere obstacle."""
-    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
-    return update_obstacle(name, pose, "sphere", [radius], color=color)
-
-
-def update_cylinder(
-    name: str,
-    x: float,
-    y: float,
-    z: float,
-    radius: float,
-    height: float,
-    color: list[float] | None = None,
-) -> bool:
-    """Replace a complete cylinder obstacle."""
-    pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
-    return update_obstacle(name, pose, "cylinder", [radius, height], color=color)
-
-
-def update_pose(
-    name: str,
-    x: float,
-    y: float,
-    z: float,
-    roll: float = 0.0,
-    pitch: float = 0.0,
-    yaw: float = 0.0,
-) -> bool:
-    """Move an obstacle without changing its geometry."""
-    pose = Pose(
-        position=Vector3(x=x, y=y, z=z),
-        orientation=Quaternion.from_euler(Vector3(x=roll, y=pitch, z=yaw)),
+    pose = motion.get_state().groups[group.id].end_effector_pose
+    if pose is None:
+        raise RuntimeError("End-effector pose is unavailable")
+    lifted = PoseStamped(
+        frame_id=pose.frame_id,
+        position=pose.position + Vector3(0.0, 0.0, 0.01),
+        orientation=pose.orientation,
     )
-    return cast("bool", _client.update_obstacle_pose(name, pose))
+    _require(motion.plan_to_poses({group.id: lifted}, speed_scale=0.2))
+    _require(motion.execute(blocking=False))
+    completed = motion.wait_for_execution(timeout=60.0)
+    _require(completed)
+    if completed.status is not ExecutionStatus.COMPLETED:
+        raise RuntimeError(f"Expected physical completion, got {completed!r}")
+
+    _require(motion.move_linear(dz=-0.01, planning_group=group.id, check_collision=True))
+    _require(motion.plan_to_joints({group.id: initial}, speed_scale=0.1))
+    _require(motion.execute(blocking=False))
+    cancelled = motion.cancel()
+    print(cancelled)
+    # A sufficiently short trajectory can complete before cancellation arrives.
+    if cancelled.status not in {ExecutionStatus.ABORTED, ExecutionStatus.COMPLETED}:
+        raise RuntimeError(f"Cancellation was not confirmed: {cancelled!r}")
+
+    # Restore the original camera/arm pose before the object workflow.
+    _require(motion.plan_to_joints({group.id: initial}, speed_scale=0.2))
+    _require(motion.execute())
+    _require(motion.clear_planned_path())
+    _require(motion.set_gripper_position(1.0, group.id))
+    return group.id
 
 
-def remove(obstacle_id: str) -> bool:
-    """Remove an obstacle by ID."""
-    return cast("bool", _client.remove_obstacle(obstacle_id))
+def run_pick_place(
+    pick_place: PickAndPlaceSpec,
+    prompt: str,
+    destination: tuple[float, float, float],
+    planning_group: PlanningGroupID,
+) -> None:
+    """Pick the uniquely detected object and place it at a verified position."""
+    scan = pick_place.scan_objects([prompt])
+    _require(scan)
+    if len(scan.objects) != 1:
+        raise RuntimeError(f"Use a prompt selecting exactly one object; detected {scan.objects!r}")
+    target = scan.objects[0]
+    print(pick_place.get_object(target.object_id))
+    picked = pick_place.pick_object(target.object_id, planning_group)
+    _require(picked)
+    print(pick_place.get_grasp_candidates())
+    _require(pick_place.place_at(*destination, planning_group=planning_group))
 
 
-def stop() -> None:
-    """Stop the RPC client."""
-    _client.stop_rpc_client()
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--object", help="Unique object description for the current scene")
+    parser.add_argument("--place", nargs=3, type=float, metavar=("X", "Y", "Z"))
+    args = parser.parse_args()
+    if (args.object is None) != (args.place is None):
+        parser.error("--object and --place must be supplied together")
+
+    app = Dimos.connect()
+    try:
+        motion = app.get_module(ManipulationSpec)
+        group = run_motion(motion)
+        if args.object is not None:
+            pick_place = app.get_module(PickAndPlaceSpec)
+            run_pick_place(pick_place, args.object, tuple(args.place), group)
+    finally:
+        # Disconnecting does not stop the remote blueprint or cancel its motion.
+        app.stop()
 
 
 if __name__ == "__main__":
-    print("Manipulation RPC client ready: groups(), state(), plan_joints(), execute()")
+    main()

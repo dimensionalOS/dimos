@@ -204,7 +204,7 @@ class ManipulationOperator:
         )
 
     def preview(self, plan: GeneratedPlan, duration: float | None = None) -> bool:
-        return self._module.preview_plan(plan=plan, duration=duration)
+        return self._module.preview_plan(plan=plan, duration=duration).succeeded
 
     def execute(self, plan: GeneratedPlan) -> bool:
         return self._module._execute_generated_plan(plan)
@@ -213,7 +213,7 @@ class ManipulationOperator:
         return self._module.cancel().status.name != "UNCERTAIN"
 
     def clear_plan(self) -> bool:
-        return self._module.clear_planned_path()
+        return self._module.clear_planned_path().succeeded
 
     def _validate_joint_request(
         self, request: JointTargetRequest

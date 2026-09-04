@@ -921,7 +921,6 @@ class TestPlanningGroupApis:
         pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
 
         assert module.get_ee_pose() is None
-        assert module.plan_to_pose(pose) is False
         result = module.inverse_kinematics_single(pose)
         assert result.status == IKStatus.NO_SOLUTION
         assert "no unique pose-targetable planning group" in result.message
@@ -961,7 +960,6 @@ class TestPlanningGroupApis:
         pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
 
         assert module.get_ee_pose() is None
-        assert module.plan_to_pose(pose) is False
         result = module.inverse_kinematics_single(pose)
         assert result.status == IKStatus.NO_SOLUTION
         assert "2 pose-targetable planning groups" in result.message

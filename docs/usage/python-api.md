@@ -53,6 +53,14 @@ app.GO2Connection.move(Twist(linear=(1, 0, 0), angular=(0, 0, 0)), duration=0.05
 
 Discovery works in both local and remote mode:
 
+For a typed capability, use `app.get_module(MySpec)`. DimOS resolves the single
+deployed Module whose advertised RPCs match the Spec's signatures. Several
+matches require an explicit `instance_name`, for example
+`app.get_module(MySpec, instance_name="robot0/manipulation")`. Matching requires
+the module classes to be importable locally. See the
+[manipulation Python guide](/docs/capabilities/manipulation/python_api.md) for a
+complete client example.
+
 ```python skip
 # Live structured records for exact deployed instances.
 app.list_modules()

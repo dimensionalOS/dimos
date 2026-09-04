@@ -19,6 +19,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from dimos.manipulation.manipulation_spec import (
+    CommandResult,
+    CommandStatus,
     ExecutionResult,
     ExecutionStatus,
     OperationStatus,
@@ -83,10 +85,10 @@ def _operator() -> tuple[ManipulationOperator, MagicMock, MagicMock]:
     module.generate_plan_to_joint_targets.return_value = _plan()
     module.generate_plan_to_pose_targets.return_value = _plan()
     module.generate_cartesian_plan.return_value = _plan()
-    module.preview_plan.return_value = True
+    module.preview_plan.return_value = CommandResult(CommandStatus.SUCCEEDED)
     module._execute_generated_plan.return_value = True
     module.cancel.return_value = ExecutionResult(ExecutionStatus.NO_EXECUTION)
-    module.clear_planned_path.return_value = True
+    module.clear_planned_path.return_value = CommandResult(CommandStatus.SUCCEEDED)
 
     monitor = MagicMock()
     monitor.planning_groups = PlanningGroupRegistry(config.planning_groups)
