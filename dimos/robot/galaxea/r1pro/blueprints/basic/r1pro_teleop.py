@@ -13,10 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""R1 Pro teleop: coordinator + viewer-driven chassis teleop.
+"""R1 Pro viewer-driven chassis teleop.
 
-The viewer's teleop panel publishes ``tele_cmd_vel``; ``MovementManager``
-scales and muxes it onto the ``/cmd_vel`` bus.
+The viewer's teleop output drives the coordinator's chassis velocity task.
 
 Usage:
     dimos run r1pro-teleop
@@ -24,13 +23,13 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_coordinator
+from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
-r1pro_teleop = autoconnect(
-    r1pro_coordinator,
-    MovementManager.blueprint(),
-).global_config(n_workers=5)
+r1pro_teleop = r1pro_coordinator.remappings(
+    [
+        (RerunWebSocketServer, "tele_cmd_vel", "twist_command"),
+    ]
+)
 
 __all__ = ["r1pro_teleop"]

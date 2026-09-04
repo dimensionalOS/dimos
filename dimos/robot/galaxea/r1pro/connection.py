@@ -16,12 +16,11 @@
 
 Owns all ROS 2 traffic for the R1 Pro and exposes it as dimos streams:
 whole-body joint control (18 DOF: torso 4 + left arm 7 + right arm 7) for
-the ``transport_lcm`` whole-body adapter, chassis ``cmd_vel``/``odom`` for
-the twist-base adapter, plus cameras, lidar, and IMUs.
+the whole-body adapter, chassis ``cmd_vel``/``odom`` for the twist-base
+adapter, plus cameras, lidar, and IMUs.
 
-Sensors run on a second, isolated RawROS instance (own DDS participant) so
-bulk camera traffic never contends with 100 Hz control traffic. Decoding
-happens on per-stream workers behind latest-wins queues.
+Sensors run on a second RawROS node. Conversion happens on per-stream workers
+behind latest-wins queues.
 
 The on-robot joint tracker manages PD gains; only ``q`` and ``dq`` are
 forwarded. Chassis gate handling lives in the on-robot ``galaxea-dimos``
@@ -52,11 +51,13 @@ from dimos.hardware.whole_body.spec import VEL_STOP
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -69,13 +70,7 @@ _NUM_MOTORS = 18
 
 _FEEDBACK_DISCOVERY_TIMEOUT_S = 5.0
 
-# URDF-faithful joint names. Indices match the flat MotorCommandArray layout.
-_R1PRO_UPPER_BODY_BARE: list[str] = (
-    [f"torso_joint{i}" for i in range(1, 5)]
-    + [f"left_arm_joint{i}" for i in range(1, 8)]
-    + [f"right_arm_joint{i}" for i in range(1, 8)]
-)
-R1PRO_UPPER_BODY_JOINTS: list[str] = [f"r1pro/{j}" for j in _R1PRO_UPPER_BODY_BARE]
+R1PRO_UPPER_BODY_JOINTS: list[str] = [coordinator_name(j) for j in UPPER_BODY_JOINTS]
 assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
 
 # JPEG color streams: stream name → ROS topic.
@@ -139,13 +134,12 @@ class R1ProConnectionConfig(ModuleConfig):
     # Wrist depth is raw 16-bit at up to 30 Hz per wrist — too heavy for the
     # on-robot CPU budget by default; enable when manipulation needs it.
     enable_wrist_depth: bool = Field(default=False)
-    # Max Hz per color camera (0 = no cap); the gate runs before the JPEG
-    # decode so skipped frames cost ~nothing.
+    # Max Hz per color camera (0 = no cap).
     color_publish_hz: float = Field(default=5.0)
 
 
 class R1ProConnection(Module):
-    """R1 Pro Module — ROS 2 control node + isolated sensor node."""
+    """R1 Pro Module — ROS 2 control and sensor nodes."""
 
     config: R1ProConnectionConfig
 
@@ -165,19 +159,19 @@ class R1ProConnection(Module):
     odometry: Out[Odometry]
 
     # Perception.
-    head_left_color: Out[Image]
-    head_right_color: Out[Image]
+    head_left_color: Out[CompressedImage]
+    head_right_color: Out[CompressedImage]
     head_depth: Out[Image]
     lidar: Out[PointCloud2]
-    wrist_left_color: Out[Image]
+    wrist_left_color: Out[CompressedImage]
     wrist_left_depth: Out[Image]
-    wrist_right_color: Out[Image]
+    wrist_right_color: Out[CompressedImage]
     wrist_right_depth: Out[Image]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
-        # ROS pubsub instances (control + isolated sensors).
+        # ROS pubsub instances.
         self._ros: RawROS | None = None
         self._sensors: RawROS | None = None
         self._cmd_torso_topic: RawROSTopic | None = None
@@ -232,10 +226,10 @@ class R1ProConnection(Module):
         # environments without ROS 2.
         from dimos.protocol.pubsub.impl.rospubsub import RawROS
 
-        logger.info("Starting R1ProConnection (control + isolated sensor node)...")
+        logger.info("Starting R1ProConnection (control + sensor nodes)...")
         self._ros = RawROS(node_name="r1pro_control")
         self._ros.start()
-        self._sensors = RawROS(node_name="r1pro_sensors", isolated_context=True)
+        self._sensors = RawROS(node_name="r1pro_sensors")
         self._sensors.start()
 
         self._setup_control_topics()
@@ -280,8 +274,7 @@ class R1ProConnection(Module):
             self._publish_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._publish_thread = None
 
-        # Unblock decode workers, then stop the sensor pubsub (owns the
-        # isolated context) and the control pubsub.
+        # Unblock sensor workers, then stop both ROS nodes.
         for q in self._queues.values():
             try:
                 q.put_nowait(None)
@@ -367,7 +360,7 @@ class R1ProConnection(Module):
     def _setup_sensor_streams(self) -> None:
         try:
             from sensor_msgs.msg import (
-                CompressedImage,
+                CompressedImage as RosCompressedImage,
                 Image as RosImage,
                 Imu as RosImu,
                 PointCloud2 as RosPointCloud2,
@@ -403,7 +396,7 @@ class R1ProConnection(Module):
             )
 
         for stream, topic in _COLOR_CAMERAS.items():
-            add_stream(stream, topic, CompressedImage, self._jpeg_decode_loop)
+            add_stream(stream, topic, RosCompressedImage, self._compressed_image_loop)
 
         add_stream("head_depth", _HEAD_DEPTH_TOPIC, RosImage, self._convert_loop, Image)
         add_stream("lidar", _LIDAR_TOPIC, RosPointCloud2, self._convert_loop, PointCloud2)
@@ -427,7 +420,7 @@ class R1ProConnection(Module):
         logger.info(
             f"R1Pro sensor streams up: {len(_COLOR_CAMERAS)} color cams + head_depth "
             f"+ lidar + 2 imus, wrist depth "
-            f"{'on' if self.config.enable_wrist_depth else 'off'} (isolated DDS participant)"
+            f"{'on' if self.config.enable_wrist_depth else 'off'}"
         )
 
     # Per-stream diagnostics
@@ -698,15 +691,10 @@ class R1ProConnection(Module):
             else:
                 next_tick = time.perf_counter()
 
-    # Decode workers — convert ROS messages off the spin thread and publish
+    # Sensor workers
 
-    def _jpeg_decode_loop(self, stream: str, q: queue.Queue[Any]) -> None:
-        import cv2
-        import numpy as np
-
-        from dimos.msgs.sensor_msgs.Image import ImageFormat
-
-        out: Out[Image] = getattr(self, stream)
+    def _compressed_image_loop(self, stream: str, q: queue.Queue[Any]) -> None:
+        out: Out[CompressedImage] = getattr(self, stream)
         hz = self.config.color_publish_hz
         min_period = 1.0 / hz if hz > 0 else 0.0
         last_pub = 0.0
@@ -718,21 +706,24 @@ class R1ProConnection(Module):
             if msg is None:
                 break
             t0 = time.perf_counter()
-            # Rate gate BEFORE the decode — dropping here is ~free.
             if min_period > 0.0 and t0 - last_pub < min_period:
                 continue
             last_pub = t0
             try:
-                arr = np.frombuffer(bytes(msg.data), np.uint8)
-                bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-                if bgr is None:
-                    self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=False)
-                    continue
-                out.publish(Image(bgr, format=ImageFormat.BGR, frame_id=stream))
+                stamp = msg.header.stamp
+                ts = stamp.sec + stamp.nanosec * 1e-9
+                out.publish(
+                    CompressedImage(
+                        data=bytes(msg.data),
+                        format="jpeg",
+                        frame_id=msg.header.frame_id or stream,
+                        ts=ts if ts > 0 else time.time(),
+                    )
+                )
                 self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=True)
             except Exception:
                 self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=False)
-                logger.exception(f"R1Pro {stream} decode error")
+                logger.exception(f"R1Pro {stream} conversion error")
 
     def _convert_loop(self, stream: str, q: queue.Queue[Any], dimos_type: type) -> None:
         """ros_to_dimos passthrough worker (depth images, lidar)."""

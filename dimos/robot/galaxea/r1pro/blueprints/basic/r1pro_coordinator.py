@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""R1 Pro ControlCoordinator: R1ProConnection Module + transport_lcm bridges.
+"""R1 Pro ControlCoordinator and ROS connection.
 
 Mirrors ``unitree_g1_coordinator.py``: the 18-DOF upper body goes through
 the generic whole-body transport adapter, the holonomic chassis through the
@@ -30,20 +30,24 @@ from typing import Any
 
 from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.transport import JpegLcmTransport, LCMTransport
+from dimos.core.transport import ZenohTransport
+from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnection
-from dimos.visualization.vis_module import vis_module
+from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
 _chassis_joints = make_twist_base_joints("chassis")
 
@@ -51,8 +55,7 @@ _chassis_joints = make_twist_base_joints("chassis")
 def _r1pro_rerun_blueprint() -> Any:
     """Two-tab viewer layout: main (head stereo + 3D) and all cameras + depth.
 
-    Entity paths assume the bridge's default ``entity_prefix="world"`` — so
-    LCM topic ``/r1pro/head_left_color`` lands at ``world/r1pro/head_left_color``.
+    Entity paths assume the bridge's default ``entity_prefix="world"``.
     """
     import rerun as rr
     import rerun.blueprint as rrb
@@ -97,7 +100,7 @@ def _r1pro_rerun_blueprint() -> Any:
 
 # Per-entity rate caps for the rerun bridge (visualization only — the
 # coordinator sees full rate). Sized for an on-robot deployment viewed over
-# WiFi. Keys are rerun entity paths (entity_prefix "world" + the LCM topic).
+# WiFi. Keys are rerun entity paths.
 _RERUN_MAX_HZ = {
     "world/r1pro/head_left_color": 5.0,
     "world/r1pro/head_right_color": 5.0,
@@ -108,28 +111,8 @@ _RERUN_MAX_HZ = {
 }
 
 
-def _compress_color_for_viewer(msg: Any) -> Any:
-    """Re-encode a color frame to JPEG before it enters the rerun stream —
-    raw RGB frames overwhelm a WiFi-connected viewer."""
-    import rerun as rr
-
-    try:
-        data = getattr(msg, "data", None)
-        if data is None:
-            return msg  # not an Image — let the bridge's default conversion run
-        image = rr.Image(data)
-        compress = getattr(image, "compress", None)
-        return compress(jpeg_quality=75) if compress is not None else image
-    except Exception:
-        return msg  # fall back to the bridge's default conversion
-
-
 # Per-topic overrides for the rerun bridge (None = suppress entirely).
 _RERUN_VISUAL_OVERRIDE = {
-    "world/r1pro/head_left_color": _compress_color_for_viewer,
-    "world/r1pro/head_right_color": _compress_color_for_viewer,
-    "world/r1pro/wrist_left_color": _compress_color_for_viewer,
-    "world/r1pro/wrist_right_color": _compress_color_for_viewer,
     # Raw depth frames are the heaviest payloads on the viewer link.
     "world/r1pro/wrist_left_depth": None,
     "world/r1pro/wrist_right_depth": None,
@@ -139,7 +122,9 @@ _RERUN_VISUAL_OVERRIDE = {
 
 rerun_config = {
     "blueprint": _r1pro_rerun_blueprint,
-    "pubsubs": [LCM()],
+    "pubsubs": [Zenoh()],
+    "rerun_open": global_config.rerun_open,
+    "rerun_web": global_config.rerun_web,
     # A live viewer needs only a small rolling buffer, and every viewer
     # (re)connect replays the whole buffer before going live.
     "memory_limit": "256MB",
@@ -148,25 +133,46 @@ rerun_config = {
 }
 
 
+def r1pro_visualization() -> Blueprint:
+    if global_config.viewer == "rerun":
+        return autoconnect(
+            RerunBridgeModule.blueprint(**rerun_config),
+            RerunWebSocketServer.blueprint(),
+        )
+    if global_config.viewer == "none":
+        return Blueprint(blueprints=())
+    raise ValueError(f"Unsupported viewer: {global_config.viewer}")
+
+
+def _zenoh_transport(
+    topic: str,
+    msg_type: type,
+    *,
+    latest_wins: bool = False,
+) -> TransportSpec:
+    return ZenohTransport.spec(
+        ZenohTopic(
+            f"dimos/{topic.lstrip('/')}",
+            msg_type,
+            qos=QOS_LATEST_WINS if latest_wins else None,
+        )
+    )
+
+
 def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
 ) -> Blueprint:
-    """R1ProConnection + ControlCoordinator wired over LCM transports.
+    """R1ProConnection and ControlCoordinator.
 
-    ``tasks`` overrides the default task set (whole-body servo + chassis
+    ``tasks`` overrides the default task set (whole-body trajectory + chassis
     velocity); transports and remappings stay identical either way.
     """
     resolved_tasks = (
         list(tasks)
         if tasks is not None
         else [
-            TaskConfig(
-                name="servo_r1pro",
-                type="servo",
-                joint_names=R1PRO_UPPER_BODY_JOINTS,
-                priority=10,
-            ),
+            joint_trajectory_task(R1PRO_UPPER_BODY_JOINTS),
             TaskConfig(
                 name="vel_chassis",
                 type="velocity",
@@ -187,12 +193,14 @@ def r1pro_control(
                         hardware_type=HardwareType.WHOLE_BODY,
                         joints=R1PRO_UPPER_BODY_JOINTS,
                         adapter_type="transport_lcm",
+                        adapter_kwargs={"transport_cls": make_transport},
                     ),
                     HardwareComponent(
                         hardware_id="chassis",
                         hardware_type=HardwareType.BASE,
                         joints=_chassis_joints,
                         adapter_type="transport_lcm",
+                        adapter_kwargs={"transport_cls": make_transport},
                     ),
                 ],
                 tasks=resolved_tasks,
@@ -209,44 +217,63 @@ def r1pro_control(
             {
                 # WholeBody bridge (hw_id="r1pro"). TransportWholeBodyAdapter
                 # subscribes /{hw}/imu — only one IMU goes there.
-                ("motor_states", JointState): LCMTransport("/r1pro/motor_states", JointState),
-                ("imu_chassis", Imu): LCMTransport("/r1pro/imu", Imu),
-                ("imu_torso", Imu): LCMTransport("/r1pro/imu_torso", Imu),
-                ("motor_command", MotorCommandArray): LCMTransport(
+                ("motor_states", JointState): _zenoh_transport("/r1pro/motor_states", JointState),
+                ("imu_chassis", Imu): _zenoh_transport("/r1pro/imu", Imu),
+                ("imu_torso", Imu): _zenoh_transport("/r1pro/imu_torso", Imu),
+                ("motor_command", MotorCommandArray): _zenoh_transport(
                     "/r1pro/motor_command", MotorCommandArray
                 ),
                 # Twist bridge (hw_id="chassis").
-                ("chassis_cmd_vel", Twist): LCMTransport("/chassis/cmd_vel", Twist),
-                ("chassis_odom", PoseStamped): LCMTransport("/chassis/odom", PoseStamped),
+                ("chassis_cmd_vel", Twist): _zenoh_transport("/chassis/cmd_vel", Twist),
+                ("chassis_odom", PoseStamped): _zenoh_transport("/chassis/odom", PoseStamped),
                 # Wheel odometry (pose + twist) for navigation consumers.
-                ("odometry", Odometry): LCMTransport("/r1pro/odometry", Odometry),
+                ("odometry", Odometry): _zenoh_transport("/r1pro/odometry", Odometry),
                 # Public Twist bus: any module's cmd_vel Out drives the
                 # coordinator's twist_command In.
-                ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-                ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
+                ("cmd_vel", Twist): _zenoh_transport("/cmd_vel", Twist),
+                ("twist_command", Twist): _zenoh_transport("/cmd_vel", Twist),
                 # Sensor pass-throughs.
-                ("head_left_color", Image): JpegLcmTransport("/r1pro/head_left_color", Image),
-                ("head_right_color", Image): JpegLcmTransport("/r1pro/head_right_color", Image),
-                ("head_depth", Image): LCMTransport("/r1pro/head_depth", Image),
-                ("lidar", PointCloud2): LCMTransport("/r1pro/lidar", PointCloud2),
-                ("wrist_left_color", Image): JpegLcmTransport("/r1pro/wrist_left_color", Image),
-                ("wrist_left_depth", Image): LCMTransport("/r1pro/wrist_left_depth", Image),
-                ("wrist_right_color", Image): JpegLcmTransport("/r1pro/wrist_right_color", Image),
-                ("wrist_right_depth", Image): LCMTransport("/r1pro/wrist_right_depth", Image),
+                ("head_left_color", CompressedImage): _zenoh_transport(
+                    "/r1pro/head_left_color", CompressedImage, latest_wins=True
+                ),
+                ("head_right_color", CompressedImage): _zenoh_transport(
+                    "/r1pro/head_right_color", CompressedImage, latest_wins=True
+                ),
+                ("head_depth", Image): _zenoh_transport(
+                    "/r1pro/head_depth", Image, latest_wins=True
+                ),
+                ("lidar", PointCloud2): _zenoh_transport(
+                    "/r1pro/lidar", PointCloud2, latest_wins=True
+                ),
+                ("wrist_left_color", CompressedImage): _zenoh_transport(
+                    "/r1pro/wrist_left_color", CompressedImage, latest_wins=True
+                ),
+                ("wrist_left_depth", Image): _zenoh_transport(
+                    "/r1pro/wrist_left_depth", Image, latest_wins=True
+                ),
+                ("wrist_right_color", CompressedImage): _zenoh_transport(
+                    "/r1pro/wrist_right_color", CompressedImage, latest_wins=True
+                ),
+                ("wrist_right_depth", Image): _zenoh_transport(
+                    "/r1pro/wrist_right_depth", Image, latest_wins=True
+                ),
                 # ControlCoordinator outs.
-                ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-                ("joint_command", JointState): LCMTransport("/r1pro/joint_command", JointState),
+                ("coordinator_joint_state", JointState): _zenoh_transport(
+                    "/coordinator/joint_state", JointState
+                ),
+                ("joint_command", JointState): _zenoh_transport("/r1pro/joint_command", JointState),
             }
         )
+        .global_config(transport="zenoh")
     )
 
 
 # n_workers keeps the 100 Hz coordinator tick loop out of the interpreter
-# that runs the connection's camera-decode threads.
+# that runs the connection's sensor threads.
 r1pro_coordinator = autoconnect(
-    vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config),
+    r1pro_visualization(),
     r1pro_control(),
 ).global_config(n_workers=4)
 
 
-__all__ = ["r1pro_control", "r1pro_coordinator", "rerun_config"]
+__all__ = ["r1pro_control", "r1pro_coordinator", "r1pro_visualization", "rerun_config"]
