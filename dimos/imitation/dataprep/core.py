@@ -571,7 +571,7 @@ def get_writer(format_name: str) -> Writer:
     if format_name == "lerobot":
         raise RuntimeError(
             "LeRobot conversion requires its isolated environment; "
-            "run it through `dimos dataprep build`"
+            "use `run_lerobot_dataprep()` or a built-in `dimos imitation prepare` workflow"
         )
     elif format_name == "hdf5":
         from dimos.imitation.dataprep.formats.hdf5.writer import write

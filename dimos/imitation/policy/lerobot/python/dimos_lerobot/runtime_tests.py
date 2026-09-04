@@ -191,6 +191,8 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
             joint_names=JOINTS,
             fps=50.0,
             robot_type="test_arm",
+            image_width=5,
+            image_height=4,
         )
         control = mocker.MagicMock()
         control.execute_trajectory.return_value = TrajectoryExecutionResult(
@@ -199,6 +201,7 @@ def make_runtime(mocker: pytest_mock.MockerFixture) -> Iterator[RuntimeFactory]:
         control.cancel_trajectory.return_value = TrajectoryCancellationResult(
             TrajectoryCancellationStatus.ALREADY_STOPPED
         )
+        control.list_tasks.return_value = ["policy_rollout"]
         mocker.patch.object(module, "_control", control, create=True)
         built.append(module)
         return module, control
@@ -220,23 +223,31 @@ def _provide_observation(
     positions: list[float] | None = None,
     ts: float | None = None,
 ) -> tuple[NDArray[np.uint8], list[float], float]:
-    bgr = np.zeros((4, 5, 3), dtype=np.uint8)
-    bgr[..., 0] = 10
-    bgr[..., 1] = 20
-    bgr[..., 2] = 30
+    rgb = np.zeros((4, 5, 3), dtype=np.uint8)
+    rgb[..., 0] = 10
+    rgb[..., 1] = 20
+    rgb[..., 2] = 30
     values = positions or [float(i) / 10 for i in range(len(JOINTS))]
     timestamp = time.time() if ts is None else ts
-    module._on_color_image(Image(data=bgr, format=ImageFormat.BGR, ts=timestamp))
+    module._on_color_image(Image(data=rgb, format=ImageFormat.RGB, ts=timestamp))
     module._on_joint_state(JointState(ts=timestamp, name=JOINTS, position=values))
-    return bgr, values, timestamp
+    return rgb, values, timestamp
+
+
+def _preflight(module: LeRobotPolicyRuntime) -> None:
+    status = module.preflight_rollout()
+    assert status["policy_ready"] is True
+    assert status["observations_ready"] is True
+    assert status["last_error"] is None
 
 
 def test_policy_predicts_and_executes_one_native_joint_chunk(make_runtime: RuntimeFactory) -> None:
     actions = _action_chunk()
     policy = FakePolicy(actions, n_action_steps=2)
     module, control = make_runtime(policy)
-    bgr, positions, _ts = _provide_observation(module)
+    rgb, positions, _ts = _provide_observation(module)
 
+    _preflight(module)
     assert module.start_rollout()["active"] is True
     wait_until(lambda: control.execute_trajectory.call_count >= 1, timeout=1.0)
     module.stop_rollout()
@@ -253,7 +264,7 @@ def test_policy_predicts_and_executes_one_native_joint_chunk(make_runtime: Runti
     assert policy.batch["task"] == "pick up the test object"
     image = policy.batch["observation.images.wrist"]
     assert isinstance(image, Tensor)
-    np.testing.assert_array_equal(image.squeeze(0).numpy(), bgr[..., ::-1])
+    np.testing.assert_array_equal(image.squeeze(0).numpy(), rgb)
     assert policy.postprocessor.calls
     assert module.rollout_status()["chunks_accepted"] >= 1
 
@@ -270,6 +281,7 @@ def test_policy_actions_are_clipped_to_checkpoint_range(make_runtime: RuntimeFac
     module, control = make_runtime(policy)
     _provide_observation(module)
 
+    _preflight(module)
     module.start_rollout()
     wait_until(lambda: control.execute_trajectory.call_count >= 1, timeout=1.0)
     module.stop_rollout()
@@ -292,6 +304,7 @@ def test_next_chunk_uses_latest_joint_observation(make_runtime: RuntimeFactory) 
 
     control.execute_trajectory.side_effect = execute_trajectory
     _provide_observation(module, positions=[0.0] * len(JOINTS))
+    _preflight(module)
     module.start_rollout()
     assert first_submitted.wait(timeout=1.0)
 
@@ -321,6 +334,7 @@ def test_start_mismatch_waits_for_new_joint_state_before_retry(
         return TrajectoryExecutionResult(status)
 
     control.execute_trajectory.side_effect = execute_trajectory
+    _preflight(module)
     module.start_rollout()
     wait_until(lambda: control.execute_trajectory.call_count == 1, timeout=1.0)
 
@@ -337,6 +351,7 @@ def test_a_press_stops_worker_before_cancelling_its_trajectory(
     policy = FakePolicy(_action_chunk(), n_action_steps=2)
     module, control = make_runtime(policy)
     _provide_observation(module)
+    _preflight(module)
     execute_started = Event()
     release_execute = Event()
     stop_finished = Event()
@@ -375,6 +390,7 @@ def test_uncertain_cancellation_is_reported(make_runtime: RuntimeFactory) -> Non
     policy = FakePolicy(_action_chunk(), n_action_steps=1)
     module, control = make_runtime(policy)
     _provide_observation(module)
+    _preflight(module)
     control.cancel_trajectory.return_value = TrajectoryCancellationResult(
         TrajectoryCancellationStatus.UNCERTAIN,
         "coordinator did not confirm cancellation",
@@ -404,6 +420,7 @@ def test_invalid_action_chunk_cancels_and_latches_rollout_off(
     module, control = make_runtime(policy)
     _provide_observation(module)
 
+    _preflight(module)
     module.start_rollout()
 
     wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
@@ -422,6 +439,7 @@ def test_trajectory_rejection_cancels_and_latches_rollout_off(
         "outside hardware limits",
     )
 
+    _preflight(module)
     module.start_rollout()
 
     wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
@@ -438,6 +456,14 @@ def test_trajectory_rejection_cancels_and_latches_rollout_off(
             lambda config: setattr(config, "temporal_ensemble_coeff", 0.01),
             "temporal ensembling",
         ),
+        (
+            lambda config: setattr(
+                config.input_features["observation.images.wrist"],
+                "shape",
+                (3, 8, 8),
+            ),
+            "Policy image shape",
+        ),
     ],
 )
 def test_incompatible_chunk_contract_is_rejected(
@@ -450,10 +476,11 @@ def test_incompatible_chunk_contract_is_rejected(
     module, control = make_runtime(policy)
     _provide_observation(module)
 
-    module.start_rollout()
+    status = module.preflight_rollout()
 
-    wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
-    assert message in (module.rollout_status()["last_error"] or "")
+    assert status["active"] is False
+    assert status["policy_ready"] is False
+    assert message in (status["last_error"] or "")
     control.execute_trajectory.assert_not_called()
 
 
@@ -461,7 +488,7 @@ def test_policy_refuses_to_load_without_live_observations(make_runtime: RuntimeF
     policy = FakePolicy(_action_chunk())
     module, control = make_runtime(policy)
 
-    result = module.start_rollout()
+    result = module.preflight_rollout()
 
     assert result["active"] is False
     assert "no camera image" in (result["last_error"] or "")
@@ -474,7 +501,7 @@ def test_policy_refuses_stale_observations(make_runtime: RuntimeFactory) -> None
     module, control = make_runtime(policy)
     _provide_observation(module, ts=time.time() - module.config.max_observation_age_s - 1.0)
 
-    result = module.start_rollout()
+    result = module.preflight_rollout()
 
     assert result["active"] is False
     assert "camera image is stale" in (result["last_error"] or "")
@@ -487,6 +514,7 @@ def test_checkpoint_loads_on_demand_and_is_cached(make_runtime: RuntimeFactory) 
     module, control = make_runtime(policy)
     _provide_observation(module)
 
+    _preflight(module)
     module.start_rollout()
     wait_until(lambda: control.execute_trajectory.call_count >= 1, timeout=1.0)
     module.stop_rollout()
@@ -496,3 +524,136 @@ def test_checkpoint_loads_on_demand_and_is_cached(make_runtime: RuntimeFactory) 
     module.stop_rollout()
 
     assert policy.config_load_count == 1
+
+
+def test_start_requires_a_successful_preflight(make_runtime: RuntimeFactory) -> None:
+    policy = FakePolicy(_action_chunk())
+    module, control = make_runtime(policy)
+    _provide_observation(module)
+
+    status = module.start_rollout()
+
+    assert status["active"] is False
+    assert status["last_error"] == "policy preflight has not passed"
+    control.execute_trajectory.assert_not_called()
+
+
+def test_preflight_never_sends_a_trajectory(make_runtime: RuntimeFactory) -> None:
+    policy = FakePolicy(_action_chunk())
+    module, control = make_runtime(policy)
+    _provide_observation(module)
+
+    status = module.preflight_rollout()
+
+    assert status["policy_ready"] is True
+    control.execute_trajectory.assert_not_called()
+    control.cancel_trajectory.assert_not_called()
+
+
+def test_preflight_requires_the_configured_coordinator_task(
+    make_runtime: RuntimeFactory,
+) -> None:
+    policy = FakePolicy(_action_chunk())
+    module, control = make_runtime(policy)
+    _provide_observation(module)
+    control.list_tasks.return_value = ["another_task"]
+
+    status = module.preflight_rollout()
+
+    assert status["policy_ready"] is False
+    assert "missing configured rollout task" in (status["last_error"] or "")
+    assert policy.config_load_count == 0
+
+
+@pytest.mark.parametrize(
+    ("positions", "names", "message"),
+    [
+        ([0.0, 0.0, 0.0, float("nan")], JOINTS, "non-finite positions"),
+        ([0.0, 0.0, 0.0], JOINTS[:-1], "missing configured joints"),
+    ],
+)
+def test_preflight_rejects_invalid_live_joints(
+    make_runtime: RuntimeFactory,
+    positions: list[float],
+    names: list[str],
+    message: str,
+) -> None:
+    policy = FakePolicy(_action_chunk())
+    module, control = make_runtime(policy)
+    timestamp = time.time()
+    module._on_color_image(
+        Image(data=np.zeros((4, 5, 3), dtype=np.uint8), format=ImageFormat.RGB, ts=timestamp)
+    )
+    module._on_joint_state(JointState(ts=timestamp, name=names, position=positions))
+
+    status = module.preflight_rollout()
+
+    assert status["policy_ready"] is False
+    assert message in (status["last_error"] or "")
+    control.execute_trajectory.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("image", "image_format"),
+    [
+        (np.zeros((8, 8, 3), dtype=np.uint8), ImageFormat.RGB),
+        (np.zeros((4, 5, 3), dtype=np.uint8), ImageFormat.BGR),
+    ],
+)
+def test_preflight_requires_exact_live_rgb_contract(
+    make_runtime: RuntimeFactory,
+    image: NDArray[np.uint8],
+    image_format: ImageFormat,
+) -> None:
+    policy = FakePolicy(_action_chunk())
+    module, control = make_runtime(policy)
+    timestamp = time.time()
+    module._on_color_image(Image(data=image, format=image_format, ts=timestamp))
+    module._on_joint_state(JointState(ts=timestamp, name=JOINTS, position=[0.0] * len(JOINTS)))
+
+    status = module.preflight_rollout()
+
+    assert status["policy_ready"] is False
+    assert "no camera image" in (status["last_error"] or "")
+    control.execute_trajectory.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper", "message"),
+    [
+        ([-1.0] * 3, [1.0] * 3, "range shape"),
+        ([-1.0, -1.0, -1.0, float("nan")], [1.0] * 4, "non-finite"),
+        ([2.0] * 4, [1.0] * 4, "min greater than max"),
+    ],
+)
+def test_preflight_rejects_invalid_checkpoint_action_bounds(
+    make_runtime: RuntimeFactory,
+    lower: list[float],
+    upper: list[float],
+    message: str,
+) -> None:
+    policy = FakePolicy(_action_chunk(), action_lower=lower, action_upper=upper)
+    module, control = make_runtime(policy)
+    _provide_observation(module)
+
+    status = module.preflight_rollout()
+
+    assert status["policy_ready"] is False
+    assert message in (status["last_error"] or "")
+    control.execute_trajectory.assert_not_called()
+
+
+def test_preflight_rejects_unavailable_cuda(
+    make_runtime: RuntimeFactory,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    policy = FakePolicy(_action_chunk())
+    module, control = make_runtime(policy, device="cuda")
+    _provide_observation(module)
+    mocker.patch.object(torch.cuda, "is_available", return_value=False)
+
+    status = module.preflight_rollout()
+
+    assert status["policy_ready"] is False
+    assert "CUDA is not available" in (status["last_error"] or "")
+    control.execute_trajectory.assert_not_called()

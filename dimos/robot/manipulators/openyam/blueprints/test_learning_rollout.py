@@ -25,10 +25,11 @@ from dimos.imitation.policy.lerobot.module import (
     LeRobotPolicyModule,
 )
 from dimos.robot.manipulators.openyam.blueprints.learning_rollout import (
-    learning_rollout_quest_openyam,
+    build_openyam_rollout,
 )
 from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
 from dimos.robot.manipulators.openyam.learning import OPENYAM_LEARNING_PROFILE
+from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -37,8 +38,23 @@ def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
     )
 
 
-def test_rollout_uses_one_low_priority_seven_joint_trajectory_task() -> None:
-    coordinator = _module_kwargs(learning_rollout_quest_openyam, ControlCoordinator)
+def test_default_rollout_is_quest_free() -> None:
+    blueprint = build_openyam_rollout(checkpoint="checkpoint", task="pick up block")
+    modules = [atom.module for atom in blueprint.active_blueprints]
+    coordinator = _module_kwargs(blueprint, ControlCoordinator)
+    policy = next(task for task in coordinator["tasks"] if task.name == POLICY_ROLLOUT_TASK_NAME)
+
+    assert ArmTeleopModule not in modules
+    assert len(coordinator["tasks"]) == 1
+    assert policy.type == "trajectory"
+    assert policy.joint_names == OPENYAM_JOINTS
+
+
+def test_quest_rollout_adds_higher_priority_takeover() -> None:
+    blueprint = build_openyam_rollout(
+        checkpoint="checkpoint", task="pick up block", quest_control=True
+    )
+    coordinator = _module_kwargs(blueprint, ControlCoordinator)
     policy = next(task for task in coordinator["tasks"] if task.name == POLICY_ROLLOUT_TASK_NAME)
     teleop = next(task for task in coordinator["tasks"] if task.name == "teleop_openyam")
     trajectory = next(
@@ -51,12 +67,19 @@ def test_rollout_uses_one_low_priority_seven_joint_trajectory_task() -> None:
 
 
 def test_rollout_uses_the_shared_learning_profile() -> None:
-    policy = _module_kwargs(learning_rollout_quest_openyam, LeRobotPolicyModule)
-    camera = _module_kwargs(learning_rollout_quest_openyam, CameraModule)
+    blueprint = build_openyam_rollout(
+        checkpoint="checkpoint", task="pick up block", camera_device="/dev/camera", device="cuda"
+    )
+    policy = _module_kwargs(blueprint, LeRobotPolicyModule)
+    camera = _module_kwargs(blueprint, CameraModule)
 
+    assert policy["policy_path"] == "checkpoint"
+    assert policy["task"] == "pick up block"
+    assert policy["device"] == "cuda"
     assert policy["fps"] == OPENYAM_LEARNING_PROFILE.fps
     assert policy["joint_names"] == list(OPENYAM_LEARNING_PROFILE.joint_names)
     assert policy["trajectory_task_name"] == POLICY_ROLLOUT_TASK_NAME
     assert camera["hardware"].fps == OPENYAM_LEARNING_PROFILE.fps
     assert camera["hardware"].width == OPENYAM_LEARNING_PROFILE.camera_width
     assert camera["hardware"].height == OPENYAM_LEARNING_PROFILE.camera_height
+    assert camera["hardware"].camera_index == "/dev/camera"

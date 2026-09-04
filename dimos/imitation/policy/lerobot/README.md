@@ -26,15 +26,20 @@ policy = LeRobotPolicyModule.blueprint(
     trajectory_task_name="policy_rollout",
     fps=30.0,
     robot_type="my_robot",
+    image_width=640,
+    image_height=480,
 )
 ```
 
-The module exposes `start_rollout`, `stop_rollout`, and `rollout_status` RPCs.
-It owns one configured checkpoint and loads it lazily on the first rollout.
+The module exposes `preflight_rollout`, `start_rollout`, `stop_rollout`, and
+`rollout_status` RPCs. Preflight loads the checkpoint and processors, validates
+the control task and fresh live observations, and sends no trajectory.
+`start_rollout` refuses to run until preflight passes and rechecks observations
+before starting.
 The runtime rejects missing or stale observations, missing joints, non-finite
 values, incompatible checkpoint features, malformed action chunks, and
 trajectories outside the hardware's declared position limits. Pressing the
-configured Quest button (A by default) toggles rollout.
+configured Quest button (A by default) toggles a preflighted rollout.
 
 The runtime calls LeRobot's `predict_action_chunk()`, postprocesses the entire
 chunk, clips every action dimension to the checkpoint's recorded data range,

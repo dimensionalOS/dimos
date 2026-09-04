@@ -12,53 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
 from dimos.control.coordinator import ControlCoordinator
-from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.native_recorder import NativeCollectionRecorder
 from dimos.robot.manipulators.openyam.blueprints.learning_collection import (
-    learning_collect_quest_openyam,
-    learning_collect_teach_openyam,
+    build_quest_collection,
+    build_teach_collection,
 )
 from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
 
 
-def test_openyam_collection_uses_the_native_recorder() -> None:
-    assert learning_collect_quest_openyam.active_blueprints[0].module is NativeCollectionRecorder
-
-
-def test_openyam_collection_uses_the_selected_global_transport() -> None:
-    assert learning_collect_quest_openyam.global_config_overrides == {}
-    assert learning_collect_quest_openyam.transport_map == {}
-    assert learning_collect_quest_openyam.requirement_checks == ()
-
-
-def test_native_openyam_paths_are_configurable_from_cli() -> None:
-    parsed = BlueprintConfigParser(learning_collect_quest_openyam).parse(
-        [
-            "--nativecollectionrecorder.store.path",
-            "/tmp/native-openyam.mcap",
-            "--WristCamera.hardware.camera-index",
-            "/dev/v4l/by-id/usb-wrist-camera",
-            "--task",
-            "pick up the red block",
-        ],
-        environ={},
+def test_openyam_collection_uses_the_native_recorder(tmp_path: Path) -> None:
+    blueprint = build_quest_collection(
+        recording=tmp_path / "session.mcap", task="pick up the block", camera_device=3
     )
 
-    assert parsed.module_kwargs("nativecollectionrecorder")["store"]["path"] == (
-        "/tmp/native-openyam.mcap"
+    recorder = blueprint.active_blueprints[0]
+    monitor = next(
+        atom for atom in blueprint.active_blueprints if atom.module is EpisodeMonitorModule
     )
-    assert parsed.module_kwargs("WristCamera")["hardware"]["camera_index"] == (
-        "/dev/v4l/by-id/usb-wrist-camera"
-    )
-    assert parsed.module_kwargs("episodemonitormodule")["task"] == "pick up the red block"
-    assert learning_collect_quest_openyam.active_blueprints[0].kwargs["record_tf"] is False
+    camera = next(atom for atom in blueprint.active_blueprints if atom.module is CameraModule)
+    assert recorder.module is NativeCollectionRecorder
+    assert recorder.kwargs["store"].path == str(tmp_path / "session.mcap")
+    assert recorder.kwargs["record_tf"] is False
+    assert monitor.kwargs["task"] == "pick up the block"
+    assert camera.kwargs["hardware"].camera_index == 3
 
 
-def test_openyam_teach_collection_is_a_minimal_native_stack() -> None:
-    modules = [atom.module for atom in learning_collect_teach_openyam.active_blueprints]
+def test_openyam_teach_collection_is_a_minimal_native_stack(tmp_path: Path) -> None:
+    blueprint = build_teach_collection(recording=tmp_path / "session.mcap", task="place cup")
+    modules = [atom.module for atom in blueprint.active_blueprints]
 
     assert modules == [
         NativeCollectionRecorder,
@@ -68,11 +54,12 @@ def test_openyam_teach_collection_is_a_minimal_native_stack() -> None:
     ]
 
 
-def test_openyam_teach_collection_uses_gravity_compensation_and_zero_stiffness() -> None:
+def test_openyam_teach_collection_uses_gravity_compensation_and_zero_stiffness(
+    tmp_path: Path,
+) -> None:
+    blueprint = build_teach_collection(recording=tmp_path / "session.mcap", task="place cup")
     coordinator = next(
-        atom
-        for atom in learning_collect_teach_openyam.active_blueprints
-        if atom.module is ControlCoordinator
+        atom for atom in blueprint.active_blueprints if atom.module is ControlCoordinator
     )
     hardware = coordinator.kwargs["hardware"][0]
     assert hardware.joints == OPENYAM_JOINTS
@@ -95,25 +82,3 @@ def test_openyam_teach_collection_uses_gravity_compensation_and_zero_stiffness()
             {"hold_position_when_idle": True},
         ),
     ]
-
-
-def test_native_openyam_teach_paths_are_configurable_from_cli() -> None:
-    parsed = BlueprintConfigParser(learning_collect_teach_openyam).parse(
-        [
-            "--nativecollectionrecorder.store.path",
-            "/tmp/native-openyam-teach.mcap",
-            "--WristCamera.hardware.camera-index",
-            "/dev/v4l/by-id/usb-wrist-camera",
-            "--task",
-            "place the cup",
-        ],
-        environ={},
-    )
-
-    assert parsed.module_kwargs("nativecollectionrecorder")["store"]["path"] == (
-        "/tmp/native-openyam-teach.mcap"
-    )
-    assert parsed.module_kwargs("WristCamera")["hardware"]["camera_index"] == (
-        "/dev/v4l/by-id/usb-wrist-camera"
-    )
-    assert parsed.module_kwargs("episodemonitormodule")["task"] == "place the cup"

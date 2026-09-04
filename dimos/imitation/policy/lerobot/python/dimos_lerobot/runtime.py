@@ -113,10 +113,55 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
         super().stop()
 
     @rpc
+    def preflight_rollout(self) -> RolloutStatus:
+        """Validate the checkpoint, coordinator, and live observations without moving."""
+        with self._lock:
+            if self._active:
+                self._last_error = "cannot preflight while a policy rollout is active"
+                return self._status_locked()
+            loaded_policy = self._loaded_policy
+            try:
+                self._snapshot_observation(time.time())
+            except Exception as exc:
+                self._loaded_policy = None
+                self._last_error = str(exc)
+                return self._status_locked()
+
+        try:
+            tasks = set(self._control.list_tasks())
+            if self.config.trajectory_task_name not in tasks:
+                raise RuntimeError(
+                    "ControlCoordinator is missing configured rollout task "
+                    f"{self.config.trajectory_task_name!r}"
+                )
+            if loaded_policy is None:
+                loaded_policy = self._load_policy()
+                logger.info(
+                    "Loaded LeRobot policy during preflight",
+                    path=self.config.policy_path,
+                    runtime_fps=self.config.fps,
+                    chunk_size=loaded_policy.chunk_size,
+                    n_action_steps=loaded_policy.n_action_steps,
+                )
+            with self._lock:
+                self._loaded_policy = loaded_policy
+                self._snapshot_observation(time.time())
+                self._last_error = None
+                return self._status_locked()
+        except Exception as exc:
+            with self._lock:
+                self._loaded_policy = None
+                self._last_error = str(exc)
+                return self._status_locked()
+
+    @rpc
     def start_rollout(self) -> RolloutStatus:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 self._last_error = "a policy rollout is already active"
+                return self._status_locked()
+            if self._loaded_policy is None:
+                self._last_error = "policy preflight has not passed"
                 return self._status_locked()
             try:
                 self._snapshot_observation(time.time())
@@ -158,21 +203,26 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             "policy_path": self.config.policy_path,
             "task": self.config.task,
             "device": self.config.device,
+            "policy_ready": self._loaded_policy is not None,
             "observations_ready": observations_ready,
             "chunks_accepted": self._chunks_accepted,
             "last_error": self._last_error,
         }
 
     def _on_color_image(self, image: Image) -> None:
-        rgb = image.to_rgb()
-        if rgb.format != ImageFormat.RGB or rgb.data.dtype != np.uint8:
+        if image.format != ImageFormat.RGB or image.data.dtype != np.uint8:
             logger.warning("Ignoring non-uint8 RGB policy image", image=str(image))
             return
-        if rgb.data.ndim != 3 or rgb.data.shape[2] != 3:
-            logger.warning("Ignoring policy image with unexpected shape", shape=rgb.data.shape)
+        expected_shape = (self.config.image_height, self.config.image_width, 3)
+        if image.data.shape != expected_shape:
+            logger.warning(
+                "Ignoring policy image with unexpected shape",
+                shape=image.data.shape,
+                expected=expected_shape,
+            )
             return
         with self._lock:
-            self._latest_image = (np.ascontiguousarray(rgb.data), rgb.ts)
+            self._latest_image = (np.ascontiguousarray(image.data), image.ts)
 
     def _on_joint_state(self, state: JointState) -> None:
         with self._observation_changed:
@@ -271,8 +321,14 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             raise ValueError("Policies using temporal ensembling are not supported")
 
         state_shape = tuple(inputs[_STATE_FEATURE].shape)
+        image_shape = tuple(inputs[_IMAGE_FEATURE].shape)
         action_shape = tuple(outputs[_ACTION_FEATURE].shape)
         joint_count = len(self.config.joint_names)
+        expected_image_shape = (3, self.config.image_height, self.config.image_width)
+        if image_shape != expected_image_shape:
+            raise ValueError(
+                f"Policy image shape {image_shape} does not match {expected_image_shape}"
+            )
         if not state_shape or state_shape[0] != joint_count:
             raise ValueError(
                 f"Policy state dimension {state_shape} does not match {joint_count} configured joints"
@@ -319,17 +375,7 @@ class LeRobotPolicyRuntime(LeRobotPolicyModule):
             with self._lock:
                 loaded_policy = self._loaded_policy
             if loaded_policy is None:
-                loaded_policy = self._load_policy()
-                with self._lock:
-                    self._loaded_policy = loaded_policy
-                logger.info(
-                    "Loaded LeRobot policy",
-                    path=self.config.policy_path,
-                    runtime_fps=self.config.fps,
-                    chunk_size=loaded_policy.chunk_size,
-                    n_action_steps=loaded_policy.n_action_steps,
-                    action_horizon_s=loaded_policy.n_action_steps / self.config.fps,
-                )
+                raise RuntimeError("policy preflight has not passed")
             if self._stop_event.is_set():
                 return
             self._reset_policy(loaded_policy)

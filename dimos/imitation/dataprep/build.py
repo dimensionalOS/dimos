@@ -17,7 +17,7 @@
 `run_dataprep` (build) and `inspect_dataset` (read-back) own the I/O and side
 effects — open/close the store, drive the writer/reader, emit logs, write
 files; they compose the pure helpers in `core.py` and the per-format
-readers/writers. Exposed by the `dimos dataprep` subcommand.
+readers/writers. Built-in workflows expose it through `dimos imitation`.
 """
 
 from __future__ import annotations

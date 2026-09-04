@@ -3,6 +3,10 @@
 Motion planning and teleoperation for robotic manipulators. RoboPlan provides
 the default world and native path planner.
 
+For the CLI-first demonstration → training → policy workflow, see
+[Imitation Learning for Manipulation](/docs/capabilities/manipulation/imitation-learning.md). Quest is optional;
+the primary OpenYAM path uses direct hand teaching.
+
 ## Quick Start
 
 Recent addition: the A-750 keyboard teleop blueprint is now available via:
