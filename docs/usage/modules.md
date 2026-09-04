@@ -519,7 +519,7 @@ Available transports live in `dimos.core.transport` (`LCMTransport`, `ZenohTrans
 
 ### Raw transports (no modules)
 
-A transport works on its own — init one and send/receive from a plain script, no module or stream declarations needed:
+A transport works on its own. Init one and send/receive from a plain script, no module or stream declarations needed:
 
 ```python skip
 from dimos.core.transport import LCMTransport
