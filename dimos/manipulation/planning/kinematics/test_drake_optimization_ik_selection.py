@@ -27,42 +27,37 @@ from dimos.manipulation.planning.spec.enums import IKStatus
 from dimos.manipulation.planning.spec.models import IKResult
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
 
 
 class FakeWorld:
     def __init__(self) -> None:
-        self.robot_id = "robot-instance"
         self.config = RobotModelConfig(
-            name="arm",
-            model_path=Path("/tmp/fake.urdf"),
-            joint_names=["base", "shoulder", "elbow", "wrist"],
+            model=RobotModel.from_file(Path("/tmp/fake.urdf")),
+            joint_names=["arm/base", "arm/shoulder", "arm/elbow", "arm/wrist"],
         )
         self.current_state = JointState(
-            {"name": ["base", "shoulder", "elbow", "wrist"], "position": [1.0, 2.0, 3.0, 4.0]}
+            {
+                "name": ["arm/base", "arm/shoulder", "arm/elbow", "arm/wrist"],
+                "position": [1.0, 2.0, 3.0, 4.0],
+            }
         )
         self.collision_checked_state: JointState | None = None
 
-    def get_robot_ids(self) -> list[str]:
-        return [self.robot_id]
-
-    def get_robot_config(self, robot_id: str) -> RobotModelConfig:
-        assert robot_id == self.robot_id
+    def get_model_config(self) -> RobotModelConfig:
         return self.config
 
-    def get_joint_limits(self, robot_id: str) -> tuple[np.ndarray, np.ndarray]:
-        assert robot_id == self.robot_id
+    def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
         return np.array([-10.0] * 4), np.array([10.0] * 4)
 
     @contextmanager
     def scratch_context(self):
         yield object()
 
-    def get_joint_state(self, ctx: object, robot_id: str) -> JointState:
-        assert robot_id == self.robot_id
+    def get_joint_state(self, ctx: object) -> JointState:
         return self.current_state
 
-    def check_config_collision_free(self, robot_id: str, joint_state: JointState) -> bool:
-        assert robot_id == self.robot_id
+    def check_config_collision_free(self, joint_state: JointState) -> bool:
         self.collision_checked_state = joint_state
         return True
 
@@ -73,11 +68,8 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
 
     world = FakeWorld()
     group = PlanningGroup(
-        id="arm/reach",
-        robot_name="arm",
-        group_name="reach",
+        id="reach",
         joint_names=("arm/shoulder", "arm/wrist"),
-        local_joint_names=("shoulder", "wrist"),
         base_link="base_link",
         tip_link="group_tip_link",
     )
@@ -89,7 +81,7 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
             status=IKStatus.SUCCESS,
             joint_state=JointState(
                 {
-                    "name": ["base", "shoulder", "elbow", "wrist"],
+                    "name": ["arm/base", "arm/shoulder", "arm/elbow", "arm/wrist"],
                     "position": [10.0, 20.0, 30.0, 40.0],
                 }
             ),
@@ -103,7 +95,7 @@ def test_solve_pose_targets_uses_group_tip_locks_seed_fallback_and_filters(monke
     result = DrakeOptimizationIK().solve_pose_targets(
         world=world,  # type: ignore[arg-type]
         pose_targets={group: PoseStamped()},
-        seed=JointState({"name": ["shoulder"], "position": [22.0]}),
+        seed=JointState({"name": ["arm/shoulder"], "position": [22.0]}),
         check_collision=False,
         max_attempts=1,
     )
@@ -198,25 +190,25 @@ class FakeSolveResult:
 class FakeDrakeWorld:
     def __init__(self) -> None:
         self.plant = FakePlant()
-        self._robots = {"robot-instance": _FakeRobotData()}
-        self.link_pose_calls: list[tuple[str, str]] = []
+        self.link_pose_calls: list[str] = []
         self.set_joint_state_calls: list[JointState] = []
+
+    def get_body_frame(self, link_name: str) -> str:
+        return self.plant.GetBodyByName(link_name, "model-instance").body_frame()
+
+    def get_model_joint_indices(self) -> list[int]:
+        return [1, 3, 4]
 
     @contextmanager
     def scratch_context(self):
         yield "ctx"
 
-    def set_joint_state(self, ctx: str, robot_id: str, joint_state: JointState) -> None:
+    def set_joint_state(self, ctx: str, joint_state: JointState) -> None:
         self.set_joint_state_calls.append(joint_state)
 
-    def get_link_pose(self, ctx: str, robot_id: str, target_frame_name: str) -> np.ndarray:
-        self.link_pose_calls.append((robot_id, target_frame_name))
+    def get_link_pose(self, ctx: str, target_frame_name: str) -> np.ndarray:
+        self.link_pose_calls.append(target_frame_name)
         return np.eye(4)
-
-
-class _FakeRobotData:
-    model_instance = "model-instance"
-    joint_indices = [1, 3, 4]
 
 
 def test_solve_single_uses_target_frame_for_constraints_error_and_joint_locks(monkeypatch) -> None:
@@ -230,7 +222,6 @@ def test_solve_single_uses_target_frame_for_constraints_error_and_joint_locks(mo
     world = FakeDrakeWorld()
     result = DrakeOptimizationIK()._solve_single(
         world=world,  # type: ignore[arg-type]
-        robot_id="robot-instance",
         target_transform=FakeRigidTransform(),
         seed=np.array([1.0, 2.0, 3.0]),
         joint_names=["j0", "j1", "j2"],
@@ -247,7 +238,7 @@ def test_solve_single_uses_target_frame_for_constraints_error_and_joint_locks(mo
     assert world.plant.requested_bodies == [("selected_tip_link", "model-instance")]
     assert ik.position_constraints[0]["frameB"] == "frame:selected_tip_link"
     assert ik.orientation_constraints[0]["frameBbar"] == "frame:selected_tip_link"
-    assert world.link_pose_calls == [("robot-instance", "selected_tip_link")]
+    assert world.link_pose_calls == ["selected_tip_link"]
     assert ik.program.locks == [(1.5, 1.5, "q1"), (3.5, 3.5, "q4")]
     assert ik.program.initial_guess is not None
     np.testing.assert_allclose(ik.program.initial_guess[1], [0.0, 1.0, 0.0, 2.0, 3.0, 0.0])

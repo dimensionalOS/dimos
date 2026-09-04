@@ -12,62 +12,162 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenArm keyboard teleop blueprints."""
+"""OpenArm Quest teleop blueprint."""
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+from dimos.control.coordinator import ControlCoordinatorConfig, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.robot.manipulators.common.blueprints import (
-    eef_twist_task,
-)
-from dimos.robot.manipulators.common.coordinators import (
-    ArmTwistCoordinator,
-)
+from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.openarm.config import (
-    LEFT_CAN,
-    openarm_single_hardware,
-    openarm_single_model_config,
+    OPENARM_ARM_JOINTS,
+    OPENARM_GRIPPER_JOINTS,
+    OPENARM_JOINTS,
+    openarm_bimanual_model_config,
+    openarm_hardware,
 )
-from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
+from dimos.robot.manipulators.openarm.teleop_ik import OpenArmPinkPoseTargetSolver
+from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
-_teleop_hw = openarm_single_hardware()
-_openarm_model = openarm_single_model_config()
+OPENARM_QUEST_TASK_NAME = "teleop_openarm"
 
-keyboard_teleop_openarm_mock = autoconnect(
-    KeyboardTeleopModule.blueprint(),
-    ArmTwistCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        hardware=[_teleop_hw],
-        tasks=[
-            eef_twist_task(
-                _teleop_hw,
-                robot_model=_openarm_model,
+_OPENARM_ARM_VELOCITY_PROFILE_RAD_S = (1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0)
+_OPENARM_JOINT_VELOCITY_LIMITS_RAD_S = {
+    joint_name: velocity_limit
+    for joint_name, velocity_limit in zip(
+        OPENARM_ARM_JOINTS,
+        _OPENARM_ARM_VELOCITY_PROFILE_RAD_S * 2,
+        strict=True,
+    )
+}
+
+
+def _trajectory_task(*, priority: int = 10) -> TaskConfig:
+    return TaskConfig(
+        name=JOINT_TRAJECTORY_TASK_NAME,
+        type="trajectory",
+        joint_names=list(OPENARM_JOINTS),
+        priority=priority,
+        params={"start_position_tolerance": 0.05},
+    )
+
+
+class OpenArmTeleopCoordinatorConfig(ControlCoordinatorConfig):
+    """OpenArm teleop deployment configuration requiring a complete bus pair."""
+
+    left_can_port: str | None = None
+    right_can_port: str | None = None
+
+
+class OpenArmTeleopCoordinator(TeleopControlCoordinator):
+    """Install the fixed OpenArm model and resolved hardware adapter."""
+
+    config: OpenArmTeleopCoordinatorConfig
+
+    def _setup_from_config(self) -> None:
+        self.config.tasks = [
+            replace(
+                task,
+                params={
+                    **task.params,
+                    "robot_model": openarm_bimanual_model_config(),
+                },
             )
+            if task.name == OPENARM_QUEST_TASK_NAME
+            else task
+            for task in self.config.tasks
+        ]
+        self.config.hardware = [
+            openarm_hardware(
+                left_can_port=self.config.left_can_port,
+                right_can_port=self.config.right_can_port,
+            )
+        ]
+        super()._setup_from_config()
+
+
+class _OpenArmManipulationModule(ManipulationModule):
+    """Own the fixed OpenArm model outside blueprint CLI configuration."""
+
+    def _initialize_planning(self) -> None:
+        self.config.model = openarm_bimanual_model_config()
+        super()._initialize_planning()
+
+
+_openarm_quest_pink = PinkKinematicsConfig(
+    dt=0.01,
+    position_cost=8.0,
+    orientation_cost=2.0,
+    posture_cost=0.01,
+    joint_limit_posture_margin=0.3,
+    lm_damping=0.01,
+    gain=0.25,
+)
+_openarm_quest_task = TaskConfig(
+    name=OPENARM_QUEST_TASK_NAME,
+    type="teleop_ik",
+    joint_names=OPENARM_ARM_JOINTS,
+    params={
+        "bindings": [
+            {
+                "hand": "left",
+                "target_frame": "openarm_left_grasp_frame",
+            },
+            {
+                "hand": "right",
+                "target_frame": "openarm_right_grasp_frame",
+            },
+        ],
+        "solver_type": OpenArmPinkPoseTargetSolver,
+        "pink": _openarm_quest_pink,
+        "timeout": 0.5,
+        "max_command_tracking_error_deg": 10.0,
+        "max_joint_velocity_rad_s": 2.0,
+        "joint_velocity_limits_rad_s": _OPENARM_JOINT_VELOCITY_LIMITS_RAD_S,
+        "joint_command_filter_cutoff_hz": 5.0,
+    },
+)
+
+# Safe default: both controllers feed one bimanual task backed by in-memory
+# hardware. Supplying both CAN ports selects the physical adapter.
+teleop_quest_openarm = autoconnect(
+    ArmTeleopModule.blueprint(),
+    OpenArmTeleopCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        tasks=[
+            _openarm_quest_task,
+            TaskConfig(
+                name="left_arm_gripper",
+                type="gripper",
+                joint_names=[OPENARM_GRIPPER_JOINTS[0]],
+                priority=20,
+                stream_bind={"gripper_command": "left_gripper_command"},
+            ),
+            TaskConfig(
+                name="right_arm_gripper",
+                type="gripper",
+                joint_names=[OPENARM_GRIPPER_JOINTS[1]],
+                priority=20,
+                stream_bind={"gripper_command": "right_gripper_command"},
+            ),
+            _trajectory_task(priority=20),
         ],
     ),
-    ManipulationModule.blueprint(
-        robots=[_openarm_model],
-        visualization={"backend": "meshcat"},
+    _OpenArmManipulationModule.blueprint(
+        model=openarm_bimanual_model_config(),
+        kinematics=_openarm_quest_pink,
+        visualization={"backend": "viser"},
     ),
-)
-
-_teleop_real_hw = openarm_single_hardware(adapter_type="openarm", address=LEFT_CAN)
-
-keyboard_teleop_openarm = autoconnect(
-    KeyboardTeleopModule.blueprint(),
-    ArmTwistCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        hardware=[_teleop_real_hw],
-        tasks=[
-            eef_twist_task(
-                _teleop_real_hw,
-                robot_model=_openarm_model,
-            )
-        ],
-    ),
-    ManipulationModule.blueprint(
-        robots=[_openarm_model],
-        visualization={"backend": "meshcat"},
-    ),
+).remappings(
+    [
+        (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+        (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
+        (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+    ]
 )

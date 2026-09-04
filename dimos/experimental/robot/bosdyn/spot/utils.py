@@ -27,7 +27,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.robot.model_parser import JointDescription, parse_model
+from dimos.robot.assets.model import JointDescription, RobotModel
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -95,7 +95,7 @@ def camera_mount_transforms(
     from each optical frame and folds the per-joint origins into one transform, so
     the recorded images resolve a pose against the live odom->base_link edge.
     """
-    model = parse_model(urdf_path)
+    model = RobotModel.from_file(urdf_path).load()
     urdf_root = model.root_link
     joint_by_child = {joint.child_link: joint for joint in model.joints}
     transforms: list[Transform] = []

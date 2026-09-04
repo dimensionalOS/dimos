@@ -16,27 +16,45 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
+from dimos.robot.manipulators.common.blueprints import coordinator, planner
 from dimos.robot.manipulators.openyam.config import (
-    make_openyam_hardware,
+    OPENYAM_GRIPPER_JOINT,
+    OPENYAM_HARDWARE_ID,
+    OPENYAM_JOINTS,
     make_openyam_model_config,
+    openyam_hardware,
 )
 
-_openyam_planner_hw = make_openyam_hardware("arm")
+
+def _trajectory_task() -> TaskConfig:
+    return joint_trajectory_task(OPENYAM_JOINTS)
+
+
+def _gripper_task() -> TaskConfig:
+    return TaskConfig(
+        name=f"{OPENYAM_HARDWARE_ID}_gripper",
+        type="gripper",
+        joint_names=[OPENYAM_GRIPPER_JOINT],
+        priority=20,
+    )
+
+
+_openyam_planner_hw = openyam_hardware()
 
 openyam_planner_coordinator = autoconnect(
-    planner(robots=[make_openyam_model_config(name="arm")]),
+    planner(model=make_openyam_model_config()),
     coordinator(
         hardware=[_openyam_planner_hw],
-        tasks=[trajectory_task(_openyam_planner_hw)],
+        tasks=[_trajectory_task(), _gripper_task()],
     ),
 )
 
-_openyam_hw = make_openyam_hardware("arm")
+_openyam_hw = openyam_hardware()
 
 coordinator_openyam = ControlCoordinator.blueprint(
     hardware=[_openyam_hw],
-    tasks=[trajectory_task(_openyam_hw)],
+    tasks=[_trajectory_task(), _gripper_task()],
 )

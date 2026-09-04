@@ -31,7 +31,7 @@ execute()               # Execute via coordinator
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    ManipulationModule                       │
-│         (RPC interface, state machine, multi-robot)         │
+│       (RPC interface, state machine, one robot model)       │
 └─────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────────────────────────────────────┐
@@ -60,22 +60,32 @@ execute()               # Execute via coordinator
 ## Using ManipulationModule
 
 ```python skip
-from pathlib import Path
 from dimos.manipulation import ManipulationModule
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.assets.model import RobotModel
 
 config = RobotModelConfig(
-    name="xarm7",
-    model_path=Path("/path/to/xarm7.urdf"),
+    model=RobotModel.from_file("/path/to/xarm7.urdf"),
     base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
     joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
-    end_effector_link="link7",
     base_link="link_base",
-    joint_name_mapping={"arm_joint1": "joint1", ...},  # coordinator <-> URDF
+    planning_groups=[
+        PlanningGroupDefinition(
+            name="arm",
+            joint_names=("joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"),
+            base_link="link_base",
+            tip_link="link7",
+        )
+    ],
 )
 
 module = ManipulationModule(
-    robots=[config],
+    model=config,
     planning_timeout=10.0,
     enable_viz=True,
     world_backend="drake",                # RoboPlan is the default
@@ -84,7 +94,9 @@ module = ManipulationModule(
     kinematics={"backend": "drake_optimization"}, # Or "jacobian" / "pink"
 )
 module.start()
-module.plan_to_joints([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
+module.plan_to_joints(
+    {"arm": JointState(position=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])}
+)
 module.execute()  # Sends to coordinator
 ```
 
@@ -113,9 +125,9 @@ DimOS skips parametrization, preserves its timing, and applies the same
 canonical structural validation. This is not fallback: a failure of the
 selected parametrizer never invokes another backend.
 
-Preview and execution both consume the accepted stored trajectory. Execution
-may project globally named joints into each robot's local order, but it does not
-regenerate or retime the trajectory.
+Preview and execution both consume the accepted stored trajectory. The same
+canonical joint names and ordering flow through planning, visualization, and
+coordinator execution without renaming, splitting, or retiming.
 
 When Viser is enabled, its **Next plan speed** slider selects a runtime
 reduction from `0.05` to `1.0`. The value multiplies the configured velocity
@@ -159,12 +171,12 @@ not the collision-checked geometric path.
 `roboplan_toppra` can parametrize a geometric path from any planner, but only
 when `world_backend="roboplan"`: it reuses the finalized `RoboPlanWorld` model
 and planning groups. Selecting it with another world fails during startup.
-DimOS pins RoboPlan to `0.5.1` for this integration.
+DimOS supports RoboPlan `0.6.x` for this integration.
 
 For every selected movable joint, the RoboPlan URDF must provide a finite,
 positive velocity limit. DimOS uses an authored extended acceleration limit
-when present; otherwise it temporarily inserts a global `2.0 rad/s²` fallback
-while composing the RoboPlan model. Formal per-joint acceleration overrides
+when present; otherwise it temporarily inserts a default `2.0 rad/s²` limit
+while preparing the RoboPlan model. Formal per-joint acceleration overrides
 will replace this fallback.
 
 ```xml
@@ -181,23 +193,19 @@ RoboPlan scene limits are authoritative for this backend. The current
 `RobotModelConfig.max_velocity`, `velocity_limits`, and `max_acceleration`
 fields are not substituted when a URDF limit is missing. Missing or invalid
 limits fail plan materialization with the affected joint named. Formal
-globally named per-joint overrides are future work.
+canonical per-joint overrides are future work.
 
 ## RobotModelConfig Fields
 
 | Field | Description |
 |-------|-------------|
-| `name` | Robot identifier |
-| `model_path` | Path to URDF/XACRO file |
+| `model` | Lazy portable robot model |
 | `base_pose` | PoseStamped for robot base in world frame |
-| `joint_names` | Joint names in URDF |
-| `end_effector_link` | EE link name |
+| `joint_names` | Canonical joint names in the model |
 | `base_link` | Base link name |
+| `planning_groups` | Named planning subsets with canonical joints and frames |
 | `max_velocity` | Max joint velocity (rad/s) |
 | `max_acceleration` | Max acceleration (rad/s²) |
-| `joint_name_mapping` | Coordinator → URDF name mapping |
-| `package_paths` | ROS package paths for meshes |
-| `xacro_args` | Xacro arguments (e.g., `{"dof": "7"}`) |
 
 ## Components
 

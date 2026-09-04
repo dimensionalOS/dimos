@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Ingress-bound tests for the viewer session's frame queue (no network:
-frames are fed straight into the protocol callbacks)."""
+"""Ingress-bound tests for the session's frame and control queues (no
+network: frames are fed straight into the protocol callbacks)."""
 
 from aioquic.quic.connection import QuicConnection
 from aioquic.quic.events import StreamReset
 
 from dimos.web.relay_bridge._wt_session import (
+    _CONTROL_QUEUE_MAX,
     _FRAME_QUEUE_MAX,
     _FRAME_QUEUE_MAX_BYTES,
     SessionProtocol,
@@ -26,11 +27,15 @@ from dimos.web.relay_bridge._wt_session import (
     make_quic_configuration,
 )
 from dimos.web.relay_bridge.protocol import (
-    ChannelSpec,
+    CONTROL_CHANNEL,
+    MAX_CONTROL_PAYLOAD_BYTES,
     DataFrame,
     FrameHeader,
     Manifest,
+    Stop,
+    Subs,
     encode_data_frame,
+    encode_datagram,
 )
 
 
@@ -41,6 +46,11 @@ def _session() -> SessionProtocol:
 def _frame_bytes(ch: str, seq: int, size: int) -> bytes:
     header = FrameHeader(ch=ch, seq=seq, ts=0.5, delivery="latest")
     return encode_data_frame(header, b"\xab" * size)
+
+
+def _control_bytes(payload: bytes, seq: int = 1) -> bytes:
+    header = FrameHeader(ch=CONTROL_CHANNEL, seq=seq, ts=0.5, delivery="reliable")
+    return encode_data_frame(header, payload)
 
 
 async def test_frame_queue_bounded_by_total_bytes():
@@ -91,10 +101,24 @@ async def test_per_encoding_payload_caps():
     session._control_msg_received(
         Manifest(
             robotId="r1",
-            channels=[
-                ChannelSpec(ch="odom", encoding="pose.json.v1", delivery="reliable", maxHz=20.5),
-                ChannelSpec(ch="cam", encoding="jpeg.v1", delivery="latest", maxHz=15.5),
-            ],
+            manifest={
+                "version": 1,
+                "channels": [
+                    {
+                        "ch": "odom",
+                        "encoding": "pose.json.v1",
+                        "delivery": "reliable",
+                        "maxHz": 20.5,
+                    },
+                    {"ch": "cam", "encoding": "jpeg.v1", "delivery": "latest", "maxHz": 15.5},
+                    {
+                        "ch": "global_costmap",
+                        "encoding": "costmap.zlib.v1",
+                        "delivery": "latest",
+                        "maxHz": 5.5,
+                    },
+                ],
+            },
         )
     )
     # The manifest still reaches the control consumer queue.
@@ -104,14 +128,19 @@ async def test_per_encoding_payload_caps():
     session._stream_data_received(4, _frame_bytes("odom", 1, 128 * 1024), False)
     assert session.frames.qsize() == 0
     assert session.frames_oversized == 1
+    # Over the costmap cap: dropped too.
+    session._stream_data_received(8, _frame_bytes("global_costmap", 1, 9 * 1024 * 1024), False)
+    assert session.frames.qsize() == 0
+    assert session.frames_oversized == 2
     # Under the caps: queued.
     session._stream_data_received(4, _frame_bytes("odom", 2, 100), False)
     session._stream_data_received(8, _frame_bytes("cam", 1, 1024 * 1024), False)
-    assert session.frames.qsize() == 2
-    # Channels with no known encoding only get the outer frame-size bound.
-    session._stream_data_received(12, _frame_bytes("mystery", 1, 9 * 1024 * 1024), True)
+    session._stream_data_received(12, _frame_bytes("global_costmap", 2, 30 * 1024), False)
     assert session.frames.qsize() == 3
-    assert session.frames_oversized == 1
+    # Channels with no known encoding only get the outer frame-size bound.
+    session._stream_data_received(16, _frame_bytes("mystery", 1, 9 * 1024 * 1024), True)
+    assert session.frames.qsize() == 4
+    assert session.frames_oversized == 2
 
 
 async def test_stream_reset_drops_the_frame_reader():
@@ -132,3 +161,164 @@ async def test_stream_reset_drops_the_frame_reader():
     session.quic_event_received(StreamReset(error_code=1, stream_id=8))
     assert 8 not in session._frame_readers
     assert session.frames.qsize() == 1
+
+
+async def test_control_frames_route_to_the_control_consumer():
+    # Carrier @control frames feed control_msgs, never the data-frame queue.
+    # Back-to-back frames in one chunk and a frame split across chunks both
+    # dispatch (the carrier is one persistent stream, byte-count framing);
+    # each snapshot supersedes the queued one, so only the newest remains -
+    # the end state proves all three dispatched in order.
+    session = _session()
+    two = _control_bytes(encode_datagram(Subs(chs=[], n=1)), seq=1) + _control_bytes(
+        encode_datagram(Subs(chs=["odom"], n=2)), seq=2
+    )
+    session._stream_data_received(3, two, False)
+    assert session.control_msgs.qsize() == 1  # n=2 superseded n=1
+    split = _control_bytes(encode_datagram(Subs(chs=["cam", "odom"], n=3)), seq=3)
+    session._stream_data_received(3, split[:7], False)
+    assert session.control_msgs.qsize() == 1  # the partial frame waits
+    session._stream_data_received(3, split[7:], False)
+    assert session.frames.qsize() == 0
+    assert session.control_msgs.get_nowait() == Subs(chs=["cam", "odom"], n=3)
+    assert session.control_dropped == 0
+    assert not session.closed.is_set()
+
+
+async def test_undecodable_control_payload_is_dropped_not_fatal():
+    # Mirrors the relay's post-registration junk-control handling; an
+    # exactly-at-cap payload also pins the size boundary as accepted.
+    session = _session()
+    session.incoming_is_carrier = True
+    session._stream_data_received(3, _control_bytes(b"\xff" * MAX_CONTROL_PAYLOAD_BYTES), False)
+    assert session.control_invalid == 1
+    assert session.control_msgs.qsize() == 0
+    assert session.frames.qsize() == 0
+    assert not session.closed.is_set()
+
+
+async def test_oversized_control_payload_fails_the_session():
+    session = _session()
+    session._stream_data_received(3, _control_bytes(b"x" * (MAX_CONTROL_PAYLOAD_BYTES + 1)), False)
+    assert session.closed.is_set()
+    assert session.control_msgs.qsize() == 0
+
+
+async def test_corrupt_carrier_framing_fails_the_robot_session():
+    # Robot role (incoming_is_carrier): the carrier is a control dependency,
+    # so corruption ends the session instead of leaving it alive with frozen
+    # subscriptions. Frames decoded before the corruption still dispatch
+    # first.
+    session = _session()
+    session.incoming_is_carrier = True
+    good = _control_bytes(encode_datagram(Subs(chs=["odom"], n=1)))
+    session._stream_data_received(3, good + b"\xff" * 8, False)
+    assert session.control_msgs.get_nowait() == Subs(chs=["odom"], n=1)
+    assert session.closed.is_set()
+    assert session._frame_readers[3] is None
+
+
+async def test_corrupt_framing_on_a_viewer_session_poisons_only_that_stream():
+    # Default (viewer) behavior is unchanged: the corrupt stream is abandoned
+    # alone and the session lives on.
+    session = _session()
+    session._stream_data_received(4, b"\xff" * 8, False)
+    assert session._frame_readers[4] is None
+    assert not session.closed.is_set()
+    # Later bytes on the poisoned stream are ignored; other streams work.
+    session._stream_data_received(4, _frame_bytes("cam", 1, 16), False)
+    assert session.frames.qsize() == 0
+    session._stream_data_received(8, _frame_bytes("cam", 2, 16), False)
+    assert session.frames.qsize() == 1
+
+
+async def test_subs_snapshot_survives_a_teleop_flood():
+    # All non-handshake control shares one drop-oldest queue; eviction must
+    # take the oldest teleop message, never the one queued snapshot - with
+    # the carrier there is no periodic resend to heal an evicted one.
+    session = _session()
+    session.incoming_is_carrier = True
+    session._stream_data_received(
+        3, _control_bytes(encode_datagram(Subs(chs=["odom"], n=1))), False
+    )
+    for seq in range(_CONTROL_QUEUE_MAX):
+        session._control_msg_received(Stop(seq=seq, ts=0.5))
+    assert session.control_msgs.qsize() == _CONTROL_QUEUE_MAX
+    assert session.control_dropped == 1
+    msgs = [session.control_msgs.get_nowait() for _ in range(_CONTROL_QUEUE_MAX)]
+    assert msgs[0] == Subs(chs=["odom"], n=1)
+    # The oldest teleop message (seq 0) was the eviction victim.
+    assert [m.seq for m in msgs[1:] if isinstance(m, Stop)] == list(range(1, _CONTROL_QUEUE_MAX))
+
+
+async def test_newer_subs_snapshot_supersedes_the_queued_one():
+    # Snapshots are full state: a queued older one is replaced (not counted
+    # as a drop) while other control keeps its order.
+    session = _session()
+    session._control_msg_received(Subs(chs=["odom"], n=1))
+    session._control_msg_received(Stop(seq=1, ts=0.5))
+    session._control_msg_received(Subs(chs=["cam", "odom"], n=2))
+    msgs = [session.control_msgs.get_nowait() for _ in range(2)]
+    assert msgs == [Stop(seq=1, ts=0.5), Subs(chs=["cam", "odom"], n=2)]
+    assert session.control_dropped == 0
+
+
+async def test_carrier_reset_fails_the_robot_session():
+    # The relay never replaces a carrier, so a reset while the connection
+    # lives (e.g. the relay's carrier dispose racing its delayed session
+    # close) must fail the session now, not after the idle timeout; the
+    # partial snapshot in the reader is discarded with it.
+    session = _session()
+    session.incoming_is_carrier = True
+    frame = _control_bytes(encode_datagram(Subs(chs=["odom"], n=1)))
+    session._stream_data_received(3, frame[: len(frame) // 2], False)
+    session.quic_event_received(StreamReset(error_code=1, stream_id=3))
+    assert 3 not in session._frame_readers
+    assert session.closed.is_set()
+    assert session.control_msgs.qsize() == 0
+
+
+async def test_carrier_fin_fails_the_robot_session():
+    # Deno aborts, never FINs; an ended carrier is equally unreplaceable.
+    # Complete frames in the final chunk still dispatch first.
+    session = _session()
+    session.incoming_is_carrier = True
+    session._stream_data_received(3, _control_bytes(encode_datagram(Subs(chs=["odom"], n=1))), True)
+    assert session.control_msgs.get_nowait() == Subs(chs=["odom"], n=1)
+    assert session.closed.is_set()
+
+
+async def test_robot_bidi_receive_reset_is_not_carrier_loss():
+    # The relay aborts its send half of EVERY robot-opened bidi stream on
+    # accept, so the robot sees a reset per hello/data stream (id % 4 == 0);
+    # only server-initiated uni ids (% 4 == 3) are the carrier.
+    session = _session()
+    session.incoming_is_carrier = True
+    session.quic_event_received(StreamReset(error_code=1, stream_id=0))
+    session.quic_event_received(StreamReset(error_code=1, stream_id=4))
+    assert not session.closed.is_set()
+
+
+async def test_viewer_uni_reset_and_fin_stay_routine():
+    # Viewer legs receive many relay-opened uni data streams; resets (reap,
+    # dispose, teardown) and FINs remain routine stream ends there.
+    session = _session()
+    session._stream_data_received(3, _frame_bytes("cam", 1, 16), True)
+    assert session.frames.qsize() == 1
+    session.quic_event_received(StreamReset(error_code=1, stream_id=7))
+    assert not session.closed.is_set()
+
+
+async def test_failed_session_does_not_leak_into_a_fresh_epoch():
+    # Epoch isolation is structural - a reconnect builds a whole new
+    # SessionProtocol - so a failed session's state must stay instance-local
+    # and the replacement must ingest carrier frames normally.
+    failed = _session()
+    failed.incoming_is_carrier = True
+    failed.quic_event_received(StreamReset(error_code=1, stream_id=3))
+    assert failed.closed.is_set()
+    fresh = _session()
+    fresh.incoming_is_carrier = True
+    fresh._stream_data_received(3, _control_bytes(encode_datagram(Subs(chs=["odom"], n=1))), False)
+    assert fresh.control_msgs.qsize() == 1
+    assert not fresh.closed.is_set()

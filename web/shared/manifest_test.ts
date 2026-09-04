@@ -30,10 +30,23 @@ Deno.test("maxHz beyond float64 is rejected", () => {
   // Infinity; test_manifest.py pins the Python half (an exact huge int) to
   // the same code.
   const data = {
+    version: 1,
     channels: [
       { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: Infinity },
     ],
   };
   const err = assertThrows(() => parseManifest(data), ManifestError);
   assertEquals(err.code, "invalid_max_hz");
+});
+
+Deno.test("layout share beyond float64 is rejected", () => {
+  // Same non-golden reasoning as above, for the layout walker's share bound.
+  const data = {
+    version: 1,
+    channels: [{ ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 }],
+    panels: [{ id: "pose", kind: "readout", channels: ["odom"] }],
+    layout: { row: ["pose"], shares: [Infinity] },
+  };
+  const err = assertThrows(() => parseManifest(data), ManifestError);
+  assertEquals(err.code, "invalid_layout");
 });

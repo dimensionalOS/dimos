@@ -19,29 +19,30 @@ from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.get_all_blueprints import get_blueprint_by_name
 
 # Optional dependencies that are allowed to be missing
-OPTIONAL_DEPENDENCIES = {"pyrealsense2", "pyzed", "geometry_msgs", "turbojpeg", "unitree_sdk2py"}
+OPTIONAL_DEPENDENCIES = {"pyzed", "geometry_msgs", "turbojpeg", "unitree_sdk2py"}
 OPTIONAL_ERROR_SUBSTRINGS = {
     "Unable to locate turbojpeg library automatically",
     "ZED SDK not installed",
     "Descriptors cannot be created directly",
+    # cockpit() blueprints without the [web] extra installed.
+    "needs the web extra",
 }
 
-# These need git LFS, so can't be run on the ubuntu runners.
+# These need self-hosted dependencies or external robot assets.
 SELF_HOSTED_BLUEPRINTS = frozenset(
     {
-        "alfred-nav",
         "coordinator-basic",
         "coordinator-cartesian-ik-mock",
         "coordinator-cartesian-ik-piper",
         "coordinator-combined-xarm6",
         "coordinator-flowbase",
         "coordinator-flowbase-keyboard-teleop",
-        "coordinator-flowbase-nav",
         "coordinator-mobile-manip-mock",
         "coordinator-mock",
         "coordinator-mock-twist-base",
+        "coordinator-openarm",
         "coordinator-piper",
-        "coordinator-servo-xarm6",
+        "coordinator-trajectory-xarm6",
         "coordinator-teleop-dual",
         "coordinator-teleop-piper",
         "coordinator-teleop-xarm6",
@@ -51,6 +52,7 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "coordinator-xarm7",
         "dual-xarm6-planner-coordinator",
         "learning-collect-quest-xarm7",
+        "openarm-planner-coordinator",
         "teleop-hosted-go2-multicam",
         "teleop-hosted-go2-transport",
         "teleop-hosted-xarm6",
@@ -63,7 +65,6 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "teleop-quest-xarm6",
         "teleop-quest-xarm7",
         "teleop-quest-xarm7-video",
-        "unitree-g1-nav-sim",
         "xarm-perception",
         "xarm-perception-agent",
         "xarm-perception-sim",

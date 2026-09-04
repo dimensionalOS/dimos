@@ -19,11 +19,11 @@ try:
     # Not a dependency, just the best way to get config path if available.
     from gi.repository import GLib  # type: ignore[import-untyped,import-not-found]
 except ImportError:
-    CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "dimos"
     STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "dimos"
     CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "dimos"
 else:
-    CONFIG_DIR = Path(GLib.get_user_config_dir())
+    CONFIG_DIR = Path(GLib.get_user_config_dir()) / "dimos"
     STATE_DIR = Path(GLib.get_user_state_dir()) / "dimos"
     CACHE_DIR = Path(GLib.get_user_cache_dir()) / "dimos"
 
@@ -33,12 +33,15 @@ if (DIMOS_PROJECT_ROOT / ".git").exists():
     # Running from Git repository
     LOG_DIR = DIMOS_PROJECT_ROOT / "logs"
     RECORDINGS_DIR = DIMOS_PROJECT_ROOT / "recordings"
+    DOWNLOADS_DIR = DIMOS_PROJECT_ROOT / "downloads"
 else:
     # Running from an installed package - use XDG_STATE_HOME
     LOG_DIR = STATE_DIR / "logs"
     RECORDINGS_DIR = STATE_DIR / "recordings"
+    DOWNLOADS_DIR = STATE_DIR / "downloads"
 
-CREDENTIALS_PATH = CONFIG_DIR / "dimos-credentials"
+CREDENTIALS_PATH = CONFIG_DIR / "credentials"
+
 
 """
 Constants for shared memory
@@ -62,3 +65,11 @@ LCM_MAX_CHANNEL_NAME_LENGTH = 63
 DEFAULT_THREAD_JOIN_TIMEOUT = 2.0
 
 DEFAULT_BUILD_NATIVE = False
+
+# streaming compression libraries sharing the open(path, mode) API: id -> (module, suffix)
+CODEC_LIBS = {
+    "lz4": ("lz4.frame", ".lz4"),
+    "gzip": ("gzip", ".gz"),
+    "bz2": ("bz2", ".bz2"),
+    "xz": ("lzma", ".xz"),
+}

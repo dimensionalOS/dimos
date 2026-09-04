@@ -1,6 +1,4 @@
----
-title: "Testing Guidelines"
----
+# Testing Guidelines
 
 Rules for writing tests in dimos. These address recurring issues found in code review.
 

@@ -13,15 +13,23 @@
 # limitations under the License.
 
 import difflib
+import math
 from typing import Any
 
 from langchain_core.messages import HumanMessage
+import pytest
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.base import NavigationState
-from dimos.robot.unitree.unitree_skill_container import _UNITREE_COMMANDS, UnitreeSkillContainer
+from dimos.robot.unitree.unitree_skill_container import (
+    _UNITREE_COMMANDS,
+    UnitreeSkillContainer,
+    _goal_pose,
+)
 
 
 class StubNavigation(Module):
@@ -70,3 +78,44 @@ def test_did_you_mean() -> None:
     suggestions = difflib.get_close_matches("Pounce", _UNITREE_COMMANDS.keys(), n=3, cutoff=0.6)
     assert "FrontPounce" in suggestions
     assert "Pose" in suggestions
+
+
+def _pose(x: float, y: float, yaw_deg: float) -> PoseStamped:
+    return PoseStamped(
+        position=Vector3(x, y, 0.3),
+        orientation=Quaternion.from_euler(Vector3(0, 0, math.radians(yaw_deg))),
+    )
+
+
+def _xy(pose: PoseStamped) -> tuple[float, float]:
+    return pose.position.x, pose.position.y
+
+
+def _yaw_deg(pose: PoseStamped) -> float:
+    return math.degrees(pose.orientation.to_euler().yaw)
+
+
+def test_move_to_world_keeps_heading() -> None:
+    goal = _goal_pose(_pose(1, 1, 90), 4, 1, None, relative=False)
+    assert _xy(goal) == pytest.approx((4, 1))
+    assert goal.position.z == pytest.approx(0.3)
+    assert _yaw_deg(goal) == pytest.approx(90)
+
+
+def test_move_to_world_explicit_heading_is_absolute() -> None:
+    goal = _goal_pose(_pose(0, 0, 45), 2, 2, 90, relative=False)
+    assert _xy(goal) == pytest.approx((2, 2))
+    assert _yaw_deg(goal) == pytest.approx(90)
+
+
+def test_move_to_relative_offset_rotates_into_world() -> None:
+    # Facing north, 2 m forward and 1 m left lands at (-1, 2), still facing north.
+    goal = _goal_pose(_pose(0, 0, 90), 2, 1, None, relative=True)
+    assert _xy(goal) == pytest.approx((-1, 2))
+    assert _yaw_deg(goal) == pytest.approx(90)
+
+
+def test_move_to_relative_turn_in_place() -> None:
+    goal = _goal_pose(_pose(0, 0, 90), 0, 0, -90, relative=True)
+    assert _xy(goal) == pytest.approx((0, 0))
+    assert _yaw_deg(goal) == pytest.approx(0)

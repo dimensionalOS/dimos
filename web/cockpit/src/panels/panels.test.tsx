@@ -1,12 +1,15 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { FrameHeader, PanelSpec } from "@dimos/shared";
-import { ChannelStore } from "../session/store.ts";
-import { PanelGrid } from "./PanelGrid.tsx";
-import { getPanel } from "./registry.ts";
-import { type DrawHealth, startVideoSink, VideoPanel } from "./VideoPanel.tsx";
+import type { CostmapValue } from "@dimos/sdk";
+import { ChannelStore } from "@dimos/sdk";
+import type { DrawHealth } from "../layout/PanelFrame.tsx";
+import { MapPanel, startMapSink } from "./MapPanel.tsx";
+import { fitTransform, posePath } from "./mapRenderer.ts";
+import { getPanel, UnknownPanel } from "./registry.tsx";
+import { startVideoSink, VideoPanel } from "./VideoPanel.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -189,7 +192,7 @@ describe("startVideoSink", () => {
 });
 
 describe("VideoPanel", () => {
-  const SPEC: PanelSpec = { id: "cam", kind: "video", channels: [CH] };
+  const SPEC: PanelSpec = { id: "cam", kind: "video", title: "", channels: [CH], params: {} };
   let container: HTMLElement;
   let root: Root;
   let now: number;
@@ -303,7 +306,10 @@ describe("VideoPanel", () => {
   it("renders a visible note instead of a canvas when no channel is bound", () => {
     act(() =>
       root.render(
-        <VideoPanel spec={{ id: "cam", kind: "video", channels: [] }} store={store} />,
+        <VideoPanel
+          spec={{ id: "cam", kind: "video", title: "", channels: [], params: {} }}
+          store={store}
+        />,
       )
     );
     expect(container.textContent).toContain("no channel bound");
@@ -311,13 +317,12 @@ describe("VideoPanel", () => {
   });
 });
 
-describe("PanelGrid", () => {
+describe("registry", () => {
   let container: HTMLElement;
   let root: Root;
   let store: ChannelStore;
 
   beforeEach(() => {
-    vi.stubGlobal("createImageBitmap", () => Promise.resolve(bitmap()));
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -327,26 +332,451 @@ describe("PanelGrid", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+  });
+
+  it("has the video and map2d panels registered; unknown kinds stay undefined", () => {
+    // The subscription gate depends on getPanel returning undefined here: an
+    // UnknownPanel fallback in the registry itself would subscribe every
+    // channel of a newer bridge (see channelSubscribable in session.ts).
+    expect(getPanel("video")).toBe(VideoPanel);
+    expect(getPanel("map2d")).toBe(MapPanel);
+    expect(getPanel("hologram")).toBeUndefined();
+  });
+
+  it("UnknownPanel renders visible chrome and binds nothing", () => {
+    const spec: PanelSpec = {
+      id: "mystery",
+      kind: "hologram",
+      title: "",
+      channels: [],
+      params: {},
+    };
+    act(() => root.render(<UnknownPanel spec={spec} store={store} />));
+    expect(container.querySelector('[data-testid="panel-mystery"]')).not.toBeNull();
+    expect(container.textContent).toContain("unknown panel kind hologram");
+    expect(container.querySelector("canvas")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Map panel
+
+const MAP_CH = "global_costmap";
+const POSE_CH = "odom";
+
+function costmapValue(seq: number, w = 2, h = 2): CostmapValue {
+  return { bytes: new Uint8Array([seq]), w, h, res: 0.5, origin: [0.25, -0.5, 0.0] };
+}
+
+function gridFrame(store: ChannelStore, seq: number, ts = seq): CostmapValue {
+  const value = costmapValue(seq);
+  store.ingest(MAP_CH, { ch: MAP_CH, seq, ts, delivery: "latest" }, value, true);
+  return value;
+}
+
+function poseFrame(store: ChannelStore, seq: number): void {
+  const value = { x: 0.5, y: 0.5, z: 0.1, yaw: 0.25, ts: seq };
+  store.ingest(POSE_CH, { ch: POSE_CH, seq, ts: seq, delivery: "reliable" }, value, true);
+}
+
+/** Inflate stub whose promises settle only when the test says so. */
+function deferredInflate() {
+  const calls: CostmapValue[] = [];
+  const settlers: { resolve: (cells: Uint8Array) => void; reject: (e: Error) => void }[] = [];
+  const inflate = (value: CostmapValue): Promise<Uint8Array> => {
+    calls.push(value);
+    return new Promise((resolve, reject) => settlers.push({ resolve, reject }));
+  };
+  return { inflate, calls, settlers };
+}
+
+/** happy-dom has no layout; pin the CSS size the sink reads. */
+function defineSize(canvas: HTMLCanvasElement, w: number, h: number): void {
+  Object.defineProperty(canvas, "clientWidth", { configurable: true, value: w });
+  Object.defineProperty(canvas, "clientHeight", { configurable: true, value: h });
+}
+
+describe("startMapSink", () => {
+  interface FakeCtx {
+    drawImage: ReturnType<typeof vi.fn>;
+    putImageData: ReturnType<typeof vi.fn>;
+    clearRect: ReturnType<typeof vi.fn>;
+    save: ReturnType<typeof vi.fn>;
+    restore: ReturnType<typeof vi.fn>;
+    translate: ReturnType<typeof vi.fn>;
+    rotate: ReturnType<typeof vi.fn>;
+    beginPath: ReturnType<typeof vi.fn>;
+    moveTo: ReturnType<typeof vi.fn>;
+    lineTo: ReturnType<typeof vi.fn>;
+    closePath: ReturnType<typeof vi.fn>;
+    fill: ReturnType<typeof vi.fn>;
+  }
+  let store: ChannelStore;
+  let canvas: HTMLCanvasElement;
+  let contexts: FakeCtx[];
+  let health: DrawHealth;
+  let stop: (() => void) | null;
+  // getContext creation order in startMapSink: display canvas, then backing.
+  const display = () => contexts[0];
+  const backing = () => contexts[1];
+
+  beforeEach(() => {
+    store = new ChannelStore();
+    canvas = document.createElement("canvas");
+    defineSize(canvas, 100, 80);
+    contexts = [];
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => {
+      const fake: FakeCtx = {
+        drawImage: vi.fn(),
+        putImageData: vi.fn(),
+        clearRect: vi.fn(),
+        save: vi.fn(),
+        restore: vi.fn(),
+        translate: vi.fn(),
+        rotate: vi.fn(),
+        beginPath: vi.fn(),
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        closePath: vi.fn(),
+        fill: vi.fn(),
+      };
+      contexts.push(fake);
+      return fake as unknown as CanvasRenderingContext2D;
+    });
+    health = { lastDrawOkAtMs: 0, failures: 0 };
+    stop = null;
+  });
+
+  afterEach(() => {
+    stop?.();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
-  it("renders known panel kinds in manifest order and skips unknown ones", () => {
-    const panels: PanelSpec[] = [
-      { id: "cam", kind: "video", channels: [CH] },
-      { id: "mystery", kind: "hologram", channels: [] },
-    ];
-    act(() => root.render(<PanelGrid panels={panels} store={store} />));
-    expect(container.querySelector('[data-testid="panel-cam"]')).not.toBeNull();
-    expect(container.textContent).not.toContain("mystery");
+  it("inflates one grid at a time and skips straight to the newest", async () => {
+    const { inflate, calls, settlers } = deferredInflate();
+    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
 
-    // No known panels: the grid contributes nothing (ChannelList still shows
-    // the channels).
-    act(() => root.render(<PanelGrid panels={[panels[1]]} store={store} />));
-    expect(container.innerHTML).toBe("");
+    const first = gridFrame(store, 1);
+    expect(calls).toEqual([first]);
+    gridFrame(store, 2);
+    const newest = gridFrame(store, 3);
+    expect(calls.length).toBe(1); // one inflate in flight, burst sheds
+
+    settlers[0].resolve(new Uint8Array(4));
+    await flush();
+    expect(backing().putImageData).toHaveBeenCalledTimes(1);
+    const img = backing().putImageData.mock.calls[0][0] as ImageData;
+    expect([img.width, img.height]).toEqual([2, 2]);
+    expect(display().drawImage).toHaveBeenCalledTimes(1);
+    expect(canvas.width).toBe(100); // sized from the layout, not the grid
+    expect(calls.length).toBe(2);
+    expect(calls[1]).toBe(newest); // frame 2 was never inflated
+
+    settlers[1].resolve(new Uint8Array(4));
+    await flush();
+    expect(calls.length).toBe(2); // caught up
   });
 
-  it("has the video panel registered", () => {
-    expect(getPanel("video")).toBe(VideoPanel);
-    expect(getPanel("hologram")).toBeUndefined();
+  it("redraws the pose from the cached bitmap without a new inflate", async () => {
+    const { inflate, calls, settlers } = deferredInflate();
+    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    gridFrame(store, 1);
+    settlers[0].resolve(new Uint8Array(4));
+    await flush();
+    expect(display().fill).not.toHaveBeenCalled(); // no pose yet, no triangle
+
+    poseFrame(store, 1);
+    expect(display().drawImage).toHaveBeenCalledTimes(2);
+    expect(display().fill).toHaveBeenCalledTimes(1); // the triangle
+    expect(backing().putImageData).toHaveBeenCalledTimes(1); // bitmap reused
+    expect(calls.length).toBe(1);
+  });
+
+  it("ignores pose frames until a grid has drawn", () => {
+    const { inflate } = deferredInflate();
+    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    poseFrame(store, 1);
+    expect(display().drawImage).not.toHaveBeenCalled();
+  });
+
+  it("counts inflate rejections and recovers on the next grid", async () => {
+    const { inflate, settlers } = deferredInflate();
+    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    const stamp = health.lastDrawOkAtMs;
+    gridFrame(store, 1);
+    settlers[0].reject(new Error("corrupt zlib"));
+    await flush();
+    expect(health.failures).toBe(1);
+    expect(health.lastDrawOkAtMs).toBe(stamp); // only successes stamp it
+
+    gridFrame(store, 2);
+    settlers[1].resolve(new Uint8Array(4));
+    await flush();
+    expect(health.failures).toBe(0);
+  });
+
+  it("skips a slot that is not a costmap value without spinning", () => {
+    const { inflate, calls } = deferredInflate();
+    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    store.ingest(
+      MAP_CH,
+      { ch: MAP_CH, seq: 1, ts: 1, delivery: "latest" },
+      new Uint8Array(3),
+      true,
+    );
+    expect(calls.length).toBe(0);
+  });
+
+  it("does not inflate while hidden and catches up on visibilitychange", async () => {
+    const { inflate, calls, settlers } = deferredInflate();
+    let hidden = true;
+    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => hidden });
+    gridFrame(store, 1);
+    const newest = gridFrame(store, 2);
+    expect(calls.length).toBe(0); // a backgrounded panel costs no inflate
+
+    hidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(calls.length).toBe(1);
+    expect(calls[0]).toBe(newest);
+    settlers[0].resolve(new Uint8Array(4));
+    await flush();
+  });
+
+  it("redraws on resize with the cached bitmap and disposes the observer", async () => {
+    const { inflate, calls, settlers } = deferredInflate();
+    let resize: (() => void) | null = null;
+    const dispose = vi.fn();
+    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, {
+      inflate,
+      hidden: () => false,
+      observeResize: (_el, cb) => {
+        resize = cb;
+        return dispose;
+      },
+    });
+    gridFrame(store, 1);
+    settlers[0].resolve(new Uint8Array(4));
+    await flush();
+    expect(canvas.width).toBe(100);
+
+    defineSize(canvas, 250, 80);
+    resize!();
+    expect(canvas.width).toBe(250); // backing store follows the layout size
+    expect(display().drawImage).toHaveBeenCalledTimes(2);
+    expect(calls.length).toBe(1); // no re-inflate on resize
+
+    stop!();
+    stop = null;
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops inflating and drawing after cleanup", async () => {
+    const { inflate, calls, settlers } = deferredInflate();
+    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    gridFrame(store, 1);
+    stop();
+    stop = null;
+
+    settlers[0].resolve(new Uint8Array(4));
+    await flush();
+    expect(backing().putImageData).not.toHaveBeenCalled(); // in-flight inflate must not paint
+
+    gridFrame(store, 2);
+    poseFrame(store, 1);
+    expect(calls.length).toBe(1);
+    expect(display().drawImage).not.toHaveBeenCalled();
+  });
+
+  it("rotates the grid blit by -yaw and restores before the pose", async () => {
+    const { inflate, settlers } = deferredInflate();
+    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    const value = { ...costmapValue(1), origin: [0.25, -0.5, 0.25] as [number, number, number] };
+    store.ingest(MAP_CH, { ch: MAP_CH, seq: 1, ts: 1, delivery: "latest" }, value, true);
+    settlers[0].resolve(new Uint8Array(4));
+    await flush();
+    poseFrame(store, 1);
+
+    expect(display().rotate.mock.calls[0][0]).toBeCloseTo(-0.25, 9);
+    const [, dx, dy, dw, dh] = display().drawImage.mock.calls[0];
+    expect(dx).toBe(0);
+    expect(dy).toBeCloseTo(-dh, 9); // drawn upward from the rotated anchor
+    expect(dw).toBeCloseTo(dh, 9); // square grid
+    // The pose triangle must not inherit the grid rotation: the last restore
+    // (this draw's) precedes the triangle fill.
+    const restores = display().restore.mock.invocationCallOrder;
+    expect(restores[restores.length - 1]).toBeLessThan(
+      display().fill.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("reuses the ImageData buffer across same-size grids", async () => {
+    const { inflate, settlers } = deferredInflate();
+    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    gridFrame(store, 1);
+    settlers[0].resolve(new Uint8Array(4));
+    await flush();
+    gridFrame(store, 2);
+    settlers[1].resolve(new Uint8Array(4));
+    await flush();
+    const first = backing().putImageData.mock.calls[0][0];
+    expect(backing().putImageData.mock.calls[1][0]).toBe(first);
+
+    const wider = costmapValue(3, 3, 2);
+    store.ingest(MAP_CH, { ch: MAP_CH, seq: 3, ts: 3, delivery: "latest" }, wider, true);
+    settlers[2].resolve(new Uint8Array(6));
+    await flush();
+    expect(backing().putImageData.mock.calls[2][0]).not.toBe(first);
+  });
+
+  it("sizes the backing store and pose marker by devicePixelRatio", async () => {
+    vi.stubGlobal("devicePixelRatio", 2);
+    const { inflate, settlers } = deferredInflate();
+    stop = startMapSink(store, MAP_CH, POSE_CH, canvas, health, { inflate, hidden: () => false });
+    gridFrame(store, 1);
+    settlers[0].resolve(new Uint8Array(4));
+    await flush();
+    expect([canvas.width, canvas.height]).toEqual([200, 160]); // css 100x80 * dpr 2
+
+    poseFrame(store, 1);
+    const t = fitTransform({ w: 2, h: 2, res: 0.5, origin: [0.25, -0.5, 0] }, 200, 160);
+    const [ex, ey] = posePath(t, { x: 0.5, y: 0.5, yaw: 0.25 }, 2)[0];
+    const [nx, ny] = display().moveTo.mock.calls[0];
+    expect(nx).toBeCloseTo(ex, 9); // the sink passed its dpr to the marker
+    expect(ny).toBeCloseTo(ey, 9);
+  });
+});
+
+describe("MapPanel", () => {
+  const SPEC: PanelSpec = {
+    id: "map",
+    kind: "map2d",
+    title: "",
+    channels: [MAP_CH, POSE_CH],
+    params: {},
+  };
+  let container: HTMLElement;
+  let root: Root;
+  let now: number;
+  let store: ChannelStore;
+  let deflated: Uint8Array;
+  const badge = () => container.querySelector(`[data-testid="map2d-${MAP_CH}-badge"]`)!;
+
+  beforeAll(async () => {
+    // Real zlib bytes so the panel's default inflate path runs end to end.
+    const stream = new Blob([Uint8Array.from([0, 50, 100, 255]) as BlobPart]).stream()
+      .pipeThrough(new CompressionStream("deflate"));
+    deflated = new Uint8Array(await new Response(stream).arrayBuffer());
+  });
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    now = 1_000_000;
+    store = new ChannelStore(() => now);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.restoreAllMocks();
+  });
+
+  function realGridFrame(seq: number, ts = seq): void {
+    const value: CostmapValue = {
+      bytes: deflated,
+      w: 2,
+      h: 2,
+      res: 0.5,
+      origin: [0.25, -0.5, 0.0],
+    };
+    store.ingest(MAP_CH, { ch: MAP_CH, seq, ts, delivery: "latest" }, value, true);
+  }
+
+  it("shows waiting, then the Hz badge, then flags staleness", async () => {
+    act(() => root.render(<MapPanel spec={SPEC} store={store} />));
+    expect(container.textContent).toContain("waiting for data");
+    expect(badge().textContent).toBe("waiting");
+    expect(badge().getAttribute("role")).toBe("status");
+    const canvas = container.querySelector("canvas")!;
+    expect(canvas.getAttribute("role")).toBe("img");
+    expect(canvas.getAttribute("aria-label")).toBe("map");
+
+    // Grids at 5 Hz of source time, arriving with zero skew.
+    await act(async () => {
+      for (let i = 0; i < 5; i++) realGridFrame(i, now / 1000 - (4 - i) / 5);
+      await flush();
+      store.publishUi();
+    });
+    expect(container.textContent).not.toContain("waiting for data");
+    expect(badge().textContent).toMatch(/Hz$/);
+    expect(badge().getAttribute("data-stale")).toBeNull();
+
+    // Silence: source age climbs past the threshold on a later UI tick.
+    act(() => {
+      now += 12_000;
+      store.publishUi();
+    });
+    expect(badge().textContent).toMatch(/^stale/);
+    expect(badge().getAttribute("data-stale")).toBe("true");
+  });
+
+  it("flags a failing inflate in the badge and recovers on the next grid", async () => {
+    act(() => root.render(<MapPanel spec={SPEC} store={store} />));
+    await act(async () => {
+      // Not a zlib stream: the panel's real inflate rejects.
+      store.ingest(
+        MAP_CH,
+        { ch: MAP_CH, seq: 1, ts: now / 1000, delivery: "latest" },
+        costmapValue(9),
+        true,
+      );
+      await flush();
+      await flush();
+      store.publishUi();
+    });
+    expect(badge().textContent).toBe("decode failing");
+    expect(badge().getAttribute("data-error")).toBe("true");
+
+    await act(async () => {
+      realGridFrame(2, now / 1000);
+      await flush();
+      await flush();
+      store.publishUi();
+    });
+    expect(badge().textContent).toMatch(/Hz$/);
+    expect(badge().getAttribute("data-error")).toBeNull();
+  });
+
+  it("renders without a pose binding (single-channel spec)", async () => {
+    act(() =>
+      root.render(
+        <MapPanel
+          spec={{ id: "map", kind: "map2d", title: "", channels: [MAP_CH], params: {} }}
+          store={store}
+        />,
+      )
+    );
+    await act(async () => {
+      realGridFrame(1, now / 1000);
+      await flush();
+      store.publishUi();
+    });
+    expect(badge().textContent).toMatch(/Hz$/);
+  });
+
+  it("renders a visible note instead of a canvas when no channel is bound", () => {
+    act(() =>
+      root.render(
+        <MapPanel
+          spec={{ id: "map", kind: "map2d", title: "", channels: [], params: {} }}
+          store={store}
+        />,
+      )
+    );
+    expect(container.textContent).toContain("no channel bound");
+    expect(container.querySelector("canvas")).toBeNull();
   });
 });
