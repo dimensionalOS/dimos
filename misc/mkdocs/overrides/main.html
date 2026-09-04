@@ -29,12 +29,21 @@
 {% block scripts %}
   {{ super() }}
   <script>
+    // The copied check must reflect the outcome: material pushes into alert$
+    // only after clipboard.js reports success, so the clicked button turns
+    // into a check only then. A failed copy keeps the copy icon. The click
+    // listener runs in the capture phase because clipboard.js copies (and
+    // material emits the alert) synchronously in its own bubble listener.
+    let pendingCopy = null;
+    alert$.subscribe(() => {
+      if (!pendingCopy) return;
+      const button = pendingCopy;
+      pendingCopy = null;
+      button.classList.add("dim-copied");
+      setTimeout(() => button.classList.remove("dim-copied"), 1600);
+    });
     document.addEventListener("click", (event) => {
-      const clip = event.target.closest('.md-code__button[data-md-type="copy"]');
-      if (clip) {
-        clip.classList.add("dim-copied");
-        setTimeout(() => clip.classList.remove("dim-copied"), 1600);
-      }
+      pendingCopy = event.target.closest('.md-code__button[data-md-type="copy"]');
       const menu = document.querySelector(".dim-markdown");
       if (event.target.closest(".dim-markdown__toggle")) {
         menu.classList.toggle("dim-markdown--open");
@@ -48,8 +57,11 @@
           .then((markdown) => new Blob([markdown], { type: "text/plain" }));
         navigator.clipboard
           .write([new ClipboardItem({ "text/plain": text })])
-          .then(() => alert$.next("{{ lang.t('clipboard.copied') }}"));
+          .then(() => {
+            copy.textContent = "Copied";
+            setTimeout(() => (copy.textContent = "Copy as markdown"), 1600);
+          });
       }
-    });
+    }, true);
   </script>
 {% endblock %}
