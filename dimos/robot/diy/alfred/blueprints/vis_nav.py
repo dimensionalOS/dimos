@@ -39,6 +39,7 @@ from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
+from dimos.robot.diy.alfred.base_arbiter import alfred_base_arbiter_blueprint
 from dimos.robot.diy.alfred.config import ALFRED, ALFRED_URDF
 from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
 from dimos.visualization.vis_module import vis_module
@@ -180,7 +181,12 @@ def vis_nav(
             [(DanLocalPlanner, "odom", "start_pose")]
         ),
         DanHolonomicTC.blueprint().remappings([(DanHolonomicTC, "odom", "start_pose")]),
-        MovementManager.blueprint(),
+        # Kept for the click->goal relay and the cancel it fires on teleop. Its own
+        # teleop/nav mux is superseded by the arbiter, so its cmd_vel goes nowhere.
+        MovementManager.blueprint().remappings(
+            [(MovementManager, "cmd_vel", "_movement_manager_cmd_vel_unused")]
+        ),
+        alfred_base_arbiter_blueprint(),
         vis_module(
             global_config.viewer,
             rerun_config={
