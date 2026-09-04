@@ -26,6 +26,7 @@ class TeleopControlCoordinator(ControlCoordinator):
 
     left_cartesian_command: In[PoseStamped]
     right_cartesian_command: In[PoseStamped]
+    head_cartesian_command: In[PoseStamped]
     left_gripper_command: In[Float32]
     right_gripper_command: In[Float32]
     teleop_buttons: In[Buttons]

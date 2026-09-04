@@ -56,11 +56,17 @@ def _binding(
     )
 
 
-def _config(bindings: tuple[TeleopHandBinding, ...], *, timeout: float = 0.5) -> TeleopIKTaskConfig:
+def _config(
+    bindings: tuple[TeleopHandBinding, ...],
+    *,
+    head_target_frame: str | None = None,
+    timeout: float = 0.5,
+) -> TeleopIKTaskConfig:
     return TeleopIKTaskConfig(
         joint_names=("robot/left", "robot/right"),
         robot_model=_robot_model(),
         bindings=bindings,
+        head_target_frame=head_target_frame,
         timeout=timeout,
     )
 
@@ -74,6 +80,10 @@ def _solver(mocker: MockerFixture) -> PinkPoseTargetSolver:
         ),
         "right_tool": PoseStamped(
             position=Vector3(-1.0, 0.0, 0.0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        ),
+        "head_link": PoseStamped(
+            position=Vector3(0.0, 0.0, 1.0),
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         ),
     }
@@ -236,6 +246,7 @@ def test_estop_and_preemption_clear_command_session(mocker: MockerFixture) -> No
     task.set_estop(True)
     assert not task.is_active()
     task.set_estop(False)
+    task.on_teleop_buttons(_buttons(), 1.05)
     task.on_teleop_buttons(_buttons(left=True), 1.1)
     task.on_left_cartesian_command(_pose(0.2), 1.1)
     assert task.compute(_state(1.1)) is not None
@@ -354,6 +365,69 @@ def test_bimanual_step_contains_both_targets(
         "right_tool",
     }
     assert output.joint_names == ["robot/left", "robot/right"]
+
+
+def test_head_target_joins_bimanual_session_atomically(mocker: MockerFixture) -> None:
+    solver = _solver(mocker)
+    task = TeleopIKTask(
+        "quest",
+        _config(
+            (
+                _binding("left", "left_tool"),
+                _binding("right", "right_tool"),
+            ),
+            head_target_frame="head_link",
+        ),
+        solver=solver,
+    )
+    task.on_teleop_buttons(_buttons(left=True, right=True), 1.0)
+    task.on_left_cartesian_command(_pose(0.1), 1.0)
+    task.on_right_cartesian_command(_pose(-0.1), 1.0)
+    assert task.compute(_state()) is None
+
+    task.on_head_cartesian_command(_pose(0.5), 1.0)
+    assert task.compute(_state()) is not None
+    task.on_head_cartesian_command(_pose(0.7), 1.1)
+    assert task.compute(_state(1.1)) is not None
+
+    targets = solver.step.call_args.args[0]
+    assert set(targets) == {"left_tool", "right_tool", "head_link"}
+    assert targets["head_link"].position.x == pytest.approx(0.2)
+    assert targets["head_link"].position.z == pytest.approx(1.0)
+
+
+def test_stale_head_requires_deadman_release_before_rearming(
+    mocker: MockerFixture,
+) -> None:
+    solver = _solver(mocker)
+    task = TeleopIKTask(
+        "quest",
+        _config(
+            (_binding("left", "left_tool"),),
+            head_target_frame="head_link",
+            timeout=0.2,
+        ),
+        solver=solver,
+    )
+    task.on_teleop_buttons(_buttons(left=True), 1.0)
+    task.on_left_cartesian_command(_pose(0.1), 1.0)
+    task.on_head_cartesian_command(_pose(0.5), 1.0)
+    assert task.compute(_state(1.0)) is not None
+
+    task.on_teleop_buttons(_buttons(left=True), 1.25)
+    task.on_left_cartesian_command(_pose(0.2), 1.25)
+    assert task.compute(_state(1.25)) is None
+
+    task.on_teleop_buttons(_buttons(left=True), 1.3)
+    task.on_left_cartesian_command(_pose(0.2), 1.3)
+    task.on_head_cartesian_command(_pose(0.6), 1.3)
+    assert task.compute(_state(1.3)) is None
+
+    task.on_teleop_buttons(_buttons(), 1.4)
+    task.on_teleop_buttons(_buttons(left=True), 1.5)
+    task.on_left_cartesian_command(_pose(0.2), 1.5)
+    task.on_head_cartesian_command(_pose(0.6), 1.5)
+    assert task.compute(_state(1.5)) is not None
 
 
 def test_factory_constructs_plain_pose_target_solver_by_default(

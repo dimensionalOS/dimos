@@ -341,11 +341,18 @@ class QuestTeleopModule(Module):
     def _on_pose_bytes(self, data: bytes) -> None:
         """Decode LCM bytes into PoseStamped, transform to robot frame."""
         msg = PoseStamped.lcm_decode(data)
+        if msg.frame_id == "head":
+            self._on_headset_pose(msg)
+            return
         hand = self._resolve_hand(msg.frame_id)
         robot_pose = webxr_to_robot(msg, is_left_controller=(hand == Hand.LEFT))
         with self._lock:
             self._current_poses[hand] = robot_pose
             self._last_pose_update[hand] = time.monotonic()
+
+    def _on_headset_pose(self, msg: PoseStamped) -> None:
+        """Handle a raw headset pose when a subclass consumes one."""
+        del msg
 
     def _on_joy_bytes(self, data: bytes) -> bool:
         """Decode LCM bytes into Joy, parse into QuestControllerState."""

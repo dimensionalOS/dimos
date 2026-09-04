@@ -27,6 +27,7 @@ from dimos.teleop.quest.quest_extensions import (
     ArmTeleopModule,
     Go2TeleopModule,
     HandTeleopModule,
+    HeadsetArmTeleopModule,
 )
 from dimos.teleop.quest.quest_teleop_module import QuestTeleopModule, _ws_send_text
 from dimos.teleop.quest.quest_types import (
@@ -367,6 +368,27 @@ def test_arm_teleop_publishes_absolute_controller_pose() -> None:
         module._initial_poses[Hand.LEFT] = PoseStamped(position=[0.5, 0.5, 0.5])
 
         assert module._get_output_pose(Hand.LEFT) is pose
+    finally:
+        module.stop()
+
+
+def test_headset_arm_teleop_publishes_robot_frame_head_pose(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    module = HeadsetArmTeleopModule()
+    publish = mocker.patch.object(module.headset_output, "publish")
+    mocker.patch(
+        "dimos.teleop.quest.quest_teleop_module.PoseStamped.lcm_decode",
+        return_value=PoseStamped(frame_id="head", position=[1.0, 2.0, 3.0]),
+    )
+    try:
+        module._on_pose_bytes(b"head")
+
+        pose = publish.call_args.args[0]
+        assert pose.frame_id == "head"
+        assert pose.position.x == pytest.approx(-3.0)
+        assert pose.position.y == pytest.approx(-1.0)
+        assert pose.position.z == pytest.approx(2.0)
     finally:
         module.stop()
 
