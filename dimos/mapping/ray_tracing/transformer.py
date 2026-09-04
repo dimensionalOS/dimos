@@ -40,7 +40,7 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
     def __init__(
         self,
         *,
-        voxel_size: float = 0.1,
+        voxel_size: float = 0.08,
         max_range: float = 30.0,
         emit_every: int = 1,
         **mapper_kwargs: Any,

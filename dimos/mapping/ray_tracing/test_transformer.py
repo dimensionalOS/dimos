@@ -27,7 +27,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 def _default_margin() -> float:
-    mapper = VoxelRayMapper(voxel_size=0.1, max_range=30.0)
+    mapper = VoxelRayMapper(voxel_size=0.08, max_range=30.0)
     return mapper.shadow_depth + mapper.voxel_size
 
 

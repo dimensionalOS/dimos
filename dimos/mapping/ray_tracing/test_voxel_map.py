@@ -139,7 +139,7 @@ def test_local_map_fine_emits_fine_centers() -> None:
 
 
 def test_local_map_fine_requires_fine_divisor() -> None:
-    mapper = make_mapper()
+    mapper = VoxelRayMapper(voxel_size=1.0, max_range=100.0, fine_divisor=0)
     mapper.add_frame(np.array([[5.5, 0.5, 0.5]], dtype=np.float32), ORIGIN, IDENTITY)
     with pytest.raises(ValueError, match="fine_divisor"):
         mapper.local_map_fine((0.0, 0.0, 0.0), 10.0, -1.0, 1.0)

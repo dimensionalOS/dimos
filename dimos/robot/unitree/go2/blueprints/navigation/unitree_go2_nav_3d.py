@@ -198,7 +198,7 @@ if _RECORD_PCAP:
 
 # The same stack placed in a premap named by --map-file. An accepted fix seeds
 # the ray tracer with the premap and the planner gets the seeded extent as
-# full_map. The republish covers a lost LCM fragment on the one-shot publish.
+# full_map. The republish covers a ray tracer that missed the one-shot publish.
 unitree_go2_nav_3d_relocalization = autoconnect(
     unitree_go2_nav_3d,
     LocalMapRelocalization.blueprint(world_frame="odom", republish_loaded_map=30.0),

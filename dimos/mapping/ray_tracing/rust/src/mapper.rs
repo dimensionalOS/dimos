@@ -278,6 +278,7 @@ mod tests {
         Config {
             voxel_size: 1.0,
             fine_divisor: 0,
+            emit_fine: false,
             max_range: 100.0,
             ray_subsample: 1,
             shadow_depth: 2.0,

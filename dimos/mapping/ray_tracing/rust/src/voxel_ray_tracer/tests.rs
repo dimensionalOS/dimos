@@ -18,6 +18,7 @@ fn basic_config() -> Config {
     Config {
         voxel_size: 1.0,
         fine_divisor: 0,
+        emit_fine: false,
         max_range: 100.0,
         ray_subsample: 1,
         shadow_depth: 2.0,
@@ -291,6 +292,7 @@ fn ground_clipping_single_ray() {
     let cfg = Config {
         voxel_size,
         fine_divisor: 0,
+        emit_fine: false,
         max_range: 50.0,
         ray_subsample: 1,
         shadow_depth: 0.2,
@@ -447,6 +449,7 @@ fn stair_clipping_ray_fan() {
     let cfg = Config {
         voxel_size,
         fine_divisor: 0,
+        emit_fine: false,
         max_range: 50.0,
         ray_subsample: 1,
         shadow_depth: 0.2,
@@ -525,6 +528,7 @@ fn landing_floor_ray_fan() {
     let cfg = Config {
         voxel_size,
         fine_divisor: 0,
+        emit_fine: false,
         max_range: 50.0,
         ray_subsample: 1,
         shadow_depth: 0.2,
@@ -591,6 +595,7 @@ fn landing_grazed_from_below() {
     let cfg = |graze_cos| Config {
         voxel_size,
         fine_divisor: 0,
+        emit_fine: false,
         max_range: 50.0,
         ray_subsample: 1,
         shadow_depth: 0.2,
@@ -726,6 +731,7 @@ fn grazing_ray_spares_planar_floor() {
     let cfg = Config {
         voxel_size,
         fine_divisor: 0,
+        emit_fine: false,
         max_range: 50.0,
         ray_subsample: 1,
         shadow_depth: 0.2,
@@ -1052,6 +1058,10 @@ fn config_rejects_bad_fine_settings() {
     assert!(cfg.validate().is_err(), "divisor^3 bits must fit in a u64");
     cfg.fine_divisor = 2;
     assert!(cfg.validate().is_ok());
+    cfg.emit_fine = true;
+    assert!(cfg.validate().is_ok());
+    cfg.fine_divisor = 0;
+    assert!(cfg.validate().is_err(), "emit_fine needs the fine layer");
 }
 
 #[test]

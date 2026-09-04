@@ -481,6 +481,9 @@ def main(
     voxel_size: float = typer.Option(
         DEFAULT_VOXEL_SIZE, "--voxel-size", help="Voxel edge length (m)"
     ),
+    fine_divisor: int = typer.Option(
+        3, "--fine-divisor", help="Fine cells per voxel edge. Zero disables the fine layer"
+    ),
     max_range: float = typer.Option(30.0, "--max-range", help="Max ray cast distance (m)"),
     ray_subsample: int = typer.Option(1, "--ray-subsample", help="Keep every Nth ray"),
     shadow_depth: float = typer.Option(
@@ -605,6 +608,7 @@ def main(
         pose_tagged = lidar.transform(_pose_from_tf(tf_lookup, world_frame))
         ray = RayTraceMap(
             voxel_size=voxel_size,
+            fine_divisor=fine_divisor,
             max_range=max_range,
             ray_subsample=ray_subsample,
             shadow_depth=shadow_depth,

@@ -120,7 +120,11 @@ impl RayTracingVoxelMap {
 
         let global_points = mapper.global_due().then(|| mapper.global_points());
         let local_points = cylinder.as_ref().map(|cyl| mapper.local_points(cyl));
-        let fine_points = cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl));
+        let fine_points = self
+            .config
+            .emit_fine
+            .then(|| cylinder.as_ref().and_then(|cyl| mapper.fine_points(cyl)))
+            .flatten();
 
         let out_frame_id = self.config.world_frame.as_str();
         let stamp = msg.header.stamp;
@@ -440,6 +444,7 @@ mod tests {
         Config {
             voxel_size: 1.0,
             fine_divisor: 0,
+            emit_fine: false,
             max_range: 1000.0,
             ray_subsample: 1,
             shadow_depth: 0.0,
