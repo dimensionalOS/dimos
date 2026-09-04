@@ -290,6 +290,16 @@ def test_lfs_path_lazy_creation() -> None:
     assert filename == "test_data_file"
 
 
+def test_lfs_path_hash_matches_resolved_path(
+    mocker: MockerFixture,
+    tmp_path: Path,
+) -> None:
+    resolved = tmp_path / "model.urdf"
+    mocker.patch.object(LfsPath, "_ensure_downloaded", return_value=resolved)
+
+    assert hash(LfsPath("robot_description/model.urdf")) == hash(resolved)
+
+
 def test_lfs_path_safe_attributes() -> None:
     """Test that safe attributes don't trigger download."""
     lfs_path = LfsPath("test_data_file")

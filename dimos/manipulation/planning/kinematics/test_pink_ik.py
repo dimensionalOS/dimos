@@ -381,6 +381,27 @@ def _robot_config() -> RobotModelConfig:
     )
 
 
+def test_reduce_to_controlled_joints_locks_every_other_joint(mocker: MockerFixture) -> None:
+    modules = _install_fake_modules(mocker)
+    model = _FakeModel()
+    reduced = _FakeModel()
+    modules.pinocchio.neutral = lambda source: np.zeros(source.nq)
+    build_reduced_model = mocker.Mock(return_value=reduced)
+    modules.pinocchio.buildReducedModel = build_reduced_model
+
+    result = pink_ik._reduce_to_controlled_joints(
+        model,
+        _robot_config(),
+        ["joint_a"],
+    )
+
+    assert result is reduced
+    args = build_reduced_model.call_args.args
+    assert args[0] is model
+    assert args[1] == [1, 3]
+    assert args[2] == pytest.approx([0.0, 0.0, 0.0])
+
+
 def _streaming_ik(mocker: MockerFixture, converge: bool = True) -> _StreamingTestPinkIK:
     _install_fake_modules(mocker, converge=converge)
     return _StreamingTestPinkIK(PinkIKConfig(max_iterations=3))
@@ -523,6 +544,27 @@ def test_joint_order_mapping_uses_names_not_positions() -> None:
     assert mapping.idx_q == [1, 0, 2]
     assert mapping.idx_v == [1, 0, 2]
     assert _seed_positions_for_mapping(seed, mapping).tolist() == [10.0, 20.0, 30.0]
+
+
+def test_robot_context_applies_configured_velocity_limits_by_joint_name(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    modules = _install_fake_modules(mocker)
+    model = _FakeModel()
+    modules.pinocchio.buildModelFromXML = mocker.Mock(return_value=model)
+    config = _robot_config()
+    model_path = tmp_path / "fake.urdf"
+    model_path.write_text("<robot/>")
+    config.model = RobotModel.from_file(model_path)
+    config.velocity_limits = [0.5, 1.5, 2.5]
+
+    context = _StreamingTestPinkIK(PinkIKConfig())._build_robot_context(
+        config,
+        "tool",
+        config.joint_names,
+    )
+
+    assert context.model.velocityLimit == pytest.approx([1.5, 0.5, 2.5])
 
 
 def test_streaming_envelope_intersects_configured_and_urdf_velocity(

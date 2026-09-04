@@ -39,6 +39,7 @@ from dimos.robot.manipulators.openyam.config import (
     make_openyam_model_config,
     openyam_hardware,
 )
+from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
@@ -94,7 +95,7 @@ _openyam_quest_pink = PinkKinematicsConfig(
     posture_cost=0.01,
     joint_limit_posture_margin=0.3,
     lm_damping=0.01,
-    gain=0.25,
+    gain=1.0,
 )
 _openyam_quest_hw = openyam_hardware()
 _openyam_quest_model = make_openyam_model_config()
@@ -104,6 +105,7 @@ _openyam_quest_task = teleop_ik_task(
     name=OPENYAM_QUEST_TASK_NAME,
     joint_names=OPENYAM_ARM_JOINTS,
     priority=10,
+    solver_type=OpenYamPinkPoseTargetSolver,
     bindings=[
         {
             "hand": "right",
@@ -115,7 +117,7 @@ _openyam_quest_task = teleop_ik_task(
         "timeout": 0.5,
         "max_command_tracking_error_deg": 10.0,
         "max_joint_velocity_rad_s": 2.0,
-        "joint_command_filter_cutoff_hz": 5.0,
+        "joint_command_filter_cutoff_hz": 30.0,
     },
 )
 

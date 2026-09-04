@@ -35,11 +35,14 @@ from dimos.robot.manipulators.openyam.config import (
     OPENYAM_DOF,
     OPENYAM_GRIPPER_JOINT,
     OPENYAM_HARDWARE_ID,
+    OPENYAM_HOME_JOINTS,
     OPENYAM_JOINTS,
     OPENYAM_MODEL_PATH,
     make_openyam_model_config,
     openyam_hardware,
 )
+from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
+from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -57,11 +60,15 @@ def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
 def test_make_openyam_model_config_uses_canonical_arm_joints() -> None:
     config = make_openyam_model_config()
 
+    assert OPENYAM_MODEL_PATH.parts[-2:] == ("i2rt", "yam.urdf")
     assert config.model.source_path is OPENYAM_MODEL_PATH
     assert config.joint_names == OPENYAM_ARM_JOINTS
     assert config.base_link == "base"
     assert config.planning_groups[0].tip_link == "gripper_tip"
     assert config.gripper_hardware_id == "arm"
+    assert config.home_joints == OPENYAM_HOME_JOINTS
+    assert config.velocity_limits == [2.0] * OPENYAM_DOF
+    assert config.max_velocity == 2.0
 
 
 @pytest.mark.self_hosted
@@ -72,6 +79,24 @@ def test_openyam_model_contains_canonical_arm_joints() -> None:
     assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
         OPENYAM_ARM_JOINTS
     )
+
+
+def test_make_openyam_model_config_preserves_explicit_home() -> None:
+    configured_home = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+
+    config = make_openyam_model_config(home_joints=configured_home)
+
+    assert config.home_joints == configured_home
+
+
+def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
+    tasks = _coordinator_kwargs(teleop_quest_openyam)["tasks"]
+    teleop = next(task for task in tasks if task.type == "teleop_ik")
+
+    assert teleop.params["pink"].gain == 1.0
+    assert teleop.params["solver_type"] is OpenYamPinkPoseTargetSolver
+    assert teleop.params["max_joint_velocity_rad_s"] == 2.0
+    assert teleop.params["joint_command_filter_cutoff_hz"] == 30.0
 
 
 def test_openyam_hardware_physical_mode_returns_one_whole_body(
@@ -113,6 +138,13 @@ def test_openyam_hardware_simulation_mode_returns_generic_whole_body_mock(
     assert limits is not None
     assert limits.position_lower == [*([None] * OPENYAM_DOF), 0.0]
     assert limits.position_upper == [*([None] * OPENYAM_DOF), 1.0]
+
+
+def test_quest_teleop_module_accepts_blueprint_config() -> None:
+    kwargs = _module_kwargs(teleop_quest_openyam, ArmTeleopModule)
+
+    module = ArmTeleopModule(**kwargs)
+    module.stop()
 
 
 @pytest.mark.parametrize(
