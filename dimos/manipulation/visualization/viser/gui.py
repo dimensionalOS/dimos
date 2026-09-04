@@ -15,7 +15,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 import math
+import time
 from typing import TypeAlias, cast
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
@@ -65,6 +67,7 @@ try:
         GuiFolderHandle,
         GuiMarkdownHandle,
         GuiSliderHandle,
+        GuiTextHandle,
         TransformControlsHandle,
         ViserServer,
     )
@@ -80,6 +83,7 @@ PanelHandle: TypeAlias = (
     | GuiButtonHandle
     | GuiCheckboxHandle
     | GuiSliderHandle[float]
+    | GuiTextHandle
     | TransformControlsHandle
 )
 
@@ -110,6 +114,14 @@ PLANNING_MODE_LABELS = {
 PLANNING_MODES_BY_LABEL = {label: mode for mode, label in PLANNING_MODE_LABELS.items()}
 
 
+@dataclass(frozen=True)
+class CameraViewpoint:
+    position: tuple[float, float, float]
+    look_at: tuple[float, float, float]
+    up_direction: tuple[float, float, float]
+    fov: float
+
+
 class ViserPanelGui:
     """Viser operator panel for manipulation target editing and plan control."""
 
@@ -136,6 +148,10 @@ class ViserPanelGui:
         self._default_group_initialized = False
         self._handles: dict[str, PanelHandle] = {}
         self._joint_sliders: dict[tuple[PlanningGroupID, str], GuiSliderHandle[float]] = {}
+        self._viewpoints: dict[str, CameraViewpoint] = {}
+        self._viewpoint_counter = 0
+        self._scan_running = False
+        self._last_scan_started = float("-inf")
         self._worker = TargetEvaluationWorker(
             self._handle_target_evaluation_request,
             self._apply_target_evaluation_result,
@@ -343,6 +359,7 @@ class ViserPanelGui:
     def _build_panel_controls(self, gui: GuiApi) -> None:
         self._handles["status"] = gui.add_markdown("### Status\n**State:** Ready")
         self._build_scene_controls(gui)
+        self._build_interaction_controls(gui)
         self._handles["planning_groups_heading"] = gui.add_markdown(
             "### Planning Groups\nActive planning groups for pose goals, planning, and joint edits."
         )
@@ -384,6 +401,132 @@ class ViserPanelGui:
         joint_controls = gui.add_folder("Joint Control", expand_by_default=False)
         self._handles["joint_control_folder"] = joint_controls
         self._build_joint_sliders()
+
+    def _build_interaction_controls(self, gui: GuiApi) -> None:
+        if self.config.scan_from_here_enabled:
+            scan_folder = gui.add_folder("Perception", expand_by_default=True)
+            self._handles["scan_folder"] = scan_folder
+            with scan_folder:
+                scan_button = gui.add_button("Scan from here")
+                scan_button.on_click(lambda _event: self._submit_scan())
+                self._handles["scan"] = scan_button
+                self._handles["scan_status"] = gui.add_markdown("No scan yet.")
+        if self.config.viewpoints_enabled:
+            viewpoint_folder = gui.add_folder("Viewpoints", expand_by_default=False)
+            self._handles["viewpoint_folder"] = viewpoint_folder
+            with viewpoint_folder:
+                name = gui.add_text("Name", initial_value="")
+                self._handles["viewpoint_name"] = name
+                save = gui.add_button("Save current camera")
+                save.on_click(self._save_viewpoint)
+                self._handles["viewpoint_save"] = save
+                choices = gui.add_dropdown(
+                    "Saved viewpoints", options=["(none)"], initial_value="(none)"
+                )
+                self._handles["viewpoint_choices"] = choices
+                restore = gui.add_button("Jump to viewpoint")
+                restore.on_click(self._restore_viewpoint)
+                self._handles["viewpoint_restore"] = restore
+                self._handles["viewpoint_status"] = gui.add_markdown("No viewpoints saved.")
+
+    def _save_viewpoint(self, event: object) -> None:
+        client = getattr(event, "client", None)
+        if self._closed or client is None:
+            self._set_interaction_status("viewpoint_status", "Open the panel in a client first.")
+            return
+        name_handle = self._handles.get("viewpoint_name")
+        name = str(getattr(name_handle, "value", "")).strip()
+        if not name:
+            self._viewpoint_counter += 1
+            name = f"Viewpoint {self._viewpoint_counter}"
+        camera = client.camera
+        self._viewpoints[name] = CameraViewpoint(
+            position=self._camera_vector(camera.position),
+            look_at=self._camera_vector(camera.look_at),
+            up_direction=self._camera_vector(camera.up_direction),
+            fov=float(camera.fov),
+        )
+        choices = self._handles.get("viewpoint_choices")
+        self._set_optional_handle_attr(choices, "options", list(self._viewpoints))
+        self._set_optional_handle_attr(choices, "value", name)
+        self._set_optional_handle_attr(name_handle, "value", "")
+        self._set_interaction_status("viewpoint_status", f"Saved `{name}` for this session.")
+
+    def _restore_viewpoint(self, event: object) -> None:
+        client = getattr(event, "client", None)
+        choices = self._handles.get("viewpoint_choices")
+        name = str(getattr(choices, "value", ""))
+        viewpoint = self._viewpoints.get(name)
+        if self._closed or client is None or viewpoint is None:
+            self._set_interaction_status(
+                "viewpoint_status", "Select a saved viewpoint in an active client."
+            )
+            return
+        camera = client.camera
+        camera.position = viewpoint.position
+        camera.look_at = viewpoint.look_at
+        camera.up_direction = viewpoint.up_direction
+        camera.fov = viewpoint.fov
+        self._set_interaction_status("viewpoint_status", f"Restored `{name}`.")
+
+    def _submit_scan(self) -> None:
+        now = time.monotonic()
+        if (
+            self._closed
+            or not self.config.scan_from_here_enabled
+            or self._scan_running
+            or self.state.action_status != ActionStatus.IDLE
+            or now - self._last_scan_started < self.config.scan_debounce_seconds
+        ):
+            return
+        self._last_scan_started = now
+        self._scan_running = True
+        self.state.action_status = ActionStatus.RUNNING
+        self._set_interaction_status("scan_status", "Scanning from the current arm pose…")
+        operation_id = self._next_operation_id()
+        self.refresh()
+
+        def operation() -> None:
+            if not self._operation_is_current(operation_id):
+                return
+            result = self.operator.scan_from_here(
+                list(self.config.scan_prompts), self.config.scan_timeout
+            )
+            if not self._operation_is_current(operation_id):
+                return
+            self._scan_running = False
+            self.state.mark_plan_stale()
+            self._set_interaction_status(
+                "scan_status",
+                "Scan complete: "
+                f"{result['detected']} detected, {result['total']} planner objects total.",
+            )
+            self._finish_operation(
+                f"scan={result['detected']}, total={result['total']}",
+                operation_id=operation_id,
+            )
+
+        self._operation_worker.submit(
+            operation,
+            timeout_seconds=self.config.scan_timeout + 1.0,
+            on_error=lambda message: self._set_scan_error(message, operation_id),
+        )
+
+    def _set_scan_error(self, message: str, operation_id: int) -> None:
+        if not self._operation_is_current(operation_id):
+            return
+        self._scan_running = False
+        self._set_interaction_status("scan_status", f"Scan failed: {message}")
+        self._set_operation_error(message, operation_id)
+
+    def _set_interaction_status(self, key: str, content: str) -> None:
+        handle = self._handles.get(key)
+        if handle is not None:
+            self._set_optional_handle_attr(handle, "content", content)
+
+    @staticmethod
+    def _camera_vector(values: Sequence[float]) -> tuple[float, float, float]:
+        return (float(values[0]), float(values[1]), float(values[2]))
 
     def _build_motion_settings(self, gui: GuiApi) -> None:
         """Build controls that affect trajectories generated in the future."""
@@ -1057,6 +1200,9 @@ class ViserPanelGui:
         can_cancel = self.state.can_cancel()
         self._set_disabled("cancel", not can_cancel)
         self._set_visible("cancel", can_cancel)
+        self._set_disabled(
+            "scan", self._scan_running or self.state.action_status != ActionStatus.IDLE
+        )
         self._update_target_visual_state()
 
     def _update_target_visual_state(self) -> None:

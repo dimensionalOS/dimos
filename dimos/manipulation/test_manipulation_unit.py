@@ -298,6 +298,26 @@ class TestObstacleUpdates:
         assert count == 1
         assert obstacles == {"object-1": pose}
 
+    def test_scan_from_here_waits_for_osr_then_refreshes(self, module_factory, mocker) -> None:
+        module = module_factory()
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.refresh_obstacles.return_value = [{"object_id": "one"}]
+        module._world_monitor.world.get_obstacles.return_value = [
+            Obstacle(name="one", pose=PoseStamped(), obstacle_type=ObstacleType.BOX)
+        ]
+        result_message = MagicMock(detections=[], detections_length=0)
+        publish = mocker.patch.object(
+            module.scan_requests,
+            "publish",
+            side_effect=lambda _prompts: module._scan_result_queue.put_nowait(result_message),
+        )
+
+        result = module.scan_from_here([" cup ", "bottle"], timeout=1.0)
+
+        publish.assert_called_once_with(["cup", "bottle"])
+        module._world_monitor.refresh_obstacles.assert_called_once_with(0.0)
+        assert result == {"detected": 0, "refreshed": 1, "total": 1}
+
     def test_complete_update_forwards_new_obstacle_value(self, module_factory) -> None:
         module = module_factory()
         module._world_monitor = MagicMock(spec=WorldMonitor)
@@ -483,6 +503,7 @@ class TestPlanningInitialization:
         module.coordinator_joint_state = None
         module.voxel_map = None
         module.objects = None
+        module.scan_results = None
         initialize_planning = mocker.patch.object(module, "_initialize_planning")
         initialize_execution = mocker.patch.object(module, "_initialize_execution")
 
@@ -495,6 +516,7 @@ class TestPlanningInitialization:
         module.coordinator_joint_state = None
         module.voxel_map = None
         module.objects = None
+        module.scan_results = None
         initialize_planning = mocker.patch.object(module, "_initialize_planning")
         initialize_execution = mocker.patch.object(module, "_initialize_execution")
 
@@ -517,6 +539,7 @@ class TestPlanningInitialization:
         module.coordinator_joint_state = None
         module.voxel_map = None
         module.objects = None
+        module.scan_results = None
         observed_status: list[ExecutionStatus] = []
 
         def observe_state() -> None:

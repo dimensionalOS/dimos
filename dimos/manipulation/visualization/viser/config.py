@@ -35,6 +35,25 @@ class ViserVisualizationConfig(BaseModel):
     panel_enabled: bool = Field(
         default=True, validation_alias=AliasChoices("panel_enabled", "viser_panel_enabled")
     )
+    scan_from_here_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("scan_from_here_enabled", "viser_scan_from_here_enabled"),
+    )
+    scan_prompts: tuple[str, ...] = Field(
+        default=(), validation_alias=AliasChoices("scan_prompts", "viser_scan_prompts")
+    )
+    scan_timeout: float = Field(
+        default=30.0, gt=0.0, validation_alias=AliasChoices("scan_timeout", "viser_scan_timeout")
+    )
+    scan_debounce_seconds: float = Field(
+        default=0.75,
+        ge=0.0,
+        validation_alias=AliasChoices("scan_debounce_seconds", "viser_scan_debounce_seconds"),
+    )
+    viewpoints_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("viewpoints_enabled", "viser_viewpoints_enabled"),
+    )
     poll_hz: float = Field(default=5.0, validation_alias=AliasChoices("poll_hz", "viser_poll_hz"))
     preview_duration: float = Field(
         default=3.0, validation_alias=AliasChoices("preview_duration", "viser_preview_duration")

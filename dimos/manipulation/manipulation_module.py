@@ -27,6 +27,7 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from enum import Enum
 import math
+import queue
 import threading
 import time
 import traceback
@@ -106,6 +107,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.experimental.object import Object as DetObject
 from dimos.utils.logging_config import setup_logger
 
@@ -190,6 +192,8 @@ class ManipulationModule(Module):
     # message is a complete map, so it replaces the obstacle rather than adding.
     voxel_map: In[PointCloud2]
     objects: In[list[DetObject]]
+    scan_results: In[Detection3DArray]
+    scan_requests: Out[list[str]]
     tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -210,6 +214,9 @@ class ManipulationModule(Module):
 
         # Canonical generated plan for the plan/preview/execute workflow.
         self._last_plan: GeneratedPlan | None = None
+        self._scan_lock = threading.Lock()
+        self._scan_result_queue: queue.Queue[Detection3DArray] = queue.Queue(maxsize=1)
+        self._objects_updated = threading.Condition()
 
         # Coordinator integration (initialized in start())
         self._execution_manager: PlanExecutionManager
@@ -1266,6 +1273,17 @@ class ManipulationModule(Module):
         """Cache the latest perception objects for an explicit obstacle refresh."""
         if self._world_monitor is not None:
             self._world_monitor.on_objects(objects)
+        with self._objects_updated:
+            self._objects_updated.notify_all()
+
+    async def handle_scan_results(self, result: Detection3DArray) -> None:
+        """Deliver one OSR scan response to the synchronous visualization seam."""
+        while True:
+            try:
+                self._scan_result_queue.get_nowait()
+            except queue.Empty:
+                break
+        self._scan_result_queue.put_nowait(result)
 
     @rpc
     def refresh_obstacles(self, min_duration: float = 0.0) -> int:
@@ -1273,6 +1291,49 @@ class ManipulationModule(Module):
         if self._world_monitor is None:
             return 0
         return len(self._world_monitor.refresh_obstacles(min_duration))
+
+    @rpc
+    def scan_from_here(self, prompts: list[str], timeout: float = 30.0) -> dict[str, int]:
+        """Run OSR at the current camera pose and refresh accumulated obstacles."""
+        normalized = [prompt.strip() for prompt in prompts if prompt.strip()]
+        if not normalized:
+            raise ValueError("At least one scan prompt is required")
+        if timeout <= 0.0:
+            raise ValueError("Scan timeout must be positive")
+        with self._scan_lock:
+            while True:
+                try:
+                    self._scan_result_queue.get_nowait()
+                except queue.Empty:
+                    break
+            self.scan_requests.publish(normalized)
+            try:
+                result = self._scan_result_queue.get(timeout=timeout)
+            except queue.Empty as error:
+                raise TimeoutError(f"Scan timed out after {timeout:.1f}s") from error
+            expected_ids = {str(detection.id) for detection in result.detections if detection.id}
+            self._wait_for_scan_objects(expected_ids, time.monotonic() + timeout)
+            refreshed = self.refresh_obstacles()
+            return {
+                "detected": int(result.detections_length),
+                "refreshed": refreshed,
+                "total": len(self.get_obstacles()),
+            }
+
+    def _wait_for_scan_objects(self, expected_ids: set[str], deadline: float) -> None:
+        if self._world_monitor is None or not expected_ids:
+            return
+        with self._objects_updated:
+            while True:
+                cached_ids = {
+                    str(obj.object_id) for obj in self._world_monitor.get_cached_objects()
+                }
+                if expected_ids.issubset(cached_ids):
+                    return
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    raise TimeoutError("Timed out waiting for scanned objects to reach planning")
+                self._objects_updated.wait(timeout=remaining)
 
     @rpc
     def get_obstacles(self) -> dict[str, PoseStamped]:

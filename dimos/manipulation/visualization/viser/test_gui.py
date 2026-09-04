@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -50,10 +51,15 @@ class EmptyServer:
 class FakeOperatorBackend:
     def __init__(self) -> None:
         self.cancel_calls = 0
+        self.scan_calls: list[tuple[list[str], float]] = []
 
     def cancel(self) -> bool:
         self.cancel_calls += 1
         return True
+
+    def scan_from_here(self, prompts: list[str], timeout: float) -> dict[str, int]:
+        self.scan_calls.append((prompts, timeout))
+        return {"detected": 2, "refreshed": 4, "total": 4}
 
 
 class FakeOperator:
@@ -71,6 +77,9 @@ class FakeOperator:
 
     def preview(self, *_args: object, **_kwargs: object) -> bool:
         return True
+
+    def scan_from_here(self, prompts: list[str], timeout: float) -> dict[str, int]:
+        return self.module.scan_from_here(prompts, timeout)
 
 
 @dataclass
@@ -282,6 +291,69 @@ def test_gui_only_preview_submits_timeout_override(monkeypatch: pytest.MonkeyPat
     gui._submit_preview()
 
     assert submissions == [{"timeout_seconds": 0.25}]
+
+
+def test_scan_is_debounced_and_reports_accumulated_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submissions: list[Callable[[], None]] = []
+    backend = FakeOperatorBackend()
+    gui = make_gui(backend)
+    gui.config = ViserVisualizationConfig(
+        scan_from_here_enabled=True,
+        scan_prompts=("cup", "bottle"),
+        scan_timeout=12.0,
+    )
+    gui._operation_worker.stop()
+    monkeypatch.setattr(gui, "_operation_worker", FakeOperationSubmitWorker(submissions))
+    monkeypatch.setattr(gui, "refresh", lambda: None)
+    scan_status = SimpleNamespace(content="")
+    gui._handles["scan_status"] = scan_status
+    gui.state.action_status = ActionStatus.IDLE
+
+    gui._submit_scan()
+    gui._submit_scan()
+    submissions[0]()
+
+    assert backend.scan_calls == [(["cup", "bottle"], 12.0)]
+    assert scan_status.content == "Scan complete: 2 detected, 4 planner objects total."
+    assert gui.state.action_status == ActionStatus.IDLE
+    assert gui.state.last_result == "scan=2, total=4"
+
+
+def test_named_camera_viewpoint_round_trip_lives_in_panel_session() -> None:
+    gui = make_gui()
+    camera = SimpleNamespace(
+        position=(1.0, 2.0, 3.0),
+        look_at=(0.1, 0.2, 0.3),
+        up_direction=(0.0, 0.0, 1.0),
+        fov=0.8,
+    )
+    event = SimpleNamespace(client=SimpleNamespace(camera=camera))
+    name = SimpleNamespace(value="table overview")
+    choices = SimpleNamespace(options=["(none)"], value="(none)")
+    status = SimpleNamespace(content="")
+    gui._handles.update(
+        {
+            "viewpoint_name": name,
+            "viewpoint_choices": choices,
+            "viewpoint_status": status,
+        }
+    )
+
+    gui._save_viewpoint(event)
+    camera.position = (9.0, 9.0, 9.0)
+    camera.look_at = (8.0, 8.0, 8.0)
+    camera.up_direction = (0.0, 1.0, 0.0)
+    camera.fov = 1.2
+    gui._restore_viewpoint(event)
+
+    assert choices.options == ["table overview"]
+    assert camera.position == (1.0, 2.0, 3.0)
+    assert camera.look_at == (0.1, 0.2, 0.3)
+    assert camera.up_direction == (0.0, 0.0, 1.0)
+    assert camera.fov == 0.8
+    assert status.content == "Restored `table overview`."
 
 
 def test_gui_preview_enters_previewing_before_worker_runs(
