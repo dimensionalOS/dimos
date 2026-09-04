@@ -49,9 +49,40 @@ app.GO2Connection.move(Twist(linear=(0, 0, 0), angular=(0, 0, -1)), duration=0.0
 app.GO2Connection.move(Twist(linear=(1, 0, 0), angular=(0, 0, 0)), duration=0.05)
 ```
 
+## Manipulation SDK
+
+For sequential arm motion, use the client-only convenience layer on top of the
+typed RPCs:
+
+```python skip
+from dimos.porcelain.dimos import Dimos
+from dimos.sdk.manipulation import Arm
+
+app = Dimos.connect()
+arm = Arm.from_app(app)
+print(arm.joints())
+print(arm.pose())
+arm.move_linear(dz=0.01, check_collision=True)
+app.stop()
+```
+
+`Arm` selects the unique pose-capable group and raises on failed actions. It
+accepts numeric sequences and NumPy arrays for joint and pose targets. Explicit
+planning and execution controls remain available through `arm.rpc`. See the
+[manipulation Python guide](/docs/capabilities/manipulation/python_api.md) for
+presets, failure handling, and simulation examples.
+
 ## Discovering modules and RPCs
 
 Discovery works in both local and remote mode:
+
+For a typed capability, use `app.get_module(MySpec)`. DimOS resolves the single
+deployed Module whose advertised RPCs match the Spec's signatures. Several
+matches require an explicit `instance_name`, for example
+`app.get_module(MySpec, instance_name="robot0/manipulation")`. Matching requires
+the module classes to be importable locally. See the
+[manipulation Python guide](/docs/capabilities/manipulation/python_api.md) for a
+complete client example.
 
 ```python skip
 # Live structured records for exact deployed instances.

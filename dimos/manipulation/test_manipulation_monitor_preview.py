@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.manipulation_spec import CommandStatus
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
@@ -291,6 +292,15 @@ class TestWorldMonitorVisualization:
 
 
 class TestManipulationPreview:
+    def test_preview_without_a_plan_returns_rejected(self, module_factory):
+        module = module_factory()
+
+        result = module.preview_plan()
+
+        assert result.status is CommandStatus.REJECTED
+        assert not result.succeeded
+        assert result.message == "No generated plan to preview"
+
     def test_clear_planned_path_invalidates_before_dismissing_preview(self, module_factory):
         module = module_factory()
         plan = GeneratedPlan(trajectory=JointTrajectory(), group_ids=("manipulator",), path=[])
@@ -301,7 +311,7 @@ class TestManipulationPreview:
             lambda: plan_during_dismissal.append(module._last_plan)
         )
 
-        assert module.clear_planned_path() is True
+        assert module.clear_planned_path().succeeded
 
         assert plan_during_dismissal == [None]
         module._world_monitor.cancel_preview_animation.assert_called_once_with()
@@ -313,7 +323,7 @@ class TestManipulationPreview:
             trajectory=JointTrajectory(), group_ids=("manipulator",), path=[]
         )
 
-        assert module.clear_planned_path() is True
+        assert module.clear_planned_path().succeeded
         assert module._last_plan is None
 
     def test_dismiss_preview_noop_without_monitor(self, module_factory):
@@ -334,7 +344,7 @@ class TestManipulationPreview:
         config = _one_joint_config()
         _install_generated_plan(module, config, [0.0], [2.0])
 
-        assert module.preview_plan() is True
+        assert module.preview_plan().succeeded
 
         module._world_monitor.animate_trajectory.assert_called_once_with(
             module._last_plan.trajectory, None

@@ -213,7 +213,7 @@ class MoveResult:
 
 
 class ManipulationSpec(Spec, Protocol):
-    """Primitive cross-module manipulation interface."""
+    """Typed motion RPCs for deployed manipulation Modules and Python clients."""
 
     def list_planning_groups(self) -> tuple[PlanningGroupInfo, ...]: ...
 
@@ -230,6 +230,14 @@ class ManipulationSpec(Spec, Protocol):
         targets: Mapping[PlanningGroupID, PoseStamped],
         speed_scale: float | None = None,
     ) -> PlanResult: ...
+
+    def preview_plan(
+        self, plan: GeneratedPlan | None = None, duration: float | None = None
+    ) -> CommandResult: ...
+
+    def clear_planned_path(self) -> CommandResult: ...
+
+    def get_visualization_url(self) -> str | None: ...
 
     def execute(self, blocking: bool = True, timeout: float | None = None) -> ExecutionResult: ...
 

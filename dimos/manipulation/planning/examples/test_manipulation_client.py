@@ -14,111 +14,94 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
+import numpy as np
 import pytest
-from pytest_mock import MockerFixture
 
-from dimos.manipulation.planning.examples import manipulation_client
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
-
-def test_update_box_calls_complete_obstacle_rpc(mocker: MockerFixture) -> None:
-    client = MagicMock()
-    client.update_obstacle.return_value = True
-    mocker.patch.object(manipulation_client, "_client", client)
-
-    result = manipulation_client.update_box(
-        "box",
-        1.0,
-        2.0,
-        3.0,
-        w=0.4,
-        h=0.5,
-        d=0.6,
-        color=[0.1, 0.2, 0.3, 0.9],
-    )
-
-    assert result is True
-    name, pose, shape, dimensions, mesh_path, color = client.update_obstacle.call_args.args
-    assert name == "box"
-    assert pose.position == Vector3(1.0, 2.0, 3.0)
-    assert shape == "box"
-    assert dimensions == [0.4, 0.5, 0.6]
-    assert mesh_path is None
-    assert color == [0.1, 0.2, 0.3, 0.9]
-
-
-@pytest.mark.parametrize(
-    ("helper_name", "dimensions", "shape"),
-    [
-        ("update_sphere", [0.4], "sphere"),
-        ("update_cylinder", [0.4, 0.8], "cylinder"),
-    ],
+from dimos.manipulation.manipulation_spec import PlanningGroupInfo, PlanResult, PlanStatus
+from dimos.manipulation.pick_and_place_spec import (
+    DetectedObject,
+    PickAndPlaceSpec,
+    PickPlaceStatus,
+    PickResult,
+    PlaceResult,
+    ScanResult,
 )
-def test_update_round_shape_helpers_call_complete_obstacle_rpc(
-    mocker: MockerFixture,
-    helper_name: str,
-    dimensions: list[float],
-    shape: str,
-) -> None:
-    client = MagicMock()
-    client.update_obstacle.return_value = True
-    mocker.patch.object(manipulation_client, "_client", client)
-    helper = getattr(manipulation_client, helper_name)
+from dimos.manipulation.planning.examples.manipulation_client import run_motion, run_pick_place
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.sdk.manipulation import Arm, MotionError
 
-    result = helper("shape", 1.0, 2.0, 3.0, *dimensions)
 
-    assert result is True
-    client.update_obstacle.assert_called_once_with(
-        "shape",
-        mocker.ANY,
-        shape,
-        dimensions,
-        None,
-        None,
+@pytest.fixture
+def arm(mocker):
+    client = mocker.Mock(spec=Arm)
+    client.info = PlanningGroupInfo("arm", ("j0", "j1"), "base", "tip", True)
+    client.joints.return_value = np.array([0.1, 0.2])
+    client.pose.return_value = PoseStamped(frame_id="world", position=[0.4, 0.0, 0.3])
+    return client
+
+
+def test_motion_example_uses_sdk_and_restores_initial_joints(arm):
+    group = run_motion(arm)
+
+    assert group == "arm"
+    np.testing.assert_allclose(arm.move_joints.call_args_list[0].args[0], [0.12, 0.2])
+    np.testing.assert_array_equal(arm.move_joints.call_args_list[1].args[0], [0.1, 0.2])
+    np.testing.assert_array_equal(arm.joints.return_value, [0.1, 0.2])
+    arm.move_pose.assert_called_once_with([0.4, 0.0, 0.31], speed_scale=0.2)
+    arm.move_linear.assert_called_once_with(dz=-0.01, check_collision=True)
+    arm.open_gripper.assert_called_once_with()
+
+
+def test_motion_example_stops_after_sdk_failure(arm):
+    failure = MotionError("move_joints", PlanResult(PlanStatus.FAILED, "unreachable"))
+    arm.move_joints.side_effect = failure
+
+    with pytest.raises(MotionError, match="unreachable") as error:
+        run_motion(arm)
+
+    assert error.value is failure
+    arm.move_pose.assert_not_called()
+    arm.open_gripper.assert_not_called()
+
+
+@pytest.fixture
+def pick_place(mocker):
+    module = mocker.Mock(spec=PickAndPlaceSpec)
+    module.scan_objects.return_value = ScanResult(
+        PickPlaceStatus.SUCCEEDED, objects=(DetectedObject("cup-1", "cup"),)
     )
-    assert client.update_obstacle.call_args.args[1].position == Vector3(1.0, 2.0, 3.0)
+    module.pick_object.return_value = PickResult(
+        PickPlaceStatus.SUCCEEDED, object_id="cup-1", holding_object=True
+    )
+    module.place_at.return_value = PlaceResult(PickPlaceStatus.SUCCEEDED)
+    return module
 
 
-def test_update_obstacle_exposes_generic_mesh_replacement(mocker: MockerFixture) -> None:
-    client = MagicMock()
-    client.update_obstacle.return_value = True
-    mocker.patch.object(manipulation_client, "_client", client)
-    pose = Pose(
-        position=Vector3(0.1, 0.2, 0.3),
-        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+def test_example_uses_scanned_id_and_explicit_destination(pick_place):
+    run_pick_place(pick_place, "cup", (0.4, 0.0, 0.2), "arm")
+
+    pick_place.pick_object.assert_called_once_with("cup-1", "arm")
+    pick_place.place_at.assert_called_once_with(0.4, 0.0, 0.2, planning_group="arm")
+
+
+def test_example_does_not_guess_between_objects(pick_place):
+    pick_place.scan_objects.return_value = ScanResult(
+        PickPlaceStatus.SUCCEEDED,
+        objects=(DetectedObject("cup-1", "cup"), DetectedObject("cup-2", "cup")),
     )
 
-    result = manipulation_client.update_obstacle(
-        "mesh",
-        pose,
-        "mesh",
-        mesh_path="replacement.obj",
+    with pytest.raises(RuntimeError, match="exactly one object"):
+        run_pick_place(pick_place, "cup", (0.4, 0.0, 0.2), "arm")
+
+    pick_place.pick_object.assert_not_called()
+
+
+def test_example_stops_after_failed_pick_even_when_holding(pick_place):
+    pick_place.pick_object.return_value = PickResult(
+        PickPlaceStatus.EXECUTION_FAILED, "retract failed", holding_object=True
     )
 
-    assert result is True
-    client.update_obstacle.assert_called_once_with(
-        "mesh",
-        pose,
-        "mesh",
-        None,
-        "replacement.obj",
-        None,
-    )
+    with pytest.raises(RuntimeError, match="retract failed"):
+        run_pick_place(pick_place, "cup", (0.4, 0.0, 0.2), "arm")
 
-
-def test_update_pose_calls_pose_only_rpc(mocker: MockerFixture) -> None:
-    client = MagicMock()
-    client.update_obstacle_pose.return_value = True
-    mocker.patch.object(manipulation_client, "_client", client)
-
-    result = manipulation_client.update_pose("box", 4.0, 5.0, 6.0)
-
-    assert result is True
-    name, pose = client.update_obstacle_pose.call_args.args
-    assert name == "box"
-    assert pose.position == Vector3(4.0, 5.0, 6.0)
-    assert pose.orientation == Quaternion(0.0, 0.0, 0.0, 1.0)
+    pick_place.place_at.assert_not_called()

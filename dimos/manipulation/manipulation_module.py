@@ -15,8 +15,7 @@
 """Manipulation Module - Motion planning with ControlCoordinator execution.
 
 Base module providing core manipulation infrastructure:
-- @rpc: Low-level building blocks (plan_to_pose, plan_to_joints, preview_plan, execute)
-- @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home, go_init)
+- @rpc: Typed motion building blocks (plan_to_poses, plan_to_joints, preview_plan, execute)
 
 PickAndPlaceModule composes this module's RPCs with perception and grasp generation.
 """
@@ -35,7 +34,6 @@ from typing import Any, Literal, TypeAlias
 import numpy as np
 from pydantic import Field
 
-from dimos.agents.skill_result import SkillResult
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.core import rpc
@@ -90,7 +88,6 @@ from dimos.manipulation.planning.spec.protocols import (
 from dimos.manipulation.planning.trajectory_generator.config import (
     TrajectoryParametrizationConfig,
 )
-from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.manipulation.visualization.config import (
     ManipulationVisualizationConfig,
     NoManipulationVisualizationConfig,
@@ -173,12 +170,9 @@ class ManipulationModuleConfig(ModuleConfig):
 
 
 class ManipulationModule(Module):
-    """Base motion planning module with ControlCoordinator execution.
+    """Motion planning RPCs with ControlCoordinator execution.
 
-    - @rpc: Low-level building blocks (plan, execute, gripper)
-    - @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home)
-
-    Subclass PickAndPlaceModule adds perception integration and long-horizon skills.
+    PickAndPlaceModule composes these RPCs with perception and grasping.
     """
 
     config: ManipulationModuleConfig
@@ -754,25 +748,6 @@ class ManipulationModule(Module):
         return result
 
     @rpc
-    def plan_to_pose(self, pose: Pose, group_id: PlanningGroupID | None = None) -> bool:
-        """Plan motion to pose. Use preview_plan() then execute().
-
-        Args:
-            pose: Target end-effector pose
-            group_id: Planning group to use; omission requires one compatible group
-        """
-        if self._kinematics is None or self._world_monitor is None:
-            self._record_error("Planning not initialized")
-            return False
-        try:
-            selected_group_id = group_id or self._require_unique_pose_group_id()
-        except ValueError as exc:
-            logger.warning("Pose planning unavailable", error=str(exc))
-            self._record_error(str(exc))
-            return False
-        return self.generate_plan_to_pose_targets({selected_group_id: pose}) is not None
-
-    @rpc
     def plan_to_joints(
         self,
         targets: Mapping[PlanningGroupID, JointState],
@@ -982,16 +957,15 @@ class ManipulationModule(Module):
         self,
         plan: GeneratedPlan | None = None,
         duration: float | None = None,
-    ) -> bool:
+    ) -> CommandResult:
         """Preview a complete generated plan in the visualizer."""
         plan = plan or self._last_plan
         if plan is None or not plan.path:
-            logger.warning("No generated plan to preview")
-            return False
+            return CommandResult(CommandStatus.REJECTED, "No generated plan to preview")
         if self._world_monitor is None:
-            return False
+            return CommandResult(CommandStatus.FAILED, "Planning not initialized")
         self._world_monitor.animate_trajectory(plan.trajectory, duration)
-        return True
+        return CommandResult(CommandStatus.SUCCEEDED, "Preview requested")
 
     @rpc
     def has_planned_path(self) -> bool:
@@ -1014,12 +988,8 @@ class ManipulationModule(Module):
         return self._world_monitor.get_visualization_url()
 
     @rpc
-    def clear_planned_path(self) -> bool:
-        """Clear the stored planned path.
-
-        Returns:
-            True if cleared
-        """
+    def clear_planned_path(self) -> CommandResult:
+        """Discard the pending plan and its preview without cancelling active execution."""
         with self._lock:
             plan = self._last_plan
             self._last_plan = None
@@ -1030,7 +1000,7 @@ class ManipulationModule(Module):
             # Preserve the group selection until the public visualization
             # transaction has invalidated and hidden its preview.
             self._dismiss_preview(plan.group_ids)
-        return True
+        return CommandResult(CommandStatus.SUCCEEDED, "Pending plan cleared")
 
     @rpc
     def list_planning_groups(self) -> tuple[PlanningGroupInfo, ...]:
@@ -1490,39 +1460,6 @@ class ManipulationModule(Module):
                 f"Expected one {capability}-capable planning group, found {len(candidates)}",
             )
         return candidates[0]
-
-    def _lift_if_low(
-        self, group_id: PlanningGroupID | None = None, min_z: float = 0.05
-    ) -> SkillResult[ManipulationSkillError]:
-        """If the end-effector is below *min_z*, plan and execute a short lift."""
-        ee = self.get_ee_pose(group_id)
-        if ee is None or ee.position.z >= min_z:
-            return SkillResult.ok()
-
-        lift_z = min_z + 0.05
-        logger.info(
-            "Lifting low end effector", current_z=ee.position.z, minimum_z=min_z, target_z=lift_z
-        )
-        lift_pose = Pose(Vector3(ee.position.x, ee.position.y, lift_z), ee.orientation)
-        if not self.plan_to_pose(lift_pose, group_id):
-            return SkillResult.fail(
-                "PLANNING_FAILED",
-                f"Failed to plan lift from z={ee.position.z:.3f}",
-            )
-        return self._preview_execute_wait()
-
-    def _preview_execute_wait(
-        self, preview_duration: float = 0.5
-    ) -> SkillResult[ManipulationSkillError]:
-        """Preview planned path, execute, and wait for completion.
-
-        Args:
-            preview_duration: Duration to animate the preview in Meshcat (seconds)
-        """
-        result = self.execute(blocking=True)
-        if not result.succeeded:
-            return SkillResult.fail("EXECUTION_FAILED", result.message or result.status.name)
-        return SkillResult.ok(str(result))
 
     @rpc
     def stop(self) -> None:
