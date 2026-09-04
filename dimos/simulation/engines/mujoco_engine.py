@@ -50,6 +50,19 @@ StepHook = Callable[["MujocoEngine"], None]
 _MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
 _RESET_WAIT_TIMEOUT_S = 5.0
 
+# How far behind its wall-clock schedule the sim loop may fall and still spend
+# time on camera rendering. One render legitimately costs several step budgets
+# (a 640x360 camera is ~10 ms against a 5 ms step), so the loop is briefly in
+# debt after every frame and repays it on the next near-empty steps; the
+# threshold has to sit above that normal sawtooth and below the sustained debt
+# that means rendering no longer fits in real time.
+RENDER_LAG_BUDGET = 0.020
+# Debt past this is treated as unrecoverable (a host suspend, a long GC pause)
+# and abandoned, so it cannot suppress rendering forever afterwards.
+MAX_LAG_CATCHUP = 0.25
+# Rate limit for the "skipping renders" warning.
+SKIP_REPORT_INTERVAL = 10.0
+
 
 def _camera_name_candidates(camera_name: str) -> tuple[str, ...]:
     stripped = camera_name.strip("/")
@@ -614,8 +627,18 @@ class MujocoEngine(SimulationEngine):
         cam_renderers = self._init_cameras()
         lidar_states = self._init_raycast_lidars()
 
+        # Wall-clock time this iteration was due to start. Cameras render
+        # inline on this thread (see _render_cameras), so without a schedule
+        # to measure against, a slow render silently steals from the
+        # simulation clock instead of from the frame rate.
+        next_step_at = time.time()
+        skipped_renders = 0
+        last_skip_report = next_step_at
+
         def _step_once(sync_viewer: bool) -> None:
+            nonlocal next_step_at, skipped_renders, last_skip_report
             loop_start = time.time()
+            lag = loop_start - next_step_at
             reset_done_events: list[threading.Event] = []
             with self._lock:
                 if self._reset_requested:
@@ -640,13 +663,43 @@ class MujocoEngine(SimulationEngine):
                     self._on_after_step(self)
                 except Exception as exc:
                     logger.error("on_after_step failed", error=str(exc))
-            self._render_cameras(loop_start, cam_renderers)
+            # Cameras render inline on this thread and one render costs
+            # several times the whole per-step budget, so they have to yield
+            # to the simulation clock: when the loop is already behind real
+            # time - GPU contention from a screen recorder, another encoder,
+            # the compositor - skip this cycle's renders. Contention then
+            # costs frame rate, which recovers on its own, instead of slowing
+            # simulated time, which does not. Rendering resumes by itself as
+            # soon as the loop catches up; _render_cameras leaves
+            # last_render_time untouched when it does not run, so the next
+            # opportunity is taken immediately.
+            if lag <= RENDER_LAG_BUDGET:
+                self._render_cameras(loop_start, cam_renderers)
+            else:
+                skipped_renders += 1
+            # Lidar is deliberately NOT skipped: it feeds navigation, runs at
+            # ~1 Hz, and is a rounding error next to the cameras.
             self._raycast_lidars(loop_start, lidar_states)
 
-            elapsed = time.time() - loop_start
-            sleep_time = dt - elapsed
+            next_step_at += dt
+            now = time.time()
+            sleep_time = next_step_at - now
             if sleep_time > 0:
                 time.sleep(sleep_time)
+            elif now - next_step_at > MAX_LAG_CATCHUP:
+                # Unrecoverable debt (a long stall, the host suspending).
+                # Abandon it rather than sprint - and rather than let it
+                # suppress every render from here on.
+                next_step_at = now
+            if skipped_renders and now - last_skip_report >= SKIP_REPORT_INTERVAL:
+                logger.warning(
+                    "sim loop behind real time; camera renders skipped to protect the "
+                    "simulation clock (GPU contention?)",
+                    skipped=skipped_renders,
+                    window_s=round(now - last_skip_report, 1),
+                )
+                skipped_renders = 0
+                last_skip_report = now
 
         if self._headless:
             while not self._stop_event.is_set():
