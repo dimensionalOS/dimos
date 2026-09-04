@@ -17,20 +17,21 @@
       "aarch64-darwin"
     ] (system: let
       pkgs = nixpkgs.legacyPackages.${system};
+      workspaceRoot = ../../../..;
       # resolve the members straight from the workspace
       workspaceMembers =
-        (builtins.fromTOML (builtins.readFile ../../../../Cargo.toml)).workspace.members;
+        (builtins.fromTOML (builtins.readFile (workspaceRoot + "/Cargo.toml"))).workspace.members;
       dimos-memory-recorder = pkgs.rustPlatform.buildRustPackage {
         pname = "dimos-memory-recorder";
         version = "0.1.0";
         src = pkgs.lib.fileset.toSource {
-          root = ../../../..;
+          root = workspaceRoot;
           fileset = pkgs.lib.fileset.unions (
             [
-              ../../../../Cargo.lock
-              ../../../../Cargo.toml
+              (workspaceRoot + "/Cargo.lock")
+              (workspaceRoot + "/Cargo.toml")
             ]
-            ++ map (member: ../../../.. + "/${member}") workspaceMembers
+            ++ map (member: workspaceRoot + "/${member}") workspaceMembers
           );
         };
 
