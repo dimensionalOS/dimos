@@ -13,12 +13,22 @@ flag_management:
   individual_flags:
     - name: SelfHosted-Linux
       carryforward: true
-    - name: SelfHosted-macos
+    - name: SelfHosted-macOS
       carryforward: true
     - name: SelfHosted-Large
       carryforward: true
 
+# Tests are co-located with source, so split them out as their own unit.
+component_management:
+  individual_components:
+    - component_id: tests
+      name: Tests
+      paths:
+        - "dimos/**/test_*.py"
+        - "dimos/**/conftest.py"
+        - "dimos/e2e_tests/**"
+
 comment:
-  layout: "newheader, diff, flags, components, files"
+  layout: "newheader, diff, components, flags, files"
   require_head: false
   require_base: false

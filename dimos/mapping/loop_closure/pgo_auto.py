@@ -59,13 +59,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, Unpack
 
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
-import open3d.core as o3c  # type: ignore[import-untyped]
 from scipy.spatial.transform import Rotation
 
-from dimos.memory2.store.memory import MemoryStore
-from dimos.memory2.stream import Stream
-from dimos.memory2.type.observation import Observation
+from dimos.memory.store.memory import MemoryStore
+from dimos.memory.stream import Stream
+from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -807,6 +805,8 @@ def _icp(
     this directly as sigma_trans squared. On rejection (too few points or
     zero correspondences) returns the identity transform and inf fitness.
     """
+    import open3d as o3d  # type: ignore[import-untyped]
+    import open3d.core as o3c  # type: ignore[import-untyped]
 
     if len(source) < min_inliers or len(target) < min_inliers:
         return Transform.identity(), float("inf")

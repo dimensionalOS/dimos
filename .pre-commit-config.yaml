@@ -16,6 +16,16 @@ repos:
           - --license-filepath
           - assets/license_file_header.txt
           - --use-current-year
+      - id: insert-license
+        name: insert-license (rust)
+        files: \.rs$
+        types: [rust]
+        args:
+          - --license-filepath
+          - assets/license_file_header.txt
+          - --comment-style
+          - "//"
+          - --use-current-year
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.3
@@ -39,11 +49,17 @@ repos:
         args: [--fix=lf]
         exclude: \.patch$  # keep patch files byte-identical to upstream diffs
       - id: check-json
+        exclude: ^misc/DimSim/public/sims/  # LFS-tracked
       - id: check-toml
       - id: check-yaml
+        # mkdocs-material configures extensions with !!python/name: tags,
+        # which pyyaml's safe loader refuses to construct.
+        exclude: ^mkdocs\.yml$
       - id: pretty-format-json
         name: format json
         args: [ --autofix, --no-sort-keys ]
+        # misc/DimSim/public/sims/ is LFS-tracked; web/ JSON is owned by `deno fmt`
+        exclude: ^(misc/DimSim/public/sims/|web/)
 
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
     rev: 3.4.1
@@ -84,14 +100,22 @@ repos:
         always_run: true
         pass_filenames: false
         entry: python bin/hooks/largefiles_check
+        args: [--all]
         language: python
         additional_dependencies: ['tomli']
+
+      - id: emdash-check
+        name: No em dashes in docs
+        entry: bin/hooks/emdash_check
+        language: script
+        files: ^docs/.*\.mdx?$
+        exclude: ^docs/node_modules/
 
       - id: doclinks
         name: Doclinks
         always_run: true
         pass_filenames: false
-        entry: python -m dimos.utils.docs.doclinks docs/
+        entry: python -m dimos.cli.doclinks docs/
         language: system
         files: ^docs/.*\.md$
         exclude: ^docs/node_modules/
@@ -133,9 +157,21 @@ repos:
             git ls-files "*Cargo.toml" | while read -r m; do
               cargo locate-project --manifest-path "$m" --workspace --message-format plain
             done | sort -u | while read -r root; do
-              cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
+              # A crate with its own flake carries system deps the root shell lacks.
+              if [ -f "$(dirname "$root")/flake.nix" ]; then
+                nix develop "path:$(dirname "$root")" -c cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
+              else
+                cargo clippy --manifest-path "$root" --workspace --all-targets -- -D warnings
+              fi
             done
           '
         language: system
         types: [rust]
+        pass_filenames: false
+
+      - id: deno-fmt
+        name: deno fmt (web/)
+        entry: bash -c 'cd web && deno fmt'
+        language: system
+        files: ^web/
         pass_filenames: false

@@ -1,4 +1,4 @@
-# DimOS Modules
+# dimOS Modules
 
 Modules are subsystems on a robot that operate autonomously and communicate with other subsystems using standardized messages.
 
@@ -48,14 +48,15 @@ print(CameraModule.io())
 └┬─────────────┘
  ├─ color_image: Image
  ├─ camera_info: CameraInfo
+ ├─ tf: TFMessage
  │
  ├─ RPC build() -> None
  ├─ RPC get_skills() -> list
+ ├─ RPC peek_stream(stream_name: str, timeout: float) -> Any
  ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
  ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
  ├─ RPC start() -> None
  ├─ RPC stop() -> None
- ├─ RPC take_a_picture() -> Image
 ```
 
 We can see that the camera module outputs two streams:
@@ -65,7 +66,7 @@ We can see that the camera module outputs two streams:
 
 It offers two RPC calls: `start()` and `stop()` (lifecycle methods).
 
-It also exposes an agentic [skill](/docs/usage/blueprints.md#defining-skills) called `take_a_picture` (more on skills in the Blueprints guide).
+Camera observation as an agentic [skill](/docs/usage/blueprints.md#defining-skills) is provided separately by the reusable `ObserveSkill` container (`dimos/agents/skills/observe_skill.py`), which subscribes to `color_image` and can be added to any blueprint (more on skills in the Blueprints guide).
 
 We can start this module and explore the output of its streams in real time (this will use your webcam).
 
@@ -137,7 +138,7 @@ from dimos.hardware.sensors.camera.module import CameraModule
 camera = CameraModule()
 detector = Detection2DModule()
 
-detector.image.connect(camera.color_image)
+detector.color_image.connect(camera.color_image)
 
 camera.start()
 detector.start()
@@ -152,7 +153,7 @@ camera.stop()
 
 As we build module structures, we'll quickly want to utilize all cores on the machine (which Python doesn't allow as a single process) and potentially distribute modules across machines or even the internet.
 
-For this, we use `dimos.core` and DimOS transport protocols.
+For this, we use `dimos.core` and dimOS transport protocols.
 
 Defining message exchange protocols and message types also gives us the ability to write models in faster languages.
 
@@ -238,7 +239,7 @@ class Watchdog(Module):
             self._notifier.notify(f"value={msg.data}")
 ```
 
-The Spec must match the target module's `@rpc` signatures (sync/async are interchangeable — see [Async modules](#async-modules-lock-free-state)).
+The Spec must match the target module's `@rpc` signatures. Sync and async are interchangeable (see [Async modules](#async-modules-lock-free-state)).
 
 To deploy `Watchdog`, add `Watchdog.blueprint()` to an existing blueprint's `autoconnect(...)` chain. The coordinator matches `Out[T]` to `In[T]` by name across the union of modules, and resolves `_notifier: NotifierSpec` to whichever module in the blueprint implements `notify`. No manual wiring required.
 
@@ -319,7 +320,7 @@ class MovementManager(Module):
         self.cmd_vel.publish(msg)
 ```
 
-Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are serialized: only one invocation of `handle_x` runs at a time. If messages arrive faster than the handler can process them, intermediate messages are dropped — only the most recent unprocessed message is kept (LATEST policy). The handler is guaranteed to eventually run with the most recently published value.
+Each handler runs in a per-handler dispatcher task on `self._loop`. Handlers are serialized: only one invocation of `handle_x` runs at a time. If messages arrive faster than the handler can process them, intermediate messages are dropped. Only the most recent unprocessed message is kept (LATEST policy). The handler is guaranteed to eventually run with the most recently published value.
 
 ### Async `@rpc` methods
 
@@ -470,3 +471,130 @@ to_svg(agentic, "assets/go2_agentic.svg")
 ![output](assets/go2_agentic.svg)
 
 To see more information on how to use Blueprints, see [Blueprints](/docs/usage/blueprints.md).
+
+## Low level manual plumbing
+
+Most of the time this is a bad idea, but you can peak behind blueprints, autoconnect etc, and deal with pubsub directly at lower and lower layers of abstraction
+
+### Connecting via transports
+
+`.connect` wires two modules living in the same process. Alternatively, you can assign a **transport** a typed pub/sub channel such as LCM or Zenoh. The modules never hold a reference to each other, so they can run as separate scripts.
+
+`camera_script.py`:
+
+```python skip
+import time
+from dimos.core.transport import LCMTransport
+from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.msgs.sensor_msgs.Image import Image
+
+camera = CameraModule()
+camera.color_image.transport = LCMTransport("/camera/rgb", Image)
+
+camera.start()
+time.sleep(10)
+camera.stop()
+```
+
+`detector_script.py`:
+
+```python skip
+import time
+from dimos.core.transport import LCMTransport
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.module2D import Detection2DModule
+
+detector = Detection2DModule()
+detector.color_image.transport = LCMTransport("/camera/rgb", Image)
+
+detector.start()
+detector.detections.subscribe(print)
+time.sleep(10)
+detector.stop()
+```
+
+Run each in its own terminal and detections start printing as soon as both are up. The channel name and message type must match on both sides `LCMTransport("/camera/rgb", Image)` maps to the typed channel `/camera/rgb#sensor_msgs.Image`, which you can watch with `dimos spy` or `dimos topic echo /camera/rgb`.
+
+Available transports live in `dimos.core.transport` (`LCMTransport`, `ZenohTransport`, `SHMTransport`, ...); see [Transports](/docs/usage/transports/index.md) for choosing between them.
+
+### Raw transports (no modules)
+
+A transport works on its own. Init one and send/receive from a plain script, no module or stream declarations needed:
+
+```python skip
+from dimos.core.transport import LCMTransport
+from dimos.msgs.std_msgs.String import String
+
+chat = LCMTransport("/chat", String)
+
+unsubscribe = chat.subscribe(print)     # receive
+chat.publish(String(data="hello"))      # send
+
+msg = chat.get_next()                   # or block for the next message
+chat.stop()
+```
+
+Any other script (or module stream) on the same channel sees the traffic. This is handy for quick probes and debug scripts. For a robot system, prefer modules so the streams show up in blueprints and introspection.
+
+### Dynamic streams
+
+Our system is very flexible, but this is dangerous as you lose essentially all support above pubsub. Autoconnect, blueprints, configuration support (dimos --transport=...) etc
+
+Streams don't have to be class annotations, a module can grow inputs and outputs at runtime, and they can even be attached externally.
+Construct the stream and assign it as an attribute.
+
+module has `inputs`/`outputs`/`io()` attributes and is a ble to discover streams attached.
+
+```python ansi=false
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
+from dimos.core.transport import LCMTransport
+from dimos.msgs.std_msgs.String import String
+
+class Dyn(Module):
+    @rpc
+    def start(self) -> None:
+        super().start()
+        # module can add a random input
+        self.echo = In(String, "echo", m)
+        print("Externally attached output:", self.words)
+
+m = Dyn()
+
+m.words = Out(String, "words", m)
+m.start()
+
+
+m.words.transport = LCMTransport("/words", String)
+m.echo.transport = LCMTransport("/words", String)
+
+
+print("\nInputs:")
+print(m.inputs)
+print(m.inputs['echo'])
+print("\nOutputs:")
+print(m.outputs)
+print(m.outputs['words'])
+
+print("\Send/Receive Test:")
+
+# we can subscribe to topics from anywhere also
+m.echo.subscribe(print)
+m.words.publish(String(data="loopback over LCM"))
+
+```
+
+```results
+Externally attached output: Out words[String] @ Dyn
+
+Inputs:
+{'echo': <dimos.core.stream.In object at 0x7f03b4bb32c0>}
+In echo[String] @ Dyn via LCMTransport(/words#std_msgs.String)
+
+Outputs:
+{'words': <dimos.core.stream.Out object at 0x7f03b4b7f860>}
+Out words[String] @ Dyn via LCMTransport(/words#std_msgs.String)
+\Send/Receive Test:
+<dimos.msgs.std_msgs.String.String object at 0x7f03eb2d10d0>
+```

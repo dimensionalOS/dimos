@@ -52,6 +52,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,
@@ -82,6 +83,31 @@ def _find_sensor_slice(model: mujoco.MjModel, *names: str, dim: int = 3) -> slic
 
 
 _RX180 = R.from_euler("x", 180, degrees=True)
+
+
+def _pose_matrix(
+    position: NDArray[np.float64], rotation: NDArray[np.float64]
+) -> NDArray[np.float64]:
+    matrix = np.eye(4, dtype=np.float64)
+    matrix[:3, :3] = rotation
+    matrix[:3, 3] = position
+    return matrix
+
+
+def _transform_from_matrix(
+    matrix: NDArray[np.float64], *, frame_id: str, child_frame_id: str, ts: float
+) -> Transform:
+    return Transform(
+        translation=Vector3(
+            float(matrix[0, 3]),
+            float(matrix[1, 3]),
+            float(matrix[2, 3]),
+        ),
+        rotation=Quaternion.from_rotation_matrix(matrix[:3, :3]),
+        frame_id=frame_id,
+        child_frame_id=child_frame_id,
+        ts=ts,
+    )
 
 
 def _default_identity_transform() -> Transform:
@@ -306,6 +332,7 @@ class MujocoSimModule(
     # root. Published every step; consumers like the viser viewer use
     # this to translate the robot in world space.
     odom: Out[PoseStamped]
+    tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -317,8 +344,10 @@ class MujocoSimModule(
         self._gripper_joint_range: tuple[float, float] = (0.0, 1.0)
         self._stop_event = threading.Event()
         self._publish_thread: threading.Thread | None = None
+        self._state_lock = threading.Lock()
         self._camera_info_base: CameraInfo | None = None
         self._shm_ready_signaled = False
+        self._latest_frame_ts: float | None = None
 
         # IMU sensor slices into MjData.sensordata, resolved once at start.
         # None if the MJCF has no recognized IMU sensors (e.g. arm-only sims).
@@ -351,17 +380,27 @@ class MujocoSimModule(
     def _depth_optical_frame(self) -> str:
         return f"{self.config.camera_name}_depth_optical_frame"
 
+    def _camera_info_ts(self) -> float:
+        """Latest frame's sim time; wall clock only before the first frame."""
+        with self._state_lock:
+            ts = self._latest_frame_ts
+        return time.time() if ts is None else ts
+
     @rpc
     def get_color_camera_info(self) -> CameraInfo | None:
-        if self._camera_info_base is None:
+        with self._state_lock:
+            base = self._camera_info_base
+        if base is None:
             return None
-        return self._camera_info_base.with_ts(time.time())
+        return base.with_ts(self._camera_info_ts())
 
     @rpc
     def get_depth_camera_info(self) -> CameraInfo | None:
-        if self._camera_info_base is None:
+        with self._state_lock:
+            base = self._camera_info_base
+        if base is None:
             return None
-        return self._camera_info_base.with_ts(time.time())
+        return base.with_ts(self._camera_info_ts())
 
     @rpc
     def get_depth_scale(self) -> float:
@@ -417,6 +456,7 @@ class MujocoSimModule(
                 fps=float(self.config.fps),
                 max_geom=max_geom,
                 geom_groups=groups,
+                base_body_name=self.config.base_frame_id,
             )
 
         primary_needed = (
@@ -476,6 +516,7 @@ class MujocoSimModule(
             self._gripper_idx = dof
             self._gripper_ctrl_range = ctrl_range
             self._gripper_joint_range = joint_range
+            self._shm.write_gripper_range(*joint_range)
             logger.info(
                 "MujocoSimModule: gripper detected",
                 idx=dof,
@@ -570,8 +611,11 @@ class MujocoSimModule(
         )
 
     def _compose_model(self) -> mujoco.MjModel:
-        """Compose optional scene package MJCF + robot MJCF + entities."""
-        from dimos.simulation.mujoco.entity_scene import add_entities_to_spec, spawn_penetrators
+        """Compose optional scene package MJCF + robot MJCF + scene-package entities."""
+        from dimos.simulation.mujoco.scene_package_entity_composer import (
+            add_scene_package_entities_to_spec,
+            find_scene_package_entity_spawn_penetrators,
+        )
 
         if self.config.robot_mjcf is None:
             raise RuntimeError("MujocoSimModule: robot_mjcf is required for composition")
@@ -605,7 +649,7 @@ class MujocoSimModule(
             spec_scene.attach(spec_robot, prefix=prefix, frame=frame)
 
             if self.config.scene_entities:
-                add_entities_to_spec(
+                add_scene_package_entities_to_spec(
                     spec_scene, self.config.scene_entities, force_static=force_static
                 )
             return spec_scene
@@ -613,10 +657,10 @@ class MujocoSimModule(
         spec_scene = build_spec()
         model = spec_scene.compile()
         if self.config.scene_entities:
-            penetrators = spawn_penetrators(model)
+            penetrators = find_scene_package_entity_spawn_penetrators(model)
             if penetrators:
                 logger.warning(
-                    "MujocoSimModule: scene entities spawn in deep contact; welding static",
+                    "MujocoSimModule: scene-package entities spawn in deep contact; welding static",
                     count=len(penetrators),
                     samples=sorted(penetrators)[:20],
                 )
@@ -648,7 +692,9 @@ class MujocoSimModule(
                 errors.append(("shm.cleanup", exc))
 
         self._sim_hooks = None
-        self._camera_info_base = None
+        with self._state_lock:
+            self._camera_info_base = None
+            self._latest_frame_ts = None
         super().stop()
 
         if errors:
@@ -768,7 +814,7 @@ class MujocoSimModule(
             and self._imu_base_qpos_slice is None
         ):
             if not self._shm_ready_signaled:
-                shm.signal_ready(num_joints=len(engine.joint_names))
+                shm.signal_ready(num_joints=len(engine.joint_names), arm_joints=self.config.dof)
                 self._shm_ready_signaled = True
             return
 
@@ -798,7 +844,7 @@ class MujocoSimModule(
         )
 
         if not self._shm_ready_signaled:
-            shm.signal_ready(num_joints=len(engine.joint_names))
+            shm.signal_ready(num_joints=len(engine.joint_names), arm_joints=self.config.dof)
             self._shm_ready_signaled = True
 
     def _build_camera_info(self) -> None:
@@ -813,7 +859,7 @@ class MujocoSimModule(
         fovy_rad = math.radians(fovy_deg)
         fy = h / (2.0 * math.tan(fovy_rad / 2.0))
         fx = fy  # square pixels
-        self._camera_info_base = CameraInfo.from_intrinsics(
+        camera_info = CameraInfo.from_intrinsics(
             fx=fx,
             fy=fy,
             cx=w / 2.0,
@@ -822,6 +868,8 @@ class MujocoSimModule(
             height=h,
             frame_id=self._color_optical_frame,
         )
+        with self._state_lock:
+            self._camera_info_base = camera_info
 
     def _publish_loop(self) -> None:
         """Poll engine for rendered frames and publish at configured FPS."""
@@ -845,6 +893,7 @@ class MujocoSimModule(
             return
 
         while not self._stop_event.is_set():
+            loop_start = time.monotonic()
             try:
                 frame = engine.read_camera(self.config.camera_name)
             except RuntimeError as exc:
@@ -860,7 +909,9 @@ class MujocoSimModule(
                 self._stop_event.wait(timeout=interval * 0.5)
                 continue
             last_timestamp = frame.timestamp
-            ts = time.time()
+            ts = frame.timestamp
+            with self._state_lock:
+                self._latest_frame_ts = ts
 
             if self.config.enable_color:
                 color_img = Image(
@@ -890,16 +941,17 @@ class MujocoSimModule(
                     depth_shape=frame.depth.shape,
                 )
 
-            elapsed = time.time() - ts
+            elapsed = time.monotonic() - loop_start
             sleep_time = interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
     def _publish_camera_info(self) -> None:
-        base = self._camera_info_base
+        with self._state_lock:
+            base = self._camera_info_base
         if base is None:
             return
-        ts = time.time()
+        ts = self._camera_info_ts()
         info = CameraInfo(
             height=base.height,
             width=base.width,
@@ -918,35 +970,37 @@ class MujocoSimModule(
             return
         mj_rot = R.from_matrix(frame.cam_mat.reshape(3, 3))
         optical_rot = mj_rot * _RX180
-        q = optical_rot.as_quat()  # xyzw
-        pos = Vector3(
-            float(frame.cam_pos[0]),
-            float(frame.cam_pos[1]),
-            float(frame.cam_pos[2]),
-        )
-        rot = Quaternion(float(q[0]), float(q[1]), float(q[2]), float(q[3]))
+        camera_transform = _pose_matrix(frame.cam_pos, mj_rot.as_matrix())
+        optical_transform = _pose_matrix(frame.cam_pos, optical_rot.as_matrix())
+        parent_frame = "world"
+        if frame.base_pos is not None and frame.base_mat is not None:
+            parent_frame = self.config.base_frame_id
+            base_transform = _pose_matrix(frame.base_pos, frame.base_mat)
+            inv_base_transform = np.linalg.inv(base_transform)
+            camera_transform = inv_base_transform @ camera_transform
+            optical_transform = inv_base_transform @ optical_transform
+
         self.tf.publish(
-            Transform(
-                translation=pos,
-                rotation=rot,
-                frame_id="world",
-                child_frame_id=self._color_optical_frame,
-                ts=ts,
-            ),
-            Transform(
-                translation=pos,
-                rotation=rot,
-                frame_id="world",
-                child_frame_id=self._depth_optical_frame,
-                ts=ts,
-            ),
-            Transform(
-                translation=pos,
-                rotation=rot,
-                frame_id="world",
-                child_frame_id=self._camera_link,
-                ts=ts,
-            ),
+            TFMessage(
+                _transform_from_matrix(
+                    optical_transform,
+                    frame_id=parent_frame,
+                    child_frame_id=self._color_optical_frame,
+                    ts=ts,
+                ),
+                _transform_from_matrix(
+                    optical_transform,
+                    frame_id=parent_frame,
+                    child_frame_id=self._depth_optical_frame,
+                    ts=ts,
+                ),
+                _transform_from_matrix(
+                    camera_transform,
+                    frame_id=parent_frame,
+                    child_frame_id=self._camera_link,
+                    ts=ts,
+                ),
+            )
         )
 
     def _generate_pointcloud(self) -> None:
@@ -956,7 +1010,9 @@ class MujocoSimModule(
             self._generate_mujoco_lidar_pointcloud()
             return
         # Back-project the primary camera's depth image.
-        if self._camera_info_base is None:
+        with self._state_lock:
+            camera_info = self._camera_info_base
+        if camera_info is None:
             return
         frame = self._engine.read_camera(self.config.camera_name)
         if frame is None:
@@ -977,7 +1033,7 @@ class MujocoSimModule(
             pcd = PointCloud2.from_rgbd(
                 color_image=color_img,
                 depth_image=depth_img,
-                camera_info=self._camera_info_base,
+                camera_info=camera_info,
                 depth_scale=1.0,
             )
             pcd = pcd.voxel_downsample(0.005)

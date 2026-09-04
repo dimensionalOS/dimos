@@ -34,11 +34,9 @@ Use `skip` when a block would pull in **CUDA / GPU-only** stacks (for example pe
 
 ## Examples
 
-# md-babel-py
+## md-babel-py
 
 Execute code blocks in markdown files and insert the results.
-
-![Demo](assets/screencast.gif)
 
 **Use cases:**
 - Keep documentation examples up-to-date automatically
@@ -55,7 +53,7 @@ echo "cwd: $(pwd)"
 ```
 
 ```results
-cwd: /home/lesh/coding/dimos
+cwd: /home/lesh/coding/dimos/docs
 ```
 
 ### Python

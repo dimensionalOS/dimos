@@ -15,7 +15,7 @@ dimos --replay run drone-agentic
 dimos run drone-basic
 
 # Real drone — outdoor (GPS-based odometry)
-dimos run drone-basic --set outdoor=true
+dimos run drone-basic --outdoor=true
 
 # Agentic with LLM control
 dimos run drone-agentic
@@ -35,7 +35,10 @@ Connection + camera + visualization. The foundation layer.
 | `WebsocketVisModule` | Web-based visualization |
 | `RerunBridgeModule` | 3D viewer (selected by `--viewer`) |
 
-**Indoor vs Outdoor:** By default, the drone uses velocity integration for odometry (indoor mode). For outdoor flights with GPS, set `outdoor=true` — this switches to GPS-only positioning which is more reliable in open environments but less precise for close-range maneuvers.
+**Indoor vs Outdoor:** By default, the drone uses velocity integration for
+odometry (indoor mode). For outdoor flights with GPS, pass `--outdoor=true`;
+this switches to GPS-only positioning, which is more reliable in open
+environments but less precise for close-range maneuvers.
 
 ### `drone-agentic`
 Composes on top of `drone-basic`, adding autonomous capabilities:
@@ -80,7 +83,15 @@ export GOOGLE_MAPS_API_KEY=...  # For GoogleMapsSkillContainer
 RosettaDrone is an Android app that bridges DJI SDK to MAVLink protocol. Without it, the drone cannot communicate with DimOS.
 
 ### Option 1: Pre-built APK
-1. Download latest release: https://github.com/RosettaDrone/rosettadrone/releases
+
+> **Heads up:** the maintained [`RosettaDrone/rosettadrone`](https://github.com/RosettaDrone/rosettadrone)
+> repo has **no GitHub releases**, so there is no official pre-built APK. The only pre-built APK
+> available is a **2018 build** from the original `diux-dev` project; it targets a legacy DJI Mobile
+> SDK and may fail to register with current DJI accounts/firmware. Treat it as a quick test only —
+> for a working current build, use [Option 2: Build from Source](#option-2-build-from-source).
+
+1. Download the legacy APK (older DJI SDK, use at your own risk):
+   <https://github.com/diux-dev/rosettadrone/releases/download/v0.5/Rosetta.Drone.v0.5.apk>
 2. Install on Android device connected to DJI controller
 3. Configure in app:
    - MAVLink Target IP: Your computer's IP
@@ -200,7 +211,7 @@ Parameters: `(Kp, Ki, Kd, (min_output, max_output), integral_limit, deadband_pix
 
 ## Available Skills
 
-All skills are exposed to the LLM agent via the `@skill` decorator on `DroneConnectionModule`:
+All skills are exposed to the LLM agent via the `@skill` decorator on `DroneConnectionModule`, except `observe()`, which comes from the shared `ObserveSkill` container (`dimos/agents/skills/observe_skill.py`, remapped to the drone's `video` stream in `drone_agentic`):
 
 ### Movement & Control
 - `move(x, y, z, duration)` — Move with velocity (m/s)

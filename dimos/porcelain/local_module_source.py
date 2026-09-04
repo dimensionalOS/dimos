@@ -14,13 +14,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from dimos.core.rpc_client import ModuleProxyProtocol
+from dimos.porcelain.module_handle import ModuleHandle
 from dimos.porcelain.module_source import ModuleSource
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator, ModuleDescriptor
 
 logger = setup_logger()
 
@@ -41,10 +43,27 @@ class LocalModuleSource(ModuleSource):
     def list_module_names(self) -> list[str]:
         return self._coordinator.list_module_names()
 
-    def get_module(self, name: str) -> Any:
-        for cls, proxy in self._coordinator._deployed_modules.items():
+    def list_module_descriptors(self) -> list[ModuleDescriptor]:
+        return self._coordinator.list_modules()
+
+    def get_module(self, name: str) -> ModuleHandle:
+        if name in self._coordinator._deployed_modules:
+            return self._coordinator._deployed_modules[name]
+
+        matches: list[tuple[str, ModuleProxyProtocol]] = []
+        for instance_key, proxy in self._coordinator._deployed_modules.items():
+            cls = self._coordinator._instance_classes[instance_key]
             if cls.__name__ == name:
-                return proxy
+                matches.append((instance_key, proxy))
+
+        if len(matches) == 1:
+            return matches[0][1]
+        if len(matches) > 1:
+            instance_names = ", ".join(sorted(instance_key for instance_key, _ in matches))
+            raise ValueError(
+                f"Multiple instances of {name!r} are deployed "
+                f"({instance_names}); use the instance name."
+            )
         raise KeyError(name)
 
     def invalidate(self, name: str) -> None:

@@ -1,0 +1,86 @@
+[
+  {
+    "id": "go2_short_disp_0_60",
+    "q": "How far in a straight line is your final position from your position at the first shown observation, in meters?",
+    "a": 1.7,
+    "band": 1.0,
+    "stream": "odom",
+    "window": [
+      0,
+      60
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_disp_0_30",
+    "q": "How far in a straight line is your final position from your position at the first shown observation, in meters?",
+    "a": 11.4,
+    "band": 4.543036677935427,
+    "stream": "odom",
+    "window": [
+      0,
+      30
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_disp_30_60",
+    "q": "How far in a straight line is your final position from your position at the first shown observation, in meters?",
+    "a": 11.8,
+    "band": 4.738980277235515,
+    "stream": "odom",
+    "window": [
+      30,
+      60
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_path_0_60",
+    "q": "Roughly how many meters did you travel in total over these observations (path length, not displacement)?",
+    "a": 37.9,
+    "band": 18.963056711366217,
+    "stream": "odom",
+    "window": [
+      0,
+      60
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_hongkong_office_disp_0_558",
+    "q": "How far in a straight line is your final position from your position at the first shown observation, in meters?",
+    "a": 9.6,
+    "band": 3.8486174236058126,
+    "stream": "odom",
+    "window": [
+      0,
+      558
+    ],
+    "dataset": "go2_hongkong_office"
+  },
+  {
+    "id": "go2_hongkong_office_disp_100_300",
+    "q": "How far in a straight line is your final position from your position at the first shown observation, in meters?",
+    "a": 27.5,
+    "band": 11.016777380908813,
+    "stream": "odom",
+    "window": [
+      100,
+      300
+    ],
+    "dataset": "go2_hongkong_office"
+  },
+  {
+    "id": "go2_hongkong_office_path_0_558",
+    "q": "Roughly how many meters did you travel in total over these observations (path length, not displacement)?",
+    "a": 192.5,
+    "band": 96.26788393075581,
+    "stream": "odom",
+    "window": [
+      0,
+      558
+    ],
+    "dataset": "go2_hongkong_office"
+  }
+]

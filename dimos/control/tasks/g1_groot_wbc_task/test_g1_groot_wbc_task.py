@@ -37,6 +37,7 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
     G1GrootWBCTaskConfig,
 )
 from dimos.hardware.whole_body.spec import IMUState
+from dimos.msgs.geometry_msgs.Twist import Twist
 
 
 class _StubSession:
@@ -76,7 +77,6 @@ def patched_ort(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     call_log: list[str] = []
 
     def _factory(path: str, providers: Any = None) -> _StubSession:
-        _ = providers
         label = "balance" if "balance" in str(path) else "walk"
         return _StubSession(
             str(path),
@@ -116,7 +116,6 @@ def joints_29() -> list[str]:
 def task(
     patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
 ) -> Iterator[G1GrootWBCTask]:
-    _ = patched_ort
     task = G1GrootWBCTask(
         name="groot_wbc",
         config=G1GrootWBCTaskConfig(
@@ -140,7 +139,6 @@ def task(
 def unarmed_task(
     patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
 ) -> Iterator[G1GrootWBCTask]:
-    _ = patched_ort
     task = G1GrootWBCTask(
         name="groot_wbc",
         config=G1GrootWBCTaskConfig(
@@ -185,6 +183,13 @@ def test_nonzero_cmd_uses_walk_until_timeout(
         task.compute(_state_at(102.0, joints_29))
 
     assert patched_ort == ["walk", "balance"]
+
+
+def test_on_twist_command_sets_velocity_command(task: G1GrootWBCTask) -> None:
+    task.on_twist_command(Twist(linear=[0.5, 0.25, 0.0], angular=[0.0, 0.0, 0.3]), t_now=100.0)
+
+    assert list(task._cmd) == pytest.approx([0.5, 0.25, 0.3])
+    assert task._last_cmd_time == 100.0
 
 
 def test_observation_layout_matches_policy_contract(task: G1GrootWBCTask) -> None:

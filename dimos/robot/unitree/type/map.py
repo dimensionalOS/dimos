@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from pathlib import Path
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import open3d as o3d  # type: ignore[import-untyped]
 from reactivex import interval
 from reactivex.disposable import Disposable
 
@@ -28,6 +29,9 @@ from dimos.mapping.pointclouds.accumulators.protocol import PointCloudAccumulato
 from dimos.mapping.pointclouds.occupancy import general_occupancy
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+if TYPE_CHECKING:
+    import open3d as o3d  # type: ignore[import-untyped]
 
 
 class MapConfig(ModuleConfig):

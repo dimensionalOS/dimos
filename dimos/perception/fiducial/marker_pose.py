@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-import cv2
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -25,14 +26,9 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 
-try:
+if TYPE_CHECKING:
+    import cv2
     import cv2.aruco
-except (ImportError, AttributeError) as e:
-    raise ImportError(
-        "dimos.perception.fiducial requires cv2.aruco. Install with: "
-        "uv sync --inexact --extra apriltag"
-    ) from e
-
 
 _FISHEYE_MODELS = frozenset({"equidistant", "fisheye", "kannala_brandt"})
 
@@ -89,6 +85,8 @@ def estimate_marker_pose(
     same pinhole ``K`` so the radtan-only ``solvePnP`` sees pinhole-equivalent
     pixels. Otherwise the radtan ``dist_coeffs`` are passed straight through.
     """
+    import cv2
+
     obj = _aruco_marker_object_points(marker_length_m)
     img: np.ndarray = corners_px.reshape(4, 1, 2).astype(np.float32)
     if is_fisheye_model(distortion_model):
@@ -124,6 +122,8 @@ def rvec_tvec_to_transform(
     ts: float,
 ) -> Transform:
     """Build ``Transform`` for ``frame_id`` <- ``child_frame_id`` (camera <- marker)."""
+    import cv2
+
     rot_mat, _ = cv2.Rodrigues(rvec)
     quat = Quaternion.from_rotation_matrix(rot_mat)
     tx, ty, tz = tvec.reshape(3)
@@ -136,11 +136,17 @@ def rvec_tvec_to_transform(
     )
 
 
-def create_aruco_detector(dictionary_name: str) -> cv2.aruco.ArucoDetector:
+def create_aruco_detector(
+    dictionary_name: str, *, detect_inverted: bool = False
+) -> cv2.aruco.ArucoDetector:
+    """Build a detector; `detect_inverted` also accepts light-on-dark (negative) markers."""
+    import cv2.aruco
+
     if not hasattr(cv2.aruco, dictionary_name):
         raise ValueError(f"Unknown ArUco dictionary {dictionary_name!r}")
     dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, dictionary_name))
     parameters = cv2.aruco.DetectorParameters()
+    parameters.detectInvertedMarker = detect_inverted
     return cv2.aruco.ArucoDetector(dictionary, parameters)
 
 
@@ -167,6 +173,8 @@ def marker_reprojection_error(
     Fisheye/equidistant inputs are compared in the same undistorted pinhole
     pixel space used by :func:`estimate_marker_pose`.
     """
+    import cv2
+
     observed: np.ndarray = np.asarray(corners_px, dtype=np.float32).reshape(4, 1, 2)
     project_dist = dist_coeffs
 

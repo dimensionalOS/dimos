@@ -66,7 +66,7 @@ import tempfile
 
 import pytest
 
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.Image import Image
 
 

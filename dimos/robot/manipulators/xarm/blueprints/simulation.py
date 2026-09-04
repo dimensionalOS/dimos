@@ -16,57 +16,121 @@
 
 from __future__ import annotations
 
-import math
-
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
-    make_xarm7_model_config,
-    make_xarm_hardware,
+    make_xarm7_sim_hardware,
+    make_xarm7_sim_module_kwargs,
+    make_xarm7_sim_robot_config,
 )
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-XARM7_SIM_HOME = [0.0, 0.0, 0.0, 0.0, 0.0, -0.7, 0.0]
-
-_xarm7_sim_hw = make_xarm_hardware(
-    "arm",
-    7,
-    adapter_type="sim_mujoco",
-    address=str(XARM7_SIM_PATH),
-    gripper=True,
-    home_joints=XARM7_SIM_HOME,
-)
+_xarm7_sim_model = make_xarm7_sim_robot_config()
+_xarm7_sim_hw = make_xarm7_sim_hardware(XARM7_SIM_PATH)
+XARM_ROOM_SCENE_PATH = LfsPath("xarm_grasp_sim/scene.xml")
+# The stock xArm home points the narrow wrist-camera frustum between the six
+# widely spaced targets. This collision-free top-down pose raises the camera
+# enough to put every mesh in one frame, without changing the configured base
+# pose or introducing coordinate offsets.
+XARM_ROOM_SCAN_JOINTS = [0.0, -0.04609, 0.0, 1.83940, 0.0, 1.87106, 0.0]
+_xarm_room_sim_hw = make_xarm7_sim_hardware(XARM_ROOM_SCENE_PATH, home_joints=XARM_ROOM_SCAN_JOINTS)
+XARM_ROOM_PROMPTS = [
+    "black bottle",
+    "gray can",
+    "red cup",
+    "green tape roll",
+    "blue marker",
+    "brown box",
+    # The wrist camera sees the tape almost directly from above, where it reads
+    # as a ring instead of a roll. Keep a shape-word fallback for that view.
+    "green ring",
+]
 
 xarm_perception_sim = autoconnect(
-    PickAndPlaceModule.blueprint(
-        robots=[
-            make_xarm7_model_config(
-                name="arm",
-                add_gripper=True,
-                pitch=math.radians(45),
-                tf_extra_links=["link7"],
-                home_joints=XARM7_SIM_HOME,
-                pre_grasp_offset=0.05,
-            )
-        ],
+    ManipulationModule.blueprint(
+        model=_xarm7_sim_model,
         planning_timeout=10.0,
-        visualization={"backend": "meshcat"},
+        visualization={"backend": "viser"},
     ),
-    MujocoSimModule.blueprint(
-        address=str(XARM7_SIM_PATH),
-        headless=False,
-        dof=7,
-        camera_name="wrist_camera",
-        base_frame_id="link7",
+    ManipulationSkills.blueprint(),
+    PickAndPlaceModule.blueprint(planning_frame="world"),
+    HeuristicGraspModule.blueprint(),
+    MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)),
+    ObjectSceneRegistrationModule.blueprint(
+        target_frame="world",
+        detector_backend="moondream",
+        segmentation_backend="edgetam",
+        detect_on_request=True,
     ),
-    ObjectSceneRegistrationModule.blueprint(target_frame="world"),
     coordinator(
         hardware=[_xarm7_sim_hw],
-        tasks=[trajectory_task(_xarm7_sim_hw)],
+        tasks=[
+            trajectory_task(_xarm7_sim_hw),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/gripper"],
+                priority=20,
+            ),
+        ],
     ),
     RerunBridgeModule.blueprint(),
+)
+
+xarm_room_sim = autoconnect(
+    ManipulationModule.blueprint(
+        model=_xarm7_sim_model,
+        planning_timeout=10.0,
+        visualization={"backend": "none"},
+    ),
+    ManipulationSkills.blueprint(),
+    PickAndPlaceModule.blueprint(planning_frame="world"),
+    HeuristicGraspModule.blueprint(),
+    MujocoSimModule.blueprint(
+        **{
+            **make_xarm7_sim_module_kwargs(XARM_ROOM_SCENE_PATH),
+            "headless": True,
+            # Publish the simulated camera pose directly in the planning frame.
+            # A wrist-relative TF would require a second asynchronously stamped
+            # world->link7 edge and can make an otherwise valid scan unregistrable.
+            "base_frame_id": "world",
+            "reset_joint_positions": XARM_ROOM_SCAN_JOINTS,
+        }
+    ),
+    ObjectSceneRegistrationModule.blueprint(
+        target_frame="world",
+        detector_backend="owlv2",
+        # OWLv2 is box-only; YOLO-E visual prompts refine its boxes into masks.
+        segmentation_backend="yolo",
+        # Synthetic MuJoCo renders score far below natural images.
+        detector_confidence=0.07,
+        segmentation_confidence=0.05,
+        # Keep adjacent tabletop targets distinct instead of merging by label.
+        distance_threshold=0.05,
+        detect_on_request=True,
+        # The obstacle stream contains permanent objects only; one explicit
+        # room scan must therefore promote its first sightings immediately.
+        min_detections_for_permanent=1,
+    ),
+    coordinator(
+        hardware=[_xarm_room_sim_hw],
+        tasks=[
+            trajectory_task(_xarm_room_sim_hw),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/gripper"],
+                priority=20,
+            ),
+        ],
+    ),
 )

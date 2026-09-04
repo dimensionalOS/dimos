@@ -18,7 +18,7 @@ A :class:`DdsCodec` is the bytes<->payload pair for one DDS message type. The
 same codec decodes a recorded mcap message and a live DDS sample (both are CDR),
 and its ``encode`` half publishes back to the wire — so this is shared by the
 reader, :class:`~dimos.robot.unitree.go2.dds.store.Go2McapStore`, and (later) a live
-DDS bridge. It is distinct from memory2's storage codecs (pickle/lcm/jpeg);
+DDS bridge. It is distinct from memory's storage codecs (pickle/lcm/jpeg);
 they only coincide when an mcap is opened as a store.
 
 ``GO2_CODECS`` is the Go2 channel set — the default registry today.
@@ -36,7 +36,10 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.dds import cdr, ros
+from dimos.robot.unitree.go2.dds.msgs.CompressedVideo import CompressedVideo
 from dimos.robot.unitree.go2.dds.msgs.ControlEvent import ControlEvent
+from dimos.robot.unitree.go2.dds.msgs.HeightMap import HeightMap
+from dimos.robot.unitree.go2.dds.msgs.LowCmd import LowCmd
 from dimos.robot.unitree.go2.dds.msgs.LowState import LowState
 from dimos.robot.unitree.go2.dds.msgs.SportModeState import SportModeState
 from dimos.robot.unitree.go2.dds.msgs.Telemetry import Telemetry
@@ -107,10 +110,14 @@ class JsonCodec:
 # Go2 channel topic -> codec. The default registry (only platform we have today).
 GO2_CODECS: dict[str, DdsCodec] = {
     "rt/utlidar/cloud": FnCodec(PointCloud2, ros.decode_pointcloud2),
+    "rt/utlidar/cloud_deskewed": FnCodec(PointCloud2, ros.decode_pointcloud2),
+    "rt/utlidar/height_map_array": FnCodec(HeightMap, ros.decode_height_map),
     "rt/utlidar/imu": FnCodec(Imu, ros.decode_imu),
     "rt/utlidar/robot_odom": FnCodec(Odometry, ros.decode_odometry),
     "rt/frontvideo": FnCodec(Image, ros.decode_compressed_image),
+    "rt/frontvideo/h264": FnCodec(CompressedVideo, ros.decode_compressed_video),
     "rt/lowstate": CdrStructCodec(LowState),
+    "rt/lowcmd": CdrStructCodec(LowCmd),
     "rt/sportmodestate": CdrStructCodec(SportModeState),
     "telemetry": JsonCodec(Telemetry),
     "control_log": JsonCodec(ControlEvent),

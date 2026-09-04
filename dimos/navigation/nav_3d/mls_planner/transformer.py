@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.memory2.transform import Transformer
+from dimos.memory.transform import Transformer
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
 
 logger = setup_logger()
 
@@ -42,8 +42,8 @@ class MLSPlan(Transformer[PointCloud2, Path]):
         self,
         *,
         goal: tuple[float, float, float],
-        voxel_size: float = 0.1,
-        robot_height: float = 1.5,
+        voxel_size: float = 0.08,
+        robot_height: float = 0.3,
         **planner_kwargs: Any,
     ) -> None:
         self.goal = goal
@@ -83,7 +83,7 @@ class MLSPlan(Transformer[PointCloud2, Path]):
 
             ox, oy, radius, z_min, z_max = obs.tags["region_bounds"]
             t_update = time.perf_counter()
-            planner.update_region(obs.data.points_f32(), (ox, oy), radius, z_min, z_max)
+            planner.update_region(obs.data.points_f32(), (ox, oy), radius, z_min, z_max, float(z))
             t_plan = time.perf_counter()
             waypoints = planner.plan(start, self.goal)
             t_done = time.perf_counter()

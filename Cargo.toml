@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "dimos/experimental/memory/rust",
+    "native/rust/dimos-module",
+    "native/rust/dimos-module-macros",
+    "dimos/mapping/ray_tracing/rust",
+    "dimos/mapping/ray_tracing/rust/py",
+    "dimos/navigation/nav_3d/mls_planner/rust",
+    "dimos/navigation/nav_3d/mls_planner/rust/py",
+    "dimos/hardware/sensors/lidar/virtual_mid360",
+    "examples/native-modules/rust",
+]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0

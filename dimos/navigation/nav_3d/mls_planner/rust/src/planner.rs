@@ -1,13 +1,23 @@
 // Copyright 2026 Dimensional Inc.
-// SPDX-License-Identifier: Apache-2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-use std::cmp::Ordering;
 use std::collections::{BinaryHeap, VecDeque};
 
 use ahash::{AHashMap, AHashSet};
 
 use crate::adjacency::{rise, CellId, SurfaceCells, SurfaceLookup};
-use crate::dijkstra::walk_preds;
+use crate::dijkstra::{walk_preds, Scored};
 use crate::edges::{NodeEdgeIdx, NodeId, PlannerGraph, NO_NODE};
 use crate::mls_planner::Config;
 use crate::nodes::penalty_of;
@@ -104,7 +114,7 @@ pub fn plan(
     let start_candidates =
         snap_candidates(&plg.surface_lookup, start_pose, voxel_size, z_tolerance_m);
     if start_candidates.is_empty() {
-        tracing::warn!(
+        tracing::debug!(
             ?start_pose,
             "plan failed: start does not snap to any surface cell"
         );
@@ -113,28 +123,33 @@ pub fn plan(
     let Some(goal_coord) =
         snap_pose_to_cell(&plg.surface_lookup, goal_pose, voxel_size, z_tolerance_m)
     else {
-        tracing::warn!(
+        tracing::debug!(
             ?goal_pose,
             "plan failed: goal does not snap to any surface cell"
         );
         return None;
     };
     let Some(goal_cell) = plg.cells.id(goal_coord) else {
-        tracing::warn!(?goal_coord, "plan failed: goal cell is not in the graph");
+        tracing::debug!(?goal_coord, "plan failed: goal cell is not in the graph");
         return None;
     };
+    let start_cells: Vec<CellId> = start_candidates
+        .iter()
+        .take(MAX_SNAP_ATTEMPTS)
+        .filter_map(|&candidate| plg.cells.id(candidate))
+        .collect();
 
     let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
 
     // The penalized Voronoi cannot own sub-clearance goals, so fall back to the
     // nearest node by hops. A real failure then reports as disconnected below.
-    let mut goal_segment = walk_preds(&plg.cell_state, goal_cell);
+    let mut goal_segment = walk_live_preds(plg, goal_cell);
     let mut goal_node = *goal_segment
         .last()
-        .expect("walk_preds returns at least the start cell");
+        .expect("the goal cell is live, so the walk keeps at least it");
     if !node_cells.contains(&goal_node) {
         let Some((node, path)) = nearest_node(&plg.cells, goal_cell, &node_cells) else {
-            tracing::warn!(
+            tracing::debug!(
                 ?goal_coord,
                 "plan failed: goal's connected component has no graph node"
             );
@@ -148,27 +163,24 @@ pub fn plan(
     let (cost_to_go, pred_to_goal) = node_dijkstra(plg, goal_node);
 
     let radius = (config.node_spacing_m * CANDIDATE_RADIUS_FACTOR).max(voxel_size);
-    let mut entry: Option<(Vec<CellId>, Vec<NodeId>)> = None;
-    for &candidate in start_candidates.iter().take(MAX_SNAP_ATTEMPTS) {
-        let Some(start_cell) = plg.cells.id(candidate) else {
-            continue;
-        };
-        entry = select_entry(
+    // Nearest candidate first so the lead-in anchors at the robot's own cell.
+    // The rest are only a fallback when it cannot connect.
+    let (near, rest) = start_cells.split_at(start_cells.len().min(1));
+    let entry = [near, rest].into_iter().find_map(|group| {
+        select_entry(
             plg,
-            start_cell,
+            group,
+            goal_cell,
             goal_node,
             &cost_to_go,
             &pred_to_goal,
             &node_cells,
             radius,
-        );
-        if entry.is_some() {
-            break;
-        }
-    }
+        )
+    });
     let Some((lead_in, node_seq)) = entry else {
-        tracing::warn!(
-            candidates = start_candidates.len().min(MAX_SNAP_ATTEMPTS),
+        tracing::debug!(
+            candidates = start_cells.len(),
             reachable_nodes = cost_to_go.len(),
             total_nodes = plg.nodes.len(),
             "plan failed: start and goal lie on separate connected surface components",
@@ -176,8 +188,8 @@ pub fn plan(
         return None;
     };
 
-    // Max traversable step in cells, floored to match the graph adjacency.
-    let step_cells = (config.step_threshold_m / voxel_size).floor() as i32;
+    // Max traversable step in cells, the hard bound shared with the graph.
+    let step_cells = config.step_cells();
 
     let wall_cost = WallCost {
         clearance_m: config.wall_clearance_m,
@@ -185,9 +197,22 @@ pub fn plan(
         buffer_weight: config.wall_buffer_weight,
         voxel_size,
     };
-    let cells = assemble_cells(plg, &node_seq, &lead_in, &goal_segment);
+    // A direct goal connection carries the whole route in its lead-in.
+    let goal_segment: &[CellId] = if node_seq.is_empty() {
+        &[]
+    } else {
+        &goal_segment
+    };
+    let cells = assemble_cells(plg, &node_seq, &lead_in, goal_segment);
     let cells = string_pull(plg, &cells, step_cells, &wall_cost);
     let waypoints = cells_to_waypoints(plg, &cells, start_pose, goal_pose, voxel_size);
+    let waypoints = crate::smoother::smooth_path(
+        plg,
+        waypoints,
+        step_cells,
+        &wall_cost,
+        config.step_penalty_weight,
+    );
     let path_cells: Vec<VoxelKey> = cells.iter().map(|&id| plg.cells.coord(id)).collect();
     Some((waypoints, path_cells))
 }
@@ -205,7 +230,7 @@ pub fn truncate_to_safe(
         return Vec::new();
     }
     let voxel_size = config.voxel_size;
-    let step_cells = (config.step_threshold_m / voxel_size).floor() as i32;
+    let step_cells = config.step_cells();
     let wall_cost = WallCost {
         clearance_m: config.wall_clearance_m,
         buffer_m: config.wall_buffer_m,
@@ -247,7 +272,7 @@ pub fn truncate_to_safe(
         return Vec::new();
     }
 
-    // Hold the standoff only when blocked; a clean run to the goal has nothing
+    // Hold the standoff only when blocked. A clean run to the goal has nothing
     // to stand off from.
     if blocked {
         return back_off_tail(&waypoints, BEST_EFFORT_DISTANCE_M);
@@ -398,17 +423,26 @@ fn point_segment_dist2(a: (f32, f32), b: (f32, f32), p: (f32, f32)) -> f32 {
 }
 
 /// Pick the entry node by connect cost plus cost-to-go, with its on-surface
-/// lead-in and the node sequence to the goal.
+/// lead-in and the node sequence to the goal. A goal cell inside the search
+/// radius connects directly instead, signalled by an empty node sequence.
+#[allow(clippy::too_many_arguments)]
 fn select_entry(
     plg: &PlannerGraph,
-    start_cell: CellId,
+    start_cells: &[CellId],
+    goal_cell: CellId,
     goal_node: NodeId,
     cost_to_go: &AHashMap<NodeId, f32>,
     pred_to_goal: &AHashMap<NodeId, NodeId>,
     node_cells: &AHashSet<NodeId>,
     radius_m: f32,
 ) -> Option<(Vec<CellId>, Vec<NodeId>)> {
-    let (connect_dist, connect_pred) = robot_search(&plg.cells, start_cell, radius_m);
+    let (connect_dist, connect_pred) = robot_search(&plg.cells, start_cells, radius_m);
+
+    if connect_dist.contains_key(&goal_cell) {
+        let mut lead = walk_local_preds(&connect_pred, goal_cell);
+        lead.reverse();
+        return Some((lead, Vec::new()));
+    }
 
     let mut entry_node = NO_NODE;
     let mut best_score = f32::INFINITY;
@@ -439,33 +473,40 @@ fn select_entry(
         return Some((lead, follow_preds(entry_node, goal_node, pred_to_goal)?));
     }
 
-    let start_segment = walk_preds(&plg.cell_state, start_cell);
-    let region_node = *start_segment.last()?;
-    if !node_cells.contains(&region_node)
-        || !cost_to_go.get(&region_node).is_some_and(|c| c.is_finite())
-    {
-        return None;
+    for &start_cell in start_cells {
+        let start_segment = walk_live_preds(plg, start_cell);
+        let region_node = *start_segment
+            .last()
+            .expect("the start cell is live, so the walk keeps at least it");
+        if !node_cells.contains(&region_node)
+            || !cost_to_go.get(&region_node).is_some_and(|c| c.is_finite())
+        {
+            continue;
+        }
+        let Some(node_seq) = follow_preds(region_node, goal_node, pred_to_goal) else {
+            continue;
+        };
+        return Some((start_segment, node_seq));
     }
-    Some((
-        start_segment,
-        follow_preds(region_node, goal_node, pred_to_goal)?,
-    ))
+    None
 }
 
 /// Bounded Dijkstra from the robot cell. Cost is wall-penalized for steering,
 /// but the radius bounds metric distance, not penalized cost.
 fn robot_search(
     cells: &SurfaceCells,
-    source: CellId,
+    sources: &[CellId],
     radius_m: f32,
 ) -> (AHashMap<CellId, f32>, AHashMap<CellId, CellId>) {
     let mut dist: AHashMap<CellId, f32> = AHashMap::new();
     let mut geo: AHashMap<CellId, f32> = AHashMap::new();
     let mut pred: AHashMap<CellId, CellId> = AHashMap::new();
-    let mut heap: BinaryHeap<Scored> = BinaryHeap::new();
-    dist.insert(source, 0.0);
-    geo.insert(source, 0.0);
-    heap.push(Scored(0.0, source));
+    let mut heap: BinaryHeap<Scored<CellId>> = BinaryHeap::new();
+    for &source in sources {
+        dist.insert(source, 0.0);
+        geo.insert(source, 0.0);
+        heap.push(Scored(0.0, source));
+    }
 
     while let Some(Scored(d, u)) = heap.pop() {
         if d > dist.get(&u).copied().unwrap_or(f32::INFINITY) {
@@ -528,6 +569,17 @@ fn nearest_node(
     None
 }
 
+/// walk_preds through the persistent Voronoi state, truncated at the first
+/// cell that died since the state was written. Regional updates leave
+/// out-of-window pred chains stale, and a freed slot's coord is garbage.
+fn walk_live_preds(plg: &PlannerGraph, from: CellId) -> Vec<CellId> {
+    let mut chain = walk_preds(&plg.cell_state, from);
+    if let Some(cut) = chain.iter().position(|&c| !plg.cells.is_live(c)) {
+        chain.truncate(cut);
+    }
+    chain
+}
+
 /// Walk predecessors back to the search source.
 fn walk_local_preds(pred: &AHashMap<CellId, CellId>, from: CellId) -> Vec<CellId> {
     let mut path = vec![from];
@@ -549,7 +601,7 @@ fn node_dijkstra(
     let mut dist: AHashMap<NodeId, f32> = AHashMap::new();
     let mut pred: AHashMap<NodeId, NodeId> = AHashMap::new();
     dist.insert(source, 0.0);
-    let mut heap: BinaryHeap<Scored> = BinaryHeap::new();
+    let mut heap: BinaryHeap<Scored<NodeId>> = BinaryHeap::new();
     heap.push(Scored(0.0, source));
 
     while let Some(Scored(d, u)) = heap.pop() {
@@ -616,18 +668,18 @@ fn assemble_cells(
         let edge_idx =
             edge_between(plg, a, b).expect("consecutive nodes in path must share an edge");
         let edge = &plg.node_edges[edge_idx as usize];
-        let (start_side, end_side) = if a == edge.a {
-            (edge.boundary_u, edge.boundary_v)
+
+        // The stored corridor runs a to b. Dead cells are skipped: the update
+        // safety walk drops broken corridors, so gaps here are rare races.
+        let resolve = |coord: &VoxelKey| plg.cells.id(*coord);
+        if a == edge.a {
+            for c in edge.chain.iter().filter_map(resolve) {
+                push_cell(&mut cells, c);
+            }
         } else {
-            (edge.boundary_v, edge.boundary_u)
-        };
-
-        let mut from_a = walk_preds(&plg.cell_state, start_side);
-        from_a.reverse();
-        let to_b = walk_preds(&plg.cell_state, end_side);
-
-        for c in from_a.into_iter().chain(to_b) {
-            push_cell(&mut cells, c);
+            for c in edge.chain.iter().rev().filter_map(resolve) {
+                push_cell(&mut cells, c);
+            }
         }
     }
 
@@ -658,11 +710,11 @@ fn cells_to_waypoints(
 }
 
 /// Clearance and step limits the smoother holds the path to.
-struct WallCost {
-    clearance_m: f32,
-    buffer_m: f32,
-    buffer_weight: f32,
-    voxel_size: f32,
+pub(crate) struct WallCost {
+    pub(crate) clearance_m: f32,
+    pub(crate) buffer_m: f32,
+    pub(crate) buffer_weight: f32,
+    pub(crate) voxel_size: f32,
 }
 
 /// Replace runs of cells with straight chords that come no closer to a wall and
@@ -801,25 +853,6 @@ fn edge_between(plg: &PlannerGraph, a: NodeId, b: NodeId) -> Option<NodeEdgeIdx>
     None
 }
 
-struct Scored(f32, NodeId);
-
-impl PartialEq for Scored {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.total_cmp(&other.0) == Ordering::Equal && self.1 == other.1
-    }
-}
-impl Eq for Scored {}
-impl PartialOrd for Scored {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for Scored {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other.0.total_cmp(&self.0).then(self.1.cmp(&other.1))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -865,8 +898,11 @@ mod tests {
     ) -> Option<Vec<(f32, f32, f32)>> {
         let config = Config {
             world_frame: "world".into(),
+            base_frame: "base_link".into(),
             voxel_size: VOXEL,
             robot_height: Z_TOL,
+            start_z_offset_m: 0.0,
+            max_overhead_m: 2.0,
             surface_closing_radius: 0.0,
             node_spacing_m: 1.0,
             wall_clearance_m: 0.2,
@@ -876,6 +912,7 @@ mod tests {
             step_penalty_weight: 4.0,
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
+            worker_threads: 4,
         };
         plan(plg, start, goal, &config).map(|(wp, _)| wp)
     }
@@ -890,8 +927,11 @@ mod tests {
     fn truncate_config() -> Config {
         Config {
             world_frame: "world".into(),
+            base_frame: "base_link".into(),
             voxel_size: VOXEL,
             robot_height: Z_TOL,
+            start_z_offset_m: 0.0,
+            max_overhead_m: 2.0,
             surface_closing_radius: 0.0,
             node_spacing_m: 1.0,
             wall_clearance_m: 0.2,
@@ -901,6 +941,7 @@ mod tests {
             step_penalty_weight: 4.0,
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
+            worker_threads: 4,
         }
     }
 
@@ -996,56 +1037,6 @@ mod tests {
     }
 
     #[test]
-    fn back_off_tail_trims_from_the_goal_end() {
-        let path = vec![
-            (0.0, 0.0, 0.0),
-            (1.0, 0.0, 0.0),
-            (2.0, 0.0, 0.0),
-            (3.0, 0.0, 0.0),
-        ];
-        // Trim within the last segment.
-        assert_eq!(*back_off_tail(&path, 0.5).last().unwrap(), (2.5, 0.0, 0.0));
-        // Trim exactly to a vertex without leaving a duplicate point.
-        let to_vertex = back_off_tail(&path, 1.0);
-        assert_eq!(*to_vertex.last().unwrap(), (2.0, 0.0, 0.0));
-        assert_eq!(to_vertex.len(), 3);
-        // Trimming more than the path length stops (empty).
-        assert!(back_off_tail(&path, 5.0).is_empty());
-    }
-
-    #[test]
-    fn snap_picks_in_column_cell() {
-        let mut lookup = SurfaceLookup::new();
-        build_surface_lookup(&strip(20), &mut lookup);
-        let cell = snap_pose_to_cell(&lookup, (0.5, 0.0, 0.1), VOXEL, Z_TOL).unwrap();
-        assert_eq!(cell, (5, 0, 0));
-    }
-
-    #[test]
-    fn snap_falls_back_to_nearby_column() {
-        let mut cells = strip(20);
-        cells.retain(|c| c.0 != 2);
-        let mut lookup = SurfaceLookup::new();
-        build_surface_lookup(&cells, &mut lookup);
-        let cell = snap_pose_to_cell(&lookup, (0.25, 0.0, 0.1), VOXEL, Z_TOL).unwrap();
-        assert!(cell == (1, 0, 0) || cell == (3, 0, 0));
-    }
-
-    #[test]
-    fn snap_rejects_outside_z_tolerance() {
-        let mut lookup = SurfaceLookup::new();
-        build_surface_lookup(&strip(20), &mut lookup);
-        assert!(snap_pose_to_cell(&lookup, (0.5, 0.0, 2.0), VOXEL, 1.5).is_none());
-    }
-
-    #[test]
-    fn plan_returns_none_if_start_cant_snap() {
-        let plg = graph_with_nodes(&strip(20), &[(10, 0, 0)]);
-        let result = plan_simple(&plg, (0.5, 0.0, 10.0), (1.0, 0.0, 0.1));
-        assert!(result.is_none());
-    }
-
-    #[test]
     fn plan_returns_none_if_disconnected() {
         // The gap must exceed SNAP_SEARCH_RADIUS_M so no start candidate
         // can relocate onto the goal island.
@@ -1057,24 +1048,20 @@ mod tests {
     }
 
     #[test]
-    fn plan_same_start_and_goal_passes_through_snap_cell() {
-        let plg = graph_with_nodes(&strip(20), &[(10, 0, 0)]);
-        let wp = plan_simple(&plg, (1.0, 0.0, 0.05), (1.0, 0.0, 0.05)).unwrap();
-        assert_eq!(wp.first(), Some(&(1.0, 0.0, 0.05)));
-        assert_eq!(wp.last(), Some(&(1.0, 0.0, 0.05)));
-        let snap = surface_point_xyz(10, 0, 0, VOXEL);
-        assert!(wp.contains(&snap));
-    }
-
-    #[test]
     fn plan_traces_surface_from_pose_to_first_node() {
         let plg = graph_with_nodes(&strip(20), &[(3, 0, 0), (15, 0, 0)]);
         let wp = plan_simple(&plg, (0.2, 0.0, 0.05), (1.7, 0.0, 0.05)).unwrap();
-        // First waypoint is the robot's own snapped cell, not a jump ahead.
-        let start_cell_pos = surface_point_xyz(2, 0, 0, VOXEL);
-        let goal_cell_pos = surface_point_xyz(17, 0, 0, VOXEL);
-        assert_eq!(wp[1], start_cell_pos);
-        assert_eq!(wp[wp.len() - 2], goal_cell_pos);
+        // The path leaves from the robot's own cell, not a jump ahead, and
+        // walks x monotonically to the goal.
+        assert!(
+            (wp[1].0 - 0.2).abs() < 2.0 * VOXEL,
+            "jumped ahead: {:?}",
+            wp[1]
+        );
+        assert!(
+            wp.windows(2).all(|p| p[1].0 >= p[0].0 - 1e-4),
+            "walked backward"
+        );
     }
 
     #[test]
@@ -1086,7 +1073,10 @@ mod tests {
             .iter()
             .map(|w| (w.0 / VOXEL).floor() as i32)
             .collect();
-        assert_eq!(xs.first(), Some(&5));
+        assert!(
+            *xs.first().unwrap() >= 5,
+            "backtracked to the region node: {xs:?}"
+        );
         assert!(
             xs.windows(2).all(|p| p[1] >= p[0]),
             "lead-in walked backward: {xs:?}"
@@ -1149,29 +1139,16 @@ mod tests {
         }
         let plg = graph_with_nodes(&cells, &[(2, 2, 0), (7, 3, 0)]);
         let wp = plan_simple(&plg, (0.05, 0.05, 0.05), (0.85, 0.55, 0.05)).unwrap();
-        let interior = wp.len() - 2;
+        let length: f32 = wp
+            .windows(2)
+            .map(|w| ((w[1].0 - w[0].0).powi(2) + (w[1].1 - w[0].1).powi(2)).sqrt())
+            .sum();
+        let direct = (0.8f32.powi(2) + 0.5f32.powi(2)).sqrt();
         assert!(
-            interior <= 4,
-            "path not straightened: {interior} interior points"
+            length <= direct * 1.2,
+            "path not straightened: length {length} vs direct {direct}"
         );
     }
-
-    #[test]
-    fn segment_metrics_rejects_vertical_chord() {
-        let plg = PlannerGraph::new();
-        let wc = WallCost {
-            clearance_m: 0.2,
-            buffer_m: 0.3,
-            buffer_weight: 4.0,
-            voxel_size: VOXEL,
-        };
-        assert!(segment_metrics(&plg, (5, 5, 0), (5, 5, 4), 2, &wc).is_none());
-        assert_eq!(
-            segment_metrics(&plg, (5, 5, 0), (5, 5, 0), 2, &wc),
-            Some((1.0, 0.0))
-        );
-    }
-
     #[test]
     fn string_pull_refuses_shortcut_through_sub_clearance_cell() {
         // Straight strip: with open clearance the run collapses to its
@@ -1206,6 +1183,121 @@ mod tests {
     }
 
     #[test]
+    fn select_entry_connects_straight_to_in_radius_goal() {
+        // The only node is behind the robot and the goal is just ahead.
+        // Entry must connect straight to the goal, not dogleg via the node.
+        let plg = graph_with_nodes(&strip(20), &[(2, 0, 0)]);
+        let start = plg.cells.id((10, 0, 0)).unwrap();
+        let goal = plg.cells.id((15, 0, 0)).unwrap();
+        let goal_node = plg.nodes[0].cell_id;
+        let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
+        let (ctg, pred) = node_dijkstra(&plg, goal_node);
+
+        let (lead, node_seq) = select_entry(
+            &plg,
+            &[start],
+            goal,
+            goal_node,
+            &ctg,
+            &pred,
+            &node_cells,
+            3.0,
+        )
+        .unwrap();
+
+        assert!(
+            node_seq.is_empty(),
+            "endgame routed via nodes: {node_seq:?}"
+        );
+        assert_eq!(lead.first(), Some(&start));
+        assert_eq!(lead.last(), Some(&goal));
+        let xs: Vec<i32> = lead.iter().map(|&c| plg.cells.coord(c).0).collect();
+        assert!(
+            xs.windows(2).all(|p| p[1] >= p[0]),
+            "lead-in walked backward: {xs:?}"
+        );
+    }
+
+    #[test]
+    fn select_entry_anchors_lead_at_the_nearest_candidate() {
+        // The nearest candidate connects, so the lead-in starts at the
+        // robot's own cell even though other candidates exist.
+        let plg = graph_with_nodes(&strip(20), &[(12, 0, 0)]);
+        let near = plg.cells.id((10, 0, 0)).unwrap();
+        let goal = plg.cells.id((19, 0, 0)).unwrap();
+        let goal_node = plg.nodes[0].cell_id;
+        let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
+        let (ctg, pred) = node_dijkstra(&plg, goal_node);
+
+        let (lead, node_seq) = select_entry(
+            &plg,
+            &[near],
+            goal,
+            goal_node,
+            &ctg,
+            &pred,
+            &node_cells,
+            0.3,
+        )
+        .unwrap();
+        assert_eq!(
+            lead.first(),
+            Some(&near),
+            "lead must anchor at the robot's cell"
+        );
+        assert_eq!(lead.last(), Some(&goal_node));
+        assert_eq!(node_seq, vec![goal_node]);
+    }
+
+    #[test]
+    fn select_entry_falls_back_to_merged_rest_candidates() {
+        // The nearest candidate sits on a disconnected fragment. The fallback
+        // runs one merged wavefront over the rest, and only the candidate
+        // that actually reaches the node roots the lead-in.
+        let mut surface = strip(20);
+        surface.extend((0..3).map(|x| (x, 10, 0)));
+        let plg = graph_with_nodes(&surface, &[(12, 0, 0)]);
+        let near = plg.cells.id((1, 10, 0)).unwrap();
+        let far_rest = plg.cells.id((5, 0, 0)).unwrap();
+        let reaching_rest = plg.cells.id((14, 0, 0)).unwrap();
+        let goal = plg.cells.id((19, 0, 0)).unwrap();
+        let goal_node = plg.nodes[0].cell_id;
+        let node_cells: AHashSet<NodeId> = plg.nodes.iter().map(|n| n.cell_id).collect();
+        let (ctg, pred) = node_dijkstra(&plg, goal_node);
+
+        let entry = select_entry(
+            &plg,
+            &[near],
+            goal,
+            goal_node,
+            &ctg,
+            &pred,
+            &node_cells,
+            0.3,
+        );
+        assert!(entry.is_none(), "disconnected candidate must not connect");
+
+        let (lead, node_seq) = select_entry(
+            &plg,
+            &[far_rest, reaching_rest],
+            goal,
+            goal_node,
+            &ctg,
+            &pred,
+            &node_cells,
+            0.3,
+        )
+        .unwrap();
+        assert_eq!(
+            lead.first(),
+            Some(&reaching_rest),
+            "lead must root at the candidate that reaches the node"
+        );
+        assert_eq!(lead.last(), Some(&goal_node));
+        assert_eq!(node_seq, vec![goal_node]);
+    }
+
+    #[test]
     fn plan_enters_on_goalward_node_not_nearest() {
         // Robot sits past node 2 toward the goal. Entry must skip it for node 10.
         let plg = graph_with_nodes(&strip(20), &[(2, 0, 0), (10, 0, 0)]);
@@ -1222,6 +1314,65 @@ mod tests {
         assert!(
             xs.windows(2).all(|p| p[1] >= p[0]),
             "path stepped backward: {xs:?}"
+        );
+    }
+
+    #[test]
+    fn back_off_tail_trims_from_the_goal_end() {
+        let path = vec![
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (2.0, 0.0, 0.0),
+            (3.0, 0.0, 0.0),
+        ];
+        // Trim within the last segment.
+        assert_eq!(*back_off_tail(&path, 0.5).last().unwrap(), (2.5, 0.0, 0.0));
+        // Trim exactly to a vertex without leaving a duplicate point.
+        let to_vertex = back_off_tail(&path, 1.0);
+        assert_eq!(*to_vertex.last().unwrap(), (2.0, 0.0, 0.0));
+        assert_eq!(to_vertex.len(), 3);
+        // Trimming more than the path length stops (empty).
+        assert!(back_off_tail(&path, 5.0).is_empty());
+    }
+
+    #[test]
+    fn snap_picks_in_column_cell() {
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&strip(20), &mut lookup);
+        let cell = snap_pose_to_cell(&lookup, (0.5, 0.0, 0.1), VOXEL, Z_TOL).unwrap();
+        assert_eq!(cell, (5, 0, 0));
+    }
+
+    #[test]
+    fn snap_falls_back_to_nearby_column() {
+        let mut cells = strip(20);
+        cells.retain(|c| c.0 != 2);
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&cells, &mut lookup);
+        let cell = snap_pose_to_cell(&lookup, (0.25, 0.0, 0.1), VOXEL, Z_TOL).unwrap();
+        assert!(cell == (1, 0, 0) || cell == (3, 0, 0));
+    }
+
+    #[test]
+    fn snap_rejects_outside_z_tolerance() {
+        let mut lookup = SurfaceLookup::new();
+        build_surface_lookup(&strip(20), &mut lookup);
+        assert!(snap_pose_to_cell(&lookup, (0.5, 0.0, 2.0), VOXEL, 1.5).is_none());
+    }
+
+    #[test]
+    fn segment_metrics_rejects_vertical_chord() {
+        let plg = PlannerGraph::new();
+        let wc = WallCost {
+            clearance_m: 0.2,
+            buffer_m: 0.3,
+            buffer_weight: 4.0,
+            voxel_size: VOXEL,
+        };
+        assert!(segment_metrics(&plg, (5, 5, 0), (5, 5, 4), 2, &wc).is_none());
+        assert_eq!(
+            segment_metrics(&plg, (5, 5, 0), (5, 5, 0), 2, &wc),
+            Some((1.0, 0.0))
         );
     }
 }

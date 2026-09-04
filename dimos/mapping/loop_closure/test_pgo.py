@@ -26,8 +26,8 @@ from dimos.mapping.loop_closure.pgo import (
     _obs_to_pose3,
     _pose3_to_transform,
 )
-from dimos.memory2.store.memory import MemoryStore
-from dimos.memory2.stream import Stream
+from dimos.memory.store.memory import MemoryStore
+from dimos.memory.stream import Stream
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -69,7 +69,7 @@ class TestPGOConfig:
 class TestTransformHelpers:
     def test_observation_normalizes_transform_pose(self) -> None:
         """Constructing/deriving with pose=Transform should coerce to 7-tuple."""
-        from dimos.memory2.type.observation import Observation
+        from dimos.memory.type.observation import Observation
 
         tf = Transform(
             translation=Vector3(1.5, -2.0, 0.7),
@@ -86,7 +86,7 @@ class TestTransformHelpers:
         assert derived.pose_tuple == obs.pose_tuple
 
     def test_observation_normalizes_posestamped(self) -> None:
-        from dimos.memory2.type.observation import Observation
+        from dimos.memory.type.observation import Observation
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         ps = PoseStamped(ts=1.0, position=(1.0, 2.0, 3.0), orientation=(0.0, 0.0, 0.0, 1.0))
@@ -94,7 +94,7 @@ class TestTransformHelpers:
         assert obs.pose_tuple == (1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0)
 
     def test_obs_to_pose3_roundtrip(self) -> None:
-        from dimos.memory2.type.observation import Observation
+        from dimos.memory.type.observation import Observation
 
         rng = np.random.default_rng(4)
         R = _random_R(rng)

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Render Go2 odom sources to rerun — memory2 store pipelines (standalone).
+"""Render Go2 odom sources to rerun — memory store pipelines (standalone).
 
 Each *pipeline* is a function ``(store, seconds) -> None`` composed from
 reusable stream transforms over standard dimos messages. ``leg_odom`` logs both
@@ -35,11 +35,10 @@ import subprocess
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
-import rerun as rr
 import typer
 
-from dimos.memory2.transform import throttle
-from dimos.memory2.utils.progress import progress
+from dimos.memory.transform import throttle
+from dimos.memory.utils.progress import progress
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -52,7 +51,7 @@ from dimos.robot.unitree.go2.dds.store import Go2McapStore
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from dimos.memory2.type.observation import Observation
+    from dimos.memory.type.observation import Observation
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
@@ -157,6 +156,7 @@ def accumulate_path(upstream: Iterator[Observation[PoseStamped]]) -> Iterator[Ob
 
 def leg_odom(store: Go2McapStore, seconds: float | None) -> None:
     """Leg-inertial odometry — pose stream (Transform3D) + accumulated Path line."""
+    import rerun as rr
 
     def log_pose(obs: Observation[PoseStamped]) -> None:
         rr.set_time("time", timestamp=obs.ts)
@@ -167,19 +167,21 @@ def leg_odom(store: Go2McapStore, seconds: float | None) -> None:
         rr.log("world/leg_odom_path", obs.data.to_rerun())
 
     src = store.streams.sportmodestate.to_time(seconds)
-    (
-        src.tap(progress(src.count(), "leg_odom"))
-        .map_data(sportmode_pose)
-        .tap(log_pose)
-        .transform(throttle(0.1))  # reduce_rate: thin the path to ~10 Hz
-        .transform(accumulate_path)  # yield the growing path each step
-        .tap(log_path)
-        .drain()
-    )
+    with progress(src.count(), "leg_odom") as bar:
+        (
+            src.tap(bar)
+            .map_data(sportmode_pose)
+            .tap(log_pose)
+            .transform(throttle(0.1))  # reduce_rate: thin the path to ~10 Hz
+            .transform(accumulate_path)  # yield the growing path each step
+            .tap(log_path)
+            .drain()
+        )
 
 
 def imu_odom(store: Go2McapStore, seconds: float | None) -> None:
     """Dead-reckoned IMU odometry — accel -> velocity -> position -> growing Path (drifts)."""
+    import rerun as rr
 
     def log_path(obs: Observation[Path]) -> None:
         rr.set_time("time", timestamp=obs.ts)
@@ -187,19 +189,21 @@ def imu_odom(store: Go2McapStore, seconds: float | None) -> None:
 
     gravity = gravity_bias(store)  # calibrate gravity+bias on the stationary start
     src = store.streams.imu.to_time(seconds)
-    (
-        src.tap(progress(src.count(), "imu_odom"))
-        .scan_data((np.zeros(3), None), integrate_velocity(gravity))  # -> velocity (TwistStamped)
-        .scan_data((np.zeros(3), None), integrate_position)  # -> position (PoseStamped)
-        .transform(throttle(0.1))  # thin the path after integrating at full IMU rate
-        .transform(accumulate_path)
-        .tap(log_path)
-        .drain()
-    )
+    with progress(src.count(), "imu_odom") as bar:
+        (
+            src.tap(bar)
+            .scan_data((np.zeros(3), None), integrate_velocity(gravity))  # -> velocity
+            .scan_data((np.zeros(3), None), integrate_position)  # -> position (PoseStamped)
+            .transform(throttle(0.1))  # thin the path after integrating at full IMU rate
+            .transform(accumulate_path)
+            .tap(log_path)
+            .drain()
+        )
 
 
 def lidar(store: Go2McapStore, seconds: float | None) -> None:
     """Lidar point cloud, under the leg_odom transform (lidar -> base -> world)."""
+    import rerun as rr
 
     def log_lidar(obs: Observation[PointCloud2]) -> None:
         rr.set_time("time", timestamp=obs.ts)
@@ -207,7 +211,8 @@ def lidar(store: Go2McapStore, seconds: float | None) -> None:
 
     src = store.streams.lidar.to_time(seconds)
     rr.log("world/leg_odom/lidar", LIDAR_TO_BASE.to_rerun(frameless=True), static=True)
-    (src.tap(progress(src.count(), "lidar")).tap(log_lidar).drain())
+    with progress(src.count(), "lidar") as bar:
+        src.tap(bar).tap(log_lidar).drain()
 
 
 def _interp_pose(
@@ -226,7 +231,9 @@ def _interp_pose(
 
 
 def world_lidar(store: Go2McapStore, seconds: float | None) -> None:
-    from dimos.mapping.voxels import VoxelMapTransformer
+    import rerun as rr
+
+    from dimos.mapping.voxels.module import VoxelMapTransformer
 
     ext = LIDAR_TO_BASE  # lidar -> base (standard Transform from extrinsics)
 
@@ -252,13 +259,14 @@ def world_lidar(store: Go2McapStore, seconds: float | None) -> None:
         rr.log("world/world_lidar", obs.data.to_rerun())
 
     src = store.streams.lidar.to_time(seconds)
-    (
-        src.tap(progress(src.count(), "world_lidar"))
-        .map_data(to_world)  # lidar cloud -> world-frame cloud
-        .transform(VoxelMapTransformer(emit_every=10, voxel_size=0.1))  # global voxel map
-        .tap(log_voxels)
-        .drain()
-    )
+    with progress(src.count(), "world_lidar") as bar:
+        (
+            src.tap(bar)
+            .map_data(to_world)  # lidar cloud -> world-frame cloud
+            .transform(VoxelMapTransformer(emit_every=10, voxel_size=0.1))  # global voxel map
+            .tap(log_voxels)
+            .drain()
+        )
 
 
 def camera(store: Go2McapStore, seconds: float | None, hz: float) -> None:
@@ -267,6 +275,7 @@ def camera(store: Go2McapStore, seconds: float | None, hz: float) -> None:
     Throttling runs before ``obs.data``, so thinned frames never pay the jpeg
     decode; frames that fail to decode (``None``) are skipped.
     """
+    import rerun as rr
 
     def log_image(obs: Observation[Image]) -> None:
         if obs.data is None:  # truncated/corrupt frame
@@ -275,7 +284,8 @@ def camera(store: Go2McapStore, seconds: float | None, hz: float) -> None:
         rr.log("world/camera", obs.data.to_rerun())
 
     src = store.streams.color_image.to_time(seconds)
-    (src.tap(progress(src.count(), "camera")).transform(throttle(1.0 / hz)).tap(log_image).drain())
+    with progress(src.count(), "camera") as bar:
+        src.tap(bar).transform(throttle(1.0 / hz)).tap(log_image).drain()
 
 
 # Add a source: write a (store, seconds) -> None function and append it.
@@ -295,6 +305,8 @@ def main(
     image_hz: float = typer.Option(10.0, "--image-hz", help="Camera frame rate when --image"),
     no_gui: bool = typer.Option(False, "--no-gui", help="Write the .rrd but don't open the viewer"),
 ) -> None:
+    import rerun as rr
+
     from dimos.visualization.rerun.init import rerun_init
 
     store = Go2McapStore(path=mcap)

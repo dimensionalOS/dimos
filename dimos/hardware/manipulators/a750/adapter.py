@@ -17,16 +17,13 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from dimos.hardware.manipulators.registry import AdapterRegistry
+from typing import Any
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
-    JointLimits,
     ManipulatorInfo,
 )
+from dimos.hardware.spec import JointLimits
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -49,11 +46,17 @@ class A750Adapter:
         initial_positions: list[float] | None = None,
         **_: object,
     ) -> None:
-        if dof != 6:
-            raise ValueError(f"A750Adapter only supports 6 DOF (got {dof})")
+        if dof not in (6, 7):
+            raise ValueError(
+                f"A750Adapter supports 6 arm joints and one optional joint (got {dof})"
+            )
         self._device_path = address or "/dev/ttyACM0"
         self._dof = dof
+        self._arm_dof = 6
+        self._gripper_dof = dof - self._arm_dof
         self._positions = list(initial_positions) if initial_positions is not None else [0.0] * dof
+        if len(self._positions) != dof:
+            raise ValueError(f"A750Adapter initial_positions must contain {dof} entries")
         self._connected = False
         self._enabled = False
         self._control_mode = ControlMode.POSITION
@@ -112,17 +115,21 @@ class A750Adapter:
         return ManipulatorInfo(vendor="Dobkin", model="A-750", dof=self._dof)
 
     def get_dof(self) -> int:
-        """Get degrees of freedom."""
+        """Total joints owned by this adapter."""
         self._trace("get_dof")
         return self._dof
 
     def get_limits(self) -> JointLimits:
-        """Get approximate joint limits."""
+        """Arm limits in radians, then the gripper's finger travel in metres.
+
+        NOTE: not verified against hardware — there is no a750 on the bench
+        (GRIPPER-SPEC R13). The range comes from the existing module constant.
+        """
         self._trace("get_limits")
         return JointLimits(
-            position_lower=[-math.pi] * self._dof,
-            position_upper=[math.pi] * self._dof,
-            velocity_max=[math.pi] * self._dof,
+            position_lower=[-math.pi] * self._arm_dof + [0.0] * self._gripper_dof,
+            position_upper=[math.pi] * self._arm_dof + [GRIPPER_MAX_OPENING_M] * self._gripper_dof,
+            velocity_max=[math.pi] * self._arm_dof + [0.0] * self._gripper_dof,
         )
 
     def set_control_mode(self, mode: ControlMode) -> bool:
@@ -142,7 +149,7 @@ class A750Adapter:
             raise RuntimeError("Not connected")
 
         state = self._robot.get_current_state()
-        return [
+        positions = [
             state.joint1.pos_rad,
             state.joint2.pos_rad,
             state.joint3.pos_rad,
@@ -150,6 +157,9 @@ class A750Adapter:
             state.joint5.pos_rad,
             state.joint6.pos_rad,
         ]
+        if self._gripper_dof:
+            positions.append(self._read_gripper())
+        return positions
 
     def read_joint_velocities(self) -> list[float]:
         """Read current joint velocities in radians/second."""
@@ -164,6 +174,7 @@ class A750Adapter:
             state.joint4.vel_rads,
             state.joint5.vel_rads,
             state.joint6.vel_rads,
+            *([0.0] * self._gripper_dof),
         ]
 
     def read_joint_efforts(self) -> list[float]:
@@ -179,6 +190,7 @@ class A750Adapter:
             state.joint4.torque_nm,
             state.joint5.torque_nm,
             state.joint6.torque_nm,
+            *([0.0] * self._gripper_dof),
         ]
 
     def read_state(self) -> dict[str, int]:
@@ -200,19 +212,21 @@ class A750Adapter:
         positions: list[float],
         velocity: float = 1.0,
     ) -> bool:
-        """Command joint positions."""
-        assert len(positions) == self._dof
+        """Command every joint this adapter owns, gripper last (metres)."""
+        if len(positions) != self._dof:
+            return False
 
         if not self._enabled:
             return False
 
-        self._robot.command_joint_positions(positions, velocity)
-        return True
+        arm, grip = positions[: self._arm_dof], positions[self._arm_dof :]
+        self._robot.command_joint_positions(arm, velocity)
+        return self._write_gripper(grip[0]) if grip else True
 
     def write_joint_velocities(self, velocities: list[float]) -> bool:
-        """Command joint velocities."""
+        """Reject velocity commands; this scaffold has no velocity interface."""
         self._trace("write_joint_velocities", velocities=velocities)
-        return self._connected and len(velocities) == self._dof
+        return False
 
     def write_stop(self) -> bool:
         """Stop all motion."""
@@ -261,16 +275,16 @@ class A750Adapter:
         self._trace("write_cartesian_position", pose=pose, velocity=velocity)
         return self._connected
 
-    def read_gripper_position(self) -> float | None:
-        """Read gripper finger position as offset from center in meters."""
+    def _read_gripper(self) -> float:
+        """Gripper finger position in metres — the unit get_limits() declares."""
         if not self._connected:
-            return None
+            return 0.0
 
         state = self._robot.get_current_state()
-        return state.gripper.pos_m  # type: ignore[no-any-return]
+        return float(state.gripper.pos_m)
 
-    def write_gripper_position(self, position: float) -> bool:
-        """Command gripper position."""
+    def _write_gripper(self, position: float) -> bool:
+        """Command the gripper in metres. No conversion."""
         if not self._enabled:
             return False
 
@@ -290,8 +304,3 @@ class A750Adapter:
         details = ", ".join(f"{key}={value!r}" for key, value in kwargs.items())
         suffix = f"({details})" if details else "()"
         logger.info(f"A750Adapter.{method}{suffix}")
-
-
-def register(registry: AdapterRegistry) -> None:
-    """Register this adapter with the registry."""
-    registry.register("a750", A750Adapter)

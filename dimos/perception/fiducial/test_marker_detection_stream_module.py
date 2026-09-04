@@ -19,10 +19,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-pytest.importorskip("cv2.aruco")
-
-from dimos.memory2.store.memory import MemoryStore
-from dimos.memory2.type.observation import Observation
+from dimos.memory.store.memory import MemoryStore
+from dimos.memory.type.observation import Observation
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -95,7 +93,7 @@ def _marker_obs(
 def test_marker_detection_stream_module_exposes_single_stream_input() -> None:
     module = MarkerDetectionStreamModule(marker_length_m=0.18, camera_info=camera_info())
     try:
-        assert set(module.inputs) == {"color_image"}
+        assert set(module.inputs) == {"color_image", "tf"}
         assert set(module.outputs) == {"detections"}
     finally:
         module.stop()
@@ -240,7 +238,7 @@ def test_append_image_with_pose_uses_camera_optical_tf_without_recomputing_pose(
             self.calls.append((parent_frame, child_frame, time_point, time_tolerance))
             return t_world_optical
 
-        def stop(self) -> None:
+        def dispose(self) -> None:
             pass
 
     module = MarkerDetectionStreamModule(
@@ -287,7 +285,7 @@ def test_append_image_with_pose_skips_withoutcamera_info_or_tf() -> None:
             self.calls += 1
             return None
 
-        def stop(self) -> None:
+        def dispose(self) -> None:
             pass
 
     missing_tf = MissingTf()

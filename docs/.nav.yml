@@ -1,0 +1,13 @@
+# Top-level order only. Each directory fills itself in (index page first,
+# then the rest in natural order), so adding a page is just adding the file.
+# A directory that wants its own order or title gets its own .nav.yml.
+nav:
+  - index.md
+  - quickstart.md
+  - requirements.md
+  - installation
+  - usage
+  - capabilities
+  - platforms
+  - development
+  - coding-agents

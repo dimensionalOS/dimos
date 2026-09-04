@@ -18,24 +18,9 @@ from __future__ import annotations
 
 from typing import TypeAlias
 
-from dimos.manipulation.planning.spec.models import RobotName
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
 DegreesOfFreedom: TypeAlias = int
 JointPrefix: TypeAlias = str
-UrdfJointPrefix: TypeAlias = str
 UrdfJointName: TypeAlias = str
-CoordinatorJointName: TypeAlias = str
-JointNameMapping: TypeAlias = dict[CoordinatorJointName, UrdfJointName]
-
-
-def base_pose(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> PoseStamped:
-    return PoseStamped(
-        position=Vector3(x=x, y=y, z=z),
-        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    )
 
 
 def joint_names(
@@ -44,16 +29,3 @@ def joint_names(
     prefix: JointPrefix = "joint",
 ) -> list[UrdfJointName]:
     return [f"{prefix}{i}" for i in range(1, dof + 1)]
-
-
-def coordinator_joint_mapping(
-    name: RobotName,
-    dof: DegreesOfFreedom,
-    *,
-    joint_prefix: JointPrefix | None = None,
-    urdf_joint_prefix: UrdfJointPrefix = "",
-) -> JointNameMapping:
-    prefix = f"{name}/" if joint_prefix is None else joint_prefix
-    if not prefix:
-        return {}
-    return {f"{prefix}joint{i}": f"{urdf_joint_prefix}joint{i}" for i in range(1, dof + 1)}

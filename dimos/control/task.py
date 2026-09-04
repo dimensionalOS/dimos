@@ -37,6 +37,7 @@ from dimos.hardware.whole_body.spec import IMUState
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Pose import Pose
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+    from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
     from dimos.teleop.quest.quest_types import Buttons
 
 
@@ -295,6 +296,10 @@ class ControlTask(Protocol):
         """Handle incoming cartesian command (target or delta pose)."""
         ...
 
+    def on_ee_twist_command(self, twist: TwistStamped, t_now: float) -> bool:
+        """Handle routed spatial end-effector twist command."""
+        ...
+
     def set_target_by_name(self, positions: dict[str, float], t_now: float) -> bool:
         """Handle servo position commands by joint name."""
         ...
@@ -322,11 +327,22 @@ class BaseControlTask(ControlTask):
     in tasks that don't need them. Only override what your task uses.
     """
 
+    _name: str
+
+    @property
+    def name(self) -> str:
+        """Unique task identifier, backed by ``self._name``."""
+        return self._name
+
     def on_buttons(self, msg: Buttons) -> bool:
         """No-op default."""
         return False
 
     def on_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
+        """No-op default."""
+        return False
+
+    def on_ee_twist_command(self, twist: TwistStamped, t_now: float) -> bool:
         """No-op default."""
         return False
 

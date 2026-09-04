@@ -20,9 +20,9 @@ from dotenv import load_dotenv
 from langchain_core.messages.base import BaseMessage
 import pytest
 
-from dimos.agents.agent_test_runner import AgentTestRunner
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.agents.testing.agent_test_runner import AgentTestRunner
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
@@ -84,7 +84,7 @@ def agent_setup(request, mcp_url: str, lcm_url: str):
             AgentTestRunner.blueprint(messages=messages),
         )
 
-        global_config.update(viewer="none")
+        global_config.update(viewer="none", transport="lcm")  # fixture uses pLCMTransport sidecars
 
         nonlocal coordinator
         coordinator = ModuleCoordinator.build(blueprint)

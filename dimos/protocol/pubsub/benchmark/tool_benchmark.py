@@ -15,10 +15,12 @@
 # limitations under the License.
 
 from collections.abc import Generator
+import os
 import threading
 import time
 from typing import Any
 
+import psutil
 import pytest
 
 from dimos.protocol.pubsub.benchmark.testdata import testcases
@@ -53,8 +55,10 @@ BENCH_DURATION = 1.0
 # Max messages to send per test (prevents overwhelming slower transports)
 MAX_MESSAGES = 5000
 
-# Max time to wait for in-flight messages after publishing stops
-RECEIVE_TIMEOUT = 1.0
+# Max time to wait for in-flight messages after publishing stops. Networked
+# transports need more drain time than the local default, e.g.
+# DIMOS_BENCH_RECEIVE_TIMEOUT_S=5 for the webrtc/Cloudflare round trip.
+RECEIVE_TIMEOUT = float(os.environ.get("DIMOS_BENCH_RECEIVE_TIMEOUT_S", "1.0"))
 
 
 def pubsub_id(testcase: Case[Any, Any]) -> str:
@@ -73,6 +77,7 @@ def benchmark_results() -> Generator[BenchmarkResults, None, None]:
     results.print_summary()
     results.print_heatmap()
     results.print_bandwidth_heatmap()
+    results.print_cpu_heatmap()
     results.print_latency_heatmap()
     results.print_loss_heatmap()
 
@@ -88,8 +93,10 @@ def test_throughput(
     benchmark_results: BenchmarkResults,
 ) -> None:
     """Measure throughput for publishing and receiving messages over a fixed duration."""
+    # Generate (or skip on) the message before connecting: webrtc sizes over
+    # the CF DataChannel cap skip here, and shouldn't pay a live CF session.
+    topic, msg = msggen(msg_size)
     with pubsub_context() as pubsub:
-        topic, msg = msggen(msg_size)
         received_count = 0
         target_count = [0]  # Use list to allow modification after publish loop
         lock = threading.Lock()
@@ -111,8 +118,12 @@ def test_throughput(
         # Set target so callback can signal when all received
         target_count[0] = MAX_MESSAGES
 
-        # Publish messages until time limit, max messages, or all received
+        # CPU sampled over the publish window only, so lossy transports' receive
+        # idle doesn't skew it. psutil counts in-process threads but not kernel
+        # softirq or external daemons, so network transports read lower than SHM.
         msgs_sent = 0
+        process = psutil.Process()
+        cpu_before = process.cpu_times()
         start = time.perf_counter()
         end_time = start + BENCH_DURATION
 
@@ -124,6 +135,8 @@ def test_throughput(
                 break
 
         publish_end = time.perf_counter()
+        cpu_after = process.cpu_times()
+        cpu_seconds = (cpu_after.user - cpu_before.user) + (cpu_after.system - cpu_before.system)
         target_count[0] = msgs_sent  # Update to actual sent count
 
         # Check if already done, otherwise wait up to RECEIVE_TIMEOUT
@@ -154,6 +167,7 @@ def test_throughput(
             msgs_received=final_received,
             msg_size_bytes=msg_size,
             receive_time=latency,
+            cpu_seconds=cpu_seconds,
         )
         benchmark_results.add(result)
 

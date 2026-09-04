@@ -1,4 +1,4 @@
-ARG FROM_IMAGE=ghcr.io/dimensionalos/ros-python:dev
+ARG FROM_IMAGE=dimensional/ros-python:latest
 FROM ${FROM_IMAGE}
 
 ARG GIT_COMMIT=unknown
@@ -28,6 +28,11 @@ WORKDIR /app
 ENV UV_SYSTEM_PYTHON=1
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
+
+# Install rust so dimos bake can compile module hosts
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path
+ENV PATH="/usr/local/cargo/bin:$PATH"
 
 # Copy files and add version to motd
 COPY /assets/dimensionalascii.txt /etc/motd

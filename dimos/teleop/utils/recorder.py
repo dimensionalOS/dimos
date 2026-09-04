@@ -12,18 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generic teleop stream recorder, shared across all teleop variants.
+"""Generic teleop stream recorder (quest, phone, hosted).
 
-One recorder for quest, phone, and hosted teleop. It declares the *superset*
-of teleop output ports; autoconnect wires whichever the composed blueprint
-actually produces (VR controller poses + buttons for arm teleop, or
-``cmd_vel_stamped`` for mobile-base/keyboard teleop). Ports the blueprint
-doesn't drive simply stay empty in the DB.
+Declares the *superset* of teleop output ports; autoconnect wires whichever the
+composed blueprint produces, the rest stay empty in the DB. Compose at the CLI::
 
-Compose at the CLI::
-
-    dimos run teleop-quest-xarm7  teleop-recorder
-    dimos run teleop-hosted-go2   teleop-recorder
+    dimos run teleop-quest-xarm7          teleop-recorder
+    dimos run teleop-hosted-go2-transport teleop-recorder
 """
 
 from datetime import datetime
@@ -32,8 +27,8 @@ from pathlib import Path
 from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.stream import In
-from dimos.memory2.module import Recorder, RecorderConfig
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.module import Recorder, RecorderConfig
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.teleop.quest.quest_types import Buttons
@@ -50,26 +45,24 @@ class TeleopRecorderConfig(RecorderConfig):
 
 
 class TeleopRecorder(Recorder):
-    """Records teleop streams to a .db + (optionally) a transport-stats report.
-
-    Superset of ports across arm (pose + buttons), mobile-base
-    (``cmd_vel_stamped``), and hosted-teleop video stats. Unconnected ports stay
-    empty in the DB. Each run lands in its own ``<stem>_<YYYYmmdd_HHMMSS>.db``
-    so runs don't clobber. On stop, if ``generate_report=True``, also writes
-    ``report.md`` next to the .db.
-    """
+    """Records teleop streams to a per-run timestamped .db; on stop, if
+    ``generate_report=True``, writes ``report_<ts>.json`` next to it."""
 
     left_controller_output: In[PoseStamped]
     right_controller_output: In[PoseStamped]
     teleop_buttons: In[Buttons]
     cmd_vel_stamped: In[TwistStamped]
     video_stats: In[VideoStats]
+    robot_telemetry: In[bytes]
     config: TeleopRecorderConfig
     # Per-run path (stem + timestamp), held here so we don't mutate config.
     _db_path: Path | None = None
 
     @rpc
     def start(self) -> None:
+        if self.config.g.replay:
+            super().start()
+            return
         base = Path(self.config.db_path)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._db_path = base.with_name(f"{base.stem}_{timestamp}{base.suffix}")

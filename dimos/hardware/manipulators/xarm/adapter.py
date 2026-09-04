@@ -21,23 +21,26 @@ DimOS Units: angles=radians, distance=meters, velocity=rad/s
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
 
 from xarm.wrapper import XArmAPI
 
-if TYPE_CHECKING:
-    from dimos.hardware.manipulators.registry import AdapterRegistry
-
 from dimos.hardware.manipulators.spec import (
     ControlMode,
-    JointLimits,
     ManipulatorAdapter,
     ManipulatorInfo,
 )
+from dimos.hardware.spec import JointLimits
+from dimos.utils.logging_config import setup_logger
 
-# Unit conversion constants
+logger = setup_logger()
+
+# Cartesian pose conversions; the gripper does not use these.
 MM_TO_M = 0.001
 M_TO_MM = 1000.0
+
+# The gripper SDK's own dimensionless scale.
+XARM_GRIPPER_MIN = 0.0
+XARM_GRIPPER_MAX = 850.0
 MAX_CARTESIAN_SPEED_MM = 500.0  # Max cartesian speed in mm/s
 _XARM_LIFECYCLE_SPEED_DEG = 20.0
 _XARM_LIFECYCLE_ACCEL_DEG = 500.0
@@ -60,11 +63,20 @@ class XArmAdapter(ManipulatorAdapter):
     No inheritance required - just matching method signatures.
     """
 
-    def __init__(self, address: str, dof: int = 6, **_: object) -> None:
+    def __init__(self, address: str, dof: int = 6, arm_dof: int | None = None, **_: object) -> None:
         if not address:
             raise ValueError("address (IP) is required for XArmAdapter")
+        resolved_arm_dof = dof if arm_dof is None else arm_dof
+        extra_dof = dof - resolved_arm_dof
+        if resolved_arm_dof not in (6, 7) or extra_dof not in (0, 1):
+            raise ValueError(
+                "XArmAdapter requires 6 or 7 arm axes and at most one additional joint "
+                f"(got dof={dof}, arm_dof={resolved_arm_dof})"
+            )
         self._ip = address
         self._dof = dof
+        self._arm_dof = resolved_arm_dof
+        self._gripper_dof = extra_dof
         self._arm: XArmAPI | None = None
         self._control_mode: ControlMode = ControlMode.POSITION
         self._gripper_enabled: bool = False
@@ -76,7 +88,7 @@ class XArmAdapter(ManipulatorAdapter):
             self._arm.connect()
 
             if not self._arm.connected:
-                print(f"ERROR: XArm at {self._ip} not reachable (connected=False)")
+                logger.error("XArm at %s not reachable (connected=False)", self._ip)
                 return False
 
             # Initialize to servo mode for high-frequency control
@@ -86,7 +98,7 @@ class XArmAdapter(ManipulatorAdapter):
 
             return True
         except Exception as e:
-            print(f"ERROR: Failed to connect to XArm at {self._ip}: {e}")
+            logger.error("Failed to connect to XArm at %s: %s", self._ip, e)
             return False
 
     def disconnect(self) -> None:
@@ -103,22 +115,22 @@ class XArmAdapter(ManipulatorAdapter):
         """Get XArm information."""
         return ManipulatorInfo(
             vendor="UFACTORY",
-            model=f"xArm{self._dof}",
+            model=f"xArm{self._arm_dof}",
             dof=self._dof,
         )
 
     def get_dof(self) -> int:
-        """Get degrees of freedom."""
+        """Total joints owned by this adapter."""
         return self._dof
 
     def get_limits(self) -> JointLimits:
-        """Get joint limits (default XArm limits)."""
+        """Arm limits in radians, then the gripper's own 0-850 scale."""
         # XArm typical joint limits (varies by joint, using conservative values)
         limit = 2 * math.pi
         return JointLimits(
-            position_lower=[-limit] * self._dof,
-            position_upper=[limit] * self._dof,
-            velocity_max=[math.pi] * self._dof,  # ~180 deg/s
+            position_lower=[-limit] * self._arm_dof + [XARM_GRIPPER_MIN] * self._gripper_dof,
+            position_upper=[limit] * self._arm_dof + [XARM_GRIPPER_MAX] * self._gripper_dof,
+            velocity_max=[math.pi] * self._arm_dof + [0.0] * self._gripper_dof,
         )
 
     def set_control_mode(self, mode: ControlMode) -> bool:
@@ -162,7 +174,10 @@ class XArmAdapter(ManipulatorAdapter):
         _, angles = self._arm.get_servo_angle()
         if not angles:
             raise RuntimeError("Failed to read joint positions")
-        return [math.radians(a) for a in angles[: self._dof]]
+        positions = [math.radians(a) for a in angles[: self._arm_dof]]
+        if self._gripper_dof:
+            positions.append(self._read_gripper())
+        return positions
 
     def read_joint_velocities(self) -> list[float]:
         """Read joint velocities.
@@ -174,14 +189,15 @@ class XArmAdapter(ManipulatorAdapter):
         return [0.0] * self._dof
 
     def read_joint_efforts(self) -> list[float]:
-        """Read joint torques in Nm."""
+        """Read joint torques in Nm; the gripper reports 0.0 (no feedback)."""
+        gripper = [0.0] * self._gripper_dof
         if not self._arm:
-            return [0.0] * self._dof
+            return [0.0] * self._arm_dof + gripper
 
         code, torques = self._arm.get_joints_torque()
         if code == 0 and torques:
-            return list(torques[: self._dof])
-        return [0.0] * self._dof
+            return list(torques[: self._arm_dof]) + gripper
+        return [0.0] * self._arm_dof + gripper
 
     def read_state(self) -> dict[str, int]:
         """Read robot state."""
@@ -213,20 +229,29 @@ class XArmAdapter(ManipulatorAdapter):
         Uses set_servo_angle_j() for high-frequency servo control.
         Requires mode 1 (servo mode) to be active.
 
+        The trailing gripper entry passes to the SDK unconverted (0-850).
+
         Args:
-            positions: Target positions in radians
+            positions: Target positions, arm in radians then gripper native
             velocity: Speed as fraction of max (0-1) - not used in servo mode
         """
         if not self._arm:
             return False
 
+        if len(positions) != self._dof:
+            return False
+        arm, grip = positions[: self._arm_dof], positions[self._arm_dof :]
+
         # Convert radians to degrees
-        angles = [math.degrees(p) for p in positions]
+        angles = [math.degrees(p) for p in arm]
 
         # Use set_servo_angle_j for high-frequency servo control (100Hz+)
         # This only executes the last instruction, suitable for real-time control
         code: int = self._arm.set_servo_angle_j(angles, speed=100, mvacc=500)
-        return code == 0
+        ok = code == 0
+        if grip:
+            ok = self._write_gripper(grip[0]) and ok
+        return ok
 
     def activate(self) -> bool:
         """Enable motion and move the arm to its initial joint pose."""
@@ -244,11 +269,10 @@ class XArmAdapter(ManipulatorAdapter):
             return False
 
         self._prepare_for_position_motion()
-        if not self._move_to_initial_pose():
-            return False
+        homed = self._move_to_initial_pose()
         self._arm.motion_enable(enable=False)
         code: int = self._arm.set_state(4)
-        return code == 0
+        return homed and code == 0
 
     def _move_to_initial_pose(self) -> bool:
         if not self._arm:
@@ -264,12 +288,22 @@ class XArmAdapter(ManipulatorAdapter):
             mvacc=_XARM_LIFECYCLE_ACCEL_DEG,
             wait=True,
         )
+        if code != 0:
+            logger.warning(
+                "xArm move-to-initial-pose failed: set_servo_angle code=%s "
+                "(state=%s mode=%s err=%s warn=%s)",
+                code,
+                self._arm.state,
+                self._arm.mode,
+                self._arm.error_code,
+                self._arm.warn_code,
+            )
         return code == 0
 
     def _initial_joints_degrees(self) -> list[float] | None:
-        if self._dof == 6:
+        if self._arm_dof == 6:
             return _XARM6_INITIAL_JOINTS_DEG
-        if self._dof == 7:
+        if self._arm_dof == 7:
             return _XARM7_INITIAL_JOINTS_DEG
         return None
 
@@ -293,9 +327,13 @@ class XArmAdapter(ManipulatorAdapter):
         """
         if not self._arm:
             return False
+        if len(velocities) != self._dof:
+            return False
 
-        # Convert rad/s to deg/s
-        speeds = [math.degrees(v) for v in velocities]
+        # Arm entries only; the xArm gripper has no velocity interface.
+        if any(value != 0.0 for value in velocities[self._arm_dof :]):
+            return False
+        speeds = [math.degrees(v) for v in velocities[: self._arm_dof]]
         code: int = self._arm.vc_set_joint_velocity(speeds)
         return code == 0
 
@@ -366,28 +404,27 @@ class XArmAdapter(ManipulatorAdapter):
         )
         return code == 0
 
-    def read_gripper_position(self) -> float | None:
-        """Read gripper position (mm -> meters)."""
+    def _read_gripper(self) -> float:
+        """Read the gripper position in SDK units (0-850)."""
         if not self._arm:
-            return None
+            return 0.0
 
         result = self._arm.get_gripper_position()
         code: int = result[0]
         pos: float | None = result[1]
         if code == 0 and pos is not None:
-            return pos * MM_TO_M
-        return None
+            return float(pos)
+        return 0.0
 
-    def write_gripper_position(self, position: float) -> bool:
-        """Write gripper position (meters -> mm)."""
+    def _write_gripper(self, position: float) -> bool:
+        """Command the gripper in SDK units (0-850)."""
         if not self._arm:
             return False
 
         if not self._gripper_enabled:
             self._arm.set_gripper_enable(True)
             self._gripper_enabled = True
-        pos_mm = position * M_TO_MM
-        code: int = self._arm.set_gripper_position(pos_mm, wait=False)
+        code: int = self._arm.set_gripper_position(position, wait=False)
         return code == 0
 
     def read_force_torque(self) -> list[float] | None:
@@ -399,8 +436,3 @@ class XArmAdapter(ManipulatorAdapter):
         if code == 0 and ft:
             return list(ft)
         return None
-
-
-def register(registry: AdapterRegistry) -> None:
-    """Register this adapter with the registry."""
-    registry.register("xarm", XArmAdapter)

@@ -35,7 +35,6 @@ import subprocess
 from threading import Lock
 import time
 
-import cv2
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -124,6 +123,8 @@ class FastAPIServer(EdgeIO):
 
     def process_frame_fastapi(self, frame):  # type: ignore[no-untyped-def]
         """Convert frame to JPEG format for streaming."""
+        import cv2
+
         _, buffer = cv2.imencode(".jpg", frame)
         return buffer.tobytes()
 

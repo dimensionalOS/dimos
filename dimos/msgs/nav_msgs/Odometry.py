@@ -42,13 +42,13 @@ class Odometry(Timestamped):
 
     def __init__(
         self,
-        ts: float = 0.0,
+        ts: float | None = None,
         frame_id: str = "",
         child_frame_id: str = "",
         pose: PoseWithCovariance | Pose | None = None,
         twist: TwistWithCovariance | Twist | None = None,
     ) -> None:
-        self.ts = ts if ts != 0 else time.time()
+        self.ts = time.time() if ts is None else ts
         self.frame_id = frame_id
         self.child_frame_id = child_frame_id
 
