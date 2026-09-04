@@ -31,5 +31,3 @@ r1pro_teleop = r1pro_coordinator.remappings(
         (RerunWebSocketServer, "tele_cmd_vel", "twist_command"),
     ]
 )
-
-__all__ = ["r1pro_teleop"]

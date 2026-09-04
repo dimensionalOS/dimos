@@ -60,5 +60,3 @@ r1pro_manipulation = autoconnect(
         visualization=ViserVisualizationConfig(host="0.0.0.0"),
     ),
 ).global_config(n_workers=6)
-
-__all__ = ["r1pro_manipulation"]

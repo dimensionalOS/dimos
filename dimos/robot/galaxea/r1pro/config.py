@@ -86,6 +86,7 @@ R1PRO_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("right_arm_link7", "right_gmsl_link"),
 ]
 
+
 R1PRO_MODEL = (
     RobotModel.from_file(
         R1PRO_MODEL_PATH,
@@ -126,12 +127,3 @@ def make_r1pro_model_config() -> RobotModelConfig:
         max_acceleration=1.0,
         home_joints=[0.0] * len(UPPER_BODY_JOINTS),
     )
-
-
-__all__ = [
-    "R1PRO_COLLISION_EXCLUSIONS",
-    "R1PRO_DESCRIPTION_SOURCE",
-    "R1PRO_MODEL",
-    "R1PRO_MODEL_PATH",
-    "make_r1pro_model_config",
-]

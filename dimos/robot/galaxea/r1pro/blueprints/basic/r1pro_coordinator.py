@@ -274,6 +274,3 @@ r1pro_coordinator = autoconnect(
     r1pro_visualization(),
     r1pro_control(),
 ).global_config(n_workers=4)
-
-
-__all__ = ["r1pro_control", "r1pro_coordinator", "r1pro_visualization", "rerun_config"]

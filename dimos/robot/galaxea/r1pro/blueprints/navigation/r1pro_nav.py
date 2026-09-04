@@ -57,5 +57,3 @@ r1pro_nav = autoconnect(
     ),
     MovementManager.blueprint(),
 ).global_config(n_workers=8)
-
-__all__ = ["r1pro_nav"]

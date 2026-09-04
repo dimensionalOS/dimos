@@ -49,6 +49,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import VEL_STOP
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
@@ -57,6 +58,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
 
@@ -88,6 +90,8 @@ _WRIST_DEPTH_CAMERAS: dict[str, str] = {
 }
 _HEAD_DEPTH_TOPIC = "/hdas/camera_head/depth/depth_registered"
 _LIDAR_TOPIC = "/hdas/lidar_chassis_left"
+# base_link -> lidar_chassis_left_link, the fixed joint origin in the vendor URDF.
+_LIDAR_MOUNT_XYZ = (0.15711, 0.26215, 0.29465)
 
 
 @dataclass
@@ -127,8 +131,9 @@ class R1ProConnectionConfig(ModuleConfig):
     # rad/s used when MotorCommand.dq is the VEL_STOP sentinel or 0.
     tracking_speed: float = Field(default=0.5)
     publish_odom: bool = Field(default=True)
-    frame_id: str = Field(default="r1pro_base_link")
+    frame_id: str = Field(default="base_link")
     odom_frame_id: str = Field(default="odom")
+    lidar_frame_id: str = Field(default="lidar_chassis_left_link")
     # Seconds between per-stream sensor-stats log lines (0 disables).
     sensor_stats_interval_s: float = Field(default=10.0)
     # Wrist depth is raw 16-bit at up to 30 Hz per wrist — too heavy for the
@@ -157,6 +162,7 @@ class R1ProConnection(Module):
     # navigation consumers (voxel map, planner).
     odom: Out[PoseStamped]
     odometry: Out[Odometry]
+    tf: Out[TFMessage]
 
     # Perception.
     head_left_color: Out[CompressedImage]
@@ -226,7 +232,6 @@ class R1ProConnection(Module):
         # environments without ROS 2.
         from dimos.protocol.pubsub.impl.rospubsub import RawROS
 
-        logger.info("Starting R1ProConnection (control + sensor nodes)...")
         self._ros = RawROS(node_name="r1pro_control")
         self._ros.start()
         self._sensors = RawROS(node_name="r1pro_sensors")
@@ -237,10 +242,6 @@ class R1ProConnection(Module):
 
         # Wait for at least one feedback frame from each segment so the
         # publish loop can ship a fully-populated motor_states.
-        logger.info(
-            "Waiting up to %.0fs for first feedback from torso/left_arm/right_arm...",
-            _FEEDBACK_DISCOVERY_TIMEOUT_S,
-        )
         deadline = time.monotonic() + _FEEDBACK_DISCOVERY_TIMEOUT_S
         while time.monotonic() < deadline:
             with self._lock:
@@ -262,8 +263,6 @@ class R1ProConnection(Module):
 
         self._publish_thread = Thread(target=self._publish_loop, name="r1pro-publish", daemon=True)
         self._publish_thread.start()
-
-        logger.info("R1ProConnection started")
 
     @rpc
     def stop(self) -> None:
@@ -306,7 +305,6 @@ class R1ProConnection(Module):
             self._latest_imu_chassis = None
             self._latest_imu_torso = None
 
-        logger.info("R1ProConnection stopped")
         super().stop()
 
     # Control topics
@@ -416,12 +414,6 @@ class R1ProConnection(Module):
 
         for t in self._sensor_workers:
             t.start()
-
-        logger.info(
-            f"R1Pro sensor streams up: {len(_COLOR_CAMERAS)} color cams + head_depth "
-            f"+ lidar + 2 imus, wrist depth "
-            f"{'on' if self.config.enable_wrist_depth else 'off'}"
-        )
 
     # Per-stream diagnostics
 
@@ -618,16 +610,29 @@ class R1ProConnection(Module):
         position = Vector3(self._odom_x, self._odom_y, 0.0)
         orientation = Quaternion(0.0, 0.0, math.sin(half), math.cos(half))
         frame_id = self.config.odom_frame_id
-        self.odom.publish(
-            PoseStamped(ts=now, frame_id=frame_id, position=position, orientation=orientation)
-        )
+        base = self.config.frame_id
+        pose = PoseStamped(ts=now, frame_id=frame_id, position=position, orientation=orientation)
+        self.odom.publish(pose)
         self.odometry.publish(
             Odometry(
                 ts=now,
                 frame_id=frame_id,
-                child_frame_id=self.config.frame_id,
+                child_frame_id=base,
                 pose=Pose(position, orientation),
                 twist=Twist(Vector3(vx, vy, 0.0), Vector3(0.0, 0.0, wz)),
+            )
+        )
+        # Both edges at the odom stamp: the voxel map matches each against the
+        # cloud stamp independently
+        self.tf.publish(
+            TFMessage(
+                Transform.from_pose(base, pose),
+                Transform(
+                    translation=Vector3(*_LIDAR_MOUNT_XYZ),
+                    frame_id=base,
+                    child_frame_id=self.config.lidar_frame_id,
+                    ts=now,
+                ),
             )
         )
 
@@ -783,10 +788,3 @@ def _enqueue_drop_oldest(q: queue.Queue[Any], item: Any) -> bool:
         except queue.Full:
             pass
         return True
-
-
-__all__ = [
-    "R1PRO_UPPER_BODY_JOINTS",
-    "R1ProConnection",
-    "R1ProConnectionConfig",
-]
