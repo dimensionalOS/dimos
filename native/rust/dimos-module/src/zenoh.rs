@@ -24,7 +24,7 @@ use ::zenoh::Session;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::transport::{Dispatch, Transport};
+use crate::transport::{Dispatch, TopicDispatch, Transport};
 
 pub(crate) const SESSION_KEY: &str = "session";
 
@@ -317,6 +317,17 @@ impl Transport for ZenohTransport {
         self.session
             .declare_subscriber(zenoh_key(channel).to_string())
             .callback(move |sample| on_msg(&sample.payload().to_bytes()))
+            .background()
+            .await
+            .map_err(to_io)
+    }
+
+    async fn subscribe_all(&self, on_msg: TopicDispatch) -> io::Result<()> {
+        self.session
+            .declare_subscriber("dimos/**")
+            .callback(move |sample| {
+                on_msg(&sample.payload().to_bytes(), sample.key_expr().as_str())
+            })
             .background()
             .await
             .map_err(to_io)
@@ -670,6 +681,41 @@ mod tests {
         .expect("payload not delivered within timeout");
 
         assert_eq!(received, payload);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn subscribe_all_receives_new_channels() {
+        let transport = ZenohTransport::new().await.expect("open session");
+        let channel = format!("dimos/subscribe_all/{}", std::process::id());
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<(String, Vec<u8>)>(8);
+        let sink: TopicDispatch = Arc::new(move |bytes: &[u8], topic: &str| {
+            let _ = tx.try_send((topic.to_string(), bytes.to_vec()));
+        });
+        transport
+            .subscribe_all(sink)
+            .await
+            .expect("subscribe to all channels");
+
+        let payload = b"new channel";
+        let received = tokio::time::timeout(Duration::from_secs(10), async {
+            'publish: loop {
+                transport
+                    .publish(&channel, payload.to_vec())
+                    .await
+                    .expect("publish");
+                while let Ok(Some(message)) =
+                    tokio::time::timeout(Duration::from_millis(100), rx.recv()).await
+                {
+                    if message.0 == channel {
+                        break 'publish message;
+                    }
+                }
+            }
+        })
+        .await
+        .expect("new channel not delivered within timeout");
+
+        assert_eq!(received, (channel, payload.to_vec()));
     }
 
     #[test]
