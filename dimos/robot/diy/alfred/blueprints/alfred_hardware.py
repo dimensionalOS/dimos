@@ -16,13 +16,19 @@
 
 Every Alfred blueprint composes this and then adds what it does with the sensors. Private, so
 it stays out of the runnable blueprint registry: sensors with nothing consuming them.
+
+The rear D435i stays plugged in, so with both attached librealsense may hand back the wrong
+one. Pick the mast camera per machine rather than in here:
+
+    dimos run alfred-mls-nav --serial-number=<mast d455 serial>
+
+or set `serial_number` once under the module in ~/.config/dimos/config.
 """
 
 from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.robot.diy.alfred.config import ALFRED
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
 
@@ -42,7 +48,6 @@ _alfred_hardware = autoconnect(
         enable_color=False,
         align_depth_to_color=False,
         frame_id="d455_link",
-        serial_number=ALFRED.d455_serial,
     ).remappings(
         [
             (RealSenseCamera, "infrared_left", "image"),
