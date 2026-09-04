@@ -357,7 +357,7 @@ class TestControlCoordinatorLifecycle:
         dispatch = mocker.patch.object(coordinator, "_dispatch")
 
         coordinator._map_twist_to_base_joints(
-            Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0])
+            "joint_command", Twist(linear=[1.0, 2.0, 0.0], angular=[0.0, 0.0, 3.0])
         )
 
         stream, joint_state = dispatch.call_args.args
