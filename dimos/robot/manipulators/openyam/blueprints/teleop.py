@@ -145,7 +145,6 @@ teleop_quest_openyam = autoconnect(
 ).remappings(
     [
         (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
     ]
 )
 
