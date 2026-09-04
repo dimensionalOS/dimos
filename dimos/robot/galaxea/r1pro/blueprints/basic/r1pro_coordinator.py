@@ -62,8 +62,8 @@ def _r1pro_rerun_blueprint() -> Any:
 
     main_tab = rrb.Horizontal(
         rrb.Vertical(
-            rrb.Spatial2DView(origin="world/r1pro/head_left_color", name="Head left"),
-            rrb.Spatial2DView(origin="world/r1pro/head_right_color", name="Head right"),
+            rrb.Spatial2DView(origin="world/head_left_color", name="Head left"),
+            rrb.Spatial2DView(origin="world/head_right_color", name="Head right"),
         ),
         rrb.Spatial3DView(
             origin="world",
@@ -79,14 +79,14 @@ def _r1pro_rerun_blueprint() -> Any:
 
     cameras_tab = rrb.Grid(
         # Row 1 — RGB.
-        rrb.Spatial2DView(origin="world/r1pro/head_left_color", name="Head left"),
-        rrb.Spatial2DView(origin="world/r1pro/head_right_color", name="Head right"),
-        rrb.Spatial2DView(origin="world/r1pro/wrist_left_color", name="Wrist left"),
-        rrb.Spatial2DView(origin="world/r1pro/wrist_right_color", name="Wrist right"),
+        rrb.Spatial2DView(origin="world/head_left_color", name="Head left"),
+        rrb.Spatial2DView(origin="world/head_right_color", name="Head right"),
+        rrb.Spatial2DView(origin="world/wrist_left_color", name="Wrist left"),
+        rrb.Spatial2DView(origin="world/wrist_right_color", name="Wrist right"),
         # Row 2 — depth.
-        rrb.Spatial2DView(origin="world/r1pro/head_depth", name="Head depth"),
-        rrb.Spatial2DView(origin="world/r1pro/wrist_left_depth", name="Wrist left depth"),
-        rrb.Spatial2DView(origin="world/r1pro/wrist_right_depth", name="Wrist right depth"),
+        rrb.Spatial2DView(origin="world/head_depth", name="Head depth"),
+        rrb.Spatial2DView(origin="world/wrist_left_depth", name="Wrist left depth"),
+        rrb.Spatial2DView(origin="world/wrist_right_depth", name="Wrist right depth"),
         grid_columns=4,
         name="All cameras",
     )
@@ -102,21 +102,21 @@ def _r1pro_rerun_blueprint() -> Any:
 # coordinator sees full rate). Sized for an on-robot deployment viewed over
 # WiFi. Keys are rerun entity paths.
 _RERUN_MAX_HZ = {
-    "world/r1pro/head_left_color": 5.0,
-    "world/r1pro/head_right_color": 5.0,
-    "world/r1pro/wrist_left_color": 5.0,
-    "world/r1pro/wrist_right_color": 5.0,
+    "world/head_left_color": 5.0,
+    "world/head_right_color": 5.0,
+    "world/wrist_left_color": 5.0,
+    "world/wrist_right_color": 5.0,
     # Raw float32 Points3D; uncapped it out-bytes every camera stream.
-    "world/r1pro/lidar": 5.0,
+    "world/lidar": 5.0,
 }
 
 
 # Per-topic overrides for the rerun bridge (None = suppress entirely).
 _RERUN_VISUAL_OVERRIDE = {
     # Raw depth frames are the heaviest payloads on the viewer link.
-    "world/r1pro/wrist_left_depth": None,
-    "world/r1pro/wrist_right_depth": None,
-    "world/r1pro/head_depth": None,
+    "world/wrist_left_depth": None,
+    "world/wrist_right_depth": None,
+    "world/head_depth": None,
 }
 
 
@@ -216,10 +216,12 @@ def r1pro_control(
         .transports(
             {
                 # WholeBody bridge (hw_id="r1pro"). TransportWholeBodyAdapter
-                # subscribes /{hw}/imu — only one IMU goes there.
+                # builds /{hw}/motor_states|imu|motor_command itself, so these
+                # three topics are fixed by hardware_id, not a naming choice.
+                # Only one IMU goes to /r1pro/imu.
                 ("motor_states", JointState): _zenoh_transport("/r1pro/motor_states", JointState),
                 ("imu_chassis", Imu): _zenoh_transport("/r1pro/imu", Imu),
-                ("imu_torso", Imu): _zenoh_transport("/r1pro/imu_torso", Imu),
+                ("imu_torso", Imu): _zenoh_transport("/imu_torso", Imu),
                 ("motor_command", MotorCommandArray): _zenoh_transport(
                     "/r1pro/motor_command", MotorCommandArray
                 ),
@@ -227,35 +229,31 @@ def r1pro_control(
                 ("chassis_cmd_vel", Twist): _zenoh_transport("/chassis/cmd_vel", Twist),
                 ("chassis_odom", PoseStamped): _zenoh_transport("/chassis/odom", PoseStamped),
                 # Wheel odometry (pose + twist) for navigation consumers.
-                ("odometry", Odometry): _zenoh_transport("/r1pro/odometry", Odometry),
+                ("odometry", Odometry): _zenoh_transport("/odometry", Odometry),
                 # Public Twist bus: any module's cmd_vel Out drives the
                 # coordinator's twist_command In.
                 ("cmd_vel", Twist): _zenoh_transport("/cmd_vel", Twist),
                 ("twist_command", Twist): _zenoh_transport("/cmd_vel", Twist),
                 # Sensor pass-throughs.
                 ("head_left_color", CompressedImage): _zenoh_transport(
-                    "/r1pro/head_left_color", CompressedImage, latest_wins=True
+                    "/head_left_color", CompressedImage, latest_wins=True
                 ),
                 ("head_right_color", CompressedImage): _zenoh_transport(
-                    "/r1pro/head_right_color", CompressedImage, latest_wins=True
+                    "/head_right_color", CompressedImage, latest_wins=True
                 ),
-                ("head_depth", Image): _zenoh_transport(
-                    "/r1pro/head_depth", Image, latest_wins=True
-                ),
-                ("lidar", PointCloud2): _zenoh_transport(
-                    "/r1pro/lidar", PointCloud2, latest_wins=True
-                ),
+                ("head_depth", Image): _zenoh_transport("/head_depth", Image, latest_wins=True),
+                ("lidar", PointCloud2): _zenoh_transport("/lidar", PointCloud2, latest_wins=True),
                 ("wrist_left_color", CompressedImage): _zenoh_transport(
-                    "/r1pro/wrist_left_color", CompressedImage, latest_wins=True
+                    "/wrist_left_color", CompressedImage, latest_wins=True
                 ),
                 ("wrist_left_depth", Image): _zenoh_transport(
-                    "/r1pro/wrist_left_depth", Image, latest_wins=True
+                    "/wrist_left_depth", Image, latest_wins=True
                 ),
                 ("wrist_right_color", CompressedImage): _zenoh_transport(
-                    "/r1pro/wrist_right_color", CompressedImage, latest_wins=True
+                    "/wrist_right_color", CompressedImage, latest_wins=True
                 ),
                 ("wrist_right_depth", Image): _zenoh_transport(
-                    "/r1pro/wrist_right_depth", Image, latest_wins=True
+                    "/wrist_right_depth", Image, latest_wins=True
                 ),
                 # ControlCoordinator outs.
                 ("coordinator_joint_state", JointState): _zenoh_transport(
