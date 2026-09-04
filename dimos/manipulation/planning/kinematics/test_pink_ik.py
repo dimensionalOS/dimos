@@ -63,7 +63,7 @@ from dimos.manipulation.planning.spec.joint_space import (
     JointSpace,
 )
 from dimos.manipulation.planning.spec.models import IKResult
-from dimos.manipulation.planning.spec.validation import PreparedRobotModel
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel, prepare_robot_model
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -1314,7 +1314,7 @@ def test_pose_target_solve_constrains_joints_outside_planning_group(tmp_path: Pa
     ]
     arm_names = joint_names[3:]
     config = RobotModelConfig(
-        model=RobotModel.from_file(model_path),
+        model=RobotModel.from_file(model_path).with_default_joint_acceleration_limit(2.0),
         joint_names=joint_names,
         base_link="pelvis",
         planning_groups=[
@@ -1334,21 +1334,13 @@ def test_pose_target_solve_constrains_joints_outside_planning_group(tmp_path: Pa
     )
     seed_positions = np.array([0.0, 0.0, 0.0, -0.4, 0.2, 0.0, 1.2, 0.0, 0.0, 0.0])
     seed = JointState(name=joint_names, position=seed_positions.tolist())
-    lower_limits = np.array(
-        [-2.618, -0.52, -0.52, -3.0892, -1.5882, -2.618, -1.0472, -1.9722, -1.6144, -1.6144]
-    )
-    upper_limits = np.array(
-        [2.618, 0.52, 0.52, 2.6704, 2.2515, 2.618, 2.0944, 1.9722, 1.6144, 1.6144]
-    )
+    prepared = prepare_robot_model(config)
 
     class World:
         is_finalized = True
 
-        def get_model_config(self) -> RobotModelConfig:
-            return config
-
-        def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
-            return lower_limits, upper_limits
+        def get_prepared_model(self) -> PreparedRobotModel:
+            return prepared
 
         def scratch_context(self) -> nullcontext[None]:
             return nullcontext(None)
@@ -1366,7 +1358,7 @@ def test_pose_target_solve_constrains_joints_outside_planning_group(tmp_path: Pa
             return True
 
     ik = PinkIK(PinkIKConfig(max_iterations=100))
-    context = ik._build_robot_context(config, "tool")
+    context = ik._build_robot_context(prepared, "tool")
     target_positions = seed_positions.copy()
     target_positions[3:] += np.array(
         [0.05003819, 0.15888552, 0.11027428, -0.10991712, -0.07993349, 0.14942138, -0.19789388]
