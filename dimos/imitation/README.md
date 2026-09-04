@@ -63,7 +63,9 @@ prints one line per transition:
 
 Direct teaching removes the Quest teleoperator. The arm runs with gravity
 compensation, zero position stiffness, and joint damping. Move it by hand while
-the existing OpenYAM observation and action streams are recorded.
+the existing OpenYAM observation and action streams are recorded. The coordinator's
+idle trajectory holder keeps sending the motor commands that apply gravity and
+damping; zero stiffness makes its latched position target inert.
 
 Start the hardware stack in one terminal. Be ready to support the arm as it
 activates, and keep people and obstacles outside its workspace.
@@ -82,12 +84,17 @@ dimos collect
 ```
 
 ```text
-┌────────────────────── OpenYAM teach collection ──────────────────────┐
-│ Task       pick up the red block                                    │
-│ State      RECORDING                                                │
-│ Episodes   2 saved, 0 discarded                                     │
-│ Gripper    passive — move by hand                                   │
-└─────────────────────────────────────────────────────────────────────┘
+╔════════════════ OPENYAM / TEACH COLLECTION ════════════════╗
+║ TASK  pick up the red block                                ║
+║                                                            ║
+║                 ● RECORDING  00:08.4                       ║
+║                                                            ║
+║         SAVED  2                 DISCARDED  0              ║
+║                                                            ║
+║ Move the gravity-compensated arm and passive gripper.      ║
+║                                                            ║
+║       [ Save episode ] [ Discard ] [ Detach ]              ║
+╚════════════════════════════════════════════════════════════╝
 ```
 
 | Key | Action |
@@ -96,6 +103,7 @@ dimos collect
 | **D** | Discard the in-progress episode |
 | **Q** or **Ctrl-C** | Detach the panel while idle |
 
+The same actions are available as clickable buttons.
 The panel refuses to detach while recording. Save or discard the take first.
 Detaching closes only the panel's RPC connection; the arm remains active in
 gravity-compensation mode until you run `dimos stop`.

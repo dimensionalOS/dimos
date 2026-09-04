@@ -84,8 +84,16 @@ def test_openyam_teach_collection_uses_gravity_compensation_and_zero_stiffness()
         assert hardware.adapter_kwargs["runtime_config"].passive_grippers == ("gripper",)
 
     tasks = coordinator.kwargs["tasks"]
-    assert [(task.name, task.type, task.joint_names, task.priority) for task in tasks] == [
-        ("teach_openyam", "teach", OPENYAM_JOINTS, 10),
+    assert [
+        (task.name, task.type, task.joint_names, task.priority, task.params) for task in tasks
+    ] == [
+        (
+            "teach_openyam",
+            "trajectory",
+            OPENYAM_JOINTS,
+            10,
+            {"hold_position_when_idle": True},
+        ),
     ]
 
 

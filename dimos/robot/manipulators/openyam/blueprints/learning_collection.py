@@ -105,9 +105,10 @@ learning_collect_teach_openyam = autoconnect(
         tasks=[
             TaskConfig(
                 name="teach_openyam",
-                type="teach",
+                type="trajectory",
                 joint_names=list(OPENYAM_JOINTS),
                 priority=10,
+                params={"hold_position_when_idle": True},
             ),
         ],
     ),
