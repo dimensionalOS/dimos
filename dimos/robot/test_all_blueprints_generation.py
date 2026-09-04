@@ -116,9 +116,7 @@ def _build_module_class_set(root: Path) -> set[str]:
     known: set[str] = {"Module", "ModuleBase"}
     all_classes: list[tuple[str, list[str]]] = []
 
-    for path in sorted(root.rglob("*.py")):
-        if "__pycache__" in str(path):
-            continue
+    for path in sorted(_get_all_python_files(root)):
         try:
             tree = ast.parse(path.read_text("utf-8"), str(path))
         except Exception:
@@ -157,6 +155,9 @@ def _is_production_module_file(file_path: Path, root: Path) -> bool:
         or "/testing/" in rel
         or "example" in relative_path.parts
         or relative_path == Path("experimental/isolated_python/module.py")
+        # Python-native implementations are private subprocess details. Only
+        # their host contracts belong in the runnable module registry.
+        or "python" in relative_path.parts
         or rel.startswith("core/")
     )
 
@@ -174,6 +175,22 @@ def test_isolated_python_framework_is_not_a_production_module(
     relative_path: str,
 ) -> None:
     assert _is_production_module_file(tmp_path / relative_path, tmp_path) is False
+
+
+def test_python_native_runtime_is_not_a_production_module(tmp_path: Path) -> None:
+    runtime = tmp_path / "feature" / "python" / "package" / "runtime.py"
+
+    assert _is_production_module_file(runtime, tmp_path) is False
+
+
+def test_python_native_runtime_tree_is_not_scanned(tmp_path: Path) -> None:
+    contract = tmp_path / "feature" / "module.py"
+    runtime = tmp_path / "feature" / "python" / "package" / "runtime.py"
+    runtime.parent.mkdir(parents=True)
+    contract.write_text("")
+    runtime.write_text("")
+
+    assert list(_get_all_python_files(tmp_path)) == [contract]
 
 
 def _scan_for_blueprints(root: Path) -> tuple[dict[str, str], dict[str, str]]:
@@ -256,11 +273,20 @@ def _check_for_uncommitted_changes(file_path: Path) -> bool:
 
 
 def _get_all_python_files(root: Path) -> Generator[Path, None, None]:
-    for path in root.rglob("*.py"):
-        rel_path = str(path.relative_to(root.parent))
-        if "__pycache__" in str(path) or rel_path in IGNORED_FILES:
-            continue
-        yield path
+    """Yield host source files without entering Python-native runtime projects."""
+    for directory, directory_names, file_names in os.walk(root):
+        # A sibling directory named ``python`` is the isolation boundary for a
+        # PythonNativeModule. Its implementation and .venv are not host code.
+        directory_names[:] = sorted(
+            name for name in directory_names if name not in {"__pycache__", "python"}
+        )
+        for file_name in sorted(file_names):
+            if not file_name.endswith(".py"):
+                continue
+            path = Path(directory) / file_name
+            rel_path = str(path.relative_to(root.parent))
+            if rel_path not in IGNORED_FILES:
+                yield path
 
 
 def _path_to_module_name(path: Path, root: Path) -> str:
