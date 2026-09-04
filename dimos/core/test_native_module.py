@@ -35,7 +35,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, TransportBackend
-from dimos.core.module import Module
+from dimos.core.module import Module, TopicFunnel
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import IO, In, Out
 from dimos.core.transport import LCMTransport, ZenohTransport
@@ -103,6 +103,12 @@ class StubIoModule(NativeModule):
     config: StubNativeConfig
     cmd_vel: In[Twist]
     tf: IO[TFMessage]
+
+
+class StubFunnelModule(NativeModule):
+    config: StubNativeConfig
+    cams: In[Imu]
+    cmd_vel: In[Twist]
 
 
 class StubConsumer(Module):
@@ -209,6 +215,80 @@ def test_tf_topic_comes_from_the_declared_port_only() -> None:
         module.stop()
         with contextlib.suppress(Exception):
             transport.stop()
+
+
+def test_a_topic_funnel_reaches_the_native_process_as_a_list(monkeypatch) -> None:
+    """The funnelled port carries every entry's channel instead of one of its own."""
+    monkeypatch.setattr(native_module_mod.global_config, "transport", "lcm")
+    module = StubFunnelModule(
+        executable=_ECHO,
+        topic_funnels={"cams": TopicFunnel(["cam0/imu", "cam1/imu"])},
+    )
+    try:
+        topics = module._collect_topics()
+        assert topics["cams"] == ["/cam0/imu#sensor_msgs.Imu", "/cam1/imu#sensor_msgs.Imu"]
+        assert module._argv(topics)[1:3] == [
+            "--cams",
+            "/cam0/imu#sensor_msgs.Imu,/cam1/imu#sensor_msgs.Imu",
+        ]
+    finally:
+        module.stop()
+
+
+def test_funnel_info_rides_the_launch_line_but_not_the_argv(monkeypatch) -> None:
+    """Per-topic info becomes a {topic, info} entry on stdin; argv keeps only topics."""
+    monkeypatch.setattr(native_module_mod.global_config, "transport", "lcm")
+    module = StubFunnelModule(
+        executable=_ECHO,
+        topic_funnels={"cams": TopicFunnel({"cam0/imu": {"rectified": True}, "cam1/imu": {}})},
+    )
+    try:
+        topics = module._collect_topics()
+        assert topics["cams"] == [
+            {"topic": "/cam0/imu#sensor_msgs.Imu", "info": {"rectified": True}},
+            "/cam1/imu#sensor_msgs.Imu",
+        ]
+        assert module._argv(topics)[1:3] == [
+            "--cams",
+            "/cam0/imu#sensor_msgs.Imu,/cam1/imu#sensor_msgs.Imu",
+        ]
+    finally:
+        module.stop()
+
+
+def test_a_wired_topic_funnel_entry_uses_its_transport() -> None:
+    """Remapping/pins arrive as set_transport on the entry, and the launch line follows."""
+    module = StubFunnelModule(
+        executable=_ECHO,
+        topic_funnels={"cams": TopicFunnel(["cam0/imu"])},
+    )
+    transport = LCMTransport("/remapped/imu", Imu)
+    try:
+        module.set_transport("cam0/imu", transport)
+        assert module._collect_topics()["cams"] == ["/remapped/imu#sensor_msgs.Imu"]
+    finally:
+        module.stop()
+        with contextlib.suppress(Exception):
+            transport.stop()
+
+
+def test_a_topic_funnel_needs_a_declared_port() -> None:
+    """The funnel replaces a port's wiring, so it has to have one to replace."""
+    with pytest.raises(ValueError, match="not an In or IO stream"):
+        StubFunnelModule(executable=_ECHO, topic_funnels={"nope": TopicFunnel(["cam0/imu"])})
+
+
+def test_a_topic_funnel_is_not_a_native_config_field() -> None:
+    """The funnel is wiring, so it belongs in `topics`, not the config struct."""
+    module = StubFunnelModule(
+        executable=_ECHO,
+        topic_funnels={"cams": TopicFunnel(["cam0/imu"])},
+    )
+    try:
+        assert "topic_funnels" not in module.config.to_config_dict()
+        assert "--topic_funnels" not in module._argv({})
+    finally:
+        module.stop()
 
 
 def test_io_port_publisher_qos_reaches_the_native_process() -> None:

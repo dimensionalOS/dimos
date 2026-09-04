@@ -19,7 +19,6 @@
 //! [`host_main`]. Everything a host needs beyond that lives here, so the
 //! generated crate stays a table of module entries and three `include_str!`s.
 
-use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
@@ -33,7 +32,7 @@ use tracing::{error, info, warn};
 use crate::lcm::LcmTransport;
 use crate::module::{
     init_tracing, log_wiring, parse_config_value, read_launch_config, run_module_core,
-    validate_config, Module,
+    validate_config, Module, Topics,
 };
 use crate::transport::{SharedTransport, Transport};
 use crate::zenoh::{ZenohTransport, SESSION_KEY};
@@ -52,7 +51,7 @@ type RunFn = Box<dyn FnOnce(Arc<SharedTransport>, watch::Receiver<bool>) -> Modu
 /// once the transport is open. Produced before anything is spawned so a bad
 /// config kills the host instead of half-starting it.
 struct Prepared {
-    topics: HashMap<String, String>,
+    topics: Topics,
     run: RunFn,
 }
 
@@ -450,7 +449,7 @@ fn run_host_fallible(spec: &HostSpec) -> io::Result<()> {
     let prepared = prepare_all(spec, &stdin)?;
     let known: Vec<String> = prepared
         .iter()
-        .flat_map(|p| p.topics.values().cloned())
+        .flat_map(|p| p.topics.channels().cloned())
         .collect();
     let suppress = resolve_suppress(spec, &stdin, &known)?;
     if let Ok(transport) = std::env::var("DIMOS_TRANSPORT") {
@@ -587,6 +586,7 @@ fn supervise(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn thread_name_is_prefixed_and_capped() {

@@ -184,6 +184,7 @@ enum FieldKind {
     Input {
         decode: Path,
         handler: Ident,
+        wants_meta: bool,
     },
     Output {
         encode: Path,
@@ -336,26 +337,33 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     });
 
     // Every port that receives messages gets an arm in the select! loop.
-    let handled_fields: Vec<(&Ident, &Ident)> = classified
+    let handle_arms: Vec<TokenStream2> = classified
         .iter()
-        .filter_map(|f| match &f.kind {
-            FieldKind::Input { handler, .. } | FieldKind::Io { handler, .. } => {
-                Some((f.name, handler))
+        .filter_map(|f| {
+            let name = f.name;
+            match &f.kind {
+                FieldKind::Input {
+                    handler,
+                    wants_meta: true,
+                    ..
+                } => Some(quote!(
+                    ::core::option::Option::Some((msg, meta)) = self.#name.recv_meta() => {
+                        self.#handler(msg, meta).await
+                    }
+                )),
+                FieldKind::Input { handler, .. } | FieldKind::Io { handler, .. } => Some(quote!(
+                    ::core::option::Option::Some(msg) = self.#name.recv() => {
+                        self.#handler(msg).await
+                    }
+                )),
+                _ => None,
             }
-            _ => None,
         })
         .collect();
 
-    let handle_body = if handled_fields.is_empty() {
+    let handle_body = if handle_arms.is_empty() {
         quote!(::std::future::pending::<()>().await)
     } else {
-        let handle_arms = handled_fields.iter().map(|(name, handler)| {
-            quote!(
-                ::core::option::Option::Some(msg) = self.#name.recv() => {
-                    self.#handler(msg).await
-                }
-            )
-        });
         quote! {
             loop {
                 ::tokio::select! {
@@ -558,6 +566,7 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
             }
             let mut decode: Option<Path> = None;
             let mut handler: Option<Ident> = None;
+            let mut wants_meta = false;
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("decode") {
                     decode = Some(meta.value()?.parse()?);
@@ -565,10 +574,12 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
                     handler = Some(meta.value()?.parse()?);
                 } else if meta.path.is_ident("msg") {
                     msg = Some(meta.value()?.parse::<LitStr>()?.value());
+                } else if meta.path.is_ident("meta") {
+                    wants_meta = true;
                 } else {
                     return Err(meta.error(
                         "unrecognized #[input] argument; expected `decode = ...`, \
-                         `handler = ...` or `msg = ...`",
+                         `handler = ...`, `msg = ...` or `meta`",
                     ));
                 }
                 Ok(())
@@ -576,7 +587,11 @@ fn classify_field(field: &Field, name: &Ident) -> syn::Result<FieldAttr> {
             let decode = decode
                 .ok_or_else(|| syn::Error::new_spanned(attr, "#[input] requires `decode = ...`"))?;
             let handler = handler.unwrap_or_else(|| format_ident!("handle_{}", name));
-            found = Some(FieldKind::Input { decode, handler });
+            found = Some(FieldKind::Input {
+                decode,
+                handler,
+                wants_meta,
+            });
         } else if path.is_ident("output") {
             if found.is_some() {
                 return Err(syn::Error::new_spanned(attr, ONE_ATTR_ONLY));

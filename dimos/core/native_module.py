@@ -52,7 +52,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import IO, Any
+from typing import IO, Any, TypedDict, cast
 
 from pydantic import Field, model_validator
 
@@ -60,9 +60,23 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import session_config
 from dimos.protocol.service.spec import SessionConfig
 from dimos.utils.logging_config import setup_logger
+
+
+class TopicEntry(TypedDict):
+    """A funnel entry carrying that stream's info, mirroring the native `TopicEntry`."""
+
+    topic: str
+    info: dict[str, Any]
+
+
+# The wire channel(s) one port is launched with. A funnel port carries a list,
+# and an entry with per-topic info is an object rather than a bare string.
+TopicValue = str | list[str | TopicEntry]
+TopicsMap = dict[str, TopicValue]
 
 if sys.platform.startswith("linux"):
     import ctypes
@@ -201,6 +215,9 @@ class NativeModule(Module):
     ``DIMOS_TRANSPORT`` env var. With ``stdin_config``, the topics, config,
     publisher QoS and session settings also arrive as one JSON line on stdin.
 
+    A port fanned in by ``.remappings()`` gets a list of channels instead of one,
+    so several same-typed streams reach a single native handler.
+
     The native process should parse whichever it uses and pub/sub on the given
     topics directly. On ``stop()``, the process receives SIGTERM.
     """
@@ -258,16 +275,22 @@ class NativeModule(Module):
         # A blueprint builds its config before global config is settled.
         return pinned.rebased()
 
-    def _argv(self, topics: dict[str, str]) -> list[str]:
+    def _argv(self, topics: TopicsMap) -> list[str]:
         """The command line the native process is spawned with."""
         cmd = [self.config.executable]
-        for name, topic_str in topics.items():
-            cmd.extend([f"--{name}", topic_str])
+        for name, value in topics.items():
+            if isinstance(value, list):
+                joined = ",".join(
+                    entry["topic"] if isinstance(entry, dict) else entry for entry in value
+                )
+            else:
+                joined = value
+            cmd.extend([f"--{name}", joined])
         cmd.extend(self.config.to_cli_args())
         cmd.extend(self.config.extra_args)
         return cmd
 
-    def _stdin_blob(self, topics: dict[str, str]) -> bytes:
+    def _stdin_blob(self, topics: TopicsMap) -> bytes:
         """The JSON line the native process reads its launch from."""
         config_dict = self.config.to_config_dict()
         blob: dict[str, Any] = {
@@ -513,8 +536,8 @@ class NativeModule(Module):
             duration_sec=round(build_elapsed, 3),
         )
 
-    def _collect_topics(self) -> dict[str, str]:
-        topics: dict[str, str] = {}
+    def _collect_topics(self) -> TopicsMap:
+        topics: TopicsMap = {}
         for name in list(self.inputs) + list(self.outputs) + list(self.ios):
             stream = getattr(self, name, None)
             if stream is None:
@@ -525,6 +548,13 @@ class NativeModule(Module):
             channel = getattr(transport, "channel", None)
             if channel is not None:
                 topics[name] = channel
+        for port, funnel in self.config.topic_funnels.items():
+            entries: list[str | TopicEntry] = []
+            for name in funnel.names:
+                channel = cast("PubSubTransport[Any]", self._funnel_streams[name].transport).channel
+                info = funnel.info.get(name)
+                entries.append(channel if info is None else TopicEntry(topic=channel, info=info))
+            topics[port] = entries
         return topics
 
     def _collect_output_qos(self) -> dict[str, dict[str, str]]:

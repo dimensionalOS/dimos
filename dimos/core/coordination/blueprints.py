@@ -27,7 +27,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
-from dimos.core.module import ModuleBase, is_module_type
+from dimos.core.module import ModuleBase, TopicFunnel, is_module_type
 from dimos.core.stream import IO, In, Out, Transport
 from dimos.spec.utils import Spec, is_spec
 from dimos.utils.logging_config import setup_logger
@@ -231,13 +231,28 @@ class Blueprint:
     def remappings(
         self,
         remappings: Sequence[
-            tuple[type[ModuleBase] | str, str, str | type[ModuleBase] | type[Spec]]
+            tuple[
+                type[ModuleBase] | str,
+                str,
+                str
+                | Sequence[str]
+                | Mapping[str, Mapping[str, Any]]
+                | type[ModuleBase]
+                | type[Spec],
+            ]
         ],
     ) -> "Blueprint":
         remappings_dict = dict(self.remapping_map)
+        atoms = list(self.blueprints)
         for module, old, new in remappings:
-            remappings_dict[(self._instance_key(module), old)] = new
-        return replace(self, remapping_map=MappingProxyType(remappings_dict))
+            instance_key = self._instance_key(module)
+            if isinstance(new, (str, type)):
+                remappings_dict[instance_key, old] = new
+            else:
+                atoms = _fan_in(atoms, instance_key, old, TopicFunnel(new))
+        return replace(
+            self, blueprints=tuple(atoms), remapping_map=MappingProxyType(remappings_dict)
+        )
 
     def _instance_key(self, module: type[ModuleBase] | str) -> str:
         if isinstance(module, str):
@@ -379,6 +394,54 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
         requirement_checks=all_requirement_checks,
         configurator_checks=all_configurator_checks,
     )
+
+
+def _fan_in(
+    atoms: list[BlueprintAtom], instance_key: str, port: str, funnel: TopicFunnel
+) -> list[BlueprintAtom]:
+    """Point one declared input at several streams instead of one.
+
+    The port stops being a stream of its own; each entry takes its place as an
+    `In` of the same type, so autoconnect, `.namespace()` and transport pins
+    treat the entries as ordinary streams. The module keeps the port as the
+    single place messages from all of them arrive.
+    """
+    updated = []
+    matched = False
+    for atom in atoms:
+        declared = next(
+            (
+                stream
+                for stream in atom.streams
+                if atom.name == instance_key
+                and stream.name == port
+                and stream.direction in ("in", "inout")
+            ),
+            None,
+        )
+        if declared is None:
+            updated.append(atom)
+            continue
+        matched = True
+        entries = tuple(
+            StreamRef(name=name, type=declared.type, direction="in") for name in funnel.names
+        )
+        updated.append(
+            replace(
+                atom,
+                kwargs={
+                    **atom.kwargs,
+                    "topic_funnels": {**atom.kwargs.get("topic_funnels", {}), port: funnel},
+                },
+                streams=tuple(s for s in atom.streams if s is not declared) + entries,
+            )
+        )
+    if not matched:
+        raise ValueError(
+            f"cannot fan {port!r} in: {instance_key} declares no such In/IO stream "
+            "in this blueprint (already fanned in, or a typo?)"
+        )
+    return updated
 
 
 def _eliminate_duplicates(blueprints: list[BlueprintAtom]) -> list[BlueprintAtom]:

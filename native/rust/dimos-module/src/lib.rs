@@ -29,7 +29,9 @@ pub mod zenoh;
 pub use dimos_module_macros::{native_config, Module};
 pub use host::{host_main, HostSpec, ModuleEntry};
 pub use lcm::LcmTransport;
-pub use module::{run, Builder, Input, Io, Module, ModuleConfig, NativeConfig, NoConfig, Output};
+pub use module::{
+    run, Builder, Input, Io, Module, ModuleConfig, NativeConfig, NoConfig, Output, TopicMetadata,
+};
 pub use tf::{Lookup, Tf, Transform};
 pub use transport::{SharedTransport, Transport};
 pub use workers::worker_pool;

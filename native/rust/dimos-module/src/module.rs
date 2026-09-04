@@ -74,9 +74,13 @@ pub(crate) trait Route: Send + Sync {
     fn try_dispatch(&self, data: &[u8]);
 }
 
+/// Decodes a frame into whatever the port's channel carries. Boxed because an
+/// input route tags the message with the index of the topic it arrived on.
+type Decode<T> = Box<dyn Fn(&[u8]) -> io::Result<T> + Send + Sync>;
+
 struct TypedRoute<T: Send + 'static> {
     topic: String,
-    decode: fn(&[u8]) -> io::Result<T>,
+    decode: Decode<T>,
     sender: mpsc::Sender<T>,
     drop_count: AtomicU64,
     last_log_ns: AtomicU64,
@@ -109,14 +113,55 @@ impl<T: Send + 'static> Route for TypedRoute<T> {
         }
     }
 }
-pub struct Input<T> {
+/// Which topic of an input a message arrived on, for handlers that opt in
+/// with `#[input(meta)]`. `info` is whatever the coordinator attached to that
+/// topic on the launch line (`Null` when nothing was).
+#[derive(Clone, Debug)]
+pub struct TopicMetadata {
+    pub index: usize,
     pub topic: String,
-    receiver: mpsc::Receiver<T>,
+    pub info: serde_json::Value,
+}
+
+/// A port wired to one topic, or to every topic the launch line lists under
+/// it — a topic funnel. Every message carries the index of the topic it
+/// arrived on; `recv` drops it, `recv_meta` hands it over. A port given an
+/// empty array never yields.
+pub struct Input<T> {
+    pub topics: Vec<String>,
+    pub infos: Vec<serde_json::Value>,
+    receiver: mpsc::Receiver<(usize, T)>,
 }
 
 impl<T> Input<T> {
     pub async fn recv(&mut self) -> Option<T> {
-        self.receiver.recv().await
+        self.receiver.recv().await.map(|(_, msg)| msg)
+    }
+
+    pub async fn recv_meta(&mut self) -> Option<(T, TopicMetadata)> {
+        let (index, msg) = self.receiver.recv().await?;
+        let meta = TopicMetadata {
+            index,
+            topic: self.topics[index].clone(),
+            info: self.infos[index].clone(),
+        };
+        Some((msg, meta))
+    }
+
+    pub fn topic(&self, index: usize) -> &str {
+        &self.topics[index]
+    }
+
+    pub fn info(&self, index: usize) -> &serde_json::Value {
+        &self.infos[index]
+    }
+
+    pub fn len(&self) -> usize {
+        self.topics.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.topics.is_empty()
     }
 }
 
@@ -164,19 +209,100 @@ pub(crate) async fn publish_encoded(
         .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "background task gone"))
 }
 
+/// One source of a funneled input: its topic plus whatever per-topic info the
+/// coordinator attached on the launch line.
+#[derive(Clone, Debug)]
+pub(crate) struct TopicEntry {
+    topic: String,
+    info: serde_json::Value,
+}
+
+impl TopicEntry {
+    fn bare(topic: impl Into<String>) -> Self {
+        Self {
+            topic: topic.into(),
+            info: serde_json::Value::Null,
+        }
+    }
+}
+
+/// The port-to-topic wiring from the launch line. A port names one topic, or an
+/// array of same-typed topics that one handler sees.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Topics {
+    single: HashMap<String, String>,
+    grouped: HashMap<String, Vec<TopicEntry>>,
+}
+
+impl Topics {
+    fn ports(&self) -> BTreeSet<&String> {
+        self.single.keys().chain(self.grouped.keys()).collect()
+    }
+
+    /// Every wire channel the module touches, groups flattened.
+    pub(crate) fn channels(&self) -> impl Iterator<Item = &String> {
+        self.single
+            .values()
+            .chain(self.grouped.values().flatten().map(|entry| &entry.topic))
+    }
+}
+
+fn parse_topics(json: &serde_json::Value) -> io::Result<Topics> {
+    let mut topics = Topics::default();
+    let Some(table) = json.get("topics").and_then(|v| v.as_object()) else {
+        return Ok(topics);
+    };
+    for (port, value) in table {
+        let invalid = |detail: &str| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("topic for port '{port}' {detail}"),
+            )
+        };
+        match value {
+            serde_json::Value::String(topic) => {
+                topics.single.insert(port.clone(), topic.clone());
+            }
+            serde_json::Value::Array(items) => {
+                let group = items
+                    .iter()
+                    .map(|item| match item {
+                        serde_json::Value::String(topic) => Ok(TopicEntry::bare(topic)),
+                        serde_json::Value::Object(fields) => {
+                            let topic =
+                                fields
+                                    .get("topic")
+                                    .and_then(|v| v.as_str())
+                                    .ok_or_else(|| {
+                                        invalid("has an entry object without a string 'topic'")
+                                    })?;
+                            Ok(TopicEntry {
+                                topic: topic.to_string(),
+                                info: fields
+                                    .get("info")
+                                    .cloned()
+                                    .unwrap_or(serde_json::Value::Null),
+                            })
+                        }
+                        _ => Err(invalid(
+                            "is a group, so every entry must be a string or a {topic, info} object",
+                        )),
+                    })
+                    .collect::<io::Result<Vec<TopicEntry>>>()?;
+                topics.grouped.insert(port.clone(), group);
+            }
+            _ => return Err(invalid("must be a string or an array of strings")),
+        }
+    }
+    Ok(topics)
+}
+
 /// Extract `(topics, config)` from an already-parsed config object. `run`
 /// parses the line once and also reads `qos` from it, so this takes the value.
 pub(crate) fn parse_config_value<C: DeserializeOwned + Serialize>(
     json: &serde_json::Value,
-) -> io::Result<(HashMap<String, String>, C)> {
-    let mut topics = HashMap::new();
-    if let Some(t) = json.get("topics").and_then(|v| v.as_object()) {
-        for (port, topic) in t {
-            if let Some(s) = topic.as_str() {
-                topics.insert(port.clone(), s.to_string());
-            }
-        }
-    }
+) -> io::Result<(Topics, C)> {
+    let topics = parse_topics(json)?;
 
     let config_value = json.get("config").ok_or_else(|| {
         io::Error::new(
@@ -305,7 +431,7 @@ pub trait Module: Sized + Send + 'static {
 }
 
 pub struct Builder {
-    topics: HashMap<String, String>,
+    topics: Topics,
     // Every port the module asked for a topic, matched against topics after build.
     requested: BTreeSet<String>,
     routes: HashMap<String, Vec<Box<dyn Route>>>,
@@ -315,7 +441,7 @@ pub struct Builder {
 }
 
 impl Builder {
-    pub(crate) fn new(topics: HashMap<String, String>) -> Self {
+    pub(crate) fn new(topics: Topics) -> Self {
         Self {
             topics,
             requested: BTreeSet::new(),
@@ -328,15 +454,29 @@ impl Builder {
     fn topic_for(&mut self, port: &str) -> String {
         self.requested.insert(port.to_string());
         self.topics
+            .single
             .get(port)
             .cloned()
             .unwrap_or_else(|| format!("/{port}"))
     }
 
+    /// One topic, or every topic an array under `port` lists. An unnamed port
+    /// falls back to `/{port}`; an empty array is a port with no sources.
+    fn input_entries_for(&mut self, port: &str) -> Vec<TopicEntry> {
+        self.requested.insert(port.to_string());
+        if let Some(topic) = self.topics.single.get(port) {
+            vec![TopicEntry::bare(topic)]
+        } else if let Some(group) = self.topics.grouped.get(port) {
+            group.clone()
+        } else {
+            vec![TopicEntry::bare(format!("/{port}"))]
+        }
+    }
+
     // A mismatch is dead wiring: an unclaimed topic reaches no port, and an
     // unsent one leaves the port on a fallback name nothing else publishes to.
     pub(crate) fn enforce_topics_match_ports(&self) -> io::Result<()> {
-        let provided: BTreeSet<&String> = self.topics.keys().collect();
+        let provided = self.topics.ports();
         let requested: BTreeSet<&String> = self.requested.iter().collect();
         if provided == requested {
             return Ok(());
@@ -351,22 +491,31 @@ impl Builder {
         ))
     }
 
-    fn add_route<T: Send + 'static>(
+    fn push_route<T: Send + 'static>(
         &mut self,
         topic: &str,
-        decode: fn(&[u8]) -> io::Result<T>,
-    ) -> mpsc::Receiver<T> {
-        let (tx, rx) = mpsc::channel(INPUT_CHANNEL_CAPACITY);
+        decode: Decode<T>,
+        sender: mpsc::Sender<T>,
+    ) {
         self.routes
             .entry(topic.to_string())
             .or_default()
             .push(Box::new(TypedRoute {
                 topic: topic.to_string(),
                 decode,
-                sender: tx,
+                sender,
                 drop_count: AtomicU64::new(0),
                 last_log_ns: AtomicU64::new(0),
             }));
+    }
+
+    fn add_route<T: Send + 'static>(
+        &mut self,
+        topic: &str,
+        decode: fn(&[u8]) -> io::Result<T>,
+    ) -> mpsc::Receiver<T> {
+        let (tx, rx) = mpsc::channel(INPUT_CHANNEL_CAPACITY);
+        self.push_route(topic, Box::new(decode), tx);
         rx
     }
 
@@ -381,9 +530,21 @@ impl Builder {
         port: &str,
         decode: fn(&[u8]) -> io::Result<T>,
     ) -> Input<T> {
-        let topic = self.topic_for(port);
-        let receiver = self.add_route(&topic, decode);
-        Input { topic, receiver }
+        let entries = self.input_entries_for(port);
+        let (sender, receiver) = mpsc::channel(INPUT_CHANNEL_CAPACITY);
+        for (index, entry) in entries.iter().enumerate() {
+            let tag = Box::new(move |bytes: &[u8]| decode(bytes).map(|msg| (index, msg)));
+            self.push_route(&entry.topic, tag, sender.clone());
+        }
+        let (topics, infos) = entries
+            .into_iter()
+            .map(|entry| (entry.topic, entry.info))
+            .unzip();
+        Input {
+            topics,
+            infos,
+            receiver,
+        }
     }
 
     pub fn output<T>(&mut self, port: &str, encode: fn(&T) -> Vec<u8>) -> Output<T> {
@@ -514,7 +675,7 @@ where
 /// and by the baked host, which drives several of these on one transport.
 pub(crate) async fn run_module_core<M, T>(
     transport: Arc<T>,
-    topics: HashMap<String, String>,
+    topics: Topics,
     config: M::Config,
     mut shutdown: watch::Receiver<bool>,
 ) -> io::Result<()>
@@ -551,9 +712,12 @@ where
 
 /// Log the resolved wiring of a module, tagged with whatever the operator sees
 /// in `ps`: the executable for a lone module, the module id inside a host.
-pub(crate) fn log_wiring<C: Debug>(exe: &str, topics: &HashMap<String, String>, config: &C) {
-    for (port, topic) in topics {
+pub(crate) fn log_wiring<C: Debug>(exe: &str, topics: &Topics, config: &C) {
+    for (port, topic) in &topics.single {
         info!(exe = %exe, port = %port, topic = %topic, "topic mapping");
+    }
+    for (port, group) in &topics.grouped {
+        info!(exe = %exe, port = %port, topics = ?group, "topic group mapping");
     }
     info!(exe = %exe, config = ?config, "config loaded");
 }
@@ -599,9 +763,7 @@ mod tests {
 
     /// Parse a raw config line the way `run` does, for exercising
     /// `parse_config_value` from the string form the coordinator sends.
-    fn parse_config_json<C: DeserializeOwned + Serialize>(
-        line: &str,
-    ) -> io::Result<(HashMap<String, String>, C)> {
+    fn parse_config_json<C: DeserializeOwned + Serialize>(line: &str) -> io::Result<(Topics, C)> {
         parse_config_value(&parse_launch_config(line)?)
     }
 
@@ -726,8 +888,8 @@ mod tests {
     fn parses_topics_and_config() {
         let json = r#"{"topics": {"data": "/foo/data", "confirm": "/foo/confirm"}, "config": {"value": 42, "name": "hello"}}"#;
         let (topics, config) = parse_config_json::<TestConfig>(json).unwrap();
-        assert_eq!(topics["data"], "/foo/data");
-        assert_eq!(topics["confirm"], "/foo/confirm");
+        assert_eq!(topics.single["data"], "/foo/data");
+        assert_eq!(topics.single["confirm"], "/foo/confirm");
         assert_eq!(
             config,
             TestConfig {
@@ -798,7 +960,7 @@ mod tests {
     fn missing_topics_field_gives_empty_map() {
         let json = r#"{"config": {"value": 1, "name": "x"}}"#;
         let (topics, _config) = parse_config_json::<TestConfig>(json).unwrap();
-        assert!(topics.is_empty());
+        assert!(topics.ports().is_empty());
     }
 
     #[test]
@@ -887,11 +1049,24 @@ mod tests {
 
     // topic_for fallback
 
-    fn topics(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs
-            .iter()
-            .map(|(p, t)| (p.to_string(), t.to_string()))
-            .collect()
+    fn topics(pairs: &[(&str, &str)]) -> Topics {
+        Topics {
+            single: pairs
+                .iter()
+                .map(|(port, topic)| (port.to_string(), topic.to_string()))
+                .collect(),
+            grouped: HashMap::new(),
+        }
+    }
+
+    fn grouped_topics(port: &str, group: &[&str]) -> Topics {
+        Topics {
+            single: HashMap::new(),
+            grouped: HashMap::from([(
+                port.to_string(),
+                group.iter().map(|t| TopicEntry::bare(*t)).collect(),
+            )]),
+        }
     }
 
     fn builder_with_topics(pairs: &[(&str, &str)]) -> Builder {
@@ -914,14 +1089,14 @@ mod tests {
     fn input_uses_mapped_topic() {
         let mut builder = builder_with_topics(&[("data", "/test/data")]);
         let input = builder.input("data", |b| Ok(b.to_vec()));
-        assert_eq!(input.topic, "/test/data");
+        assert_eq!(input.topics, ["/test/data"]);
     }
 
     #[test]
     fn input_falls_back_to_slash_port_when_unmapped() {
         let mut builder = builder_with_topics(&[]);
         let input = builder.input("data", |b| Ok(b.to_vec()));
-        assert_eq!(input.topic, "/data");
+        assert_eq!(input.topics, ["/data"]);
     }
 
     #[test]
@@ -929,6 +1104,83 @@ mod tests {
         let mut builder = builder_with_topics(&[("cmd_vel", "/robot/cmd_vel")]);
         let output = builder.output("cmd_vel", |b: &Vec<u8>| b.clone());
         assert_eq!(output.topic, "/robot/cmd_vel");
+    }
+
+    // topic funnels: a port wired to an array of topics
+
+    #[test]
+    fn a_port_given_an_array_of_topics_becomes_a_funnel() {
+        let json = r#"{"topics": {"cams": ["/cam0", "/cam1"], "odom": "/odom"}, "config": null}"#;
+        let (topics, _config) = parse_config_json::<()>(json).unwrap();
+        let cams: Vec<&str> = topics.grouped["cams"].iter().map(|e| &*e.topic).collect();
+        assert_eq!(cams, ["/cam0", "/cam1"]);
+        assert_eq!(topics.single["odom"], "/odom");
+    }
+
+    #[test]
+    fn a_funnel_entry_that_is_not_a_string_is_rejected() {
+        let json = r#"{"topics": {"cams": ["/cam0", 7]}, "config": null}"#;
+        let err = parse_config_json::<()>(json).expect_err("a non-string funnel entry is invalid");
+        assert!(err.to_string().contains("cams"), "{err}");
+    }
+
+    #[test]
+    fn a_funnel_entry_object_carries_per_topic_info() {
+        let json = r#"{"topics": {"cams":
+            ["/cam0", {"topic": "/cam1", "info": {"rectified": true}}]}, "config": null}"#;
+        let (topics, _config) = parse_config_json::<()>(json).unwrap();
+        let cams = &topics.grouped["cams"];
+        assert_eq!(cams[0].info, serde_json::Value::Null);
+        assert_eq!(cams[1].topic, "/cam1");
+        assert_eq!(cams[1].info["rectified"], true);
+    }
+
+    #[test]
+    fn a_funnel_entry_object_without_a_topic_is_rejected() {
+        let json = r#"{"topics": {"cams": [{"info": {"rectified": true}}]}, "config": null}"#;
+        let err = parse_config_json::<()>(json).expect_err("an entry object needs a topic");
+        assert!(err.to_string().contains("'topic'"), "{err}");
+    }
+
+    #[test]
+    fn a_funneled_input_subscribes_every_topic_it_was_given() {
+        let mut builder = Builder::new(grouped_topics("cams", &["/cam0", "/cam1"]));
+        let input = builder.input("cams", |b| Ok(b.to_vec()));
+        assert_eq!(input.topics, ["/cam0", "/cam1"]);
+        assert_eq!(builder.routes.get("/cam0").map(Vec::len), Some(1));
+        assert_eq!(builder.routes.get("/cam1").map(Vec::len), Some(1));
+        builder.enforce_topics_match_ports().expect("port claimed");
+    }
+
+    /// One handler sees every topic, so the metadata is the only thing that
+    /// says which camera of a rig a frame came from.
+    #[tokio::test]
+    async fn recv_meta_names_the_topic_a_message_arrived_on() {
+        let mut topics = grouped_topics("cams", &["/cam0", "/cam1"]);
+        topics.grouped.get_mut("cams").unwrap()[1].info = serde_json::json!({"rectified": true});
+        let mut builder = Builder::new(topics);
+        let mut input = builder.input("cams", |b| Ok(b.to_vec()));
+
+        builder.routes["/cam1"][0].try_dispatch(b"second");
+        builder.routes["/cam0"][0].try_dispatch(b"first");
+
+        let (msg, meta) = input.recv_meta().await.expect("cam1 frame");
+        assert_eq!(msg, b"second");
+        assert_eq!(meta.index, 1);
+        assert_eq!(meta.topic, "/cam1");
+        assert_eq!(meta.info["rectified"], true);
+
+        // recv drops the tag for handlers that treat the funnel as one stream.
+        assert_eq!(input.recv().await.expect("cam0 frame"), b"first");
+    }
+
+    #[test]
+    fn an_empty_funnel_still_claims_its_port() {
+        let mut builder = Builder::new(grouped_topics("cams", &[]));
+        let input = builder.input("cams", |b| Ok(b.to_vec()));
+        assert!(input.is_empty());
+        assert!(builder.routes.is_empty());
+        builder.enforce_topics_match_ports().expect("port claimed");
     }
 
     #[test]
@@ -1241,7 +1493,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel::<Vec<u8>>(1);
         let route = TypedRoute {
             topic: "/test".to_string(),
-            decode: |b| Ok(b.to_vec()),
+            decode: Box::new(|b: &[u8]| Ok(b.to_vec())),
             sender: tx,
             drop_count: AtomicU64::new(0),
             last_log_ns: AtomicU64::new(0),
@@ -1282,6 +1534,41 @@ mod tests {
                         .expect("publish");
                 }
             }
+        }
+
+        #[derive(crate::Module)]
+        struct Rig {
+            #[input(decode = decode, meta)]
+            cams: crate::Input<Msg>,
+            #[output(encode = encode)]
+            seen: crate::Output<Msg>,
+        }
+
+        impl Rig {
+            async fn handle_cams(&mut self, msg: Msg, meta: crate::TopicMetadata) {
+                let mut tagged = vec![meta.index as u8];
+                tagged.extend(msg.0);
+                self.seen.publish(&Msg(tagged)).await.expect("publish");
+            }
+        }
+
+        #[tokio::test]
+        async fn a_meta_input_hands_its_handler_the_topic_index() {
+            let mut builder = Builder::new(Topics {
+                single: HashMap::from([("seen".to_string(), "/seen".to_string())]),
+                grouped: HashMap::from([(
+                    "cams".to_string(),
+                    vec![TopicEntry::bare("/cam0"), TopicEntry::bare("/cam1")],
+                )]),
+            });
+            let mut rig = Rig::build(&mut builder, NoConfig);
+
+            builder.routes["/cam1"][0].try_dispatch(b"frame");
+            builder.routes.clear();
+            rig.handle().await;
+
+            let (_, rx) = &mut builder.outputs[0];
+            assert_eq!(rx.recv().await.expect("handler output"), b"\x01frame");
         }
 
         #[tokio::test]

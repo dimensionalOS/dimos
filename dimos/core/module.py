@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
-from collections.abc import AsyncGenerator, Callable
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from functools import partial
 import inspect
 import json
@@ -41,7 +41,7 @@ from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import CompositeResource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import IO, In, Out, RemoteOut, Transport
-from dimos.core.transport_factory import rpc_backend
+from dimos.core.transport_factory import make_transport, rpc_backend
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.protocol.tf.tf import TF
@@ -103,6 +103,76 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 Deployment = Literal["python", "docker"]
 
 
+@dataclass(init=False)
+class TopicFunnel:
+    """Several same-typed streams that one declared port fans into one handler.
+
+    Built by `Blueprint.remappings()`, not by blueprint authors::
+
+        .remappings([
+            (Fuser, "scan", ["front_lidar", "rear_lidar"]),
+            (Fuser, "image", {"depth": {"meters_per_unit": 0.001}, "color": {}}),
+        ])
+    """
+
+    names: list[str]
+    info: dict[str, dict[str, Any]]
+
+    def __init__(self, entries: "Sequence[str] | Mapping[str, Mapping[str, Any]]") -> None:
+        self.names = list(entries)
+        self.info = (
+            {name: dict(value) for name, value in entries.items() if value}
+            if isinstance(entries, Mapping)
+            else {}
+        )
+        leading_slash = [name for name in self.names if name.startswith("/")]
+        if leading_slash:
+            raise ValueError(
+                f"topic funnel names must be stream names, not topics: {leading_slash} "
+                "start with '/' (use `left_cam`, not `/left_cam`)"
+            )
+
+
+@dataclass(frozen=True)
+class TopicMetadata:
+    """Which stream a message arrived on, for handlers that take `(msg, meta)`.
+
+    `index` is the position in the funnel's `names` (0 for a plain input);
+    `name` is the stream name as the module declared it, pre-remapping;
+    `info` is whatever the funnel's `TopicFunnel.info` attached to that name.
+    """
+
+    index: int
+    name: str
+    info: dict[str, Any] = field(default_factory=dict)
+
+
+def _handler_wants_metadata(handler: Callable[..., Any], label: str) -> bool:
+    """True if the bound handler takes `(msg, meta)` rather than just `(msg)`."""
+    count = len(inspect.signature(handler).parameters)
+    if count not in (1, 2):
+        raise TypeError(f"{label} must take (msg) or (msg, meta), not {count} parameters")
+    return count == 2
+
+
+def _dispatch_to(
+    handler: Callable[..., Any], metas: "list[TopicMetadata] | None"
+) -> Callable[[int, Any], Any]:
+    """Adapt a handler to the `(index, msg)` the dispatcher calls with.
+
+    `metas` is None when the handler takes just the message; otherwise it holds
+    one `TopicMetadata` per stream feeding the port, indexed the same way.
+    """
+
+    async def invoke(index: int, msg: Any) -> None:
+        if metas is None:
+            await handler(msg)
+        else:
+            await handler(msg, metas[index])
+
+    return invoke
+
+
 class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = Field(default_factory=rpc_backend)
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
@@ -113,6 +183,9 @@ class ModuleConfig(BaseConfig):
     # once (see BlueprintAtom.instance_name). Changes the RPC topic prefix
     # from the class name to this name.
     instance_name: str | None = None
+    # Declared In/IO port -> the streams that port's single handler receives.
+    # Set by `Blueprint.remappings()`, not by blueprint authors.
+    topic_funnels: dict[str, TopicFunnel] = Field(default_factory=dict)
     g: GlobalConfig = global_config
 
 
@@ -146,9 +219,11 @@ class ModuleBase(Configurable, CompositeResource):
     _main_gen: AsyncGenerator[None, None] | None = None
     _tools: dict[str, Any]
     _tools_lock: threading.Lock
+    _funnel_streams: dict[str, In[Any]]
 
     def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)
+        self._funnel_streams = self._make_funnel_streams()
         self._module_closed_lock = threading.Lock()
         self._tools = {}
         self._tools_lock = threading.Lock()
@@ -638,12 +713,18 @@ class ModuleBase(Configurable, CompositeResource):
     def _auto_bind_handlers(self) -> None:
         """
         For each declared `x: In[T]` or `x: IO[T]`, if `async def handle_x` exists,
-        subscribe it via process_observable so it runs on self._loop.
+        subscribe it to that port's stream so it runs on self._loop. A port that
+        `.remappings()` fanned in is subscribed to every stream of its funnel
+        instead, all reaching the one handler.
+
+        A native module defines no such method — its subprocess subscribes
+        instead — so this is a no-op there.
         """
         # Validate every handler before subscribing any of them.
-        bindings: list[tuple[Any, Callable[[Any], Any]]] = []
-        for input_name, in_stream in {**self.inputs, **self.ios}.items():
-            handler = getattr(self, f"handle_{input_name}", None)
+        bindings: list[tuple[list[In[Any] | IO[Any]], Callable[[int, Any], Any]]] = []
+        ports: dict[str, In[Any] | IO[Any]] = {**self.inputs, **self.ios}
+        for port, declared in ports.items():
+            handler = getattr(self, f"handle_{port}", None)
             if handler is None:
                 continue
             # Async @rpc wraps the coroutine fn in a sync dispatcher. Unwrap it
@@ -653,18 +734,64 @@ class ModuleBase(Configurable, CompositeResource):
                 handler = handler.aio.__get__(self, type(self))
             if not inspect.iscoroutinefunction(handler):
                 raise TypeError(
-                    f"{type(self).__name__}.handle_{input_name} must be `async def` "
+                    f"{type(self).__name__}.handle_{port} must be `async def` "
                     "(use a manual self.<input>.subscribe(...) for sync handlers)"
                 )
-            bindings.append((in_stream, handler))
+            funnel = self.config.topic_funnels.get(port)
+            names = funnel.names if funnel else [port]
+            streams: list[In[Any] | IO[Any]] = (
+                [self._funnel_streams[name] for name in names] if funnel else [declared]
+            )
+            metas = None
+            if _handler_wants_metadata(handler, f"{type(self).__name__}.handle_{port}"):
+                metas = [
+                    TopicMetadata(
+                        index=index, name=name, info=funnel.info.get(name, {}) if funnel else {}
+                    )
+                    for index, name in enumerate(names)
+                ]
+            bindings.append((streams, _dispatch_to(handler, metas)))
 
-        for in_stream, handler in bindings:
-            # process_observable runs each handler through a per-subscription
-            # dispatcher task on self._loop that serializes invocations and
-            # keeps only the latest unprocessed message. We subscribe to
-            # pure_observable() because the dispatcher already provides
-            # backpressure.
-            self.process_observable(in_stream.pure_observable(), handler)
+        for streams, invoke in bindings:
+            # One dispatcher task per port, on self._loop: it serializes the
+            # handler and holds only the latest unprocessed message per stream.
+            on_msg, dispatcher = self._make_keyed_dispatch(invoke)
+            self.register_disposable(dispatcher)
+            for index, stream in enumerate(streams):
+                self.register_disposable(Disposable(stream.subscribe(partial(on_msg, index))))
+
+    def _make_funnel_streams(self) -> "dict[str, In[Any]]":
+        """One `In` per topic-funnel entry, keyed by stream name.
+
+        These are wired like declared ports (`set_transport` finds them, the
+        blueprint machinery remaps/namespaces/pins them), but they are not
+        attributes, so `inputs` and the native launch line never see them as
+        ports of their own — the funnel's port stands in for all of them.
+
+        Each starts on the transport its name alone implies, which a coordinator
+        overwrites when it wires the blueprint and standalone use keeps.
+        """
+        streams: dict[str, In[Any]] = {}
+        for port, funnel in self.config.topic_funnels.items():
+            declared = self.inputs.get(port) or self.ios.get(port)
+            if declared is None:
+                raise ValueError(
+                    f"topic funnel port {port!r} is not an In or IO stream of {type(self).__name__}"
+                )
+            for name in funnel.names:
+                if name != port and name in {**self.inputs, **self.outputs, **self.ios}:
+                    raise ValueError(
+                        f"topic funnel {port!r} entry {name!r} collides with a "
+                        f"declared stream of {type(self).__name__}"
+                    )
+                if name in streams:
+                    raise ValueError(
+                        f"topic funnel {port!r} entry {name!r} appears in more than one funnel"
+                    )
+                stream: In[Any] = In(declared.type, name, self)
+                stream.transport = make_transport(name, declared.type)
+                streams[name] = stream
+        return streams
 
     def _make_async_dispatch(
         self, async_handler: Callable[[Any], Any]
@@ -680,45 +807,60 @@ class ModuleBase(Configurable, CompositeResource):
             message is kept (LATEST policy).
           - The returned Disposable cancels the dispatcher task.
         """
+
+        on_msg, disposable = self._make_keyed_dispatch(_dispatch_to(async_handler, None))
+        return partial(on_msg, 0), disposable
+
+    def _make_keyed_dispatch(
+        self, async_handler: Callable[[int, Any], Any]
+    ) -> tuple[Callable[[int, Any], None], "DisposableBase"]:
+        """`_make_async_dispatch` generalized to a mailbox keyed by sender.
+
+        The mailbox keeps the latest unprocessed message *per key* and drains them
+        oldest-waiting first, so one chatty topic in a group cannot starve its
+        siblings the way a single shared slot would. One key is the degenerate case
+        and behaves exactly like a single LATEST slot.
+        """
         loop = self._loop
         if loop is None or not loop.is_running():
             raise RuntimeError(f"{type(self).__name__}._loop is not running")
 
-        async def _bootstrap() -> tuple[asyncio.Event, dict[str, Any], asyncio.Task[None]]:
+        async def _bootstrap() -> tuple[asyncio.Event, dict[int, Any], asyncio.Task[None]]:
             event = asyncio.Event()
-            slot: dict[str, Any] = {"value": None, "has_value": False}
+            # Insertion-ordered, and re-assigning an existing key keeps its
+            # position, so a waiting topic holds its place while its value ages up.
+            pending: dict[int, Any] = {}
 
             async def dispatcher() -> None:
                 try:
                     while True:
                         await event.wait()
                         event.clear()
-                        if not slot["has_value"]:
-                            continue
-                        msg = slot["value"]
-                        slot["value"] = None
-                        slot["has_value"] = False
-                        try:
-                            await async_handler(msg)
-                        except asyncio.CancelledError:
-                            raise
-                        except BaseException as e:
-                            self._log_async_handler_exception(e)
+                        while pending:
+                            key = next(iter(pending))
+                            msg = pending.pop(key)
+                            try:
+                                await async_handler(key, msg)
+                            except asyncio.CancelledError:
+                                raise
+                            except BaseException as e:
+                                self._log_async_handler_exception(e)
                 except asyncio.CancelledError:
                     return
 
-            return event, slot, asyncio.create_task(dispatcher())
+            return event, pending, asyncio.create_task(dispatcher())
 
-        event, slot, task = asyncio.run_coroutine_threadsafe(_bootstrap(), loop).result(timeout=5.0)
+        event, pending, task = asyncio.run_coroutine_threadsafe(_bootstrap(), loop).result(
+            timeout=5.0
+        )
 
-        def on_msg(msg: Any) -> None:
+        def on_msg(key: int, msg: Any) -> None:
             loop_now = self._loop
             if loop_now is None or not loop_now.is_running():
                 return
 
             def _set() -> None:
-                slot["value"] = msg
-                slot["has_value"] = True
+                pending[key] = msg
                 event.set()
 
             loop_now.call_soon_threadsafe(_set)
@@ -811,7 +953,7 @@ class Module(ModuleBase):
 
     @rpc
     def set_transport(self, stream_name: str, transport: Transport) -> bool:  # type: ignore[type-arg]
-        stream = getattr(self, stream_name, None)
+        stream = self._funnel_streams.get(stream_name) or getattr(self, stream_name, None)
         if not stream:
             raise ValueError(f"{stream_name} not found in {self.__class__.__name__}")
 

@@ -61,7 +61,7 @@ Every transport is compiled into the binary. `run_with_transport` opens the one 
 
 - `#[derive(Module)]`: on the struct. Required.
 - `#[module(setup = fn, teardown = fn)]`: on the struct. Both optional. Names methods on `Self`. `setup` runs once before the input dispatch loop starts (use it to spawn background tasks or initialize resources); `teardown` runs once after the loop exits (use it for cleanup).
-- `#[input(decode = fn, handler = fn)]`: on a field of type `Input<T>`. `decode` is required; `handler` defaults to `handle_<field_name>`.
+- `#[input(decode = fn, handler = fn, meta)]`: on a field of type `Input<T>`. `decode` is required; `handler` defaults to `handle_<field_name>`. The `meta` flag makes the handler take `(msg, meta: TopicMetadata)`, where `meta` names the topic the message arrived on — useful when the port is a topic funnel (see [Topic funnels](#topic-funnels)).
 - `#[output(encode = fn)]`: on a field of type `Output<T>`. `encode` is required.
 - `#[io(decode = fn, encode = fn, handler = fn)]`: on a field of type `Io<T>`, a port that publishes to and subscribes on one topic. `decode` and `encode` are required; `handler` defaults to `handle_<field_name>`. The transports deliver a message back to its own sender, so the handler also sees what the module publishes. Use `#[output]` instead when the module only publishes.
 - `#[config]`: on one field. The type must be defined with `#[native_config]` (see [Config](#config)). At most one per struct. If absent, `Config` defaults to `dimos_module::NoConfig`.
@@ -107,6 +107,52 @@ fn validate_health_range(cfg: &Config) -> Result<(), ValidationError> {
 At runtime `run()` enforces the mapping on the Python payload: deserialization rejects an unknown field, and a key-set check rejects any field whose JSON key is absent, even an `Option` or a type alias to `Option` that serde would otherwise accept as `None`.
 
 Field name = port name. Ports map to topics via the stdin JSON; unmapped ports fall back to `/{port}`.
+
+## Topic funnels
+
+A rig with N identical sensors would otherwise need N ports and N near-identical handlers. A topic funnel is one `Input<T>` port wired to a list of topics that all carry `T`, delivered to one handler in arrival order. Any input accepts a funnel — on the launch line the port's value is an array of topics rather than a string, and nothing in the module changes. A handler that needs to tell the sources apart opts in with the `meta` flag and receives a `TopicMetadata` alongside each message:
+
+```rust
+#[derive(Module)]
+struct MultiCam {
+    #[input(decode = Image::decode, meta)]
+    cameras: Input<Image>,
+}
+
+impl MultiCam {
+    async fn handle_cameras(&mut self, image: Image, meta: TopicMetadata) {
+        // meta.index: position in the topic list; meta.topic: the topic itself;
+        // meta.info: per-topic JSON the coordinator attached (Null when none)
+    }
+}
+```
+
+Funnelling happens at the blueprint routing level: `.remappings()` takes a list of stream names where it would otherwise take one.
+
+```python
+MultiCam.blueprint().remappings([
+    (MultiCam, "cameras", ["left_cam", "right_cam"]),
+])
+```
+
+A dict instead of a list attaches arbitrary per-stream info — `{"left_cam": {"rectified": True}, "right_cam": {}}` — which reaches the handler as `TopicMetadata.info` (a dict in python, `serde_json::Value` in rust; on the launch line such an entry is a `{"topic": ..., "info": ...}` object instead of a plain string).
+
+The entries are stream names, not backend topics — a leading `/` is rejected. Each one takes the port's place as an `In` stream of the same type, so autoconnect matches it against producers' `Out` streams, `.namespace()` and further `.remappings()` rewrite it, and blueprint transport pins apply. The same blueprint runs unchanged over LCM or zenoh.
+
+The port itself stops being a stream of its own: python hands the wired entries' channels to the native process, which subscribes them directly. On the launch line the port's value is an array rather than a string. A funnel with no entries still claims its port but never yields.
+
+Fan-in is a `ModuleConfig` feature, so a plain Python `Module` funnels the same way. There the module subscribes the entries itself and dispatches to `async def handle_<port>`. Opting into metadata is by signature — a one-parameter handler just gets the message, a two-parameter handler also gets a `TopicMetadata` with `index` (position in the list) and `name` (the stream name as declared, pre-remapping):
+
+```python
+class MultiCam(Module):
+    cameras: In[Image]
+
+    async def handle_cameras(self, image: Image, meta: TopicMetadata) -> None: ...
+```
+
+The same applies to any `handle_<input>` for a plain `In` port, where the metadata is always `index=0, name=<input>`.
+
+Either way the whole funnel shares one dispatcher, so the handler is never re-entered. What they do under load differs: python's mailbox holds the latest unprocessed message per stream and drains them oldest-waiting first, so a chatty camera cannot starve the others, while rust feeds every topic of a funnel into one bounded channel that drops the arriving message once it is full.
 
 ## Transforms
 
