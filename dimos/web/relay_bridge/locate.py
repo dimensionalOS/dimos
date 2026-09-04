@@ -89,6 +89,7 @@ def relay_run_cmd(
     serve_dir: Path | None = None,
     cert: Path | None = None,
     key: Path | None = None,
+    auth_file: Path | None = None,
 ) -> list[str]:
     """Build the argv that runs the relay with the pinned config and least permissions."""
     # Canonical paths: the relay realpath-checks served files against its
@@ -103,6 +104,7 @@ def relay_run_cmd(
             ("--serve-dir", serve_dir),
             ("--cert", cert),
             ("--key", key),
+            ("--auth-file", auth_file),
         )
         if path is not None
     ]

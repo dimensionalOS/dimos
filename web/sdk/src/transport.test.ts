@@ -327,6 +327,18 @@ describe("ReconnectingTransport", () => {
     expect(phases.at(-1)).toEqual({ phase: "failed", reason: "protocol mismatch" });
   });
 
+  it("fail() carries the relay's code when there is one", async () => {
+    const transport = makeTransport({ fetchInfo: () => Promise.reject(new Error("down")) });
+    transport.start();
+    await vi.advanceTimersByTimeAsync(0);
+    transport.fail("invalid viewer token", "auth_failed");
+    expect(transport.phase).toEqual({
+      phase: "failed",
+      reason: "invalid viewer token",
+      code: "auth_failed",
+    });
+  });
+
   it("fails permanently on a protocol version mismatch from /api/info", async () => {
     const fetchInfo = vi.fn(() => Promise.resolve({ ...INFO, v: 99 }));
     const transport = makeTransport({ fetchInfo });

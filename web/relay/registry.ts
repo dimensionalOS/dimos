@@ -82,6 +82,8 @@ export interface ViewerPeer {
   readonly sink: ViewerSink;
   /** True once a valid hello arrived; robots pushes skip un-greeted viewers. */
   greeted: boolean;
+  /** Name from the relay's auth file once authenticated; null with auth off. */
+  name: string | null;
   /** Push channel chosen at hello time (bidi stream or datagrams). */
   sendMsg(msg: Msg): void;
 }
@@ -770,6 +772,7 @@ export class Registry {
       ),
       perViewer: [...this.#viewers].map((v) => ({
         id: v.id,
+        name: v.name,
         watched: v.watched,
         subs: [...v.subs].sort(),
         channels: Object.fromEntries(

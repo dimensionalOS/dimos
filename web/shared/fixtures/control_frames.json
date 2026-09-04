@@ -68,6 +68,16 @@
       "b64": "IwAAAHsidCI6ImhlbGxvIiwidiI6Niwicm9sZSI6InZpZXdlciJ9"
     },
     {
+      "name": "hello_viewer_token",
+      "message": {
+        "t": "hello",
+        "v": 6,
+        "role": "viewer",
+        "token": "viewer-token-fixture-0123456789abcdef"
+      },
+      "b64": "UwAAAHsidCI6ImhlbGxvIiwidiI6Niwicm9sZSI6InZpZXdlciIsInRva2VuIjoidmlld2VyLXRva2VuLWZpeHR1cmUtMDEyMzQ1Njc4OWFiY2RlZiJ9"
+    },
+    {
       "name": "welcome",
       "message": {
         "t": "welcome",

@@ -28,7 +28,7 @@ const PHASE_LABEL: Record<string, string> = {
 };
 
 export function StatusBar(
-  { status, view, onViewChange, pages, page, onPageChange, onSwitchRobot }: {
+  { status, view, onViewChange, pages, page, onPageChange, onSwitchRobot, onLogOut }: {
     status: SessionStatus;
     view: View;
     onViewChange: (view: View) => void;
@@ -39,6 +39,8 @@ export function StatusBar(
     /** Reopens the robot picker; null hides the button (nothing else to
      * watch, or the picker is already open). */
     onSwitchRobot: (() => void) | null;
+    /** Forgets the stored viewer token; null when none is stored. */
+    onLogOut: (() => void) | null;
   },
 ) {
   const transport = status.transport;
@@ -121,11 +123,16 @@ export function StatusBar(
       {onSwitchRobot !== null && (
         <button
           type="button"
-          className={styles.switchRobot}
+          className={styles.action}
           data-testid="switch-robot"
           onClick={onSwitchRobot}
         >
           switch robot
+        </button>
+      )}
+      {onLogOut !== null && (
+        <button type="button" className={styles.action} data-testid="log-out" onClick={onLogOut}>
+          log out
         </button>
       )}
       {status.lastError !== null && <span className={styles.error}>{status.lastError.message}

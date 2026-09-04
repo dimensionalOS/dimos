@@ -24,6 +24,8 @@ import hashlib
 import json
 import statistics
 import time
+from typing import Any
+import urllib.error
 import urllib.request
 
 import pytest
@@ -518,3 +520,83 @@ async def test_close_signal_stops_writer_and_wakes_waiter(own_relay: RelayProces
         # A dead channel is visible at the producer.
         with pytest.raises(RuntimeError):
             writer.offer(b"y")
+
+
+# --auth-file: both hellos carry a secret and /api/stats wants a bearer token.
+
+ROBOT_KEY = "robot-key-e2e-0123456789abcdef"
+VIEWER_TOKEN = "viewer-token-e2e-0123456789abcdef"
+
+
+@pytest.fixture(scope="module")
+def auth_relay(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RelayReadyInfo]:
+    auth_file = tmp_path_factory.mktemp("auth") / "auth.json"
+    auth_file.write_text(
+        json.dumps(
+            {
+                "robots": {ROBOT.id: ROBOT_KEY, "other-bot": "other-key-e2e-0123456789abcdef"},
+                "viewers": {"tester": VIEWER_TOKEN},
+            }
+        )
+    )
+    process = RelayProcess(auth_file=auth_file)
+    try:
+        yield process.start()
+    finally:
+        process.stop()
+
+
+@pytest.mark.parametrize(
+    ("token", "message"),
+    [
+        (None, "missing robot key"),
+        ("wrong-key-e2e-0123456789abcdef", "invalid robot key"),
+        ("other-key-e2e-0123456789abcdef", "invalid robot key"),  # another id's key
+    ],
+)
+async def test_robot_hello_needs_its_own_key(
+    auth_relay: RelayReadyInfo, token: str | None, message: str
+) -> None:
+    async with await RelayClient.connect(auth_relay.wt_url, "robot") as robot:
+        with pytest.raises(RelayRejectedError) as exc_info:
+            await robot.hello(robot=ROBOT, token=token)
+    assert (exc_info.value.code, exc_info.value.message) == ("auth_failed", message)
+
+
+async def test_viewer_hello_needs_a_token(auth_relay: RelayReadyInfo) -> None:
+    async with await RelayClient.connect(auth_relay.wt_url, "viewer") as viewer:
+        with pytest.raises(RelayRejectedError, match="auth_failed: missing viewer token"):
+            await viewer.hello()
+    async with await RelayClient.connect(auth_relay.wt_url, "viewer") as viewer:
+        with pytest.raises(RelayRejectedError, match="auth_failed: invalid viewer token"):
+            await viewer.hello(token="wrong-token-e2e-0123456789abcdef")
+
+
+async def test_secrets_register_and_gate_stats(auth_relay: RelayReadyInfo) -> None:
+    async with (
+        await RelayClient.connect(auth_relay.wt_url, "robot") as robot,
+        await RelayClient.connect(auth_relay.wt_url, "viewer") as viewer,
+    ):
+        await robot.hello(robot=ROBOT, token=ROBOT_KEY)
+        await viewer.hello(token=VIEWER_TOKEN)
+        await attach_viewer(viewer, ROBOT.id, [])  # its manifest proves registration
+
+        url = f"http://127.0.0.1:{auth_relay.http_port}/api/stats"
+
+        def _get(headers: dict[str, str]) -> tuple[int, Any, str]:
+            request = urllib.request.Request(url, headers=headers)
+            try:
+                with urllib.request.urlopen(request) as response:
+                    return response.status, response.headers, response.read().decode()
+            except urllib.error.HTTPError as e:
+                return e.code, e.headers, ""
+
+        status, headers, _ = await asyncio.to_thread(_get, {})
+        assert status == 401 and headers.get("WWW-Authenticate") == "Bearer"
+        status, headers, body = await asyncio.to_thread(
+            _get, {"Authorization": f"Bearer {VIEWER_TOKEN}"}
+        )
+        assert status == 200 and "Access-Control-Allow-Origin" not in headers
+        # Names, never tokens.
+        assert [v["name"] for v in json.loads(body)["perViewer"]] == ["tester"]
+        assert VIEWER_TOKEN not in body and ROBOT_KEY not in body

@@ -4,6 +4,7 @@
 // quinn's job; here we pin the orders the relay assigns.
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { ControlFrameReader, encodeControlFrame, type Msg, PROTOCOL_VERSION } from "@dimos/shared";
+import { Auth } from "./auth.ts";
 import { Registry } from "./registry.ts";
 import {
   CONTROL_SEND_ORDER,
@@ -206,4 +207,89 @@ Deno.test("the viewer control stream is raised to CONTROL_SEND_ORDER", async () 
     (controlWritable as unknown as { sendOrder?: number }).sendOrder,
     CONTROL_SEND_ORDER,
   );
+});
+
+// Viewer auth (T12d): with an Auth, a hello must carry a known viewer token.
+const VIEWER_TOKEN = "viewer-token-0123456789abcdef";
+const AUTH = new Auth(new Map(), new Map([["paul", VIEWER_TOKEN]]));
+
+/** One viewer hello over a fake WebTransport: the control replies, whether
+ * the session closed the transport, and the session itself. */
+async function viewerHandshake(
+  hello: Msg,
+  auth: Auth | null,
+): Promise<{ replies: Msg[]; closed: boolean; session: ViewerSession }> {
+  const written: Uint8Array[] = [];
+  let closed = false;
+  const wt = {
+    closed: new Promise<void>(() => {}),
+    close: () => {
+      closed = true;
+    },
+    datagrams: {
+      readable: new ReadableStream<Uint8Array>(),
+      writable: new WritableStream<Uint8Array>(),
+    },
+    incomingBidirectionalStreams: new ReadableStream({
+      start(controller) {
+        controller.enqueue({
+          readable: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(encodeControlFrame(hello));
+            },
+          }),
+          writable: new WritableStream<Uint8Array>({
+            write(chunk) {
+              written.push(chunk);
+            },
+          }),
+        });
+      },
+    }),
+  } as unknown as WebTransport;
+  const session = new ViewerSession(wt, 1, new Registry(), auth);
+  session.start();
+  for (let i = 0; i < 100 && written.length < 1; i++) await tick();
+  // A rejection closes 250 ms later (closeAfterFlush); wait it out so the
+  // timer does not outlive the test.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const frames = new ControlFrameReader();
+  return { replies: written.flatMap((chunk) => frames.push(chunk)), closed, session };
+}
+
+Deno.test("viewer auth: a hello without or with a wrong token is rejected and closed", async () => {
+  const missing = await viewerHandshake({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }, AUTH);
+  assertEquals(missing.replies, [
+    { t: "error", code: "auth_failed", message: "missing viewer token" } as Msg,
+  ]);
+  assert(missing.closed);
+  assertEquals(missing.session.greeted, false);
+  const wrong = await viewerHandshake(
+    { t: "hello", v: PROTOCOL_VERSION, role: "viewer", token: "wrong-token-0123456789abcdef" },
+    AUTH,
+  );
+  assertEquals(wrong.replies, [
+    { t: "error", code: "auth_failed", message: "invalid viewer token" } as Msg,
+  ]);
+  assert(wrong.closed);
+});
+
+Deno.test("viewer auth: the right token is greeted and names the session", async () => {
+  const ok = await viewerHandshake(
+    { t: "hello", v: PROTOCOL_VERSION, role: "viewer", token: VIEWER_TOKEN },
+    AUTH,
+  );
+  assertEquals(ok.replies[0], { t: "welcome", v: PROTOCOL_VERSION } as Msg);
+  assertEquals(ok.session.name, "paul");
+  assertEquals(ok.closed, false);
+});
+
+Deno.test("viewer auth: version and role mismatches keep their own codes; auth off is unchanged", async () => {
+  const old = await viewerHandshake({ t: "hello", v: 99, role: "viewer" }, AUTH);
+  assertEquals((old.replies[0] as { code: string }).code, "version_mismatch");
+  const robot = await viewerHandshake({ t: "hello", v: PROTOCOL_VERSION, role: "robot" }, AUTH);
+  assertEquals((robot.replies[0] as { code: string }).code, "role_mismatch");
+  const off = await viewerHandshake({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }, null);
+  assertEquals(off.replies[0], { t: "welcome", v: PROTOCOL_VERSION } as Msg);
+  assertEquals(off.session.name, null);
 });

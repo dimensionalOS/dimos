@@ -26,11 +26,31 @@ import time
 
 from dimos.constants import STATE_DIR
 from dimos.core.coordination.process_lifecycle import kill_run_processes
+from dimos.core.global_config import SECRET_CONFIG_FIELDS
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 REGISTRY_DIR = STATE_DIR / "runs"
+
+
+def _config_field_name(option: str) -> str:
+    return option.removeprefix("--").rsplit(".", 1)[-1].replace("-", "_")
+
+
+def _without_secret_options(argv: list[str]) -> list[str]:
+    safe: list[str] = []
+    skip_value = False
+    for arg in argv:
+        if skip_value:
+            skip_value = False
+            continue
+        option, separator, _value = arg.partition("=")
+        if option.startswith("--") and _config_field_name(option) in SECRET_CONFIG_FIELDS:
+            skip_value = separator == ""
+            continue
+        safe.append(arg)
+    return safe
 
 
 @dataclass
@@ -45,6 +65,14 @@ class RunEntry:
     cli_args: list[str] = field(default_factory=list)
     config_overrides: dict[str, object] = field(default_factory=dict)
     original_argv: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.config_overrides = {
+            key: value
+            for key, value in self.config_overrides.items()
+            if _config_field_name(key) not in SECRET_CONFIG_FIELDS
+        }
+        self.original_argv = _without_secret_options(self.original_argv)
 
     @property
     def registry_path(self) -> Path:
