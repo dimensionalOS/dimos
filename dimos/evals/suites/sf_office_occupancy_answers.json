@@ -1,0 +1,82 @@
+{
+  "recording": "recording_go2.db",
+  "latest_grid": {
+    "sha256": "e47342fa8a98df18cd5ee32572a45600f7493c40af55664b8ff1263fd8ffe49c",
+    "shape": [450, 461],
+    "resolution_m": 0.05,
+    "origin_m": [-10.575, -13.425]
+  },
+  "answers": {
+    "sf_office_occupancy_room_count": {
+      "room_count": 4,
+      "grading": {"mode": "exact"},
+      "source": "human-provided"
+    },
+    "sf_office_occupancy_movement_square": {
+      "center_m": [5.65, -2.35],
+      "grading": {"mode": "point_distance", "full_credit_radius_m": 0.5, "zero_credit_radius_m": 1.5}
+    },
+    "sf_office_occupancy_three_point_loop": {
+      "required_points_m": [[0.0, -4.2], [-7.0, -10.3], [3.3, -1.7], [0.0, -4.2]],
+      "optimal_length_m": 29.18894,
+      "robot_radius_m": 0.25,
+      "grading": {"mode": "valid_path_and_optimality", "full_credit_excess_m": 0.5, "zero_credit_excess_m": 5.0}
+    },
+    "sf_office_occupancy_max_robot_radius": {
+      "max_radius_m": 0.55899,
+      "grading": {"mode": "absolute_error", "full_credit_error_m": 0.05, "zero_credit_error_m": 0.25}
+    },
+    "sf_office_occupancy_blocked_opening_reachability": {
+      "reachable": true,
+      "grading": {"mode": "exact"}
+    },
+    "sf_office_occupancy_doorways": {
+      "reference_centers_m": [[-6.1, -1.2], [-1.5, 0.4], [2.7, -1.9], [5.4, -3.9], [3.1, -5.7], [-4.4, -6.9], [-1.2, -8.0], [0.6, -10.3]],
+      "grading": {"mode": "matched_segments", "match_radius_m": 1.0, "required_width_range_m": [0.6, 1.2], "metric": "f1"},
+      "source": "translated exploratory annotation"
+    },
+    "sf_office_occupancy_largest_free_circle": {
+      "center_m": [0.0, -4.05],
+      "radius_m": 1.95576,
+      "grading": {"mode": "circle_quality", "center_full_credit_radius_m": 0.25, "center_zero_credit_radius_m": 1.5, "radius_full_credit_error_m": 0.1, "radius_zero_credit_error_m": 0.75}
+    },
+    "sf_office_occupancy_possible_person_motion": {
+      "intervals_s": [[442.75, 443.38], [447.3, 453.43]],
+      "grading": {"mode": "interval_overlap", "merge_gap_s": 1.0, "metric": "f1"}
+    },
+    "sf_office_occupancy_hide_location": {
+      "position_m": [-0.3, -8.9],
+      "acceptable_region_m": {"x": [-1.2, 0.7], "y": [-10.0, -7.8]},
+      "robot_radius_m": 0.25,
+      "grading": {"mode": "reachable_concealment_quality", "full_credit_radius_m": 0.75, "zero_credit_radius_m": 2.0},
+      "source": "translated exploratory annotation snapped to reachable clearance"
+    },
+    "sf_office_occupancy_independent_routes": {
+      "two_independent_routes": true,
+      "grading": {"mode": "exact"}
+    },
+    "sf_office_occupancy_doorway_bottleneck": {
+      "opening_m": [[-1.8, -6.9], [-1.0, -6.3]],
+      "grading": {"mode": "segment_midpoint_and_angle", "midpoint_tolerance_m": 1.0, "angle_tolerance_deg": 35.0},
+      "source": "latest-grid route throat annotation"
+    },
+    "sf_office_occupancy_constant_twist_collision": {
+      "collision": true,
+      "time_s": 4.84,
+      "position_m": [1.2571, -2.3203],
+      "grading": {"mode": "collision_event", "time_full_credit_error_s": 0.15, "time_zero_credit_error_s": 1.0, "position_full_credit_error_m": 0.15, "position_zero_credit_error_m": 0.75}
+    },
+    "sf_office_occupancy_first_reachable_time": {
+      "time_s": 392.52581,
+      "grading": {"mode": "absolute_error", "full_credit_error_s": 0.75, "zero_credit_error_s": 4.0}
+    },
+    "sf_office_occupancy_known_free_area": {
+      "known_free_area_m2": 161.455,
+      "grading": {"mode": "absolute_error", "full_credit_error_m2": 1.0, "zero_credit_error_m2": 12.0}
+    },
+    "sf_office_occupancy_forward_clearance": {
+      "clear": true,
+      "grading": {"mode": "exact"}
+    }
+  }
+}

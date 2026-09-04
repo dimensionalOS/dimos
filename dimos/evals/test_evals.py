@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import json
+import os
 from pathlib import Path
 import sys
 import threading
@@ -966,7 +967,9 @@ def test_pi_runs_headless_over_the_recording_and_records_every_call(
     run_dir.mkdir()
     try:
         agent = Pi(cli=str(fake_pi), model="gpt-fake")
-        assert agent._env(run_dir)["DIMOS_AGENT_ACTIVITY_DIR"] == str(run_dir / "agent-activity")
+        pi_env = agent._env(run_dir)
+        assert pi_env["DIMOS_AGENT_ACTIVITY_DIR"] == str(run_dir / "agent-activity")
+        assert pi_env["PATH"].split(os.pathsep)[0] == str(Path(sys.executable).parent)
         agent.preflight(env)
         trajectory = agent.run("how far?", running, run_dir, timeout_s=60.0)
     finally:

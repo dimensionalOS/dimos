@@ -24,6 +24,7 @@ from pathlib import Path
 import queue
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -313,6 +314,10 @@ class Pi:
     def _env(self, run_dir: Path) -> dict[str, str]:
         keep = self.passthrough_env
         passed = {k: v for k, v in os.environ.items() if k in keep or k.startswith("DIMOS_")}
+        python_bin = str(Path(sys.executable).parent)
+        passed["PATH"] = os.pathsep.join(
+            dict.fromkeys((python_bin, *passed.get("PATH", "").split(os.pathsep)))
+        )
         return {
             **passed,
             "DIMOS_AGENT_ACTIVITY_DIR": str(run_dir / "agent-activity"),
