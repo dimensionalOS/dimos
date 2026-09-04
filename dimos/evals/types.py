@@ -12,196 +12,273 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Eval case primitives.
+"""Eval primitives: the task and the agent are separate things.
 
-Two taxonomies, orthogonal:
+A :class:`EvalCase` is an environment, an instruction, and a grader; nothing
+else. Which agent runs it is the run's business. The same case is benchmarked
+under a bare model, the production agent, or an external CLI without
+changing, so scores stay comparable across years.
 
-- **Passive** evals: world state is immutable (a frozen frame or replay, any
-  time window). The model's output never feeds back into its input. Cheap,
-  deterministic, repeatable.
-- **Interactive** evals: actions feed back into observations; state is
-  mutable. Needs sim or a real robot, scored by sampling the live memory
-  store the robot's Recorder writes.
+- :class:`Environment` says what exists: a frozen recording (``Dataset``), a
+  standalone image (``ImageFile``), or a live simulator (``Sim``). It starts,
+  yields a :class:`RunningEnvironment` (an MCP url when there is a robot, the
+  memory recording, and artifact paths), and stops.
+- :class:`Agent` delivers the instruction, acts, and returns a
+  :class:`Trajectory` (Harbor's ATIF document) with every provider
+  request/response saved whole.
+- ``grade(Outcome) -> float`` runs once, after the agent finishes, over the
+  trajectory and the artifacts.
 
-Suites are Python modules exporting ``SUITE: Suite`` (behavior is typed code;
-JSON holds only data rows). memory is the source of truth for all input and
-perception: context selectors return real :class:`~dimos.memory.stream.Stream`
-objects and scoring reads :class:`~dimos.memory.store.base.Store`.
+Suites are Python modules exporting ``SUITE: Suite``; an agent is a module
+defining one :class:`Agent` class (:mod:`dimos.evals.agents`), constructed
+from the command line with ``--set field=value`` overrides.
 """
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
-
-from pydantic import BaseModel
-
-from dimos.evals.scorers import exact, final
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 if TYPE_CHECKING:
-    from dimos.e2e_tests.dim_sim_client import DimSimClient
     from dimos.memory.store.base import Store
     from dimos.memory.stream import Stream
 
-T = TypeVar("T")
-ResponseT = TypeVar("ResponseT", bound=BaseModel)
-
 Select = Callable[["Store"], "Stream[Any, Any]"]
-"""Context selector — hands the model real mem2 streams, whole or windowed::
+"""Stream selector — what a frozen recording holds for a case::
 
     lambda s: s.streams.lidar.limit(1)
     lambda s: s.streams.odom.range_time(0, 600)
 """
 
 
+# -- trajectory (Harbor ATIF) ----------------------------------------------------------
+# https://www.harborframework.com/docs/agents/trajectory-format
+
+
+@dataclass(frozen=True, kw_only=True)
+class ToolCall:
+    tool_call_id: str
+    function_name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True, kw_only=True)
+class ObservationResult:
+    source_call_id: str  # the ToolCall this answers
+    content: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class Observation:
+    results: tuple[ObservationResult, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class Metrics:
+    prompt_tokens: int  # everything sent, cache reads included
+    completion_tokens: int
+    cached_tokens: int = 0  # the part of prompt_tokens read from the provider's cache
+    cost_usd: float | None = None  # when the provider reports it
+
+
+@dataclass(frozen=True, kw_only=True)
+class StepExtra:
+    request: Path  # the exact payload sent to the provider for this call
+    response: Path  # the exact payload received
+    latency_s: float = 0.0
+    reasoning_tokens: int = 0  # the part of completion_tokens spent reasoning
+
+
+@dataclass(frozen=True, kw_only=True)
+class Step:
+    """One turn: the instruction (``user``) or one model call (``agent``) with
+    the tool executions it caused."""
+
+    step_id: int  # 1-based, sequential
+    timestamp: str  # ISO 8601
+    source: Literal["user", "agent", "system"]
+    message: str
+    # agent steps only
+    model_name: str | None = None
+    reasoning_content: str | None = None
+    tool_calls: tuple[ToolCall, ...] | None = None
+    observation: Observation | None = None
+    metrics: Metrics | None = None
+    extra: StepExtra | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentInfo:
+    name: str  # the Agent class
+    version: str
+    model_name: str  # what actually ran, as reported by the provider
+    tool_definitions: tuple[dict[str, Any], ...] | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class FinalMetrics:
+    total_prompt_tokens: int
+    total_completion_tokens: int
+    total_cached_tokens: int
+    total_cost_usd: float
+    total_steps: int
+
+
+EndedBy = Literal["answer", "max_steps", "timeout", "error"]
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunExtra:
+    ended_by: EndedBy
+
+
+@dataclass(frozen=True, kw_only=True)
+class Trajectory:
+    """The ATIF document for one run: the instruction, then one agent step per
+    model call, in order. The messages array actually sent per call is *not*
+    the previous call plus one message (harnesses compact and re-inject), so
+    each call's request is a whole record named in its step, never
+    reconstructed from the steps."""
+
+    schema_version: str = (
+        "ATIF-v1.7"  # v1.8 only adds audio parts; Harbor's validator stops at v1.7
+    )
+    agent: AgentInfo
+    steps: tuple[Step, ...]
+    final_metrics: FinalMetrics
+    extra: RunExtra
+
+    @property
+    def final_answer(self) -> str:
+        """The last agent message that called no tool, "" if none."""
+        return next(
+            (s.message for s in reversed(self.steps) if s.source == "agent" and not s.tool_calls),
+            "",
+        )
+
+
+# -- environment -----------------------------------------------------------------------
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunningEnvironment:
+    mcp_url: str  # "" when there is no robot
+    streams: Sequence[Stream[Any, Any]]  # what the agent may look at. Dataset: the selection
+    artifacts: Mapping[str, Path]  # name -> path; every declared name is present
+
+
+class Environment(Protocol):
+    """What exists for a case. Implementations: :mod:`dimos.evals.environments`."""
+
+    @property
+    def artifacts(self) -> tuple[str, ...]:
+        """Names this environment produces, e.g. ``("recording",)``."""
+
+    @property
+    def has_robot(self) -> bool:
+        """True: ``start()`` returns an MCP url on its own, with no modules
+        from the agent (``Sim``; ``Dataset`` only with ``mcp_url``)."""
+
+    def preflight(self, agent: Agent) -> None:
+        """Raise if this environment can't run *agent* (it adds modules this
+        environment can't launch; a stream a case selected is missing).
+        Cheap: no data read, no process started."""
+
+    def start(self, modules: str) -> RunningEnvironment:
+        """Start, with *modules* (what the agent adds) on top of this
+        environment's own stack where it launches one."""
+
+    def settle(self, budget_s: float) -> None:
+        """Block until the world has finished reacting to the agent's actions,
+        at most *budget_s* seconds. Skills can return before the motion they
+        started completes; the case is over when the world is at rest, not
+        when the agent stops talking. An environment where nothing keeps
+        happening returns immediately."""
+
+    def stop(self) -> None: ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class Outcome:
+    trajectory: Trajectory  # the agent's final reply is trajectory.final_answer
+    artifacts: Mapping[str, Path]  # what the environment produced, by name
+
+
+def recording(o: Outcome) -> Store:
+    """The memory recording an environment produced, opened for grading."""
+    from dimos.memory.store.sqlite import SqliteStore
+
+    return SqliteStore(path=str(o.artifacts["recording"]), must_exist=True)
+
+
+# -- agent -----------------------------------------------------------------------------
+
+
+class Agent(Protocol):
+    """How the instruction reaches a model and how the model acts.
+
+    How the recording reaches the model is what an agent *is*: ``QuestionAnswer``
+    encodes the whole recording into one prompt, ``Blind`` never looks,
+    ``McpClientAgent`` acts through tools. No agent knows anything about
+    any particular case.
+    """
+
+    modules: str
+    """Blueprint atoms this agent brings; ``""`` for none. ``Sim`` appends
+    them to its launch (``dimos run <case stack> <modules>``), ``Dataset``
+    launches exactly them (a frozen recording has no stack to add to), and
+    ``ImageFile`` rejects a non-empty value in ``preflight``."""
+
+    def preflight(self, environment: Environment) -> None:
+        """Raise if this agent can't run in *environment* (needs a robot and
+        there is none; needs a stream it lacks). Runs before any environment
+        starts."""
+
+    def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
+        """Every tool this agent can call. *environment_tools* are the MCP
+        tools exposed by the running environment."""
+
+    def run(
+        self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
+    ) -> Trajectory:
+        """Deliver *inputs* and let the agent act until it stops, hits its own
+        step limit, or *timeout_s* passes (return what it has, marked
+        ``timeout``). Write raw provider request/response bodies under
+        ``run_dir``. Return the trajectory. Synchronous: nothing of the
+        agent's outlives the call. Never grades."""
+
+
+# -- case ------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, kw_only=True)
+class EvalCase:
+    id: str
+    inputs: str  # the user message
+    environment: Environment
+    grade: Callable[[Outcome], float]  # 0..1, called once after the agent finishes
+    tags: frozenset[str] = frozenset()
+    timeout_s: float = 60.0  # wall-clock is a task property; max_steps is the agent's
+
+
+Suite = Sequence[EvalCase]
+
+
 @dataclass(frozen=True, kw_only=True)
 class EvalResult:
     case_id: str
-    outputs: str = ""
     score: float = 0.0
     passed: bool = False
     duration_s: float = 0.0
     error: str = ""
-    series: tuple[tuple[float, float], ...] = ()  # (t, score) — interactive only
-    transcript: str = ""  # path within the run dir, when an agent loop ran
-
-
-class EvalRig(Protocol):
-    """What a case may ask of the runner. :class:`EvalRunner` implements this
-    structurally — no import cycle, mypy-checked at call sites, and a fake rig
-    in tests is any object with these methods."""
-
-    @property
-    def blind(self) -> bool: ...
-    @property
-    def mcp_url(self) -> str: ...
-
-    def open_dataset(self, name: str) -> Store: ...
-    def live_store(self) -> Store: ...
-    def encode(self, stream: Stream[Any, Any]) -> list[dict[str, Any]]: ...
-    def ask(self, context: Sequence[dict[str, Any]], question: str) -> str: ...
-    def ask_structured(
-        self,
-        context: Sequence[dict[str, Any]],
-        question: str,
-        schema: type[ResponseT],
-    ) -> ResponseT: ...
-    def call_skill(self, name: str, args: Mapping[str, object]) -> str: ...
-    def agent_loop(self, case: EvalCase) -> str: ...
-    def mcp_ready(self) -> bool: ...
-    def setup_env(self, case: InteractiveEval) -> None: ...
-    def check_env(self, case: InteractiveEval) -> None: ...
-    def instruct(self, text: str) -> None: ...
-    def sample(
-        self, score: Callable[[Store], float], interval_s: float, timeout_s: float
-    ) -> list[tuple[float, float]]: ...
-
-
-@dataclass(frozen=True, kw_only=True)
-class EvalCase(ABC):
-    """Common surface the runner, report, and filters operate on.
-
-    ``skill`` set -> score one tool call (no agent loop): ``detect()`` on a
-    replay, ``grasp()`` in sim. ``skill`` empty -> subclass decides.
-    """
-
-    id: str
-    inputs: str
-    skill: str = ""
-    skill_args: Mapping[str, object] = field(default_factory=dict)
-    tags: frozenset[str] = frozenset()
-    timeout_s: float = 60.0
-
-    @abstractmethod
-    def evaluate(self, rig: EvalRig) -> EvalResult:
-        """Produce this case's result using the rig's resources."""
-
-    def preflight(self, rig: EvalRig) -> None:
-        """Raise with a precise message if this case cannot run on this rig.
-
-        Cheap: resolves resources, reads no data, starts no processes.
-        """
-        if self.skill and not rig.mcp_ready():
-            raise RuntimeError(f"{self.id}: needs MCP at {rig.mcp_url}, nothing listening")
-
-
-@dataclass(frozen=True, kw_only=True)
-class PassiveEval(EvalCase, Generic[T]):
-    """World state immutable; ``T`` ties ``expected``/``parse``/``score``
-    together so mypy checks the triple agrees per case."""
-
-    expected: T
-    parse: Callable[[str], T]
-    score: Callable[[T, T], float] = exact
-    context: tuple[Select, ...] = ()
-    dataset: str = "go2_short"
-    tools: bool = False  # True: full agent loop over the frozen store
-
-    def evaluate(self, rig: EvalRig) -> EvalResult:
-        store = rig.open_dataset(self.dataset)
-        try:
-            if self.skill:
-                outputs = rig.call_skill(self.skill, self.skill_args)
-            elif self.tools:
-                outputs = rig.agent_loop(self)
-            else:
-                blocks = (
-                    [] if rig.blind else [b for sel in self.context for b in rig.encode(sel(store))]
-                )
-                outputs = rig.ask(blocks, self.inputs)
-        finally:
-            store.stop()
-        got = self.parse(outputs)
-        return EvalResult(case_id=self.id, outputs=outputs, score=self.score(self.expected, got))
-
-    def preflight(self, rig: EvalRig) -> None:
-        store = rig.open_dataset(self.dataset)  # raises: dataset unresolvable
-        try:
-            for sel in self.context:
-                sel(store)  # raises: "No stream 'x'. Available: [...]" — no data read
-        finally:
-            store.stop()
-        if (self.skill or self.tools) and not rig.mcp_ready():
-            raise RuntimeError(f"{self.id}: needs MCP at {rig.mcp_url}, nothing listening")
-
-
-def _no_setup(sim: DimSimClient) -> None:
-    return None
-
-
-@dataclass(frozen=True, kw_only=True)
-class InteractiveEval(EvalCase):
-    """Actions feed back into observations. The case names its environment so
-    the eval is reproducible; the runner only decides attach-vs-launch."""
-
-    score: Callable[[Store], float]  # sampled every interval_s against live mem2
-    aggregate: Callable[[Sequence[float]], float] = final
-    interval_s: float = 1.0
-    timeout_s: float = 300.0
-    blueprint: str = "unitree-go2-agentic"
-    simulator: str = "dimsim"  # "" = attach to a running dimos / real robot
-    scene: str = "apartment"  # --dimsim-scene name (ScenePackage name later)
-    setup: Callable[[DimSimClient], None] = _no_setup
-
-    def evaluate(self, rig: EvalRig) -> EvalResult:
-        rig.setup_env(self)
-        if self.skill:
-            rig.call_skill(self.skill, self.skill_args)
-        else:
-            rig.instruct(self.inputs)
-        series = rig.sample(self.score, self.interval_s, self.timeout_s)
-        if not series:
-            return EvalResult(case_id=self.id, error=f"{self.id}: no samples collected")
-        return EvalResult(
-            case_id=self.id,
-            score=self.aggregate([s for _, s in series]),
-            series=tuple(series),
-        )
-
-    def preflight(self, rig: EvalRig) -> None:
-        rig.check_env(self)
-
-
-Suite = Sequence[EvalCase]
+    final_answer: str = ""
+    steps: int = 0  # every step, the instruction included
+    prompt_tokens: int = 0  # everything sent, cache reads included
+    completion_tokens: int = 0
+    cached_tokens: int = 0
+    reasoning_tokens: int = 0
+    cost_usd: float = 0.0
+    ended_by: str = ""
+    trajectory: str = ""  # path of <case_id>/trajectory.json, when an agent ran

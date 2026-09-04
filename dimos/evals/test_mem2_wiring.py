@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Integration tests for the memory <-> EvalCase connection.
+"""Integration tests for the memory <-> eval connection.
 
-Passive: a case's context Selects pull real Streams from a recording, the
-runner encodes them, and the *actual observation data* (image blocks, pose
-text) reaches the model prompt.
+Frozen: a case's ``Dataset.select`` pulls real Streams from a recording, the
+``QuestionAnswer`` agent encodes them, and the *actual observation data*
+(image blocks, pose text) reaches the model prompt.
 
-Interactive: a case's score callable reads the *live* store while a writer is
-appending — the mem2 analogue of a robot's Recorder running mid-task.
+Live: the environment's recording is written while the agent acts (the
+Recorder's role); the grader reads the whole history afterwards.
 """
 
 from __future__ import annotations
@@ -36,9 +36,17 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 import numpy as np
 import pytest
 
+from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
+from dimos.evals.agents.question_answer import QuestionAnswer
+from dimos.evals.environments.dataset import Dataset
 from dimos.evals.runner import EvalRunner
-from dimos.evals.scorers import final, first_number, ramp, within
-from dimos.evals.types import InteractiveEval, PassiveEval
+from dimos.evals.scorers import first_number, ramp, within
+from dimos.evals.types import (
+    EvalCase,
+    RunningEnvironment,
+    Trajectory,
+    recording,
+)
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
@@ -63,7 +71,7 @@ def _open_store(path: Path) -> Any:
 
 
 class SpyChat(BaseChatModel):
-    """Captures the exact messages the runner sends; replies with a constant."""
+    """Captures the exact messages the agent sends; replies with a constant."""
 
     reply: str = "42"
     seen: list[list[BaseMessage]] = []
@@ -83,10 +91,14 @@ class SpyChat(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.reply))])
 
 
-# -- passive: recording -> Select -> encode -> prompt --------------------------------
+def _qa(spy: SpyChat, **kwargs: Any) -> QuestionAnswer:
+    return QuestionAnswer(chat_model=spy, model="spy", system_prompt="sys", **kwargs)
 
 
-def test_passive_streams_reach_the_prompt(tmp_path: Path) -> None:
+# -- frozen: recording -> select -> encode -> prompt ---------------------------------
+
+
+def test_selected_streams_reach_the_prompt(tmp_path: Path) -> None:
     store = _open_store(tmp_path / "rec.db")
     odom = store.stream("odom", PoseStamped)
     for i in range(20):
@@ -97,65 +109,63 @@ def test_passive_streams_reach_the_prompt(tmp_path: Path) -> None:
         images.append(Image.from_numpy(frame, frame_id="cam", ts=1000.0 + i), ts=1000.0 + i)
     store.stop()
 
-    case = PassiveEval(
+    case = EvalCase(
         id="wiring",
         inputs="how far along x did you travel?",
-        expected=19.0,
-        parse=first_number,
-        score=within(1.0),
-        context=(
-            lambda s: s.streams.odom.range_time(0, 100),
-            lambda s: s.streams.color_image.limit(2),
+        environment=Dataset(
+            str(tmp_path / "rec.db"),
+            select=(lambda s: s.streams.odom, lambda s: s.streams.color_image.limit(2)),
         ),
-        dataset=str(tmp_path / "rec.db"),
+        grade=lambda o: within(1.0)(19.0, first_number(o.trajectory.final_answer)),
     )
 
     spy = SpyChat(reply="19")
     spy.seen.clear()
-    runner = EvalRunner(chat_model=spy, out_dir=tmp_path / "evals")
-    results = runner.run([case])
+    results = EvalRunner(out_dir=tmp_path / "evals").run([case], _qa(spy))
 
     assert results[0].passed, results[0]
     blocks = [b for m in spy.seen[0] for b in (m.content if isinstance(m.content, list) else [])]
     image_blocks = [b for b in blocks if b.get("type") == "image_url"]
     text = " ".join(b["text"] for b in blocks if b.get("type") == "text")
-    # the actual observation data crossed from mem2 into the prompt:
+    # the actual observation data crossed from memory into the prompt:
     assert len(image_blocks) == 2, "both selected image observations should be encoded"
     assert image_blocks[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
-    assert "pos=[0.000, 2.500" in text.replace("  ", " ") or "0.000" in text
     assert "19.000" in text or "19.0" in text, "last odom pose must reach the prompt"
     assert case.inputs in text
 
 
-def test_passive_context_budget_downsamples_not_truncates(tmp_path: Path) -> None:
+def test_frames_per_stream_downsamples_not_truncates(tmp_path: Path) -> None:
     store = _open_store(tmp_path / "rec.db")
     odom = store.stream("odom", PoseStamped)
     for i in range(100):
         odom.append(_pose(float(i), 0.0), ts=1000.0 + i)
     store.stop()
 
-    runner = EvalRunner(context_budget=5, out_dir=tmp_path / "evals")
-    reopened = runner.open_dataset(str(tmp_path / "rec.db"))
+    spy = SpyChat(reply="99")
+    spy.seen.clear()
+    env = Dataset(str(tmp_path / "rec.db"))
+    running = env.start("")
     try:
-        blocks = runner.encode(reopened.streams.odom)
+        _qa(spy, frames_per_stream=5).run("?", running, tmp_path, timeout_s=60.0)
     finally:
-        reopened.stop()
-    texts = [b["text"] for b in blocks[1:]]  # skip header
-    assert len(texts) == 5
-    assert "0.000" in texts[0] and "99.000" in texts[-1], "spread must cover the whole window"
+        env.stop()
+    texts = [b["text"] for b in spy.seen[0][-1].content if b.get("type") == "text"]  # type: ignore[union-attr]
+    stamped = [t for t in texts if t.startswith("[t=")]
+    assert len(stamped) == 5
+    assert "0.000" in stamped[0] and "99.000" in stamped[-1], "spread must cover the whole window"
 
 
-# -- interactive: live store -> score sampling ----------------------------------------
+# -- live: the recording is written while the agent acts; the grader reads it after ----
 
 
-def test_interactive_scores_live_store_while_writing(tmp_path: Path) -> None:
-    """A writer thread plays the Recorder role: the case's score callable must
-    see fresh observations appear in the live store as they are appended."""
+def test_grader_reads_the_history_the_environment_recorded(tmp_path: Path) -> None:
+    """A writer thread plays the Recorder: the robot approaches the goal while
+    the agent 'acts'; the grader then reads the final pose and the path from
+    the recording artifact."""
     db = tmp_path / "live.db"
     store = _open_store(db)
     odom = store.stream("odom", PoseStamped)
     odom.append(_pose(5.0, 0.0), ts=time.time())  # robot starts 5m from goal
-
     stop = threading.Event()
 
     def writer() -> None:
@@ -163,46 +173,59 @@ def test_interactive_scores_live_store_while_writing(tmp_path: Path) -> None:
             if stop.is_set():
                 return
             odom.append(_pose(max(0.0, 5.0 - i * 0.2), 0.0), ts=time.time())
-            time.sleep(0.05)
+            time.sleep(0.02)
 
     thread = threading.Thread(target=writer)
 
-    class NoEnvRunner(EvalRunner):
-        """Rig with the sim/MCP environment stubbed out — mem2 path stays real."""
+    class LiveEnvironment:
+        artifacts = ("recording",)
+        has_robot = False
 
-        def check_env(self, case: InteractiveEval) -> None:
+        def preflight(self, agent: Any) -> None:
             pass
 
-        def setup_env(self, case: InteractiveEval) -> None:
+        def start(self, modules: str) -> RunningEnvironment:
             thread.start()
+            return RunningEnvironment(mcp_url="", streams=(), artifacts={"recording": db})
 
-        def instruct(self, text: str) -> None:
+        def settle(self, budget_s: float) -> None:
+            return None
+
+        def stop(self) -> None:
+            stop.set()
+            thread.join(timeout=5.0)
+
+    class WaitingAgent:
+        modules = ""
+
+        def preflight(self, environment: Any) -> None:
             pass
 
-    case = InteractiveEval(
-        id="live_wiring",
-        inputs="go to the goal",
-        score=lambda s: ramp(abs(s.streams.odom.last().data.position.x), band=2.0),
-        aggregate=final,
-        interval_s=0.1,
-        timeout_s=10.0,
-        simulator="",
-    )
+        def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
+            return ()
 
-    runner = NoEnvRunner(live_db=str(db), out_dir=tmp_path / "evals")
+        def run(
+            self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
+        ) -> Trajectory:
+            time.sleep(min(1.0, timeout_s))
+            return TrajectoryBuilder(inputs, name="none").build("answer")
+
+    def grade(o: Any) -> float:
+        rec = recording(o)
+        try:
+            poses = [obs.data.position.x for obs in rec.streams.odom]
+        finally:
+            rec.stop()
+        assert len(poses) >= 3, "the whole history is in the recording"
+        assert poses == sorted(poses, reverse=True), "monotonic approach must be visible"
+        return ramp(abs(poses[-1]), band=2.0)
+
+    case = EvalCase(id="live", inputs="go to the goal", environment=LiveEnvironment(), grade=grade)
     try:
-        results = runner.run([case])
+        result = EvalRunner(out_dir=tmp_path / "evals").run([case], WaitingAgent())[0]
     finally:
         stop.set()
-        if thread.ident is not None:
-            thread.join(timeout=5.0)
         store.stop()
 
-    r = results[0]
-    assert not r.error, r.error
-    assert len(r.series) >= 3, "sampler must observe multiple live states"
-    scores = [s for _, s in r.series]
-    assert scores[0] < 0.9, "first sample sees the robot far from the goal"
-    assert scores[-1] >= 0.99, "last sample sees the robot arrive (live data flowed)"
-    assert r.score >= 0.99  # aggregate=final
-    assert scores == sorted(scores), "monotonic approach must be visible in the series"
+    assert not result.error, result.error
+    assert result.score >= 0.99  # the last recorded pose is at the goal

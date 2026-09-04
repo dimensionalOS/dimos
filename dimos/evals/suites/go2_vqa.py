@@ -14,60 +14,60 @@
 
 """Generated VQA suite over the go2 replays.
 
-Rows (``go2_vqa.json``) are pure data emitted by :mod:`dimos.evals.generate` —
-ground truth computed analytically from odom, quizzing the encoded odom
-summary. Typing and scoring live here; the JSON stays behavior-free.
+Rows (``go2_vqa.json``) are pure data emitted by
+:mod:`dimos.evals.suites.lib.generate` — ground truth computed analytically
+from odom, quizzing the encoded odom summary. Typing and scoring live here;
+the JSON stays behavior-free.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
+from dimos.evals.environments.dataset import Dataset
 from dimos.evals.scorers import exact, first_number, within, yes_no
-from dimos.evals.types import PassiveEval, Suite
+from dimos.evals.types import EvalCase, Suite
 
 _ROWS = json.loads((Path(__file__).parent / "go2_vqa.json").read_text())
 
-_generated: list[PassiveEval[float]] = [
-    PassiveEval(
+
+def _generated(row: dict[str, Any]) -> EvalCase:
+    stream, window = str(row["stream"]), tuple(row["window"])
+    expected, band = float(row["a"]), float(row["band"])
+    return EvalCase(
         id=str(row["id"]),
-        inputs=str(row["q"]),
-        expected=float(row["a"]),  # type: ignore[arg-type]
-        parse=first_number,
-        score=within(float(row["band"])),  # type: ignore[arg-type]
-        context=(
-            lambda s, name=str(row["stream"]), w=tuple(row["window"]):  # type: ignore[misc]
-            s.streams[name].range_time(*w),
+        inputs=f"{row['q']} Answer with just the number.",
+        environment=Dataset(
+            str(row["dataset"]), select=(lambda s: s.streams[stream].range_time(*window),)
         ),
-        dataset=str(row["dataset"]),
+        grade=lambda o: within(band)(expected, first_number(o.trajectory.final_answer)),
         tags=frozenset({"generated", "odom", "numeric"}),
     )
-    for row in _ROWS
-]
+
 
 # Hand-labeled presence questions, verified against the recording imagery.
-_hand: list[PassiveEval[str]] = [
-    PassiveEval(
+_hand: list[EvalCase] = [
+    EvalCase(
         id="hk_couch_seen",
-        inputs="Did you see a couch or sofa at any point?",
-        expected="yes",
-        parse=yes_no,
-        score=exact,
-        context=(lambda s: s.streams.color_image.range_time(150, 250),),
-        dataset="go2_hongkong_office",
+        inputs="Did you see a couch or sofa at any point? Answer yes or no.",
+        environment=Dataset(
+            "go2_hongkong_office",
+            select=(lambda s: s.streams.color_image.range_time(150, 250),),
+        ),
+        grade=lambda o: exact("yes", yes_no(o.trajectory.final_answer)),
         tags=frozenset({"image", "presence"}),
     ),
-    PassiveEval(
+    EvalCase(
         id="hk_plants_seen",
-        inputs="Did you see any potted plants?",
-        expected="yes",
-        parse=yes_no,
-        score=exact,
-        context=(lambda s: s.streams.color_image.range_time(0, 60),),
-        dataset="go2_hongkong_office",
+        inputs="Did you see any potted plants? Answer yes or no.",
+        environment=Dataset(
+            "go2_hongkong_office", select=(lambda s: s.streams.color_image.range_time(0, 60),)
+        ),
+        grade=lambda o: exact("yes", yes_no(o.trajectory.final_answer)),
         tags=frozenset({"image", "presence"}),
     ),
 ]
 
-SUITE: Suite = [*_generated, *_hand]
+SUITE: Suite = [*(_generated(row) for row in _ROWS), *_hand]
