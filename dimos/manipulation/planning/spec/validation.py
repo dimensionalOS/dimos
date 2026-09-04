@@ -43,6 +43,7 @@ _EXPECTED_DIMENSIONS = {
 # thousands; this is the ceiling that keeps a misaimed room-scale map from
 # quietly stalling the pipe.
 MAX_OCTREE_POINTS = 200_000
+_SUPPORTED_CONTROLLED_JOINT_TYPES = {"continuous", "prismatic", "revolute"}
 
 
 def validate_robot_model_config(config: RobotModelConfig) -> LoadedRobotModel:
@@ -75,9 +76,31 @@ def validate_robot_model_config(config: RobotModelConfig) -> LoadedRobotModel:
         raise ValueError(
             f"RobotModelConfig configured joints are missing from the model: {missing_joints}"
         )
+    joints_by_name = {joint.name: joint for joint in model_joints}
+    unsupported_joints = {
+        name: joints_by_name[name].type
+        for name in config.joint_names
+        if joints_by_name[name].type not in _SUPPORTED_CONTROLLED_JOINT_TYPES
+    }
+    if unsupported_joints:
+        raise ValueError(
+            "RobotModelConfig controlled joints must be one-DoF revolute, continuous, "
+            f"or prismatic joints; unsupported joints: {unsupported_joints}. Use "
+            "RobotModel.with_planar_base() for a floor-constrained mobile base."
+        )
     model_link_names = set(model_links)
     if config.base_link not in model_link_names:
         raise ValueError(f"RobotModelConfig base link '{config.base_link}' is missing")
+    planar_base = config.model.planar_base
+    if planar_base is not None:
+        if config.base_link != planar_base.root_link:
+            raise ValueError(
+                f"Planar robot base_link must be '{planar_base.root_link}', "
+                f"got '{config.base_link}'"
+            )
+        missing_base_joints = sorted(set(planar_base.joint_names) - set(config.joint_names))
+        if missing_base_joints:
+            raise ValueError(f"Planar robot controllable joints are missing: {missing_base_joints}")
 
     duplicate_group_names = _duplicates(group.name for group in config.planning_groups)
     if duplicate_group_names:

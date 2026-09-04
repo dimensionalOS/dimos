@@ -52,7 +52,7 @@ def interpolate_path(
 
     Args:
         path: Original path (list of JointState waypoints)
-        resolution: Maximum distance between waypoints (radians)
+        resolution: Maximum distance between waypoints in native joint coordinates
 
     Returns:
         Interpolated path with more waypoints
@@ -100,7 +100,7 @@ def interpolate_segment(
     Args:
         start: Start joint configuration
         end: End joint configuration
-        step_size: Maximum step size (radians)
+        step_size: Maximum step size in native joint coordinates
 
     Returns:
         List of interpolated JointState waypoints [start, ..., end]
@@ -180,19 +180,20 @@ def simplify_path(
 
 
 def compute_path_length(path: JointPath) -> float:
-    """Compute total path length in joint space.
+    """Compute unweighted coordinate-space path length for diagnostics.
 
-    Sums the Euclidean distances between consecutive waypoints.
+    Sums Euclidean distances between consecutive waypoint vectors. The result
+    has no single physical unit when the path mixes linear and angular joints.
 
     Args:
         path: Path to measure (list of JointState waypoints)
 
     Returns:
-        Total length in radians
+        Unweighted Euclidean coordinate-space length
 
     Example:
         length = compute_path_length(path)
-        print(f"Path length: {length:.2f} rad")
+        print(f"Coordinate-space path length: {length:.2f}")
     """
     if len(path) <= 1:
         return 0.0
@@ -215,8 +216,8 @@ def is_path_within_limits(
 
     Args:
         path: Path to check (list of JointState waypoints)
-        lower_limits: Lower joint limits (radians)
-        upper_limits: Upper joint limits (radians)
+        lower_limits: Lower limits in native joint coordinates
+        upper_limits: Upper limits in native joint coordinates
 
     Returns:
         True if all waypoints are within limits
@@ -237,8 +238,8 @@ def clip_path_to_limits(
 
     Args:
         path: Path to clip (list of JointState waypoints)
-        lower_limits: Lower joint limits (radians)
-        upper_limits: Upper joint limits (radians)
+        lower_limits: Lower limits in native joint coordinates
+        upper_limits: Upper limits in native joint coordinates
 
     Returns:
         Path with all waypoints clipped to limits

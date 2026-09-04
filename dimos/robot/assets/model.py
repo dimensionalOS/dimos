@@ -23,7 +23,12 @@ import math
 import os
 from pathlib import Path
 import re
+from typing import Annotated
 import xml.etree.ElementTree as ET
+
+from pydantic import ConfigDict, Field, FiniteFloat, model_validator
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+from typing_extensions import Self
 
 from dimos.robot.assets.xacro import expand_xacro
 from dimos.utils.logging_config import setup_logger
@@ -89,6 +94,44 @@ class _JointPositionLimits:
     upper: float
 
 
+_PLANAR_BASE_CONFIG = ConfigDict(extra="forbid", validate_default=True)
+_NonEmptyString = Annotated[str, Field(min_length=1)]
+_PositiveFiniteFloat = Annotated[float, Field(gt=0.0, allow_inf_nan=False)]
+_FiniteVector3 = tuple[FiniteFloat, FiniteFloat, FiniteFloat]
+_PositiveVector3 = tuple[_PositiveFiniteFloat, _PositiveFiniteFloat, _PositiveFiniteFloat]
+
+
+@pydantic_dataclass(frozen=True, config=_PLANAR_BASE_CONFIG)
+class PlanarBaseDefinition:
+    """Synthetic floor-constrained base coordinates and planning workspace.
+
+    The three coordinates are ordered ``x``, ``y``, then ``yaw``. Linear
+    coordinates use meters and angular coordinates use radians.
+    """
+
+    workspace_lower: _FiniteVector3
+    workspace_upper: _FiniteVector3
+    velocity_limits: _PositiveVector3
+    acceleration_limits: _PositiveVector3
+    root_link: _NonEmptyString = "planar_base_root"
+    joint_names: tuple[_NonEmptyString, _NonEmptyString, _NonEmptyString] = (
+        "base/x",
+        "base/y",
+        "base/yaw",
+    )
+
+    @model_validator(mode="after")
+    def _validate_cross_field_invariants(self) -> Self:
+        if len(set(self.joint_names)) != 3:
+            raise ValueError("Planar base joint names must be unique")
+        if any(
+            lower >= upper
+            for lower, upper in zip(self.workspace_lower, self.workspace_upper, strict=True)
+        ):
+            raise ValueError("Planar base workspace bounds must be strictly increasing")
+        return self
+
+
 @dataclass(frozen=True)
 class RobotModel:
     """Lazy, immutable robot model shared by planning backends."""
@@ -102,6 +145,7 @@ class RobotModel:
     _joint_position_limits: tuple[_JointPositionLimits, ...] = ()
     _subtree_root_link: str | None = None
     _removed_joint_subtrees: tuple[str, ...] = ()
+    _planar_base: PlanarBaseDefinition | None = None
 
     @classmethod
     def from_file(
@@ -122,6 +166,17 @@ class RobotModel:
     def source_path(self) -> Path | str | os.PathLike[str]:
         """Return the source handle without forcing lazy asset checkout."""
         return self._source_path
+
+    @property
+    def planar_base(self) -> PlanarBaseDefinition | None:
+        """Return the configured synthetic planar base, if any."""
+        return self._planar_base
+
+    def with_planar_base(self, definition: PlanarBaseDefinition) -> RobotModel:
+        """Return a model whose original root moves through ``x``, ``y``, and ``yaw``."""
+        if self._planar_base is not None:
+            raise ValueError("Robot model already has a planar base")
+        return replace(self, _planar_base=definition)
 
     def with_fixed_frame(
         self,
@@ -230,6 +285,8 @@ class RobotModel:
             xml,
             search_directories=(source_path.parent, *package_paths.values()),
         )
+        if self._planar_base is not None:
+            xml = _add_planar_base(xml, self._planar_base)
         if self._fixed_joints:
             xml = _set_joints_fixed(xml, self._fixed_joints)
         if self._joint_position_limits:
@@ -250,6 +307,56 @@ class RobotModel:
     def __setstate__(self, state: dict[str, object]) -> None:
         for name, value in state.items():
             object.__setattr__(self, name, value)
+
+
+def _add_planar_base(xml: str, definition: PlanarBaseDefinition) -> str:
+    root = ET.fromstring(xml)
+    link_names = {link.get("name") for link in root.findall("link")}
+    joint_names = {joint.get("name") for joint in root.findall("joint")}
+    child_links = {
+        child.get("link")
+        for joint in root.findall("joint")
+        if (child := joint.find("child")) is not None
+    }
+    root_links = sorted(name for name in link_names - child_links if name is not None)
+    if len(root_links) != 1:
+        raise ValueError(f"Planar base requires one URDF root link, found {root_links}")
+
+    x_link = f"{definition.root_link}_x"
+    xy_link = f"{definition.root_link}_xy"
+    generated_links = {definition.root_link, x_link, xy_link}
+    duplicate_links = sorted(generated_links & link_names)
+    if duplicate_links:
+        raise ValueError(f"Planar base link names already exist: {duplicate_links}")
+    duplicate_joints = sorted(set(definition.joint_names) & joint_names)
+    if duplicate_joints:
+        raise ValueError(f"Planar base joint names already exist: {duplicate_joints}")
+
+    for name in (definition.root_link, x_link, xy_link):
+        ET.SubElement(root, "link", {"name": name})
+    links = (definition.root_link, x_link, xy_link, root_links[0])
+    axes = ("1 0 0", "0 1 0", "0 0 1")
+    types = ("prismatic", "prismatic", "revolute")
+    for index, (name, axis, joint_type) in enumerate(
+        zip(definition.joint_names, axes, types, strict=True)
+    ):
+        joint = ET.SubElement(root, "joint", {"name": name, "type": joint_type})
+        ET.SubElement(joint, "origin", {"xyz": "0 0 0", "rpy": "0 0 0"})
+        ET.SubElement(joint, "parent", {"link": links[index]})
+        ET.SubElement(joint, "child", {"link": links[index + 1]})
+        ET.SubElement(joint, "axis", {"xyz": axis})
+        ET.SubElement(
+            joint,
+            "limit",
+            {
+                "lower": str(definition.workspace_lower[index]),
+                "upper": str(definition.workspace_upper[index]),
+                "effort": "1",
+                "velocity": str(definition.velocity_limits[index]),
+                "acceleration": str(definition.acceleration_limits[index]),
+            },
+        )
+    return ET.tostring(root, encoding="unicode")
 
 
 def _add_fixed_frames(xml: str, frames: tuple[_FixedFrame, ...]) -> str:

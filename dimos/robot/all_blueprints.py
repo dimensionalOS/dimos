@@ -95,6 +95,7 @@ all_blueprints = {
     "r1pro-coordinator": "dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator:r1pro_coordinator",
     "r1pro-manipulation": "dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_manipulation:r1pro_manipulation",
     "r1pro-nav": "dimos.robot.galaxea.r1pro.blueprints.navigation.r1pro_nav:r1pro_nav",
+    "r1pro-planner-coordinator": "dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_planner_coordinator:r1pro_planner_coordinator",
     "r1pro-teleop": "dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_teleop:r1pro_teleop",
     "real-sense-camera-vis": "dimos.hardware.sensors.camera.realsense.blueprints:real_sense_camera_vis",
     "relocalize-mid360": "dimos.mapping.relocalization.blueprints:relocalize_mid360",

@@ -83,7 +83,7 @@ PanelHandle: TypeAlias = (
     | TransformControlsHandle
 )
 
-# Fallback joint-slider range (radians) when a robot config omits joint limits.
+# Fallback slider range in native joint coordinates when a config omits limits.
 DEFAULT_JOINT_LIMITS = (-3.14, 3.14)
 PRIMARY_ACTION_COLOR = (0, 102, 179)
 ACTIVE_GROUP_COLOR = PRIMARY_ACTION_COLOR

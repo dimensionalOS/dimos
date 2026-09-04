@@ -167,7 +167,7 @@ class ManipulationSkills(Module):
         """Move one planning group to comma-separated joint positions.
 
         Args:
-            joints: Comma-separated joint positions in radians.
+            joints: Comma-separated positions in each joint's native coordinate.
             planning_group: Opaque planning-group ID. Omit when only one group exists.
         """
 
