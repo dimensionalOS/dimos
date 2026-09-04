@@ -42,6 +42,7 @@ from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector impo
 )
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.robot.microduck.config import MICRODUCK
 from dimos.robot.microduck.sim_module import LIDAR_CAMERA_SPECS, MicroduckSimModule
 
 _SCENE_XML = Path(__file__).resolve().parents[1] / "assets" / "room_scene.xml"
@@ -51,11 +52,6 @@ MICRODUCK_ROOM_OBJECTS: dict[str, tuple[float, float]] = {
     "red_box": (1.5, 0.8),
     "blue_box": (-1.5, -0.8),
 }
-
-# The duck is ~25 cm tall and ~12 cm wide; nav scales follow.
-_DUCK_WIDTH = 0.2
-_DUCK_HEIGHT = 0.28
-_DUCK_ROTATION_DIAMETER = 0.3
 
 microduck_sim = (
     autoconnect(
@@ -95,14 +91,14 @@ microduck_sim = (
         CostMapper.blueprint(
             config=HeightCostConfig(
                 resolution=0.03,
-                can_pass_under=_DUCK_HEIGHT + 0.05,
+                can_pass_under=MICRODUCK.height_clearance + 0.05,
                 can_climb=0.03,
             ),
-            initial_safe_radius_meters=_DUCK_WIDTH + 0.15,
+            initial_safe_radius_meters=MICRODUCK.width_clearance + 0.15,
         ),
         ReplanningAStarPlanner.blueprint(
-            robot_width=_DUCK_WIDTH,
-            robot_rotation_diameter=_DUCK_ROTATION_DIAMETER,
+            robot_width=MICRODUCK.width_clearance,
+            robot_rotation_diameter=MICRODUCK.rotation_diameter,
         ),
         MovementManager.blueprint(),
         WavefrontFrontierExplorer.blueprint(

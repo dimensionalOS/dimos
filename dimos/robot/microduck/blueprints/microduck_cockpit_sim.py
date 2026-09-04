@@ -55,6 +55,7 @@ from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 # Imported for the registration side effect: the cockpit blueprint resolves
 # these encoders by id when it compiles MICRODUCK_COCKPIT_CHANNELS.
 from dimos.robot.microduck import web_codecs  # noqa: F401
+from dimos.robot.microduck.config import MICRODUCK
 from dimos.robot.microduck.control_module import DuckControlModule
 from dimos.robot.microduck.places import (
     FOUR_ROOM_XML,
@@ -81,12 +82,6 @@ from dimos.web.cockpit import (
 
 # Robot model + policy set; see policies.py for the two variants.
 _VARIANT = os.environ.get("MICRODUCK_VARIANT", "default")
-
-# The duck is ~25 cm tall and ~12 cm wide; nav scales follow (as in
-# microduck_sim.py, which stays untouched for the exploration demo).
-_DUCK_WIDTH = 0.2
-_DUCK_HEIGHT = 0.28
-_DUCK_ROTATION_DIAMETER = 0.3
 
 # The gait covers ~0.06 m/s, so the planner's default stuck detector (< 0.4 m
 # in 8 s) fires on every leg and the replan limiter gives up mid-room. Over
@@ -338,14 +333,14 @@ def _stack(mcp_client_kwargs: dict[str, object]):  # type: ignore[no-untyped-def
         CostMapper.blueprint(
             config=HeightCostConfig(
                 resolution=0.03,
-                can_pass_under=_DUCK_HEIGHT + 0.05,
+                can_pass_under=MICRODUCK.height_clearance + 0.05,
                 can_climb=0.03,
             ),
-            initial_safe_radius_meters=_DUCK_WIDTH + 0.15,
+            initial_safe_radius_meters=MICRODUCK.width_clearance + 0.15,
         ),
         ReplanningAStarPlanner.blueprint(
-            robot_width=_DUCK_WIDTH,
-            robot_rotation_diameter=_DUCK_ROTATION_DIAMETER,
+            robot_width=MICRODUCK.width_clearance,
+            robot_rotation_diameter=MICRODUCK.rotation_diameter,
             stuck_time_window=_DUCK_STUCK_TIME_WINDOW,
             stuck_threshold=_DUCK_STUCK_THRESHOLD,
         ),
