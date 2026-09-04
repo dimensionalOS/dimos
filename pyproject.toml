@@ -640,6 +640,7 @@ module = [
     "a750_control.*",
     "bosdyn",
     "bosdyn.*",
+    "builtin_interfaces.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
