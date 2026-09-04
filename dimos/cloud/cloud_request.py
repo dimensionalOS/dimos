@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 from pathlib import Path
 import shutil
@@ -29,7 +30,9 @@ class CloudRequest(Protocol):
         self, method: str, path: str, body: dict[str, Any] | None = None
     ) -> dict[str, Any]: ...
     def put(self, url: str, body: bytes) -> None: ...
-    def download(self, url: str, dst: Path) -> None: ...
+    def download(
+        self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
+    ) -> None: ...
 
 
 class HttpCloudRequest:
@@ -62,6 +65,16 @@ class HttpCloudRequest:
         ):
             pass
 
-    def download(self, url: str, dst: Path) -> None:
+    def download(
+        self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
+    ) -> None:
         with urllib.request.urlopen(url, timeout=self.timeout) as r, dst.open("wb") as f:
-            shutil.copyfileobj(r, f)
+            if progress is None:
+                shutil.copyfileobj(r, f)
+                return
+            total = int(r.headers.get("Content-Length") or 0)
+            done = 0
+            while chunk := r.read(1 << 20):
+                f.write(chunk)
+                done += len(chunk)
+                progress(done, total)

@@ -56,7 +56,7 @@ def test_dual_openyam_hardware_uses_both_explicit_can_ports() -> None:
     assert hardware.adapter_type == DUAL_OPENYAM_ADAPTER_TYPE
     runtime = hardware.adapter_kwargs["runtime_config"]
     assert isinstance(runtime, DamiaoRuntimeConfig)
-    assert runtime.bus_addresses == {"left": "can8", "right": "can9"}
+    assert runtime.bus_devices == {"left": "can8", "right": "can9"}
     assert runtime.gravity_comp is True
 
 
@@ -70,3 +70,8 @@ def test_dual_openyam_hardware_rejects_partial_can_configuration(
 ) -> None:
     with pytest.raises(ValueError, match="requires both"):
         dual_openyam_hardware(left_can_port=left, right_can_port=right)
+
+
+def test_dual_openyam_hardware_rejects_duplicate_can_configuration() -> None:
+    with pytest.raises(ValueError, match="requires distinct"):
+        dual_openyam_hardware(left_can_port="same", right_can_port="same")

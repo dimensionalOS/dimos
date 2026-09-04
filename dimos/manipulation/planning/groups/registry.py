@@ -17,28 +17,21 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING
 
-from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
+from dimos.manipulation.planning.groups.models import (
+    PlanningGroup,
+    PlanningGroupDefinition,
+    PlanningGroupSelection,
+)
 from dimos.manipulation.planning.spec.models import PlanningGroupID
-
-if TYPE_CHECKING:
-    from dimos.manipulation.planning.spec.config import RobotModelConfig
 
 
 class PlanningGroupRegistry:
     """Registry of public planning groups derived from one model config."""
 
-    def __init__(self, model_configs: Iterable[RobotModelConfig] = ()) -> None:
+    def __init__(self, definitions: Iterable[PlanningGroupDefinition] = ()) -> None:
         self._groups: dict[PlanningGroupID, PlanningGroup] = {}
-        for config in model_configs:
-            self.add_model(config)
-
-    def add_model(self, config: RobotModelConfig) -> None:
-        """Register all planning groups declared by the model config."""
-        if self._groups:
-            raise ValueError("A model is already registered")
-        for definition in config.planning_groups:
+        for definition in definitions:
             group_id = definition.name
             if group_id in self._groups:
                 raise ValueError(f"Planning group '{group_id}' is already registered")
@@ -52,7 +45,7 @@ class PlanningGroupRegistry:
             self._groups[group_id] = group
 
     def list(self) -> tuple[PlanningGroup, ...]:
-        """List planning groups in robot registration order."""
+        """List planning groups in declaration order."""
         return tuple(self._groups.values())
 
     def get(self, group_id: PlanningGroupID) -> PlanningGroup:

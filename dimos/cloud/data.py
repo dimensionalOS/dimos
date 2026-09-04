@@ -75,8 +75,10 @@ class DataApi:
     def put_part(self, url: str, chunk: bytes) -> None:
         self.t.put(url, chunk)
 
-    def fetch(self, url: str, dst: Path) -> None:
-        self.t.download(url, dst)
+    def fetch(
+        self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
+    ) -> None:
+        self.t.download(url, dst, progress)
 
 
 class MultipartBackend:
@@ -178,18 +180,39 @@ class MultipartBackend:
             done = self.api.complete(uid, parts)
             return {**done, "upload_id": uid, "skipped": False}
 
-    def pull(self, upload_id: str, dest: Path | None, tag: str = "") -> Path:
+    def pull(
+        self,
+        upload_id: str,
+        dest: Path | None,
+        tag: str = "",
+        progress: Progress | None = None,
+        size: int = 0,
+    ) -> Path:
+        tick = progress or (lambda phase, done, total: None)
         d = self.api.download(upload_id)
         wire = d.get("content_encoding") or ""
         out = dest or DOWNLOADS_DIR / f"{tag}{_plain_name(d['filename'], wire)}"
         out.parent.mkdir(parents=True, exist_ok=True)
         with self._staging(out) as tmp:
+            if size:
+                # wire and decompressed copies coexist in staging before the move
+                _require_space(Path(tmp), size * 2 if wire else size)
             raw = Path(tmp) / "wire"
-            self._retry(functools.partial(self.api.fetch, d["url"], raw), "download")
+            tick("download", 0, 0)
+            self._retry(
+                functools.partial(
+                    self.api.fetch, d["url"], raw, lambda done, total: tick("download", done, total)
+                ),
+                "download",
+            )
+            tick("verify", 0, 0)
             if _sha256(raw) != d["sha256"]:
                 raise RuntimeError("sha256 mismatch — refusing to keep the file")
-            plain = Path(tmp) / "plain"
-            codecs.decompress(wire, raw, plain) if wire else raw.rename(plain)
+            if wire:
+                tick("decompress", 0, 0)
+                codecs.decompress(wire, raw, plain := Path(tmp) / "plain")
+            else:
+                raw.rename(plain := Path(tmp) / "plain")
             _move_into_place(plain, out)
         return out
 
@@ -257,9 +280,17 @@ class CloudData:
             raise RuntimeError(f"ambiguous id prefix {prefix!r}")
         return hits[0]
 
-    def pull(self, upload_id: str | None, dest: Path | None = None) -> Path:
+    def pull(
+        self, upload_id: str | None, dest: Path | None = None, progress: Progress | None = None
+    ) -> Path:
         row = self.resolve(upload_id)
-        return self.backend.pull(str(row["id"]), dest, tag=_tag(row))
+        return self.backend.pull(
+            str(row["id"]),
+            dest,
+            tag=_tag(row),
+            progress=progress,
+            size=int(row.get("size") or 0),
+        )
 
     def ls(self) -> list[dict[str, Any]]:
         return self.backend.ls()
@@ -305,13 +336,13 @@ def kind_of(path: Path) -> str:
 
 
 def _require_space(where: Path, need: int) -> None:
-    """Compression stages a copy beside the file (or in dimos_staging_dir); fail before
-    starting rather than at 99% of a 100 GB transfer."""
+    """Uploads and pulls stage copies beside the file (or in dimos_staging_dir); fail
+    before starting rather than at 99% of a 100 GB transfer."""
     free = shutil.disk_usage(where).free
     if free < need:
         raise RuntimeError(
-            f"{where} has {free / 2**30:.1f} GB free, need ~{need / 2**30:.1f} GB to stage the "
-            "compressed copy — set dimos_staging_dir to a larger partition or upload with dimos_upload_codec=''"
+            f"{where} has {free / 2**30:.1f} GB free, need ~{need / 2**30:.1f} GB to stage — "
+            "set dimos_staging_dir to a larger partition"
         )
 
 

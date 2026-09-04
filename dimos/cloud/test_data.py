@@ -112,8 +112,14 @@ class FakeTransport:
             raise OSError("link dropped")
         self.parts[uid][int(n)] = body
 
-    def download(self, url: str, dst: Path) -> None:
-        dst.write_bytes(self.uploads[url]["blob"])
+    def download(
+        self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
+    ) -> None:
+        blob = self.uploads[url]["blob"]
+        dst.write_bytes(blob)
+        if progress:
+            progress(len(blob) // 2, len(blob))
+            progress(len(blob), len(blob))
 
 
 def recording(dir_: Path, age_s: float = 3600) -> Path:
@@ -328,7 +334,13 @@ def test_progress_prefix_and_default_pull(env: tuple[CloudData, FakeTransport, P
     assert cloud.resolve(uid[:6])["id"] == uid == cloud.resolve(None)["id"]
     with pytest.raises(RuntimeError, match="no upload matching"):
         cloud.resolve("zz")
-    assert cloud.pull(uid[:6], dest=db.parent / "p.db").read_bytes() == db.read_bytes()
+    pulls: list[tuple[str, int, int]] = []
+    got = cloud.pull(uid[:6], dest=db.parent / "p.db", progress=lambda *a: pulls.append(a))
+    assert got.read_bytes() == db.read_bytes()
+    phases = [p[0] for p in pulls]
+    assert phases[0] == "download" and "verify" in phases
+    dl = [p for p in pulls if p[0] == "download" and p[2]]
+    assert dl[-1][1] == dl[-1][2] > 0
     out = cloud.pull(None)
     assert out.name == f"20260830-120000-{uid}-{db.name}"
     assert out.read_bytes() == db.read_bytes()
@@ -343,6 +355,18 @@ def test_upload_refuses_when_staging_partition_is_full(
     monkeypatch.setattr(shutil, "disk_usage", lambda p: shutil._ntuple_diskusage(10, 9, 1))  # type: ignore[attr-defined]
     with pytest.raises(RuntimeError, match="free, need"):
         cloud.upload(db)
+
+
+def test_pull_refuses_when_disk_is_full(
+    env: tuple[CloudData, FakeTransport, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cloud, _, db = env
+    uid = cloud.upload(db)["upload_id"]
+    import shutil
+
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: shutil._ntuple_diskusage(10, 9, 1))  # type: ignore[attr-defined]
+    with pytest.raises(RuntimeError, match="free, need"):
+        cloud.pull(uid)
 
 
 def test_missing_staging_dir_is_created(tmp_path: Path) -> None:
