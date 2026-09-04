@@ -950,6 +950,16 @@ class MujocoSimModule(
                 self.color_image.publish(color_img)
 
             if self.config.enable_depth:
+                # depth_needed in start() must have registered this camera with
+                # render_depth=True. Say so out loud: if that derivation ever
+                # drifts, publishing Image(data=None) would fail somewhere far
+                # from the cause, or not at all.
+                if frame.depth is None:
+                    raise RuntimeError(
+                        f"camera {self.config.camera_name!r} rendered no depth while "
+                        "enable_depth is set; CameraConfig.render_depth and the "
+                        "depth_needed derivation in start() have diverged"
+                    )
                 depth_img = Image(
                     data=frame.depth,
                     format=ImageFormat.DEPTH,
@@ -1051,6 +1061,15 @@ class MujocoSimModule(
                 frame_id=self._color_optical_frame,
                 ts=frame.timestamp,
             )
+            # Same invariant as the publish path: this branch only runs when
+            # the raycast lidar is off, which is exactly when depth_needed is
+            # true, so a None here means that derivation drifted.
+            if frame.depth is None:
+                raise RuntimeError(
+                    f"camera {self.config.camera_name!r} rendered no depth while the "
+                    "RGB-D pointcloud path is active; CameraConfig.render_depth and "
+                    "the depth_needed derivation in start() have diverged"
+                )
             depth_img = Image(
                 data=frame.depth,
                 format=ImageFormat.DEPTH,
