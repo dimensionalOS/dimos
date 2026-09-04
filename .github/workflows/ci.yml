@@ -264,7 +264,16 @@ jobs:
         env:
           CRATES: ${{ steps.find-flake-crates.outputs.crates }}
         run: |
+          system=$(nix eval --raw --impure --expr builtins.currentSystem)
           for crate in $CRATES; do
+            # The toolchain comes from the crate's dev shell, so a flake that
+            # offers none opts out. dim_slam is the case that matters: its only
+            # outputs are per-cuVSLAM-variant packages, because which variant is
+            # correct depends on the GPU the module will run on.
+            if ! (cd "$crate" && nix eval --raw "path:.#devShells.$system.default.name") >/dev/null 2>&1; then
+              echo "::notice::$crate exposes no dev shell - skipping"
+              continue
+            fi
             echo "::group::$crate"
             (cd "$crate" && nix develop path:. --command bash -c '
               set -euo pipefail
