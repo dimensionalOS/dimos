@@ -187,9 +187,9 @@ class TestManipulationModuleIntegration:
         """Test planning to an explicit planning-group joint target."""
         module._on_joint_state(joint_state_zeros)
 
-        success = module.plan_to_joint_targets({"manipulator": JointState(position=[0.05] * 7)})
+        result = module.plan_to_joints({"manipulator": JointState(position=[0.05] * 7)})
 
-        assert success is True
+        assert result.is_success()
         assert module._state == ManipulationState.COMPLETED
         assert module._last_plan is not None
         assert module._last_plan.group_ids == ("manipulator",)
@@ -217,10 +217,10 @@ class TestManipulationModuleIntegration:
         info = module.get_model_info()
 
         assert len(info["joint_names"]) == 7
-        assert info["end_effector_link"] == "link7"
         groups = info["planning_groups"]
         assert len(groups) == 1
         assert groups[0].id == "manipulator"
+        assert groups[0].tip_frame == "link7"
 
         all_groups = module.list_planning_groups()
         assert [group.id for group in all_groups] == ["manipulator"]

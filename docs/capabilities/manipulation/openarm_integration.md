@@ -35,7 +35,8 @@ finger joints and preflights the remaining 14 joints against the declared arm
 order before enabling the motors.
 
 Planning treats the two arms as one robot with `left_arm`, `right_arm`, and
-`both_arms` planning groups because collision exclusions cannot span robots.
+`both_arms` planning groups. The single model supports cross-arm collision
+checking and synchronized bimanual planning.
 
 ## Bring-up
 

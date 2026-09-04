@@ -180,9 +180,6 @@ Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
 misc = [
-    # Core requirements
-    "python-multipart>=0.0.27",
-
     # Developer Specific
     "ipykernel",
 
@@ -244,6 +241,7 @@ agents = [
 
 web = [
     "fastapi>=0.115.6",
+    "python-multipart>=0.0.27",
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
     "jinja2>=3.1.6",
@@ -291,7 +289,7 @@ manipulation = [
     "xarm-python-sdk>=1.17.0",
     "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
-    "can-motor-control>=0.0.7; sys_platform == 'linux'",
+    "can-motor-control>=0.0.8; sys_platform == 'linux' or sys_platform == 'darwin'",
 
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
@@ -421,7 +419,7 @@ project-deps = [
     "langchain-openai>=1,<2",
     "ollama>=0.6.0",
     # The generic Damiao whole-body adapter imports upstream types directly.
-    "can-motor-control>=0.0.7; sys_platform == 'linux'",
+    "can-motor-control>=0.0.8; sys_platform == 'linux' or sys_platform == 'darwin'",
 ]
 
 tests = [
@@ -518,6 +516,9 @@ docs = [
     "mkdocs-material>=9.7.7",
     "mkdocs-minify-plugin>=0.8.0",
     "mkdocs-redirects>=1.2.3",
+]
+dev = [
+    "optuna>=4.9.0",
 ]
 
 [tool.uv]
@@ -705,6 +706,9 @@ module = [
     "pxr.*",
     "trimesh",
     "trimesh.*",
+    # dev-group only (tuning), so absent from the default sync and from CI
+    "optuna",
+    "optuna.*",
 ]
 ignore_missing_imports = true
 

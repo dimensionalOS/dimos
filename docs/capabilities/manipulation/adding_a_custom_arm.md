@@ -481,11 +481,11 @@ robot asset cache. Use `LfsPath` only when the description is intentionally
 vendored, locally modified, or has no suitable upstream source.
 
 If the planning blueprint selects the RoboPlan TOPP-RA trajectory
-parametrizer, dimOS currently pins RoboPlan to `0.5.1`. Every movable joint in
+parametrizer, dimOS requires RoboPlan `0.6.x`. Every movable joint in
 each selected planning group must provide finite, positive velocity limits.
 Authored extended acceleration limits take precedence; when absent, dimOS
-temporarily inserts a global `2.0 rad/s²` acceleration fallback during RoboPlan
-model composition:
+temporarily inserts a default `2.0 rad/s²` acceleration limit during RoboPlan
+model preparation:
 
 ```xml
 <joint name="joint1" type="revolute">

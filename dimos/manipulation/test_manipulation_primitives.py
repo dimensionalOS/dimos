@@ -80,7 +80,7 @@ def _plan() -> GeneratedPlan:
 def _set_groups(module, model: RobotModelConfig) -> None:
     module.config.model = model
     module._world_monitor = MagicMock()
-    module._world_monitor.planning_groups = PlanningGroupRegistry((model,))
+    module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
 
 
 def test_move_linear_uses_world_relative_target_and_default_speed(

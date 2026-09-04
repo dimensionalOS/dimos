@@ -622,18 +622,16 @@ class ViserPanelGui:
             if config is None or target is None:
                 continue
             config_indexes = {str(name): index for index, name in enumerate(config.joint_names)}
-            for _global_name, local_name, value in zip(
-                group.joint_names, group.joint_names, target.position, strict=True
-            ):
-                index = config_indexes.get(str(local_name))
+            for joint_name, value in zip(group.joint_names, target.position, strict=True):
+                index = config_indexes.get(str(joint_name))
                 lower, upper = DEFAULT_JOINT_LIMITS
                 if index is not None and config.joint_limits_lower is not None:
                     lower = config.joint_limits_lower[index]
                 if index is not None and config.joint_limits_upper is not None:
                     upper = config.joint_limits_upper[index]
-                key = (group_id, str(local_name))
+                key = (group_id, str(joint_name))
                 handle = gui.add_slider(
-                    f"{group_id}/{local_name}",
+                    f"{group_id}/{joint_name}",
                     min=float(lower),
                     max=float(upper),
                     step=0.001,
@@ -643,7 +641,7 @@ class ViserPanelGui:
                 def on_slider_update(
                     _event: object,
                     selected_group_id: PlanningGroupID = group_id,
-                    name: str = str(local_name),
+                    name: str = str(joint_name),
                 ) -> None:
                     self._on_joint_slider_update(selected_group_id, name)
 
@@ -794,24 +792,24 @@ class ViserPanelGui:
             slider_values.append((group_id, group.joint_names, positions))
         self.state.group_joint_targets.update(targets)
         if any(
-            (group_id, str(local_name)) not in self._joint_sliders
-            for group_id, local_names, _positions in slider_values
-            for local_name in local_names
+            (group_id, str(joint_name)) not in self._joint_sliders
+            for group_id, joint_names, _positions in slider_values
+            for joint_name in joint_names
         ):
             self._build_joint_sliders()
-        for group_id, local_names, positions in slider_values:
-            self._set_group_slider_values(group_id, local_names, positions)
+        for group_id, joint_names, positions in slider_values:
+            self._set_group_slider_values(group_id, joint_names, positions)
         self._refresh_target_joints_from_groups()
         self._submit_joint_target_evaluation()
         self.refresh()
 
     def _set_group_slider_values(
-        self, group_id: PlanningGroupID, local_names: tuple[str, ...], values: list[float]
+        self, group_id: PlanningGroupID, joint_names: tuple[str, ...], values: list[float]
     ) -> None:
         self._suppress_target_callbacks = True
         try:
-            for local_name, value in zip(local_names, values, strict=True):
-                handle = self._joint_sliders.get((group_id, str(local_name)))
+            for joint_name, value in zip(joint_names, values, strict=True):
+                handle = self._joint_sliders.get((group_id, str(joint_name)))
                 if handle is not None:
                     handle.value = float(value)
         finally:
@@ -825,16 +823,16 @@ class ViserPanelGui:
                 self._set_error(f"Unknown planning group: {group_id}")
                 return None
             positions: list[float] = []
-            for local_name in group.joint_names:
-                handle = self._joint_sliders.get((group_id, str(local_name)))
+            for joint_name in group.joint_names:
+                handle = self._joint_sliders.get((group_id, str(joint_name)))
                 if handle is None:
-                    self._set_error(f"Missing target slider for {group_id}/{local_name}")
+                    self._set_error(f"Missing target slider for {group_id}/{joint_name}")
                     return None
                 positions.append(float(handle.value))
             targets[group_id] = JointState({"name": list(group.joint_names), "position": positions})
         return targets
 
-    def _on_joint_slider_update(self, _group_id: PlanningGroupID, _local_name: str) -> None:
+    def _on_joint_slider_update(self, _group_id: PlanningGroupID, _joint_name: str) -> None:
         if self._closed:
             return
         if self._suppress_target_callbacks:
@@ -901,7 +899,7 @@ class ViserPanelGui:
         state = self._target_ghost_state(targets)
         if state is not None:
             config = self.get_model_config()
-            self.scene.set_target_joints("model", config.joint_names, state.position)
+            self.scene.set_target_joints(config.joint_names, state.position)
 
     def _target_ghost_state(
         self, targets: Mapping[PlanningGroupID, JointState]
@@ -932,7 +930,7 @@ class ViserPanelGui:
             (group := self._groups_by_id().get(group_id)) is not None and group.has_pose_target
             for group_id in self.state.selected_group_ids
         )
-        self.scene.set_target_active("model", active)
+        self.scene.set_target_active(active)
 
     def _handle_target_evaluation_request(
         self, request: TargetEvaluationRequest
@@ -1075,7 +1073,7 @@ class ViserPanelGui:
             if group.has_pose_target:
                 self.scene.set_target_control_visual_state(str(group_id), feasible)
         if selected_groups:
-            self.scene.set_target_robot_visual_state("model", feasible)
+            self.scene.set_target_robot_visual_state(feasible)
 
     def _can_execute(self) -> bool:
         return self.state.can_execute()

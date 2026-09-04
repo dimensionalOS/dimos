@@ -161,8 +161,8 @@ velocities bypasses path parametrization and retains its existing timing after
 canonical validation. TOPP-RA follows the collision-checked geometric path
 without corner blending; collision checking remains the planner's concern.
 Explicit configuration overrides the world-based default.
-RoboPlan model composition preserves authored acceleration limits and inserts a
-temporary global `2.0 rad/s²` fallback where they are absent. Formal per-joint
+RoboPlan model preparation preserves authored acceleration limits and inserts a
+temporary default `2.0 rad/s²` limit where they are absent. Formal per-joint
 acceleration overrides will replace this fallback.
 
 The Viser panel's **Next plan speed** slider provides runtime speed tuning from
@@ -199,11 +199,6 @@ from dimos.manipulation.planning.planners.roboplan_config import (
 )
 
 path_config = RoboPlanCartesianPathConfig()
-
-module.plan_cartesian_targets(
-    {"arm/manipulator": (current_tcp_pose, goal_tcp_pose)},
-    path_config,
-)
 ```
 
 The default `time_optimal` mode returns the TOPP-RA trajectory constrained by
@@ -237,8 +232,8 @@ handling. RoboPlan 0.6 removed the former `limit_ratio_tolerance` and
 `max_attempts_per_step` settings.
 
 Cartesian path planning remains a low-level internal capability in this
-release. `ManipulationModule.plan_cartesian_targets()` accepts an ordered
-waypoint sequence for each target planning group. A sequence contains only
+release. The internal generator accepts an ordered waypoint sequence for each
+target planning group. A sequence contains only
 `PoseStamped` absolute waypoints or only `Transform` displacements relative to
 the planning start, and begins at the current TCP pose or identity transform.
 RoboPlan plans all target groups simultaneously. The Viser panel constructs a
@@ -343,7 +338,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule, Manipulat
 
 manipulation = ManipulationModule.blueprint(
     config=ManipulationModuleConfig(
-        robots=[...],
+        model=robot_model,
         visualization={
             "backend": "viser",
             "host": "127.0.0.1",
@@ -383,19 +378,18 @@ failure leaves the plan unavailable. Preview and execution use RoboPlan's
 original synchronized timestamps and velocities.
 
 External manipulation visualizers are initialized from a backend-neutral
-`VisualizationSession` after the planning world has added its robots. The
-session contains static `PlanningSceneInfo` metadata: world robot IDs,
-`RobotModelConfig` values, and resolved planning groups. Runtime joint state is
+`VisualizationSession` after the planning world has loaded its model. The
+session contains static `PlanningSceneInfo` metadata: the `RobotModelConfig`
+and resolved planning groups. Runtime joint state is
 then pushed through `VisualizationStateFrame` updates so renderers do not poll
 world/module state or own freshness policy. Embedded Meshcat visualization does
 not need extra setup because it observes the Drake world directly.
 
 Previews use the stored synchronized `JointTrajectory` from the generated plan.
-Viser projects the globally named trajectory into robot-local preview ghosts and
-plays the stored timestamped points directly; optional preview duration only
-scales the stored delays. Execution projects that same accepted trajectory into
-each robot's local joint order while preserving timestamps and velocities; it
-does not regenerate or retime it. Execute freshness is enforced by the
+Viser plays the stored canonical trajectory directly; optional preview duration
+only scales the stored delays. Execution forwards that same accepted trajectory
+with unchanged joint names, ordering, timestamps, and velocities; it does not
+regenerate or retime it. Execute freshness is enforced by the
 manipulation module/operator immediately before dispatch, not by Viser-side
 telemetry snapshots.
 
