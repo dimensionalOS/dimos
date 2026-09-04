@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dimos-abc-runtime"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "ftfy>=6.3,<7",
+    "numpy>=2,<3",
+    "regex>=2025.7",
+    "torch==2.11.0+cu128",
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+
+[dependency-groups]
+tests = [
+    "mypy==1.19.0",
+    "pytest==8.3.5",
+    "pytest-mock>=3.14",
+]
+
+[tool.uv]
+default-groups = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["abc_minimal*", "dimos_abc*"]
+
+[tool.pytest.ini_options]
+testpaths = ["dimos_abc"]
+python_files = ["*_tests.py"]
+
+[tool.mypy]
+files = ["dimos_abc/"]
+python_version = "3.12"
+strict = true
+explicit_package_bases = true
+mypy_path = "../../../../../"
+untyped_calls_exclude = ["abc_minimal"]
+
+[[tool.mypy.overrides]]
+module = ["dimos", "dimos.*"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["abc_minimal", "abc_minimal.*"]
+follow_untyped_imports = true

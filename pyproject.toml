@@ -54,6 +54,9 @@ exclude = [
     # shipping arbitrary manifests from the source tree.
     "imitation/policy/lerobot/python/pyproject.toml",
     "imitation/policy/lerobot/python/uv.lock",
+    "imitation/policy/abc/python/pyproject.toml",
+    "imitation/policy/abc/python/uv.lock",
+    "imitation/policy/abc/python/VENDORED.md",
 ]
 
 [tool.setuptools.exclude-package-data]
@@ -592,6 +595,7 @@ exclude = [
     "venv",
     "libs",
     "external",
+    "dimos/imitation/policy/abc/python/abc_minimal",
     "src"
 ]
 
@@ -635,7 +639,7 @@ strict = true
 warn_unused_ignores = false
 untyped_calls_exclude = ["zenoh"]
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|^dimos/imitation/policy/lerobot/python/|.*/test_.|.*/tool_.|.*/conftest.py*"
+exclude = "^dimos/models/Detic(/|$)|^dimos/imitation/policy/(lerobot|abc)/python/|.*/test_.|.*/tool_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [

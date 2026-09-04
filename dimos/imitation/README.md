@@ -1,16 +1,17 @@
 # Imitation Learning
 
-The public collect → prepare → train → run workflow is documented in
+The public workflow is documented in
 [Imitation Learning for Manipulation](../../docs/capabilities/manipulation/imitation-learning.md).
 
-This package contains the implementation layers behind that CLI:
+The package is split by concern:
 
-- `workflows.py` binds built-in collection Blueprints, DataPrep Profiles, and
-  rollout Blueprints.
-- `collection/` records episode boundaries and robot streams.
-- `dataprep/` converts recordings into training datasets.
-- `policy/lerobot/` runs checkpoints in a pinned isolated environment.
+- `profile.py` defines feature-key to typed-stream contracts.
+- `collection/` records the ports generated from a collection profile.
+- `dataprep/` converts MCAP recordings to LeRobot datasets.
+- `policy/runtime.py` owns live synchronization and safe trajectory execution.
+- `policy/lerobot/` and `policy/abc/` contain isolated backend adapters.
+- `workflows.py` exposes separate lazy collection and rollout catalogs.
 
-These layers remain usable by maintainers when composing new built-in
-workflows. Users should start with `dimos imitation list` and keep robot module
-configuration out of their command line.
+Profiles are Python declarations because module ports must exist before a
+Blueprint autoconnects. Runtime YAML or checkpoint inspection cannot add ports
+after deployment.

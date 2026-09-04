@@ -12,88 +12,65 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The data contract shared by OpenYAM collection, training, and rollout."""
+"""OpenYAM collection and rollout policy profiles."""
 
-from pydantic import Field
-
-from dimos.imitation.dataprep.core import (
-    DataPrepConfig,
-    FeatureSpec,
-    OutputConfig,
-    QualityConfig,
-    SyncConfig,
+from dimos.imitation.collection.native_recorder import declare_recorder
+from dimos.imitation.dataprep.core import QualityConfig, SyncConfig
+from dimos.imitation.profile import (
+    ImageSource,
+    JointPositionAction,
+    JointPositionSource,
+    PolicyIOProfile,
 )
-from dimos.protocol.service.spec import BaseConfig
-from dimos.robot.manipulators.openyam.config import (
-    OPENYAM_GRIPPER_JOINT,
-    OPENYAM_JOINTS,
+from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
+
+OPENYAM_CAMERA_SHAPE = (480, 640, 3)
+OPENYAM_FPS = 30.0
+
+
+def _profile(name: str, action_stream: str) -> PolicyIOProfile:
+    joints = tuple(OPENYAM_JOINTS)
+    return PolicyIOProfile(
+        name=name,
+        robot_type="openyam",
+        observations={
+            "observation.images.wrist": ImageSource(
+                stream="wrist_image",
+                shape=OPENYAM_CAMERA_SHAPE,
+            ),
+            "observation.state": JointPositionSource(
+                stream="coordinator_joint_state",
+                joints=joints,
+            ),
+        },
+        action=JointPositionAction(
+            key="action",
+            demonstration=JointPositionSource(stream=action_stream, joints=joints),
+        ),
+        sync=SyncConfig(
+            anchor="observation.images.wrist",
+            rate_hz=OPENYAM_FPS,
+            tolerance_ms=20.0,
+        ),
+        quality=QualityConfig(
+            mode="strict",
+            min_source_rate_ratio=0.95,
+            max_camera_gap_ms=100.0,
+            max_alignment_error_ms=20.0,
+        ),
+    )
+
+
+OPENYAM_QUEST_IO = _profile("openyam-quest", "applied_joint_position_command")
+OPENYAM_TEACH_IO = _profile("openyam-teach", "coordinator_joint_state")
+
+OpenYamQuestRecorder = declare_recorder(
+    "OpenYamQuestRecorder",
+    __name__,
+    OPENYAM_QUEST_IO,
 )
-
-
-class OpenYamLearningProfile(BaseConfig):
-    """One fixed observation/action schema for an OpenYAM collection mode."""
-
-    robot_type: str = "openyam"
-    joint_names: tuple[str, ...] = tuple(OPENYAM_JOINTS)
-    gripper_joint_name: str = OPENYAM_GRIPPER_JOINT
-    fps: float = Field(default=30.0, gt=0)
-    camera_width: int = Field(default=640, gt=0)
-    camera_height: int = Field(default=480, gt=0)
-    camera_channels: int = Field(default=3, gt=0)
-    camera_frame_prefix: str = "wrist"
-    camera_frame_id: str = "wrist_camera_link"
-    image_feature: str = "observation.images.wrist"
-    action_stream: str = "applied_joint_position_command"
-    repo_id: str = "local/openyam-wrist"
-
-    def dataprep_config(self) -> DataPrepConfig:
-        """Build the matching native-recording to LeRobot conversion config."""
-        joint_names = list(self.joint_names)
-        return DataPrepConfig(
-            source="",
-            observation={
-                self.image_feature: FeatureSpec(
-                    stream="color_image",
-                    field="data",
-                    dtype="video",
-                    shape=(self.camera_height, self.camera_width, self.camera_channels),
-                    names=["height", "width", "channels"],
-                ),
-                "observation.state": FeatureSpec(
-                    stream="coordinator_joint_state",
-                    field="position",
-                    dtype="float32",
-                    shape=(len(joint_names),),
-                    names=joint_names,
-                ),
-            },
-            action={
-                "action": FeatureSpec(
-                    stream=self.action_stream,
-                    field="position",
-                    dtype="float32",
-                    shape=(len(joint_names),),
-                    names=joint_names,
-                )
-            },
-            sync=SyncConfig(
-                anchor=self.image_feature,
-                rate_hz=self.fps,
-                tolerance_ms=20.0,
-            ),
-            quality=QualityConfig(
-                mode="strict",
-                min_source_rate_ratio=0.95,
-                max_camera_gap_ms=100.0,
-                max_alignment_error_ms=20.0,
-            ),
-            output=OutputConfig(
-                format="lerobot",
-                path=DataPrepConfig().output.path,
-                metadata={"repo_id": self.repo_id, "robot_type": self.robot_type},
-            ),
-        )
-
-
-OPENYAM_LEARNING_PROFILE = OpenYamLearningProfile()
-OPENYAM_TEACH_LEARNING_PROFILE = OpenYamLearningProfile(action_stream="coordinator_joint_state")
+OpenYamTeachRecorder = declare_recorder(
+    "OpenYamTeachRecorder",
+    __name__,
+    OPENYAM_TEACH_IO,
+)

@@ -14,31 +14,46 @@
 
 import pytest
 
-from dimos.imitation.workflows import WORKFLOWS, get_workflow
-from dimos.robot.manipulators.openyam.learning import (
-    OPENYAM_LEARNING_PROFILE,
-    OPENYAM_TEACH_LEARNING_PROFILE,
+from dimos.imitation.profile import ImageSource
+from dimos.imitation.workflows import (
+    COLLECTION_WORKFLOWS,
+    ROLLOUT_WORKFLOWS,
+    get_collection_workflow,
+    get_rollout_workflow,
 )
+from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_JOINTS
+from dimos.robot.manipulators.dual_openyam.learning import ABC_JOINTS
 
 
-def test_registry_has_two_explicit_openyam_workflows() -> None:
-    assert list(WORKFLOWS) == ["openyam-teach", "openyam-quest"]
-    assert WORKFLOWS["openyam-teach"].collection_method == ("gravity-compensated hand guidance")
-    assert "Quest headset" not in WORKFLOWS["openyam-teach"].required_hardware
-    assert "Quest headset" in WORKFLOWS["openyam-quest"].required_hardware
+def test_collection_and_rollout_catalogs_are_independent() -> None:
+    assert list(COLLECTION_WORKFLOWS) == [
+        "openyam-teach",
+        "openyam-quest",
+        "dual-openyam-quest",
+    ]
+    assert list(ROLLOUT_WORKFLOWS) == ["openyam-lerobot", "dual-openyam-abc"]
 
 
-def test_workflows_select_the_correct_action_contract() -> None:
-    teach = get_workflow("openyam-teach").load_dataprep_profile()
-    quest = get_workflow("openyam-quest").load_dataprep_profile()
+def test_dual_collection_uses_two_wrist_cameras_and_canonical_joint_order() -> None:
+    profile = get_collection_workflow("dual-openyam-quest").load_profile()
+    camera_streams = {
+        source.stream for source in profile.observations.values() if isinstance(source, ImageSource)
+    }
 
-    assert teach is OPENYAM_TEACH_LEARNING_PROFILE
-    assert quest is OPENYAM_LEARNING_PROFILE
-    assert teach.dataprep_config().action["action"].stream == "coordinator_joint_state"
-    assert quest.dataprep_config().action["action"].stream == ("applied_joint_position_command")
-    assert teach.dataprep_config().quality.mode == "strict"
+    assert camera_streams == {"left_wrist_image", "right_wrist_image"}
+    assert profile.action.demonstration.joints == tuple(DUAL_OPENYAM_JOINTS)
 
 
-def test_unknown_workflow_lists_valid_choices() -> None:
-    with pytest.raises(ValueError, match="openyam-quest, openyam-teach"):
-        get_workflow("missing")
+def test_abc_rollout_has_real_top_camera_and_released_joint_order() -> None:
+    profile = get_rollout_workflow("dual-openyam-abc").load_profile()
+
+    assert profile.observations["top"].stream == "top_image"
+    assert profile.action.demonstration.joints == ABC_JOINTS
+    assert profile.sync.tolerance_ms == 20.0
+
+
+def test_unknown_workflows_list_only_the_relevant_catalog() -> None:
+    with pytest.raises(ValueError, match="dual-openyam-quest"):
+        get_collection_workflow("missing")
+    with pytest.raises(ValueError, match="dual-openyam-abc"):
+        get_rollout_workflow("missing")

@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -127,13 +127,6 @@ class DataPrepConfig(BaseConfig):
     sync: SyncConfig = SyncConfig(anchor="image", rate_hz=DEFAULT_FPS, tolerance_ms=50.0)
     quality: QualityConfig = QualityConfig()
     output: OutputConfig = OutputConfig(format="lerobot", path=STATE_DIR / "datasets" / "default")
-
-
-@runtime_checkable
-class DataPrepProfile(Protocol):
-    """A reusable template for one recording and dataset schema."""
-
-    def dataprep_config(self) -> DataPrepConfig: ...
 
 
 # ─────────────────────────────────────────────────────────────────────────────

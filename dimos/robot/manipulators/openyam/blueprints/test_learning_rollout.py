@@ -15,20 +15,19 @@
 from typing import Any
 
 from dimos.control.coordinator import ControlCoordinator
-from dimos.control.tasks.trajectory_task.trajectory_task import (
-    JOINT_TRAJECTORY_TASK_NAME,
-)
+from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.imitation.policy.lerobot.module import (
+from dimos.imitation.policy.lerobot.module import OpenYamLeRobotPolicy
+from dimos.imitation.policy.module import (
+    POLICY_ROLLOUT_INSTANCE_NAME,
     POLICY_ROLLOUT_TASK_NAME,
-    LeRobotPolicyModule,
 )
 from dimos.robot.manipulators.openyam.blueprints.learning_rollout import (
     build_openyam_rollout,
 )
 from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
-from dimos.robot.manipulators.openyam.learning import OPENYAM_LEARNING_PROFILE
+from dimos.robot.manipulators.openyam.learning import OPENYAM_CAMERA_SHAPE, OPENYAM_FPS
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 
@@ -39,20 +38,29 @@ def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
 
 
 def test_default_rollout_is_quest_free() -> None:
-    blueprint = build_openyam_rollout(checkpoint="checkpoint", task="pick up block")
+    blueprint = build_openyam_rollout(
+        artifact="checkpoint",
+        task="pick up block",
+        cameras={"wrist_image": 0},
+    )
     modules = [atom.module for atom in blueprint.active_blueprints]
     coordinator = _module_kwargs(blueprint, ControlCoordinator)
-    policy = next(task for task in coordinator["tasks"] if task.name == POLICY_ROLLOUT_TASK_NAME)
+    policy_task = next(
+        task for task in coordinator["tasks"] if task.name == POLICY_ROLLOUT_TASK_NAME
+    )
 
     assert ArmTeleopModule not in modules
     assert len(coordinator["tasks"]) == 1
-    assert policy.type == "trajectory"
-    assert policy.joint_names == OPENYAM_JOINTS
+    assert policy_task.type == "trajectory"
+    assert policy_task.joint_names == OPENYAM_JOINTS
 
 
 def test_quest_rollout_adds_higher_priority_takeover() -> None:
     blueprint = build_openyam_rollout(
-        checkpoint="checkpoint", task="pick up block", quest_control=True
+        artifact="checkpoint",
+        task="pick up block",
+        cameras={"wrist_image": 0},
+        quest_control=True,
     )
     coordinator = _module_kwargs(blueprint, ControlCoordinator)
     policy = next(task for task in coordinator["tasks"] if task.name == POLICY_ROLLOUT_TASK_NAME)
@@ -61,25 +69,24 @@ def test_quest_rollout_adds_higher_priority_takeover() -> None:
         task for task in coordinator["tasks"] if task.name == JOINT_TRAJECTORY_TASK_NAME
     )
 
-    assert policy.type == "trajectory"
-    assert policy.joint_names == OPENYAM_JOINTS
     assert policy.priority < teleop.priority < trajectory.priority
 
 
-def test_rollout_uses_the_shared_learning_profile() -> None:
+def test_rollout_binds_profile_camera_without_changing_autoconnect() -> None:
     blueprint = build_openyam_rollout(
-        checkpoint="checkpoint", task="pick up block", camera_device="/dev/camera", device="cuda"
+        artifact="checkpoint",
+        task="pick up block",
+        cameras={"wrist_image": "/dev/camera"},
+        device="cuda",
     )
-    policy = _module_kwargs(blueprint, LeRobotPolicyModule)
+    policy = _module_kwargs(blueprint, OpenYamLeRobotPolicy)
     camera = _module_kwargs(blueprint, CameraModule)
 
-    assert policy["policy_path"] == "checkpoint"
+    assert policy["instance_name"] == POLICY_ROLLOUT_INSTANCE_NAME
+    assert policy["artifact"] == "checkpoint"
     assert policy["task"] == "pick up block"
     assert policy["device"] == "cuda"
-    assert policy["fps"] == OPENYAM_LEARNING_PROFILE.fps
-    assert policy["joint_names"] == list(OPENYAM_LEARNING_PROFILE.joint_names)
-    assert policy["trajectory_task_name"] == POLICY_ROLLOUT_TASK_NAME
-    assert camera["hardware"].fps == OPENYAM_LEARNING_PROFILE.fps
-    assert camera["hardware"].width == OPENYAM_LEARNING_PROFILE.camera_width
-    assert camera["hardware"].height == OPENYAM_LEARNING_PROFILE.camera_height
+    assert camera["hardware"].fps == OPENYAM_FPS
+    assert (camera["hardware"].height, camera["hardware"].width, 3) == OPENYAM_CAMERA_SHAPE
     assert camera["hardware"].camera_index == "/dev/camera"
+    assert blueprint.remapping_map[("PolicyCamera_wrist_image", "color_image")] == "wrist_image"

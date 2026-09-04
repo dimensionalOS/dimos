@@ -17,17 +17,19 @@ from pathlib import Path
 from dimos.control.coordinator import ControlCoordinator
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
-from dimos.imitation.collection.native_recorder import NativeCollectionRecorder
 from dimos.robot.manipulators.openyam.blueprints.learning_collection import (
     build_quest_collection,
     build_teach_collection,
 )
 from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
+from dimos.robot.manipulators.openyam.learning import OpenYamQuestRecorder, OpenYamTeachRecorder
 
 
 def test_openyam_collection_uses_the_native_recorder(tmp_path: Path) -> None:
     blueprint = build_quest_collection(
-        recording=tmp_path / "session.mcap", task="pick up the block", camera_device=3
+        recording=tmp_path / "session.mcap",
+        task="pick up the block",
+        cameras={"wrist_image": 3},
     )
 
     recorder = blueprint.active_blueprints[0]
@@ -35,7 +37,7 @@ def test_openyam_collection_uses_the_native_recorder(tmp_path: Path) -> None:
         atom for atom in blueprint.active_blueprints if atom.module is EpisodeMonitorModule
     )
     camera = next(atom for atom in blueprint.active_blueprints if atom.module is CameraModule)
-    assert recorder.module is NativeCollectionRecorder
+    assert recorder.module is OpenYamQuestRecorder
     assert recorder.kwargs["store"].path == str(tmp_path / "session.mcap")
     assert recorder.kwargs["record_tf"] is False
     assert monitor.kwargs["task"] == "pick up the block"
@@ -43,11 +45,15 @@ def test_openyam_collection_uses_the_native_recorder(tmp_path: Path) -> None:
 
 
 def test_openyam_teach_collection_is_a_minimal_native_stack(tmp_path: Path) -> None:
-    blueprint = build_teach_collection(recording=tmp_path / "session.mcap", task="place cup")
+    blueprint = build_teach_collection(
+        recording=tmp_path / "session.mcap",
+        task="place cup",
+        cameras={"wrist_image": 0},
+    )
     modules = [atom.module for atom in blueprint.active_blueprints]
 
     assert modules == [
-        NativeCollectionRecorder,
+        OpenYamTeachRecorder,
         EpisodeMonitorModule,
         ControlCoordinator,
         CameraModule,
@@ -57,7 +63,11 @@ def test_openyam_teach_collection_is_a_minimal_native_stack(tmp_path: Path) -> N
 def test_openyam_teach_collection_uses_gravity_compensation_and_zero_stiffness(
     tmp_path: Path,
 ) -> None:
-    blueprint = build_teach_collection(recording=tmp_path / "session.mcap", task="place cup")
+    blueprint = build_teach_collection(
+        recording=tmp_path / "session.mcap",
+        task="place cup",
+        cameras={"wrist_image": 0},
+    )
     coordinator = next(
         atom for atom in blueprint.active_blueprints if atom.module is ControlCoordinator
     )

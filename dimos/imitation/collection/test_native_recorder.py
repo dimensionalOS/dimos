@@ -18,13 +18,12 @@ from pathlib import Path
 import pytest
 import pytest_mock
 
-from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
-from dimos.imitation.collection.native_recorder import NativeCollectionRecorder
+from dimos.robot.manipulators.dual_openyam.learning import DualOpenYamQuestRecorder
 
 
 @pytest.fixture
-def recorder(tmp_path: Path) -> Iterator[NativeCollectionRecorder]:
-    instance = NativeCollectionRecorder(
+def recorder(tmp_path: Path) -> Iterator[DualOpenYamQuestRecorder]:
+    instance = DualOpenYamQuestRecorder(
         store={"kind": "sqlite", "path": str(tmp_path / "collection.db")},
         record_tf=False,
     )
@@ -32,81 +31,26 @@ def recorder(tmp_path: Path) -> Iterator[NativeCollectionRecorder]:
     instance.stop()
 
 
-def test_native_collection_profile_resolves_dataprep_codecs(
-    recorder: NativeCollectionRecorder,
+def test_profile_recorder_declares_and_resolves_all_typed_streams(
+    recorder: DualOpenYamQuestRecorder,
     mocker: pytest_mock.MockerFixture,
 ) -> None:
-    for name in (
-        "color_image",
+    names = (
+        "left_wrist_image",
+        "right_wrist_image",
         "coordinator_joint_state",
         "applied_joint_position_command",
         "status",
-    ):
+    )
+    for name in names:
         getattr(recorder, name).transport = mocker.MagicMock(channel=f"dimos/{name}")
 
     specs = recorder._stream_specs()
 
-    assert [(spec.name, spec.codec) for spec in specs] == [
-        ("color_image", "jpeg"),
-        ("coordinator_joint_state", "lcm"),
-        ("applied_joint_position_command", "lcm"),
-        ("status", "lcm"),
-    ]
-    assert recorder.config.record_tf is False
-    assert "record_tf" not in recorder.config.to_config_dict()
-
-
-def test_native_collection_profile_accepts_mcap_store(tmp_path: Path) -> None:
-    recorder = NativeCollectionRecorder(
-        store=RustMcapStoreConfig(path=str(tmp_path / "collection.mcap"))
-    )
-
-    assert recorder.config.store.kind == "mcap"
-    assert recorder.config.store.path == str(tmp_path / "collection.mcap")
-    recorder.stop()
-
-
-@pytest.mark.parametrize(
-    ("record_tf", "expected_ports"),
-    [
-        (
-            False,
-            {
-                "color_image",
-                "coordinator_joint_state",
-                "applied_joint_position_command",
-                "status",
-            },
-        ),
-        (
-            True,
-            {
-                "color_image",
-                "coordinator_joint_state",
-                "applied_joint_position_command",
-                "status",
-                "tf",
-            },
-        ),
-    ],
-)
-def test_native_collection_forwards_only_enabled_stream_topics(
-    recorder: NativeCollectionRecorder,
-    mocker: pytest_mock.MockerFixture,
-    record_tf: bool,
-    expected_ports: set[str],
-) -> None:
-    recorder.config.record_tf = record_tf
-    for name in (
-        "color_image",
-        "coordinator_joint_state",
-        "applied_joint_position_command",
-        "status",
-        "tf",
-    ):
-        getattr(recorder, name).transport = mocker.MagicMock(channel=f"dimos/{name}")
-    recorder.config.streams = recorder._stream_specs()
-
-    topics = recorder._collect_topics()
-
-    assert topics == {name: f"dimos/{name}" for name in expected_ports}
+    assert {spec.name: spec.codec for spec in specs} == {
+        "left_wrist_image": "jpeg",
+        "right_wrist_image": "jpeg",
+        "coordinator_joint_state": "lcm",
+        "applied_joint_position_command": "lcm",
+        "status": "lcm",
+    }

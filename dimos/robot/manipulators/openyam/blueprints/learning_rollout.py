@@ -21,11 +21,11 @@ from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.transport import pSHMTransport
-from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.hardware.sensors.camera.webcam import WebcamConfig
-from dimos.imitation.policy.lerobot.module import (
+from dimos.imitation.cameras import CameraDevice, profile_cameras
+from dimos.imitation.policy.lerobot.module import OpenYamLeRobotPolicy
+from dimos.imitation.policy.module import (
+    POLICY_ROLLOUT_INSTANCE_NAME,
     POLICY_ROLLOUT_TASK_NAME,
-    LeRobotPolicyModule,
 )
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.sensor_msgs.Image import Image
@@ -39,15 +39,15 @@ from dimos.robot.manipulators.openyam.config import (
     OPENYAM_JOINTS,
     openyam_hardware,
 )
-from dimos.robot.manipulators.openyam.learning import OPENYAM_LEARNING_PROFILE
+from dimos.robot.manipulators.openyam.learning import OPENYAM_QUEST_IO
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
 
 
 def build_openyam_rollout(
     *,
-    checkpoint: str,
+    artifact: str,
     task: str,
-    camera_device: int | str = 0,
+    cameras: dict[str, CameraDevice],
     device: str | None = None,
     quest_control: bool = False,
 ) -> Blueprint:
@@ -57,28 +57,14 @@ def build_openyam_rollout(
         joint_names=list(OPENYAM_JOINTS),
         priority=10,
     )
-    policy = LeRobotPolicyModule.blueprint(
-        policy_path=checkpoint,
+    policy = OpenYamLeRobotPolicy.blueprint(
+        instance_name=POLICY_ROLLOUT_INSTANCE_NAME,
+        artifact=artifact,
         task=task,
         device=device,
-        joint_names=list(OPENYAM_LEARNING_PROFILE.joint_names),
-        fps=OPENYAM_LEARNING_PROFILE.fps,
-        robot_type=OPENYAM_LEARNING_PROFILE.robot_type,
-        image_width=OPENYAM_LEARNING_PROFILE.camera_width,
-        image_height=OPENYAM_LEARNING_PROFILE.camera_height,
         trajectory_task_name=POLICY_ROLLOUT_TASK_NAME,
     )
-    camera = CameraModule.blueprint(
-        instance_name="WristCamera",
-        hardware=WebcamConfig(
-            camera_index=camera_device,
-            width=OPENYAM_LEARNING_PROFILE.camera_width,
-            height=OPENYAM_LEARNING_PROFILE.camera_height,
-            fps=OPENYAM_LEARNING_PROFILE.fps,
-            frame_id_prefix=OPENYAM_LEARNING_PROFILE.camera_frame_prefix,
-        ),
-        frame_id=OPENYAM_LEARNING_PROFILE.camera_frame_id,
-    )
+    camera_blueprints, camera_remappings = profile_cameras(OPENYAM_QUEST_IO, cameras)
 
     if quest_control:
         blueprint = autoconnect(
@@ -89,7 +75,7 @@ def build_openyam_rollout(
                 hardware=[OPENYAM_QUEST_HARDWARE],
                 tasks=openyam_quest_tasks(policy_task),
             ),
-            camera,
+            *camera_blueprints,
             ManipulationModule.blueprint(
                 model=OPENYAM_QUEST_MODEL,
                 kinematics=OPENYAM_QUEST_KINEMATICS,
@@ -99,6 +85,7 @@ def build_openyam_rollout(
             [
                 (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
                 (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+                *camera_remappings,
             ]
         )
     else:
@@ -109,13 +96,13 @@ def build_openyam_rollout(
                 hardware=[openyam_hardware()],
                 tasks=[policy_task],
             ),
-            camera,
-        )
+            *camera_blueprints,
+        ).remappings(camera_remappings)
 
     return blueprint.transports(
         {
-            ("color_image", Image): pSHMTransport.spec(
-                "/color_image",
+            ("wrist_image", Image): pSHMTransport.spec(
+                "/wrist_image",
                 default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE,
             )
         }

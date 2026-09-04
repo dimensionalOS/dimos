@@ -27,8 +27,9 @@ from dimos.cli.commands.imitation import (
     imitation_app,
 )
 from dimos.constants import STATE_DIR
-from dimos.imitation.workflows import get_workflow
+from dimos.imitation.workflows import get_collection_workflow
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
+from dimos.robot.manipulators.openyam.learning import OPENYAM_TEACH_IO
 
 
 def _status(
@@ -83,6 +84,8 @@ def test_list_does_not_load_hardware_modules(mocker: MockerFixture) -> None:
     assert result.exit_code == 0
     assert "openyam-teach" in result.output
     assert "openyam-quest" in result.output
+    assert "dual-openyam-quest" in result.output
+    assert "dual-openyam-abc" in result.output
     imported.assert_not_called()
 
 
@@ -120,7 +123,7 @@ def test_prepare_rejects_an_existing_output(tmp_path: Path) -> None:
 
 
 def test_default_artifacts_live_in_state_and_are_unique() -> None:
-    workflow = get_workflow("openyam-teach")
+    workflow = get_collection_workflow("openyam-teach")
 
     first = _default_recording(workflow)
     second = _default_recording(workflow)
@@ -147,10 +150,15 @@ def test_collect_stops_driver_when_stack_start_fails(
 ) -> None:
     workflow = mocker.Mock(name="workflow")
     workflow.name = "openyam-teach"
-    workflow.load_collection_builder.return_value = mocker.Mock(return_value="blueprint")
+    workflow.dual_can = False
+    workflow.load_builder.return_value = mocker.Mock(return_value="blueprint")
+    workflow.load_profile.return_value = OPENYAM_TEACH_IO
     driver = mocker.Mock()
     driver.run.side_effect = RuntimeError("hardware failed")
-    mocker.patch("dimos.cli.commands.imitation.get_workflow", return_value=workflow)
+    mocker.patch(
+        "dimos.cli.commands.imitation.get_collection_workflow",
+        return_value=workflow,
+    )
     mocker.patch("dimos.cli.commands.imitation._require_idle_coordinator")
     mocker.patch("dimos.cli.commands.imitation.Dimos", return_value=driver)
 
@@ -163,12 +171,38 @@ def test_collect_stops_driver_when_stack_start_fails(
             "pick up block",
             "--recording",
             str(tmp_path / "session.mcap"),
+            "--camera",
+            "wrist_image=0",
         ],
     )
 
     assert result.exit_code == 1
     assert "hardware failed" in result.output
     driver.stop.assert_called_once_with()
+
+
+def test_dual_collection_requires_both_can_interfaces(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        imitation_app,
+        [
+            "collect",
+            "dual-openyam-quest",
+            "--task",
+            "fold towel",
+            "--recording",
+            str(tmp_path / "dual.mcap"),
+            "--camera",
+            "left_wrist_image=0",
+            "--camera",
+            "right_wrist_image=1",
+            "--left-can-port",
+            "follower_l",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Dual OpenYAM requires both --left-can-port" in result.output
+    assert "--right-can-port" in result.output
 
 
 def test_collection_app_guards_normal_quit_while_recording(mocker: MockerFixture) -> None:

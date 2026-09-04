@@ -21,33 +21,44 @@ from pathlib import Path
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
-from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.hardware.sensors.camera.webcam import WebcamConfig
+from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig, RustRecorder
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
+from dimos.imitation.cameras import CameraDevice, profile_cameras
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
-from dimos.imitation.collection.native_recorder import NativeCollectionRecorder
+from dimos.imitation.profile import PolicyIOProfile
 from dimos.robot.manipulators.openyam.blueprints.teleop import teleop_quest_openyam
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_JOINTS,
     openyam_hardware,
 )
-from dimos.robot.manipulators.openyam.learning import OPENYAM_LEARNING_PROFILE
+from dimos.robot.manipulators.openyam.learning import (
+    OPENYAM_QUEST_IO,
+    OPENYAM_TEACH_IO,
+    OpenYamQuestRecorder,
+    OpenYamTeachRecorder,
+)
 
 
-def _wrist_camera(camera_device: int | str) -> Blueprint:
-    return CameraModule.blueprint(
-        instance_name="WristCamera",
-        hardware=WebcamConfig(
-            camera_index=camera_device,
-            width=OPENYAM_LEARNING_PROFILE.camera_width,
-            height=OPENYAM_LEARNING_PROFILE.camera_height,
-            fps=OPENYAM_LEARNING_PROFILE.fps,
-            frame_id_prefix=OPENYAM_LEARNING_PROFILE.camera_frame_prefix,
+def _collection(
+    *,
+    recorder: type[RustRecorder],
+    profile: PolicyIOProfile,
+    recording: Path,
+    task: str,
+    cameras: dict[str, CameraDevice],
+    robot: Blueprint,
+) -> Blueprint:
+    camera_blueprints, camera_remappings = profile_cameras(profile, cameras)
+    return autoconnect(
+        recorder.blueprint(
+            store=RustMcapStoreConfig(path=str(recording)),
+            record_tf=False,
         ),
-        frame_id=OPENYAM_LEARNING_PROFILE.camera_frame_id,
-    )
+        EpisodeMonitorModule.blueprint(task=task),
+        robot,
+        *camera_blueprints,
+    ).remappings(camera_remappings)
 
 
 OPENYAM_TEACH_DAMPING = (2.0, 2.0, 2.0, 0.5, 0.5, 0.5, 0.0)
@@ -73,42 +84,41 @@ _openyam_teach_hardware = replace(
 
 
 def build_quest_collection(
-    *, recording: Path, task: str, camera_device: int | str = 0
+    *, recording: Path, task: str, cameras: dict[str, CameraDevice]
 ) -> Blueprint:
     """Build one Quest-controlled OpenYAM collection session."""
-    return autoconnect(
-        NativeCollectionRecorder.blueprint(
-            store=RustMcapStoreConfig(path=str(recording)),
-            record_tf=False,
-        ),
-        EpisodeMonitorModule.blueprint(task=task),
-        teleop_quest_openyam,
-        _wrist_camera(camera_device),
+    return _collection(
+        recorder=OpenYamQuestRecorder,
+        profile=OPENYAM_QUEST_IO,
+        recording=recording,
+        task=task,
+        cameras=cameras,
+        robot=teleop_quest_openyam,
     )
 
 
 def build_teach_collection(
-    *, recording: Path, task: str, camera_device: int | str = 0
+    *, recording: Path, task: str, cameras: dict[str, CameraDevice]
 ) -> Blueprint:
     """Build one gravity-compensated OpenYAM collection session."""
-    return autoconnect(
-        NativeCollectionRecorder.blueprint(
-            store=RustMcapStoreConfig(path=str(recording)),
-            record_tf=False,
-        ),
-        EpisodeMonitorModule.blueprint(task=task),
-        ControlCoordinator.blueprint(
-            instance_name="ControlCoordinator",
-            hardware=[_openyam_teach_hardware],
-            tasks=[
-                TaskConfig(
-                    name="teach_openyam",
-                    type="trajectory",
-                    joint_names=list(OPENYAM_JOINTS),
-                    priority=10,
-                    params={"hold_position_when_idle": True},
-                ),
-            ],
-        ),
-        _wrist_camera(camera_device),
+    robot = ControlCoordinator.blueprint(
+        instance_name="ControlCoordinator",
+        hardware=[_openyam_teach_hardware],
+        tasks=[
+            TaskConfig(
+                name="teach_openyam",
+                type="trajectory",
+                joint_names=list(OPENYAM_JOINTS),
+                priority=10,
+                params={"hold_position_when_idle": True},
+            ),
+        ],
+    )
+    return _collection(
+        recorder=OpenYamTeachRecorder,
+        profile=OPENYAM_TEACH_IO,
+        recording=recording,
+        task=task,
+        cameras=cameras,
+        robot=robot,
     )

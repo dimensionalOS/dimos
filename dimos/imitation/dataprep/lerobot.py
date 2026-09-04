@@ -33,13 +33,13 @@ from dimos.imitation.dataprep._lerobot_protocol import (
     Result,
 )
 from dimos.imitation.dataprep.core import DataPrepConfig
-from dimos.imitation.policy.lerobot.module import LeRobotPolicyModule
+from dimos.imitation.policy.lerobot.module import OpenYamLeRobotPolicy
 from dimos.utils.cache import cache_usage_guard
 
 
 def lerobot_project() -> Path:
     """Locate the packaged LeRobot project beside its host contract."""
-    source = Path(inspect.getfile(LeRobotPolicyModule)).resolve()
+    source = Path(inspect.getfile(OpenYamLeRobotPolicy)).resolve()
     return source.parent / "python"
 
 

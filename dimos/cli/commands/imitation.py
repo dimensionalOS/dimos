@@ -33,21 +33,36 @@ from dimos.cli import theme
 from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
 from dimos.core.run_registry import list_runs
 from dimos.imitation.dataprep.build import inspect_dataset, inspect_recording
-from dimos.imitation.dataprep.core import DataPrepConfig, DataPrepProfile
-from dimos.imitation.policy.lerobot.module import RolloutStatus
-from dimos.imitation.workflows import WORKFLOWS, ImitationWorkflow, get_workflow
+from dimos.imitation.dataprep.core import DataPrepConfig, OutputConfig
+from dimos.imitation.policy.module import POLICY_ROLLOUT_INSTANCE_NAME, RolloutStatus
+from dimos.imitation.profile import ImageSource, PolicyIOProfile
+from dimos.imitation.workflows import (
+    COLLECTION_WORKFLOWS,
+    ROLLOUT_WORKFLOWS,
+    CollectionWorkflow,
+    RolloutWorkflow,
+    get_collection_workflow,
+    get_rollout_workflow,
+)
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.porcelain.dimos import Dimos
 
 imitation_app = typer.Typer(help="Collect, prepare, train, and run imitation policies")
 
 _MONITOR = "EpisodeMonitorModule"
-_POLICY = "LeRobotPolicyModule"
+_POLICY = POLICY_ROLLOUT_INSTANCE_NAME
 
 
-def _workflow(value: str) -> ImitationWorkflow:
+def _collection_workflow(value: str) -> CollectionWorkflow:
     try:
-        return get_workflow(value)
+        return get_collection_workflow(value)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+def _rollout_workflow(value: str) -> RolloutWorkflow:
+    try:
+        return get_rollout_workflow(value)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
@@ -56,9 +71,49 @@ def _camera_device(value: str) -> int | str:
     return int(value) if value.isdecimal() else value
 
 
-def _default_recording(workflow: ImitationWorkflow) -> Path:
+def _default_recording(workflow: CollectionWorkflow) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     return STATE_DIR / "recordings" / f"{workflow.name}_{timestamp}.mcap"
+
+
+def _camera_devices(values: list[str], profile: PolicyIOProfile) -> dict[str, int | str]:
+    required = {
+        source.stream for source in profile.observations.values() if isinstance(source, ImageSource)
+    }
+    devices: dict[str, int | str] = {}
+    for value in values:
+        try:
+            stream, device = value.split("=", 1)
+        except ValueError as exc:
+            raise typer.BadParameter("--camera must use STREAM=DEVICE") from exc
+        if not stream or not device:
+            raise typer.BadParameter("--camera must use non-empty STREAM=DEVICE values")
+        if stream in devices:
+            raise typer.BadParameter(f"camera stream {stream!r} was declared more than once")
+        devices[stream] = _camera_device(device)
+    missing = sorted(required - set(devices))
+    unknown = sorted(set(devices) - required)
+    if missing:
+        raise typer.BadParameter(f"missing --camera declarations for: {', '.join(missing)}")
+    if unknown:
+        raise typer.BadParameter(f"unknown camera streams: {', '.join(unknown)}")
+    return devices
+
+
+def _dual_can_kwargs(
+    *,
+    enabled: bool,
+    left_can_port: str | None,
+    right_can_port: str | None,
+) -> dict[str, str]:
+    configured = left_can_port is not None or right_can_port is not None
+    if not enabled:
+        if configured:
+            raise typer.BadParameter("CAN-pair options apply only to Dual OpenYAM workflows")
+        return {}
+    if left_can_port is None or right_can_port is None:
+        raise typer.BadParameter("Dual OpenYAM requires both --left-can-port and --right-can-port")
+    return {"left_can_port": left_can_port, "right_can_port": right_can_port}
 
 
 def _default_dataset(recording: Path) -> Path:
@@ -403,10 +458,21 @@ class RolloutApp(App[None]):
 @imitation_app.command("list")
 def list_imitation_workflows() -> None:
     """List built-in workflows without importing robot hardware modules."""
-    for workflow in WORKFLOWS.values():
-        hardware = ", ".join(workflow.required_hardware)
+    typer.echo("Collection workflows:")
+    for collection_workflow in COLLECTION_WORKFLOWS.values():
+        hardware = ", ".join(collection_workflow.required_hardware)
         typer.echo(
-            f"{workflow.name}\n  collection: {workflow.collection_method}\n  hardware: {hardware}"
+            f"{collection_workflow.name}\n"
+            f"  method: {collection_workflow.method}\n"
+            f"  hardware: {hardware}"
+        )
+    typer.echo("Rollout workflows:")
+    for rollout_workflow in ROLLOUT_WORKFLOWS.values():
+        hardware = ", ".join(rollout_workflow.required_hardware)
+        typer.echo(
+            f"{rollout_workflow.name}\n"
+            f"  backend: {rollout_workflow.backend}\n"
+            f"  hardware: {hardware}"
         )
 
 
@@ -415,10 +481,25 @@ def collect(
     workflow_name: str = typer.Argument(..., metavar="WORKFLOW"),
     task: str = typer.Option(..., "--task", help="Demonstration task description"),
     recording: Path | None = typer.Option(None, "--recording", help="New MCAP recording path"),
-    camera_device: str = typer.Option("0", "--camera-device", help="Camera index or device path"),
+    camera: list[str] = typer.Option(
+        [],
+        "--camera",
+        help="Repeat for every profile camera as STREAM=DEVICE",
+    ),
+    left_can_port: str | None = typer.Option(None, "--left-can-port"),
+    right_can_port: str | None = typer.Option(None, "--right-can-port"),
 ) -> None:
     """Collect demonstrations and own the robot stack for the full session."""
-    workflow = _workflow(workflow_name)
+    workflow = _collection_workflow(workflow_name)
+    profile = workflow.load_profile()
+    if not isinstance(profile, PolicyIOProfile):
+        raise TypeError(f"collection workflow {workflow.name!r} has an invalid profile")
+    cameras = _camera_devices(camera, profile)
+    can_kwargs = _dual_can_kwargs(
+        enabled=workflow.dual_can,
+        left_can_port=left_can_port,
+        right_can_port=right_can_port,
+    )
     path = _require_new_path(recording or _default_recording(workflow), "recording")
     if not task.strip():
         raise typer.BadParameter("--task must not be blank")
@@ -426,11 +507,12 @@ def collect(
     try:
         _require_idle_coordinator()
         path.parent.mkdir(parents=True, exist_ok=True)
-        builder = workflow.load_collection_builder()
+        builder = workflow.load_builder()
         blueprint = builder(
             recording=path,
             task=task.strip(),
-            camera_device=_camera_device(camera_device),
+            cameras=cameras,
+            **can_kwargs,
         )
         typer.echo(f"Recording: {path}")
         typer.echo("Safety: stopping this command de-torques the arm. Keep the robot supported.")
@@ -449,13 +531,21 @@ def collect(
             driver.stop()
 
 
-def _dataprep_config(workflow: ImitationWorkflow, source: Path, output: Path) -> DataPrepConfig:
-    profile = workflow.load_dataprep_profile()
-    if not isinstance(profile, DataPrepProfile):
-        raise TypeError(f"workflow {workflow.name!r} has an invalid DataPrep profile")
-    config = profile.dataprep_config()
-    return config.model_copy(
-        update={"source": str(source), "output": config.output.model_copy(update={"path": output})}
+def _dataprep_config(
+    workflow: CollectionWorkflow,
+    source: Path,
+    output: Path,
+) -> DataPrepConfig:
+    profile = workflow.load_profile()
+    if not isinstance(profile, PolicyIOProfile):
+        raise TypeError(f"collection workflow {workflow.name!r} has an invalid profile")
+    return profile.dataprep_config(
+        source=str(source),
+        output=OutputConfig(
+            format="lerobot",
+            path=output,
+            metadata={"repo_id": f"local/{profile.name}", "robot_type": profile.robot_type},
+        ),
     )
 
 
@@ -466,7 +556,7 @@ def prepare(
     output: Path | None = typer.Option(None, "--output", help="New LeRobot dataset directory"),
 ) -> None:
     """Convert one recording into a strict LeRobot dataset."""
-    workflow = _workflow(workflow_name)
+    workflow = _collection_workflow(workflow_name)
     source = recording.expanduser().resolve()
     target = _require_new_path(output or _default_dataset(source), "dataset")
     typer.echo(f"Recording: {source}")
@@ -490,9 +580,14 @@ def inspect(
     path = artifact.expanduser().resolve()
     try:
         if workflow_name is not None and path.suffix.lower() in {".mcap", ".db"}:
-            workflow = _workflow(workflow_name)
-            profile = workflow.load_dataprep_profile()
-            config = profile.dataprep_config().model_copy(update={"source": str(path)})
+            workflow = _collection_workflow(workflow_name)
+            profile = workflow.load_profile()
+            if not isinstance(profile, PolicyIOProfile):
+                raise TypeError(f"collection workflow {workflow.name!r} has an invalid profile")
+            config = profile.dataprep_config(
+                source=str(path),
+                output=OutputConfig(path=_default_dataset(path)),
+            )
             info = inspect_recording(path, config=config)
         else:
             info = inspect_dataset(path)
@@ -521,28 +616,44 @@ def train(ctx: typer.Context) -> None:
 @imitation_app.command("run")
 def run_policy(
     workflow_name: str = typer.Argument(..., metavar="WORKFLOW"),
-    checkpoint: Path = typer.Argument(..., metavar="CHECKPOINT"),
+    artifact: Path = typer.Argument(..., metavar="ARTIFACT"),
     task: str = typer.Option(..., "--task", help="Task conditioning text"),
-    camera_device: str = typer.Option("0", "--camera-device", help="Camera index or device path"),
+    camera: list[str] = typer.Option(
+        [],
+        "--camera",
+        help="Repeat for every profile camera as STREAM=DEVICE",
+    ),
     device: str | None = typer.Option(
         None, "--device", help="Inference device, such as cuda or cpu"
     ),
     quest_control: bool = typer.Option(False, "--quest-control", help="Enable Quest takeover"),
+    left_can_port: str | None = typer.Option(None, "--left-can-port"),
+    right_can_port: str | None = typer.Option(None, "--right-can-port"),
 ) -> None:
     """Preflight and run a trained policy with terminal controls."""
-    workflow = _workflow(workflow_name)
+    workflow = _rollout_workflow(workflow_name)
+    profile = workflow.load_profile()
+    if not isinstance(profile, PolicyIOProfile):
+        raise TypeError(f"rollout workflow {workflow.name!r} has an invalid profile")
+    cameras = _camera_devices(camera, profile)
+    can_kwargs = _dual_can_kwargs(
+        enabled=workflow.dual_can,
+        left_can_port=left_can_port,
+        right_can_port=right_can_port,
+    )
     if not task.strip():
         raise typer.BadParameter("--task must not be blank")
     driver: Dimos | None = None
     try:
         _require_idle_coordinator()
-        builder = workflow.load_rollout_builder()
+        builder = workflow.load_builder()
         blueprint = builder(
-            checkpoint=str(checkpoint.expanduser().resolve()),
+            artifact=str(artifact.expanduser().resolve()),
             task=task.strip(),
-            camera_device=_camera_device(camera_device),
+            cameras=cameras,
             device=device,
             quest_control=quest_control,
+            **can_kwargs,
         )
         typer.echo("Safety: stopping this command de-torques the arm. Keep the robot supported.")
         typer.echo("Running non-moving policy preflight...")

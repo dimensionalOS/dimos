@@ -12,21 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Native recording streams for imitation data collection."""
+"""Profile-driven native recorder declarations."""
 
 from __future__ import annotations
 
 from dimos.core.stream import In
 from dimos.experimental.memory.rust_recorder import RustRecorder
+from dimos.imitation.profile import ImageSource, PolicyIOProfile
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 
-class NativeCollectionRecorder(RustRecorder):
-    """Declare the streams captured by the native collection recorder."""
+def declare_recorder(
+    name: str,
+    module_name: str,
+    profile: PolicyIOProfile,
+) -> type[RustRecorder]:
+    """Declare a recorder whose typed ports exactly match ``profile``."""
+    annotations: dict[str, object] = {"status": In[EpisodeStatus]}
+    sources = [*profile.observations.values(), profile.action.demonstration]
+    for source in sources:
+        annotations[source.stream] = (
+            In[Image] if isinstance(source, ImageSource) else In[JointState]
+        )
 
-    color_image: In[Image]
-    coordinator_joint_state: In[JointState]
-    applied_joint_position_command: In[JointState]
-    status: In[EpisodeStatus]
+    return type(
+        name,
+        (RustRecorder,),
+        {
+            "__annotations__": annotations,
+            "__doc__": f"Native recorder for the {profile.name!r} policy profile.",
+            "__module__": module_name,
+            "__qualname__": name,
+            "profile": profile,
+        },
+    )

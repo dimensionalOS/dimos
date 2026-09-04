@@ -1,165 +1,147 @@
 # Imitation Learning for Manipulation
 
-DimOS provides one CLI workflow for collecting robot demonstrations, preparing a
-LeRobot dataset, training a policy, and running the checkpoint. The preview
-supports OpenYAM with a 640×480, 30 FPS wrist RGB camera.
+DimOS separates demonstration collection from policy rollout. A collection
+profile defines what is recorded and converted to LeRobot. A rollout profile
+defines the live inputs and joint outputs expected by one policy backend.
 
 ```text
-collect ──▶ recording ──▶ prepare ──▶ dataset ──▶ train ──▶ checkpoint ──▶ run
-                .mcap                    LeRobot
+collection profile                         rollout profile + backend
+        │                                            │
+        ▼                                            ▼
+robot + cameras ──▶ MCAP ──▶ LeRobot dataset     robot + cameras ──▶ actions
 ```
 
-An **Imitation Workflow** is a built-in binding between three robot-specific
-pieces: a collection Blueprint, a DataPrep Profile, and a rollout Blueprint. It
-does not replace a Blueprint, store session state, or configure LeRobot
-training. Choose the workflow explicitly at each robot-facing step.
+Run `dimos imitation list` to see both catalogs.
 
-## Choose a workflow
+| Collection | Inputs | Joint order |
+| --- | --- | --- |
+| `openyam-teach` | Wrist RGB, measured joint state | OpenYAM 7-D |
+| `openyam-quest` | Wrist RGB, accepted commands | OpenYAM 7-D |
+| `dual-openyam-quest` | Left and right wrist RGB | DimOS dual 14-D |
+
+| Rollout | Backend | Inputs | Joint order |
+| --- | --- | --- | --- |
+| `openyam-lerobot` | LeRobot | Wrist RGB | OpenYAM 7-D |
+| `dual-openyam-abc` | Amazon ABC-DiT | Top, left wrist, right wrist RGB | ABC 14-D |
+
+Collection and rollout names need not match. The dual collection schema is a
+LeRobot dataset contract; the released ABC checkpoint has its own three-camera
+contract and does not train from that dataset in this change.
+
+## Declare cameras
+
+Every physical camera is explicit as `--camera STREAM=DEVICE`. Repeat the
+option for multi-camera profiles. The stream names come from the selected
+profile; unknown, duplicate, or missing names fail before hardware starts.
 
 ```bash
-dimos imitation list
+dimos imitation collect dual-openyam-quest \
+  --task "fold the towel" \
+  --left-can-port follower_l \
+  --right-can-port follower_r \
+  --camera left_wrist_image=/dev/video0 \
+  --camera right_wrist_image=/dev/video2
 ```
 
-| Workflow | Demonstration control | Required hardware |
-| --- | --- | --- |
-| `openyam-teach` | Hand guidance with gravity compensation | OpenYAM, wrist camera |
-| `openyam-quest` | Quest teleoperation | OpenYAM, wrist camera, Quest |
-
-Quest is optional. The main path uses `openyam-teach`; policy rollout also runs
-without Quest unless you pass `--quest-control`.
-
-## 1. Collect demonstrations
-
-Support the arm before starting. Collection activates hardware, and stopping
-the command de-torques the arm.
+For one arm:
 
 ```bash
 dimos --can-port follower_l imitation collect openyam-teach \
   --task "pick up the red block" \
-  --camera-device 0
+  --camera wrist_image=0
 ```
 
-The command starts the collection stack, opens its terminal controls, and stops
-the complete stack when you exit. It prints a unique recording path under the
-DimOS state directory. Pass `--recording PATH` to choose another new path; the
-command refuses to overwrite an existing artifact.
+The terminal uses Space to start/save, D to discard, and Q twice to stop while
+idle. Stopping the command de-torques the arm.
 
-| Key | Action |
-| --- | --- |
-| Space | Start an episode; press again to save it |
-| D | Discard the current episode |
-| Q | Stop while idle; press twice to confirm de-torque |
-| Ctrl-C | Emergency best-effort shutdown |
-
-Normal exit is blocked during a take. Save or discard first. An interruption
-during a take leaves it incomplete, so DataPrep can report and exclude it.
-
-To collect through Quest instead, select the other workflow:
+## Prepare and train LeRobot data
 
 ```bash
-dimos --can-port follower_l imitation collect openyam-quest \
-  --task "pick up the red block"
-```
-
-The CLI refuses to start collection or rollout while another DimOS coordinator
-is active.
-
-## 2. Prepare and inspect the dataset
-
-Use the recording path printed by `collect`:
-
-```bash
-dimos imitation inspect RECORDING.mcap --workflow openyam-teach
-dimos imitation prepare openyam-teach RECORDING.mcap
-```
-
-`prepare` selects the workflow's fixed DataPrep Profile and applies strict
-episode validation. It writes a unique default directory under the DimOS state
-directory and prints the resolved source and destination. Use `--output DIR` to
-choose another new directory.
-
-Inspect either the recording or prepared dataset:
-
-```bash
-dimos imitation inspect RECORDING.mcap --workflow openyam-teach
-dimos imitation inspect DATASET_DIR
-```
-
-The prepared LeRobot dataset contains these fixed features:
-
-| Feature | Shape | Source |
-| --- | --- | --- |
-| `observation.images.wrist` | RGB, 480×640×3 | Wrist camera |
-| `observation.state` | 7 values | Six OpenYAM joints and gripper |
-| `action` | 7 values | Measured teach state or accepted Quest command |
-
-## 3. Train with LeRobot
-
-`dimos imitation train` is a transparent pass-through to `lerobot-train` in
-the pinned LeRobot environment. DimOS adds no training defaults and does not
-rewrite arguments, output, or exit codes.
-
-```bash
+dimos imitation inspect RECORDING.mcap --workflow dual-openyam-quest
+dimos imitation prepare dual-openyam-quest RECORDING.mcap
 dimos imitation train \
-  --dataset.repo_id=local/openyam-wrist \
+  --dataset.repo_id=local/dual-openyam-quest \
   --dataset.root=DATASET_DIR \
   --policy.type=act \
-  --output_dir=outputs/openyam-act
+  --output_dir=outputs/dual-openyam-act
 ```
 
-Run `dimos imitation train --help` for the installed LeRobot options.
+`prepare` uses the collection profile's feature keys, joint order, 30 Hz rate,
+and 20 ms alignment tolerance. It currently writes LeRobot datasets. The train
+command remains a transparent pass-through to the pinned LeRobot CLI; ABC
+training and an ABC dataset writer are outside this scope.
 
-## 4. Run the checkpoint
+## Run a policy
 
-The normal rollout requires no Quest headset:
+LeRobot single-arm rollout:
 
 ```bash
-dimos --can-port follower_l imitation run openyam-teach CHECKPOINT_DIR \
+dimos --can-port follower_l imitation run openyam-lerobot CHECKPOINT_DIR \
   --task "pick up the red block" \
-  --camera-device 0 \
+  --camera wrist_image=0 \
   --device cuda
 ```
 
-Before enabling the terminal's start control, DimOS performs a non-moving
-preflight. It loads the checkpoint and processors and checks:
-
-- required feature keys and image, state, and action dimensions;
-- finite checkpoint action bounds and an available inference device;
-- fresh 640×480 RGB observations and all configured live joints;
-- the configured policy trajectory task in the control coordinator.
-
-Preflight never sends a trajectory. After it passes, Space starts or stops the
-policy. Stop the policy before exiting the stack.
-
-Add Quest only when an operator wants teleoperation takeover:
+Released ABC-DiT dual-arm rollout:
 
 ```bash
-dimos --can-port follower_l imitation run openyam-teach CHECKPOINT_DIR \
-  --task "pick up the red block" \
-  --quest-control
+dimos imitation run dual-openyam-abc CHECKPOINT.pt \
+  --task "put the plastic bottles in the bin" \
+  --left-can-port follower_l \
+  --right-can-port follower_r \
+  --camera top_image=/dev/video0 \
+  --camera left_wrist_image=/dev/video2 \
+  --camera right_wrist_image=/dev/video4 \
+  --device cuda
 ```
 
-Quest tasks have higher control priority than policy trajectories. Quest input
-cannot bypass policy preflight.
+ABC never fabricates the checkpoint's top view from a wrist camera. Missing
+top, left, or right input fails before the policy can move.
 
-## Compatibility boundary
+Preflight loads the selected backend, validates its feature dimensions and
+control task, then requires a fresh aligned observation set. The newest fresh
+anchor sample is paired with the nearest buffered sample for every other input;
+the maximum skew is 20 ms. Preflight sends no trajectory.
 
-DimOS can detect feature keys, tensor dimensions, action bounds, device
-availability, image shape, and live joint availability. Matching dimensions do
-not prove that a checkpoint was trained for the same robot or joint order.
-Because training is a transparent pass-through and checkpoints carry no DimOS
-workflow lineage, the operator must pair the checkpoint with the correct
-workflow and task.
+During rollout, the common runtime validates finite 2-D action chunks, applies
+backend bounds when available, and caps every submitted trajectory to 0.5 s.
+The ABC binding predicts 30 steps and executes at most 15 at 30 Hz. Trajectory
+joint names use the profile's exact order, including both grippers.
 
-## Maintainer notes
+## ABC dependency and verification boundary
 
-Built-in workflow bindings live in `dimos.imitation.workflows`. A binding keeps
-the public CLI small while the collection and rollout implementations remain
-ordinary Blueprints and DataPrep remains an offline profile-driven transform.
-External workflow discovery is outside this preview.
+The ABC isolated environment vendors only inference code from the
+[Amazon ABC repository](https://github.com/amazon-far/abc) at revision
+`6bc6586721cf0c409ccee80f675a28de9b9b2f5e`: the DiT model, image/normalization
+helpers, CLIP text encoder, and optional CUDA graph helper. It does not install
+MuJoCo, Warp, visualization, training, dataset export, or RTC dependencies.
 
-The merge gate is automated: registry and CLI tests, lifecycle tests, Blueprint
-composition tests, DataPrep tests, isolated runtime preflight tests, formatting,
-and type checks. Release still requires an OpenYAM hardware smoke test covering
-one saved teach episode, dataset preparation, non-moving preflight, policy
-start/stop, Ctrl-C cleanup, and optional Quest takeover.
+Automated tests use tiny synthetic backends and arrays. They do not download or
+load the multi-gigabyte released checkpoint. Before hardware rollout, perform a
+manual offline check on the target GPU:
+
+1. Start the three cameras and coordinator with motion disabled.
+2. Call `preflight_rollout()` and confirm backend `abc`, all observations ready,
+   and no error.
+3. Run one inference without submitting its trajectory and inspect the returned
+   shape `(30, 14)`, finite values, and grippers in `[0, 1]`.
+4. Enable motion at low-risk initial conditions and verify Space/Ctrl-C cancels
+   the `policy_rollout` task.
+
+Matching dimensions do not prove embodiment compatibility. Operators must pair
+an artifact with its exact profile, camera roles, calibration, joint convention,
+and task.
+
+## Maintainer contract
+
+`PolicyIOProfile` maps backend feature keys directly to typed DimOS image or
+joint-position streams. `declare_recorder()` and `declare_policy_module()` turn
+that import-time profile into ordinary module subclasses, so Blueprint
+autoconnect still sees concrete `In[Image]` and `In[JointState]` ports.
+
+The shared runtime owns input buffering, timing, lifecycle RPCs, cancellation,
+action validation, execution horizon, and trajectory creation. Isolated
+backends own artifact loading, tensor layout, preprocessing, normalization, and
+in-process prediction. Add a new backend by declaring a backend-specific config,
+a profile-bound host module, and a small `PolicyBackend` implementation without
+changing the coordinator or autoconnect.

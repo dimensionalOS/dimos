@@ -15,7 +15,7 @@
 """Coupled Quest teleoperation for the complete Dual OpenYAM entity."""
 
 from dimos.control.coordinator import TaskConfig
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.common.blueprints import teleop_ik_task
@@ -73,39 +73,51 @@ _dual_openyam_quest_task = teleop_ik_task(
     },
 )
 
-teleop_quest_dual_openyam = autoconnect(
-    ArmTeleopModule.blueprint(),
-    DualOpenYamCoordinator.blueprint(
-        instance_name="ControlCoordinator",
-        tasks=[
-            _dual_openyam_quest_task,
-            TaskConfig(
-                name="left_arm_gripper",
-                type="gripper",
-                joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[0]],
-                priority=20,
-                stream_bind={"gripper_command": "left_gripper_command"},
-            ),
-            TaskConfig(
-                name="right_arm_gripper",
-                type="gripper",
-                joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[1]],
-                priority=20,
-                stream_bind={"gripper_command": "right_gripper_command"},
-            ),
-            dual_openyam_trajectory_task(priority=20),
-        ],
-    ),
-    ManipulationModule.blueprint(
-        model=_dual_openyam_quest_model,
-        kinematics=_dual_openyam_quest_pink,
-        visualization={"backend": "viser"},
-    ),
-).remappings(
-    [
-        (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-        (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
-        (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
-        (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
-    ]
-)
+
+def build_dual_openyam_quest_teleop(
+    *,
+    left_can_port: str | None = None,
+    right_can_port: str | None = None,
+) -> Blueprint:
+    """Build Quest teleop against mock or explicitly selected dual-CAN hardware."""
+    return autoconnect(
+        ArmTeleopModule.blueprint(),
+        DualOpenYamCoordinator.blueprint(
+            instance_name="ControlCoordinator",
+            left_can_port=left_can_port,
+            right_can_port=right_can_port,
+            tasks=[
+                _dual_openyam_quest_task,
+                TaskConfig(
+                    name="left_arm_gripper",
+                    type="gripper",
+                    joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[0]],
+                    priority=20,
+                    stream_bind={"gripper_command": "left_gripper_command"},
+                ),
+                TaskConfig(
+                    name="right_arm_gripper",
+                    type="gripper",
+                    joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[1]],
+                    priority=20,
+                    stream_bind={"gripper_command": "right_gripper_command"},
+                ),
+                dual_openyam_trajectory_task(priority=20),
+            ],
+        ),
+        ManipulationModule.blueprint(
+            model=_dual_openyam_quest_model,
+            kinematics=_dual_openyam_quest_pink,
+            visualization={"backend": "viser"},
+        ),
+    ).remappings(
+        [
+            (ArmTeleopModule, "left_controller_output", "left_cartesian_command"),
+            (ArmTeleopModule, "left_gripper_command", "left_gripper_command"),
+            (ArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+            (ArmTeleopModule, "right_gripper_command", "right_gripper_command"),
+        ]
+    )
+
+
+teleop_quest_dual_openyam = autoconnect(build_dual_openyam_quest_teleop())

@@ -47,6 +47,10 @@ explicit_package_bases = true
 mypy_path = "../../../../../"
 
 [[tool.mypy.overrides]]
+module = ["dimos", "dimos.*"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
 module = [
     "lerobot.configs.policies",
     "lerobot.datasets",

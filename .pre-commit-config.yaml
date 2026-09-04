@@ -1,6 +1,6 @@
 default_stages: [pre-commit]
 default_install_hook_types: [pre-commit, commit-msg]
-exclude: (dimos/models/.*)|(deprecated)
+exclude: (dimos/models/.*)|(deprecated)|(dimos/imitation/policy/abc/python/abc_minimal/)
 repos:
 
   - repo: https://github.com/Lucas-C/pre-commit-hooks
