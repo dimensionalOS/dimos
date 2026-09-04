@@ -21,10 +21,8 @@ import shlex
 import subprocess
 import sys
 
+import can_motor_control
 import typer
-
-if sys.platform in {"linux", "darwin"}:
-    import can_motor_control
 
 app = typer.Typer(help="Discover and configure CAN interfaces", no_args_is_help=True)
 
