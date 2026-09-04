@@ -19,7 +19,6 @@ import logging
 import multiprocessing
 from multiprocessing.connection import Connection
 import os
-from pathlib import Path
 import signal
 import subprocess
 import sys
@@ -41,6 +40,7 @@ from dimos.core.coordination.worker_messages import (
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.protocol.pubsub.impl.webrtc.providers.spec import shutdown_all_providers
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.mjpython import prepare_mjpython_launch
 from dimos.utils.sequential_ids import SequentialIds
 
 if TYPE_CHECKING:
@@ -260,11 +260,7 @@ class PythonWorker:
         if sys.platform != "darwin":
             raise RuntimeError("mjpython workers are only supported on macOS")
 
-        mjpython = Path(sys.executable).with_name("mjpython")
-        if not mjpython.is_file() or not os.access(mjpython, os.X_OK):
-            raise RuntimeError(
-                f"MuJoCo's mjpython launcher is missing from this environment: {mjpython}"
-            )
+        mjpython, env = prepare_mjpython_launch()
 
         ctx = get_forkserver_context()
         parent_conn, child_conn = ctx.Pipe()
@@ -281,6 +277,7 @@ class PythonWorker:
                     str(self._worker_id),
                 ],
                 pass_fds=(child_fd,),
+                env=env,
             )
         except BaseException:
             parent_conn.close()
@@ -294,7 +291,7 @@ class PythonWorker:
             self._process.terminate()
             self._process.join(timeout=1.0)
             self._process = None
-            self._conn.close()
+            parent_conn.close()
             self._conn = None
             raise RuntimeError(
                 f"mjpython worker did not initialize within {_MJPYTHON_START_TIMEOUT_S:g} seconds"
