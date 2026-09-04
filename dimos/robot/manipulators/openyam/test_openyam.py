@@ -28,6 +28,7 @@ from dimos.robot.manipulators.openyam.blueprints.basic import (
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
     keyboard_teleop_openyam,
     keyboard_teleop_openyam_planner,
+    teleop_quest_openyam,
 )
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_ARM_JOINTS,
@@ -35,6 +36,7 @@ from dimos.robot.manipulators.openyam.config import (
     OPENYAM_GRIPPER_JOINT,
     OPENYAM_HARDWARE_ID,
     OPENYAM_JOINTS,
+    OPENYAM_MODEL_PATH,
     make_openyam_model_config,
     openyam_hardware,
 )
@@ -47,15 +49,18 @@ def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
 
 
 def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
-    return _module_kwargs(blueprint, ControlCoordinator)
+    return next(
+        atom.kwargs for atom in blueprint.blueprints if issubclass(atom.module, ControlCoordinator)
+    )
 
 
 def test_make_openyam_model_config_uses_canonical_arm_joints() -> None:
     config = make_openyam_model_config()
 
+    assert config.model.source_path is OPENYAM_MODEL_PATH
     assert config.joint_names == OPENYAM_ARM_JOINTS
-    assert config.base_link == "yam_base_link"
-    assert config.planning_groups[0].tip_link == "yam_hand_tcp"
+    assert config.base_link == "base"
+    assert config.planning_groups[0].tip_link == "gripper_tip"
     assert config.gripper_hardware_id == "arm"
 
 
@@ -82,7 +87,18 @@ def test_openyam_hardware_physical_mode_returns_one_whole_body(
         HardwareType.WHOLE_BODY,
         "openyam_damiao",
     )
-    assert hardware.adapter_kwargs["runtime_config"].bus_addresses == {"openyam": "can1"}
+    assert hardware.adapter_kwargs["runtime_config"].bus_devices == {"openyam": "can1"}
+
+
+def test_openyam_hardware_without_can_port_uses_platform_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(global_config, "simulation", "")
+    monkeypatch.setattr(global_config, "can_port", None)
+
+    hardware = openyam_hardware()
+
+    assert hardware.adapter_kwargs["runtime_config"].bus_devices == {}
 
 
 def test_openyam_hardware_simulation_mode_returns_generic_whole_body_mock(
@@ -165,3 +181,13 @@ def test_keyboard_teleop_openyam_gripper_task_has_no_extra_params() -> None:
 
     assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
     assert gripper.params == {}
+
+
+def test_quest_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
+    tasks = _coordinator_kwargs(teleop_quest_openyam)["tasks"]
+    teleop = next(task for task in tasks if task.type == "teleop_ik")
+    gripper = next(task for task in tasks if task.type == "gripper")
+
+    assert teleop.params["bindings"] == [{"hand": "right", "target_frame": "gripper_tip"}]
+    assert gripper.joint_names == [OPENYAM_GRIPPER_JOINT]
+    assert gripper.stream_bind == {"gripper_command": "right_gripper_command"}

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "dimos/experimental/memory/rust",
     "native/rust/dimos-module",
     "native/rust/dimos-module-macros",
     "dimos/mapping/ray_tracing/rust",

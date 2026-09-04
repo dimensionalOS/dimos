@@ -109,7 +109,7 @@ def _module(monkeypatch: pytest.MonkeyPatch, module_factory):
     module._world_monitor = MagicMock()
     module._world_monitor.world = MagicMock()
     module._world_monitor.world.get_model_config.return_value = model
-    module._world_monitor.planning_groups = PlanningGroupRegistry([model])
+    module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
     module._planner = MagicMock()
     module._trajectory_parametrizer = SimpleTrapezoidParametrizer(
         SimpleTrapezoidParametrizationConfig()

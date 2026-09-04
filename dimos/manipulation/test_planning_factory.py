@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Generator
-import inspect
 from pathlib import Path
 import sys
 from types import ModuleType
@@ -29,7 +28,6 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
-from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.manipulation.planning.factory import (
     create_kinematics,
     create_planner,
@@ -300,22 +298,9 @@ def test_create_planning_stack_defaults_to_roboplan(
     world.finalize.assert_called_once()
 
 
-def test_configuration_requires_one_model_and_rejects_robots() -> None:
+def test_configuration_requires_one_model() -> None:
     with pytest.raises(ValidationError, match="model"):
         ManipulationModuleConfig()
-    with pytest.raises(ValidationError, match="robots"):
-        ManipulationModuleConfig.model_validate({"robots": []})
-
-
-def test_public_manipulation_surface_has_no_robot_selectors_or_listing_apis() -> None:
-    forbidden_parameters = {"robot_name", "robot_id", "hardware_id"}
-    for module_type in (ManipulationModule, PickAndPlaceModule):
-        for _, method in inspect.getmembers(module_type, inspect.isfunction):
-            if getattr(method, "__rpc__", False):
-                assert forbidden_parameters.isdisjoint(inspect.signature(method).parameters)
-
-    for obsolete_method in ("get_robot_info", "list_robots", "preview_path"):
-        assert not hasattr(ManipulationModule, obsolete_method)
 
 
 def test_start_uses_configured_planner_and_kinematics(

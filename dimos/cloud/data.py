@@ -75,8 +75,10 @@ class DataApi:
     def put_part(self, url: str, chunk: bytes) -> None:
         self.t.put(url, chunk)
 
-    def fetch(self, url: str, dst: Path) -> None:
-        self.t.download(url, dst)
+    def fetch(
+        self, url: str, dst: Path, progress: Callable[[int, int], None] | None = None
+    ) -> None:
+        self.t.download(url, dst, progress)
 
 
 class MultipartBackend:
@@ -120,25 +122,28 @@ class MultipartBackend:
         if bp := _blueprint(path):
             manifest = dict(manifest or {}, blueprint=bp)
         with self._staging(path) as tmp:
-            if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
+            # A file already carrying the codec's suffix uploads as-is; it must not be
+            # stamped, or pull would decompress bytes we never compressed.
+            compress = bool(self.codec_id) and path.suffix != codecs.suffix(self.codec_id)
+            if compress:
                 _require_space(Path(tmp), path.stat().st_size)
-            if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
                 artifact = Path(tmp) / (path.name + codecs.suffix(self.codec_id))
                 tick("compress", 0, 0)
                 codecs.compress(self.codec_id, path, artifact)
             else:
                 artifact = path
             size = artifact.stat().st_size
-            create = self.api.create(
+            spec = dict(
                 filename=artifact.name,
                 size=size,
                 sha256=_sha256(artifact),
                 kind=kind,
-                content_encoding=self.codec_id or None,
+                content_encoding=self.codec_id if compress else None,
                 robot_id=robot_id,
                 manifest=manifest,
                 part_size=part_size,
             )
+            create = self.api.create(**spec)
             if create["state"] == "complete":
                 return {**create, "skipped": True}
             uid = create["upload_id"]
@@ -146,34 +151,70 @@ class MultipartBackend:
             ps = create["part_size"]
             done = min(len(have) * ps, size)
             tick("upload", done, size)
+            urls = {p["part_number"]: p["url"] for p in create["part_urls"]}
             with artifact.open("rb") as f:
-                for part in create["part_urls"]:
-                    if part["part_number"] in have:
+                for n in sorted(urls):
+                    if n in have:
                         continue
-                    f.seek((part["part_number"] - 1) * ps)
+                    f.seek((n - 1) * ps)
                     chunk = f.read(ps)
-                    self._retry(
-                        functools.partial(self.api.put_part, part["url"], chunk),
-                        f"part {part['part_number']}",
-                    )
+                    try:
+                        self._retry(
+                            functools.partial(self.api.put_part, urls[n], chunk), f"part {n}"
+                        )
+                    except RuntimeError as e:
+                        if "403" not in str(e):
+                            raise
+                        # Part URLs are presigned at create and share one expiry
+                        # clock; an upload slower than the TTL outlives them and
+                        # S3 answers 403. create is idempotent by sha256 and
+                        # re-signs every URL.
+                        fresh = self.api.create(**spec)
+                        if fresh["state"] == "complete":
+                            return {**fresh, "skipped": True}
+                        urls = {p["part_number"]: p["url"] for p in fresh["part_urls"]}
+                        self._retry(
+                            functools.partial(self.api.put_part, urls[n], chunk), f"part {n}"
+                        )
                     done += len(chunk)
                     tick("upload", done, size)
             parts = sorted(self.status(uid)["parts"], key=lambda p: p["part_number"])
             done = self.api.complete(uid, parts)
             return {**done, "upload_id": uid, "skipped": False}
 
-    def pull(self, upload_id: str, dest: Path | None, tag: str = "") -> Path:
+    def pull(
+        self,
+        upload_id: str,
+        dest: Path | None,
+        tag: str = "",
+        progress: Progress | None = None,
+        size: int = 0,
+    ) -> Path:
+        tick = progress or (lambda phase, done, total: None)
         d = self.api.download(upload_id)
         wire = d.get("content_encoding") or ""
         out = dest or DOWNLOADS_DIR / f"{tag}{_plain_name(d['filename'], wire)}"
         out.parent.mkdir(parents=True, exist_ok=True)
         with self._staging(out) as tmp:
+            if size:
+                # wire and decompressed copies coexist in staging before the move
+                _require_space(Path(tmp), size * 2 if wire else size)
             raw = Path(tmp) / "wire"
-            self._retry(functools.partial(self.api.fetch, d["url"], raw), "download")
+            tick("download", 0, 0)
+            self._retry(
+                functools.partial(
+                    self.api.fetch, d["url"], raw, lambda done, total: tick("download", done, total)
+                ),
+                "download",
+            )
+            tick("verify", 0, 0)
             if _sha256(raw) != d["sha256"]:
                 raise RuntimeError("sha256 mismatch — refusing to keep the file")
-            plain = Path(tmp) / "plain"
-            codecs.decompress(wire, raw, plain) if wire else raw.rename(plain)
+            if wire:
+                tick("decompress", 0, 0)
+                codecs.decompress(wire, raw, plain := Path(tmp) / "plain")
+            else:
+                raw.rename(plain := Path(tmp) / "plain")
             _move_into_place(plain, out)
         return out
 
@@ -241,9 +282,17 @@ class CloudData:
             raise RuntimeError(f"ambiguous id prefix {prefix!r}")
         return hits[0]
 
-    def pull(self, upload_id: str | None, dest: Path | None = None) -> Path:
+    def pull(
+        self, upload_id: str | None, dest: Path | None = None, progress: Progress | None = None
+    ) -> Path:
         row = self.resolve(upload_id)
-        return self.backend.pull(str(row["id"]), dest, tag=_tag(row))
+        return self.backend.pull(
+            str(row["id"]),
+            dest,
+            tag=_tag(row),
+            progress=progress,
+            size=int(row.get("size") or 0),
+        )
 
     def ls(self) -> list[dict[str, Any]]:
         return self.backend.ls()
@@ -289,13 +338,13 @@ def kind_of(path: Path) -> str:
 
 
 def _require_space(where: Path, need: int) -> None:
-    """Compression stages a copy beside the file (or in dimos_staging_dir); fail before
-    starting rather than at 99% of a 100 GB transfer."""
+    """Uploads and pulls stage copies beside the file (or in dimos_staging_dir); fail
+    before starting rather than at 99% of a 100 GB transfer."""
     free = shutil.disk_usage(where).free
     if free < need:
         raise RuntimeError(
-            f"{where} has {free / 2**30:.1f} GB free, need ~{need / 2**30:.1f} GB to stage the "
-            "compressed copy — set dimos_staging_dir to a larger partition or upload with dimos_upload_codec=''"
+            f"{where} has {free / 2**30:.1f} GB free, need ~{need / 2**30:.1f} GB to stage — "
+            "set dimos_staging_dir to a larger partition"
         )
 
 
