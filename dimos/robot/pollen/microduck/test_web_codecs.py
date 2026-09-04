@@ -44,7 +44,7 @@ import pytest
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path as NavPath
-from dimos.robot.microduck.web_codecs import (
+from dimos.robot.pollen.microduck.web_codecs import (
     _CHAT_CONTENT_MAX_CHARS,
     _PATH_MAX_POINTS,
     encode_chat,

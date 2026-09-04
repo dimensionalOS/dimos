@@ -439,6 +439,16 @@ class MujocoSimModule(
         cameras_by_name: dict[str, CameraConfig] = {}
         raycast_lidars: list[RaycastLidarConfig] = []
 
+        # The only readers of a rendered depth image: the depth_image publisher
+        # and the RGB-D pointcloud back-projection (which the raycast lidar
+        # replaces when enabled). With neither, the second render per frame is
+        # pure cost on the sim thread. Bound before add_camera rather than
+        # after: the closure reads it, so a future caller placed above the old
+        # assignment would have raised NameError.
+        depth_needed = self.config.enable_depth or (
+            self.config.enable_pointcloud and not self.config.enable_mujoco_lidar
+        )
+
         def add_camera(
             name: str,
             *,
@@ -465,19 +475,8 @@ class MujocoSimModule(
                 render_depth=depth_needed,
             )
 
-        # The only readers of a rendered depth image: the depth_image
-        # publisher and the RGB-D pointcloud back-projection (which the
-        # raycast lidar replaces when enabled). With neither, the second
-        # render per frame is pure cost on the sim thread.
-        depth_needed = self.config.enable_depth or (
-            self.config.enable_pointcloud and not self.config.enable_mujoco_lidar
-        )
-
-        primary_needed = (
-            self.config.enable_color
-            or self.config.enable_depth
-            or (self.config.enable_pointcloud and not self.config.enable_mujoco_lidar)
-        )
+        # Same two readers, plus colour: depth_needed already spells the rest.
+        primary_needed = self.config.enable_color or depth_needed
         if primary_needed:
             add_camera(self.config.camera_name)
 

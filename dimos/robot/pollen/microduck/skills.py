@@ -54,7 +54,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.base import NavigationState
 from dimos.navigation.navigation_spec import NavigationInterfaceSpec
-from dimos.robot.microduck.places import (
+from dimos.robot.pollen.microduck.places import (
     ARENA_HALF_EXTENT,
     PlaceRecord,
     PlacesMemory,
@@ -94,7 +94,7 @@ _POLICY_HISTORY = 256
 _POLICY_ACTIONS = ("start", "stop", "toggle")
 
 # Static fallback (display order) used until the simulator has reported its
-# own policy table; kinds match dimos.robot.microduck.policies.
+# own policy table; kinds match dimos.robot.pollen.microduck.policies.
 _POLICY_KINDS: dict[str, str] = {
     "walk": "base",
     "stand": "base",

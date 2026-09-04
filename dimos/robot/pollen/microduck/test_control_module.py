@@ -32,7 +32,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.base import NavigationState
-from dimos.robot.microduck.control_module import (
+from dimos.robot.pollen.microduck.control_module import (
     NAV_STATES,
     NO_PATH_TIMEOUT_SEC,
     STOP_SETTLE_SEC,

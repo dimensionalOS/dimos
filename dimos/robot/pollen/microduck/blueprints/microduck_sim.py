@@ -42,8 +42,8 @@ from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector impo
 )
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
-from dimos.robot.microduck.config import MICRODUCK
-from dimos.robot.microduck.sim_module import LIDAR_CAMERA_SPECS, MicroduckSimModule
+from dimos.robot.pollen.microduck.config import MICRODUCK
+from dimos.robot.pollen.microduck.sim_module import LIDAR_CAMERA_SPECS, MicroduckSimModule
 
 _SCENE_XML = Path(__file__).resolve().parents[1] / "assets" / "room_scene.xml"
 

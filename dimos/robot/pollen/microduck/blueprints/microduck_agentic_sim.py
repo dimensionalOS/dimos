@@ -33,11 +33,11 @@ from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.ollama_agent import ollama_installed
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.robot.microduck.blueprints.microduck_sim import (
+from dimos.robot.pollen.microduck.blueprints.microduck_sim import (
     MICRODUCK_ROOM_OBJECTS,
     microduck_sim,
 )
-from dimos.robot.microduck.skills import MicroduckSkillContainer
+from dimos.robot.pollen.microduck.skills import MicroduckSkillContainer
 
 MICRODUCK_SYSTEM_PROMPT = """\
 You are the brain of Microduck, a tiny (25 cm tall) two-legged duck robot

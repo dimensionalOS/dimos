@@ -25,8 +25,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from dimos.robot.microduck import assets_fetch
-from dimos.robot.microduck.gait import (
+from dimos.robot.pollen.microduck import assets_fetch
+from dimos.robot.pollen.microduck.gait import (
     COMMAND_LEN,
     CONTROL_DT,
     OBS_LEN,

@@ -52,7 +52,7 @@ import tempfile
 import urllib.error
 import urllib.request
 
-from dimos.robot.microduck.policies import DEFAULT_VARIANT, POLICY_SPECS, PolicyName
+from dimos.robot.pollen.microduck.policies import DEFAULT_VARIANT, POLICY_SPECS, PolicyName
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

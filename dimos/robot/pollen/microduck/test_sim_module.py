@@ -27,9 +27,9 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.Image import ImageFormat
-from dimos.robot.microduck import assets_fetch
-from dimos.robot.microduck.places import BALL_BODY, BALL_RADIUS, FOUR_ROOM_XML
-from dimos.robot.microduck.sim_module import (
+from dimos.robot.pollen.microduck import assets_fetch
+from dimos.robot.pollen.microduck.places import BALL_BODY, BALL_RADIUS, FOUR_ROOM_XML
+from dimos.robot.pollen.microduck.sim_module import (
     CHASE_CAMERA_NAME,
     LIDAR_CAMERA_SPECS,
     PHYSICS_TIMESTEP,

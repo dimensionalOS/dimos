@@ -33,15 +33,15 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.base import NavigationState
-from dimos.robot.microduck import skills
-from dimos.robot.microduck.places import (
+from dimos.robot.pollen.microduck import skills
+from dimos.robot.pollen.microduck.places import (
     MICRODUCK_OBJECTS,
     MICRODUCK_ROOMS,
     PlacesMemory,
     RoomSpec,
     scene_id,
 )
-from dimos.robot.microduck.skills import MicroduckSkillContainer
+from dimos.robot.pollen.microduck.skills import MicroduckSkillContainer
 
 FOLLOWING = NavigationState.FOLLOWING_PATH
 IDLE = NavigationState.IDLE

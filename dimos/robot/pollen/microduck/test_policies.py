@@ -19,13 +19,13 @@ headless MuJoCo run of every policy.
 The MuJoCo-backed tests carry the ``mujoco`` marker, which the repo's pytest
 ``addopts`` deselect by default, so they need ``-m mujoco``::
 
-    pytest dimos/robot/microduck/test_policies.py -m mujoco
+    pytest dimos/robot/pollen/microduck/test_policies.py -m mujoco
 
 The per-policy headless matrix (``test_slow_policy_runs_in_headless_sim``,
 a few seconds per variant on Apple Silicon) is additionally gated on an env
 flag and needs the cached ONNX/MJCF assets under ``~/.cache/dimos/microduck``::
 
-    MICRODUCK_SLOW_TESTS=1 pytest dimos/robot/microduck/test_policies.py \\
+    MICRODUCK_SLOW_TESTS=1 pytest dimos/robot/pollen/microduck/test_policies.py \\
         -m mujoco -k headless -s            # default variant, prints outcomes
     MICRODUCK_SLOW_VARIANTS=rollers MICRODUCK_SLOW_TESTS=1 pytest ... -m mujoco -k headless
 """
@@ -44,8 +44,8 @@ import urllib.error
 import numpy as np
 import pytest
 
-from dimos.robot.microduck import assets_fetch
-from dimos.robot.microduck.policies import (
+from dimos.robot.pollen.microduck import assets_fetch
+from dimos.robot.pollen.microduck.policies import (
     ACTIVE_BRAKING,
     ACTIVE_STANDING_UP,
     ASSET_MISSING_REASON,

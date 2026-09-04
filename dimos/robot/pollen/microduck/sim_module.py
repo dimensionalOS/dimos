@@ -56,10 +56,10 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.microduck import assets_fetch
-from dimos.robot.microduck.gait import CONTROL_DT
-from dimos.robot.microduck.places import BALL_BODY, BALL_RADIUS, add_ball_body
-from dimos.robot.microduck.policies import (
+from dimos.robot.pollen.microduck import assets_fetch
+from dimos.robot.pollen.microduck.gait import CONTROL_DT
+from dimos.robot.pollen.microduck.places import BALL_BODY, BALL_RADIUS, add_ball_body
+from dimos.robot.pollen.microduck.policies import (
     DEFAULT_VARIANT,
     FALL_GRAVITY_Z,
     PolicyBank,

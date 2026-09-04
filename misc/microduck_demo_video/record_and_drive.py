@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.robot.microduck import assets_fetch
+from dimos.robot.pollen.microduck import assets_fetch
 from dimos.simulation.engines.mujoco_shm import ManipShmReader, shm_key_from_path
 
 OUT = "/Users/tule/.claude/jobs/1c2d08cf/tmp/events.jsonl"

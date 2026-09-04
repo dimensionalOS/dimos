@@ -54,20 +54,20 @@ from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 
 # Imported for the registration side effect: the cockpit blueprint resolves
 # these encoders by id when it compiles MICRODUCK_COCKPIT_CHANNELS.
-from dimos.robot.microduck import web_codecs  # noqa: F401
-from dimos.robot.microduck.config import MICRODUCK
-from dimos.robot.microduck.control_module import DuckControlModule
-from dimos.robot.microduck.places import (
+from dimos.robot.pollen.microduck import web_codecs  # noqa: F401
+from dimos.robot.pollen.microduck.config import MICRODUCK
+from dimos.robot.pollen.microduck.control_module import DuckControlModule
+from dimos.robot.pollen.microduck.places import (
     FOUR_ROOM_XML,
     MICRODUCK_OBJECTS,
     MICRODUCK_ROOMS,
 )
-from dimos.robot.microduck.sim_module import (
+from dimos.robot.pollen.microduck.sim_module import (
     LIDAR_CAMERA_SPECS,
     POV_CAMERA_NAME,
     MicroduckSimModule,
 )
-from dimos.robot.microduck.skills import MicroduckSkillContainer
+from dimos.robot.pollen.microduck.skills import MicroduckSkillContainer
 from dimos.web.cockpit import (
     Channel,
     Chat,

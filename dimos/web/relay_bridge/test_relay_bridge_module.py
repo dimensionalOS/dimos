@@ -54,8 +54,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.robot.microduck import web_codecs
-from dimos.robot.microduck.blueprints.microduck_cockpit_sim import (
+from dimos.robot.pollen.microduck import web_codecs
+from dimos.robot.pollen.microduck.blueprints.microduck_cockpit_sim import (
     MICRODUCK_COCKPIT_CHANNELS,
     MICRODUCK_COCKPIT_LAYOUT,
 )
@@ -673,7 +673,7 @@ def test_bridge_imports_without_langchain() -> None:
     # and run `--local-relay`. A None entry in sys.modules makes the import
     # raise exactly like a missing package; nothing under the bridge reaches
     # for it, because the duck's transcript channel and its encoder are
-    # authored on the microduck side (dimos/robot/microduck/web_codecs.py).
+    # authored on the microduck side (dimos/robot/pollen/microduck/web_codecs.py).
     code = textwrap.dedent(
         """
         import sys

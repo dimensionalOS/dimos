@@ -25,7 +25,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from dimos.robot.microduck.places import (
+from dimos.robot.pollen.microduck.places import (
     ARENA_HALF_EXTENT,
     BALL_BODY,
     BALL_FREEJOINT,

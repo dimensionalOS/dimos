@@ -19,10 +19,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dimos.robot.microduck import assets_fetch
-from dimos.robot.microduck.config import MICRODUCK
-from dimos.robot.microduck.places import FOUR_ROOM_XML
-from dimos.robot.microduck.sim_module import MicroduckSimModule
+from dimos.robot.pollen.microduck import assets_fetch
+from dimos.robot.pollen.microduck.config import MICRODUCK
+from dimos.robot.pollen.microduck.places import FOUR_ROOM_XML
+from dimos.robot.pollen.microduck.sim_module import MicroduckSimModule
 
 
 def _duck_extent() -> tuple[float, float, float]:
@@ -114,7 +114,7 @@ def test_blueprints_take_their_clearances_from_the_descriptor() -> None:
     """The duplication this file exists to prevent: the same three numbers
     were spelled out in both blueprints, so tuning one silently desynced the
     other."""
-    from dimos.robot.microduck.blueprints import microduck_cockpit_sim, microduck_sim
+    from dimos.robot.pollen.microduck.blueprints import microduck_cockpit_sim, microduck_sim
 
     for module in (microduck_cockpit_sim, microduck_sim):
         source = module.__file__

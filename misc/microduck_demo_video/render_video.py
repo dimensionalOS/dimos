@@ -15,14 +15,14 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, "/Users/tule/trenches/dimos-repo/.claude/worktrees/microduck-sim")
-from dimos.robot.microduck import assets_fetch  # noqa: E402
+from dimos.robot.pollen.microduck import assets_fetch  # noqa: E402
 from dimos.simulation.utils.xml_parser import build_joint_mappings  # noqa: E402
 
 EVENTS = "/Users/tule/.claude/jobs/1c2d08cf/tmp/events.jsonl"
 OUT = "/Users/tule/Desktop/microduck_demo.mp4"
 SCENE = (
     "/Users/tule/trenches/dimos-repo/.claude/worktrees/microduck-sim/"
-    "dimos/robot/microduck/assets/room_scene.xml"
+    "dimos/robot/pollen/microduck/assets/room_scene.xml"
 )
 W, H, FPS = 1280, 720, 30
 SLOW_PRE, SLOW_POST, FAST = 0.5, 6.0, 4

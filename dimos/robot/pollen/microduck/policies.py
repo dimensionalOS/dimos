@@ -52,7 +52,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.robot.microduck.gait import (
+from dimos.robot.pollen.microduck.gait import (
     COMMAND_LEN,
     VX_RANGE,
     VY_RANGE,
