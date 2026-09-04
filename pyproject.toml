@@ -27,6 +27,7 @@ include = ["dimos*"]
 # (MANIFEST.in already prunes these from the sdist; this keeps their stray
 # .py modules out of the wheel too).
 exclude = [
+    "dimos.experimental.isolated_python.example.python*",
     "dimos.web.websocket_vis.node_modules*",
     "dimos.web.command-center-extension*",
     "dimos.web.dimos_interface.src*",
@@ -752,6 +753,7 @@ exclude_also = [
 max_size_kb = 75
 ignore = [
     "uv.lock",
+    "dimos/experimental/isolated_python/example/python/uv.lock",
     "*/package-lock.json",
     "Cargo.lock",
     "*/Cargo.lock",
