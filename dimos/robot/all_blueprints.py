@@ -154,6 +154,7 @@ all_blueprints = {
     "unitree-go2-multi": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_multi:unitree_go2_multi",
     "unitree-go2-multi-teleop": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_multi_teleop:unitree_go2_multi_teleop",
     "unitree-go2-nav-3d": "dimos.robot.unitree.go2.blueprints.navigation.unitree_go2_nav_3d:unitree_go2_nav_3d",
+    "unitree-go2-nav-3d-relocalization": "dimos.robot.unitree.go2.blueprints.navigation.unitree_go2_nav_3d:unitree_go2_nav_3d_relocalization",
     "unitree-go2-relocalization": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2_relocalization",
     "unitree-go2-ros": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_ros:unitree_go2_ros",
     "unitree-go2-rpp-benchmark": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_rpp_benchmark:unitree_go2_rpp_benchmark",

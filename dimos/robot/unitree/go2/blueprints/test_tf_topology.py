@@ -26,12 +26,14 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.mapping.relocalization.module import RelocalizationModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_mid360_record import (
     unitree_go2_mid360_record,
 )
 from dimos.robot.unitree.go2.blueprints.navigation.unitree_go2_nav_3d import (
     unitree_go2_nav_3d,
+    unitree_go2_nav_3d_relocalization,
 )
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
@@ -39,7 +41,7 @@ from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
     mount_transforms,
 )
 
-BLUEPRINTS = [unitree_go2_nav_3d, unitree_go2_mid360_record]
+BLUEPRINTS = [unitree_go2_nav_3d, unitree_go2_nav_3d_relocalization, unitree_go2_mid360_record]
 
 
 def _tf_children_by_publisher(blueprint: Blueprint) -> dict[str, set[str]]:
@@ -54,6 +56,8 @@ def _tf_children_by_publisher(blueprint: Blueprint) -> dict[str, set[str]]:
         if atom.module is PointLio:
             sensor_frame = atom.kwargs.get("sensor_frame_id", "mid360_link")
             children["PointLio"] = {sensor_frame}
+        if issubclass(atom.module, RelocalizationModule):
+            children[atom.module.__name__] = {atom.kwargs.get("map_frame", "map")}
     return children
 
 

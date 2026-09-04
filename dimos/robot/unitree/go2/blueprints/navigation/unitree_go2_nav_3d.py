@@ -28,6 +28,7 @@ from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
+from dimos.mapping.relocalization.lidar.module import LocalMapRelocalization
 from dimos.memory.module import pose_setter_for
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -121,6 +122,9 @@ _nav_rerun_config = {
     "visual_override": {
         **rerun_config["visual_override"],
         "world/global_map": _render_global_map,
+        "world/full_map": _render_global_map,
+        # The raw premap is millions of points. The seeded voxels are full_map.
+        "world/loaded_map": None,
         "world/path": _render_path,
         "world/camera_info": None,
         "world/color_image": None,
@@ -191,3 +195,11 @@ if _RECORD_PCAP:
         unitree_go2_nav_3d,
         Mid360PcapRecorder.blueprint(pcap_path=_RECORDING_DIR / "mid360.pcap"),
     )
+
+# The same stack placed in a premap named by --map-file. An accepted fix seeds
+# the ray tracer with the premap and the planner gets the seeded extent as
+# full_map. The republish covers a lost LCM fragment on the one-shot publish.
+unitree_go2_nav_3d_relocalization = autoconnect(
+    unitree_go2_nav_3d,
+    LocalMapRelocalization.blueprint(world_frame="odom", republish_loaded_map=30.0),
+).global_config(n_workers=11)
