@@ -30,6 +30,7 @@ from typing import Any
 
 from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import JpegLcmTransport, LCMTransport
@@ -154,19 +155,14 @@ def r1pro_control(
 ) -> Blueprint:
     """R1ProConnection + ControlCoordinator wired over LCM transports.
 
-    ``tasks`` overrides the default task set (whole-body servo + chassis
+    ``tasks`` overrides the default task set (whole-body trajectory + chassis
     velocity); transports and remappings stay identical either way.
     """
     resolved_tasks = (
         list(tasks)
         if tasks is not None
         else [
-            TaskConfig(
-                name="servo_r1pro",
-                type="servo",
-                joint_names=R1PRO_UPPER_BODY_JOINTS,
-                priority=10,
-            ),
+            joint_trajectory_task(R1PRO_UPPER_BODY_JOINTS),
             TaskConfig(
                 name="vel_chassis",
                 type="velocity",

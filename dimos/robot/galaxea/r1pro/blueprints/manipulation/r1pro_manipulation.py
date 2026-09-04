@@ -15,7 +15,7 @@
 
 """R1 Pro dual-arm manipulation (EXPERIMENTAL).
 
-Swaps the whole-body servo task for the canonical joint-trajectory task; the
+Narrows the coordinator's whole-body trajectory task to the arms; the
 planner picks an arm through the model's ``left_arm`` / ``right_arm`` planning
 groups. The chassis is welded in the planning model and driven separately by
 the velocity task; grippers are not driven yet.
