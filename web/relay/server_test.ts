@@ -278,7 +278,11 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
     const stalled = await attachViewer("stalled");
     void stalled; // never reads incomingUnidirectionalStreams: a suspended tab
 
-    const payload = new Uint8Array(8 * 1024).fill(9);
+    // Big frames on purpose. The old stream-per-frame policy wedged the
+    // stalled viewer on *stream* credit (~100 uni streams), so 8 KB frames
+    // were enough; a persistent stream wedges on the connection's *byte*
+    // window instead, which no realistic frame count of 8 KB would fill.
+    const payload = new Uint8Array(128 * 1024).fill(9);
     const fetchStalled = async () => {
       const stats = await (await fetch(`${httpBase}/api/stats`)).json();
       const viewers = stats.perViewer as {
@@ -290,24 +294,43 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
         .filter((c) => c !== undefined)
         .sort((a, b) => a.sent - b.sent)[0];
     };
+    /** The other one: highest acceptance count. */
+    const fetchHealthy = async () => {
+      const stats = await (await fetch(`${httpBase}/api/stats`)).json();
+      const viewers = stats.perViewer as {
+        channels: Record<string, { aborted: number; queued: number; sent: number }>;
+      }[];
+      return viewers
+        .map((v) => v.channels.color_image)
+        .filter((c) => c !== undefined)
+        .sort((a, b) => b.sent - a.sent)[0];
+    };
 
-    // Pump frames until the stalled viewer's stale streams are being reset
-    // under backpressure. Onset needs its uni-stream credit (~100) exhausted
-    // plus one LATEST_STALE_MS window, so give it a generous frame budget.
+    // Pump frames until the stalled viewer's watchdog is firing. Latest now
+    // packs frames onto one persistent stream (LatestPersistentChannel), so
+    // onset is no longer "~100 uni streams of credit exhausted" but the much
+    // faster "one write parked past LATEST_STALE_MS": the stalled viewer's
+    // first write blocks as soon as its flow-control window fills, and each
+    // reap tick past staleMs counts an abort. Three ticks ~= 1.5 s.
+    //
+    // The budget is therefore small and deliberate: this harness spends one
+    // robot-leg bidi stream per frame and quinn grants ~100, so a run that
+    // never trips the watchdog must fail on the assertion below rather than
+    // pump itself into a RangeError that says nothing about the relay.
     let lastSeq = 0;
     let stalledStats = await fetchStalled();
-    for (let seq = 1; seq <= 1200; seq++) {
+    for (let seq = 1; seq <= 90; seq++) {
       await sendRobotFrame(
         robot,
         { ch: "color_image", seq, ts: seq / 100, delivery: "latest" },
         payload,
       );
       lastSeq = seq;
-      if (seq % 50 === 0) {
+      if (seq % 10 === 0) {
         stalledStats = await fetchStalled();
         if (stalledStats !== undefined && stalledStats.aborted >= 3) break;
       }
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 25));
     }
     assert(stalledStats !== undefined, "stalled viewer never got a policy");
     assert(stalledStats.aborted >= 3, `expected aborted resets, got ${stalledStats.aborted}`);
@@ -317,23 +340,19 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
     // queue and require a seq from the era after the stalled viewer wedged.
     let newest = 0;
     const drainUntil = Date.now() + 8000;
-    while (newest < lastSeq - 50 && Date.now() < drainUntil) {
+    while (newest < lastSeq - 10 && Date.now() < drainUntil) {
       newest = Math.max(newest, (await within(healthyFrames(), "healthy frame")).header.seq);
     }
-    assert(newest >= lastSeq - 50, `healthy viewer stalled at seq ${newest} of ${lastSeq}`);
+    assert(newest >= lastSeq - 10, `healthy viewer stalled at seq ${newest} of ${lastSeq}`);
 
-    // The input has quiesced, so no newer offer will reap the healthy viewer's
-    // last accepted stream: only the relay's periodic reap timer can return it
-    // (against real quinn streams).
-    const reapDeadline = Date.now() + 5000;
-    let healthyInflight = -1;
-    while (Date.now() < reapDeadline) {
-      healthyInflight = await fetchHealthyInflight();
-      round.lastInflight = healthyInflight;
-      if (healthyInflight === 0) break;
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    assertEquals(healthyInflight, 0, "idle reap never reset the healthy viewer's last stream");
+    // And the watchdog told the two viewers apart rather than firing on both:
+    // the healthy viewer's writes settled every time, so no reap tick ever
+    // found one outstanding. This is the half that makes `aborted` a usable
+    // stalled-viewer gauge in /api/stats instead of a general noise counter.
+    round.lastInflight = await fetchHealthyInflight();
+    const healthyCh = await fetchHealthy();
+    assertEquals(healthyCh?.aborted, 0, "the healthy viewer must not look stalled");
+    assert((healthyCh?.sent ?? 0) > (stalledStats?.sent ?? 0), "healthy viewer fell behind");
   } catch (e) {
     // A wedge during pump/drain dies before the reap poll but leaves the
     // same stuck-carrier signature; settle one stale window, then probe.

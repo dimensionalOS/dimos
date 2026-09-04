@@ -10,6 +10,7 @@ import {
   type FrameSend,
   type FrameWriter,
   LatestChannel,
+  LatestPersistentChannel,
   parseRobotFrameHeader,
   Rate,
   readRobotFrame,
@@ -205,6 +206,85 @@ Deno.test("latest: fast sink delivers everything", async () => {
   }
   assertEquals(sink.sent.length, 5);
   assertEquals(ch.dropped, 0);
+});
+
+Deno.test("latest-persistent: one stream, newest wins, nothing queues behind", async () => {
+  const sink = new FakeSink(false);
+  const ch = new LatestPersistentChannel(sink);
+  ch.offer(frame(1));
+  await tick(); // the persistent stream opens before the first write
+  for (const n of [2, 3, 4]) ch.offer(frame(n)); // all displace one another
+  assertEquals(ch.queued(), 1);
+  sink.release(); // frame 1 lands
+  await tick();
+  sink.release(); // then the newest survivor, 4 - never 2 or 3
+  await tick();
+  assertEquals(sink.sent, [frame(1), frame(4)]);
+  assertEquals(ch.sent, 2);
+  assertEquals(ch.dropped, 2); // 2 and 3 were superseded
+  assertEquals(sink.streamsOpened, 1); // no stream-per-frame credit burn
+  assertEquals(ch.inflight(), 0);
+  assertEquals(sink.kicked, null);
+});
+
+Deno.test("latest-persistent: a settled write is never counted as a stall", async () => {
+  const sink = new FakeSink(); // auto: writes settle immediately
+  let now = 1000;
+  const ch = new LatestPersistentChannel(sink, { staleMs: 500, now: () => now });
+  ch.offer(frame(1));
+  await tick();
+  now += 60_000; // an idle eternity later
+  ch.reap(now);
+  assertEquals(ch.aborted, 0); // healthy: no write was outstanding
+  assertEquals(sink.streamsAborted, 0); // and the stream was left alone
+  ch.offer(frame(2));
+  await tick();
+  assertEquals(sink.streamsOpened, 1); // reused, not reopened
+  assertEquals(ch.sent, 2);
+});
+
+Deno.test("latest-persistent: a stalled viewer is counted, then its stream reset", async () => {
+  const sink = new FakeSink(false); // writes park: a viewer that stopped reading
+  let now = 1000;
+  const ch = new LatestPersistentChannel(sink, { staleMs: 500, now: () => now });
+  ch.offer(frame(1));
+  await tick();
+  ch.offer(frame(2)); // parks behind the stuck write, displacing nothing yet
+
+  now += 600; // past staleMs: the stall signal starts counting
+  ch.reap(now);
+  assertEquals(ch.aborted, 1);
+  assertEquals(sink.streamsAborted, 0); // counted, not yet reset
+  now += 600;
+  ch.reap(now);
+  assertEquals(ch.aborted, 2);
+
+  now += 1000; // past LATEST_PERSISTENT_RESET_MS: drop the stale backlog
+  ch.reap(now);
+  assertEquals(ch.aborted, 3);
+  assertEquals(sink.streamsAborted, 1);
+  // The reset is ours, so the viewer is kept and the channel stays usable:
+  // the next frame opens a fresh stream rather than kicking.
+  sink.rejectWrite();
+  await tick();
+  assertEquals(sink.kicked, null);
+  ch.offer(frame(3));
+  await tick();
+  assertEquals(sink.streamsOpened, 2);
+});
+
+Deno.test("latest-persistent: a real write failure still kicks the viewer", async () => {
+  const sink = new FakeSink(false);
+  const ch = new LatestPersistentChannel(sink);
+  ch.offer(frame(1));
+  await tick();
+  sink.rejectWrite(); // not preceded by a reap-driven reset
+  await tick();
+  assertEquals(sink.kicked, "write failed");
+  ch.offer(frame(2)); // disposed: later offers are no-ops
+  await tick();
+  assertEquals(ch.sent, 0);
+  assertEquals(sink.kicks, 1);
 });
 
 Deno.test("reliable: FIFO order, zero drops", async () => {

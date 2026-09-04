@@ -135,8 +135,8 @@ _TELEOP_MAX_ANGULAR = 0.6
 # a latest-wins video feed. Fixing that upstream would let all of these
 # numbers go back up.
 _CHASE_CAM_SIZE = (640, 360)
-_CHASE_CAM_FPS = 20.0
-_CHASE_CAM_MAX_HZ = 30.0
+_CHASE_CAM_FPS = 40.0
+_CHASE_CAM_MAX_HZ = 50.0
 _CHASE_CAM_QUALITY = 40
 # The head camera only fills a ~260 px inset, so it ships at a quarter of the
 # pixels. That costs nothing in render time (geometry-bound, see above) but a

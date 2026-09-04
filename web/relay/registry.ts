@@ -27,7 +27,7 @@ import { MAX_MANIFEST_ID_LEN } from "@dimos/shared/manifest";
 import type { CarrierStats } from "./carrier.ts";
 import {
   type ChannelPolicy,
-  LatestChannel,
+  LatestPersistentChannel,
   parseRobotFrameHeader,
   Rate,
   ReliableChannel,
@@ -473,7 +473,7 @@ export class Registry {
         policy?.dispose();
         policy = delivery === "reliable"
           ? new ReliableChannel(viewer.sink)
-          : new LatestChannel(viewer.sink);
+          : new LatestPersistentChannel(viewer.sink);
         viewer.policies.set(ch, policy);
       }
       policy.offer(bytes);

@@ -14,6 +14,12 @@ import {
 
 // Reliable channels: a viewer this far behind is dead weight; kick it so it
 // reconnects with a clean slate.
+/** How long a LatestPersistentChannel write may stay outstanding before the
+ * persistent stream is reset to discard its stale backlog. Well past
+ * LATEST_STALE_MS so an ordinarily slow viewer keeps its stream and only a
+ * genuinely stuck one (a suspended tab) is reset. */
+const LATEST_PERSISTENT_RESET_MS = 2000;
+
 const RELIABLE_MAX_QUEUE = 64;
 const RELIABLE_MAX_BYTES = 16 * 1024 * 1024;
 
@@ -308,6 +314,166 @@ export class LatestChannel implements ChannelPolicy {
         // frame offered between the loop observing an empty queue and this
         // callback saw #writing still true and started no drain, so only
         // this recheck can pick it up.
+        this.#writing = false;
+        if (this.#pending) this.#drain();
+      });
+  }
+}
+
+/**
+ * Latest, carried on ONE persistent uni stream instead of a stream per frame.
+ *
+ * Same contract as LatestChannel - a depth-1 queue, newest frame wins, an
+ * offer arriving mid-write displaces the one waiting rather than queueing
+ * behind it - but without the stream-per-frame pattern that the
+ * ReliableChannel docstring below already indicts: uni-stream credit is only
+ * replenished when streams complete, latest streams are never FIN'd (README
+ * bug 12), so a 20 Hz video channel spends most of its time wedged in
+ * createUnidirectionalStream waiting for credit and sheds every frame offered
+ * meanwhile. Measured on the microduck cockpit over a local relay, a headed
+ * Chrome drew 10.6 fps with 263 drops on LatestChannel and 17.4 fps with zero
+ * drops here, and multi-second freezes while the robot walked disappeared.
+ *
+ * Bounded latency is what separates this from ReliableChannel: that one keeps
+ * a 64-deep FIFO and would sit a viewer three seconds behind a walking robot
+ * before kicking it. Here a slow viewer sees dropped frames, never lag.
+ *
+ * `delivery` stays "latest": the wire format and the (frozen) manifest are
+ * unchanged, and the viewer never reads the field - it is the relay's own
+ * forwarding choice. Frames are self-delimiting, so packing many onto one
+ * stream needs nothing from the receiver.
+ *
+ * A persistent stream loses two things the stream-per-frame design got for
+ * free, so reap() rebuilds both. A viewer that stops reading (a suspended
+ * tab) parks the write in `writer.write` indefinitely:
+ *
+ *   1. `aborted` stays the suspended-viewer signal - it counts reap ticks
+ *      spent with a write outstanding past staleMs, rather than stale streams
+ *      reset. Still 0 when healthy, still the "this viewer is stuck" gauge in
+ *      /api/stats.
+ *   2. Past RESET_MS the persistent stream is reset and reopened. That is
+ *      README bug 12's reason for resetting stale latest streams: the reset
+ *      discards buffered-but-undelivered bytes on both ends, so a resuming
+ *      tab sees fresh video instead of replaying a connection window of stale
+ *      frames oldest-first. The healthy path never reaches either branch (a
+ *      local write settles in ~1 ms), so no stream churn.
+ */
+export class LatestPersistentChannel implements ChannelPolicy {
+  readonly delivery: Delivery = "latest";
+  sent = 0;
+  dropped = 0;
+  aborted = 0; // no per-frame streams to reset; fixed 0
+  expired = 0; // ditto
+  bytesOut = 0;
+  readonly rate = new Rate();
+  #pending: Uint8Array | null = null;
+  #writing = false;
+  #writer: FrameWriter | null = null;
+  #disposed = false;
+  /** When the outstanding write started, or null between writes. */
+  #writeStartedAt: number | null = null;
+  /** reap() reset the stream: the drain must reopen, not kick the viewer. */
+  #resetting = false;
+  readonly #staleMs: number;
+  readonly #now: () => number;
+
+  constructor(readonly sink: ViewerSink, opts: PolicyOptions = {}) {
+    this.#staleMs = opts.staleMs ?? LATEST_STALE_MS;
+    this.#now = opts.now ?? Date.now;
+  }
+
+  queued(): number {
+    return this.#pending ? 1 : 0;
+  }
+
+  inflight(): number {
+    return 0; // one persistent stream, no per-frame streams to reset
+  }
+
+  offer(bytes: Uint8Array): void {
+    if (this.#disposed) return;
+    if (this.#pending) this.dropped++; // superseded by this newer frame
+    this.#pending = bytes;
+    this.#drain();
+  }
+
+  /** Stall watchdog (see the class doc): count a stuck write, and past
+   * RESET_MS reset the stream so the backlog cannot follow the viewer into
+   * its resume. No per-frame streams to reap. */
+  reap(nowMs: number): void {
+    const startedAt = this.#writeStartedAt;
+    if (startedAt === null || this.#disposed || this.#resetting) return;
+    const stalledFor = nowMs - startedAt;
+    if (stalledFor < this.#staleMs) return;
+    this.aborted++;
+    if (stalledFor < LATEST_PERSISTENT_RESET_MS) return;
+    // Abort rather than close, for the reason ReliableChannel.dispose gives:
+    // close would still flush the stale frames the reset exists to discard.
+    // #resetting makes the drain's rejection a reopen instead of a kick; the
+    // writer is dropped here so the next drain opens a fresh stream.
+    this.#resetting = true;
+    const writer = this.#writer;
+    this.#writer = null;
+    this.#writeStartedAt = null;
+    writer?.abort().catch(() => {});
+  }
+
+  dispose(): void {
+    this.#disposed = true;
+    this.#pending = null;
+    this.#writeStartedAt = null;
+    // Abort, not close, for the reason ReliableChannel.dispose gives: close
+    // would still flush the stale frame and hold the stream's credit.
+    this.#writer?.abort().catch(() => {});
+    this.#writer = null;
+  }
+
+  #drain(): void {
+    if (this.#writing || this.#disposed) return;
+    this.#writing = true;
+    (async () => {
+      const writer = this.#writer ??= await this.sink.openStream();
+      if (this.#disposed) {
+        // dispose() ran while the stream was opening and found no writer to
+        // abort; release it here.
+        writer.abort().catch(() => {});
+        this.#writer = null;
+        return;
+      }
+      while (this.#pending) {
+        const bytes = this.#pending;
+        this.#pending = null; // frames offered during the write displace *this*
+        this.#writeStartedAt = this.#now();
+        try {
+          await writer.write(bytes);
+        } finally {
+          this.#writeStartedAt = null;
+        }
+        // A reset landed on this write. Whether it rejected or resolved, the
+        // stream is gone: bail out and let the finally reopen. Checked here
+        // as well as in the catch so a transport whose abort() does not
+        // reject a parked write cannot wedge the channel forever.
+        if (this.#resetting) {
+          this.#resetting = false;
+          return;
+        }
+        this.sent++;
+        this.bytesOut += bytes.byteLength;
+        this.rate.push(bytes.byteLength, this.#now());
+      }
+    })()
+      .catch(() => {
+        if (this.#disposed) return; // failure caused by disposal, not the viewer
+        if (this.#resetting) {
+          this.#resetting = false; // our own reset, not a viewer failure
+          return;
+        }
+        this.sink.kick("write failed");
+        this.dispose();
+      })
+      .finally(() => {
+        // Same lost-wakeup guard as the other two policies: clear #writing and
+        // recheck in one synchronous step.
         this.#writing = false;
         if (this.#pending) this.#drain();
       });

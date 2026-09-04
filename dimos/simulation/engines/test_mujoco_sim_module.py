@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
+from dimos.simulation.engines.mujoco_engine import CameraConfig, CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
 
 
@@ -448,6 +448,52 @@ def freejoint_engine(tmp_path: Path) -> Iterator[MujocoEngine]:
     assert engine.connect() is True
     try:
         yield engine
+    finally:
+        engine.disconnect()
+
+
+@pytest.mark.mujoco
+@pytest.mark.parametrize("render_depth", [True, False])
+def test_camera_render_depth_controls_the_second_render(tmp_path: Path, render_depth: bool) -> None:
+    """Depth is a whole second render of the scene, so a camera whose depth
+    nobody reads (a video feed) must be able to skip it and still deliver rgb."""
+    robot_xml = tmp_path / "camera.xml"
+    robot_xml.write_text(
+        """
+<mujoco model="camera">
+  <option gravity="0 0 0" timestep="0.01"/>
+  <worldbody>
+    <camera name="cam" pos="0 -1 0.5" xyaxes="1 0 0 0 0 1"/>
+    <body name="base" pos="0 0 0.5">
+      <freejoint name="floating_base_joint"/>
+      <geom name="base_geom" type="sphere" size="0.05" mass="1.0"/>
+    </body>
+  </worldbody>
+</mujoco>
+""".strip()
+    )
+    engine = MujocoEngine(
+        config_path=robot_xml,
+        headless=True,
+        cameras=[
+            CameraConfig(name="cam", width=16, height=16, fps=1000.0, render_depth=render_depth)
+        ],
+    )
+    assert engine.connect() is True
+    try:
+        deadline = time.monotonic() + 5.0
+        frame = None
+        while frame is None and time.monotonic() < deadline:
+            frame = engine.read_camera("cam")
+            if frame is None:
+                time.sleep(0.01)
+        assert frame is not None, "camera never produced a frame"
+        assert frame.rgb.shape == (16, 16, 3)  # rgb is unaffected either way
+        if render_depth:
+            assert frame.depth is not None
+            assert frame.depth.shape == (16, 16)
+        else:
+            assert frame.depth is None
     finally:
         engine.disconnect()
 

@@ -23,7 +23,7 @@ import {
   type FrameSend,
   type FrameWriter,
   LATEST_STALE_MS,
-  LatestChannel,
+  LatestPersistentChannel,
   ReliableChannel,
   type ViewerSink,
 } from "./forward.ts";
@@ -409,7 +409,7 @@ Deno.test("a delivery change disposes the superseded policy", async () => {
   await tick();
   assert(viewer.policies.get("tele") instanceof ReliableChannel);
   reg.onRobotFrame(robot, frame("tele", 2, "latest"));
-  assert(viewer.policies.get("tele") instanceof LatestChannel);
+  assert(viewer.policies.get("tele") instanceof LatestPersistentChannel);
   assertEquals(viewer.sink.streamsAborted, 1); // the reliable writer released
   await tick();
   assertEquals(viewer.sink.sent.length, 2);
@@ -518,7 +518,7 @@ Deno.test("reconnect-stale sub is filtered from snapshots, frames fall back to h
   // ... but if the robot still sends the channel, routing falls back to the
   // frame header's delivery.
   reg.onRobotFrame(second, frame("mystery", 1, "latest"));
-  assert(viewer.policies.get("mystery") instanceof LatestChannel);
+  assertEquals(viewer.policies.get("mystery")!.delivery, "latest");
 });
 
 Deno.test("invalid and unregistered frames are dropped and counted", () => {
@@ -535,9 +535,12 @@ Deno.test("invalid and unregistered frames are dropped and counted", () => {
   assertEquals(stats.framesFromUnregistered, 1);
 });
 
-Deno.test("reapAll resets stale accepted latest streams", async () => {
-  // What server.ts drives on an interval: an idle input stops offering, so
-  // without this the last accepted stream would stay open indefinitely.
+Deno.test("reapAll leaves a healthy latest channel's persistent stream alone", async () => {
+  // What server.ts drives on an interval. Latest now packs frames onto one
+  // persistent stream (LatestPersistentChannel), so there are no per-frame
+  // streams to reap and an idle input leaks nothing: the reap tick must be a
+  // no-op here, and specifically must NOT tear the stream down - the next
+  // frame has to land on it without reopening.
   const reg = new Registry();
   const robot = new FakeRobot("r1", SPECS);
   reg.registerRobot(robot);
@@ -545,12 +548,17 @@ Deno.test("reapAll resets stale accepted latest streams", async () => {
   reg.onRobotFrame(robot, frame("color_image", 1, "latest"));
   await tick();
   const policy = viewer.policies.get("color_image")!;
-  assertEquals(policy.inflight(), 1);
+  assertEquals(policy.inflight(), 0);
+  assertEquals(viewer.sink.streamsOpened, 1);
   // Entries carry real Date.now timestamps; fabricate a clock past staleMs.
   reg.reapAll(Date.now() + LATEST_STALE_MS + 100);
-  assertEquals(policy.inflight(), 0);
-  assertEquals(policy.expired, 1);
-  assertEquals(policy.aborted, 0);
+  assertEquals(policy.expired, 0);
+  assertEquals(policy.aborted, 0); // the write settled: not a stalled viewer
+  assertEquals(viewer.sink.streamsAborted, 0);
+  reg.onRobotFrame(robot, frame("color_image", 2, "latest"));
+  await tick();
+  assertEquals(viewer.sink.streamsOpened, 1); // reused, not reopened
+  assertEquals(policy.sent, 2);
 });
 
 Deno.test("stats project exact per-channel key sets with counters and rates", async () => {
@@ -603,7 +611,7 @@ Deno.test("stats project exact per-channel key sets with counters and rates", as
   ]);
   assertEquals(out.color_image.delivery, "latest");
   assertEquals(out.color_image.sent, 1);
-  assertEquals(out.color_image.inflight, 1); // its stream stays open until reaped
+  assertEquals(out.color_image.inflight, 0); // one persistent stream, nothing to reset
   assertEquals(out.odom.delivery, "reliable");
   assertEquals(out.odom.inflight, 0); // one persistent stream, nothing to reset
   assert((out.odom.bytesOut as number) > 0);

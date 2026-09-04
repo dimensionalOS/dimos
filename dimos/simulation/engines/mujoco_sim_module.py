@@ -462,7 +462,16 @@ class MujocoSimModule(
                 max_geom=max_geom,
                 geom_groups=groups,
                 base_body_name=self.config.base_frame_id,
+                render_depth=depth_needed,
             )
+
+        # The only readers of a rendered depth image: the depth_image
+        # publisher and the RGB-D pointcloud back-projection (which the
+        # raycast lidar replaces when enabled). With neither, the second
+        # render per frame is pure cost on the sim thread.
+        depth_needed = self.config.enable_depth or (
+            self.config.enable_pointcloud and not self.config.enable_mujoco_lidar
+        )
 
         primary_needed = (
             self.config.enable_color
@@ -481,6 +490,9 @@ class MujocoSimModule(
                 height=int(extra_h),
                 fps=float(extra_fps),
                 base_body_name=self.config.base_frame_id,
+                # Extra cameras are video feeds (e.g. the microduck chase
+                # cam); nothing reads their depth.
+                render_depth=False,
             )
 
         if self.config.enable_pointcloud and self.config.enable_mujoco_lidar:
@@ -954,7 +966,7 @@ class MujocoSimModule(
                 logger.info(
                     "MujocoSimModule first frame published",
                     rgb_shape=frame.rgb.shape,
-                    depth_shape=frame.depth.shape,
+                    depth_shape=None if frame.depth is None else frame.depth.shape,
                 )
 
             elapsed = time.monotonic() - loop_start
