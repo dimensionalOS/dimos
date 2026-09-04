@@ -78,8 +78,6 @@ class Mid360Config(NativeModuleConfig):
     #   "minimal" x,y,z,offset_time                    - 16 B (default)
     #   "full"    x,y,z,intensity,offset_time,tag,line - 22 B
     #   "legacy"  x,y,z,intensity                      - 16 B
-    # Scan-undistorting estimators (FAST-LIVO2 etc.) need offset_time. No LIO in
-    # the stack reads intensity, which only feeds viz and map coloring.
     point_format: Literal["full", "minimal", "legacy"] = "minimal"
     frame_id: str = "lidar_link"
     imu_frame_id: str = "imu_link"

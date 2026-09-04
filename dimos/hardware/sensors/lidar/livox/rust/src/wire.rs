@@ -432,6 +432,10 @@ impl<'a> DataPacket<'a> {
         if packet.len() < DATA_HEADER_LEN {
             return Err(WireError::TooShort);
         }
+        let length = u16::from_le_bytes([packet[1], packet[2]]) as usize;
+        if length != packet.len() {
+            return Err(WireError::BadLength);
+        }
         let dot_num = u16::from_le_bytes([packet[5], packet[6]]);
         let data_type = DataType::try_from(packet[10])?;
         let payload = &packet[DATA_HEADER_LEN..];
@@ -455,10 +459,10 @@ impl<'a> DataPacket<'a> {
 
     /// Nanoseconds between consecutive points in this packet.
     pub fn point_interval_ns(&self) -> u64 {
-        if self.dot_num == 0 {
+        if self.dot_num <= 1 {
             return 0;
         }
-        u64::from(self.time_interval) * 100 / u64::from(self.dot_num)
+        u64::from(self.time_interval) * 100 / u64::from(self.dot_num - 1)
     }
 
     pub fn points_high(&self) -> impl Iterator<Item = PointHigh> + 'a {
@@ -610,8 +614,13 @@ mod tests {
         assert_eq!(parsed.timestamp_ns, packet.timestamp_ns);
         assert_eq!(parsed.points_high().collect::<Vec<_>>(), points);
         assert_eq!(parsed.imu_samples().count(), 0);
-        // 100 us across the packet, 2 points -> 50 us between points.
-        assert_eq!(parsed.point_interval_ns(), 50_000);
+        // 100 us from first point to last, 2 points -> one 100 us gap.
+        assert_eq!(parsed.point_interval_ns(), 100_000);
+
+        // The declared length must match the datagram exactly.
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert_eq!(DataPacket::parse(&trailing), Err(WireError::BadLength));
 
         // The virtual device rewrites timestamps in place during replay.
         shift_timestamp_ns(&mut bytes, 50);

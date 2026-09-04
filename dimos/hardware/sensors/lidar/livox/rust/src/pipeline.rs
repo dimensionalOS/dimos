@@ -71,6 +71,10 @@ pub fn imu_records<'a>(packet: &'a DataPacket<'a>) -> impl Iterator<Item = ImuRe
     })
 }
 
+/// Limit number of points, in case time stamps get stalled for example
+/// This is like 10 seconds of points from the mid360
+const MAX_FRAME_POINTS: usize = 2_000_000;
+
 /// Accumulates point packets into frames cut on packet time.
 pub struct FrameAssembler {
     frame_interval_ns: u64,
@@ -130,6 +134,14 @@ impl FrameAssembler {
         // packet arrives out of order with a stamp older than the frame start.
         self.append_points(packet, ts_ns.saturating_sub(frame_start));
 
+        if completed.is_none() && self.points.len() >= MAX_FRAME_POINTS {
+            tracing::warn!(
+                points = self.points.len(),
+                "frame point cap hit without a time boundary, forcing cut"
+            );
+            self.frame_start_ns = Some(ts_ns);
+            return self.take_frame(frame_start);
+        }
         completed
     }
 
@@ -242,8 +254,8 @@ mod tests {
         assert_eq!(frame.points.len(), 3);
         assert_eq!(frame.points[0].xyz_m, [1.0, 0.0, 0.0]);
         assert_eq!(frame.points[0].offset_ns, 0);
-        // 100 us packet span over 2 points -> 50 us point spacing.
-        assert_eq!(frame.points[1].offset_ns, 50_000);
+        // 100 us first-to-last span over 2 points -> 100 us point spacing.
+        assert_eq!(frame.points[1].offset_ns, 100_000);
         // Second packet: 50 ms after the frame start.
         assert_eq!(frame.points[2].offset_ns, 50_000_000);
 
@@ -295,6 +307,24 @@ mod tests {
         assert_eq!(frames[1].points[0].offset_ns, 0);
         assert!(frames[1..].iter().all(|f| f.points.len() == 2));
         assert_eq!(assembler.flush().unwrap().points.len(), 1);
+    }
+
+    #[test]
+    fn frozen_timestamp_cuts_at_point_cap() {
+        let mut assembler = FrameAssembler::new(10.0);
+        let points: Vec<PointHigh> = (0..1000).map(|_| simple_point(1)).collect();
+        let bytes = point_packet(7, 0, &points);
+        let packet = DataPacket::parse(&bytes).unwrap();
+
+        let mut cuts = 0;
+        for _ in 0..2 * MAX_FRAME_POINTS / points.len() {
+            if let Some(frame) = assembler.push(&packet) {
+                assert_eq!(frame.start_ns, 7);
+                assert_eq!(frame.points.len(), MAX_FRAME_POINTS);
+                cuts += 1;
+            }
+        }
+        assert_eq!(cuts, 2);
     }
 
     #[test]

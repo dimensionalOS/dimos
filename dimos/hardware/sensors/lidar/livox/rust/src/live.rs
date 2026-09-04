@@ -96,8 +96,19 @@ impl LiveSource {
         let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(QUEUE_DEPTH);
         let mut threads = Vec::new();
 
+        // bind sockets before spawning threads
         let lidar_ip = config.lidar_ip;
         let point = data_socket(&config, config.ports.host_point_data)?;
+        let imu = if config.enable_imu {
+            Some(data_socket(&config, config.ports.host_imu_data)?)
+        } else {
+            None
+        };
+        let cmd = UdpSocket::bind(SocketAddrV4::new(
+            config.host_ip,
+            config.ports.host_cmd_data,
+        ))?;
+
         threads.push(spawn_reader(
             "point",
             point,
@@ -105,15 +116,9 @@ impl LiveSource {
             tx.clone(),
             failure.clone(),
         ));
-        if config.enable_imu {
-            let imu = data_socket(&config, config.ports.host_imu_data)?;
+        if let Some(imu) = imu {
             threads.push(spawn_reader("imu", imu, lidar_ip, tx, failure.clone()));
         }
-
-        let cmd = UdpSocket::bind(SocketAddrV4::new(
-            config.host_ip,
-            config.ports.host_cmd_data,
-        ))?;
         let handshake_failure = failure.clone();
         threads.push(std::thread::spawn(move || {
             run_handshake(&config, &cmd, &handshake_failure)
@@ -291,7 +296,7 @@ fn run_handshake(config: &LiveConfig, cmd: &UdpSocket, failure: &Failure) {
                 tracing::warn!("control send to {device} failed: {err}");
                 continue;
             }
-            match wait_for_ack(cmd, seq, &failure.stop) {
+            match wait_for_ack(cmd, device, seq, &failure.stop) {
                 Ack::Ok => {
                     tracing::info!(step = step.label, "handshake step acked");
                     acked = true;
@@ -324,9 +329,10 @@ enum Ack {
     Timeout,
 }
 
-/// Wait at most one retry interval for the ACK matching `seq`. The deadline
-/// holds even under a steady trickle of unrelated datagrams.
-fn wait_for_ack(cmd: &UdpSocket, seq: u32, stop: &AtomicBool) -> Ack {
+/// Wait at most one retry interval for the device's param-set ACK matching
+/// `seq`. Datagrams from anyone but the device are ignored, and the deadline
+/// holds even under a steady trickle of unrelated traffic.
+fn wait_for_ack(cmd: &UdpSocket, device: SocketAddrV4, seq: u32, stop: &AtomicBool) -> Ack {
     let deadline = Instant::now() + HANDSHAKE_RETRY;
     let mut buf = [0u8; 2048];
     loop {
@@ -337,13 +343,20 @@ fn wait_for_ack(cmd: &UdpSocket, seq: u32, stop: &AtomicBool) -> Ack {
         if remaining.is_zero() || cmd.set_read_timeout(Some(remaining)).is_err() {
             return Ack::Timeout;
         }
-        let Ok((len, _)) = cmd.recv_from(&mut buf) else {
+        let Ok((len, from)) = cmd.recv_from(&mut buf) else {
             return Ack::Timeout;
         };
+        if from != std::net::SocketAddr::V4(device) {
+            continue;
+        }
         let Ok(frame) = ControlFrame::parse(&buf[..len]) else {
             continue;
         };
-        if frame.cmd_type != wire::CMD_TYPE_ACK || frame.seq != seq {
+        if frame.cmd_type != wire::CMD_TYPE_ACK
+            || frame.sender_type != wire::SENDER_LIDAR
+            || frame.cmd_id != wire::cmd_id::PARAM_SET
+            || frame.seq != seq
+        {
             continue;
         }
         match AsyncControlAck::parse(frame.data) {
@@ -626,8 +639,11 @@ mod tests {
     fn wait_for_ack_deadline_holds_under_unrelated_traffic() {
         let cmd = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
         let target = cmd.local_addr().unwrap();
+        let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let std::net::SocketAddr::V4(device) = socket.local_addr().unwrap() else {
+            unreachable!();
+        };
         let noisy = std::thread::spawn(move || {
-            let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
             for _ in 0..20 {
                 socket.send_to(b"junk", target).unwrap();
                 std::thread::sleep(Duration::from_millis(50));
@@ -635,7 +651,7 @@ mod tests {
         });
 
         let start = Instant::now();
-        let acked = wait_for_ack(&cmd, 1, &AtomicBool::new(false));
+        let acked = wait_for_ack(&cmd, device, 1, &AtomicBool::new(false));
         assert!(matches!(acked, Ack::Timeout));
         assert!(
             start.elapsed() < HANDSHAKE_RETRY + Duration::from_millis(200),
@@ -643,5 +659,30 @@ mod tests {
             start.elapsed()
         );
         noisy.join().unwrap();
+    }
+
+    #[test]
+    fn acks_from_unexpected_senders_are_ignored() {
+        let cmd = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let target = cmd.local_addr().unwrap();
+        let forger = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let ack_body = AsyncControlAck {
+            ret_code: 0,
+            error_key: 0,
+        }
+        .build();
+        let ack = wire::build_control(
+            1,
+            wire::cmd_id::PARAM_SET,
+            wire::CMD_TYPE_ACK,
+            wire::SENDER_LIDAR,
+            &ack_body,
+        );
+        forger.send_to(&ack, target).unwrap();
+
+        // A well-formed ACK from an address other than the device times out.
+        let device = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1);
+        let acked = wait_for_ack(&cmd, device, 1, &AtomicBool::new(false));
+        assert!(matches!(acked, Ack::Timeout));
     }
 }
