@@ -38,11 +38,8 @@ def _pose(x: float = 0.0) -> PoseStamped:
 
 def _group(tip_link: str | None = "tool") -> PlanningGroup:
     return PlanningGroup(
-        id="arm/manipulator",
-        robot_name="arm",
-        group_name="manipulator",
+        id="manipulator",
         joint_names=("arm/joint_a", "arm/joint_b"),
-        local_joint_names=("joint_a", "joint_b"),
         base_link="base",
         tip_link=tip_link,
     )
@@ -54,40 +51,36 @@ class _World:
     def __init__(self) -> None:
         self.group_pose_calls = 0
         self.group_jacobian_calls = 0
-        self.legacy_pose_calls = 0
-        self.legacy_jacobian_calls = 0
         self.config = RobotModelConfig(
-            name="arm",
             model=RobotModel.from_file(Path("robot.urdf")),
             base_pose=_pose(),
-            joint_names=["joint_a", "joint_b", "gripper"],
+            joint_names=["arm/joint_a", "arm/joint_b", "arm/gripper"],
             base_link="base",
             planning_groups=[
                 PlanningGroupDefinition(
                     name="manipulator",
-                    joint_names=("joint_a", "joint_b"),
+                    joint_names=("arm/joint_a", "arm/joint_b"),
                     base_link="base",
                     tip_link="tool",
                 )
             ],
         )
 
-    def get_robot_ids(self) -> list[str]:
-        return ["robot"]
-
-    def get_robot_config(self, robot_id: str) -> RobotModelConfig:
+    def get_model_config(self) -> RobotModelConfig:
         return self.config
 
-    def get_joint_limits(self, robot_id: str) -> tuple[np.ndarray, np.ndarray]:
+    def get_joint_limits(self) -> tuple[np.ndarray, np.ndarray]:
         return np.array([-1.0, -1.0, -1.0]), np.array([1.0, 1.0, 1.0])
 
     def scratch_context(self) -> nullcontext[None]:
         return nullcontext(None)
 
-    def get_joint_state(self, ctx: object, robot_id: str) -> JointState:
-        return JointState({"name": ["joint_a", "joint_b", "gripper"], "position": [0.0, 0.0, 0.9]})
+    def get_joint_state(self, ctx: object) -> JointState:
+        return JointState(
+            {"name": ["arm/joint_a", "arm/joint_b", "arm/gripper"], "position": [0.0, 0.0, 0.9]}
+        )
 
-    def set_joint_state(self, ctx: object, robot_id: str, joint_state: JointState) -> None:
+    def set_joint_state(self, ctx: object, joint_state: JointState) -> None:
         self.last_state = joint_state
 
     def get_group_ee_pose(self, ctx: object, group_id: str) -> PoseStamped:
@@ -98,15 +91,7 @@ class _World:
         self.group_jacobian_calls += 1
         return np.eye(6, 2)
 
-    def get_ee_pose(self, ctx: object, robot_id: str) -> PoseStamped:
-        self.legacy_pose_calls += 1
-        raise AssertionError("legacy EE pose should not be used")
-
-    def get_jacobian(self, ctx: object, robot_id: str) -> np.ndarray:
-        self.legacy_jacobian_calls += 1
-        raise AssertionError("legacy Jacobian should not be used")
-
-    def check_config_collision_free(self, robot_id: str, joint_state: JointState) -> bool:
+    def check_config_collision_free(self, joint_state: JointState) -> bool:
         return True
 
 
@@ -126,8 +111,6 @@ def test_solve_pose_targets_filters_to_group_and_uses_group_world_methods() -> N
     assert result.joint_state.name == ["arm/joint_a", "arm/joint_b"]
     assert world.group_pose_calls == 1
     assert world.group_jacobian_calls == 0
-    assert world.legacy_pose_calls == 0
-    assert world.legacy_jacobian_calls == 0
 
 
 def test_solve_pose_targets_rejects_auxiliary_groups() -> None:
@@ -145,4 +128,4 @@ def test_solve_pose_targets_rejects_group_without_pose_target_frame() -> None:
     result = JacobianIK().solve_pose_targets(world=_World(), pose_targets={_group(None): _pose()})
 
     assert result.status == IKStatus.UNSUPPORTED
-    assert "no pose target frame" in result.message
+    assert "no tip" in result.message

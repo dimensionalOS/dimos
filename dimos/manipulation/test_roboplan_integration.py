@@ -35,7 +35,10 @@ from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_erro
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.manipulators.xarm.config import make_xarm6_model_config
+from dimos.robot.manipulators.xarm.config import (
+    make_dual_xarm6_model_config,
+    make_xarm6_model_config,
+)
 from dimos.utils.transform_utils import pose_to_matrix
 
 pytestmark = pytest.mark.self_hosted
@@ -51,11 +54,9 @@ def roboplan_types() -> tuple[type[Any], type[Any]]:
 
 def _sync_zero_state(
     world: Any,
-    robot_id: str,
     joint_names: list[str],
 ) -> None:
     world.sync_from_joint_state(
-        robot_id,
         JointState(name=joint_names, position=[0.0] * len(joint_names)),
     )
 
@@ -63,19 +64,18 @@ def _sync_zero_state(
 def test_real_roboplan_plans_fixed_orientation_cartesian_path(
     roboplan_types: tuple[type[Any], type[Any]],
 ) -> None:
-    config = make_xarm6_model_config(name="arm")
-    source_path = Path(config.model.source_path)
-    if not source_path.exists():
-        pytest.skip(f"xArm model is unavailable: {source_path}")
+    config = make_xarm6_model_config()
+    model_path = Path(config.model.source_path)
+    if not model_path.exists():
+        pytest.skip(f"xArm model is unavailable: {model_path}")
 
     world_type, planner_type = roboplan_types
     world = world_type()
-    robot_id = world.add_robot(config)
+    world.load_model(config)
     world.finalize()
     planner = planner_type(world, RoboPlanPlannerConfig())
-    _sync_zero_state(world, robot_id, config.joint_names)
-    group_id = world._planning_groups.primary_pose_group_id_for_robot("arm")
-    assert group_id == "arm/manipulator"
+    _sync_zero_state(world, config.joint_names)
+    group_id = "manipulator"
     selection = world._planning_groups.select((group_id,))
     start = JointState(
         name=list(selection.joint_names), position=[0.0] * len(selection.joint_names)
@@ -117,24 +117,19 @@ def test_real_roboplan_plans_fixed_orientation_cartesian_path(
 def test_real_roboplan_synchronizes_different_length_dual_arm_targets(
     roboplan_types: tuple[type[Any], type[Any]],
 ) -> None:
-    left_config = make_xarm6_model_config(name="left_arm", y_offset=0.3)
-    right_config = make_xarm6_model_config(name="right_arm", y_offset=-0.3)
-    source_path = Path(left_config.model.source_path)
-    if not source_path.exists():
-        pytest.skip(f"xArm model is unavailable: {source_path}")
+    config = make_dual_xarm6_model_config()
+    model_path = Path(config.model.source_path)
+    if not model_path.exists():
+        pytest.skip(f"xArm model is unavailable: {model_path}")
 
     world_type, planner_type = roboplan_types
     world = world_type()
-    left_id = world.add_robot(left_config)
-    right_id = world.add_robot(right_config)
+    world.load_model(config)
     world.finalize()
     planner = planner_type(world, RoboPlanPlannerConfig())
-    _sync_zero_state(world, left_id, left_config.joint_names)
-    _sync_zero_state(world, right_id, right_config.joint_names)
-    left_group_id = world._planning_groups.primary_pose_group_id_for_robot("left_arm")
-    right_group_id = world._planning_groups.primary_pose_group_id_for_robot("right_arm")
-    assert left_group_id == "left_arm/manipulator"
-    assert right_group_id == "right_arm/manipulator"
+    _sync_zero_state(world, config.joint_names)
+    left_group_id = "left_arm"
+    right_group_id = "right_arm"
     selection = world._planning_groups.select((left_group_id, right_group_id))
     start = JointState(
         name=list(selection.joint_names), position=[0.0] * len(selection.joint_names)

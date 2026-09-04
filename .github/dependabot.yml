@@ -38,7 +38,7 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: "cargo"
-    directories: ["**/*"]
+    directory: "/"
     schedule:
       interval: "daily"
     # https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns

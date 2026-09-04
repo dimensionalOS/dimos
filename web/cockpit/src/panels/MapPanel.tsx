@@ -4,9 +4,9 @@
 // - both bindings come from the manifest, never hardcoded stream names.
 
 import { useEffect, useRef } from "react";
-import { type CostmapValue, inflateCostmap } from "../session/decoders/costmap.ts";
-import { useChannel } from "../session/hooks.ts";
-import type { ChannelStore } from "../session/store.ts";
+import { Badge, type DrawHealth, PanelFrame } from "../layout/PanelFrame.tsx";
+import { type ChannelStore, type CostmapValue, inflateCostmap } from "@dimos/sdk";
+import { useStoreChannel } from "@dimos/sdk/react";
 import styles from "./MapPanel.module.css";
 import {
   drawPose,
@@ -16,8 +16,7 @@ import {
   gridToImageData,
   type Pose2d,
 } from "./mapRenderer.ts";
-import type { PanelProps } from "./registry.ts";
-import type { DrawHealth } from "./VideoPanel.tsx";
+import type { PanelProps } from "./registry.tsx";
 
 // The costmap ticks at ~5 Hz; staleness only trips on real silence (mapper
 // down, replay ended). New sessions never start stale: the bridge replays
@@ -165,49 +164,16 @@ export function startMapSink(
   };
 }
 
-function Badge({ store, ch, health }: { store: ChannelStore; ch: string; health: DrawHealth }) {
-  // Same badge shape as VideoPanel's, per-panel copies until the shared
-  // chrome arrives with T7; `health` is mutated by the sink at draw rate and
-  // simply sampled here on the 500 ms UI tick (intended coupling).
-  const { stats } = useChannel(store, ch);
-  let text: string;
-  let error = false;
-  let stale = false;
-  if (stats.frames === 0) {
-    // Nothing ever arrived; a corrupt first frame is an error, not "waiting".
-    text = "waiting";
-  } else if (stats.decodeFailing || health.failures > 0) {
-    text = "decode failing";
-    error = true;
-  } else if (stats.ageMs !== null && stats.ageMs > MAP_STALE_MS) {
-    text = `stale ${(stats.ageMs / 1000).toFixed(1)} s`;
-    stale = true;
-  } else if (stats.lastFrameAtMs - health.lastDrawOkAtMs > MAP_STALE_MS) {
-    // Grids arrive but nothing draws; both operands are browser milliseconds.
-    text = "stalled";
-    stale = true;
-  } else {
-    text = `${stats.hz.toFixed(1)} Hz`;
-  }
-  return (
-    <span
-      className={error || stale ? styles.badgeStale : styles.badge}
-      data-testid={`map2d-${ch}-badge`}
-      data-stale={stale || undefined}
-      data-error={error || undefined}
-      role="status"
-    >
-      {text}
-    </span>
-  );
-}
-
 export function MapPanel({ spec, store }: PanelProps) {
   const costmapCh = spec.channels[0] as string | undefined;
   if (costmapCh === undefined) {
     // A map panel without a costmap channel is a bridge authoring mistake;
     // render it visibly instead of crashing the grid.
-    return <div className={styles.panel}>map2d panel {spec.id}: no channel bound</div>;
+    return (
+      <PanelFrame spec={spec}>
+        <span className={styles.waiting}>map2d panel {spec.id}: no channel bound</span>
+      </PanelFrame>
+    );
   }
   return (
     <MapCanvas
@@ -227,7 +193,7 @@ function MapCanvas(
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const health = useRef<DrawHealth>({ lastDrawOkAtMs: Date.now(), failures: 0 }).current;
-  const { slot } = useChannel(store, costmapCh);
+  const { slot } = useStoreChannel(store, costmapCh);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -236,21 +202,27 @@ function MapCanvas(
   }, [store, costmapCh, poseCh, health]);
 
   return (
-    <div className={styles.panel} data-testid={`panel-${spec.id}`}>
-      <div className={styles.head}>
-        <span className={styles.title}>{spec.id}</span>
-        <Badge store={store} ch={costmapCh} health={health} />
-      </div>
-      <div className={styles.body}>
-        <canvas
-          ref={canvasRef}
-          className={styles.canvas}
-          data-testid={`map2d-${costmapCh}-canvas`}
-          role="img"
-          aria-label={spec.id}
+    <PanelFrame
+      spec={spec}
+      badge={
+        <Badge
+          store={store}
+          ch={costmapCh}
+          health={health}
+          staleMs={MAP_STALE_MS}
+          unit="Hz"
+          testId={`map2d-${costmapCh}-badge`}
         />
-        {slot === null && <span className={styles.waiting}>waiting for data...</span>}
-      </div>
-    </div>
+      }
+    >
+      <canvas
+        ref={canvasRef}
+        className={styles.canvas}
+        data-testid={`map2d-${costmapCh}-canvas`}
+        role="img"
+        aria-label={spec.id}
+      />
+      {slot === null && <span className={styles.waiting}>waiting for data...</span>}
+    </PanelFrame>
   );
 }

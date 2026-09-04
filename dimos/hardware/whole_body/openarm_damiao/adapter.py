@@ -19,6 +19,7 @@ from __future__ import annotations
 import can_motor_control
 from can_motor_control import damiao
 
+from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators.openarm.config import OPENARM_BIMANUAL_MODEL
@@ -49,24 +50,30 @@ class OpenArmDamiaoAdapter(DamiaoWholeBodyAdapter):
     """Two OpenArm v2.0 arms with grippers, one CAN bus per arm."""
 
     arm_joints = {
-        "left_arm": tuple(f"left_arm/joint{index}" for index in range(1, 8)),
-        "right_arm": tuple(f"right_arm/joint{index}" for index in range(1, 8)),
+        "left_arm": tuple(f"openarm_left_joint{index}" for index in range(1, 8)),
+        "right_arm": tuple(f"openarm_right_joint{index}" for index in range(1, 8)),
     }
     gripper_joints = {
         "left_gripper": "left_arm/gripper",
         "right_gripper": "right_arm/gripper",
     }
-    # can0/can1 follow USB enumeration order; remap through
-    # DamiaoRuntimeConfig.bus_addresses if the rig comes up swapped.
-    bus_defaults = {"left": "can1", "right": "can0"}
-    gravity_joint_names = (
-        *(f"openarm_left_joint{index}" for index in range(1, 8)),
-        *(f"openarm_right_joint{index}" for index in range(1, 8)),
-    )
+    # Preserve the rig's established right=can0, left=can1 ordering. Runtime
+    # device overrides can select Linux interfaces or macOS USB serial numbers.
+    bus_names = ("right", "left")
+    kinematic_joint_names = (*arm_joints["left_arm"], *arm_joints["right_arm"])
+
+    def get_limits(self) -> JointLimits:
+        """Declare both grippers in their local normalized opening coordinate."""
+        arm_count = sum(len(joints) for joints in self.arm_joints.values())
+        return JointLimits(
+            position_lower=[*([None] * arm_count), 0.0, 0.0],
+            position_upper=[*([None] * arm_count), 1.0, 1.0],
+            velocity_max=[None] * len(self.joint_names),
+        )
 
     @property
-    def gravity_model(self) -> RobotModel:
-        """Return the official bimanual model for gravity compensation."""
+    def kinematic_model(self) -> RobotModel:
+        """Return the official bimanual arm model."""
         return OPENARM_BIMANUAL_MODEL
 
     def _build_robot(self) -> can_motor_control.Robot:
@@ -74,12 +81,12 @@ class OpenArmDamiaoAdapter(DamiaoWholeBodyAdapter):
             can_motor_control.Robot.builder()
             .add_bus(
                 "left",
-                can_motor_control.SocketCanBus(self.bus_address("left")),
+                self._make_can_bus("left"),
                 damiao.DamiaoCodec(),
             )
             .add_bus(
                 "right",
-                can_motor_control.SocketCanBus(self.bus_address("right")),
+                self._make_can_bus("right"),
                 damiao.DamiaoCodec(),
             )
             .add_arm("left_arm", bus="left", motors=_arm_motors("left"))

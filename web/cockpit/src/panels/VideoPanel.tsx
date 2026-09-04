@@ -2,9 +2,10 @@
 // (React is not involved at frame rate; the badge rides the 500 ms UI tick).
 
 import { useEffect, useRef } from "react";
-import { useChannel } from "../session/hooks.ts";
-import type { ChannelStore } from "../session/store.ts";
-import type { PanelProps } from "./registry.ts";
+import { Badge, type DrawHealth, PanelFrame } from "../layout/PanelFrame.tsx";
+import type { ChannelStore } from "@dimos/sdk";
+import { useStoreChannel } from "@dimos/sdk/react";
+import type { PanelProps } from "./registry.tsx";
 import styles from "./VideoPanel.module.css";
 
 // A frame this far behind source time is flagged stale (frames are useless
@@ -15,14 +16,6 @@ export const VIDEO_STALE_MS = 2000;
 export interface VideoSinkDeps {
   decode?: (payload: Uint8Array) => Promise<ImageBitmap>;
   hidden?: () => boolean;
-}
-
-/** Sink-side draw diagnostics, mutated in place and sampled by the badge. */
-export interface DrawHealth {
-  /** Browser ms of the last successful draw, stamped at sink start before the first. */
-  lastDrawOkAtMs: number;
-  /** Consecutive failed decode-or-draw attempts since the last success. */
-  failures: number;
 }
 
 /**
@@ -98,50 +91,16 @@ export function startVideoSink(
   };
 }
 
-function Badge({ store, ch, health }: { store: ChannelStore; ch: string; health: DrawHealth }) {
-  // Re-rendered on the 500 ms UI tick via useChannel; `health` is mutated by
-  // the sink at draw rate and simply sampled here (intended coupling).
-  const { stats } = useChannel(store, ch);
-  let text: string;
-  let error = false;
-  let stale = false;
-  if (stats.frames === 0) {
-    // Nothing ever arrived; a corrupt first frame is an error, not "waiting".
-    text = "waiting";
-  } else if (stats.decodeFailing || health.failures > 0) {
-    // A single bad frame trips this; the next success clears it.
-    text = "decode failing";
-    error = true;
-  } else if (stats.ageMs !== null && stats.ageMs > VIDEO_STALE_MS) {
-    text = `stale ${(stats.ageMs / 1000).toFixed(1)} s`;
-    stale = true;
-  } else if (stats.lastFrameAtMs - health.lastDrawOkAtMs > VIDEO_STALE_MS) {
-    // Frames arrive but nothing draws (e.g. a decoder that never settles);
-    // both operands are browser milliseconds.
-    text = "stalled";
-    stale = true;
-  } else {
-    text = `${stats.hz.toFixed(1)} fps`;
-  }
-  return (
-    <span
-      className={error || stale ? styles.badgeStale : styles.badge}
-      data-testid={`video-${ch}-badge`}
-      data-stale={stale || undefined}
-      data-error={error || undefined}
-      role="status"
-    >
-      {text}
-    </span>
-  );
-}
-
 export function VideoPanel({ spec, store }: PanelProps) {
   const ch = spec.channels[0] as string | undefined;
   if (ch === undefined) {
     // A video panel without a channel is a bridge authoring mistake; render
     // it visibly instead of crashing the grid.
-    return <div className={styles.panel}>video panel {spec.id}: no channel bound</div>;
+    return (
+      <PanelFrame spec={spec}>
+        <span className={styles.waiting}>video panel {spec.id}: no channel bound</span>
+      </PanelFrame>
+    );
   }
   return <VideoCanvas spec={spec} store={store} ch={ch} />;
 }
@@ -149,7 +108,7 @@ export function VideoPanel({ spec, store }: PanelProps) {
 function VideoCanvas({ spec, store, ch }: PanelProps & { ch: string }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const health = useRef<DrawHealth>({ lastDrawOkAtMs: Date.now(), failures: 0 }).current;
-  const { slot } = useChannel(store, ch);
+  const { slot } = useStoreChannel(store, ch);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -158,21 +117,27 @@ function VideoCanvas({ spec, store, ch }: PanelProps & { ch: string }) {
   }, [store, ch, health]);
 
   return (
-    <div className={styles.panel} data-testid={`panel-${spec.id}`}>
-      <div className={styles.head}>
-        <span className={styles.title}>{spec.id}</span>
-        <Badge store={store} ch={ch} health={health} />
-      </div>
-      <div className={styles.body}>
-        <canvas
-          ref={canvasRef}
-          className={styles.canvas}
-          data-testid={`video-${ch}-canvas`}
-          role="img"
-          aria-label={spec.id}
+    <PanelFrame
+      spec={spec}
+      badge={
+        <Badge
+          store={store}
+          ch={ch}
+          health={health}
+          staleMs={VIDEO_STALE_MS}
+          unit="fps"
+          testId={`video-${ch}-badge`}
         />
-        {slot === null && <span className={styles.waiting}>waiting for data...</span>}
-      </div>
-    </div>
+      }
+    >
+      <canvas
+        ref={canvasRef}
+        className={styles.canvas}
+        data-testid={`video-${ch}-canvas`}
+        role="img"
+        aria-label={spec.id}
+      />
+      {slot === null && <span className={styles.waiting}>waiting for data...</span>}
+    </PanelFrame>
   );
 }

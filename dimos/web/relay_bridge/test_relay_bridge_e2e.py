@@ -42,11 +42,27 @@ import pytest
 from dimos.core.transport import pLCMTransport
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.web.relay_bridge.e2e_support import attach_viewer, collect_until, stop_module
-from dimos.web.relay_bridge.protocol import Unsub
-from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
+from dimos.web.relay_bridge.e2e_support import (
+    arm_teleop,
+    attach_viewer,
+    collect_until,
+    stop_module,
+)
+from dimos.web.relay_bridge.protocol import (
+    Stop as WireStop,
+    TeleopStart,
+    Twist as WireTwist,
+    Unsub,
+)
+from dimos.web.relay_bridge.relay_bridge_module import (
+    RelayBridgeConfig,
+    RelayBridgeModule,
+    default_manifest,
+)
+from dimos.web.relay_bridge.relay_process import RelayProcess
 from dimos.web.relay_bridge.wt_client import RelayClient
 
 ROBOT_ID = "bridge-e2e"
@@ -103,10 +119,8 @@ class _Publisher:
 
 
 def _start_bridge() -> tuple[RelayBridgeModule, tuple[pLCMTransport, ...]]:
-    # cockpit_build=False: tests must never trigger the npm-downloading build.
-    module = RelayBridgeModule(
-        local_port=0, open_browser=False, cockpit_build=False, robot_id=ROBOT_ID
-    )
+    # web_build=False: tests must never trigger the npm-downloading build.
+    module = RelayBridgeModule(local_port=0, open_browser=False, web_build=False, robot_id=ROBOT_ID)
     transports = (
         pLCMTransport("/rb_e2e/odom"),
         pLCMTransport("/rb_e2e/color_image"),
@@ -171,7 +185,7 @@ def test_local_relay_port_collision_does_not_kill_listener() -> None:
         module = RelayBridgeModule(local_port=port, open_browser=False, robot_id="collision-test")
 
         with pytest.raises(RuntimeError, match=rf"port {port} is unavailable"):
-            module._spawn_relay(False)
+            module._spawn_relay(False, None)
 
         assert listener.poll() is None
     finally:
@@ -380,5 +394,203 @@ def test_relay_child_death_respawns_and_recovers(
                 viewer, lambda fs: any(f.header.ch == "odom" for f in fs), timeout=15.0
             )
             assert any(f.header.ch == "odom" for f in frames)
+
+    asyncio.run(flow())
+
+
+# Teleop e2e: viewer datagrams -> relay lease gate -> bridge publishes.
+
+
+def _start_teleop_bridge() -> tuple[RelayBridgeModule, tuple[pLCMTransport, ...]]:
+    manifest = default_manifest(
+        RelayBridgeConfig(), ("color_image", "odom", "global_costmap", "tele_cmd_vel")
+    )
+    module = RelayBridgeModule(
+        local_port=0,
+        open_browser=False,
+        web_build=False,
+        robot_id=ROBOT_ID,
+        manifest=manifest,
+    )
+    transports = (
+        pLCMTransport("/rb_e2e/odom"),
+        pLCMTransport("/rb_e2e/color_image"),
+        pLCMTransport("/rb_e2e/global_costmap"),
+    )
+    for transport in transports:
+        transport.start()
+    module.odom.transport = transports[0]
+    module.color_image.transport = transports[1]
+    module.global_costmap.transport = transports[2]
+    module.start()
+    return module, transports
+
+
+@pytest.fixture
+def teleop_bridge() -> Iterator[RelayBridgeModule]:
+    """Function-scoped: teleop lease state must not leak between tests."""
+    module, transports = _start_teleop_bridge()
+    try:
+        yield module
+    finally:
+        stop_module(module)
+        for transport in transports:
+            transport.stop()
+
+
+async def _until(cond, what: str, timeout: float = 10.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if cond():
+            return
+        await asyncio.sleep(0.02)
+    raise TimeoutError(what)
+
+
+async def _drive(viewer: RelayClient, seq: int, stop: asyncio.Event, vx: float = 0.5) -> int:
+    """Send nonzero twists at ~20 Hz until stopped; returns the last seq used."""
+    while not stop.is_set():
+        seq += 1
+        try:
+            viewer.send_control(WireTwist(vx=vx, vy=0.0, wz=0.0, seq=seq, ts=time.time()))
+        except Exception:
+            break  # dead relay: sends are best-effort, the watchdog owns safety
+        await asyncio.sleep(0.05)
+    return seq
+
+
+def test_teleop_drive_and_estop(teleop_bridge: RelayBridgeModule) -> None:
+    bridge = teleop_bridge
+    twists: list[Twist] = []
+    bridge.tele_cmd_vel.subscribe(twists.append)
+
+    async def flow() -> None:
+        assert bridge._url is not None
+        async with await RelayClient.connect(bridge._url, "viewer") as viewer:
+            await viewer.hello()
+            await attach_viewer(viewer, ROBOT_ID, [])
+            await arm_teleop(viewer)
+
+            stop = asyncio.Event()
+            driver = asyncio.create_task(_drive(viewer, 0, stop))
+            await _until(lambda: any(not t.is_zero() for t in twists), "no twist published")
+
+            # E-stop: the stop datagram publishes an unconditional zero.
+            stop.set()
+            seq = await driver
+            marker = len(twists)
+            viewer.send_control(WireStop(seq=seq + 1, ts=time.time()))
+            await _until(
+                lambda: len(twists) > marker and twists[-1].is_zero(), "no zero after stop"
+            )
+
+    asyncio.run(flow())
+
+
+@pytest.fixture
+def deadman_bridge() -> Iterator[tuple[RelayProcess, RelayBridgeModule]]:
+    """A teleop bridge attached to an externally spawned relay. With no local
+    child there is no 1 s child watchdog, and a SIGKILLed relay sends no
+    CONNECTION_CLOSE so the session-teardown zero stays out of reach: the
+    teleop deadman is the only path that can stop the robot."""
+    relay = RelayProcess()
+    ready = relay.start()
+    manifest = default_manifest(RelayBridgeConfig(), ("tele_cmd_vel",))
+    module = RelayBridgeModule(
+        relay_url=ready.wt_url,
+        open_browser=False,
+        web_build=False,
+        robot_id=ROBOT_ID,
+        manifest=manifest,
+    )
+    module.start()
+    try:
+        yield relay, module
+    finally:
+        stop_module(module)
+        relay.stop()
+
+
+def test_teleop_relay_kill_deadman_deadline(
+    deadman_bridge: tuple[RelayProcess, RelayBridgeModule],
+) -> None:
+    relay, bridge = deadman_bridge
+    twists: list[Twist] = []
+    bridge.tele_cmd_vel.subscribe(twists.append)
+
+    async def flow() -> None:
+        assert bridge._url is not None
+        async with await RelayClient.connect(bridge._url, "viewer") as viewer:
+            await viewer.hello()
+            await attach_viewer(viewer, ROBOT_ID, [])
+            await arm_teleop(viewer)
+
+            stop = asyncio.Event()
+            driver = asyncio.create_task(_drive(viewer, 0, stop))
+            await _until(lambda: any(not t.is_zero() for t in twists), "no twist published")
+
+            marker = len(twists)
+            assert relay._process is not None
+            killed_at = time.monotonic()
+            relay._process.kill()
+            await _until(
+                lambda: len(twists) > marker and twists[-1].is_zero(),
+                "no zero after relay kill (deadman broken?)",
+                timeout=5.0,
+            )
+            # The deadline enforces the deadman itself: watchdogMs 300
+            # (default) + _TELEOP_POLL_S 0.05 + CI scheduling margin.
+            assert time.monotonic() - killed_at < 1.0
+            stop.set()
+            await driver
+
+    asyncio.run(flow())
+
+
+def test_teleop_lease_exclusive_and_handover(teleop_bridge: RelayBridgeModule) -> None:
+    bridge = teleop_bridge
+    twists: list[Twist] = []
+    bridge.tele_cmd_vel.subscribe(twists.append)
+
+    async def flow() -> None:
+        assert bridge._url is not None
+        async with await RelayClient.connect(bridge._url, "viewer") as second:
+            await second.hello()
+            await attach_viewer(second, ROBOT_ID, [])
+            async with await RelayClient.connect(bridge._url, "viewer") as holder:
+                await holder.hello()
+                await attach_viewer(holder, ROBOT_ID, [])
+                await arm_teleop(holder)
+
+                # The second viewer is refused while the lease is held (the
+                # error reply lands in relay_error; retried because replies
+                # ride lossy datagrams).
+                async def held() -> bool:
+                    second.send_control(TeleopStart())
+                    await asyncio.sleep(0.1)
+                    error = second._session.relay_error
+                    return error is not None and error.code == "teleop_held"
+
+                deadline = time.monotonic() + 10
+                while not await held():
+                    assert time.monotonic() < deadline, "teleop_held never reported"
+
+                # The holder drives; the bystander's twists are gated out.
+                second.send_control(WireTwist(vx=9.0, vy=0.0, wz=0.0, seq=1, ts=time.time()))
+                holder.send_control(WireTwist(vx=0.5, vy=0.0, wz=0.0, seq=1, ts=time.time()))
+                await _until(lambda: any(not t.is_zero() for t in twists), "no twist published")
+                assert all(t.linear.x != 9.0 for t in twists)
+
+            # Holder disconnected mid-drive: the relay releases the lease and
+            # sends teleop_stop, so the bridge zeroes without waiting for the
+            # watchdog, and the second viewer can now arm and drive.
+            await _until(lambda: twists[-1].is_zero(), "no zero after holder disconnect")
+            await arm_teleop(second)
+            marker = len(twists)
+            second.send_control(WireTwist(vx=0.25, vy=0.0, wz=0.0, seq=1, ts=time.time()))
+            await _until(
+                lambda: len(twists) > marker and twists[-1].linear.x == 0.25,
+                "handover drive never published",
+            )
 
     asyncio.run(flow())

@@ -1,6 +1,4 @@
----
-title: "Profiling dimos"
----
+# Profiling dimos
 
 You can use py-spy to profile a particular blueprint:
 

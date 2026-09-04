@@ -1,0 +1,16 @@
+[package]
+name = "dimos-voxel-ray-tracing-py"
+version = "0.1.0"
+edition = "2021"
+description = "Python bindings for the voxel ray tracing module"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_voxel_ray_tracing_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+dimos-voxel-ray-tracing = { path = ".." }
+numpy = "0.25"
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
+validator = { version = "0.21", features = ["derive"] }

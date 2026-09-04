@@ -576,15 +576,30 @@ where
 
     log_wiring(&exe_name(), &topics, &config);
 
-    // ctrl_c is the only shutdown source for a lone module.
     let (tx, rx) = watch::channel(false);
     tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
+        if shutdown_signal().await.is_ok() {
             let _ = tx.send(true);
         }
     });
 
     run_module_core::<M, T>(Arc::new(transport), topics, config, rx).await
+}
+
+#[cfg(unix)]
+async fn shutdown_signal() -> io::Result<()> {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    let mut terminate = signal(SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> io::Result<()> {
+    tokio::signal::ctrl_c().await
 }
 
 #[cfg(test)]
@@ -735,6 +750,21 @@ mod tests {
                 name: "hello".into()
             }
         );
+    }
+
+    /// A config dict whose keys mean something in order (a camera rig, a pipeline) is only
+    /// possible while serde_json carries the order it read.
+    #[test]
+    fn a_config_object_keeps_the_key_order_it_was_written_in() {
+        let json = r#"{"topics": {}, "config": {"zeta": 1, "alpha": 2}}"#;
+        let value: serde_json::Value = serde_json::from_str(json).unwrap();
+        let keys: Vec<&str> = value["config"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys, ["zeta", "alpha"]);
     }
 
     #[test]

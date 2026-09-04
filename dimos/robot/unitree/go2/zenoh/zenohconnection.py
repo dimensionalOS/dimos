@@ -48,21 +48,12 @@ from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher, StaticTfPublisherConfig
 from dimos.robot.unitree.go2.connection import _camera_info_static
-
-# Mount geometry measured on this rig (metres). Not go2_mid360_static_transforms — that
-# is the recording rig: different lidar angle, tree hung off base_link.
-CAMERA_XYZ = Vector3(0.32715, -0.00003, 0.04297)  # base_link -> front_camera
-MID360_XYZ = Vector3(-0.032, 0.0, 0.12)  # front_camera -> mid360_link: 3.2cm back, 12cm up
-# rpy mapping a sensor frame to its optical frame (x-right, y-down, z-forward)
-OPTICAL_RPY = Vector3(-math.pi / 2, 0.0, -math.pi / 2)
-
-# front_camera -> mid360_link, fixed-axis rpy in degrees, by rig.
-MID360_MOUNT_PRESETS: dict[str, tuple[float, float, float]] = {
-    # Pointing straight ahead, pitched 60 deg down.
-    "SF": (0.0, 60.0, 0.0),
-    # The 60 deg tilt lands on roll because this lidar sits yawed 90 deg on its bracket.
-    "ATHENS": (-60.0, 0.0, -90.0),
-}
+from dimos.robot.unitree.go2.go2_mid360_static_transforms import (
+    CAMERA_XYZ,
+    MID360_MOUNT_PRESETS,
+    MID360_XYZ,
+    OPTICAL_RPY,
+)
 
 
 class GO2ZenohConfig(StaticTfPublisherConfig):
@@ -176,12 +167,12 @@ class GO2Zenoh(StaticTfPublisher):
         and the body snaps between them at 35 Hz.
         """
         base_to_camera = Transform(
-            translation=CAMERA_XYZ,
+            translation=Vector3(*CAMERA_XYZ),
             frame_id="base_link",
             child_frame_id="front_camera",
         )
         camera_to_mid360 = Transform(
-            translation=MID360_XYZ,
+            translation=Vector3(*MID360_XYZ),
             rotation=Quaternion.from_euler(
                 Vector3(*(math.radians(float(d)) for d in self.config.mid360_mount))
             ),
@@ -189,7 +180,7 @@ class GO2Zenoh(StaticTfPublisher):
             child_frame_id="mid360_link",
         )
         camera_to_optical = Transform(
-            rotation=Quaternion.from_euler(OPTICAL_RPY),
+            rotation=Quaternion.from_euler(Vector3(*OPTICAL_RPY)),
             frame_id="front_camera",
             child_frame_id="camera_optical",
         )

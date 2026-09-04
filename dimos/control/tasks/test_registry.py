@@ -140,11 +140,7 @@ def test_task_cards_are_well_formed() -> None:
 
 
 def test_seeded_cards_load_into_registry() -> None:
-    servo = control_task_registry.bindings_for("servo")
-    assert servo.consumes == (
-        StreamBinding("joint_command", "on_joint_command", Routing.CLAIM_OVERLAP),
-    )
-    assert servo.exposes == frozenset({"start"})
+    assert "servo" not in control_task_registry.available()
     velocity = control_task_registry.bindings_for("velocity")
     assert velocity.consumes == (
         StreamBinding("joint_command", "on_joint_command", Routing.CLAIM_OVERLAP),
@@ -157,20 +153,28 @@ def test_seeded_cards_load_into_registry() -> None:
     assert cartesian.exposes == frozenset({"start"})
     teleop = control_task_registry.bindings_for("teleop_ik")
     assert teleop.consumes == (
-        StreamBinding("cartesian_command", "on_cartesian_command", Routing.DIRECT),
+        StreamBinding("left_cartesian_command", "on_left_cartesian_command", Routing.DIRECT),
+        StreamBinding("right_cartesian_command", "on_right_cartesian_command", Routing.DIRECT),
         StreamBinding("teleop_buttons", "on_teleop_buttons", Routing.BROADCAST),
     )
     eef_twist = control_task_registry.bindings_for("eef_twist")
     assert eef_twist.consumes == (
         StreamBinding("ee_twist_command", "on_ee_twist_command", Routing.DIRECT),
+    )
+    gripper = control_task_registry.bindings_for("gripper")
+    assert gripper.consumes == (
         StreamBinding("gripper_command", "on_gripper_command", Routing.BROADCAST),
     )
     trajectory = control_task_registry.bindings_for("trajectory")
-    assert trajectory.consumes == ()  # command-driven only
+    assert trajectory.consumes == (
+        StreamBinding("joint_command", "on_joint_command", Routing.CLAIM_OVERLAP),
+    )
     assert trajectory.exposes == frozenset({"execute", "cancel", "get_state", "get_status"})
     g1 = control_task_registry.bindings_for("g1_groot_wbc")
     assert g1.consumes == (StreamBinding("twist_command", "on_twist_command", Routing.BROADCAST),)
-    assert g1.exposes == frozenset({"arm", "disarm", "set_dry_run", "reset_runtime_state", "start"})
+    assert g1.exposes == frozenset(
+        {"arm", "disarm", "set_dry_run", "reset_runtime_state", "start", "state_snapshot"}
+    )
 
 
 def _scannable_task_classes(task_type: str) -> list[type] | None:
