@@ -31,7 +31,7 @@ from dimos.robot.manipulators.openyam.config import (
 
 
 class OpenYamLearningProfile(BaseConfig):
-    """One fixed observation/action schema for OpenYAM learning."""
+    """One fixed observation/action schema for an OpenYAM collection mode."""
 
     robot_type: str = "openyam"
     joint_names: tuple[str, ...] = tuple(OPENYAM_JOINTS)
@@ -43,6 +43,7 @@ class OpenYamLearningProfile(BaseConfig):
     camera_frame_prefix: str = "wrist"
     camera_frame_id: str = "wrist_camera_link"
     image_feature: str = "observation.images.wrist"
+    action_stream: str = "applied_joint_position_command"
     repo_id: str = "local/openyam-wrist"
 
     def dataprep_config(self) -> DataPrepConfig:
@@ -68,7 +69,7 @@ class OpenYamLearningProfile(BaseConfig):
             },
             action={
                 "action": FeatureSpec(
-                    stream="applied_joint_position_command",
+                    stream=self.action_stream,
                     field="position",
                     dtype="float32",
                     shape=(len(joint_names),),
@@ -95,3 +96,4 @@ class OpenYamLearningProfile(BaseConfig):
 
 
 OPENYAM_LEARNING_PROFILE = OpenYamLearningProfile()
+OPENYAM_TEACH_LEARNING_PROFILE = OpenYamLearningProfile(action_stream="coordinator_joint_state")

@@ -1,11 +1,14 @@
 # Imitation Learning
 
 Collect demonstrations, build training datasets, and run trained policies in
-DimOS. Teleoperation records episodes to a SQLite or MCAP artifact, and DataPrep
-converts that recording into a LeRobot or HDF5 dataset for imitation learning.
+DimOS. Quest teleoperation or direct arm teaching records episodes to a SQLite
+or MCAP artifact. DataPrep converts that recording into a LeRobot or HDF5
+dataset for imitation learning.
 
 ```
-teleop (Quest) ─▶ recorder ─▶ session_<robot>_<ts>.db/.mcap ─▶ dimos dataprep ─▶ dataset
+Quest teleop ─┐
+              ├─▶ recorder ─▶ session_<robot>_<ts>.db/.mcap ─▶ dimos dataprep ─▶ dataset
+direct teach ─┘
 ```
 
 After training, use the production
@@ -55,6 +58,99 @@ prints one line per transition:
 
 > End each good take with **B** before quitting — an episode still recording at
 > shutdown is dropped.
+
+### OpenYAM direct teaching
+
+Direct teaching removes the Quest teleoperator. The arm runs with gravity
+compensation, zero position stiffness, and joint damping. Move it by hand while
+the existing OpenYAM observation and action streams are recorded. The coordinator's
+idle trajectory holder keeps sending the motor commands that apply gravity and
+damping; zero stiffness makes its latched position target inert.
+
+Start the hardware stack in one terminal. Be ready to support the arm as it
+activates, and keep people and obstacles outside its workspace.
+
+```bash
+dimos --can-port follower_l run learning-collect-teach-openyam --daemon \
+  --task "pick up the red block" \
+  --WristCamera.hardware.camera-index 0 \
+  --nativecollectionrecorder.store.path data/recordings/openyam-teach.mcap
+```
+
+Attach the collection panel from another terminal:
+
+```bash
+dimos collect
+```
+
+```text
+╔════════════════ OPENYAM / TEACH COLLECTION ════════════════╗
+║ TASK  pick up the red block                                ║
+║                                                            ║
+║                 ● RECORDING  00:08.4                       ║
+║                                                            ║
+║         SAVED  2                 DISCARDED  0              ║
+║                                                            ║
+║ Move the gravity-compensated arm and passive gripper.      ║
+║                                                            ║
+║       [ Save episode ] [ Discard ] [ Detach ]              ║
+╚════════════════════════════════════════════════════════════╝
+```
+
+| Key | Action |
+| --- | --- |
+| **Space** | Start an episode; press again to save it |
+| **D** | Discard the in-progress episode |
+| **Q** or **Ctrl-C** | Detach the panel while idle |
+
+The same actions are available as clickable buttons.
+The panel refuses to detach while recording. Save or discard the take first.
+Detaching closes only the panel's RPC connection; the arm remains active in
+gravity-compensation mode until you run `dimos stop`.
+
+A complete session is:
+
+```text
+start daemon ─▶ attach panel ─▶ start/save takes ─▶ detach panel ─▶ stop daemon
+```
+
+After collection, stop the stack cleanly and build the dataset with the
+direct-teach profile:
+
+```bash
+dimos stop
+dimos dataprep build \
+  --source data/recordings/openyam-teach.mcap \
+  --profile dimos.robot.manipulators.openyam.learning:OPENYAM_TEACH_LEARNING_PROFILE \
+  --output data/datasets/openyam-teach
+```
+
+Visualize an episode from the isolated LeRobot environment so its matching
+Rerun viewer executable is available on `PATH`:
+
+```bash
+uv run --project dimos/imitation/policy/lerobot/python --frozen \
+  lerobot-dataset-viz \
+  --repo-id local/openyam-wrist \
+  --root "$PWD/data/datasets/openyam-teach" \
+  --episode-index 0 \
+  --mode local
+```
+
+The action row contains the measured arm and gripper positions at that instant.
+The direct-teach profile therefore reads both state and action from the continuous
+coordinator joint-state stream; Quest collection continues to use accepted commands.
+
+Before a production collection, run one hardware smoke test:
+
+1. Support the arm, start the daemon, and confirm that the arm and gripper can
+   be moved by hand without position-hold resistance. The arm should retain
+   light joint damping while the enabled gripper runs with zero stiffness,
+   zero damping, and zero feed-forward torque.
+2. Attach `dimos collect` and verify that the panel reports the gripper as
+   passive.
+3. Record and save a short take, stop the daemon, then inspect the MCAP with
+   `dimos dataprep inspect` and `OPENYAM_TEACH_LEARNING_PROFILE`.
 
 ### Where the recording goes
 
