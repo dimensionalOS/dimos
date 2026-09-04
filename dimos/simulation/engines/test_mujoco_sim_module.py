@@ -453,6 +453,35 @@ def freejoint_engine(tmp_path: Path) -> Iterator[MujocoEngine]:
 
 
 @pytest.mark.mujoco
+def test_sim_loop_holds_real_time_with_no_cameras(tmp_path: Path) -> None:
+    """The loop must pace against an absolute deadline, not per iteration.
+
+    time.sleep() overshoots - asking for 5 ms typically returns after ~6 - so a
+    pacer that sleeps `dt - elapsed` and starts the next iteration from
+    scratch throws that overshoot away every step and tops out near RTF 0.83
+    with nothing rendering at all. Only the accumulated `next_step_at`
+    schedule repays it.
+
+    Note this asserts against engine.data.time, MuJoCo's own clock. It cannot
+    be written against the odom message timestamp: that is stamped with
+    time.time(), so odom-vs-wall is wall-vs-wall and reads 1.000 no matter how
+    far behind the simulation actually is.
+    """
+    robot_xml = tmp_path / "freejoint.xml"
+    _write_freejoint_xml(robot_xml)
+    engine = MujocoEngine(config_path=robot_xml, headless=True)
+    assert engine.connect() is True
+    try:
+        time.sleep(0.5)
+        t0, sim0 = time.time(), float(engine.data.time)
+        time.sleep(3.0)
+        rtf = (float(engine.data.time) - sim0) / (time.time() - t0)
+    finally:
+        engine.disconnect()
+    assert rtf > 0.95, f"sim loop cannot hold real time even when idle (RTF={rtf:.3f})"
+
+
+@pytest.mark.mujoco
 def test_slow_renders_cost_frame_rate_not_simulated_time(tmp_path: Path) -> None:
     """Cameras render inline on the sim thread, so a slow renderer (GPU
     contention: a screen recorder, another encoder) must be allowed to cost
