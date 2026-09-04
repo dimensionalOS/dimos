@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""R1 Pro dual-arm manipulation (EXPERIMENTAL).
+"""R1 Pro upper-body manipulation (EXPERIMENTAL).
 
-Narrows the coordinator's whole-body trajectory task to the arms; the
-planner picks an arm through the model's ``left_arm`` / ``right_arm`` planning
-groups. The chassis is welded in the planning model and driven separately by
-the velocity task; grippers are not driven yet.
+The hardware-backed planner exposes the arms and torso. The chassis remains
+driven separately by the velocity task; grippers are not driven yet.
 
 Usage:
     dimos run r1pro-manipulation
@@ -30,6 +27,7 @@ from dimos.control.components import make_twist_base_joints
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
@@ -57,6 +55,6 @@ r1pro_manipulation = autoconnect(
     ManipulationModule.blueprint(
         model=make_r1pro_model_config(),
         planning_timeout=10.0,
-        visualization=ViserVisualizationConfig(host="0.0.0.0"),
+        visualization=ViserVisualizationConfig(host=global_config.listen_host),
     ),
 ).global_config(n_workers=6)

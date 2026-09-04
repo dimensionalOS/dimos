@@ -420,6 +420,29 @@ def test_with_subtree_rooted_at_selects_existing_descendants(tmp_path: Path) -> 
     assert "<link name='world'" in urdf.read_text()
 
 
+def test_planar_base_wraps_selected_subtree_root(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    urdf.write_text(
+        "<robot name='r'><link name='world'/><link name='pelvis'/><link name='torso'/>"
+        "<joint name='floating' type='floating'>"
+        "<parent link='world'/><child link='pelvis'/></joint>"
+        "<joint name='waist' type='revolute'>"
+        "<parent link='pelvis'/><child link='torso'/></joint></robot>"
+    )
+
+    loaded = (
+        robot_model.RobotModel.from_file(urdf)
+        .with_subtree_rooted_at("pelvis")
+        .with_planar_base(_planar_base())
+        .load()
+    )
+    root = ET.fromstring(loaded.xml)
+
+    assert loaded.root_link == "planar_base_root"
+    assert root.find("link[@name='world']") is None
+    assert root.find("joint[@name='base/yaw']/child").attrib == {"link": "pelvis"}
+
+
 def test_without_joint_subtrees_removes_complete_descendant_branches(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     urdf.write_text(
