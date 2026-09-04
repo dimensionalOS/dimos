@@ -14,15 +14,24 @@
 
 """R1 Pro planar-base planner with fake joint-state hardware."""
 
+from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.robot.galaxea.r1pro.config import (
+    R1PRO_PLANNING_JOINTS,
+    make_r1pro_planar_model_config,
+)
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
-from dimos.robot.manipulators.r1pro.config import make_r1pro_model_config, r1pro_fake_hardware
 
-_r1pro_hardware = r1pro_fake_hardware()
+_r1pro_hardware = HardwareComponent(
+    hardware_id="r1pro",
+    hardware_type=HardwareType.WHOLE_BODY,
+    joints=list(R1PRO_PLANNING_JOINTS),
+    adapter_type="mock_whole_body",
+)
 
 r1pro_planner_coordinator = autoconnect(
     planner(
-        model=make_r1pro_model_config(),
+        model=make_r1pro_planar_model_config(),
         visualization={"backend": "viser"},
     ),
     coordinator(

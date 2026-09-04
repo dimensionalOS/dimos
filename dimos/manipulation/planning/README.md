@@ -145,9 +145,7 @@ physical base stops. `x` and `y` use meters; `yaw` uses radians. `base_pose`
 remains the static world placement of the generated root, including the robot's
 floor height. Include all three generated joint names in
 `RobotModelConfig.joint_names`; individual planning groups opt into mobile-base
-motion by including those names. See
-[Unbounded Planar-Base Planning](../../../docs/capabilities/manipulation/unbounded-planar-base.md)
-for the stacked follow-up design that removes these fixed workspace bounds.
+motion by including those names.
 
 The R1 Pro blueprint exposes disjoint `left_arm`, `right_arm`, `torso`, and
 `moving_base` groups. In Viser, select an arm plus `torso` and `moving_base` to
