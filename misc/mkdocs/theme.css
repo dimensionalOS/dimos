@@ -77,6 +77,12 @@
 
 .md-sidebar__scrollwrap {
   scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--md-default-fg-color) 15%, transparent) transparent;
+}
+
+.md-sidebar__scrollwrap:hover,
+.md-sidebar__scrollwrap:focus-within {
+  scrollbar-color: color-mix(in srgb, var(--md-default-fg-color) 28%, transparent) transparent;
 }
 
 /* ----------------------------------------------------------- typography */
@@ -120,6 +126,18 @@
   font-weight: 600;
 }
 
+/* The wordmark already says Dimensional; material printing the site name
+ * next to it reads as a stutter. The current page title still slides in
+ * on scroll. */
+.md-header__topic:first-child {
+  display: none;
+}
+
+/* The wordmark is pixel art; scale it crisp instead of smoothed. */
+.md-header__button.md-logo img {
+  image-rendering: pixelated;
+}
+
 .md-tabs {
   background-color: transparent;
   border-bottom: 1px solid var(--dim-hairline);
@@ -134,6 +152,16 @@
   background-color: color-mix(in srgb, var(--md-default-fg-color) 11%, transparent);
 }
 
+/* Material pins the sidebar title ("Dimensional") and paints an opaque
+ * page-coloured halo under it to mask rows scrolling past. The halo is
+ * invisible until a row has a background — the active pill — whose top it
+ * slices off. A downward-only fade plus a real gap masks the same scroll
+ * without painting over the first row. */
+nav.md-nav--primary > label.md-nav__title {
+  margin-bottom: 0.5rem;
+  box-shadow: 0 0.3rem 0.3rem -0.15rem var(--md-default-bg-color);
+}
+
 /* Section headings in the sidebar ("Getting Started", "Capabilities", ...).
  * Material renders these at link size and link weight, which buries them in
  * the list of pages underneath. They are the top level of the map: give them
@@ -144,10 +172,20 @@
  * wraps the link in a container one level deeper. */
 .md-nav--primary .md-nav__item--section > .md-nav__container > .md-nav__link {
   color: var(--dim-nav-title);
-  font-size: 0.8rem;
+  font-family: var(--md-code-font-family);
+  font-size: 0.6rem;
   font-weight: 700;
-  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
   opacity: 1;
+}
+
+/* The table of contents heading matches. */
+.md-nav--secondary > .md-nav__title {
+  font-family: var(--md-code-font-family);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
 }
 
 /* A rule above each top-level section, so Platforms and Development read as
@@ -176,7 +214,11 @@
 
 .md-nav--primary .md-nav__title {
   color: var(--dim-nav-title);
+  font-family: var(--md-code-font-family);
+  font-size: 0.6rem;
   font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
 }
 
 .md-nav__link--active,
@@ -316,12 +358,14 @@
   box-shadow: none;
   transition:
     border-color 150ms,
-    transform 150ms;
+    transform 150ms,
+    box-shadow 150ms;
 }
 
 .md-typeset .grid.cards > ul > li:hover {
   border-color: var(--md-accent-fg-color);
   transform: translateY(-2px);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--md-accent-fg-color) 22%, transparent);
 }
 
 /* --------------------------------------------------------------- footer */
@@ -347,6 +391,11 @@
 .md-search__input:focus ~ .md-search__form,
 [data-md-toggle="search"]:checked ~ .md-header .md-search__form {
   border-color: color-mix(in srgb, var(--md-accent-fg-color) 55%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--md-accent-fg-color) 25%, transparent);
+}
+
+::selection {
+  background-color: color-mix(in srgb, var(--dim-brand-bright) 40%, transparent);
 }
 
 @media screen and (min-width: 60em) {
@@ -375,6 +424,9 @@
 .md-nav--primary .md-nav__link--active:hover {
   background-color: color-mix(in srgb, var(--md-accent-fg-color) 15%, transparent);
   color: var(--md-accent-fg-color);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--md-accent-fg-color) 30%, transparent),
+    0 0 12px color-mix(in srgb, var(--md-accent-fg-color) 12%, transparent);
 }
 
 /* Section headings are labels, not rows: keep the pill off them. */
@@ -398,17 +450,71 @@
 /* Admonitions: a soft tinted panel, not a stripe down the left. The tint is
  * derived from whatever colour material assigned the type, so note, warning
  * and danger stay distinguishable without a per-type rule each. */
+/* Each type carries one accent; border, fill, title, and icon derive from
+ * it. Geometry and mix levels match devin's callouts measured in dark mode:
+ * flat fill of the accent over the ground, a solid darker border, 16px
+ * radius. Horizontal padding must stay 0.6rem to match the title's -0.6rem
+ * bleed. info keeps the brand cyan. */
 .md-typeset :is(.admonition, details) {
-  border: 1px solid color-mix(in srgb, var(--md-typeset-a-color) 22%, transparent);
+  --dim-adm: var(--dim-brand-bright);
+  border: 1px solid color-mix(in srgb, var(--dim-adm) 40%, var(--md-default-bg-color));
   border-left-width: 1px;
-  border-radius: var(--dim-radius-lg);
-  background-color: color-mix(in srgb, var(--md-typeset-a-color) 6%, var(--md-default-bg-color));
-  padding: 0.1rem 0.2rem;
+  border-radius: 0.8rem;
+  background-color: color-mix(in srgb, var(--dim-adm) 16%, var(--md-default-bg-color));
+  padding: 0.4rem 0.6rem;
 }
 
-.md-typeset :is(.admonition-title, summary) {
+.md-typeset :is(.admonition, details):is(.note) {
+  --dim-adm: #6c8cff;
+}
+
+.md-typeset :is(.admonition, details):is(.tip, .hint, .success, .check, .done) {
+  --dim-adm: #3fbf6f;
+}
+
+.md-typeset :is(.admonition, details):is(.warning, .caution, .attention) {
+  --dim-adm: #ffb224;
+}
+
+.md-typeset :is(.admonition, details):is(.danger, .error, .failure, .bug) {
+  --dim-adm: #ff6b6b;
+}
+
+/* Material indents the title past its icon but leaves the body on the
+ * container edge; align the body under the title text instead. */
+.md-typeset :is(.admonition, details) > :not(.admonition-title, summary) {
+  margin-left: 1.4rem;
+}
+
+/* Selectors carry three classes so they outrank material's per-type
+ * .md-typeset .info > .admonition-title background band. */
+.md-typeset .admonition > .admonition-title,
+.md-typeset details > summary {
   background-color: transparent;
+  color: var(--dim-adm);
   font-weight: 600;
+}
+
+/* Title padding, paragraph margin, and container padding stack into a hole
+ * between title and body; collapse it. Admonitions only: a details summary
+ * needs its own bottom padding while the box is closed. */
+.md-typeset .admonition > .admonition-title {
+  padding-bottom: 0;
+}
+
+.md-typeset .admonition > .admonition-title + * {
+  margin-top: 0.3em;
+}
+
+/* The summary row owns the vertical rhythm of a closed details box. */
+.md-typeset details {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.md-typeset .admonition > .admonition-title::before,
+.md-typeset details > summary::before {
+  background-color: var(--dim-adm);
 }
 
 .md-typeset :is(.admonition-title, summary)::before {
@@ -439,6 +545,7 @@
 
 .md-typeset .md-button:hover {
   transform: translateY(-1px);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--md-accent-fg-color) 35%, transparent);
 }
 
 .md-typeset .md-button--primary {
@@ -452,20 +559,28 @@
   border-color: var(--dim-brand-bright);
 }
 
-/* The copy-to-clipboard affordance on a code block: a real button, visible
- * enough to find, quiet enough to ignore. */
-.md-typeset .md-clipboard {
-  border-radius: var(--dim-radius-sm);
-  transition: background-color 120ms, color 120ms;
+/* Code block actions (copy button): a bare icon, no slab behind it. Quiet
+ * until hovered; a check for a moment after copying (the class is toggled
+ * in overrides/main.html), replacing material's snackbar. */
+.md-typeset .md-code__nav,
+.md-typeset :hover > .md-code__nav {
+  background-color: transparent;
+  padding: 0.1rem;
 }
 
-.md-typeset .highlight:hover .md-clipboard {
-  background-color: color-mix(in srgb, var(--md-default-fg-color) 8%, transparent);
+.md-code__button.dim-copied,
+.md-code__button.dim-copied:hover {
+  color: var(--md-accent-fg-color);
 }
 
-.md-typeset .md-clipboard:hover {
-  background-color: color-mix(in srgb, var(--md-accent-fg-color) 25%, transparent);
-  color: var(--md-default-fg-color);
+.md-code__button.dim-copied[data-md-type="copy"]::after {
+  -webkit-mask-image: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 7 9 19l-5.5-5.5 1.41-1.41L9 16.17 19.59 5.59z"/></svg>');
+  mask-image: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 7 9 19l-5.5-5.5 1.41-1.41L9 16.17 19.59 5.59z"/></svg>');
+}
+
+/* The "Copied to clipboard" snackbar; the check on the button says it. */
+.md-dialog {
+  display: none;
 }
 
 /* A named code block gets a header strip, so the filename reads as a label on

@@ -122,9 +122,11 @@ class MultipartBackend:
         if bp := _blueprint(path):
             manifest = dict(manifest or {}, blueprint=bp)
         with self._staging(path) as tmp:
-            if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
+            # A file already carrying the codec's suffix uploads as-is; it must not be
+            # stamped, or pull would decompress bytes we never compressed.
+            compress = bool(self.codec_id) and path.suffix != codecs.suffix(self.codec_id)
+            if compress:
                 _require_space(Path(tmp), path.stat().st_size)
-            if self.codec_id and path.suffix != codecs.suffix(self.codec_id):
                 artifact = Path(tmp) / (path.name + codecs.suffix(self.codec_id))
                 tick("compress", 0, 0)
                 codecs.compress(self.codec_id, path, artifact)
@@ -136,7 +138,7 @@ class MultipartBackend:
                 size=size,
                 sha256=_sha256(artifact),
                 kind=kind,
-                content_encoding=self.codec_id or None,
+                content_encoding=self.codec_id if compress else None,
                 robot_id=robot_id,
                 manifest=manifest,
                 part_size=part_size,
