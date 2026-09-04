@@ -161,6 +161,43 @@ class ZenohRPC(RPCSpec, ZenohService):
             payload=payload,
         )
 
+    def call_sync(
+        self, name: str, arguments: Args, rpc_timeout: float | None = None
+    ) -> tuple[Any, Callable[[], None]]:
+        if rpc_timeout is None:
+            method = name.rsplit("/", 1)[-1]
+            rpc_timeout = self.rpc_timeouts.get(name) or self.rpc_timeouts.get(
+                method, self.default_rpc_timeout
+            )
+        deadline = time.monotonic() + rpc_timeout
+        self._wait_for_queryable(f"dimos/rpc/{name}", deadline)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"RPC call to '{name}' timed out after {rpc_timeout} seconds")
+        return super().call_sync(name, arguments, rpc_timeout=remaining)
+
+    def _wait_for_queryable(self, key: str, deadline: float) -> None:
+        matched = threading.Event()
+        remaining = max(deadline - time.monotonic(), 0.001)
+        querier = self.session.declare_querier(
+            key,
+            target=zenoh.QueryTarget.ALL,
+            consolidation=zenoh.ConsolidationMode.NONE,
+            congestion_control=zenoh.CongestionControl.BLOCK,
+            timeout=remaining,
+        )
+        listener = querier.declare_matching_listener(
+            lambda status: matched.set() if status.matching else None
+        )
+        try:
+            if querier.matching_status.matching:  # type: ignore[attr-defined]
+                matched.set()
+            if not matched.wait(max(deadline - time.monotonic(), 0)):
+                raise TimeoutError(f"RPC call to '{key}' timed out waiting for a Zenoh queryable")
+        finally:
+            listener.undeclare()
+            querier.undeclare()
+
     def call_nowait(self, name: str, arguments: Args) -> None:
         method = name.rsplit("/", 1)[-1]
         timeout = self.rpc_timeouts.get(name) or self.rpc_timeouts.get(

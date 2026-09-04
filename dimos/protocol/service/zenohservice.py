@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import secrets
 import socket
 import threading
 import time
@@ -25,7 +26,7 @@ from typing import Any, ClassVar
 from pydantic import Field, model_validator
 import zenoh
 
-from dimos.core.global_config import TransportBackend, ZenohMode, global_config
+from dimos.core.global_config import GlobalConfig, TransportBackend, ZenohMode, global_config
 from dimos.protocol.service.spec import Service, SessionConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -51,22 +52,41 @@ ALL_INTERFACES = "auto"
 # listens here instead: loopback only, on a port the kernel picks.
 LOOPBACK_LISTEN = "tcp/127.0.0.1:0"
 
+_DYNAMIC_PORT_MIN = 49_152
+_DYNAMIC_PORT_COUNT = 65_536 - _DYNAMIC_PORT_MIN
+
 
 def _locators(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def _default_connect_endpoints() -> list[str]:
+def _connect_endpoints(g: GlobalConfig = global_config) -> list[str]:
     """Dial known robots directly instead of trusting multicast scouting.
 
     Many APs filter multicast between WiFi clients, so a robot reachable over
     TCP never answers a scout. An IP carrying its own port is used as given.
     """
-    if global_config.transport != "zenoh":
+    if g.transport != "zenoh":
         return []
-    ips = _locators(f"{global_config.robot_ip or ''},{global_config.robot_ips or ''}")
+    ips = _locators(f"{g.robot_ip or ''},{g.robot_ips or ''}")
     robots = [f"tcp/{ip}" if ":" in ip else f"tcp/{ip}:{ROBOT_ZENOH_PORT}" for ip in ips]
-    return list(dict.fromkeys(robots + _locators(global_config.zenoh_connect)))
+    return list(dict.fromkeys(robots + _locators(g.zenoh_connect)))
+
+
+def _default_connect_endpoints() -> list[str]:
+    return _connect_endpoints()
+
+
+def _is_loopback_tcp_endpoint(endpoint: str) -> bool:
+    scheme, separator, address = endpoint.partition("/")
+    host, port_separator, port = address.rpartition(":")
+    return (
+        scheme == "tcp"
+        and bool(separator)
+        and host == "127.0.0.1"
+        and bool(port_separator)
+        and port.isdigit()
+    )
 
 
 def _default_scouting() -> bool:
@@ -166,6 +186,14 @@ class ZenohConfig(SessionConfig):
             # A client dials its router and accepts no links, so it has no
             # listener to pin in the first place.
             return self.listen
+        if (
+            self.connect
+            and self.multicast_interface == LOOPBACK_INTERFACE
+            and all(_is_loopback_tcp_endpoint(endpoint) for endpoint in self.connect)
+        ):
+            # A local peer seed introduces these sessions through gossip. They
+            # still need loopback listeners so Zenoh can connect them directly.
+            return [LOOPBACK_LISTEN]
         if self.connect or self.multicast_interface != LOOPBACK_INTERFACE:
             return []
         return [LOOPBACK_LISTEN]
@@ -290,6 +318,77 @@ class ZenohSessionPool:
                 except zenoh.ZError as e:
                     logger.warning("Zenoh session close failed", session_key=key, error=str(e))
             self._sessions.clear()
+
+
+class ZenohPeerSeed:
+    """Own one loopback peer that introduces this run's processes."""
+
+    def __init__(self, g: GlobalConfig = global_config) -> None:
+        self._config = g
+        self._original_connect = g.zenoh_connect
+        self._pool: ZenohSessionPool | None = None
+        self._endpoint: str | None = None
+
+    @classmethod
+    def for_config(cls, g: GlobalConfig) -> ZenohPeerSeed | None:
+        if g.transport != "zenoh" or g.zenoh_mode != "peer" or _connect_endpoints(g):
+            return None
+        return cls(g)
+
+    @property
+    def endpoint(self) -> str:
+        if self._endpoint is None:
+            raise RuntimeError("Zenoh peer seed has not started")
+        return self._endpoint
+
+    def start(self) -> None:
+        if self._endpoint is not None:
+            return
+        if self._config.zenoh_gossip is False:
+            raise ValueError(
+                "automatic Zenoh peer bootstrap requires gossip; remove "
+                "--no-zenoh-gossip or configure --zenoh-connect"
+            )
+
+        default_session_pool.close_all()
+        deadline = time.monotonic() + self._config.zenoh_connect_timeout
+        last_error: zenoh.ZError | None = None
+        while True:
+            endpoint = f"tcp/127.0.0.1:{_DYNAMIC_PORT_MIN + secrets.randbelow(_DYNAMIC_PORT_COUNT)}"
+            pool = ZenohSessionPool()
+            try:
+                pool.acquire(
+                    ZenohConfig(
+                        mode="peer",
+                        connect=[],
+                        listen=[endpoint],
+                        scouting=self._config.zenoh_scouting,
+                        scouting_interface=self._config.zenoh_interface,
+                        multicast=self._config.zenoh_multicast,
+                        scout_addr=self._config.zenoh_scout_addr,
+                        gossip=self._config.zenoh_gossip,
+                        connect_timeout=0,
+                    )
+                )
+            except zenoh.ZError as error:
+                last_error = error
+                pool.close_all()
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("could not bind a local Zenoh peer seed") from last_error
+                continue
+            self._pool = pool
+            self._endpoint = endpoint
+            self._config.zenoh_connect = endpoint
+            return
+
+    def stop(self) -> None:
+        default_session_pool.close_all()
+        self._config.zenoh_connect = self._original_connect
+        pool = self._pool
+        self._pool = None
+        self._endpoint = None
+        if pool is not None:
+            pool.close_all()
 
 
 # Process-default pool used by production code. Constructing it opens no sessions.

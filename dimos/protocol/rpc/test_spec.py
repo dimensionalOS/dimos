@@ -25,11 +25,12 @@ from typing import Any
 
 import pytest
 
+from dimos.core.global_config import GlobalConfig
 from dimos.protocol.rpc.pubsubrpc import LCMRPC, ShmRPC
 from dimos.protocol.rpc.rpc_utils import RemoteError
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, RPCSpec
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
-from dimos.protocol.service.zenohservice import ZenohSessionPool
+from dimos.protocol.service.zenohservice import LOOPBACK_LISTEN, ZenohPeerSeed, ZenohSessionPool
 
 
 class CustomTestError(Exception):
@@ -119,6 +120,22 @@ def test_call_sync_unsubscribes_timed_out_callback(mocker) -> None:
         RPCSpec.call_sync(client, "missing", ([], {}), rpc_timeout=0.0)
 
     unsubscribe.assert_called_once_with()
+
+
+def test_zenoh_sync_timeout_undeclares_matching_resources(mocker) -> None:
+    client = ZenohRPC()
+    session = mocker.Mock()
+    querier = session.declare_querier.return_value
+    querier.matching_status.matching = False
+    listener = querier.declare_matching_listener.return_value
+    client._session = session
+
+    with pytest.raises(TimeoutError, match="timed out waiting for a Zenoh queryable"):
+        client.call_sync("missing", ([], {}), rpc_timeout=0.0)
+
+    listener.undeclare.assert_called_once_with()
+    querier.undeclare.assert_called_once_with()
+    assert client._pending == {}
 
 
 # Try to add RedisRPC if available
@@ -363,6 +380,75 @@ def test_nonexistent_service(rpc_context, impl_name: str) -> None:
             client.call_sync("nonexistent", ([1, 2], {}), rpc_timeout=0.1)
         assert "nonexistent" in str(exc_info.value)
         assert "timed out" in str(exc_info.value)
+
+
+def test_zenoh_call_waits_for_a_late_queryable_across_peers() -> None:
+    """A worker may declare its RPC after another worker starts the call."""
+    seed = ZenohPeerSeed(
+        GlobalConfig(
+            transport="zenoh",
+            zenoh_mode="peer",
+            zenoh_scouting=False,
+            zenoh_multicast=False,
+            zenoh_gossip=True,
+            zenoh_connect_timeout=2.0,
+        )
+    )
+    server_pool = ZenohSessionPool()
+    client_pool = ZenohSessionPool()
+    seed.start()
+    peer_config = {
+        "mode": "peer",
+        "connect": [seed.endpoint],
+        "listen": [LOOPBACK_LISTEN],
+        "scouting": False,
+        "multicast": False,
+        "gossip": True,
+        "connect_timeout": 2.0,
+    }
+    server = ZenohRPC(session_pool=server_pool, **peer_config)
+    client = ZenohRPC(session_pool=client_pool, **peer_config)
+    server.start()
+    client.start()
+    wait_started = threading.Event()
+    original_wait = client._wait_for_queryable
+
+    def observed_wait(key: str, deadline: float) -> None:
+        wait_started.set()
+        original_wait(key, deadline)
+
+    client._wait_for_queryable = observed_wait  # type: ignore[method-assign]
+    result: list[Any] = []
+    errors: list[BaseException] = []
+
+    def call() -> None:
+        try:
+            value, _ = client.call_sync("late", ([20, 22], {}), rpc_timeout=2.0)
+            result.append(value)
+        except BaseException as error:
+            errors.append(error)
+
+    call_thread = threading.Thread(target=call)
+    unsubscribe = None
+
+    try:
+        call_thread.start()
+        assert wait_started.wait(1.0)
+        assert call_thread.is_alive()
+        unsubscribe = server.serve_rpc(add_function, "late")
+        call_thread.join(2.0)
+        assert not call_thread.is_alive()
+        assert errors == []
+        assert result == [42]
+    finally:
+        if unsubscribe is not None:
+            unsubscribe()
+        client.stop()
+        server.stop()
+        client_pool.close_all()
+        server_pool.close_all()
+        seed.stop()
+        call_thread.join(2.0)
 
 
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)

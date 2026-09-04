@@ -43,6 +43,7 @@ from dimos.core.transport import (
     pZenohTransport,
 )
 from dimos.core.transport_factory import make_transport
+from dimos.protocol.service.zenohservice import ZenohPeerSeed
 from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -78,6 +79,7 @@ class ModuleCoordinator(Resource):
         g: GlobalConfig = global_config,
     ) -> None:
         self._global_config = g
+        self._zenoh_peer_seed = ZenohPeerSeed.for_config(g)
         manager_types: list[type[WorkerManager]] = [WorkerManagerPython]
         self._managers = {cls.deployment_identifier: cls(g=g) for cls in manager_types}
         self._deployed_modules = {}
@@ -96,8 +98,14 @@ class ModuleCoordinator(Resource):
         from dimos.core.o3dpickle import register_picklers
 
         register_picklers()
-        for m in self._managers.values():
-            m.start()
+        if self._zenoh_peer_seed is not None:
+            self._zenoh_peer_seed.start()
+        try:
+            for m in self._managers.values():
+                m.start()
+        except BaseException:
+            self._stop_peer_seed()
+            raise
         self._started = True
 
     def stop(self) -> None:
@@ -121,6 +129,19 @@ class ModuleCoordinator(Resource):
                 logger.error("Error stopping manager", manager=type(m).__name__, exc_info=True)
 
         safe_thread_map(tuple(self._managers.values()), _stop_manager)
+        self._stop_peer_seed()
+
+    def _stop_peer_seed(self) -> None:
+        if self._zenoh_peer_seed is None:
+            return
+        self._zenoh_peer_seed.stop()
+
+    @property
+    def zenoh_peer_endpoint(self) -> str | None:
+        """Loopback peer entry point, when this coordinator owns one."""
+        if self._zenoh_peer_seed is None:
+            return None
+        return self._zenoh_peer_seed.endpoint
 
     def start_rpc_service(self) -> None:
         """Expose the coordinator's API as @rpc methods over LCM."""

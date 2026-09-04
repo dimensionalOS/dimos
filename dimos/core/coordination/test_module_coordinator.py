@@ -51,6 +51,7 @@ from dimos.core.transport_factory import transport_topic
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.service.zenohservice import ZenohPeerSeed
 import dimos.robot.get_all_blueprints as resolver
 from dimos.spec.utils import Spec
 
@@ -65,6 +66,82 @@ class Data2:
 
 class Data3:
     pass
+
+
+def test_unconfigured_peer_coordinator_owns_a_local_seed() -> None:
+    coordinator = ModuleCoordinator(
+        g=GlobalConfig(
+            transport="zenoh",
+            zenoh_mode="peer",
+            zenoh_connect="",
+            robot_ip=None,
+            robot_ips=None,
+            n_workers=0,
+        )
+    )
+
+    assert isinstance(coordinator._zenoh_peer_seed, ZenohPeerSeed)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        GlobalConfig(transport="lcm"),
+        GlobalConfig(transport="zenoh", zenoh_mode="client"),
+        GlobalConfig(transport="zenoh", zenoh_connect="tcp/192.0.2.1:7447"),
+        GlobalConfig(transport="zenoh", robot_ip="192.0.2.2"),
+        GlobalConfig(transport="zenoh", robot_ips="192.0.2.2,192.0.2.3"),
+    ],
+)
+def test_configured_or_non_peer_coordinator_does_not_add_a_seed(config: GlobalConfig) -> None:
+    coordinator = ModuleCoordinator(g=config)
+
+    assert coordinator._zenoh_peer_seed is None
+
+
+def test_peer_seed_reuses_global_config_worker_propagation(mocker) -> None:
+    config = GlobalConfig(
+        transport="zenoh",
+        zenoh_mode="peer",
+        zenoh_connect="",
+        robot_ip=None,
+        robot_ips=None,
+        n_workers=0,
+    )
+    coordinator = ModuleCoordinator(g=config)
+    seed = mocker.Mock(endpoint="tcp/127.0.0.1:51234")
+    seed.start.side_effect = lambda: setattr(config, "zenoh_connect", seed.endpoint)
+    seed.stop.side_effect = lambda: setattr(config, "zenoh_connect", "")
+    coordinator._zenoh_peer_seed = seed
+
+    coordinator.start()
+
+    assert config.zenoh_connect == seed.endpoint
+    assert coordinator._global_config is config
+    assert coordinator._managers["python"]._cfg is config
+
+    coordinator.stop()
+
+    assert config.zenoh_connect == ""
+    seed.stop.assert_called_once_with()
+
+
+def test_peer_seed_restores_config_when_worker_start_fails(mocker) -> None:
+    config = GlobalConfig(transport="zenoh", n_workers=0)
+    coordinator = ModuleCoordinator(g=config)
+    seed = mocker.Mock(endpoint="tcp/127.0.0.1:51234")
+    seed.start.side_effect = lambda: setattr(config, "zenoh_connect", seed.endpoint)
+    seed.stop.side_effect = lambda: setattr(config, "zenoh_connect", "")
+    manager = mocker.Mock()
+    manager.start.side_effect = RuntimeError("worker failed")
+    coordinator._zenoh_peer_seed = seed
+    coordinator._managers = {"python": manager}
+
+    with pytest.raises(RuntimeError, match="worker failed"):
+        coordinator.start()
+
+    assert config.zenoh_connect == ""
+    seed.stop.assert_called_once_with()
 
 
 class ModuleA(Module):

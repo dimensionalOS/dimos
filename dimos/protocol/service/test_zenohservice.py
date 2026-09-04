@@ -22,10 +22,17 @@ from typing import Any
 import pytest
 import zenoh
 
+from dimos.core.global_config import GlobalConfig
 from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
 from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service import zenohservice
-from dimos.protocol.service.zenohservice import ZenohConfig, ZenohService, ZenohSessionPool
+from dimos.protocol.service.zenohservice import (
+    LOOPBACK_LISTEN,
+    ZenohConfig,
+    ZenohPeerSeed,
+    ZenohService,
+    ZenohSessionPool,
+)
 
 
 @pytest.fixture()
@@ -206,3 +213,54 @@ def test_start_is_idempotent(session_pool) -> None:
     svc.start()
     session2 = svc.session
     assert session1 is session2
+
+
+def test_peer_dialing_only_a_loopback_seed_keeps_a_loopback_listener() -> None:
+    config = ZenohConfig(connect=["tcp/127.0.0.1:51234"])
+
+    assert config.listen_endpoints == [LOOPBACK_LISTEN]
+
+
+def test_peer_dialing_a_remote_endpoint_uses_zenohs_default_listener() -> None:
+    config = ZenohConfig(connect=["tcp/192.0.2.10:7447"])
+
+    assert config.listen_endpoints == []
+
+
+def test_automatic_peer_seed_requires_gossip() -> None:
+    seed = ZenohPeerSeed(
+        GlobalConfig(
+            transport="zenoh",
+            zenoh_mode="peer",
+            zenoh_gossip=False,
+        )
+    )
+
+    with pytest.raises(ValueError, match="requires gossip"):
+        seed.start()
+
+
+def test_peer_seed_publishes_and_restores_its_endpoint(mocker) -> None:
+    config = GlobalConfig(
+        transport="zenoh",
+        zenoh_mode="peer",
+        zenoh_connect="",
+        robot_ip=None,
+        robot_ips=None,
+    )
+    pool = mocker.Mock()
+    mocker.patch.object(zenohservice, "ZenohSessionPool", return_value=pool)
+    mocker.patch.object(zenohservice.secrets, "randbelow", return_value=123)
+    close_sessions = mocker.patch.object(zenohservice.default_session_pool, "close_all")
+    seed = ZenohPeerSeed(config)
+
+    seed.start()
+
+    assert config.zenoh_connect == "tcp/127.0.0.1:49275"
+    pool.acquire.assert_called_once()
+
+    seed.stop()
+
+    assert config.zenoh_connect == ""
+    pool.close_all.assert_called_once_with()
+    assert close_sessions.call_count == 2
