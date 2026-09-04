@@ -21,6 +21,8 @@ same tuples.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.hardware.spec import JointLimits
 from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
@@ -102,6 +104,8 @@ MICRODUCK_POSITION_UPPER: tuple[float, ...] = (
 
 MICRODUCK_ASSET = LfsPath("microduck")
 MICRODUCK_SCENE = MICRODUCK_ASSET / "scene.xml"
+MICRODUCK_ROBOT_MJCF = MICRODUCK_ASSET / "robot_groundcontact.xml"
+MICRODUCK_MESHDIR = MICRODUCK_ASSET / "assets"
 MICRODUCK_POLICY_DIR = MICRODUCK_ASSET / "policies"
 
 MICRODUCK_SIM_SPEC = RobotSimSpec(
@@ -120,7 +124,9 @@ MICRODUCK_SIM_SPEC = RobotSimSpec(
 )
 
 
-def make_microduck_sim_hardware() -> HardwareComponent:
+def make_microduck_sim_hardware(
+    address: str | Path = MICRODUCK_SCENE,
+) -> HardwareComponent:
     """Build the coordinator component for the native-actuator MuJoCo sim."""
 
     return HardwareComponent(
@@ -128,7 +134,7 @@ def make_microduck_sim_hardware() -> HardwareComponent:
         hardware_type=HardwareType.WHOLE_BODY,
         joints=list(MICRODUCK_JOINTS),
         adapter_type="sim_mujoco_microduck",
-        address=MICRODUCK_SCENE,
+        address=address,
         limits=JointLimits(
             position_lower=MICRODUCK_POSITION_LOWER,
             position_upper=MICRODUCK_POSITION_UPPER,

@@ -14,6 +14,7 @@
 
 import math
 from pathlib import Path
+import pickle
 from typing import Any
 
 import mujoco
@@ -27,18 +28,117 @@ from dimos.control.tasks.microduck_policy_task.microduck_policy_task import (
 )
 from dimos.hardware.whole_body.spec import IMUState
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.JointState import JointState
+import dimos.robot.pollen.microduck.blueprints.simulation as microduck_blueprint
 from dimos.robot.pollen.microduck.config import (
     MICRODUCK_HOME,
     MICRODUCK_JOINT_SUFFIXES,
     MICRODUCK_JOINTS,
+    MICRODUCK_ROBOT_MJCF,
     MICRODUCK_SIM_SPEC,
 )
+from dimos.robot.pollen.microduck.rerun import (
+    MICRODUCK_RERUN_JOINTS,
+    MICRODUCK_RERUN_ROOT,
+    MICRODUCK_RERUN_SCENE,
+    microduck_joint_state,
+    microduck_static_robot,
+    microduck_static_scene,
+)
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.simulation.engines.robot_sim_binding import (
     RobotSimBinding,
     resolve_robot_sim_binding,
 )
+from dimos.simulation.scene_assets.spec import SceneMeshAlignment, ScenePackage
 from dimos.simulation.utils.xml_parser import build_joint_mappings
 from dimos.utils.data import get_data
+from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+
+
+def test_blueprint_uses_headless_mujoco_with_rerun_and_routes_viewer_teleop() -> None:
+    microduck_sim = microduck_blueprint.microduck_sim
+    module_types = {atom.module for atom in microduck_sim.active_blueprints}
+
+    assert RerunBridgeModule in module_types
+    assert RerunWebSocketServer in module_types
+    assert WebsocketVisModule in module_types
+    assert microduck_sim.remapping_map[("ControlCoordinator", "twist_command")] == "cmd_vel"
+    assert microduck_sim.remapping_map[(RerunWebSocketServer.name, "tele_cmd_vel")] == "cmd_vel"
+    assert microduck_sim.remapping_map[(WebsocketVisModule.name, "tele_cmd_vel")] == "cmd_vel"
+    assert microduck_sim.global_config_overrides["n_workers"] == 3
+
+    simulator = next(
+        atom for atom in microduck_sim.active_blueprints if atom.module is MujocoSimModule
+    )
+    assert simulator.kwargs["headless"] is True
+
+    bridge = next(
+        atom for atom in microduck_sim.active_blueprints if atom.module is RerunBridgeModule
+    )
+    assert bridge.kwargs["visual_override"] == {
+        MICRODUCK_RERUN_JOINTS: microduck_joint_state,
+    }
+    assert bridge.kwargs["static"] == {
+        MICRODUCK_RERUN_ROOT: microduck_static_robot,
+        MICRODUCK_RERUN_SCENE: microduck_static_scene,
+    }
+    pickle.dumps(bridge.kwargs)
+
+
+def test_scene_package_uses_standard_mujoco_composition(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    scene_xml = tmp_path / "scene.xml"
+    package = ScenePackage(
+        package_dir=tmp_path,
+        source_path=tmp_path / "source.glb",
+        alignment=SceneMeshAlignment(),
+        mujoco_scene_path=scene_xml,
+        entities=[{"id": "test_entity"}],
+    )
+    monkeypatch.setattr(
+        microduck_blueprint,
+        "resolve_scene_package",
+        lambda _scene: package,
+    )
+
+    backend, adapter_address = microduck_blueprint._microduck_mujoco_backend("office")
+    simulator = backend.active_blueprints[0]
+
+    assert simulator.module is MujocoSimModule
+    assert simulator.kwargs["scene_xml"] == scene_xml
+    assert simulator.kwargs["robot_mjcf"] == MICRODUCK_ROBOT_MJCF
+    assert simulator.kwargs["scene_entities"] == package.entities
+    assert simulator.kwargs["timestep"] == pytest.approx(0.005)
+    assert simulator.kwargs["headless"] is True
+    assert adapter_address == MICRODUCK_ROBOT_MJCF
+
+
+@pytest.mark.mujoco
+def test_rerun_model_uses_official_meshes_and_animates_joints() -> None:
+    import rerun as rr
+
+    static = microduck_static_robot(rr)
+    meshes = [entity for _, entity in static if type(entity).__name__ == "Mesh3D"]
+    assert len(meshes) == 70
+    assert all(path.startswith(MICRODUCK_RERUN_ROOT) for path, _ in static)
+
+    home = JointState(name=list(MICRODUCK_JOINTS), position=list(MICRODUCK_HOME))
+    home_transforms = dict(microduck_joint_state(home))
+    assert len(home_transforms) == 15
+
+    yaw_positions = list(MICRODUCK_HOME)
+    yaw_positions[MICRODUCK_JOINT_SUFFIXES.index("head_yaw")] += 0.4
+    yawed = JointState(name=list(MICRODUCK_JOINTS), position=yaw_positions)
+    yawed_transforms = dict(microduck_joint_state(yawed))
+    head_path = next(path for path in home_transforms if path.endswith("/yaw_roll_motion"))
+    home_quaternion = home_transforms[head_path].quaternion.as_arrow_array().to_pylist()
+    yawed_quaternion = yawed_transforms[head_path].quaternion.as_arrow_array().to_pylist()
+    assert yawed_quaternion != home_quaternion
 
 
 @pytest.mark.mujoco

@@ -382,11 +382,12 @@ def test_compose_model_attaches_robot_before_scene_entities(tmp_path: Path) -> N
         scene_entities=[_scene_entity("chair_000")],
         spawn_xy=(0.25, -0.5),
         spawn_z=0.8,
+        timestep=0.004,
     )
     try:
         model = module._compose_model()
 
-        assert model.opt.timestep == pytest.approx(0.005)
+        assert model.opt.timestep == pytest.approx(0.004)
         assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "static_scene_box") >= 0
         assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "entity:chair_000") >= 0
 
