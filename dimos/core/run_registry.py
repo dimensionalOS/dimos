@@ -45,6 +45,7 @@ class RunEntry:
     cli_args: list[str] = field(default_factory=list)
     config_overrides: dict[str, object] = field(default_factory=dict)
     original_argv: list[str] = field(default_factory=list)
+    zenoh_peer_endpoint: str | None = None
 
     @property
     def registry_path(self) -> Path:

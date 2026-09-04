@@ -45,9 +45,15 @@ Generally LCM is legacy and we suggest using zenoh (the default) going forward
 
 ### What the default talks to
 
-A stock zenoh session is pinned to localhost. It listens on `tcp/127.0.0.1:0` and
-scouts for peers over loopback only, so sibling dimOS processes on this machine
-find each other and nothing on the LAN can link to them.
+A stock dimOS run starts one loopback-only Zenoh peer seed. Every worker dials
+that seed and listens on `tcp/127.0.0.1:0`; Zenoh gossip then introduces the
+workers to one another. The seed is a discovery rendezvous, not a router, so
+module traffic continues directly between peers. This avoids relying on the
+timing and platform behavior of multicast discovery.
+
+The run registry advertises the seed endpoint to local CLI clients such as
+`dimos shell`. Because every endpoint is loopback-only, nothing on the LAN can
+link to an otherwise unconfigured run.
 
 Peers on this machine carry their data through shared memory, not the socket.
 Zenoh negotiates it per link at handshake, a remote peer keeps getting the
@@ -62,7 +68,10 @@ Reaching off the machine is opt-in
 | Peers discovered across the LAN             | `ZENOH_SCOUTING=1`            |
 | Scouting on one named interface             | `ZENOH_INTERFACE=wlan0`       |
 
-Every one of these unpins the listener back to zenoh's all-interfaces default.
+Explicit connect endpoints suppress the automatic local seed and dial the
+configured remote Zenoh fabric. LAN scouting remains available alongside the
+local seed when no explicit endpoint is configured. Both paths stay in peer
+mode; neither requires a router.
 
 **Two ways to override for one run or for your shell:**
 

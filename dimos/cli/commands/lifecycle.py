@@ -270,6 +270,7 @@ def run(
                 cli_args=list(blueprint_names),
                 config_overrides=global_option_overrides,
                 original_argv=sys.argv,
+                zenoh_peer_endpoint=coordinator.zenoh_peer_endpoint,
             )
             entry.save()
             spawn_watchdog(run_id, log_dir=log_dir)
@@ -308,6 +309,7 @@ def run(
             cli_args=list(blueprint_names),
             config_overrides=global_option_overrides,
             original_argv=sys.argv,
+            zenoh_peer_endpoint=coordinator.zenoh_peer_endpoint,
         )
         entry.save()
         spawn_watchdog(run_id, log_dir=log_dir)

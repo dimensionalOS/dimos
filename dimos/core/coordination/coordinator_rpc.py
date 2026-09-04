@@ -18,7 +18,10 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.global_config import global_config
+from dimos.core.run_registry import get_most_recent
 from dimos.core.transport_factory import rpc_backend
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
+from dimos.protocol.service.zenohservice import LOOPBACK_LISTEN
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -51,7 +54,20 @@ class CoordinatorRPC:
     @classmethod
     def connect(cls, *, timeout: float) -> CoordinatorRPC:
         """Attach to a running Coordinator, raising `TimeoutError` if none answers."""
-        rpc = rpc_backend()()
+        backend = rpc_backend()
+        entry = get_most_recent() if backend is ZenohRPC else None
+        rpc: RPCSpec
+        if entry is not None and entry.zenoh_peer_endpoint is not None:
+            rpc = ZenohRPC(
+                mode="peer",
+                connect=[entry.zenoh_peer_endpoint],
+                listen=[LOOPBACK_LISTEN],
+                multicast=False,
+                gossip=True,
+                connect_timeout=min(global_config.zenoh_connect_timeout, timeout),
+            )
+        else:
+            rpc = backend()
         rpc.start()
         client = cls(rpc)
         deadline = time.monotonic() + timeout

@@ -61,3 +61,31 @@ def test_connect_stops_transport_after_retry_budget_expires(mocker) -> None:
         CoordinatorRPC.connect(timeout=1.0)
 
     rpc.stop.assert_called_once_with()
+
+
+def test_zenoh_connect_dials_the_seed_advertised_by_the_latest_run(mocker) -> None:
+    rpc = mocker.Mock()
+    rpc.call_sync.return_value = ("pong", mocker.Mock())
+    zenoh_rpc = mocker.Mock(return_value=rpc)
+    mocker.patch("dimos.core.coordination.coordinator_rpc.ZenohRPC", zenoh_rpc)
+    mocker.patch(
+        "dimos.core.coordination.coordinator_rpc.rpc_backend",
+        return_value=zenoh_rpc,
+    )
+    entry = mocker.Mock(zenoh_peer_endpoint="tcp/127.0.0.1:51234")
+    mocker.patch(
+        "dimos.core.coordination.coordinator_rpc.get_most_recent",
+        return_value=entry,
+    )
+
+    client = CoordinatorRPC.connect(timeout=1.0)
+
+    assert client.rpc is rpc
+    zenoh_rpc.assert_called_once_with(
+        mode="peer",
+        connect=["tcp/127.0.0.1:51234"],
+        listen=["tcp/127.0.0.1:0"],
+        multicast=False,
+        gossip=True,
+        connect_timeout=1.0,
+    )

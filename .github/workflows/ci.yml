@@ -607,6 +607,49 @@ jobs:
           use_pypi: true
           version: "11.2.8"
 
+  macos-zenoh-e2e:
+    timeout-minutes: 15
+    runs-on: macos-14
+    permissions:
+      contents: read
+    env:
+      PYTHONFAULTHANDLER: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          prune-cache: true
+      - name: Setup Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install PortAudio
+        run: brew install portaudio
+      - name: Install dependencies
+        run: uv sync --group tests --frozen
+      - name: Exercise deterministic Zenoh startup repeatedly
+        shell: bash
+        run: |
+          for attempt in {1..5}; do
+            echo "::group::attempt ${attempt}"
+            uv run pytest dimos/core/test_daemon_zenoh.py --no-cov -q
+            echo "::endgroup::"
+          done
+      - name: Print crash diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          for f in "$RUNNER_TEMP"/pytest-crash/*.log; do
+            echo "::group::$(basename "$f")"
+            cat "$f"
+            echo "::endgroup::"
+          done
+
   self-hosted-tests:
     # Runs on push, merge_group (trusted — a maintainer must approve + queue the
     # PR), and same-repo PRs. Skipped on fork PRs, which would expose the
@@ -639,11 +682,10 @@ jobs:
                 - /var/cache/dimos-root-cache:/root/.cache
             markers: "self_hosted or skipif_no_ros"
             experimental: false
-          # macOS runner disabled for now — we don't want Mac tests.
-          # - os: macOS
-          #   container: null  # run on host — `container:` is Linux-only
-          #   markers: "self_hosted"
-          #   experimental: true
+          - os: macOS
+            container: null  # run on host — `container:` is Linux-only
+            markers: "self_hosted"
+            experimental: false
     runs-on:
       - self-hosted
       - ${{ matrix.os }}
@@ -965,6 +1007,7 @@ jobs:
     - md-babel
     - web
     - tests
+    - macos-zenoh-e2e
     - self-hosted-tests
     #- self-hosted-large-tests
 

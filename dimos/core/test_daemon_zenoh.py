@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""E2e regression test for issue #3395: `dimos run --daemon` with zenoh.
+"""E2e regression test for `dimos run --daemon` with deterministic local Zenoh.
 
 Everything runs in subprocesses: the daemon must survive a real double fork
 (zenoh's tokio runtime does not survive fork, so the daemon process must not
 inherit any zenoh state), and the client must be a genuinely separate process.
 This also keeps zenoh threads out of the pytest process.
 
-Assumption: the zenoh `Coordinator/*` RPC keys are host-global over loopback
-multicast (not namespaced per run). Since zenoh became the default, several
-other tests serve a Coordinator too; what keeps them from answering this one's
-probe is the per-worker scouting group conftest pins (`ZENOH_SCOUT_ADDR`),
-with `--dist=loadfile` keeping this file on a single xdist worker.
+Multicast is disabled so the coordinator, workers, and external client can
+communicate only through the coordinator-owned loopback peer seed and gossip.
+This turns the macOS discovery race into a deterministic contract. The
+per-worker state directory keeps this run's advertised seed isolated, with
+`--dist=loadfile` keeping this file on one xdist worker.
 """
 
 from __future__ import annotations
@@ -63,6 +63,8 @@ def _sweep_leftover_daemons(state_dir: Path) -> None:
 def test_daemon_serves_coordinator_ping_over_zenoh(tmp_path: Path) -> None:
     env = os.environ | {
         "DIMOS_TRANSPORT": "zenoh",
+        # Prove bootstrap and RPC do not depend on multicast discovery.
+        "ZENOH_MULTICAST": "0",
         # Never touch the developer's real registry/config, even without xdist.
         "XDG_STATE_HOME": str(tmp_path / "state"),
         "XDG_CONFIG_HOME": str(tmp_path / "config"),

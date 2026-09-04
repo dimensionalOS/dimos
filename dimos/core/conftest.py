@@ -12,17 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
+
 import pytest
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
+from dimos.protocol.service.zenohservice import ZenohPeerSeed
 
 
 @pytest.fixture(params=["lcm", "zenoh"])
-def each_transport(request, monkeypatch):
-    """Run the requesting test once per transport backend."""
+def each_transport(request, monkeypatch) -> Iterator[str]:
+    """Run each backend against an isolated, already-reachable test fabric."""
     monkeypatch.setattr(global_config, "transport", request.param)
-    return request.param
+    if request.param != "zenoh":
+        yield request.param
+        return
+
+    seed = ZenohPeerSeed(global_config)
+    seed.start()
+    try:
+        yield request.param
+    finally:
+        seed.stop()
 
 
 @pytest.fixture
