@@ -158,11 +158,6 @@ class MemoryBrowserModule(QuestTeleopModule):
 
         super().__init__(**kwargs)
 
-        # Override the underlying web server's bind host. The parent's
-        # RobotWebInterface picks up the global default (loopback), which is
-        # wrong for a service the Quest reaches over Wi-Fi.
-        self._web_server.host = self.config.listen_host
-
     # ---- routes ------------------------------------------------------------
 
     def _setup_routes(self) -> None:

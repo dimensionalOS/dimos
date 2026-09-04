@@ -56,10 +56,17 @@ def main() -> None:
     )
     p.add_argument(
         "--map",
-        default=_DEFAULT_MAP_NAME,
-        help="LFS-managed name or a path; e.g. 'unitree_go2_bigoffice_map.pickle'",
+        default=None,
+        help="LFS-managed name or path; defaults to the bundled map only with "
+        "--cloud-source pickle",
     )
     p.add_argument("--port", type=int, default=8443, help="HTTPS port to serve on")
+    p.add_argument(
+        "--background",
+        choices=["black", "passthrough"],
+        default="black",
+        help="black: opaque VR world; passthrough: show the room outside the map base",
+    )
     p.add_argument(
         "--cloud-source",
         choices=["pickle", "lidar"],
@@ -69,9 +76,10 @@ def main() -> None:
     )
     p.add_argument(
         "--lidar-world-frame",
-        action="store_true",
-        help="lidar mode: scans are already map/world-registered, so don't "
-        "re-apply pose. Use this if voxels look scattered everywhere.",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="override lidar frame detection; by default map/odom/world frames "
+        "are treated as already registered",
     )
     p.add_argument(
         "--voxel-scans",
@@ -101,15 +109,10 @@ def main() -> None:
     args = p.parse_args()
 
     db_path = _resolve(args.db, "memory store")
-    # The pickle is only needed for the top-down map and the "pickle" cloud
-    # source. In lidar mode we still try to resolve it (for the minimap) but
-    # don't hard-fail if it's missing.
-    try:
-        map_path = _resolve(args.map, "global map")
-    except SystemExit:
-        if args.cloud_source == "pickle":
-            raise
-        map_path = None
+    map_name = args.map
+    if map_name is None and args.cloud_source == "pickle":
+        map_name = _DEFAULT_MAP_NAME
+    map_path = _resolve(map_name, "global map") if map_name is not None else None
 
     module = MemoryWorldModule(
         store_path=str(db_path),
@@ -120,6 +123,7 @@ def main() -> None:
         n_image_markers=args.image_markers,
         voxel_size=args.voxel_size,
         max_points=args.max_points,
+        background_mode=args.background,
         server_port=args.port,
     )
     module.start()

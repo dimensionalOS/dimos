@@ -51,14 +51,16 @@ const IMAGE_QUAD_H = 0.34;            // 16:9-ish
 const IMAGE_QUAD_HEIGHT = 0.9;        // robot z (metres) — chest height in VR
 
 export class WorldScene {
-    constructor(diag) {
+    constructor(diag, backgroundMode = 'black') {
         this.diag = diag || (() => {});
+        this.backgroundMode = backgroundMode;
+        const passthrough = backgroundMode === 'passthrough';
 
-        this.three = new THREE.WebGLRenderer({ alpha: false, antialias: false });
+        this.three = new THREE.WebGLRenderer({ alpha: passthrough, antialias: false });
         this.three.setSize(window.innerWidth || 800, window.innerHeight || 600);
         this.three.setPixelRatio(window.devicePixelRatio || 1);
         this.three.xr.enabled = true;
-        this.three.setClearColor(0x06090f, 1);
+        this.three.setClearColor(0x06090f, passthrough ? 0 : 1);
 
         const dom = this.three.domElement;
         dom.style.position = 'fixed';
@@ -71,7 +73,7 @@ export class WorldScene {
         document.body.appendChild(dom);
 
         this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x06090f);
+        this.scene.background = passthrough ? null : new THREE.Color(0x06090f);
         this.scene.add(new THREE.AmbientLight(0xffffff, 1.0));
 
         this.camera = new THREE.PerspectiveCamera(70, 1, 0.05, 500);
@@ -648,7 +650,7 @@ export class WorldScene {
             const planeMat = new THREE.MeshBasicMaterial({
                 map: tex,
                 transparent: true,
-                opacity: 0.85,
+                opacity: this.backgroundMode === 'passthrough' ? 1.0 : 0.85,
                 side: THREE.DoubleSide,
             });
             if (this._groundMesh) {

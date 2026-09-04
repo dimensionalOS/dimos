@@ -20,6 +20,7 @@ const statusEl = document.getElementById('status');
 const connectBtn = document.getElementById('connectBtn');
 const disconnectBtn = document.getElementById('disconnectBtn');
 const logEl = document.getElementById('log');
+const backgroundMode = document.body.dataset.backgroundMode || 'black';
 
 let ws = null;
 let xrSession = null;
@@ -193,7 +194,7 @@ async function startVR() {
     }
 
     try {
-        scene = new WorldScene(diag);
+        scene = new WorldScene(diag, backgroundMode);
         diag('scene_constructed');
         flushSceneMsgs();
         diag('scene_msgs_flushed');
@@ -203,22 +204,30 @@ async function startVR() {
     }
 
     let session;
-    let mode = 'immersive-vr';
-    // Memory-world is opaque (we draw the cloud as the world), so prefer VR.
-    try {
-        session = await navigator.xr.requestSession('immersive-vr', {
-            requiredFeatures: ['local-floor'],
-            optionalFeatures: ['hand-tracking'],
-        });
-    } catch (e) {
-        diag('vr_failed', { error: String(e.message || e) });
+    let mode;
+    if (backgroundMode === 'passthrough') {
         mode = 'immersive-ar';
-        session = await navigator.xr.requestSession('immersive-ar', {
+        session = await navigator.xr.requestSession(mode, {
             requiredFeatures: ['local-floor'],
             optionalFeatures: ['hand-tracking'],
         });
+    } else {
+        mode = 'immersive-vr';
+        try {
+            session = await navigator.xr.requestSession(mode, {
+                requiredFeatures: ['local-floor'],
+                optionalFeatures: ['hand-tracking'],
+            });
+        } catch (e) {
+            diag('vr_failed', { error: String(e.message || e) });
+            mode = 'immersive-ar';
+            session = await navigator.xr.requestSession(mode, {
+                requiredFeatures: ['local-floor'],
+                optionalFeatures: ['hand-tracking'],
+            });
+        }
     }
-    diag('xr_session_started', { mode });
+    diag('xr_session_started', { mode, backgroundMode, blendMode: session.environmentBlendMode });
     xrSession = session;
 
     input = new InputAdapter(dispatchGesture);
@@ -288,8 +297,10 @@ window.addEventListener('load', async () => {
     try {
         const vr = await navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
         const ar = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
-        if (!vr && !ar) {
-            setStatus('VR/AR not supported on this device');
+        const supported = backgroundMode === 'passthrough' ? ar : (vr || ar);
+        if (!supported) {
+            const requested = backgroundMode === 'passthrough' ? 'Passthrough AR' : 'VR/AR';
+            setStatus(`${requested} not supported on this device`);
             connectBtn.disabled = true;
         }
     } catch (e) {

@@ -34,7 +34,7 @@ import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 import threading
-from typing import Any
+from typing import Any, Literal
 
 import cv2
 from fastapi import WebSocket, WebSocketDisconnect
@@ -43,8 +43,8 @@ from fastapi.staticfiles import StaticFiles
 import numpy as np
 
 from dimos.core.core import rpc
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.transform import throttle
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.transform import throttle
 from dimos.teleop.memory_world.messages import (
     MSG_IMAGE_POSES,
     MSG_IMAGE_THUMBNAIL,
@@ -127,8 +127,9 @@ class MemoryWorldConfig(QuestTeleopConfig):
     # Set True if the stored lidar scans are ALREADY in the map/world frame
     # (e.g. SLAM-registered). Then we must NOT re-apply each scan's pose —
     # doing so double-transforms them into scattered noise. Leave False if
-    # scans are in the sensor frame and need their pose applied.
-    lidar_world_frame: bool = False
+    # scans are in the sensor frame and need their pose applied. None detects
+    # this from the point cloud frame_id.
+    lidar_world_frame: bool | None = None
     # Z slab applied at load time to drop the floor/ceiling from the cloud.
     # The user stands on the floor in VR; rendering it as points is just noise.
     map_z_min: float = -0.2
@@ -152,6 +153,7 @@ class MemoryWorldConfig(QuestTeleopConfig):
     ws_route: str = "/ws_memory_world"
     # Bind on all interfaces by default — the headset connects over Wi-Fi.
     listen_host: str = "0.0.0.0"
+    background_mode: Literal["black", "passthrough"] = "black"
 
 
 class MemoryWorldModule(QuestTeleopModule):
@@ -177,8 +179,6 @@ class MemoryWorldModule(QuestTeleopModule):
 
         super().__init__(**kwargs)
 
-        self._web_server.host = self.config.listen_host
-
     # ---- routes ------------------------------------------------------------
 
     def _setup_routes(self) -> None:
@@ -189,7 +189,10 @@ class MemoryWorldModule(QuestTeleopModule):
         @app.get(self.config.client_route, response_class=HTMLResponse)
         async def memory_world_index() -> HTMLResponse:
             index_path = STATIC_DIR / "index.html"
-            return HTMLResponse(content=index_path.read_text())
+            content = index_path.read_text().replace(
+                "__BACKGROUND_MODE__", self.config.background_mode
+            )
+            return HTMLResponse(content=content)
 
         if STATIC_DIR.is_dir():
             app.mount(
@@ -312,8 +315,8 @@ class MemoryWorldModule(QuestTeleopModule):
         is height-coloured (cyan low → amber high) so the user gets depth cues
         without true RGB. Same payload layout as :meth:`_build_point_cloud`.
         """
-        from dimos.mapping.voxels import VoxelMapTransformer
-        from dimos.memory2.transform import FnTransformer
+        from dimos.mapping.voxels.module import VoxelMapTransformer
+        from dimos.memory.transform import FnTransformer
         from dimos.msgs.geometry_msgs.Quaternion import Quaternion
         from dimos.msgs.geometry_msgs.Transform import Transform
         from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -325,18 +328,25 @@ class MemoryWorldModule(QuestTeleopModule):
             span = max(float(last.ts) - float(first.ts), 1e-3)
             n_scans = int(self.config.n_voxel_scans)
             use_all = n_scans <= 0
+            lidar_world_frame = self.config.lidar_world_frame
+            if lidar_world_frame is None:
+                frame_id = str(getattr(first.data, "frame_id", "")).lower().lstrip("/")
+                lidar_world_frame = frame_id in {"map", "odom", "world"}
+                logger.info(
+                    "lidar frame %r detected as %s",
+                    frame_id,
+                    "world-aligned" if lidar_world_frame else "sensor-relative",
+                )
 
             def to_world_frame(obs: Any) -> Any:
                 # If scans are already registered to the map frame, applying
                 # the pose again double-transforms them into scattered noise.
-                if self.config.lidar_world_frame:
+                if lidar_world_frame:
                     return obs
-                pose = getattr(obs, "pose", None)
+                pose = getattr(obs, "pose_tuple", None)
                 if pose is None:
                     return None
-                p = list(pose)
-                if len(p) < 7:
-                    return None
+                p = pose
                 tf = Transform(
                     translation=Vector3(float(p[0]), float(p[1]), float(p[2])),
                     rotation=Quaternion(float(p[3]), float(p[4]), float(p[5]), float(p[6])),
@@ -388,7 +398,7 @@ class MemoryWorldModule(QuestTeleopModule):
         all at full saturation and value, so every height band is vivid and
         clearly distinct (TURBO/jet have muddy dark ends that read poorly in
         VR against the dark background). Uses the fixed height SLAB bounds so a
-        given height is always the same colour. Returns N×3 uint8 RGB.
+        given height is always the same colour. Returns N x 3 uint8 RGB.
         """
         zc = positions[:, 2]
         lo = float(self.config.map_z_min)
@@ -508,12 +518,10 @@ class MemoryWorldModule(QuestTeleopModule):
             ids: list[int] = []
             thumbnails: list[bytes] = []
             for obs in stream.transform(throttle(interval)):
-                pose = getattr(obs, "pose", None)
+                pose = getattr(obs, "pose_tuple", None)
                 if pose is None:
                     continue
-                p = list(pose)
-                if len(p) < 3:
-                    continue
+                p = pose
                 positions.append((float(p[0]), float(p[1]), float(p[2])))
                 if len(p) >= 7:
                     quats.append((float(p[3]), float(p[4]), float(p[5]), float(p[6])))
@@ -552,27 +560,32 @@ class MemoryWorldModule(QuestTeleopModule):
             return ({"n": 0, "timestamps": [], "ids": []}, b""), []
 
     def _build_top_down_map(self) -> tuple[dict[str, Any], bytes] | None:
-        """Render a top-down density map from the same pickled PointCloud2.
+        """Render a top-down density map from the same point cloud shown in VR.
 
         Used for two things on the client: a GTA-style HUD minimap and a
         ground-pasted texture (so the user sees walls "drawn" on the floor).
         """
         import pickle
 
-        path = Path(self.config.global_map_path)
-        if not path.exists():
-            logger.info("no global map at %s; skipping top-down render", path)
-            return None
-        try:
-            obj = pickle.loads(path.read_bytes())
-        except Exception:
-            logger.exception("failed to load global map pickle for top-down render")
-            return None
+        path = Path(self.config.global_map_path) if self.config.global_map_path else None
+        if path is not None and path.is_file():
+            try:
+                obj = pickle.loads(path.read_bytes())
+            except Exception:
+                logger.exception("failed to load global map pickle for top-down render")
+                return None
 
-        as_np = getattr(obj, "as_numpy", None)
-        if not callable(as_np):
+            as_np = getattr(obj, "as_numpy", None)
+            if not callable(as_np):
+                return None
+            xyz, _colors = as_np()
+        elif self._cached_cloud is not None:
+            cloud_header, cloud_payload = self._cached_cloud
+            n = int(cloud_header.get("n", 0))
+            xyz = np.frombuffer(cloud_payload, dtype=np.float32, count=n * 3).reshape(n, 3)
+        else:
+            logger.info("no point cloud available; skipping top-down render")
             return None
-        xyz, _colors = as_np()
         if xyz is None or xyz.size == 0:
             return None
 
@@ -628,12 +641,10 @@ class MemoryWorldModule(QuestTeleopModule):
 
             positions: list[tuple[float, float, float]] = []
             for obs in stream.transform(throttle(interval)):
-                pose = getattr(obs, "pose", None)
+                pose = getattr(obs, "pose_tuple", None)
                 if pose is None:
                     continue
-                p = list(pose)
-                if len(p) < 3:
-                    continue
+                p = pose
                 positions.append((float(p[0]), float(p[1]), float(p[2])))
                 if len(positions) >= n:
                     break

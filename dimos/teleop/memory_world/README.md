@@ -10,6 +10,10 @@ python scripts/run_memory_world.py --db data/go2_bigoffice.db --map data/unitree
 
 Flags: `--port 8443`, `--voxel-size 0.05` (m, cloud downsample), `--max-points 250000`.
 
+Use `--background passthrough` to render with Quest passthrough outside the
+opaque map base. The default is `--background black` for the original immersive
+VR view.
+
 Point-cloud source (`--cloud-source`):
 - `pickle` (default) — load the prebuilt `--map` PointCloud2; keeps true RGB.
 - `lidar` — accumulate a voxel map live from the store's `lidar` stream (no pickle needed, height-coloured, rebuilds from current data). First connect takes a few seconds while it accumulates ~150 scans, then it's cached.

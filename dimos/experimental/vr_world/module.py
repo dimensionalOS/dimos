@@ -160,8 +160,6 @@ class VrWorldModule(QuestTeleopModule):
 
         super().__init__(**kwargs)
 
-        self._web_server.host = self.config.listen_host
-
     # ---- routes ------------------------------------------------------------
 
     def _setup_routes(self) -> None:
