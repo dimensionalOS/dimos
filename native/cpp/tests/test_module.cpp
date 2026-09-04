@@ -445,6 +445,7 @@ struct RunRecord {
     bool teardown_ran = false;
     std::string data_topic;
     int config_x = 0;
+    nlohmann::json qos;
 };
 RunRecord g_run;
 
@@ -455,6 +456,7 @@ struct RecordingTransport : Transport {
     void subscribe(const std::string& channel, Dispatch) override {
         g_run.subscribed.push_back(channel);
     }
+    void set_publisher_qos(const nlohmann::json& qos) override { g_run.qos = qos; }
 };
 
 struct RunConfig {
@@ -498,11 +500,14 @@ struct StdinLine {
 TEST_CASE("run_fallible wires stdin topics and config, then runs the lifecycle") {
     ShutdownFlagGuard guard;
     g_run = RunRecord{};
-    StdinLine line(R"({"topics":{"data":"/d","out":"/o"},"config":{"x":5}})");
+    StdinLine line(
+        R"({"topics":{"data":"/d","out":"/o"},"config":{"x":5},"qos":{"/o":{"reliability":"reliable"}}})");
 
-    run_fallible<RunModule>(std::make_unique<RecordingTransport>());
+    run_fallible<RunModule>(std::make_unique<RecordingTransport>(), read_stdin_config());
 
     CHECK(g_run.config_x == 5);
+    // The launch qos reaches the transport, which is where zenoh reads it.
+    CHECK(g_run.qos == nlohmann::json::parse(R"({"/o":{"reliability":"reliable"}})"));
     CHECK(g_run.data_topic == "/d");
     CHECK(g_run.setup_ran);
     CHECK(g_run.handle_ran);
@@ -518,7 +523,8 @@ TEST_CASE("run_fallible runs teardown when handle throws, and rethrows") {
     g_run = RunRecord{};
     StdinLine line("{}");
 
-    CHECK_THROWS_AS(run_fallible<ThrowingHandleModule>(std::make_unique<RecordingTransport>()),
+    CHECK_THROWS_AS(run_fallible<ThrowingHandleModule>(std::make_unique<RecordingTransport>(),
+                                                       read_stdin_config()),
                     std::runtime_error);
     CHECK(g_run.teardown_ran);
 }
@@ -528,8 +534,9 @@ TEST_CASE("run_fallible rejects a config field the module never parsed") {
     g_run = RunRecord{};
     StdinLine line(R"({"topics":{"data":"/d","out":"/o"},"config":{"x":5,"stray":1}})");
 
-    CHECK_THROWS_AS(run_fallible<RunModule>(std::make_unique<RecordingTransport>()),
-                    std::runtime_error);
+    CHECK_THROWS_AS(
+        run_fallible<RunModule>(std::make_unique<RecordingTransport>(), read_stdin_config()),
+        std::runtime_error);
     // enforce_all_consumed runs after build and before setup, so the module
     // never starts and teardown is not owed.
     CHECK_FALSE(g_run.setup_ran);

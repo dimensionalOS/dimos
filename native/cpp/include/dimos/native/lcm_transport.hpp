@@ -22,7 +22,6 @@
 
 #include "dimos/native/log.hpp"
 #include "dimos/native/transport.hpp"
-#include "dimos/native/transport_selection.hpp"
 
 namespace dimos::native {
 
@@ -74,6 +73,24 @@ public:
         ensure_recv_thread();
     }
 
+    /// LCM has no per-topic publisher settings and no notion of a session-local
+    /// publisher, so a baked host cannot hide an internal hop on this transport.
+    void set_publisher_qos(const nlohmann::json& qos) override {
+        if (!qos.is_object()) {
+            return;
+        }
+        std::string suppressed;
+        for (const auto& entry : qos.items()) {
+            if (entry.value().is_object() && entry.value().contains("locality")) {
+                suppressed += suppressed.empty() ? entry.key() : ", " + entry.key();
+            }
+        }
+        if (!suppressed.empty()) {
+            log::warn("LCM cannot suppress a topic; these stay visible on the multicast bus",
+                      {log::Field("channels", suppressed)});
+        }
+    }
+
 private:
     void on_lcm_message(const lcm::ReceiveBuffer* rbuf, const std::string& channel) {
         std::shared_ptr<const std::vector<Dispatch>> handlers;
@@ -114,14 +131,5 @@ private:
     std::atomic<bool> running_{false};
     std::thread recv_thread_;
 };
-
-/// Construct the transport named by `DIMOS_TRANSPORT`. Errors clearly for zenoh
-/// or any unknown/unset value.
-inline std::unique_ptr<Transport> make_transport_from_env() {
-    const char* env = std::getenv("DIMOS_TRANSPORT");
-    std::string name = env != nullptr ? env : "";
-    require_supported_transport(name);
-    return std::make_unique<LcmTransport>();
-}
 
 }  // namespace dimos::native

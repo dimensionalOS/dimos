@@ -11,16 +11,21 @@
 #include "dimos/native/log.hpp"
 #include "dimos/native/module.hpp"
 #include "dimos/native/transport.hpp"
+#include "dimos/native/transport_factory.hpp"
 #include "dimos/native/transport_selection.hpp"
 
 namespace dimos::native {
 
-/// Run module `M` over the transport named by DIMOS_TRANSPORT (LCM today).
-/// The coordinator always sets it. An unset or unknown value is fatal.
+/// Run module `M` over the transport named by DIMOS_TRANSPORT. The coordinator
+/// always sets it. An unset or unknown value is fatal.
+///
+/// The launch line is read first because zenoh opens its session from it.
 template <class M>
 void run_with_transport() {
     try {
-        run<M>(make_transport_from_env());
+        StdinConfig parsed = read_stdin_config();
+        std::unique_ptr<Transport> transport = make_transport_from_env(parsed.launch);
+        run<M>(std::move(transport), std::move(parsed));
     } catch (const std::exception& e) {
         log::error(e.what());
         std::exit(1);

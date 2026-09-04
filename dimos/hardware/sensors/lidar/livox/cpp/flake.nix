@@ -23,7 +23,10 @@
   outputs = { self, nixpkgs, flake-utils, dimos-lcm, pfr, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ (import ../../../../../../native/cpp/zenoh-overlay.nix) ];
+        };
         lcm = lcm-extended.packages.${system}.lcm;
 
         livox-sdk2 = pkgs.stdenv.mkDerivation rec {
@@ -71,10 +74,12 @@
           src = ./.;
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
-          buildInputs = [ livox-sdk2 lcm pkgs.glib pkgs.nlohmann_json ];
+          buildInputs = [ livox-sdk2 lcm pkgs.glib pkgs.nlohmann_json pkgs.zenoh-c pkgs.zenoh-cpp ];
 
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+            # ON, not AUTO: buildInputs guarantees zenoh, so a miss is a bug.
+            "-DDIMOS_NATIVE_ZENOH=ON"
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             "-DLIVOX_COMMON_DIR=${livox-common}"

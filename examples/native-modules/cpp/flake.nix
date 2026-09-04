@@ -24,7 +24,10 @@
   outputs = { self, nixpkgs, flake-utils, lcm-extended, dimos-lcm, pfr, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ (import ../../../native/cpp/zenoh-overlay.nix) ];
+        };
         lcm = lcm-extended.packages.${system}.lcm;
       in {
         packages.default = pkgs.stdenv.mkDerivation {
@@ -33,10 +36,12 @@
           src = ./.;
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
-          buildInputs = [ lcm pkgs.glib pkgs.nlohmann_json ];
+          buildInputs = [ lcm pkgs.glib pkgs.nlohmann_json pkgs.zenoh-c pkgs.zenoh-cpp ];
 
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+            # ON, not AUTO: buildInputs guarantees zenoh, so a miss is a bug.
+            "-DDIMOS_NATIVE_ZENOH=ON"
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             # The header-only SDK lives outside this dir. A git-tree flake can
