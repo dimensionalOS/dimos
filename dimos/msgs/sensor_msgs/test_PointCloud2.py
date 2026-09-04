@@ -14,6 +14,7 @@
 # limitations under the License.
 
 
+from dimos_lcm.sensor_msgs.PointCloud2 import PointCloud2 as LCMPointCloud2
 import numpy as np
 import pytest
 
@@ -154,6 +155,28 @@ def test_lcm_per_point_timing_round_trip() -> None:
     decoded_lines = decoded.lines_u8()
     assert decoded_lines is not None, "line lost after lcm_decode"
     np.testing.assert_array_equal(decoded_lines, lines)
+
+
+def test_lcm_decode_honors_row_step() -> None:
+    """An organized cloud may pad each row; the padding must not become coordinates."""
+    points = np.arange(1, 13, dtype=np.float32).reshape(4, 3)
+    source = PointCloud2.from_numpy(points, frame_id="map", timestamp=1.0)
+    msg = LCMPointCloud2.lcm_decode(source.lcm_encode())
+
+    height, width, row_padding = 2, 2, 8
+    packed_row_length = width * msg.point_step
+    padding = b"\xff\xff\x7f\x7f" * (row_padding // 4)
+    msg.height = height
+    msg.width = width
+    msg.row_step = packed_row_length + row_padding
+    msg.data = b"".join(
+        bytes(msg.data[row * packed_row_length : (row + 1) * packed_row_length]) + padding
+        for row in range(height)
+    )
+    msg.data_length = len(msg.data)
+
+    decoded_pts, _ = PointCloud2.lcm_decode(msg.lcm_encode()).as_numpy()
+    np.testing.assert_allclose(decoded_pts.astype(np.float32), points, atol=1e-6)
 
 
 def test_bounding_box_intersects() -> None:
