@@ -15,10 +15,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from queue import Empty
-from threading import RLock
+from threading import Event, RLock, Thread
 from unittest.mock import MagicMock, create_autospec, patch
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_openai import ChatOpenAI
 import pytest
@@ -161,6 +161,56 @@ def test_tool_stream_notification_becomes_human_message(mcp_client: McpClient) -
     assert isinstance(msg, HumanMessage)
     assert "[tool:follow_person]" in str(msg.content)
     assert "Person follow stopped: lost track." in str(msg.content)
+
+
+def test_cancelled_turn_closes_unresolved_tool_calls(mcp_client: McpClient) -> None:
+    mcp_client._history = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "move_to_pose", "args": {}, "id": "call-pending", "type": "tool_call"}
+            ],
+        ),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "scan", "args": {}, "id": "call-complete", "type": "tool_call"}],
+        ),
+        ToolMessage(content="Detected 2 object(s)", tool_call_id="call-complete"),
+    ]
+
+    mcp_client._close_cancelled_tool_calls()
+
+    assert isinstance(mcp_client._history[-1], ToolMessage)
+    assert mcp_client._history[-1].tool_call_id == "call-pending"
+    assert "cancelled" in str(mcp_client._history[-1].content)
+
+
+def test_cancelled_turn_does_not_wait_for_blocked_graph(mcp_client: McpClient) -> None:
+    started = Event()
+    release = Event()
+    cancelled = Event()
+    mcp_client.agent = MagicMock()
+    mcp_client.agent_idle = MagicMock()
+
+    class BlockingGraph:
+        def stream(self, *_args: object, **_kwargs: object):  # type: ignore[no-untyped-def]
+            started.set()
+            release.wait()
+            yield {}
+
+    thread = Thread(
+        target=mcp_client._process_message,
+        args=(BlockingGraph(), HumanMessage(content="move"), cancelled),
+    )
+    thread.start()
+    assert started.wait(timeout=1.0)
+
+    cancelled.set()
+    thread.join(timeout=1.0)
+    release.set()
+
+    assert not thread.is_alive()
+    mcp_client.agent_idle.publish.assert_called_with(True)
 
 
 def test_tool_stream_ignores_unrelated_frames(mcp_client: McpClient) -> None:
