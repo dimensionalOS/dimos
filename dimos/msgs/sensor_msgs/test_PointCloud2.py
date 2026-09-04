@@ -14,6 +14,8 @@
 # limitations under the License.
 
 
+import json
+
 import numpy as np
 import pytest
 
@@ -255,3 +257,188 @@ def test_to_rerun_keeps_the_clouds_own_rgb() -> None:
     ramp = cloud.to_rerun(mode="points", rgb=False)
     assert ramp.colors is None
     assert ramp.class_ids is not None
+
+
+def _grid(half: float, pitch: float = 0.05) -> np.ndarray:
+    g = np.stack(np.meshgrid(np.arange(-half, half, pitch), np.arange(-half, half, pitch)), -1)
+    return g.reshape(-1, 2)
+
+
+def _keys(encoded: dict[str, object]) -> set[str]:
+    out: set[str] = set()
+    for k, v in encoded.items():
+        out.add(k)
+        if isinstance(v, dict):
+            out |= {f"{k}.{kk}" for kk in v}
+    return out
+
+
+LEGEND_KEYS = {
+    "frame_id",
+    "ts",
+    "num_points",
+    "window_m",
+    "window_m.x",
+    "window_m.y",
+    "window_m.z",
+    "centroid_xy_m",
+    "floor_footprint_m2",
+    "raster",
+    "raster.cell_m",
+    "raster.origin_xy_m",
+    "raster.z_step_m",
+    "raster.z_min_m",
+    "raster.rows",
+    "boxes",
+    "boxes.z_m",
+    "boxes.xmin:xmax@ymin:ymax",
+}
+
+
+def test_agent_encode_scalars_are_exact() -> None:
+    """The scalars the eval suite quizzes must match numpy, not approximate it —
+    a slab wall at x=2, plus floor points that must not enter the body band."""
+    wall = np.stack(
+        [
+            np.full(200, 2.0),
+            np.linspace(-1.0, 1.0, 200),
+            np.linspace(0.2, 0.9, 200),
+        ],
+        axis=1,
+    )
+    floor = np.stack([np.linspace(-3, 3, 100), np.linspace(-3, 3, 100), np.zeros(100)], axis=1)
+    encoded = PointCloud2.from_numpy(np.vstack([wall, floor]), timestamp=12.345).agent_encode()
+
+    assert encoded["num_points"] == 300
+    assert encoded["ts"] == 12.35
+    assert encoded["window_m"] == {"x": [-3.0, 3.0], "y": [-3.0, 3.0], "z": [0.0, 0.9]}
+    boxes = encoded["boxes"]
+    assert isinstance(boxes, dict)
+    assert boxes["z_m"] == [0.15, 1.0]
+    # body-height boxes see the wall only: x pinned at 2.0, floor (z=0) excluded
+    assert all(b.startswith("2.00@") for b in str(boxes["xmin:xmax@ymin:ymax"]).split(","))
+    assert encoded["centroid_xy_m"] == [1.33, 0.0]  # 200 wall pts at x=2, 100 floor at mean 0
+
+
+def test_agent_encode_every_key_on_every_frame() -> None:
+    """A reader indexes the encoding by key; a frame that drops one is a KeyError
+    in the agent's code. The empty cloud carries the same keys, empty."""
+    empty = PointCloud2.from_numpy(np.zeros((0, 3))).agent_encode()
+    assert empty["num_points"] == 0
+    assert _keys(empty) == LEGEND_KEYS
+    one = PointCloud2.from_numpy(np.array([[1.0, 2.0, 0.3]])).agent_encode()
+    assert _keys(one) == LEGEND_KEYS
+    floor = PointCloud2.from_numpy(np.column_stack([_grid(3.0), np.zeros(14400)])).agent_encode()
+    assert _keys(floor) == LEGEND_KEYS
+    raster = floor["raster"]
+    assert isinstance(raster, dict)
+    assert raster["rows"] and all(len(r) == len(raster["rows"][0]) for r in raster["rows"])
+
+
+def test_agent_encode_empty_cloud() -> None:
+    encoded = PointCloud2.from_numpy(np.zeros((0, 3))).agent_encode()
+    assert encoded["num_points"] == 0
+    assert encoded["centroid_xy_m"] == []
+    assert encoded["window_m"] == {"x": [], "y": [], "z": []}
+    raster = encoded["raster"]
+    assert isinstance(raster, dict)
+    assert raster["rows"] == []
+
+
+def test_agent_encode_raster_quantization_round_trips() -> None:
+    """One point per level, one level per cell: the character decodes back to
+    the z it came from at the step, and the clamp holds at both ends."""
+    alphabet = PointCloud2._RASTER_ALPHABET
+    z_min, step = PointCloud2._RASTER_Z_MIN, PointCloud2._RASTER_Z_STEP
+    levels = np.arange(len(alphabet))
+    xs = levels * 0.25 + 0.125  # one cell each along x
+    pts = np.column_stack([xs, np.zeros_like(xs), z_min + levels * step])
+    pts = np.vstack([pts, [[-0.875, 0.0, -9.0], [-0.625, 0.0, 9.0]]])  # beyond the clamp
+    raster = PointCloud2.from_numpy(pts).agent_encode()["raster"]
+    assert isinstance(raster, dict)
+    assert raster["cell_m"] == 0.25
+    (row,) = raster["rows"]
+    cells = row.split(" ", 1)[1]
+    pairs = [cells[i : i + 2] for i in range(0, len(cells), 2)]
+    assert pairs[0] == "00"  # clamped low
+    assert pairs[1] == alphabet[-1] * 2  # clamped high
+    assert pairs[2] == ".."  # the cell at x in [-0.5, -0.25) has no return
+    assert pairs[3] == ".."
+    for level, pair in zip(levels, pairs[4:], strict=True):
+        assert pair == alphabet[level] * 2
+        assert z_min + alphabet.index(pair[0]) * step == pytest.approx(z_min + level * step)
+
+
+def test_agent_encode_raster_cell_rule() -> None:
+    """0.25 m for a single sweep, 0.5 m once a fused map would pass 48 cells."""
+    small = PointCloud2.from_numpy(np.column_stack([_grid(3.0, 0.1), np.zeros(3600)]))
+    large = PointCloud2.from_numpy(np.column_stack([_grid(7.5, 0.1), np.zeros(22500)]))
+    small_raster = small.agent_encode()["raster"]
+    large_raster = large.agent_encode()["raster"]
+    assert isinstance(small_raster, dict) and isinstance(large_raster, dict)
+    assert small_raster["cell_m"] == 0.25
+    assert small_raster["origin_xy_m"] == [-3.0, -3.0]
+    assert len(small_raster["rows"]) == 24
+    assert large_raster["cell_m"] == 0.5
+    assert len(large_raster["rows"]) == 30
+
+
+def test_agent_encode_raster_single_return_is_min_equals_max() -> None:
+    raster = PointCloud2.from_numpy(np.array([[0.1, 0.1, 0.62]])).agent_encode()["raster"]
+    assert isinstance(raster, dict)
+    (row,) = raster["rows"]
+    pair = row.split(" ", 1)[1]
+    assert len(pair) == 2
+    assert pair[0] == pair[1]
+    assert pair[0] == PointCloud2._RASTER_ALPHABET[round((0.62 + 0.5) / 0.1)]
+
+
+def test_agent_encode_stays_within_prompt_budget() -> None:
+    """The encoding is prompt text, so its size is a hard product constraint.
+
+    A busy room -- floor, four walls, scattered clutter -- is the verbose case.
+    The encoder trims its own tail rather than letting a dense frame run over.
+    """
+    rng = np.random.default_rng(7)
+    grid = _grid(6.0, 0.04)
+    parts = [np.column_stack([grid, np.zeros(len(grid))])]
+    for edge in (-6.0, 6.0):
+        span = np.arange(-6, 6, 0.02)
+        height = rng.uniform(0.15, 1.0, span.size)
+        parts.append(np.column_stack([np.full(span.size, edge), span, height]))
+        parts.append(np.column_stack([span, np.full(span.size, edge), height]))
+    parts.append(
+        np.column_stack(
+            [rng.uniform(-6, 6, 4000), rng.uniform(-6, 6, 4000), rng.uniform(0.15, 1.0, 4000)]
+        )
+    )
+
+    encoded = PointCloud2.from_numpy(np.vstack(parts)).agent_encode()
+
+    assert len(json.dumps(encoded)) <= PointCloud2.ENCODE_SOFT_CAP
+    assert _keys(encoded) == LEGEND_KEYS
+
+
+@pytest.mark.self_hosted
+def test_agent_encode_fused_map_fits_the_cap() -> None:
+    """A whole recording fused into one map is the largest cloud the agent
+    reads; it must still come back in one readout, at a coarser cell."""
+    from dimos.evals.suites.lib.generate import _dataset
+    from dimos.mapping.voxels.module import VoxelMapTransformer
+    from dimos.memory.transform import downsample
+
+    with _dataset("go2_china_office") as store:
+        fused = (
+            store.streams.lidar.range_time(0, 138)
+            .transform(downsample(6))
+            .transform(VoxelMapTransformer(voxel_size=0.05, device="CPU:0", emit_every=0))
+            .last()
+            .data
+        )
+    encoded = fused.agent_encode()
+    raster = encoded["raster"]
+    assert isinstance(raster, dict)
+    assert len(json.dumps(encoded)) <= PointCloud2.ENCODE_SOFT_CAP
+    assert raster["cell_m"] == 0.5
+    assert len(raster["rows"]) <= 48
+    assert _keys(encoded) == LEGEND_KEYS

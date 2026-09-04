@@ -1,0 +1,401 @@
+[
+  {
+    "id": "go2_agentic_20260819_freedisk_t375_p0",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (-1.03, -0.81). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [
+      [
+        -0.9,
+        -0.9
+      ]
+    ],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          374.84,
+          374.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          374.5,
+          375.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_freedisk_t122_p0",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (3.35, 3.51). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [
+      [
+        3.9,
+        3.5
+      ]
+    ],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          121.89,
+          121.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          121.5,
+          122.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_freedisk_t55_p0",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (5.82, 3.79). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [
+      [
+        3.7,
+        3.3
+      ]
+    ],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          54.84,
+          54.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          54.5,
+          55.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_freedisk_t78_p0",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (2.15, 5.82). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [
+      [
+        4.1,
+        5.3
+      ]
+    ],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          77.88,
+          77.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          77.5,
+          78.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_freedisk_t130_p0",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (4.01, 4.86). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [
+      [
+        4.7,
+        6.3
+      ]
+    ],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          129.91,
+          130.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          129.5,
+          130.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_20260819_freedisk_t500_p0",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (-3.51, -3.81). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          499.95,
+          500.05
+        ]
+      ],
+      [
+        "odom",
+        [
+          499.5,
+          500.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_20260819_freedisk_t750_p0",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (-2.44, -3.18). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          749.9,
+          750.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          749.5,
+          750.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_freedisk_t25_p2",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (3.25, -0.64). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          24.87,
+          24.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          24.5,
+          25.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_short_freedisk_t20_p0",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (-1.44, 15.44). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          19.85,
+          19.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          19.5,
+          20.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_20260819_freedisk_t750_p1",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (-0.96, -2.31). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          749.9,
+          750.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          749.5,
+          750.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_20260819_freedisk_t1200_p0",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (0.14, 3.96). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [
+      [
+        1.7,
+        4.9
+      ]
+    ],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          1199.89,
+          1199.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          1199.5,
+          1200.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_freedisk_t1400_p0",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (6.23, 2.26). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [
+      [
+        4.3,
+        3.7
+      ]
+    ],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          1399.89,
+          1399.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          1399.5,
+          1400.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_freedisk_t1450_p0",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (-1.55, -0.43). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          1449.85,
+          1449.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1449.5,
+          1450.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_freedisk_t1500_p0",
+    "family": "free_disk",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). You need to set down what you are carrying on clear, open floor near the world point (-0.51, -1.10). Is there a patch of floor the lidar has mapped and found nothing standing on, above z = 0.15 m, within about 2.5 m of that point, big enough to hold a circle at least 2.2 m across? If so, give the centre of the largest such patch as x,y on one line. If there is no clear mapped patch that large, answer none. Floor the lidar never reached does not count. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          1499.86,
+          1499.96
+        ]
+      ],
+      [
+        "odom",
+        [
+          1499.5,
+          1500.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  }
+]

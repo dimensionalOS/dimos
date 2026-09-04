@@ -1,0 +1,882 @@
+[
+  {
+    "id": "go2_short_extent_t5",
+    "family": "extent",
+    "type": "numeric",
+    "q": "Consider the mapped point cloud shown. What is its largest horizontal extent (the longer side of its axis-aligned bounding box in the x-y plane), in meters? Answer with a single number.",
+    "a": 6.3,
+    "band": 0.63,
+    "context": [
+      [
+        "lidar",
+        [
+          4.89,
+          4.99
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_zspan_t5",
+    "family": "zspan",
+    "type": "numeric",
+    "q": "Consider the mapped point cloud shown. What is its vertical span (max z minus min z), in meters? Answer with a single number.",
+    "a": 1.4,
+    "band": 0.3,
+    "context": [
+      [
+        "lidar",
+        [
+          4.89,
+          4.99
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_nearest_t5",
+    "family": "nearest",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown. Using the mapped point cloud, how far away is the nearest obstacle point at body height (z between 0.15 and 1.0 m), horizontal distance in meters? Answer with a single number.",
+    "a": 0.66,
+    "band": 0.25,
+    "context": [
+      [
+        "lidar",
+        [
+          4.89,
+          4.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          4.5,
+          5.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_extent_t20",
+    "family": "extent",
+    "type": "numeric",
+    "q": "Consider the mapped point cloud shown. What is its largest horizontal extent (the longer side of its axis-aligned bounding box in the x-y plane), in meters? Answer with a single number.",
+    "a": 6.35,
+    "band": 0.64,
+    "context": [
+      [
+        "lidar",
+        [
+          19.85,
+          19.95
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_zspan_t20",
+    "family": "zspan",
+    "type": "numeric",
+    "q": "Consider the mapped point cloud shown. What is its vertical span (max z minus min z), in meters? Answer with a single number.",
+    "a": 1.25,
+    "band": 0.3,
+    "context": [
+      [
+        "lidar",
+        [
+          19.85,
+          19.95
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_nearest_t20",
+    "family": "nearest",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown. Using the mapped point cloud, how far away is the nearest obstacle point at body height (z between 0.15 and 1.0 m), horizontal distance in meters? Answer with a single number.",
+    "a": 0.62,
+    "band": 0.25,
+    "context": [
+      [
+        "lidar",
+        [
+          19.85,
+          19.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          19.5,
+          20.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_extent_t40",
+    "family": "extent",
+    "type": "numeric",
+    "q": "Consider the mapped point cloud shown. What is its largest horizontal extent (the longer side of its axis-aligned bounding box in the x-y plane), in meters? Answer with a single number.",
+    "a": 6.35,
+    "band": 0.64,
+    "context": [
+      [
+        "lidar",
+        [
+          39.87,
+          39.97
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_zspan_t40",
+    "family": "zspan",
+    "type": "numeric",
+    "q": "Consider the mapped point cloud shown. What is its vertical span (max z minus min z), in meters? Answer with a single number.",
+    "a": 1.3,
+    "band": 0.3,
+    "context": [
+      [
+        "lidar",
+        [
+          39.87,
+          39.97
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_nearest_t40",
+    "family": "nearest",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown. Using the mapped point cloud, how far away is the nearest obstacle point at body height (z between 0.15 and 1.0 m), horizontal distance in meters? Answer with a single number.",
+    "a": 0.5,
+    "band": 0.25,
+    "context": [
+      [
+        "lidar",
+        [
+          39.87,
+          39.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          39.5,
+          40.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_extent_t58",
+    "family": "extent",
+    "type": "numeric",
+    "q": "Consider the mapped point cloud shown. What is its largest horizontal extent (the longer side of its axis-aligned bounding box in the x-y plane), in meters? Answer with a single number.",
+    "a": 6.35,
+    "band": 0.64,
+    "context": [
+      [
+        "lidar",
+        [
+          57.94,
+          58.04
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_zspan_t58",
+    "family": "zspan",
+    "type": "numeric",
+    "q": "Consider the mapped point cloud shown. What is its vertical span (max z minus min z), in meters? Answer with a single number.",
+    "a": 1.4,
+    "band": 0.3,
+    "context": [
+      [
+        "lidar",
+        [
+          57.94,
+          58.04
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_nearest_t58",
+    "family": "nearest",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown. Using the mapped point cloud, how far away is the nearest obstacle point at body height (z between 0.15 and 1.0 m), horizontal distance in meters? Answer with a single number.",
+    "a": 0.89,
+    "band": 0.27,
+    "context": [
+      [
+        "lidar",
+        [
+          57.94,
+          58.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          57.5,
+          58.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_areatrend_0_20",
+    "family": "areatrend",
+    "type": "mcq",
+    "q": "You are shown a sequence of mapped point clouds over time. From the first shown cloud to the last, does the mapped floor area grow, shrink, or stay about the same? Answer with exactly one word: grow, shrink, or same.",
+    "a": "shrink",
+    "choices": [
+      "grow",
+      "shrink",
+      "same"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          0.0,
+          20.0
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_coverage_0_20",
+    "family": "direction",
+    "type": "mcq",
+    "q": "You are shown a sequence of mapped point clouds over time (world frame: +x is east, +y is north). In which compass direction, relative to the center of the first shown cloud, did the map gain most of its new coverage? Answer with exactly one of: east, northeast, north, northwest, west, southwest, south, southeast.",
+    "a": "north",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          0.0,
+          20.0
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_areatrend_15_45",
+    "family": "areatrend",
+    "type": "mcq",
+    "q": "You are shown a sequence of mapped point clouds over time. From the first shown cloud to the last, does the mapped floor area grow, shrink, or stay about the same? Answer with exactly one word: grow, shrink, or same.",
+    "a": "grow",
+    "choices": [
+      "grow",
+      "shrink",
+      "same"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          15.0,
+          45.0
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_coverage_15_45",
+    "family": "direction",
+    "type": "mcq",
+    "q": "You are shown a sequence of mapped point clouds over time (world frame: +x is east, +y is north). In which compass direction, relative to the center of the first shown cloud, did the map gain most of its new coverage? Answer with exactly one of: east, northeast, north, northwest, west, southwest, south, southeast.",
+    "a": "south",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          15.0,
+          45.0
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_areatrend_30_59",
+    "family": "areatrend",
+    "type": "mcq",
+    "q": "You are shown a sequence of mapped point clouds over time. From the first shown cloud to the last, does the mapped floor area grow, shrink, or stay about the same? Answer with exactly one word: grow, shrink, or same.",
+    "a": "grow",
+    "choices": [
+      "grow",
+      "shrink",
+      "same"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          30.0,
+          59.0
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_coverage_30_59",
+    "family": "direction",
+    "type": "mcq",
+    "q": "You are shown a sequence of mapped point clouds over time (world frame: +x is east, +y is north). In which compass direction, relative to the center of the first shown cloud, did the map gain most of its new coverage? Answer with exactly one of: east, northeast, north, northwest, west, southwest, south, southeast.",
+    "a": "southwest",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          30.0,
+          59.0
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_areatrend_0_59",
+    "family": "areatrend",
+    "type": "mcq",
+    "q": "You are shown a sequence of mapped point clouds over time. From the first shown cloud to the last, does the mapped floor area grow, shrink, or stay about the same? Answer with exactly one word: grow, shrink, or same.",
+    "a": "grow",
+    "choices": [
+      "grow",
+      "shrink",
+      "same"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          0.0,
+          59.0
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_short_coverage_0_59",
+    "family": "direction",
+    "type": "mcq",
+    "q": "You are shown a sequence of mapped point clouds over time (world frame: +x is east, +y is north). In which compass direction, relative to the center of the first shown cloud, did the map gain most of its new coverage? Answer with exactly one of: east, northeast, north, northwest, west, southwest, south, southeast.",
+    "a": "southwest",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          0.0,
+          59.0
+        ]
+      ]
+    ],
+    "dataset": "go2_short"
+  },
+  {
+    "id": "go2_bigoffice_nearest_t10",
+    "family": "nearest",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown. Using the mapped point cloud, how far away is the nearest obstacle point at body height (z between 0.15 and 1.0 m), horizontal distance in meters? Answer with a single number.",
+    "a": 0.95,
+    "band": 0.28,
+    "context": [
+      [
+        "lidar",
+        [
+          9.94,
+          10.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          9.5,
+          10.1
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_area_t10",
+    "family": "area",
+    "type": "numeric",
+    "q": "Consider the local map point cloud shown. Roughly how many square meters of floor plan does it cover (footprint of the mapped points projected onto the x-y plane)? Answer with a single number.",
+    "a": 32.5,
+    "band": 8.1,
+    "context": [
+      [
+        "lidar",
+        [
+          9.94,
+          10.04
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_nearest_t80",
+    "family": "nearest",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown. Using the mapped point cloud, how far away is the nearest obstacle point at body height (z between 0.15 and 1.0 m), horizontal distance in meters? Answer with a single number.",
+    "a": 0.29,
+    "band": 0.25,
+    "context": [
+      [
+        "lidar",
+        [
+          79.84,
+          79.94
+        ]
+      ],
+      [
+        "odom",
+        [
+          79.5,
+          80.1
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_area_t80",
+    "family": "area",
+    "type": "numeric",
+    "q": "Consider the local map point cloud shown. Roughly how many square meters of floor plan does it cover (footprint of the mapped points projected onto the x-y plane)? Answer with a single number.",
+    "a": 29.8,
+    "band": 7.5,
+    "context": [
+      [
+        "lidar",
+        [
+          79.84,
+          79.94
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_nearest_t150",
+    "family": "nearest",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown. Using the mapped point cloud, how far away is the nearest obstacle point at body height (z between 0.15 and 1.0 m), horizontal distance in meters? Answer with a single number.",
+    "a": 0.97,
+    "band": 0.29,
+    "context": [
+      [
+        "lidar",
+        [
+          149.83,
+          149.93
+        ]
+      ],
+      [
+        "odom",
+        [
+          149.5,
+          150.1
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_area_t150",
+    "family": "area",
+    "type": "numeric",
+    "q": "Consider the local map point cloud shown. Roughly how many square meters of floor plan does it cover (footprint of the mapped points projected onto the x-y plane)? Answer with a single number.",
+    "a": 34.7,
+    "band": 8.7,
+    "context": [
+      [
+        "lidar",
+        [
+          149.83,
+          149.93
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_nearest_t220",
+    "family": "nearest",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown. Using the mapped point cloud, how far away is the nearest obstacle point at body height (z between 0.15 and 1.0 m), horizontal distance in meters? Answer with a single number.",
+    "a": 0.61,
+    "band": 0.25,
+    "context": [
+      [
+        "lidar",
+        [
+          219.89,
+          219.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          219.5,
+          220.1
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_area_t220",
+    "family": "area",
+    "type": "numeric",
+    "q": "Consider the local map point cloud shown. Roughly how many square meters of floor plan does it cover (footprint of the mapped points projected onto the x-y plane)? Answer with a single number.",
+    "a": 29.9,
+    "band": 7.5,
+    "context": [
+      [
+        "lidar",
+        [
+          219.89,
+          219.99
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_nearest_t285",
+    "family": "nearest",
+    "type": "numeric",
+    "q": "You are the robot; your current pose is the odom observation shown. Using the mapped point cloud, how far away is the nearest obstacle point at body height (z between 0.15 and 1.0 m), horizontal distance in meters? Answer with a single number.",
+    "a": 0.57,
+    "band": 0.25,
+    "context": [
+      [
+        "lidar",
+        [
+          284.83,
+          284.93
+        ]
+      ],
+      [
+        "odom",
+        [
+          284.5,
+          285.1
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_area_t285",
+    "family": "area",
+    "type": "numeric",
+    "q": "Consider the local map point cloud shown. Roughly how many square meters of floor plan does it cover (footprint of the mapped points projected onto the x-y plane)? Answer with a single number.",
+    "a": 22.5,
+    "band": 5.6,
+    "context": [
+      [
+        "lidar",
+        [
+          284.83,
+          284.93
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_shift_0_60",
+    "family": "shift",
+    "type": "numeric",
+    "q": "You are shown a sequence of local map point clouds over time (world coordinates). The local map follows the robot. Roughly how far did the center of the mapped region move from the first shown cloud to the last, in meters? Answer with a single number.",
+    "a": 18.4,
+    "band": 5.5,
+    "context": [
+      [
+        "lidar",
+        [
+          0.0,
+          60.0
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_direction_0_60",
+    "family": "direction",
+    "type": "mcq",
+    "q": "You are shown a sequence of local map point clouds over time (world frame: +x is east, +y is north). The local map follows the robot. In which compass direction did the mapped region's center move overall? Answer with exactly one of: east, northeast, north, northwest, west, southwest, south, southeast.",
+    "a": "southeast",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          0.0,
+          60.0
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_shift_60_150",
+    "family": "shift",
+    "type": "numeric",
+    "q": "You are shown a sequence of local map point clouds over time (world coordinates). The local map follows the robot. Roughly how far did the center of the mapped region move from the first shown cloud to the last, in meters? Answer with a single number.",
+    "a": 10.6,
+    "band": 3.2,
+    "context": [
+      [
+        "lidar",
+        [
+          60.0,
+          150.0
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_direction_60_150",
+    "family": "direction",
+    "type": "mcq",
+    "q": "You are shown a sequence of local map point clouds over time (world frame: +x is east, +y is north). The local map follows the robot. In which compass direction did the mapped region's center move overall? Answer with exactly one of: east, northeast, north, northwest, west, southwest, south, southeast.",
+    "a": "south",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          60.0,
+          150.0
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_shift_150_240",
+    "family": "shift",
+    "type": "numeric",
+    "q": "You are shown a sequence of local map point clouds over time (world coordinates). The local map follows the robot. Roughly how far did the center of the mapped region move from the first shown cloud to the last, in meters? Answer with a single number.",
+    "a": 23.3,
+    "band": 7.0,
+    "context": [
+      [
+        "lidar",
+        [
+          150.0,
+          240.0
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_direction_150_240",
+    "family": "direction",
+    "type": "mcq",
+    "q": "You are shown a sequence of local map point clouds over time (world frame: +x is east, +y is north). The local map follows the robot. In which compass direction did the mapped region's center move overall? Answer with exactly one of: east, northeast, north, northwest, west, southwest, south, southeast.",
+    "a": "north",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          150.0,
+          240.0
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_shift_200_291",
+    "family": "shift",
+    "type": "numeric",
+    "q": "You are shown a sequence of local map point clouds over time (world coordinates). The local map follows the robot. Roughly how far did the center of the mapped region move from the first shown cloud to the last, in meters? Answer with a single number.",
+    "a": 13.1,
+    "band": 3.9,
+    "context": [
+      [
+        "lidar",
+        [
+          200.0,
+          291.0
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_direction_200_291",
+    "family": "direction",
+    "type": "mcq",
+    "q": "You are shown a sequence of local map point clouds over time (world frame: +x is east, +y is north). The local map follows the robot. In which compass direction did the mapped region's center move overall? Answer with exactly one of: east, northeast, north, northwest, west, southwest, south, southeast.",
+    "a": "west",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          200.0,
+          291.0
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_shift_0_291",
+    "family": "shift",
+    "type": "numeric",
+    "q": "You are shown a sequence of local map point clouds over time (world coordinates). The local map follows the robot. Roughly how far did the center of the mapped region move from the first shown cloud to the last, in meters? Answer with a single number.",
+    "a": 13.9,
+    "band": 4.2,
+    "context": [
+      [
+        "lidar",
+        [
+          0.0,
+          291.0
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  },
+  {
+    "id": "go2_bigoffice_direction_0_291",
+    "family": "direction",
+    "type": "mcq",
+    "q": "You are shown a sequence of local map point clouds over time (world frame: +x is east, +y is north). The local map follows the robot. In which compass direction did the mapped region's center move overall? Answer with exactly one of: east, northeast, north, northwest, west, southwest, south, southeast.",
+    "a": "south",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          0.0,
+          291.0
+        ]
+      ]
+    ],
+    "dataset": "go2_bigoffice"
+  }
+]

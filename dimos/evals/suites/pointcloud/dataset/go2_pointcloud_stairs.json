@@ -1,0 +1,134 @@
+[
+  {
+    "id": "go2_stairs_20260819_stairs_t75",
+    "family": "stairs",
+    "type": "coords",
+    "q": "You are shown the point cloud the robot mapped (world frame: +x is east, +y is north, coordinates in meters). Are there any stairs or steps in what you can see? If there are, give the world coordinate of the middle of each one and how far it rises from bottom to top in meters. Answer with the single word none, or with one line per staircase as x,y,rise \u2014 nothing else.",
+    "a": [
+      [
+        9.0,
+        4.1,
+        0.45
+      ]
+    ],
+    "radius": 1.2,
+    "value_band": 0.15,
+    "context": [
+      [
+        "lidar",
+        [
+          74.82,
+          74.92
+        ]
+      ]
+    ],
+    "dataset": "go2_stairs_20260819"
+  },
+  {
+    "id": "go2_stairs_20260819_stairs_t95",
+    "family": "stairs",
+    "type": "coords",
+    "q": "You are shown the point cloud the robot mapped (world frame: +x is east, +y is north, coordinates in meters). Are there any stairs or steps in what you can see? If there are, give the world coordinate of the middle of each one and how far it rises from bottom to top in meters. Answer with the single word none, or with one line per staircase as x,y,rise \u2014 nothing else.",
+    "a": [
+      [
+        9.0,
+        4.1,
+        0.45
+      ]
+    ],
+    "radius": 1.2,
+    "value_band": 0.15,
+    "context": [
+      [
+        "lidar",
+        [
+          94.91,
+          95.01
+        ]
+      ]
+    ],
+    "dataset": "go2_stairs_20260819"
+  },
+  {
+    "id": "go2_stairs_20260819_stairs_t130",
+    "family": "stairs",
+    "type": "coords",
+    "q": "You are shown the point cloud the robot mapped (world frame: +x is east, +y is north, coordinates in meters). Are there any stairs or steps in what you can see? If there are, give the world coordinate of the middle of each one and how far it rises from bottom to top in meters. Answer with the single word none, or with one line per staircase as x,y,rise \u2014 nothing else.",
+    "a": [
+      [
+        9.0,
+        4.1,
+        0.45
+      ]
+    ],
+    "radius": 1.2,
+    "value_band": 0.15,
+    "context": [
+      [
+        "lidar",
+        [
+          129.84,
+          129.94
+        ]
+      ]
+    ],
+    "dataset": "go2_stairs_20260819"
+  },
+  {
+    "id": "go2_stairs_20260819_stairs_t3",
+    "family": "stairs",
+    "type": "coords",
+    "q": "You are shown the point cloud the robot mapped (world frame: +x is east, +y is north, coordinates in meters). Are there any stairs or steps in what you can see? If there are, give the world coordinate of the middle of each one and how far it rises from bottom to top in meters. Answer with the single word none, or with one line per staircase as x,y,rise \u2014 nothing else.",
+    "a": [],
+    "radius": 1.2,
+    "value_band": 0.15,
+    "context": [
+      [
+        "lidar",
+        [
+          2.89,
+          2.99
+        ]
+      ]
+    ],
+    "dataset": "go2_stairs_20260819"
+  },
+  {
+    "id": "go2_stairs_20260819_stairs_t23",
+    "family": "stairs",
+    "type": "coords",
+    "q": "You are shown the point cloud the robot mapped (world frame: +x is east, +y is north, coordinates in meters). Are there any stairs or steps in what you can see? If there are, give the world coordinate of the middle of each one and how far it rises from bottom to top in meters. Answer with the single word none, or with one line per staircase as x,y,rise \u2014 nothing else.",
+    "a": [],
+    "radius": 1.2,
+    "value_band": 0.15,
+    "context": [
+      [
+        "lidar",
+        [
+          22.86,
+          22.96
+        ]
+      ]
+    ],
+    "dataset": "go2_stairs_20260819"
+  },
+  {
+    "id": "go2_stairs_20260819_stairs_t25",
+    "family": "stairs",
+    "type": "coords",
+    "q": "You are shown the point cloud the robot mapped (world frame: +x is east, +y is north, coordinates in meters). Are there any stairs or steps in what you can see? If there are, give the world coordinate of the middle of each one and how far it rises from bottom to top in meters. Answer with the single word none, or with one line per staircase as x,y,rise \u2014 nothing else.",
+    "a": [],
+    "radius": 1.2,
+    "value_band": 0.15,
+    "context": [
+      [
+        "lidar",
+        [
+          24.94,
+          25.04
+        ]
+      ]
+    ],
+    "dataset": "go2_stairs_20260819"
+  }
+]

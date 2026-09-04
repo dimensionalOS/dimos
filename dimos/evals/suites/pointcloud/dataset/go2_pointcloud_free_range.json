@@ -1,0 +1,506 @@
+[
+  {
+    "id": "go2_agentic_20260819_freerange_t1400_p155",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Starting from the world point (5.88, 1.88), which single compass direction (north, north-east, east, and so on) could you travel furthest in a straight line over floor the lidar has mapped and found clear \u2014 nothing standing on it above z = 0.15 m \u2014 before you would reach something above that height or run off the edge of what the lidar mapped? Measure no further than 2.6 m in any direction, since the mapped area is closer than that on some sides. Using only the mapped point cloud, answer with the single most open direction, or none if no direction stays clear for even 2 m.",
+    "a": "south",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast",
+      "none"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1399.89,
+          1399.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          1399.5,
+          1400.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1450_p102",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Starting from the world point (-1.38, -1.12), which single compass direction (north, north-east, east, and so on) could you travel furthest in a straight line over floor the lidar has mapped and found clear \u2014 nothing standing on it above z = 0.15 m \u2014 before you would reach something above that height or run off the edge of what the lidar mapped? Measure no further than 2.4 m in any direction, since the mapped area is closer than that on some sides. Using only the mapped point cloud, answer with the single most open direction, or none if no direction stays clear for even 2 m.",
+    "a": "north",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast",
+      "none"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1449.85,
+          1449.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1449.5,
+          1450.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t900_p67",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Starting from the world point (-1.88, -2.12), which single compass direction (north, north-east, east, and so on) could you travel furthest in a straight line over floor the lidar has mapped and found clear \u2014 nothing standing on it above z = 0.15 m \u2014 before you would reach something above that height or run off the edge of what the lidar mapped? Measure no further than 2.6 m in any direction, since the mapped area is closer than that on some sides. Using only the mapped point cloud, answer with the single most open direction, or none if no direction stays clear for even 2 m.",
+    "a": "north",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast",
+      "none"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          899.93,
+          900.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          899.5,
+          900.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_freerange_t100_p152",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Starting from the world point (3.12, 2.38), which single compass direction (north, north-east, east, and so on) could you travel furthest in a straight line over floor the lidar has mapped and found clear \u2014 nothing standing on it above z = 0.15 m \u2014 before you would reach something above that height or run off the edge of what the lidar mapped? Measure no further than 3.0 m in any direction, since the mapped area is closer than that on some sides. Using only the mapped point cloud, answer with the single most open direction, or none if no direction stays clear for even 2 m.",
+    "a": "southwest",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast",
+      "none"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          99.88,
+          99.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          99.5,
+          100.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_freerange_t108_p122",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Starting from the world point (1.12, 1.38), which single compass direction (north, north-east, east, and so on) could you travel furthest in a straight line over floor the lidar has mapped and found clear \u2014 nothing standing on it above z = 0.15 m \u2014 before you would reach something above that height or run off the edge of what the lidar mapped? Measure no further than 2.3 m in any direction, since the mapped area is closer than that on some sides. Using only the mapped point cloud, answer with the single most open direction, or none if no direction stays clear for even 2 m.",
+    "a": "southwest",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast",
+      "none"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          107.93,
+          108.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          107.5,
+          108.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t750_p58",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Starting from the world point (-2.38, -2.38), which single compass direction (north, north-east, east, and so on) could you travel furthest in a straight line over floor the lidar has mapped and found clear \u2014 nothing standing on it above z = 0.15 m \u2014 before you would reach something above that height or run off the edge of what the lidar mapped? Measure no further than 2.0 m in any direction, since the mapped area is closer than that on some sides. Using only the mapped point cloud, answer with the single most open direction, or none if no direction stays clear for even 2 m.",
+    "a": "none",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast",
+      "none"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          749.9,
+          750.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          749.5,
+          750.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_freerange_t25_p54",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Starting from the world point (1.62, -0.88), which single compass direction (north, north-east, east, and so on) could you travel furthest in a straight line over floor the lidar has mapped and found clear \u2014 nothing standing on it above z = 0.15 m \u2014 before you would reach something above that height or run off the edge of what the lidar mapped? Measure no further than 2.1 m in any direction, since the mapped area is closer than that on some sides. Using only the mapped point cloud, answer with the single most open direction, or none if no direction stays clear for even 2 m.",
+    "a": "none",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast",
+      "none"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          24.87,
+          24.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          24.5,
+          25.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_freerange_t48_p88",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Starting from the world point (5.12, 2.12), which single compass direction (north, north-east, east, and so on) could you travel furthest in a straight line over floor the lidar has mapped and found clear \u2014 nothing standing on it above z = 0.15 m \u2014 before you would reach something above that height or run off the edge of what the lidar mapped? Measure no further than 2.0 m in any direction, since the mapped area is closer than that on some sides. Using only the mapped point cloud, answer with the single most open direction, or none if no direction stays clear for even 2 m.",
+    "a": "none",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast",
+      "none"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          47.82,
+          47.92
+        ]
+      ],
+      [
+        "odom",
+        [
+          47.5,
+          48.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_short_freerange_t12_p187",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Starting from the world point (-1.12, 10.88), which single compass direction (north, north-east, east, and so on) could you travel furthest in a straight line over floor the lidar has mapped and found clear \u2014 nothing standing on it above z = 0.15 m \u2014 before you would reach something above that height or run off the edge of what the lidar mapped? Measure no further than 2.0 m in any direction, since the mapped area is closer than that on some sides. Using only the mapped point cloud, answer with the single most open direction, or none if no direction stays clear for even 2 m.",
+    "a": "none",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast",
+      "none"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          11.9,
+          12.0
+        ]
+      ],
+      [
+        "odom",
+        [
+          11.5,
+          12.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short",
+    "split": "train"
+  },
+  {
+    "id": "go2_short_freerange_t44_p106",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Starting from the world point (2.62, 3.88), which single compass direction (north, north-east, east, and so on) could you travel furthest in a straight line over floor the lidar has mapped and found clear \u2014 nothing standing on it above z = 0.15 m \u2014 before you would reach something above that height or run off the edge of what the lidar mapped? Measure no further than 2.0 m in any direction, since the mapped area is closer than that on some sides. Using only the mapped point cloud, answer with the single most open direction, or none if no direction stays clear for even 2 m.",
+    "a": "none",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast",
+      "none"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          43.88,
+          43.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          43.5,
+          44.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t100_p116",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Starting from the world point (0.62, -0.62), which single compass direction (north, north-east, east, and so on) could you travel furthest in a straight line over floor the lidar has mapped and found clear \u2014 nothing standing on it above z = 0.15 m \u2014 before you would reach something above that height or run off the edge of what the lidar mapped? Measure no further than 2.1 m in any direction, since the mapped area is closer than that on some sides. Using only the mapped point cloud, answer with the single most open direction, or none if no direction stays clear for even 2 m.",
+    "a": "west",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast",
+      "none"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          99.92,
+          100.02
+        ]
+      ],
+      [
+        "odom",
+        [
+          99.5,
+          100.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1125_p146",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Starting from the world point (-1.62, 0.38), which single compass direction (north, north-east, east, and so on) could you travel furthest in a straight line over floor the lidar has mapped and found clear \u2014 nothing standing on it above z = 0.15 m \u2014 before you would reach something above that height or run off the edge of what the lidar mapped? Measure no further than 2.4 m in any direction, since the mapped area is closer than that on some sides. Using only the mapped point cloud, answer with the single most open direction, or none if no direction stays clear for even 2 m.",
+    "a": "southeast",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast",
+      "none"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1124.85,
+          1124.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1124.5,
+          1125.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t1200_p233",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Starting from the world point (-0.88, 4.38), which single compass direction (north, north-east, east, and so on) could you travel furthest in a straight line over floor the lidar has mapped and found clear \u2014 nothing standing on it above z = 0.15 m \u2014 before you would reach something above that height or run off the edge of what the lidar mapped? Measure no further than 2.2 m in any direction, since the mapped area is closer than that on some sides. Using only the mapped point cloud, answer with the single most open direction, or none if no direction stays clear for even 2 m.",
+    "a": "none",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast",
+      "none"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          1199.89,
+          1199.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          1199.5,
+          1200.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_freerange_t500_p30",
+    "family": "free_range",
+    "type": "mcq",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Starting from the world point (-2.88, -4.38), which single compass direction (north, north-east, east, and so on) could you travel furthest in a straight line over floor the lidar has mapped and found clear \u2014 nothing standing on it above z = 0.15 m \u2014 before you would reach something above that height or run off the edge of what the lidar mapped? Measure no further than 2.0 m in any direction, since the mapped area is closer than that on some sides. Using only the mapped point cloud, answer with the single most open direction, or none if no direction stays clear for even 2 m.",
+    "a": "none",
+    "choices": [
+      "east",
+      "northeast",
+      "north",
+      "northwest",
+      "west",
+      "southwest",
+      "south",
+      "southeast",
+      "none"
+    ],
+    "context": [
+      [
+        "lidar",
+        [
+          499.95,
+          500.05
+        ]
+      ],
+      [
+        "odom",
+        [
+          499.5,
+          500.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  }
+]

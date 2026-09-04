@@ -1,0 +1,407 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Row generators and the row reader for the point-cloud suites.
+
+Ground truth comes from the full-resolution cloud and odom; the case quizzes
+whatever the agent is shown. This module extends the shared reader in
+:mod:`dimos.evals.suites.lib.generate` with what only these suites use:
+
+- the ``coords`` row type — an open-ended point list, ``"a": [[x, y], ...]``
+  or ``[[x, y, value], ...]``, ``[]`` for "there are none" — scored by
+  :func:`~dimos.evals.suites.pointcloud.lib.scorers.matched_set` within
+  ``radius`` (and ``value_band`` on the third element);
+- a context entry's optional third element, ``[stream, [t0, t1], fuse]``,
+  which fuses that window into one cloud; see :func:`select_of`.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any, cast
+
+import numpy as np
+
+from dimos.evals.suites.lib import generate as shared
+from dimos.evals.suites.lib.generate import Row, _dataset
+from dimos.evals.suites.pointcloud.lib.scorers import coord_list, matched_set
+from dimos.evals.types import EvalCase, Outcome, Select
+
+if TYPE_CHECKING:
+    from dimos.memory.store.base import Store
+
+__all__ = ["Row", "_dataset"]
+
+COMPASS = ("east", "northeast", "north", "northwest", "west", "southwest", "south", "southeast")
+BODY_Z = (0.15, 1.0)  # world-frame band: above floor returns, below robot cap
+VOXEL = 0.2
+
+
+def _compass_of(v: np.ndarray) -> str:
+    return COMPASS[int(np.round(np.arctan2(v[1], v[0]) / (np.pi / 4))) % 8]
+
+
+def _voxels2d(pts: np.ndarray, cell: float = VOXEL) -> set[tuple[int, int]]:
+    return set(map(tuple, np.floor(pts[:, :2] / cell).astype(int)))
+
+
+def _frame_at(store: Store, t: float) -> tuple[Any, list[list[object]]]:
+    """The last cloud at or before ``t``, plus a context window selecting it."""
+    lidar = store.streams.lidar
+    obs = lidar.range_time(0, t).to_list()[-1]
+    ts = obs.ts - lidar.first().ts
+    return obs.data, [["lidar", [round(ts - 0.05, 2), round(ts + 0.05, 2)]]]
+
+
+def _cloud_at(store: Store, t: float) -> tuple[np.ndarray, list[list[object]]]:
+    """Points of the last cloud at or before ``t``, plus its context window."""
+    cloud, context = _frame_at(store, t)
+    return cloud.points_f32(), context
+
+
+def _odom_at(store: Store, t: float) -> np.ndarray:
+    """The robot's x-y position at or before ``t``, world meters."""
+    position = store.streams.odom.range_time(0, t).to_list()[-1].data.position
+    return np.array([float(position.x), float(position.y)])
+
+
+def _cell_grid(
+    pts: np.ndarray, cell: float, *, bounds: tuple[np.ndarray, np.ndarray] | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Per x-y cell return count, lowest z and highest z, as ``(origin, count, zmin, zmax)``.
+
+    Cells are ``cell`` squares aligned to multiples of ``cell`` in world x and
+    y, so a question can name a cell by any point inside it. ``bounds`` widens
+    the grid past the cloud (a goal outside the sensing window is then an empty
+    cell, not an index error). Arrays are ``[row=y, col=x]``.
+    """
+    xy = pts[:, :2]
+    lo, hi = xy.min(axis=0), xy.max(axis=0)
+    if bounds is not None:
+        lo, hi = np.minimum(lo, bounds[0]), np.maximum(hi, bounds[1])
+    origin = np.floor(lo / cell) * cell
+    shape = np.floor((hi - origin) / cell).astype(np.int64) + 1
+    nx, ny = int(shape[0]), int(shape[1])
+    ij = np.floor((xy - origin) / cell).astype(np.int64)
+    lin = ij[:, 1] * nx + ij[:, 0]
+    count = np.bincount(lin, minlength=nx * ny).reshape(ny, nx)
+    zmin = np.full(nx * ny, np.inf)
+    zmax = np.full(nx * ny, -np.inf)
+    np.minimum.at(zmin, lin, pts[:, 2])
+    np.maximum.at(zmax, lin, pts[:, 2])
+    return origin, count, zmin.reshape(ny, nx), zmax.reshape(ny, nx)
+
+
+def _cell_centers(
+    origin: np.ndarray, cell: float, shape: tuple[int, ...]
+) -> tuple[np.ndarray, np.ndarray]:
+    """World x and y of every cell centre of a ``_cell_grid`` array, as two ``[row, col]`` arrays."""
+    rows, cols = np.mgrid[0 : shape[0], 0 : shape[1]]
+    return origin[0] + (cols + 0.5) * cell, origin[1] + (rows + 0.5) * cell
+
+
+def _cell_index(origin: np.ndarray, cell: float, point: np.ndarray) -> tuple[int, int]:
+    """``(row, col)`` of the cell containing ``point``."""
+    return int(np.floor((point[1] - origin[1]) / cell)), int(
+        np.floor((point[0] - origin[0]) / cell)
+    )
+
+
+def extent_rows(dataset: str, timestamps: Sequence[float]) -> list[Row]:
+    """Largest horizontal bbox side of a single cloud."""
+    with _dataset(dataset) as store:
+        rows: list[Row] = []
+        for t in timestamps:
+            pts, context = _cloud_at(store, t)
+            a = round(float(max(np.ptp(pts[:, 0]), np.ptp(pts[:, 1]))), 2)
+            rows.append(
+                {
+                    "id": f"{dataset}_extent_t{t:g}",
+                    "family": "extent",
+                    "type": "numeric",
+                    "q": "Consider the mapped point cloud shown. What is its largest "
+                    "horizontal extent (the longer side of its axis-aligned "
+                    "bounding box in the x-y plane), in meters? Answer with a single number.",
+                    "a": a,
+                    "band": round(max(0.5, 0.10 * a), 2),
+                    "context": context,
+                    "dataset": dataset,
+                }
+            )
+        return rows
+
+
+def zspan_rows(dataset: str, timestamps: Sequence[float]) -> list[Row]:
+    """Vertical span of a single cloud."""
+    with _dataset(dataset) as store:
+        rows: list[Row] = []
+        for t in timestamps:
+            pts, context = _cloud_at(store, t)
+            rows.append(
+                {
+                    "id": f"{dataset}_zspan_t{t:g}",
+                    "family": "zspan",
+                    "type": "numeric",
+                    "q": "Consider the mapped point cloud shown. What is its vertical "
+                    "span (max z minus min z), in meters? Answer with a single number.",
+                    "a": round(float(np.ptp(pts[:, 2])), 2),
+                    "band": 0.3,
+                    "context": context,
+                    "dataset": dataset,
+                }
+            )
+        return rows
+
+
+def footprint_rows(dataset: str, timestamps: Sequence[float], *, cell: float = VOXEL) -> list[Row]:
+    """Mapped floor area of a single cloud (occupied x-y cells)."""
+    with _dataset(dataset) as store:
+        rows: list[Row] = []
+        for t in timestamps:
+            pts, context = _cloud_at(store, t)
+            area = round(len(_voxels2d(pts, cell)) * cell * cell, 1)
+            rows.append(
+                {
+                    "id": f"{dataset}_area_t{t:g}",
+                    "family": "area",
+                    "type": "numeric",
+                    "q": "Consider the local map point cloud shown. Roughly how many "
+                    "square meters of floor plan does it cover (footprint of the "
+                    "mapped points projected onto the x-y plane)? Answer with a single number.",
+                    "a": area,
+                    "band": round(max(3.0, 0.25 * area), 1),
+                    "context": context,
+                    "dataset": dataset,
+                }
+            )
+        return rows
+
+
+def nearest_obstacle_rows(
+    dataset: str, timestamps: Sequence[float], *, z_band: tuple[float, float] = BODY_Z
+) -> list[Row]:
+    """Horizontal clearance from the robot's own pose to the nearest body-height
+    point — the only family that needs two streams (cloud + odom)."""
+    with _dataset(dataset) as store:
+        rows: list[Row] = []
+        for t in timestamps:
+            pts, context = _cloud_at(store, t)
+            odom = store.streams.odom.range_time(0, t).to_list()[-1].data.position
+            band = pts[(pts[:, 2] >= z_band[0]) & (pts[:, 2] <= z_band[1])]
+            d = np.hypot(band[:, 0] - odom.x, band[:, 1] - odom.y)
+            d = d[d > 0.15]  # the robot's own return
+            a = round(float(d.min()), 2)
+            rows.append(
+                {
+                    "id": f"{dataset}_nearest_t{t:g}",
+                    "family": "nearest",
+                    "type": "numeric",
+                    "q": "You are the robot; your current pose is the odom observation "
+                    f"shown. Using the mapped point cloud, how far away is the "
+                    f"nearest obstacle point at body height (z between {z_band[0]} "
+                    f"and {z_band[1]} m), horizontal distance in meters? Answer with a single "
+                    "number.",
+                    "a": a,
+                    "band": round(max(0.25, 0.30 * a), 2),
+                    "context": [
+                        *context,
+                        ["odom", [round(max(0.0, t - 0.5), 2), round(t + 0.1, 2)]],
+                    ],
+                    "dataset": dataset,
+                }
+            )
+        return rows
+
+
+def map_shift_rows(dataset: str, windows: Sequence[tuple[float, float]]) -> list[Row]:
+    """How far the mapped region's center moved across a window. Meaningful only
+    where the cloud is a rolling local map, not an accumulated one."""
+    with _dataset(dataset) as store:
+        rows: list[Row] = []
+        for w0, w1 in windows:
+            frames = store.streams.lidar.range_time(w0, w1).to_list()
+            shift = frames[-1].data.points_f32()[:, :2].mean(axis=0) - frames[0].data.points_f32()[
+                :, :2
+            ].mean(axis=0)
+            s = round(float(np.hypot(*shift)), 1)
+            rows.append(
+                {
+                    "id": f"{dataset}_shift_{w0:g}_{w1:g}",
+                    "family": "shift",
+                    "type": "numeric",
+                    "q": "You are shown a sequence of local map point clouds over "
+                    "time (world coordinates). The local map follows the robot. "
+                    "Roughly how far did the center of the mapped region move "
+                    "from the first shown cloud to the last, in meters? Answer with a single "
+                    "number.",
+                    "a": s,
+                    "band": round(max(1.0, 0.30 * s), 1),
+                    "context": [["lidar", [w0, w1]]],
+                    "dataset": dataset,
+                }
+            )
+        return rows
+
+
+def map_direction_rows(
+    dataset: str, windows: Sequence[tuple[float, float]], *, min_shift: float = 1.0
+) -> list[Row]:
+    """Compass direction the mapped region's center travelled. Windows whose
+    shift is under ``min_shift`` are skipped — the answer would be noise."""
+    with _dataset(dataset) as store:
+        rows: list[Row] = []
+        for w0, w1 in windows:
+            frames = store.streams.lidar.range_time(w0, w1).to_list()
+            shift = frames[-1].data.points_f32()[:, :2].mean(axis=0) - frames[0].data.points_f32()[
+                :, :2
+            ].mean(axis=0)
+            if np.hypot(*shift) < min_shift:
+                continue
+            rows.append(
+                {
+                    "id": f"{dataset}_direction_{w0:g}_{w1:g}",
+                    "family": "direction",
+                    "type": "mcq",
+                    "q": "You are shown a sequence of local map point clouds over "
+                    "time (world frame: +x is east, +y is north). The local map "
+                    "follows the robot. In which compass direction did the "
+                    "mapped region's center move overall? Answer with exactly "
+                    "one of: " + ", ".join(COMPASS) + ".",
+                    "a": _compass_of(shift),
+                    "choices": list(COMPASS),
+                    "context": [["lidar", [w0, w1]]],
+                    "dataset": dataset,
+                }
+            )
+        return rows
+
+
+def area_trend_rows(dataset: str, windows: Sequence[tuple[float, float]]) -> list[Row]:
+    """Grow / shrink / same over a window — a 3-way MCQ, so a blind guess floors
+    at ~0.33 rather than the ~0.5 a yes/no would give away."""
+    with _dataset(dataset) as store:
+        rows: list[Row] = []
+        for w0, w1 in windows:
+            frames = store.streams.lidar.range_time(w0, w1).to_list()
+            first = _voxels2d(frames[0].data.points_f32())
+            last = _voxels2d(frames[-1].data.points_f32())
+            ratio = len(last) / max(1, len(first))
+            rows.append(
+                {
+                    "id": f"{dataset}_areatrend_{w0:g}_{w1:g}",
+                    "family": "areatrend",
+                    "type": "mcq",
+                    "q": "You are shown a sequence of mapped point clouds over time. "
+                    "From the first shown cloud to the last, does the mapped "
+                    "floor area grow, shrink, or stay about the same? Answer "
+                    "with exactly one word: grow, shrink, or same.",
+                    "a": "grow" if ratio > 1.05 else ("shrink" if ratio < 0.95 else "same"),
+                    "choices": ["grow", "shrink", "same"],
+                    "context": [["lidar", [w0, w1]]],
+                    "dataset": dataset,
+                }
+            )
+        return rows
+
+
+def coverage_direction_rows(
+    dataset: str, windows: Sequence[tuple[float, float]], *, min_new_cells: int = 50
+) -> list[Row]:
+    """Compass direction of newly mapped coverage, for accumulated maps (where
+    :func:`map_direction_rows` degenerates because the center barely moves)."""
+    with _dataset(dataset) as store:
+        rows: list[Row] = []
+        for w0, w1 in windows:
+            frames = store.streams.lidar.range_time(w0, w1).to_list()
+            first = _voxels2d(frames[0].data.points_f32())
+            new = np.array(sorted(_voxels2d(frames[-1].data.points_f32()) - first))
+            if len(new) < min_new_cells:
+                continue
+            gained = new.mean(axis=0) * VOXEL - np.array(sorted(first)).mean(axis=0) * VOXEL
+            rows.append(
+                {
+                    "id": f"{dataset}_coverage_{w0:g}_{w1:g}",
+                    "family": "direction",
+                    "type": "mcq",
+                    "q": "You are shown a sequence of mapped point clouds over time "
+                    "(world frame: +x is east, +y is north). In which compass "
+                    "direction, relative to the center of the first shown cloud, "
+                    "did the map gain most of its new coverage? Answer with "
+                    "exactly one of: " + ", ".join(COMPASS) + ".",
+                    "a": _compass_of(gained),
+                    "choices": list(COMPASS),
+                    "context": [["lidar", [w0, w1]]],
+                    "dataset": dataset,
+                }
+            )
+        return rows
+
+
+def select_of(entry: Sequence[Any]) -> Select:
+    """One context entry -> the stream the case contains.
+
+    A two-element entry is the plain window the shared reader gives. With a
+    third, ``fuse``, the window is thinned to every ``downsample``-th frame
+    and accumulated into a single voxel map (``emit_every=0`` yields once, at
+    the end), so a long stretch of driving reaches the agent as one fused
+    cloud rather than as snapshots of a rolling local map.
+    """
+    if len(entry) < 3:
+        return shared.select_of(entry)
+    name, window = str(entry[0]), tuple(cast("list[float]", entry[1]))
+    fuse = cast("dict[str, Any]", entry[2])
+
+    # Lazy so that suites that never fuse do not import open3d.
+    from dimos.mapping.voxels.module import VoxelMapTransformer
+    from dimos.memory.transform import downsample
+
+    def select(s: Store) -> Any:
+        return (
+            s.streams[name]
+            .range_time(*window)
+            .transform(downsample(int(fuse.get("downsample", 1))))
+            .transform(
+                VoxelMapTransformer(
+                    voxel_size=float(fuse.get("voxel_size", 0.05)),
+                    device=str(fuse.get("device", "CPU:0")),
+                    emit_every=0,
+                )
+            )
+        )
+
+    return select
+
+
+def grade_of(row: Row) -> Callable[[Outcome], float]:
+    """``coords`` rows score on set overlap within a radius; every other type
+    grades as the shared reader does. An unreadable reply scores 0."""
+    if row["type"] != "coords":
+        return shared.grade_of(row)
+    points = [tuple(c) for c in cast("list[list[float]]", row["a"])]
+    overlap = matched_set(
+        float(cast("float", row["radius"])), cast("float | None", row.get("value_band"))
+    )
+
+    def coords(o: Outcome) -> float:
+        try:
+            return overlap(points, coord_list(o.trajectory.final_answer))
+        except ValueError:
+            return 0.0
+
+    return coords
+
+
+def cases(rows: Sequence[Row], *, tags: frozenset[str] = frozenset()) -> list[EvalCase]:
+    """The shared reader with this module's ``grade_of`` and ``select_of``."""
+    return shared.cases(rows, tags=tags, grade_of=grade_of, select_of=select_of)

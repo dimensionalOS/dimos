@@ -1,0 +1,442 @@
+[
+  {
+    "id": "go2_agentic_20260819_floorheight_t900",
+    "family": "floor_height",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Is any part of the floor within a few meters of you at a different level than the floor beneath you \u2014 noticeably raised or sunken? If so, give the middle of each such area and how far it sits above (positive) or below (negative) your level, as x,y,dz \u2014 one area per line. If the floor around you is all one level, answer level. Use only the mapped point cloud.",
+    "a": [
+      [
+        -4.14,
+        -1.85,
+        0.25
+      ]
+    ],
+    "radius": 1.2,
+    "value_band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          899.93,
+          900.03
+        ]
+      ],
+      [
+        "odom",
+        [
+          899.5,
+          900.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_floorheight_t25",
+    "family": "floor_height",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Is any part of the floor within a few meters of you at a different level than the floor beneath you \u2014 noticeably raised or sunken? If so, give the middle of each such area and how far it sits above (positive) or below (negative) your level, as x,y,dz \u2014 one area per line. If the floor around you is all one level, answer level. Use only the mapped point cloud.",
+    "a": [
+      [
+        0.4,
+        -0.06,
+        -0.29
+      ],
+      [
+        0.42,
+        1.12,
+        -0.2
+      ]
+    ],
+    "radius": 1.2,
+    "value_band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          24.87,
+          24.97
+        ]
+      ],
+      [
+        "odom",
+        [
+          24.5,
+          25.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_short_floorheight_t20",
+    "family": "floor_height",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Is any part of the floor within a few meters of you at a different level than the floor beneath you \u2014 noticeably raised or sunken? If so, give the middle of each such area and how far it sits above (positive) or below (negative) your level, as x,y,dz \u2014 one area per line. If the floor around you is all one level, answer level. Use only the mapped point cloud.",
+    "a": [
+      [
+        -2.69,
+        15.25,
+        0.49
+      ],
+      [
+        0.0,
+        17.12,
+        0.33
+      ]
+    ],
+    "radius": 1.2,
+    "value_band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          19.85,
+          19.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          19.5,
+          20.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short",
+    "split": "train"
+  },
+  {
+    "id": "go2_short_floorheight_t58",
+    "family": "floor_height",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Is any part of the floor within a few meters of you at a different level than the floor beneath you \u2014 noticeably raised or sunken? If so, give the middle of each such area and how far it sits above (positive) or below (negative) your level, as x,y,dz \u2014 one area per line. If the floor around you is all one level, answer level. Use only the mapped point cloud.",
+    "a": [
+      [
+        -4.38,
+        5.66,
+        0.28
+      ]
+    ],
+    "radius": 1.2,
+    "value_band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          57.94,
+          58.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          57.5,
+          58.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short",
+    "split": "train"
+  },
+  {
+    "id": "go2_stairs_20260819_floorheight_t100",
+    "family": "floor_height",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Is any part of the floor within a few meters of you at a different level than the floor beneath you \u2014 noticeably raised or sunken? If so, give the middle of each such area and how far it sits above (positive) or below (negative) your level, as x,y,dz \u2014 one area per line. If the floor around you is all one level, answer level. Use only the mapped point cloud.",
+    "a": [
+      [
+        8.94,
+        4.2,
+        0.34
+      ]
+    ],
+    "radius": 1.2,
+    "value_band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          99.86,
+          99.96
+        ]
+      ],
+      [
+        "odom",
+        [
+          99.5,
+          100.1
+        ]
+      ]
+    ],
+    "dataset": "go2_stairs_20260819",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t500",
+    "family": "floor_height",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Is any part of the floor within a few meters of you at a different level than the floor beneath you \u2014 noticeably raised or sunken? If so, give the middle of each such area and how far it sits above (positive) or below (negative) your level, as x,y,dz \u2014 one area per line. If the floor around you is all one level, answer level. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.2,
+    "value_band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          499.95,
+          500.05
+        ]
+      ],
+      [
+        "odom",
+        [
+          499.5,
+          500.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_floorheight_t100",
+    "family": "floor_height",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Is any part of the floor within a few meters of you at a different level than the floor beneath you \u2014 noticeably raised or sunken? If so, give the middle of each such area and how far it sits above (positive) or below (negative) your level, as x,y,dz \u2014 one area per line. If the floor around you is all one level, answer level. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.2,
+    "value_band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          99.88,
+          99.98
+        ]
+      ],
+      [
+        "odom",
+        [
+          99.5,
+          100.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_floorheight_t130",
+    "family": "floor_height",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Is any part of the floor within a few meters of you at a different level than the floor beneath you \u2014 noticeably raised or sunken? If so, give the middle of each such area and how far it sits above (positive) or below (negative) your level, as x,y,dz \u2014 one area per line. If the floor around you is all one level, answer level. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.2,
+    "value_band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          129.91,
+          130.01
+        ]
+      ],
+      [
+        "odom",
+        [
+          129.5,
+          130.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_china_office_floorheight_t48",
+    "family": "floor_height",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Is any part of the floor within a few meters of you at a different level than the floor beneath you \u2014 noticeably raised or sunken? If so, give the middle of each such area and how far it sits above (positive) or below (negative) your level, as x,y,dz \u2014 one area per line. If the floor around you is all one level, answer level. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.2,
+    "value_band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          47.82,
+          47.92
+        ]
+      ],
+      [
+        "odom",
+        [
+          47.5,
+          48.1
+        ]
+      ]
+    ],
+    "dataset": "go2_china_office",
+    "split": "train"
+  },
+  {
+    "id": "go2_short_floorheight_t5",
+    "family": "floor_height",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Is any part of the floor within a few meters of you at a different level than the floor beneath you \u2014 noticeably raised or sunken? If so, give the middle of each such area and how far it sits above (positive) or below (negative) your level, as x,y,dz \u2014 one area per line. If the floor around you is all one level, answer level. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.2,
+    "value_band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          4.89,
+          4.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          4.5,
+          5.1
+        ]
+      ]
+    ],
+    "dataset": "go2_short",
+    "split": "train"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t1200",
+    "family": "floor_height",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Is any part of the floor within a few meters of you at a different level than the floor beneath you \u2014 noticeably raised or sunken? If so, give the middle of each such area and how far it sits above (positive) or below (negative) your level, as x,y,dz \u2014 one area per line. If the floor around you is all one level, answer level. Use only the mapped point cloud.",
+    "a": [
+      [
+        -2.0,
+        5.75,
+        0.42
+      ],
+      [
+        -1.0,
+        6.38,
+        0.29
+      ]
+    ],
+    "radius": 1.2,
+    "value_band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          1199.89,
+          1199.99
+        ]
+      ],
+      [
+        "odom",
+        [
+          1199.5,
+          1200.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t300",
+    "family": "floor_height",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Is any part of the floor within a few meters of you at a different level than the floor beneath you \u2014 noticeably raised or sunken? If so, give the middle of each such area and how far it sits above (positive) or below (negative) your level, as x,y,dz \u2014 one area per line. If the floor around you is all one level, answer level. Use only the mapped point cloud.",
+    "a": [
+      [
+        -0.5,
+        -1.75,
+        -0.2
+      ],
+      [
+        -1.0,
+        2.0,
+        -0.4
+      ]
+    ],
+    "radius": 1.2,
+    "value_band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          299.94,
+          300.04
+        ]
+      ],
+      [
+        "odom",
+        [
+          299.5,
+          300.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t100",
+    "family": "floor_height",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Is any part of the floor within a few meters of you at a different level than the floor beneath you \u2014 noticeably raised or sunken? If so, give the middle of each such area and how far it sits above (positive) or below (negative) your level, as x,y,dz \u2014 one area per line. If the floor around you is all one level, answer level. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.2,
+    "value_band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          99.92,
+          100.02
+        ]
+      ],
+      [
+        "odom",
+        [
+          99.5,
+          100.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  },
+  {
+    "id": "go2_agentic_20260819_floorheight_t1450",
+    "family": "floor_height",
+    "type": "coords",
+    "q": "You are the robot; your current pose is the odom observation shown (world frame: +x is east, +y is north, coordinates in meters). Is any part of the floor within a few meters of you at a different level than the floor beneath you \u2014 noticeably raised or sunken? If so, give the middle of each such area and how far it sits above (positive) or below (negative) your level, as x,y,dz \u2014 one area per line. If the floor around you is all one level, answer level. Use only the mapped point cloud.",
+    "a": [],
+    "radius": 1.2,
+    "value_band": 0.2,
+    "context": [
+      [
+        "lidar",
+        [
+          1449.85,
+          1449.95
+        ]
+      ],
+      [
+        "odom",
+        [
+          1449.5,
+          1450.1
+        ]
+      ]
+    ],
+    "dataset": "go2_agentic_20260819",
+    "split": "holdout"
+  }
+]

@@ -57,6 +57,7 @@ from dimos.evals.scorers import (
     within,
     yes_no,
 )
+from dimos.evals.suites.lib import generate
 from dimos.evals.types import (
     EvalCase,
     Observation,
@@ -241,6 +242,55 @@ def test_parsers() -> None:
     assert compass("north-east") == "northeast"  # not "east"
     with pytest.raises(ValueError):
         compass("no idea")
+
+
+def test_generated_rows_become_cases(dataset: str, tmp_path: Path) -> None:
+    """Every row type grades its reply; an unreadable reply is 0, not an error.
+    Family, type and split are tags; the context selects the stream."""
+
+    def row(**fields: Any) -> generate.Row:
+        return {"id": fields["id"], "family": "f", "q": "?", "dataset": dataset, **fields}
+
+    numeric, mcq = generate.cases(
+        [
+            row(
+                id="n",
+                type="numeric",
+                a=3.0,
+                band=1.0,
+                context=[["odom", [0, 10]]],
+                split="holdout",
+            ),
+            row(
+                id="m",
+                type="mcq",
+                a="north",
+                choices=["north", "south"],
+                context=[["odom", [0, 10]]],
+            ),
+        ],
+        tags=frozenset({"odom"}),
+    )
+
+    def score(case: EvalCase, answer: str) -> float:
+        return case.grade(Outcome(trajectory=_trajectory(answer, tmp_path), artifacts={}))
+
+    assert numeric.tags == {"odom", "f", "numeric", "holdout"} and mcq.tags == {"odom", "f", "mcq"}
+    assert score(numeric, "about 3.5") == 0.5 and score(numeric, "no idea") == 0.0
+    assert score(mcq, "South, then north.") == 1.0 and score(mcq, "east") == 0.0
+    with pytest.raises(ValueError):
+        generate.cases([row(id="x", type="coords", a=[], context=[["odom", [0, 10]]])])
+    with pytest.raises(ValueError):
+        generate.cases([row(id="x", type="numeric", a=1, band=1, context=[["odom", [0, 1], {}]])])
+    store = _open_store(Path(dataset))
+    running = numeric.environment.start("")
+    try:
+        window = [o.ts for o in store.streams.odom.range_time(0, 10)]
+        assert [s.name for s in running.streams] == ["odom"]
+        assert [o.ts for o in running.streams[0]] == window and window
+    finally:
+        numeric.environment.stop()
+        store.stop()
 
 
 # -- environments -------------------------------------------------------------------
@@ -683,7 +733,11 @@ def test_count_rooms_grader_scores_reply_and_coverage(tmp_path: Path) -> None:
     """Half credit for the exact room count, half for the fraction of room
     points the recorded odometry approached; an unparseable reply loses the
     count half but the world still scores."""
-    from dimos.evals.suites.dimsim_pointcloud_mapping import N_ROOMS, ROOMS, grade_rooms
+    from dimos.evals.suites.pointcloud.sim.dimsim_pointcloud_mapping import (
+        N_ROOMS,
+        ROOMS,
+        grade_rooms,
+    )
 
     radius = 1.5
     grade = grade_rooms(radius)
@@ -717,15 +771,46 @@ def test_suites_and_agents_importable() -> None:
     """Modules construct without data or network (lambdas stay lazy)."""
     from dimos.evals.cli import load_agent
     from dimos.evals.module import list_agents
-    from dimos.evals.suites import (
-        dimsim_house,
-        dimsim_pointcloud_mapping,
+    from dimos.evals.suites import dimsim_house, examples, go2_smoke, go2_vqa
+    from dimos.evals.suites.pointcloud.dataset import (
+        go2_pointcloud,
+        go2_pointcloud_clearance,
+        go2_pointcloud_doorway,
+        go2_pointcloud_floor_height,
+        go2_pointcloud_floor_level,
+        go2_pointcloud_free_disk,
+        go2_pointcloud_free_range,
+        go2_pointcloud_free_range_holdout,
+        go2_pointcloud_frontier,
+        go2_pointcloud_gap_width,
+        go2_pointcloud_glass,
+        go2_pointcloud_rooms,
+        go2_pointcloud_route,
+        go2_pointcloud_stairs,
+    )
+    from dimos.evals.suites.pointcloud.sim import dimsim_pointcloud_mapping
+
+    for module in (
         examples,
         go2_smoke,
         go2_vqa,
-    )
-
-    for module in (examples, go2_smoke, go2_vqa, dimsim_house, dimsim_pointcloud_mapping):
+        go2_pointcloud,
+        go2_pointcloud_clearance,
+        go2_pointcloud_doorway,
+        go2_pointcloud_floor_height,
+        go2_pointcloud_floor_level,
+        go2_pointcloud_free_disk,
+        go2_pointcloud_free_range,
+        go2_pointcloud_free_range_holdout,
+        go2_pointcloud_frontier,
+        go2_pointcloud_gap_width,
+        go2_pointcloud_glass,
+        go2_pointcloud_rooms,
+        go2_pointcloud_route,
+        go2_pointcloud_stairs,
+        dimsim_house,
+        dimsim_pointcloud_mapping,
+    ):
         assert module.SUITE, module.__name__
     agents = list_agents()
     assert {m.rsplit(".", 1)[1] for m in agents} == {"question_answer", "blind", "mcp_client", "pi"}
