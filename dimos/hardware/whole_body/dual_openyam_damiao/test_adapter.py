@@ -32,7 +32,7 @@ def adapter(mocker: MockerFixture) -> Iterator[DualOpenYamDamiaoAdapter]:
     mocker.patch.object(can_motor_control, "SocketCanBus", can_motor_control.MockCanBus)
     result = DualOpenYamDamiaoAdapter(
         runtime_config=DamiaoRuntimeConfig(
-            bus_addresses={"left": "can8", "right": "can9"},
+            bus_devices={"left": "can8", "right": "can9"},
             gravity_comp=False,
         )
     )

@@ -119,7 +119,7 @@ def test_openarm_hardware_uses_physical_adapter_with_explicit_can_ports() -> Non
     assert hardware.adapter_type == "openarm_damiao"
     runtime_config = hardware.adapter_kwargs["runtime_config"]
     assert isinstance(runtime_config, DamiaoRuntimeConfig)
-    assert runtime_config.bus_addresses == {"left": "can1", "right": "can0"}
+    assert runtime_config.bus_devices == {"left": "can1", "right": "can0"}
 
 
 @pytest.mark.parametrize(
