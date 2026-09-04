@@ -167,6 +167,7 @@ all_blueprints = {
     "xarm6-worldbelief": "dimos.experimental.world_belief.xarm6_blueprint:xarm6_worldbelief",
     "xarm7-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.robot.manipulators.xarm.blueprints.agentic:xarm7_planner_coordinator_agent",
+    "zed-mid360-record": "dimos.robot.assembly.zed_mid360.blueprints.zed_mid360_record:zed_mid360_record",
 }
 
 
@@ -318,4 +319,8 @@ all_modules = {
     "world-belief-recorder": "dimos.experimental.world_belief.worldbelief_recorder.WorldBeliefRecorder",
     "wrist-camera": "dimos.teleop.hosted.blueprints.cloudflare.WristCamera",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
+    "zed-imu": "dimos.hardware.sensors.camera.zed.sdkless_imu.ZedImu",
+    "zed-mid360-recorder": "dimos.robot.assembly.zed_mid360.record.ZedMid360Recorder",
+    "zed-mid360-static-tf": "dimos.robot.assembly.zed_mid360.assembly.ZedMid360StaticTf",
+    "zed-uvc-camera": "dimos.hardware.sensors.camera.zed.sdkless_camera.ZedUvcCamera",
 }
