@@ -36,6 +36,7 @@ OPENYAM_HARDWARE_ID = "openyam"
 OPENYAM_ARM_JOINTS = joint_names(OPENYAM_DOF, prefix="yam_joint")
 OPENYAM_GRIPPER_JOINT = "arm/gripper"
 OPENYAM_JOINTS = [*OPENYAM_ARM_JOINTS, OPENYAM_GRIPPER_JOINT]
+OPENYAM_HOME_JOINTS = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0]
 OPENYAM_PACKAGE = LfsPath("yam_description")
 OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
@@ -100,5 +101,7 @@ def make_openyam_model_config(
         auto_convert_meshes=True,
         collision_exclusion_pairs=[],
         gripper_hardware_id="arm",
-        home_joints=home_joints or [0.0] * OPENYAM_DOF,
+        home_joints=list(OPENYAM_HOME_JOINTS if home_joints is None else home_joints),
+        velocity_limits=[2.0] * OPENYAM_DOF,
+        max_velocity=2.0,
     )
