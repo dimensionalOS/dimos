@@ -134,6 +134,7 @@ Config(
         dimsim_headless=True,
         local_relay=False,
         relay_url=None,
+        relay_ca=None,
         dimos_cloud_url='https://api.dimensional.org',
         dimos_api_key=None
     ),
