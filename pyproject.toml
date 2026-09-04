@@ -517,6 +517,9 @@ docs = [
     "mkdocs-minify-plugin>=0.8.0",
     "mkdocs-redirects>=1.2.3",
 ]
+dev = [
+    "optuna>=4.9.0",
+]
 
 [tool.uv]
 required-version = ">=0.9.17"
@@ -703,6 +706,9 @@ module = [
     "pxr.*",
     "trimesh",
     "trimesh.*",
+    # dev-group only (tuning), so absent from the default sync and from CI
+    "optuna",
+    "optuna.*",
 ]
 ignore_missing_imports = true
 
