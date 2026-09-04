@@ -17,22 +17,22 @@
       "aarch64-darwin"
     ] (system: let
       pkgs = nixpkgs.legacyPackages.${system};
+      workspaceRoot = ../../../..;
+      # resolve the members straight from the workspace
+      workspaceMembers =
+        (builtins.fromTOML (builtins.readFile (workspaceRoot + "/Cargo.toml"))).workspace.members;
       dimos-memory-recorder = pkgs.rustPlatform.buildRustPackage {
         pname = "dimos-memory-recorder";
         version = "0.1.0";
         src = pkgs.lib.fileset.toSource {
-          root = ../../../..;
-          fileset = pkgs.lib.fileset.unions [
-            ../../../../Cargo.lock
-            ../../../../Cargo.toml
-            ../../../../dimos/experimental/memory/rust
-            ../../../../dimos/hardware/sensors/lidar/virtual_mid360
-            ../../../../dimos/mapping/ray_tracing/rust
-            ../../../../dimos/navigation/nav_3d/mls_planner/rust
-            ../../../../examples/native-modules/rust
-            ../../../../native/rust/dimos-module
-            ../../../../native/rust/dimos-module-macros
-          ];
+          root = workspaceRoot;
+          fileset = pkgs.lib.fileset.unions (
+            [
+              (workspaceRoot + "/Cargo.lock")
+              (workspaceRoot + "/Cargo.toml")
+            ]
+            ++ map (member: workspaceRoot + "/${member}") workspaceMembers
+          );
         };
 
         cargoLock = {

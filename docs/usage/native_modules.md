@@ -222,7 +222,7 @@ int main() {
 The config is a plain aggregate struct. `config.parse<PongConfig>()` reflects over its fields (via PFR, C++20), so the struct declaration is the whole contract: every field is required, unknown fields are rejected, and there is no limit on field count. Python owns all defaults and always sends every field. Add a `void validate() const` method for range checks. It runs automatically after parsing. Input handlers run serialized on the dispatch thread. Each output publishes through its own worker, so a slow channel only stalls itself. A source-style module with no inputs (a sensor driver) overrides `handle()` with its own loop and `setup()`/`teardown()` for device lifecycle.
 
 
-A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/native-modules/cpp/), and [`dimos/hardware/sensors/lidar/livox/cpp/main.cpp`](/dimos/hardware/sensors/lidar/livox/cpp/main.cpp) is a real driver example.
+A complete ping-pong pair lives at [/examples/native-modules/cpp/](/examples/native-modules/cpp/), and [`dimos/hardware/sensors/lidar/fastlio2/cpp/main.cpp`](/dimos/hardware/sensors/lidar/fastlio2/cpp/main.cpp) is a real driver example.
 
 ## Examples
 
@@ -230,7 +230,7 @@ For language interop examples (subscribing to dimOS topics from C++, TypeScript,
 
 ### Livox Mid-360 Module
 
-The Livox Mid-360 LiDAR driver is a complete example at [`dimos/hardware/sensors/lidar/livox/module.py`](/dimos/hardware/sensors/lidar/livox/module.py):
+The Livox Mid-360 LiDAR driver is a complete example at [`dimos/hardware/sensors/lidar/livox/module.py`](/dimos/hardware/sensors/lidar/livox/module.py), wrapping a Rust binary:
 
 ```python skip
 from dimos.core.stream import Out
@@ -240,15 +240,15 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.spec import perception
 
 class Mid360Config(NativeModuleConfig):
-    cwd: str | None = "cpp"
-    executable: str = "result/bin/mid360_native"
-    build_command: str | None = "nix build .#mid360_native"
-    host_ip: str = "192.168.1.5"
+    cwd: str | None = "rust"
+    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "mid360_native")
+    build_command: str | None = "cargo build --release"
+    host_ip: str | None = None  # auto-detected on the lidar's subnet
     lidar_ip: str = "192.168.1.155"
     frequency: float = 10.0
     enable_imu: bool = True
     frame_id: str = "lidar_link"
-    # ... SDK port configuration
+    # ... pcap replay and SDK port configuration
 
 class Mid360(NativeModule, perception.Lidar, perception.IMU):
     config: Mid360Config

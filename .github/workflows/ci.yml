@@ -249,6 +249,10 @@ jobs:
             dimos/navigation/nav_3d/mls_planner/test_transformer.py
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
+      - name: Native module e2e tests
+        run: |
+          cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
+          uv run pytest -m native_e2e dimos/hardware/sensors/lidar/livox/test_e2e.py --no-cov
 
   native:
     name: Native builds (C++ and Rust)
@@ -563,13 +567,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --group tests --frozen
       - name: Run tests
-        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e)'
+        run: uv run pytest --numprocesses=logical --cov=dimos/ --junitxml=junit.xml -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (self_hosted or mujoco or self_hosted_large or web_browser or bake_e2e or native_e2e)' && exit 1
         shell: bash
       - name: Print crash diagnostics
         if: failure()
@@ -740,6 +744,17 @@ jobs:
       - name: Fetch native modules from Cachix
         if: contains(matrix.markers, 'skipif_no_ros')
         run: python3 bin/build-native-modules
+      - name: Point cargo at a persistent cache on the workspace mount
+        if: contains(matrix.markers, 'self_hosted')
+        run: |
+          echo "RUSTUP_HOME=$(dirname "$RUNNER_WORKSPACE")/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$(dirname "$RUNNER_WORKSPACE")/cargo" >> "$GITHUB_ENV"
+      - name: Install Rust toolchain
+        if: contains(matrix.markers, 'self_hosted')
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build rust native modules
+        if: contains(matrix.markers, 'self_hosted')
+        run: cargo build --release --locked -p dimos-livox -p dimos-virtual-mid360
       - name: Run tests
         run: uv run pytest --cov=dimos/ --junitxml=junit.xml -m '(${{ matrix.markers }}) and not mujoco'
       - name: Re-run the failing tests with maximum verbosity
