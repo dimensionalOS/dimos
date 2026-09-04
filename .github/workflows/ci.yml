@@ -225,6 +225,34 @@ jobs:
       - name: cargo test
         run: cargo test --workspace --all-features --locked
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          prune-cache: true
+      - name: Install dependency for pyaudio
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y portaudio19-dev
+      - name: Build and test PyO3 bindings
+        # PyO3 extension modules (cdylib + `extension-module`) are the one case
+        # that still needs a plain build: pytest imports the compiled .so.
+        run: |
+          uv sync --group tests --frozen
+          source .venv/bin/activate
+          maturin develop -m dimos/mapping/ray_tracing/rust/py/Cargo.toml
+          maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/py/Cargo.toml
+          python -c "import dimos_voxel_ray_tracing, dimos_mls_planner"
+          python -m pytest -c /dev/null --rootdir . --noconftest --import-mode=importlib -p no:cacheprovider -v \
+            dimos/mapping/ray_tracing/test_voxel_map.py \
+            dimos/mapping/ray_tracing/test_transformer.py \
+            dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
+            dimos/navigation/nav_3d/mls_planner/test_transformer.py
+      - name: Bake e2e tests
+        run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
+
+      # Last in the job: freeing disk space uninstalls the gcloud SDK without
+      # deregistering its package, which breaks any later apt-get install.
       - name: Find Rust crates with their own flake
         # These carry system deps (gtsam, PCL, ...) the root shell lacks, so
         # they are excluded from the root workspace and the steps above skip
@@ -283,32 +311,6 @@ jobs:
             ')
             echo "::endgroup::"
           done
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
-        with:
-          enable-cache: true
-          prune-cache: true
-      - name: Install dependency for pyaudio
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y portaudio19-dev
-      - name: Build and test PyO3 bindings
-        # PyO3 extension modules (cdylib + `extension-module`) are the one case
-        # that still needs a plain build: pytest imports the compiled .so.
-        run: |
-          uv sync --group tests --frozen
-          source .venv/bin/activate
-          maturin develop -m dimos/mapping/ray_tracing/rust/py/Cargo.toml
-          maturin develop -m dimos/navigation/nav_3d/mls_planner/rust/py/Cargo.toml
-          python -c "import dimos_voxel_ray_tracing, dimos_mls_planner"
-          python -m pytest -c /dev/null --rootdir . --noconftest --import-mode=importlib -p no:cacheprovider -v \
-            dimos/mapping/ray_tracing/test_voxel_map.py \
-            dimos/mapping/ray_tracing/test_transformer.py \
-            dimos/navigation/nav_3d/mls_planner/test_mls_planner.py \
-            dimos/navigation/nav_3d/mls_planner/test_transformer.py
-      - name: Bake e2e tests
-        run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
 
   cpp:
     timeout-minutes: 30
