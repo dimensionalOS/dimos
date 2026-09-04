@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Typed Python client for a running manipulation blueprint.
+"""Python SDK client for a running manipulation blueprint.
 
-Start ``dimos run xarm-perception-sim-agent``, then run this module.
+Start ``dimos run xarm-perception-sim``, then run this module.
 With no arguments it demonstrates motion. Add ``--object cup --place X Y Z``
 to scan, pick, and place at a verified planning-frame position.
 """
@@ -23,86 +23,34 @@ from __future__ import annotations
 
 import argparse
 
-from dimos.manipulation.manipulation_spec import (
-    CommandResult,
-    ExecutionResult,
-    ExecutionStatus,
-    ManipulationSpec,
-    MoveResult,
-    PlanResult,
-)
 from dimos.manipulation.pick_and_place_spec import PickAndPlaceSpec, PickPlaceResult
 from dimos.manipulation.planning.spec.models import PlanningGroupID
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.porcelain.dimos import Dimos
+from dimos.sdk.manipulation import Arm
 
 
-def _require(
-    result: CommandResult | ExecutionResult | MoveResult | PlanResult | PickPlaceResult,
-) -> None:
+def _require(result: PickPlaceResult) -> None:
     print(result)
     if not result.succeeded:
         raise RuntimeError(str(result))
 
 
-def run_motion(motion: ManipulationSpec) -> PlanningGroupID:
-    """Demonstrate planning, preview, execution, cancellation, and gripper control."""
-    groups = tuple(
-        group
-        for group in motion.list_planning_groups()
-        if group.tip_frame is not None and group.has_gripper
-    )
-    if len(groups) != 1:
-        raise RuntimeError(f"Expected one gripper-capable pose group, got {groups!r}")
-    group = groups[0]
-    snapshot = motion.get_state()
-    print(snapshot)
-    state = snapshot.groups[group.id]
-    if state.joints is None or state.end_effector_pose is None:
-        raise RuntimeError("Wait for joint state and end-effector pose before running the example")
-    initial = state.joints
-    positions = list(initial.position)
+def run_motion(arm: Arm) -> PlanningGroupID:
+    """Demonstrate sequential joint, pose, linear, and gripper commands."""
+    print(arm.info)
+    print(arm.state())
+    initial = arm.joints()
+    positions = initial.copy()
     positions[0] += 0.02
-    target = JointState(name=list(initial.name), position=positions)
+    print(arm.move_joints(positions, speed_scale=0.2))
 
-    planned = motion.plan_to_joints({group.id: target}, speed_scale=0.2)
-    _require(planned)
-    _require(motion.preview_plan(planned.plan))
-    print("Preview:", motion.get_visualization_url())
-    _require(motion.execute())
-
-    pose = motion.get_state().groups[group.id].end_effector_pose
-    if pose is None:
-        raise RuntimeError("End-effector pose is unavailable")
-    lifted = PoseStamped(
-        frame_id=pose.frame_id,
-        position=pose.position + Vector3(0.0, 0.0, 0.01),
-        orientation=pose.orientation,
-    )
-    _require(motion.plan_to_poses({group.id: lifted}, speed_scale=0.2))
-    _require(motion.execute(blocking=False))
-    completed = motion.wait_for_execution(timeout=60.0)
-    _require(completed)
-    if completed.status is not ExecutionStatus.COMPLETED:
-        raise RuntimeError(f"Expected physical completion, got {completed!r}")
-
-    _require(motion.move_linear(dz=-0.01, planning_group=group.id, check_collision=True))
-    _require(motion.plan_to_joints({group.id: initial}, speed_scale=0.1))
-    _require(motion.execute(blocking=False))
-    cancelled = motion.cancel()
-    print(cancelled)
-    # A sufficiently short trajectory can complete before cancellation arrives.
-    if cancelled.status not in {ExecutionStatus.ABORTED, ExecutionStatus.COMPLETED}:
-        raise RuntimeError(f"Cancellation was not confirmed: {cancelled!r}")
-
+    pose = arm.pose()
+    print(arm.move_pose([pose.x, pose.y, pose.z + 0.01], speed_scale=0.2))
+    print(arm.move_linear(dz=-0.01, check_collision=True))
     # Restore the original camera/arm pose before the object workflow.
-    _require(motion.plan_to_joints({group.id: initial}, speed_scale=0.2))
-    _require(motion.execute())
-    _require(motion.clear_planned_path())
-    _require(motion.set_gripper_position(1.0, group.id))
-    return group.id
+    print(arm.move_joints(initial, speed_scale=0.2))
+    print(arm.open_gripper())
+    return arm.info.id
 
 
 def run_pick_place(
@@ -134,8 +82,8 @@ def main() -> None:
 
     app = Dimos.connect()
     try:
-        motion = app.get_module(ManipulationSpec)
-        group = run_motion(motion)
+        arm = Arm.from_app(app)
+        group = run_motion(arm)
         if args.object is not None:
             pick_place = app.get_module(PickAndPlaceSpec)
             run_pick_place(pick_place, args.object, tuple(args.place), group)

@@ -14,8 +14,10 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
+from dimos.manipulation.manipulation_spec import PlanningGroupInfo, PlanResult, PlanStatus
 from dimos.manipulation.pick_and_place_spec import (
     DetectedObject,
     PickAndPlaceSpec,
@@ -24,7 +26,42 @@ from dimos.manipulation.pick_and_place_spec import (
     PlaceResult,
     ScanResult,
 )
-from dimos.manipulation.planning.examples.manipulation_client import run_pick_place
+from dimos.manipulation.planning.examples.manipulation_client import run_motion, run_pick_place
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.sdk.manipulation import Arm, MotionError
+
+
+@pytest.fixture
+def arm(mocker):
+    client = mocker.Mock(spec=Arm)
+    client.info = PlanningGroupInfo("arm", ("j0", "j1"), "base", "tip", True)
+    client.joints.return_value = np.array([0.1, 0.2])
+    client.pose.return_value = PoseStamped(frame_id="world", position=[0.4, 0.0, 0.3])
+    return client
+
+
+def test_motion_example_uses_sdk_and_restores_initial_joints(arm):
+    group = run_motion(arm)
+
+    assert group == "arm"
+    np.testing.assert_allclose(arm.move_joints.call_args_list[0].args[0], [0.12, 0.2])
+    np.testing.assert_array_equal(arm.move_joints.call_args_list[1].args[0], [0.1, 0.2])
+    np.testing.assert_array_equal(arm.joints.return_value, [0.1, 0.2])
+    arm.move_pose.assert_called_once_with([0.4, 0.0, 0.31], speed_scale=0.2)
+    arm.move_linear.assert_called_once_with(dz=-0.01, check_collision=True)
+    arm.open_gripper.assert_called_once_with()
+
+
+def test_motion_example_stops_after_sdk_failure(arm):
+    failure = MotionError("move_joints", PlanResult(PlanStatus.FAILED, "unreachable"))
+    arm.move_joints.side_effect = failure
+
+    with pytest.raises(MotionError, match="unreachable") as error:
+        run_motion(arm)
+
+    assert error.value is failure
+    arm.move_pose.assert_not_called()
+    arm.open_gripper.assert_not_called()
 
 
 @pytest.fixture

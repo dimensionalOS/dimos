@@ -1,8 +1,8 @@
 # Manipulation from Python
 
-Connect a Python application to a running manipulation blueprint and resolve its
-Modules by their typed RPC contracts. This client uses the same provisioned DimOS
-environment as the runtime.
+Use the client-only `Arm` SDK for ordinary sequential motion. It wraps the
+existing typed RPCs without changing robot behavior or owning the connection.
+The client uses the same provisioned DimOS environment as the runtime.
 
 ## Start and connect
 
@@ -25,55 +25,132 @@ client; leave the agent idle while the script commands the arm.
 
 ```python skip
 from dimos.porcelain.dimos import Dimos
-from dimos.manipulation.manipulation_spec import ManipulationSpec
-from dimos.manipulation.pick_and_place_spec import PickAndPlaceSpec
+from dimos.sdk.manipulation import Arm
 
 app = Dimos.connect()
-motion = app.get_module(ManipulationSpec)
-pick_place = app.get_module(PickAndPlaceSpec)
+arm = Arm.from_app(app)
 ```
 
-Use these explicit imports for static typing. Resolution checks advertised RPC
-names and the imported module class's signatures using the same signature
-compatibility rules as blueprint Spec injection. It requires one match; it does
-not choose the first provider or bind by class-name convention. The deployed
-module classes must be importable in the client environment.
+`Arm.from_app()` resolves `ManipulationSpec` and selects the unique pose-capable
+planning group. An arm need not have a gripper. Discovery does not start a runtime
+or command motion. Missing or ambiguous selections report the available IDs.
 
-If several instances implement a Spec, the error lists their names. Select one:
+For multiple arms or deployed motion modules, select explicitly:
 
 ```python skip
-motion = app.get_module(ManipulationSpec, instance_name="robot0/manipulation")
+arm = Arm.from_app(app, group="left_arm", instance_name="robot0/manipulation")
 ```
 
-## Motion
+Module resolution checks advertised RPCs and signatures using the same rules
+as blueprint Spec injection. Deployed module classes must be importable in the
+client. Import `Arm` directly from `dimos.sdk.manipulation`; this is a convenience
+module in DimOS, not a separate SDK installation.
 
-Discover the configured group IDs and current state before selecting targets:
+## Basic motion
+
+Read state, adjust a joint, and move. These calls command the arm; try them in
+simulation with room for the requested movement:
 
 ```python skip
-print(motion.list_planning_groups())
-snapshot = motion.get_state()
-print(snapshot)
+print(arm.info)   # Group ID, joint order, and capabilities.
+print(arm.state())
+q = arm.joints()  # Fresh NumPy array in arm.info.joint_names order.
+q[0] += 0.02
+result = arm.move_joints(q, speed_scale=0.2)
+print(result)
+
+pose = arm.pose()
+arm.move_pose([pose.x, pose.y, pose.z + 0.01], speed_scale=0.2)
+arm.move_linear(dz=-0.01, check_collision=True)
+arm.open_gripper()
 ```
 
-| Operation | Result |
+Joint and pose inputs accept lists, tuples, and NumPy arrays. Positions use
+metres; angular joints use radians. `move_pose(position, orientation=None)` takes
+world-frame XYZ and an optional XYZW quaternion. Omitting orientation preserves
+the current orientation. It targets an endpoint, not necessarily a straight path.
+No frame transformations are performed.
+
+`move_linear(dx, dy, dz)` invokes the existing straight-translation primitive
+directly, in the world frame. **Collision checking remains off by default**, as
+on the RPC. Pass `check_collision=True` to validate against the configured world;
+this rejects a colliding segment rather than finding a detour.
+
+| SDK call | Result |
 |---|---|
-| `plan_to_joints({group_id: JointState(...)})` | `PlanResult` with an inspectable plan |
-| `plan_to_poses({group_id: PoseStamped(...)})` | `PlanResult`; poses carry their frame |
-| `preview_plan(plan)` / `clear_planned_path()` | `CommandResult` |
-| `execute()` / `wait_for_execution(timeout=...)` / `cancel()` | `ExecutionResult` |
-| `move_linear(dx=..., planning_group=..., check_collision=True)` | `MoveResult` containing planning and execution outcomes |
-| `set_gripper_position(position, planning_group=...)` | `CommandResult` |
+| `move_joints(...)`, `move_pose(...)` | `ExecutionResult` after completed execution |
+| `move_linear(...)` | Existing `MoveResult`, including trajectory generation and execution outcomes |
+| `set_gripper_position(position)`, `open_gripper()`, `close_gripper()` | `CommandResult` |
+| `home()`, `move_to_preset(name)` | `ExecutionResult` after moving to an existing preset |
 
-Action results expose `.succeeded`; planning, execution, and command results also
-carry enum statuses and messages. `MoveResult` contains the component results.
-Gripper positions are normalized travel: `0.0` closed, `1.0` open. Translations
-are metres and angular joint positions are radians. `move_linear` translates in
-the world frame and only checks collisions when requested.
+Gripper positions are normalized travel: `0.0` closed, `1.0` open. Movement calls
+accept `speed_scale` and execution `timeout` options. Ordinary calls block and
+raise on failure, so scripts do not need success checks between every action.
+
+### Shared presets
+
+```python skip
+print(arm.state().joint_presets.keys())
+arm.home(speed_scale=0.2)
+arm.move_to_preset("init", speed_scale=0.2)
+```
+
+These use the same configured Home and captured Init joint values as Viser.
+The SDK reads advertised presets on every call, so a server-side Init reset is
+reflected immediately. Missing presets raise with the available names; there is
+no fallback home pose. Unlike selecting a preset in Viser, these calls execute
+the move and wait for completion.
+
+### Failures and connection ownership
+
+```python skip
+from dimos.sdk.manipulation import MotionError
+
+try:
+    arm.move_linear(dz=0.01, check_collision=True, timeout=30.0)
+except MotionError as error:
+    print(error.operation, error.result)
+    raise
+```
+
+`MotionError.result` preserves the original typed failure result. Invalid numeric
+inputs raise `ValueError`; unavailable telemetry raises `RuntimeError`. Transport
+exceptions propagate unchanged. Failed planning never proceeds to execution.
+A timeout does not imply motion stopped, and the SDK neither retries nor cancels
+automatically. Use the underlying RPC to inspect execution or request cancellation.
+
+`Arm` borrows the app's connection. Call `app.stop()` when finished; for a
+connected app this disconnects without stopping the blueprint or cancelling motion.
+
+## Advanced motion RPCs
+
+Use `arm.rpc` for explicit planning, preview, nonblocking execution, and
+cancellation. The original `app.get_module(ManipulationSpec)` API remains available.
+
+```python skip
+from dimos.msgs.sensor_msgs.JointState import JointState
+
+motion = arm.rpc
+planned = motion.plan_to_joints({
+    arm.info.id: JointState(position=arm.joints() + 0.01),
+}, speed_scale=0.2)
+if planned.succeeded:
+    print(motion.preview_plan(planned.plan))
+    print(motion.get_visualization_url())
+    started = motion.execute(blocking=False)
+    if started.succeeded:
+        print(motion.wait_for_execution(timeout=30.0))
+```
+
+Raw RPC results require explicit checks. `plan_to_poses` accepts stamped poses,
+but currently interprets their coordinates as world-frame values; it does not
+transform a supplied frame.
 
 Planning stores one pending plan on the Module. A new planning request replaces
 it; `execute()` consumes it. Previewing an explicit plan does not change which
 plan execution consumes. `clear_planned_path()` discards pending work without
-cancelling active execution.
+cancelling active execution. Use one motion-commanding client per module;
+separate `Arm` objects do not own independent plans or executions.
 
 `execute()` blocks by default. With `blocking=False`, success means dispatch was
 accepted. Use `wait_for_execution()` and check `ExecutionStatus.COMPLETED` for
@@ -82,6 +159,14 @@ inspect its result to establish whether it stopped. A transport `TimeoutError`
 also does not cancel remote work. Do not automatically retry motion after it.
 
 ## Objects
+
+Pick/place stays on its typed RPC contract rather than the `Arm` wrapper:
+
+```python skip
+from dimos.manipulation.pick_and_place_spec import PickAndPlaceSpec
+
+pick_place = app.get_module(PickAndPlaceSpec)
+```
 
 Scan results expose typed objects directly. Choose an exact object ID from the
 latest scan; names are not necessarily unique.
@@ -110,8 +195,8 @@ not agent text or a metadata dictionary.
 
 ## Runnable example
 
-The example demonstrates joint and pose planning, preview, blocking and
-nonblocking execution, cancellation, a short linear move, and gripper control:
+The example demonstrates SDK joint and pose moves, a short linear move, and
+gripper control. Each motion completes before the next begins:
 
 ```bash
 python -m dimos.manipulation.planning.examples.manipulation_client

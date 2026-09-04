@@ -87,8 +87,8 @@ Then run the typed Python motion example:
 python -m dimos.manipulation.planning.examples.manipulation_client
 ```
 
-The example uses `Dimos.connect()` and `app.get_module(ManipulationSpec)` to
-discover the group, plan, preview, and execute. The
+The example uses `Dimos.connect()` and `Arm.from_app(app)` to select the arm and
+run sequential joint, pose, linear, and gripper commands. The
 [Python guide](/docs/capabilities/manipulation/python_api.md) also covers scan, pick, and place.
 
 ### Planning backend selection
