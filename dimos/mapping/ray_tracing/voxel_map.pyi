@@ -82,6 +82,10 @@ class VoxelRayMapper:
         """Return the centers of all healthy voxels as (M, 3) float32."""
         ...
 
+    def full_map(self) -> NDArray[np.float32]:
+        """Return the support-gated snapshot of the whole map as (M, 3) float32."""
+        ...
+
     def global_map_normals(self) -> tuple[NDArray[np.float32], NDArray[np.float32]]:
         """Return healthy voxel centers and their surface normals, both (M, 3) float32.
 

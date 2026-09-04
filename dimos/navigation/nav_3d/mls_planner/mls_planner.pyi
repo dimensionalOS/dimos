@@ -52,6 +52,25 @@ class MLSPlanner:
         """
         ...
 
+    def start_full_map_load(
+        self,
+        points: NDArray[np.float32],
+        center: tuple[float, float],
+        tile_size_m: float,
+    ) -> int:
+        """Partition a whole-map cloud into pending tiles, nearest center first.
+
+        Replaces any pending tiles. Returns the tile count.
+        """
+        ...
+
+    def apply_full_map_tile(self) -> int:
+        """Apply the next pending tile through the region pipeline.
+
+        Returns how many tiles remain.
+        """
+        ...
+
     def surface_map(self) -> NDArray[np.float32]:
         """Standable surface cells as (M, 3) float32 centers."""
         ...

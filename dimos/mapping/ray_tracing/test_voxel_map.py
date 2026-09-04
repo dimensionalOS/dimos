@@ -200,3 +200,14 @@ def test_global_map_normal_fits_min_eigs_track_planarity() -> None:
     assert min_eigs[rough_i] > 1e-4, "a jittered patch fits with a visible residual"
     np.testing.assert_allclose(np.abs(normals[flat_i]), [0.0, 0.0, 1.0], atol=1e-3)
     np.testing.assert_allclose(np.abs(normals[rough_i]), [0.0, 0.0, 1.0], atol=0.05)
+
+
+def test_full_map_applies_support_gate() -> None:
+    mapper = VoxelRayMapper(
+        voxel_size=1.0, max_range=100.0, min_health=0, max_health=1, support_min=3
+    )
+    cloud = [[x + 0.5, y + 0.5, 0.5] for x in range(3) for y in range(3)] + [[20.5, 20.5, 0.5]]
+    assert mapper.seed_points(np.array(cloud, dtype=np.float32)) == 10
+
+    assert mapper.full_map().shape == (9, 3), "isolated seed gated out"
+    assert mapper.global_map().shape == (10, 3)

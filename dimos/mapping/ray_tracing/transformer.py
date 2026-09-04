@@ -32,7 +32,9 @@ logger = setup_logger()
 class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
     """Accumulate lidar into a voxel map with raycast clearing.
 
-    Each cloud is sensor-frame and registered into the world by its odometry pose.
+    Each cloud is sensor-frame and registered into the world by its odometry
+    pose. The instance owns its mapper, so callers can act on it between
+    pulls, and a reused instance continues the same map.
     """
 
     def __init__(
@@ -45,10 +47,15 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
     ) -> None:
         if emit_every < 0:
             raise ValueError(f"emit_every must be >= 0, got {emit_every}")
-        self.voxel_size = voxel_size
-        self.max_range = max_range
         self.emit_every = emit_every
-        self._mapper_kwargs = mapper_kwargs
+        # emit_every=1 turns on frame batching. This transformer consumes it
+        # with take_local_bounds on its own cadence.
+        self.mapper = VoxelRayMapper(
+            voxel_size=voxel_size,
+            max_range=max_range,
+            emit_every=1,
+            **mapper_kwargs,
+        )
 
     def _make_obs(
         self,
@@ -72,14 +79,7 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
         self,
         upstream: Iterator[Observation[PointCloud2]],
     ) -> Iterator[Observation[PointCloud2]]:
-        # emit_every=1 turns on frame batching. This transformer consumes it
-        # with take_local_bounds on its own cadence.
-        mapper = VoxelRayMapper(
-            voxel_size=self.voxel_size,
-            max_range=self.max_range,
-            emit_every=1,
-            **self._mapper_kwargs,
-        )
+        mapper = self.mapper
         last_obs: Observation[PointCloud2] | None = None
         count = 0
 

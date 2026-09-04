@@ -15,6 +15,8 @@
 """Replay a lidar .db through RayTraceMap and the MLS planner into rerun.
 
 Pass one or more --config clearance,buffer,weight to overlay each as a colored path.
+A loaded_map stream in the recording seeds the mapper at its timestamp and each
+planner then ingests the full map tile by tile, one tile per frame.
 """
 
 from __future__ import annotations
@@ -540,6 +542,14 @@ def main(
     goal: tuple[float, float, float] = typer.Option(
         (0.0, 0.0, 0.0), "--goal", help="Planner goal xyz; override per recording"
     ),
+    loaded_map_stream: str = typer.Option(
+        "loaded_map",
+        "--loaded-map-stream",
+        help="Stream holding a whole-map cloud to seed at its timestamp, when present",
+    ),
+    tile_m: float = typer.Option(
+        4.0, "--tile-m", help="Tile grid spacing (m) for loading the seeded map into the planner"
+    ),
     live: bool = typer.Option(
         False, "--live", help="Also spawn the rerun viewer when --out is set"
     ),
@@ -593,20 +603,34 @@ def main(
             raise typer.BadParameter(f"{db_path} has no tf stream to register clouds from")
 
         pose_tagged = lidar.transform(_pose_from_tf(tf_lookup, world_frame))
-        ray_pipeline = pose_tagged.transform(
-            RayTraceMap(
-                voxel_size=voxel_size,
-                max_range=max_range,
-                ray_subsample=ray_subsample,
-                shadow_depth=shadow_depth,
-                grace_depth=grace_depth,
-                emit_every=emit_every,
-                min_health=min_health,
-                max_health=max_health,
-                support_min=support_min,
-            )
+        ray = RayTraceMap(
+            voxel_size=voxel_size,
+            max_range=max_range,
+            ray_subsample=ray_subsample,
+            shadow_depth=shadow_depth,
+            grace_depth=grace_depth,
+            emit_every=emit_every,
+            min_health=min_health,
+            max_health=max_health,
+            support_min=support_min,
         )
+        ray_pipeline = pose_tagged.transform(ray)
         tf_sync = _TfSync(tf)
+
+        loaded_map: Observation[PointCloud2] | None
+        try:
+            loaded_map = store.stream(loaded_map_stream, PointCloud2).order_by("ts").first()
+        except LookupError:
+            loaded_map = None
+        seeded_run = loaded_map is not None
+        tiles_left = 0
+        if loaded_map is not None:
+            rr.log(
+                "metrics/size/5_tiles",
+                rr.SeriesLines(colors=[[255, 255, 255]], names=["tiles_left"]),
+                static=True,
+            )
+            print(f"loaded_map at ts={loaded_map.ts:.3f}; seeding when reached")
 
         configs = _parse_configs(config, wall_clearance, wall_buffer, wall_buffer_weight)
         ref_clearance = configs[0][0]
@@ -678,6 +702,25 @@ def main(
                     ref_clearance,
                     crop,
                 )
+                if loaded_map is not None and ray_obs.ts >= loaded_map.ts:
+                    seed_pts = loaded_map.data.points_f32()
+                    created = ray.mapper.seed_points(seed_pts)
+                    full = ray.mapper.full_map()
+                    for _, _, planner in planners:
+                        tiles_left = planner.start_full_map_load(full, (start[0], start[1]), tile_m)
+                    rr.log(
+                        "world/loaded_map",
+                        rr.Points3D(seed_pts, colors=[[130, 130, 130]], radii=0.008),
+                    )
+                    print(f"\nseeded {created} voxels, loading {tiles_left} tiles")
+                    loaded_map = None
+                elif tiles_left:
+                    for _, _, planner in planners:
+                        tiles_left = planner.apply_full_map_tile()
+                    if tiles_left == 0:
+                        print("\nfull map load finished")
+                if seeded_run:
+                    rr.log("metrics/size/5_tiles", rr.Scalars(float(tiles_left)))
                 _log_odometry(ray_obs.pose_tuple, ray_obs.ts, sensor_trail, base)
                 frame += 1
                 print(

@@ -88,3 +88,18 @@ def test_clear_drops_graph() -> None:
     planner.clear()
     assert len(planner.nodes()) == 0
     assert planner.plan((-2.0, -2.0, 0.0), (2.0, 2.0, 0.0)) is None
+
+
+def test_full_map_load_matches_full_rebuild() -> None:
+    cloud = flat_floor()
+    full = make_planner()
+    full.update_global_map(cloud)
+
+    tiled = make_planner()
+    left = tiled.start_full_map_load(cloud, (0.0, 0.0), 2.0)
+    assert left > 1
+    while left:
+        left = tiled.apply_full_map_tile()
+
+    assert tiled.voxel_count() == full.voxel_count()
+    assert sorted(map(tuple, tiled.surface_map())) == sorted(map(tuple, full.surface_map()))

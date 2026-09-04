@@ -121,3 +121,14 @@ def test_registers_sensor_frame_cloud_by_pose() -> None:
     assert radius == pytest.approx(0.0 + margin)
     assert z_min == pytest.approx(1.0 - margin)
     assert z_max == pytest.approx(1.0 + margin)
+
+
+def test_reused_instance_continues_the_map() -> None:
+    rtm = RayTraceMap(min_health=0, max_health=1)
+    first = _obs(np.array([[1.0, 0.05, 0.05]], dtype=np.float32), ts=1.0, pose=(0.0, 0.0, 0.0))
+    second = _obs(np.array([[0.05, 1.0, 0.05]], dtype=np.float32), ts=2.0, pose=(0.0, 0.0, 0.0))
+
+    list(rtm(iter([first])))
+    list(rtm(iter([second])))
+
+    assert len(rtm.mapper.global_map()) == 2

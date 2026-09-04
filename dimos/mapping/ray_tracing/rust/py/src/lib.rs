@@ -210,6 +210,13 @@ impl VoxelRayMapper {
         flat_to_array(py, points)
     }
 
+    /// Support-gated snapshot of the whole map as (M, 3) float32.
+    fn full_map<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f32>> {
+        let mapper = &self.mapper;
+        let points = py.allow_threads(|| mapper.full_points());
+        flat_to_array(py, points)
+    }
+
     /// Healthy voxel centers and their surface normals, both (M, 3) float32 in
     /// matching order. The normal is the zero vector where there is no plane.
     fn global_map_normals<'py>(
