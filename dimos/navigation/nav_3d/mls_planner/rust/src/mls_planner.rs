@@ -185,6 +185,53 @@ pub struct MapTile {
     pub points: Vec<(f32, f32, f32)>,
 }
 
+/// Cloud points grouped by the grid cell of the tile that covers them.
+type TilePoints = AHashMap<(i32, i32), Vec<(f32, f32, f32)>>;
+
+/// The cloud half of a full-map partition, computed without the planner so
+/// it can run off the worker thread. `Planner::finish_partition` merges it
+/// against the map.
+pub struct CloudPartition {
+    tile_points: TilePoints,
+    z_min: f32,
+    z_max: f32,
+    tile_size_m: f32,
+}
+
+/// Assign a whole-map cloud to grid tiles. A point lands in every tile whose
+/// cylinder contains it, so tile order cannot decide whether an overlap
+/// point survives.
+pub fn partition_cloud(
+    points: &[(f32, f32, f32)],
+    tile_size_m: f32,
+    voxel_size: f32,
+) -> CloudPartition {
+    let s = tile_size_m;
+    let radius = tile_radius(s, voxel_size);
+    let mut z_min = f32::INFINITY;
+    let mut z_max = f32::NEG_INFINITY;
+    let mut tile_points = TilePoints::default();
+    for &p in points {
+        z_min = z_min.min(p.2);
+        z_max = z_max.max(p.2);
+        covering_cells(p.0, p.1, s, radius, |cell| {
+            tile_points.entry(cell).or_default().push(p);
+        });
+    }
+    CloudPartition {
+        tile_points,
+        z_min,
+        z_max,
+        tile_size_m,
+    }
+}
+
+/// Circumradius of an s x s grid cell plus a voxel of margin, so the tile
+/// cylinders cover the plane.
+fn tile_radius(s: f32, voxel_size: f32) -> f32 {
+    s * std::f32::consts::FRAC_1_SQRT_2 + voxel_size
+}
+
 pub struct Planner {
     // The planner owns its worker pool, so its thread setting cannot collide
     // with other components sharing the process.
@@ -268,34 +315,24 @@ impl Planner {
         });
     }
 
-    /// Partition a whole-map cloud into region tiles on a `tile_size_m` grid,
-    /// ordered nearest `center` first. Tiles cover the union of the cloud and
-    /// the current map, so applying them all removes every voxel absent from
-    /// the cloud. The z band spans both, with no sensor overhead cap.
-    pub fn partition_full_map(
+    /// Finish a cloud partition against the current map: sweep tiles for
+    /// map-only cells, the union z band, and near-`center`-first order.
+    /// Bounded by the map size, so the worker can afford it inline.
+    pub fn finish_partition(
         &self,
-        points: &[(f32, f32, f32)],
+        part: CloudPartition,
         center: (f32, f32),
-        tile_size_m: f32,
         config: &Config,
     ) -> Vec<MapTile> {
-        let s = tile_size_m;
-        // Circumradius of an s x s grid cell, so the cylinders cover the plane.
-        let radius = s * std::f32::consts::FRAC_1_SQRT_2 + config.voxel_size;
+        let s = part.tile_size_m;
+        let radius = tile_radius(s, config.voxel_size);
         let half = config.voxel_size * 0.5;
-
-        let mut z_min = f32::INFINITY;
-        let mut z_max = f32::NEG_INFINITY;
-        // A point lands in every tile whose cylinder contains it, so tile
-        // order cannot decide whether an overlap point survives.
-        let mut tile_points: AHashMap<(i32, i32), Vec<_>> = AHashMap::default();
-        for &p in points {
-            z_min = z_min.min(p.2);
-            z_max = z_max.max(p.2);
-            covering_cells(p.0, p.1, s, radius, |cell| {
-                tile_points.entry(cell).or_default().push(p);
-            });
-        }
+        let CloudPartition {
+            mut tile_points,
+            mut z_min,
+            mut z_max,
+            ..
+        } = part;
 
         // A stale voxel needs only one covering tile, and its home tile
         // always covers it.
@@ -338,6 +375,21 @@ impl Planner {
                 .then(a.bounds.origin_y.total_cmp(&b.bounds.origin_y))
         });
         tiles
+    }
+
+    /// Partition a whole-map cloud into region tiles on a `tile_size_m` grid,
+    /// ordered nearest `center` first. Tiles cover the union of the cloud and
+    /// the current map, so applying them all removes every voxel absent from
+    /// the cloud. The z band spans both, with no sensor overhead cap.
+    pub fn partition_full_map(
+        &self,
+        points: &[(f32, f32, f32)],
+        center: (f32, f32),
+        tile_size_m: f32,
+        config: &Config,
+    ) -> Vec<MapTile> {
+        let part = partition_cloud(points, tile_size_m, config.voxel_size);
+        self.finish_partition(part, center, config)
     }
 
     /// Load a whole-map cloud through the region pipeline, tile by tile.

@@ -15,7 +15,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::mls_planner::{Config, Planner, RegionBounds};
+use crate::mls_planner::{partition_cloud, CloudPartition, Config, MapTile, Planner, RegionBounds};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::geometry_msgs::{Point, PointStamped, Pose, PoseStamped, Quaternion};
@@ -23,7 +23,11 @@ use lcm_msgs::nav_msgs::Path;
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
 use lcm_msgs::std_msgs::{Header, Time};
 use tokio::sync::Notify;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
+
+/// Grid spacing of full-map load tiles, sized so one tile applies quickly
+/// between live updates.
+const FULL_MAP_TILE_M: f32 = 4.0;
 
 /// A point in the planner's world frame.
 type Xyz = (f32, f32, f32);
@@ -44,6 +48,73 @@ enum MapUpdate {
     },
 }
 
+/// What `ingest` applied, so the load tracker can react to it.
+enum AppliedUpdate {
+    Region(RegionBounds),
+    Global,
+}
+
+/// An in-progress tiled full-map load, advanced one tile per worker cycle.
+struct MapLoad {
+    tiles: Vec<MapTile>,
+    next: usize,
+    /// Regions applied since the load started. Tiles overlapping them are
+    /// skipped, since the live content is fresher.
+    regions: Vec<RegionBounds>,
+}
+
+impl MapLoad {
+    /// Index of the next tile to apply, consuming skipped tiles.
+    fn next_tile_index(&mut self) -> Option<usize> {
+        while self.next < self.tiles.len() {
+            let i = self.next;
+            self.next += 1;
+            let overlapped = self
+                .regions
+                .iter()
+                .any(|r| cylinders_overlap(&self.tiles[i].bounds, r));
+            if !overlapped {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    fn finished(&self) -> bool {
+        self.next >= self.tiles.len()
+    }
+}
+
+/// Extract and partition a full-map cloud. None when unusable or empty.
+fn extract_and_partition(msg: &PointCloud2, voxel_size: f32) -> Option<CloudPartition> {
+    let points = match extract_xyz(msg) {
+        Ok(p) => p,
+        Err(e) => {
+            warn_throttled!(
+                Duration::from_secs(1),
+                error = %e,
+                "Failed to extract full map points, dropped a load.",
+            );
+            return None;
+        }
+    };
+    if points.is_empty() {
+        return None;
+    }
+    Some(partition_cloud(&points, FULL_MAP_TILE_M, voxel_size))
+}
+
+/// Whether two region cylinders intersect.
+fn cylinders_overlap(a: &RegionBounds, b: &RegionBounds) -> bool {
+    if a.z_max < b.z_min || b.z_max < a.z_min {
+        return false;
+    }
+    let dx = a.origin_x - b.origin_x;
+    let dy = a.origin_y - b.origin_y;
+    let r = a.radius + b.radius;
+    dx * dx + dy * dy <= r * r
+}
+
 #[derive(Module)]
 #[module(name = "mls_planner", setup = spawn_worker, teardown = stop_worker)]
 pub struct MlsPlanner {
@@ -55,6 +126,11 @@ pub struct MlsPlanner {
 
     #[input(decode = PoseStamped::decode, handler = on_region_bounds)]
     region_bounds: Input<PoseStamped>,
+
+    // Whole-map snapshot loaded tile by tile through the region pipeline,
+    // between live updates. Live updates keep priority.
+    #[input(decode = PointCloud2::decode, handler = on_full_map)]
+    full_map: Input<PointCloud2>,
 
     #[input(decode = PointStamped::decode, handler = on_goal)]
     goal: Input<PointStamped>,
@@ -83,8 +159,10 @@ pub struct MlsPlanner {
     pending_bounds: Option<PoseStamped>,
 
     // Written by the handle loop, read by the worker, so the loop never blocks
-    // on map processing.
+    // on map processing. The full-map partition has its own slot, so a live
+    // update arriving first cannot clobber it.
     pending: Shared<MapUpdate>,
+    pending_full_map: Shared<CloudPartition>,
     active_goal: Shared<Xyz>,
     wake: Arc<Notify>,
 
@@ -95,6 +173,7 @@ impl MlsPlanner {
     async fn spawn_worker(&mut self) {
         let worker = Worker {
             pending: Arc::clone(&self.pending),
+            pending_full_map: Arc::clone(&self.pending_full_map),
             active_goal: Arc::clone(&self.active_goal),
             wake: Arc::clone(&self.wake),
             tf: self.tf.clone(),
@@ -115,6 +194,21 @@ impl MlsPlanner {
 
     async fn on_global_map(&mut self, msg: PointCloud2) {
         self.hand_off(MapUpdate::Global { cloud: msg });
+    }
+
+    /// Partition the cloud on a blocking thread, so neither the handle loop
+    /// nor the worker stalls on a building-scale message.
+    async fn on_full_map(&mut self, msg: PointCloud2) {
+        let slot = Arc::clone(&self.pending_full_map);
+        let wake = Arc::clone(&self.wake);
+        let voxel_size = self.config.voxel_size;
+        tokio::task::spawn_blocking(move || {
+            let Some(part) = extract_and_partition(&msg, voxel_size) else {
+                return;
+            };
+            *slot.lock().expect("full map mutex") = Some(part);
+            wake.notify_one();
+        });
     }
 
     async fn on_local_map(&mut self, msg: PointCloud2) {
@@ -168,6 +262,7 @@ fn goal_position(p: &Point) -> Option<Xyz> {
 /// off the handle loop. Woken by the handlers.
 struct Worker {
     pending: Shared<MapUpdate>,
+    pending_full_map: Shared<CloudPartition>,
     active_goal: Shared<Xyz>,
     wake: Arc<Notify>,
     tf: Tf,
@@ -181,49 +276,110 @@ struct Worker {
 impl Worker {
     async fn run(self) {
         let mut planner = Planner::new(self.config.worker_threads);
+        let mut load: Option<MapLoad> = None;
         let mut last_path_at: Option<Instant> = None;
         let mut last_viz_at: Option<Instant> = None;
         loop {
-            self.wake.notified().await;
+            // An in-progress load keeps cycling, one tile per pass, checking
+            // the mailboxes and goal between tiles. Live updates apply first.
+            if load.is_none() {
+                self.wake.notified().await;
+            } else {
+                tokio::task::yield_now().await;
+            }
             let update = self.pending.lock().expect("pending mutex").take();
             if let Some(update) = update {
-                self.apply_update(&mut planner, update, &mut last_viz_at)
-                    .await;
+                match self
+                    .apply_update(&mut planner, update, &mut last_viz_at)
+                    .await
+                {
+                    Some(AppliedUpdate::Region(bounds)) => {
+                        if let Some(l) = load.as_mut() {
+                            l.regions.push(bounds);
+                        }
+                    }
+                    // A full rebuild replaces everything a load would add.
+                    Some(AppliedUpdate::Global) => load = None,
+                    None => {}
+                }
+            }
+            let full = self.pending_full_map.lock().expect("full map mutex").take();
+            if let Some(part) = full {
+                load = Some(self.start_load(&planner, part));
+            }
+            if let Some(l) = load.as_mut() {
+                if let Some(i) = l.next_tile_index() {
+                    let tile = &l.tiles[i];
+                    let tile_start = Instant::now();
+                    tokio::task::block_in_place(|| {
+                        planner.update_region(&tile.points, &tile.bounds, &self.config)
+                    });
+                    debug!(
+                        tile = i,
+                        tile_ms = tile_start.elapsed().as_secs_f64() * 1e3,
+                        "full map tile applied"
+                    );
+                    self.publish_viz_if_due(&planner, &mut last_viz_at).await;
+                }
+                if l.finished() {
+                    info!("full map load finished");
+                    load = None;
+                }
             }
             self.maybe_replan(&mut planner, &mut last_path_at).await;
         }
     }
 
-    /// Update the graph every cycle, but rate-cap viz publishing to
-    /// viz_publish_hz since building those clouds is costly and unread by planning.
+    /// Order the partitioned cloud against the current map into a tiled
+    /// load, nearest the robot first.
+    fn start_load(&self, planner: &Planner, part: CloudPartition) -> MapLoad {
+        let center = self.base_position().map_or((0.0, 0.0), |(x, y, _)| (x, y));
+        let tiles =
+            tokio::task::block_in_place(|| planner.finish_partition(part, center, &self.config));
+        info!(tiles = tiles.len(), "full map load started");
+        MapLoad {
+            tiles,
+            next: 0,
+            regions: Vec::new(),
+        }
+    }
+
+    /// Apply one live update and refresh the viz artifacts.
     async fn apply_update(
         &self,
         planner: &mut Planner,
         update: MapUpdate,
         last_viz_at: &mut Option<Instant>,
-    ) {
+    ) -> Option<AppliedUpdate> {
+        let applied = tokio::task::block_in_place(|| self.ingest(planner, update));
+        if applied.is_some() {
+            self.publish_viz_if_due(planner, last_viz_at).await;
+        }
+        applied
+    }
+
+    /// Publish the surface, node, and edge viz artifacts, rate-capped to
+    /// viz_publish_hz since building those clouds is costly and unread by
+    /// planning.
+    async fn publish_viz_if_due(&self, planner: &Planner, last_viz_at: &mut Option<Instant>) {
         let now = Instant::now();
-        let viz_due = self.config.viz_publish_hz > 0.0 && {
+        let due = self.config.viz_publish_hz > 0.0 && {
             let viz_interval = Duration::from_secs_f32(1.0 / self.config.viz_publish_hz);
             last_viz_at.is_none_or(|t| now.duration_since(t) >= viz_interval)
         };
-
-        let messages = tokio::task::block_in_place(|| {
-            let updated = self.ingest(planner, update);
-            (updated && viz_due).then(|| self.build_graph_messages(planner))
-        });
-
-        if let Some((surface, node_cloud, edges)) = messages {
-            publish_cloud(&self.surface_map, &surface).await;
-            publish_cloud(&self.nodes, &node_cloud).await;
-            publish_path(&self.node_edges, &edges).await;
-            *last_viz_at = Some(now);
+        if !due {
+            return;
         }
+        let (surface, node_cloud, edges) =
+            tokio::task::block_in_place(|| self.build_graph_messages(planner));
+        publish_cloud(&self.surface_map, &surface).await;
+        publish_cloud(&self.nodes, &node_cloud).await;
+        publish_path(&self.node_edges, &edges).await;
+        *last_viz_at = Some(now);
     }
 
-    /// Mutate the graph from a map update. Returns false if the cloud was
-    /// unusable.
-    fn ingest(&self, planner: &mut Planner, update: MapUpdate) -> bool {
+    /// Mutate the graph from a map update. None if the cloud was unusable.
+    fn ingest(&self, planner: &mut Planner, update: MapUpdate) -> Option<AppliedUpdate> {
         match update {
             MapUpdate::Region { cloud, bounds } => {
                 let points = match extract_xyz(&cloud) {
@@ -234,7 +390,7 @@ impl Worker {
                             error = %e,
                             "Failed to extract local map points, dropped a region update.",
                         );
-                        return false;
+                        return None;
                     }
                 };
                 let z_max = bounds.pose.orientation.z as f32;
@@ -244,7 +400,7 @@ impl Worker {
                         base_frame = %self.config.base_frame,
                         "No base pose on tf, dropped a region update.",
                     );
-                    return false;
+                    return None;
                 };
                 let bounds = RegionBounds::capped(
                     bounds.pose.position.x as f32,
@@ -263,6 +419,7 @@ impl Worker {
                     local_points = points.len(),
                     "local region processed"
                 );
+                Some(AppliedUpdate::Region(bounds))
             }
             MapUpdate::Global { cloud } => {
                 let points = match extract_xyz(&cloud) {
@@ -273,17 +430,17 @@ impl Worker {
                             error = %e,
                             "Failed to extract lidar points, dropped a cloud.",
                         );
-                        return false;
+                        return None;
                     }
                 };
                 if points.is_empty() {
-                    return false;
+                    return None;
                 }
                 planner.update_global_map(&points, &self.config);
                 debug!(global_map_points = points.len(), "global_map processed");
+                Some(AppliedUpdate::Global)
             }
         }
-        true
     }
 
     fn build_graph_messages(&self, planner: &Planner) -> (PointCloud2, PointCloud2, Path) {
@@ -644,6 +801,65 @@ mod tests {
 
     fn point(x: f64, y: f64, z: f64) -> Point {
         Point { x, y, z }
+    }
+
+    fn cyl(x: f32, y: f32, r: f32) -> RegionBounds {
+        RegionBounds {
+            origin_x: x,
+            origin_y: y,
+            radius: r,
+            z_min: -1.0,
+            z_max: 1.0,
+        }
+    }
+
+    #[test]
+    fn cylinders_overlap_by_distance_and_z() {
+        assert!(cylinders_overlap(&cyl(0.0, 0.0, 1.0), &cyl(1.5, 0.0, 1.0)));
+        assert!(!cylinders_overlap(&cyl(0.0, 0.0, 1.0), &cyl(3.0, 0.0, 1.0)));
+        let mut high = cyl(0.0, 0.0, 1.0);
+        high.z_min = 2.0;
+        high.z_max = 3.0;
+        assert!(!cylinders_overlap(&cyl(0.0, 0.0, 1.0), &high));
+    }
+
+    #[test]
+    fn map_load_skips_tiles_overlapping_applied_regions() {
+        let tile = |x: f32| MapTile {
+            bounds: cyl(x, 0.0, 1.0),
+            points: Vec::new(),
+        };
+        let mut load = MapLoad {
+            tiles: vec![tile(0.0), tile(2.0), tile(4.0)],
+            next: 0,
+            regions: Vec::new(),
+        };
+        assert_eq!(load.next_tile_index(), Some(0));
+        // A live region lands on the second tile before it applies.
+        load.regions.push(cyl(2.0, 0.0, 0.5));
+        assert_eq!(load.next_tile_index(), Some(2), "overlapped tile skipped");
+        assert!(load.finished());
+        assert_eq!(load.next_tile_index(), None);
+    }
+
+    /// The full-map slot is separate from the live-update slot, so a region
+    /// frame arriving before the worker wakes cannot clobber a pending load.
+    #[test]
+    fn full_map_slot_survives_a_region_hand_off() {
+        let pending: Shared<MapUpdate> = Arc::new(Mutex::new(None));
+        let pending_full_map: Shared<CloudPartition> = Arc::new(Mutex::new(None));
+
+        *pending_full_map.lock().unwrap() = Some(partition_cloud(&[(0.5, 0.5, 0.5)], 4.0, 0.1));
+        *pending.lock().unwrap() = Some(MapUpdate::Region {
+            cloud: PointCloud2::default(),
+            bounds: PoseStamped::default(),
+        });
+
+        assert!(pending.lock().unwrap().take().is_some());
+        assert!(
+            pending_full_map.lock().unwrap().take().is_some(),
+            "pending load must survive the region hand-off"
+        );
     }
 
     #[test]

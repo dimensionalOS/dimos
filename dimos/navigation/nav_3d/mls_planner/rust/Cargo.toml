@@ -25,6 +25,7 @@ threads = 2
 global_map = "sensor_msgs.PointCloud2"
 local_map = "sensor_msgs.PointCloud2"
 region_bounds = "geometry_msgs.PoseStamped"
+full_map = "sensor_msgs.PointCloud2"
 goal = "geometry_msgs.PointStamped"
 tf = "tf2_msgs.TFMessage"
 

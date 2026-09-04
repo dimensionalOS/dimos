@@ -69,6 +69,9 @@ class MLSPlannerNative(NativeModule):
     global_map: In[PointCloud2]
     local_map: In[PointCloud2]
     region_bounds: In[PoseStamped]
+    # Whole-map snapshot loaded tile by tile through the region pipeline,
+    # between live updates. Live updates keep priority.
+    full_map: In[PointCloud2]
     goal: In[PointStamped]
     tf: In[TFMessage]
 
