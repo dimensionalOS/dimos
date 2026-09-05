@@ -81,6 +81,7 @@ all_blueprints = {
     "keyboard-teleop-xarm7": "dimos.robot.manipulators.xarm.blueprints.teleop:keyboard_teleop_xarm7",
     "learning-collect-quest-piper": "dimos.imitation.collection.blueprint:learning_collect_quest_piper",
     "learning-collect-quest-xarm7": "dimos.imitation.collection.blueprint:learning_collect_quest_xarm7",
+    "microduck-sim": "dimos.robot.pollen.microduck.blueprints.simulation:microduck_sim",
     "mid360": "dimos.hardware.sensors.lidar.livox.livox_blueprints:mid360",
     "mid360-fastlio": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio",
     "mid360-fastlio-ray-trace": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio_ray_trace",
