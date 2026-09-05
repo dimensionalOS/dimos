@@ -501,6 +501,9 @@ jobs:
           dimos/e2e_tests/test_robot_picker_browser.py
           dimos/e2e_tests/test_relay_auth_browser.py --no-cov
 
+      - name: Relay image build  # docker/relay/Dockerfile must not rot silently
+        run: docker build -f docker/relay/Dockerfile .
+
   tests:
     if: |
       !cancelled() &&
