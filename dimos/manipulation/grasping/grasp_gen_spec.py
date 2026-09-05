@@ -14,18 +14,9 @@
 
 from typing import Protocol
 
-from dimos.msgs.geometry_msgs.PoseArray import PoseArray
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec.utils import Spec
-
-
-class LegacyGraspGenSpec(Spec, Protocol):
-    def generate_grasps(
-        self,
-        pointcloud: PointCloud2,
-        scene_pointcloud: PointCloud2 | None = None,
-    ) -> PoseArray | None: ...
 
 
 class GraspGenSpec(Spec, Protocol):
