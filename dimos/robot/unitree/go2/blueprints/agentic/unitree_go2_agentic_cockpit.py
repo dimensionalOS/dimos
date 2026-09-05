@@ -16,8 +16,9 @@
 keyboard teleop in the middle, the agent chat right (the humancli
 conversation on McpClient's human_input/agent/agent_idle streams, with the
 composer's push-to-talk mic feeding VoiceInput -> the shared Whisper
-pipeline). The cockpit replaces the legacy :5555 WebInput page, so that
-module is disabled here rather than started alongside.
+pipeline), plus a full-page camera view on its own tab. The cockpit
+replaces the legacy :5555 WebInput page, so that module is disabled here
+rather than started alongside.
 
 Separate file on purpose: cockpit() needs the [web] extra at import time,
 and `unitree-go2-agentic` itself must stay importable without it.
@@ -35,11 +36,16 @@ unitree_go2_agentic_cockpit = (
         unitree_go2_agentic,
         cockpit(
             layout=Row(
-                Video("color_image"),
-                Col(Map2D(costmap="global_costmap", pose="odom"), Teleop(), shares=[3, 1]),
-                Chat(),
+                Video("color_image", title="Front camera"),
+                Col(
+                    Map2D(costmap="global_costmap", pose="odom", title="Map"),
+                    Teleop(title="Keyboard teleop"),
+                    shares=[3, 1],
+                ),
+                Chat(title="Agent chat"),
                 shares=[2, 1, 1],
             ),
+            pages=[Video("color_image", title="Front camera")],
         ),
         VoiceInput.blueprint(),
     )

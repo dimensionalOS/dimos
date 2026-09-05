@@ -7,6 +7,7 @@ import { registerTeleopHooks } from "@dimos/sdk/internal/teleop";
 import type { ChannelSpec, PanelSpec } from "@dimos/shared";
 import type { Manifest } from "@dimos/shared/manifest";
 import { App } from "./App.tsx";
+import type { View } from "./ui/StatusBar.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -72,6 +73,10 @@ describe("App session states", () => {
     container.remove();
   });
 
+  const view = (v: View) => {
+    act(() => container.querySelector<HTMLElement>(`[data-testid="view-${v}"]`)!.click());
+  };
+
   it("waits for a robot, shows its channels, and clears them when it leaves", () => {
     expect(container.textContent).toContain("Waiting for a robot");
 
@@ -87,6 +92,7 @@ describe("App session states", () => {
       );
       channels.publishUi();
     });
+    view("channels");
     expect(container.querySelector('[data-testid="ch-odom-seq"]')!.textContent).toBe("7");
     expect(container.querySelector('[data-testid="ch-odom-value"]')!.textContent).toContain(
       '{"x":1}',
@@ -115,6 +121,7 @@ describe("App session states", () => {
       );
       channels.publishUi();
     });
+    view("channels");
     expect(container.querySelector('[data-testid="ch-odom-decode-error"]')).toBeNull();
 
     // Corrupt frames arrive: the row keeps describing the good frame (seq and
@@ -159,6 +166,7 @@ describe("App session states", () => {
         manifest: mf([ODOM, IMAGE]),
       });
     });
+    view("channels");
     const value = () => container.querySelector('[data-testid="ch-color_image-value"]')!;
     expect(value().textContent).toContain("not subscribed (no panel binds it)");
 
@@ -233,6 +241,40 @@ describe("App session states", () => {
     expect(lines.join(" ")).toContain("three");
   });
 
+  it("shows the panels by default and the channel table on the channels tab", () => {
+    const cam: PanelSpec = {
+      id: "cam",
+      kind: "video",
+      title: "",
+      channels: ["color_image"],
+      params: {},
+    };
+    act(() => {
+      status.update({ watchedRobot: ROBOT, robots: [ROBOT], manifest: mf([ODOM, IMAGE], [cam]) });
+    });
+    const panel = () => container.querySelector('[data-testid="panel-cam"]');
+    const row = () => container.querySelector('[data-testid="ch-odom-seq"]');
+    const selected = (v: View) =>
+      container.querySelector(`[data-testid="view-${v}"]`)!.getAttribute("aria-selected");
+    expect(panel()).not.toBeNull();
+    expect(row()).toBeNull();
+    expect(selected("panels")).toBe("true");
+
+    view("channels");
+    expect(selected("channels")).toBe("true");
+    expect(panel()).toBeNull();
+    expect(row()).not.toBeNull();
+
+    // A manifest change remounts <main> but keeps the operator's view.
+    act(() => status.update({ manifest: mf([ODOM, IMAGE]), epoch: 1 }));
+    expect(row()).not.toBeNull();
+
+    // cockpit(channels=[...]) alone has nothing to lay out.
+    view("panels");
+    expect(row()).toBeNull();
+    expect(container.textContent).toContain("no panels");
+  });
+
   it("shows the multi-robot notice instead of channels", () => {
     act(() => status.update({ robots: [ROBOT, { id: "b", name: "B", model: "go2" }] }));
     expect(container.textContent).toContain("2 robots connected");
@@ -247,6 +289,7 @@ describe("App session states", () => {
       });
     });
     expect(container.textContent).toContain("newer than this Cockpit build");
+    view("channels");
     expect(container.querySelector('[data-testid="ch-odom-seq"]')).toBeNull();
   });
 

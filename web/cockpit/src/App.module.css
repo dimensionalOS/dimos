@@ -5,7 +5,9 @@
 }
 
 .main {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   overflow: auto;
   padding: 1rem;
 }

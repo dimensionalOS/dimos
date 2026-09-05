@@ -11,6 +11,27 @@
   font-weight: 600;
 }
 
+.views {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.view,
+.viewActive {
+  background: none;
+  border: none;
+  border-radius: 999px;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0.15rem 0.7rem;
+}
+
+.viewActive {
+  background: #30363d;
+  color: #d7dde3;
+}
+
 .pill {
   border-radius: 999px;
   font-size: 12px;
