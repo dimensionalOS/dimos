@@ -100,6 +100,11 @@ impl Mapper {
         self.seed_points(&points)
     }
 
+    /// Make room for `additional` voxels ahead of a tiled seed load.
+    pub fn reserve_voxels(&mut self, additional: usize) {
+        self.map.reserve(additional);
+    }
+
     /// Seed one tile of a partitioned world-frame cloud. Returns how many
     /// voxels were created.
     pub fn seed_tile(&mut self, tile: &[Point]) -> usize {

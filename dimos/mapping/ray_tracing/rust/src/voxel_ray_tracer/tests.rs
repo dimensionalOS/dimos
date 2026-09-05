@@ -1691,8 +1691,10 @@ fn partition_seed_orders_tiles_nearest_the_origin_first() {
     let points: Vec<(f32, f32, f32)> = (0..6).map(|i| (i as f32 * edge + 0.5, 0.5, 0.5)).collect();
     let origin = points[3];
 
-    let tiles = partition_seed(&points, voxel_size, origin);
+    let part = partition_seed(&points, voxel_size, origin);
+    let tiles = part.tiles;
 
+    assert_eq!(part.voxels, points.len(), "one voxel per point here");
     assert_eq!(tiles.len(), points.len(), "one tile per chunk");
     assert_eq!(tiles[0], vec![points[3]]);
     let distances: Vec<f32> = tiles.iter().map(|t| (t[0].0 - origin.0).abs()).collect();
@@ -1719,7 +1721,7 @@ fn seed_tiles_interleaved_with_live_frames_keep_indexes_consistent() {
     let cloud: Vec<(f32, f32, f32)> = (0..1500)
         .map(|_| (next_coord(), next_coord(), next_coord()))
         .collect();
-    let tiles = partition_seed(&cloud, cfg.voxel_size, (0.0, 0.0, 0.0));
+    let tiles = partition_seed(&cloud, cfg.voxel_size, (0.0, 0.0, 0.0)).tiles;
     assert!(tiles.len() > 4, "the cloud must span several chunks");
 
     let mut map = VoxelMap::default();
@@ -1753,4 +1755,30 @@ fn seed_tiles_interleaved_with_live_frames_keep_indexes_consistent() {
         assert_eq!(indexed, healthy, "after tile {i}: chunk index");
     }
     assert!(created_total > 0);
+}
+
+/// A seeded voxel is an ordinary voxel at health 1. A live ray through it
+/// carves it like any stale geometry: one miss drops it out of every emit,
+/// the next removes it from the map.
+#[test]
+fn live_rays_carve_seeded_voxels_they_pass_through() {
+    let cfg = Config {
+        min_health: -1,
+        max_health: 5,
+        ..basic_config()
+    };
+    let mut map = VoxelMap::default();
+    let created = seed_points(&mut map, &[(5.5, 0.5, 0.5)], &cfg);
+    assert!(created.contains(&(5, 0, 0)));
+    let no_live = AHashSet::new();
+    assert!(tuples(emit_points(&map, 1.0, None, 0, &no_live)).contains(&(5.5, 0.5, 0.5)));
+
+    // A live return well beyond the seed, along a ray that crosses it.
+    let origin = (0.5, 0.5, 0.5);
+    update_map(&mut map, origin, &[(20.5, 0.5, 0.5)], &cfg);
+    assert_eq!(map.health((5, 0, 0)), Some(0), "one miss ends its emission");
+    assert!(!tuples(emit_points(&map, 1.0, None, 0, &no_live)).contains(&(5.5, 0.5, 0.5)));
+
+    update_map(&mut map, origin, &[(20.5, 0.5, 0.5)], &cfg);
+    assert_eq!(map.health((5, 0, 0)), None, "the next miss removes it");
 }

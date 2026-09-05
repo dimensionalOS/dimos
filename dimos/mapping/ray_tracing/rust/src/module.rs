@@ -15,7 +15,7 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::mapper::{register, Mapper, Pose};
-use crate::voxel_ray_tracer::{partition_seed, Config, SeedTile};
+use crate::voxel_ray_tracer::{partition_seed, Config, SeedPartition, SeedTile};
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf, Transform};
 use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
@@ -32,11 +32,14 @@ enum Job {
     LoadedMap(PointCloud2),
     /// A loaded map placed in the world and split into tiles, or None when
     /// it could not be placed.
-    SeedPrepared(Option<Vec<SeedTile>>),
+    SeedPrepared(Option<SeedPartition>),
 }
 
 /// Messages the handlers can queue ahead of the worker before they wait.
 const JOB_QUEUE_CAPACITY: usize = 256;
+
+/// Tiles between seed load progress lines.
+const SEED_PROGRESS_TILES: usize = 100;
 
 #[derive(Module)]
 #[module(name = "ray_tracing", setup = spawn_worker, teardown = stop_worker)]
@@ -139,6 +142,15 @@ struct SeedLoad {
     next: usize,
     created: usize,
     started: Instant,
+    // The longest tile is the most a queued lidar frame ever waited.
+    max_tile_ms: f64,
+    sum_tile_ms: f64,
+}
+
+impl SeedLoad {
+    fn mean_tile_ms(&self) -> f64 {
+        self.sum_tile_ms / self.next.max(1) as f64
+    }
 }
 
 /// Everything the worker mutates across jobs.
@@ -207,13 +219,21 @@ impl Worker {
             Job::ClearMask(msg) => self.apply_clear_mask(state, msg),
             Job::LoadedMap(msg) => self.place_loaded_map(state, msg),
             Job::SeedPrepared(None) => state.seed_pending = false,
-            Job::SeedPrepared(Some(tiles)) => {
-                info!(tiles = tiles.len(), "Seed load started.");
+            Job::SeedPrepared(Some(part)) => {
+                info!(
+                    tiles = part.tiles.len(),
+                    voxels = part.voxels,
+                    "Seed load started."
+                );
+                let mapper = &mut state.mapper;
+                tokio::task::block_in_place(|| mapper.reserve_voxels(part.voxels));
                 state.load = Some(SeedLoad {
-                    tiles,
+                    tiles: part.tiles,
                     next: 0,
                     created: 0,
                     started: Instant::now(),
+                    max_tile_ms: 0.0,
+                    sum_tile_ms: 0.0,
                 });
             }
         }
@@ -419,25 +439,40 @@ impl Worker {
             let mapper = &mut state.mapper;
             let tile_start = Instant::now();
             load.created += tokio::task::block_in_place(|| mapper.seed_tile(tile));
-            debug!(
-                tile = load.next,
-                tile_ms = tile_start.elapsed().as_secs_f64() * 1e3,
-                "seed tile applied"
-            );
+            let tile_ms = tile_start.elapsed().as_secs_f64() * 1e3;
+            debug!(tile = load.next, tile_ms, "seed tile applied");
             load.next += 1;
+            load.max_tile_ms = load.max_tile_ms.max(tile_ms);
+            load.sum_tile_ms += tile_ms;
+            if load.next % SEED_PROGRESS_TILES == 0 {
+                info!(
+                    tiles_done = load.next,
+                    tiles = load.tiles.len(),
+                    max_tile_ms = load.max_tile_ms,
+                    mean_tile_ms = load.mean_tile_ms(),
+                    "Seed load in progress."
+                );
+            }
         }
         if load.next < load.tiles.len() {
             return;
         }
         let num_created = load.created;
+        let tiles = load.tiles.len();
         let load_s = load.started.elapsed().as_secs_f64();
+        let max_tile_ms = load.max_tile_ms;
+        let mean_tile_ms = load.mean_tile_ms();
         state.load = None;
         state.seeded = true;
         let mapper = &state.mapper;
         let full = tokio::task::block_in_place(|| mapper.full_points());
         info!(
             num_created,
-            load_s, "Seeded the voxel map from a loaded map cloud."
+            tiles,
+            load_s,
+            max_tile_ms,
+            mean_tile_ms,
+            "Seeded the voxel map from a loaded map cloud."
         );
         let cloud = points_to_cloud(&full, &self.config.world_frame, now());
         publish_cloud(&self.full_map, &cloud).await;
@@ -451,7 +486,7 @@ fn prepare_seed(
     pose: Pose,
     voxel_size: f32,
     origin: (f32, f32, f32),
-) -> Option<Vec<SeedTile>> {
+) -> Option<SeedPartition> {
     let mut points = match extract_xyz(msg) {
         Ok(p) => p,
         Err(e) => {
