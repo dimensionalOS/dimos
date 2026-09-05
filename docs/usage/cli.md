@@ -412,19 +412,21 @@ Returns JSON with tool names, descriptions, and parameter schemas.
 Call a skill by name.
 
 ```bash
-dimos mcp call <tool_name> [--arg key=value ...] [--json-args '{}']
+dimos mcp call <tool_name> [--arg key=value ...] [--json-args '{}'] [--timeout SECONDS]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--arg`, `-a` | Arguments as `key=value` pairs (repeatable) |
 | `--json-args`, `-j` | Arguments as a JSON string |
+| `--timeout`, `-t` | Seconds to wait for the tool. Default is `mcp_timeout` (30). The client cuts off a skill that runs longer. |
 
 ```bash
 dimos mcp call move_to --arg x=3.2 --arg y=-0.5
 dimos mcp call move_to --json-args '{"x": 2.0, "y": 0, "relative": true}'
 dimos mcp call observe
 dimos mcp call land
+dimos mcp call scan --timeout 120 --arg prompt='["mug"]'
 ```
 
 #### `dimos mcp status`
