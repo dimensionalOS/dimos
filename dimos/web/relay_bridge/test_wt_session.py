@@ -29,7 +29,9 @@ from dimos.web.relay_bridge._wt_session import (
 from dimos.web.relay_bridge.protocol import (
     CONTROL_CHANNEL,
     MAX_CONTROL_PAYLOAD_BYTES,
+    MAX_PUB_DATA_BYTES,
     DataFrame,
+    Error,
     FrameHeader,
     Manifest,
     Stop,
@@ -249,6 +251,95 @@ async def test_subs_snapshot_survives_a_teleop_flood():
     assert msgs[0] == Subs(chs=["odom"], n=1)
     # The oldest teleop message (seq 0) was the eviction victim.
     assert [m.seq for m in msgs[1:] if isinstance(m, Stop)] == list(range(1, _CONTROL_QUEUE_MAX))
+
+
+def _tx_bytes(payload: bytes, seq: int = 1) -> bytes:
+    header = FrameHeader(
+        ch="human_input",
+        seq=seq,
+        ts=0.5,
+        delivery="reliable",
+        meta={"id": f"p{seq}", "principal": "local", "relayTs": 0.5},
+    )
+    return encode_data_frame(header, payload)
+
+
+async def test_carrier_tx_frames_join_the_control_queue_in_order():
+    # A forwarded publish (non-control carrier frame) rides the same ordered
+    # consumer as control; nothing lands in the undrained data-frame queue.
+    session = _session()
+    session.incoming_is_carrier = True
+    chunk = _control_bytes(encode_datagram(Subs(chs=["odom"], n=1)), seq=1) + _tx_bytes(
+        b'{"text":"salut"}', seq=2
+    )
+    session._stream_data_received(3, chunk, False)
+    assert session.frames.qsize() == 0
+    assert session.control_msgs.get_nowait() == Subs(chs=["odom"], n=1)
+    frame = session.control_msgs.get_nowait()
+    assert isinstance(frame, DataFrame)
+    assert frame.header.ch == "human_input"
+    assert frame.header.meta == {"id": "p2", "principal": "local", "relayTs": 0.5}
+    assert frame.payload == b'{"text":"salut"}'
+    assert not session.closed.is_set()
+
+
+async def test_carrier_tx_oversize_payload_fails_the_session():
+    # The relay caps serialized publish data; past the cap the control path
+    # is broken. The exact cap still passes.
+    session = _session()
+    session.incoming_is_carrier = True
+    session._stream_data_received(3, _tx_bytes(b"x" * MAX_PUB_DATA_BYTES), False)
+    assert session.control_msgs.qsize() == 1
+    assert not session.closed.is_set()
+    session._stream_data_received(3, _tx_bytes(b"x" * (MAX_PUB_DATA_BYTES + 1), seq=2), False)
+    assert session.closed.is_set()
+    assert session.control_msgs.qsize() == 1  # the oversize frame never queued
+
+
+async def test_viewer_leg_tx_channel_frames_stay_data_frames():
+    # Only the robot leg's carrier reroutes non-control frames; a viewer
+    # session keeps every data frame in the data-frame queue.
+    session = _session()
+    session._stream_data_received(4, _tx_bytes(b"{}"), False)
+    assert session.frames.qsize() == 1
+    assert session.control_msgs.qsize() == 0
+
+
+async def test_subs_snapshot_survives_a_publish_flood():
+    # Publish frames are ordinary eviction victims; the one queued snapshot
+    # is not (an evicted publish is settled by the relay's timeout, an
+    # evicted snapshot would freeze subscriptions).
+    session = _session()
+    session.incoming_is_carrier = True
+    session._stream_data_received(
+        3, _control_bytes(encode_datagram(Subs(chs=["odom"], n=1))), False
+    )
+    for seq in range(_CONTROL_QUEUE_MAX):
+        session._stream_data_received(3, _tx_bytes(b"{}", seq=seq + 2), False)
+    assert session.control_msgs.qsize() == _CONTROL_QUEUE_MAX
+    assert session.control_dropped == 1
+    first = session.control_msgs.get_nowait()
+    assert first == Subs(chs=["odom"], n=1)
+    # The oldest publish frame (seq 2) was the eviction victim.
+    second = session.control_msgs.get_nowait()
+    assert isinstance(second, DataFrame) and second.header.seq == 3
+
+
+async def test_correlated_errors_join_the_consumer_queue_not_the_handshake_slot():
+    # An error carrying requestId is addressed to one publish, not the
+    # session: it must reach the consumer and must never unblock a hello()
+    # waiter or overwrite the handshake error slot.
+    session = _session()
+    correlated = Error(code="not_publishable", message="nu", requestId="r-1")
+    session._control_msg_received(correlated)
+    assert session.control_msgs.get_nowait() == correlated
+    assert session.relay_error is None
+    assert not session.welcomed.is_set()
+    # A session-level error keeps the handshake behavior.
+    session._control_msg_received(Error(code="version_mismatch", message="v"))
+    assert session.relay_error is not None and session.relay_error.code == "version_mismatch"
+    assert session.welcomed.is_set()
+    assert session.control_msgs.qsize() == 0
 
 
 async def test_newer_subs_snapshot_supersedes_the_queued_one():

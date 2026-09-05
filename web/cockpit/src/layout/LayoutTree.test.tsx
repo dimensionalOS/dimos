@@ -10,7 +10,16 @@ import { LayoutTree } from "./LayoutTree.tsx";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function spec(ch: string): ChannelSpec {
-  return { ch, dir: "rx", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20, params: {} };
+  return {
+    ch,
+    dir: "rx",
+    encoding: "pose.json.v1",
+    delivery: "reliable",
+    maxHz: 20,
+    params: {},
+    publish: "none",
+    requiredScope: null,
+  };
 }
 
 function panel(id: string, kind: string, channels: string[] = []): PanelSpec {
@@ -122,6 +131,8 @@ describe("LayoutTree", () => {
             delivery: "latest",
             maxHz: 15,
             params: {},
+            publish: "none",
+            requiredScope: null,
           },
         ],
         panels: [video],

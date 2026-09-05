@@ -15,6 +15,7 @@ import {
   readRobotFrame,
   readWebTransportPreamble,
   ReliableChannel,
+  TokenBucket,
   type ViewerSink,
 } from "./forward.ts";
 
@@ -525,6 +526,31 @@ Deno.test("rate: bucketed trailing window with idle decay and wraparound", () =>
   // Wraparound: pushes far apart still land in the right buckets.
   rate.push(500, t0 + 30_000);
   assertEquals(rate.snapshot(t0 + 30_000), { fps: 0.2, bps: 100 });
+});
+
+Deno.test("token bucket: burst to capacity, continuous refill, no wobble drain", () => {
+  const bucket = new TokenBucket(2); // capacity max(1, ceil(2)) = 2
+  const t0 = 1_000_000;
+  assertEquals(bucket.take(t0), true);
+  assertEquals(bucket.take(t0), true);
+  assertEquals(bucket.take(t0), false); // burst spent
+  // 2/s: half a second buys exactly one token.
+  assertEquals(bucket.take(t0 + 499), false);
+  assertEquals(bucket.take(t0 + 500), true);
+  // A backwards clock must not drain tokens (the failed take at t0+500ms+1
+  // refilled nothing; going back 400ms keeps the balance).
+  assertEquals(bucket.take(t0 + 100), false);
+  // Idle refill clamps at capacity: a long pause buys 2 tokens, not 20.
+  assertEquals(bucket.take(t0 + 60_000), true);
+  assertEquals(bucket.take(t0 + 60_000), true);
+  assertEquals(bucket.take(t0 + 60_000), false);
+
+  // Fractional rates keep at least one token of capacity.
+  const slow = new TokenBucket(0.5);
+  assertEquals(slow.capacity, 1);
+  assertEquals(slow.take(t0), true);
+  assertEquals(slow.take(t0 + 1999), false);
+  assertEquals(slow.take(t0 + 2000), true);
 });
 
 Deno.test("parseRobotFrameHeader accepts valid frames and rejects junk", () => {

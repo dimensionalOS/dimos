@@ -26,6 +26,8 @@ export function spec(over: Partial<ChannelSpec> = {}): ChannelSpec {
     delivery: "reliable",
     maxHz: 20,
     params: {},
+    publish: "none",
+    requiredScope: null,
     ...over,
   };
 }
@@ -151,8 +153,18 @@ export class FakeRelayEnd {
     );
   }
 
+  /** End the control stream (the session's read loop sees done and treats
+   * the connection as dead; the transport then reconnects). */
+  endControl(): void {
+    this.#control.close();
+  }
+
   watches(id: string): number {
     return this.sent.filter((m) => m.t === "watch" && m.robotId === id).length;
+  }
+
+  pubs(): Msg[] {
+    return this.sent.filter((m) => m.t === "pub");
   }
 
   subs(): string[] {

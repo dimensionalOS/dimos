@@ -37,8 +37,9 @@ from dimos.web.cockpit import (
     Video,
     cockpit,
 )
-from dimos.web.codecs import EncodedPayload, encode_json_v1, web_encoder
-from dimos.web.relay_bridge.manifest import parse_manifest
+from dimos.web.codecs import EncodedPayload, decode_json_v1, encode_json_v1, web_encoder
+from dimos.web.relay_bridge.builtin_codecs import decode_text
+from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
 from dimos.web.relay_bridge.protocol import (
     MAX_CONTROL_PAYLOAD_BYTES,
     PROTOCOL_VERSION,
@@ -67,6 +68,8 @@ GO2_MANIFEST = {
             "delivery": "latest",
             "maxHz": 30.0,
             "params": {"quality": 75},
+            "publish": "none",
+            "requiredScope": None,
         },
         {
             "ch": "odom",
@@ -75,6 +78,8 @@ GO2_MANIFEST = {
             "delivery": "reliable",
             "maxHz": 20.0,
             "params": {},
+            "publish": "none",
+            "requiredScope": None,
         },
         {
             "ch": "global_costmap",
@@ -83,6 +88,8 @@ GO2_MANIFEST = {
             "delivery": "latest",
             "maxHz": 5.0,
             "params": {},
+            "publish": "none",
+            "requiredScope": None,
         },
         {
             "ch": "tele_cmd_vel",
@@ -91,6 +98,8 @@ GO2_MANIFEST = {
             "delivery": "latest",
             "maxHz": 15.0,
             "params": {"maxLinear": 0.8, "maxAngular": 1.0, "boost": 2.0, "watchdogMs": 300.0},
+            "publish": "none",
+            "requiredScope": None,
         },
     ],
     "panels": [
@@ -272,18 +281,41 @@ def _encode_path_xy(msg: Path) -> EncodedPayload:
     return EncodedPayload(payload, {"n": len(msg.poses)})
 
 
-def test_channel_tx_rejected_until_publish_ticket() -> None:
-    with pytest.raises(ValueError, match="publish ticket"):
-        Channel("goal", dict, dir="tx")
+def test_channel_shared_tx_accepted() -> None:
+    channel = Channel(
+        "human_input",
+        str,
+        dir="tx",
+        encoding="text.json.v1",
+        publish="shared",
+        required_scope="chat:send",
+    )
+    assert channel.publish == "shared"
+    assert channel.required_scope == "chat:send"
+    # required_scope stays optional.
+    assert Channel("goal", dict, dir="tx", publish="shared").required_scope is None
 
 
-def test_channel_rx_publish_policy() -> None:
+def test_channel_publish_policy_rules() -> None:
+    # rx channels never declare a policy or scope.
     with pytest.raises(ValueError, match="publish='none'"):
         Channel("note", dict, publish="shared")
-    with pytest.raises(ValueError, match="publish='none'"):
-        Channel("note", dict, publish="exclusive")
-    with pytest.raises(ValueError, match="required_scope"):
+    with pytest.raises(ValueError, match="required_scope needs a publish policy"):
         Channel("note", dict, required_scope="chat:send")
+    # Exclusive arrives with the lease ticket.
+    with pytest.raises(ValueError, match=r"\(W8\)"):
+        Channel("goal", dict, dir="tx", publish="exclusive")
+    # publish="none" tx streams are the specialized protocol paths (teleop).
+    with pytest.raises(ValueError, match="specialized protocol paths"):
+        Channel("goal", dict, dir="tx")
+    # Generic publish is reliable-only.
+    with pytest.raises(ValueError, match="delivery='reliable'"):
+        Channel("goal", dict, dir="tx", publish="shared", delivery="latest")
+    # Scope uses the manifest id bound.
+    with pytest.raises(ValueError, match="required_scope must be 1..64"):
+        Channel("goal", dict, dir="tx", publish="shared", required_scope="")
+    with pytest.raises(ValueError, match="required_scope must be 1..64"):
+        Channel("goal", dict, dir="tx", publish="shared", required_scope="x" * 65)
 
 
 def test_channel_message_type_must_be_a_class() -> None:
@@ -412,6 +444,79 @@ def test_channels_only_blueprint() -> None:
     assert ratom.kwargs["manifest"] == manifest
 
 
+def test_publish_tx_channel_blueprint() -> None:
+    blueprint = cockpit(
+        channels=[
+            Channel(
+                "human_input",
+                str,
+                dir="tx",
+                encoding="text.json.v1",
+                publish="shared",
+                required_scope="chat:send",
+                max_hz=2.0,
+            ),
+        ]
+    )
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    (channel,) = manifest["channels"]
+    assert channel["dir"] == "tx" and channel["delivery"] == "reliable"
+    assert channel["publish"] == "shared" and channel["requiredScope"] == "chat:send"
+    assert parse_manifest(manifest).model_dump() == manifest
+    # Publish streams ride a generated subclass with a typed Out port.
+    assert issubclass(atom.module, RelayBridgeModule) and atom.module is not RelayBridgeModule
+    assert any(
+        s.name == "human_input" and s.type is str and s.direction == "out" for s in atom.streams
+    )
+    (spec,) = atom.kwargs["channels"]
+    assert spec.dir == "tx" and spec.publish == "shared" and spec.required_scope == "chat:send"
+    assert spec.decoder is decode_text and spec.decoder_takes_context is False
+    assert spec.encoder is None
+    # Blueprint kwargs cross the forkserver Pipe: the by-reference decoder
+    # must survive pickling.
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert ratom.module is atom.module
+    assert ratom.kwargs["channels"][0].decoder is decode_text
+
+
+def test_publish_tx_generic_json_and_dataclass_rejection() -> None:
+    (atom,) = cockpit(channels=[Channel("counter", int, dir="tx", publish="shared")]).blueprints
+    (spec,) = atom.kwargs["channels"]
+    assert spec.decoder is decode_json_v1 and spec.decoder_takes_context is False
+    # Reconstructing a dataclass from untrusted browser JSON needs an
+    # explicit decoder (narrower than the encoder side).
+    with pytest.raises(ValueError, match="register an explicit decoder"):
+        cockpit(channels=[Channel("ops_note", _OpsNote, dir="tx", publish="shared")])
+
+
+def test_publish_tx_codec_errors() -> None:
+    with pytest.raises(ValueError, match=r"@web_decoder\('goal.json.v1'\)"):
+        cockpit(
+            channels=[Channel("goal", dict, dir="tx", encoding="goal.json.v1", publish="shared")]
+        )
+    with pytest.raises(ValueError, match="decodes to str, not int"):
+        cockpit(
+            channels=[
+                Channel("human_input", int, dir="tx", encoding="text.json.v1", publish="shared")
+            ]
+        )
+    # Non-JSON-family encodings fail the manifest's invalid_publish rule.
+    with pytest.raises(ManifestError, match="invalid_publish"):
+        cockpit(channels=[Channel("blob", bytes, dir="tx", encoding="blob.v1", publish="shared")])
+
+
+def test_publish_channel_conflicts_with_teleop_panel() -> None:
+    with pytest.raises(ValueError, match="conflicting requirements for stream 'tele_cmd_vel'"):
+        cockpit(
+            layout=Teleop(),
+            channels=[
+                Channel("tele_cmd_vel", Twist, dir="tx", encoding="twist.json.v1", publish="shared")
+            ],
+        )
+
+
 def test_default_path_channels_kwarg_matches_manifest() -> None:
     (atom,) = cockpit().blueprints
     assert atom.module is RelayBridgeModule
@@ -519,10 +624,11 @@ def test_reserved_stream_names_rejected(stream: str) -> None:
         cockpit(channels=[Channel(stream, dict)])
 
 
-def test_channel_ordering_builtins_then_customs() -> None:
+def test_channel_ordering_builtins_then_customs_then_publish() -> None:
     blueprint = cockpit(
         layout=GO2_LAYOUT,
         channels=[
+            Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
             Channel("target_pose", PoseStamped, encoding="pose.json.v1", max_hz=5.0),
             Channel("ops_note", _OpsNote),
         ],
@@ -535,6 +641,7 @@ def test_channel_ordering_builtins_then_customs() -> None:
         "target_pose",
         "ops_note",
         "tele_cmd_vel",
+        "human_input",
     ]
 
 

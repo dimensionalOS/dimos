@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type Msg, PROTOCOL_VERSION, type RobotInfo } from "@dimos/shared";
+import { type JsonValue, type Msg, PROTOCOL_VERSION, type RobotInfo } from "@dimos/shared";
 import type { CostmapValue } from "./decoders/costmap.ts";
 import { createDecoderRegistry } from "./decoders/index.ts";
 import { teleopHooks } from "./internal/teleopMachine.ts";
@@ -10,6 +10,7 @@ import {
   pickAutoWatch,
   type Session,
 } from "./session.ts";
+import { PublishError } from "./errors.ts";
 import {
   FakeRelayEnd,
   INFO,
@@ -43,6 +44,17 @@ describe("manifestsEqual", () => {
       false,
     );
     expect(manifestsEqual(manifest([]), manifest([]))).toBe(true);
+  });
+
+  it("detects publish policy and scope changes (a publish-only edit must remount)", () => {
+    const chat = () => spec({ ch: "chat", dir: "tx", encoding: "text.json.v1", publish: "shared" });
+    expect(manifestsEqual(manifest([chat()]), manifest([chat()]))).toBe(true);
+    expect(manifestsEqual(manifest([chat()]), manifest([{ ...chat(), publish: "none" }]))).toBe(
+      false,
+    );
+    expect(
+      manifestsEqual(manifest([chat()]), manifest([{ ...chat(), requiredScope: "chat:send" }])),
+    ).toBe(false);
   });
 
   it("detects panel changes, including display order", () => {
@@ -348,6 +360,197 @@ describe("Session over a fake WebTransport", () => {
     await until(() => handle.status.get().lastError?.code === "unknown_channel", "error");
     await settle();
     expect(relay.subs()).toEqual([]);
+  });
+
+  const chatSpec = () =>
+    spec({ ch: "chat", dir: "tx", encoding: "text.json.v1", publish: "shared" });
+
+  async function goLiveChat(relay: FakeRelayEnd, handle: Session): Promise<void> {
+    await goLive(relay, handle, ROBOT_A, [spec(), chatSpec()]);
+  }
+
+  function expectPublishError(
+    promise: Promise<unknown>,
+    outcome: "rejected" | "unknown",
+    code: string,
+  ): Promise<void> {
+    return promise.then(
+      () => {
+        throw new Error(`expected a PublishError ${code}, got a resolution`);
+      },
+      (e: unknown) => {
+        expect(e).toBeInstanceOf(PublishError);
+        expect((e as PublishError).outcome).toBe(outcome);
+        expect((e as PublishError).code).toBe(code);
+      },
+    );
+  }
+
+  it("publish resolves on pub_ack with the receipt fields", async () => {
+    const { relay, handle } = start();
+    await goLiveChat(relay, handle);
+    const promise = handle.publish("chat", { text: "salut β" }, { clientTs: 9.5 });
+    await until(() => relay.pubs().length === 1, "pub sent");
+    const pub = relay.pubs()[0];
+    expect(pub.t === "pub" && pub.ch).toBe("chat");
+    expect(pub.t === "pub" && pub.data).toEqual({ text: "salut β" });
+    expect(pub.t === "pub" && pub.clientTs).toBe(9.5);
+    const id = pub.t === "pub" ? pub.id : "";
+    expect(id.length).toBeGreaterThan(4);
+    relay.push({ t: "pub_ack", id, ch: "chat", relayTs: 10.5, bridgeTs: 11.5 });
+    await expect(promise).resolves.toEqual({ ch: "chat", relayTs: 10.5, bridgeTs: 11.5 });
+  });
+
+  it("publish rejects locally with stable codes before anything is sent", async () => {
+    const { relay, handle } = start();
+    // Before the manifest is adopted nothing may go out.
+    await expectPublishError(handle.publish("chat", 1.5), "rejected", "not_connected");
+    await goLive(relay, handle, ROBOT_A, [
+      spec(),
+      chatSpec(),
+      spec({ ch: "goal", dir: "tx", encoding: "goal.json.v1", publish: "exclusive" }),
+    ]);
+    await expectPublishError(handle.publish("ghost", 1.5), "rejected", "unknown_channel");
+    await expectPublishError(handle.publish("odom", 1.5), "rejected", "not_publishable");
+    await expectPublishError(handle.publish("goal", 1.5), "rejected", "exclusive_unsupported");
+    // Runtime callers can bypass the JsonValue type; anything JSON.stringify
+    // would silently drop or rewrite rejects instead of mutating in flight.
+    await expectPublishError(
+      handle.publish("chat", undefined as unknown as JsonValue),
+      "rejected",
+      "not_serializable",
+    );
+    await expectPublishError(handle.publish("chat", NaN), "rejected", "not_serializable");
+    await expectPublishError(handle.publish("chat", Infinity), "rejected", "not_serializable");
+    await expectPublishError(
+      handle.publish("chat", { a: undefined } as unknown as JsonValue),
+      "rejected",
+      "not_serializable",
+    );
+    await expectPublishError(
+      handle.publish("chat", new Date() as unknown as JsonValue),
+      "rejected",
+      "not_serializable",
+    );
+    let deep: JsonValue = 1.5;
+    for (let i = 0; i < 101; i++) deep = [deep];
+    await expectPublishError(handle.publish("chat", deep), "rejected", "not_serializable");
+    await expectPublishError(
+      handle.publish("chat", 1.5, { clientTs: NaN }),
+      "rejected",
+      "not_serializable",
+    );
+    await expectPublishError(
+      handle.publish("chat", "x".repeat(33 * 1024)),
+      "rejected",
+      "too_large",
+    );
+    await settle();
+    expect(relay.pubs()).toEqual([]);
+    // Local rejections never touch the session error banner.
+    expect(handle.status.get().lastError).toBeNull();
+
+    handle.close();
+    await expectPublishError(handle.publish("chat", 1.5), "rejected", "closed");
+  });
+
+  it("publish accepts null and sends it as JSON null", async () => {
+    const { relay, handle } = start();
+    await goLiveChat(relay, handle);
+    const promise = handle.publish("chat", null);
+    await until(() => relay.pubs().length === 1, "pub sent");
+    const pub = relay.pubs()[0];
+    expect(pub.t === "pub" && pub.data).toBeNull();
+    const id = pub.t === "pub" ? pub.id : "";
+    relay.push({ t: "pub_ack", id, ch: "chat", relayTs: 1.5, bridgeTs: 2.5 });
+    await expect(promise).resolves.toEqual({ ch: "chat", relayTs: 1.5, bridgeTs: 2.5 });
+  });
+
+  it("a correlated error rejects the publish and skips the error banner", async () => {
+    const { relay, handle } = start();
+    await goLiveChat(relay, handle);
+    const promise = handle.publish("chat", 1.5);
+    await until(() => relay.pubs().length === 1, "pub sent");
+    const pub = relay.pubs()[0];
+    const id = pub.t === "pub" ? pub.id : "";
+    relay.push({ t: "error", code: "rate_limited", message: "prea rapid", requestId: id });
+    await expectPublishError(promise, "rejected", "rate_limited");
+    expect(handle.status.get().lastError).toBeNull();
+    // Codes that cannot prove non-delivery map to outcome "unknown".
+    const second = handle.publish("chat", 2.5);
+    await until(() => relay.pubs().length === 2, "second pub");
+    const pub2 = relay.pubs()[1];
+    relay.push({
+      t: "error",
+      code: "publish_timeout",
+      message: "no ack",
+      requestId: pub2.t === "pub" ? pub2.id : "",
+    });
+    await expectPublishError(second, "unknown", "publish_timeout");
+    // An uncorrelated error still banners, and one for an unknown id is
+    // dropped without touching anything.
+    relay.push({ t: "error", code: "some_error", message: "x", requestId: "nope-1" });
+    relay.push({ t: "error", code: "other_error", message: "y" });
+    await until(() => handle.status.get().lastError !== null, "banner");
+    expect(handle.status.get().lastError?.message).toBe("other_error: y");
+  });
+
+  it("connection loss rejects in-flight publishes as unknown and never resends", async () => {
+    const { relays, handle } = startReconnecting();
+    await until(() => relays.length === 1, "first connection");
+    const relay = relays[0];
+    await goLiveChat(relay, handle);
+    const promise = handle.publish("chat", 1.5);
+    await until(() => relay.pubs().length === 1, "pub sent");
+    relay.endControl();
+    await expectPublishError(promise, "unknown", "connection_lost");
+    // The next connection comes up empty: no automatic resend, ever.
+    await until(() => relays.length >= 2, "reconnect");
+    await settle();
+    expect(relays[0].pubs().length).toBe(1);
+    for (const later of relays.slice(1)) expect(later.pubs()).toEqual([]);
+  });
+
+  it("close() settles every pending publish and clears its timer", async () => {
+    const { relay, handle } = start();
+    await goLiveChat(relay, handle);
+    const first = handle.publish("chat", 1.5);
+    const second = handle.publish("chat", 2.5);
+    await until(() => relay.pubs().length === 2, "pubs sent");
+    handle.close();
+    await expectPublishError(first, "unknown", "closed");
+    await expectPublishError(second, "unknown", "closed");
+  });
+
+  it("the local safety timer settles a never-answered publish as unknown", async () => {
+    const { relay, handle } = start();
+    await goLiveChat(relay, handle);
+    // The publish must run under fake timers so its safety timer is fake too.
+    vi.useFakeTimers();
+    try {
+      const promise = handle.publish("chat", 1.5);
+      promise.catch(() => {}); // settled by fake time below; no unhandled noise
+      await vi.advanceTimersByTimeAsync(20_000);
+      await expectPublishError(promise, "unknown", "publish_timeout");
+    } finally {
+      vi.useRealTimers();
+    }
+    await settle();
+    expect(relay.pubs().length).toBe(1); // it really went out; nothing answered
+  });
+
+  it("bounds the pending publish map", async () => {
+    const { relay, handle } = start();
+    await goLiveChat(relay, handle);
+    const pending: Promise<unknown>[] = [];
+    for (let i = 0; i < 64; i++) {
+      const p = handle.publish("chat", i + 0.5);
+      p.catch(() => {});
+      pending.push(p);
+    }
+    await expectPublishError(handle.publish("chat", 65.5), "rejected", "pending_limit");
+    handle.close();
+    await Promise.allSettled(pending);
   });
 
   it("keeps notifying other subscribers when one callback throws", async () => {
