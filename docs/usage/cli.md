@@ -426,7 +426,6 @@ dimos mcp call move_to --arg x=3.2 --arg y=-0.5
 dimos mcp call move_to --json-args '{"x": 2.0, "y": 0, "relative": true}'
 dimos mcp call observe
 dimos mcp call land
-dimos mcp call scan --timeout 120 --arg prompt='["mug"]'
 ```
 
 #### `dimos mcp status`
