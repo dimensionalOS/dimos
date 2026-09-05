@@ -104,6 +104,10 @@ class GlobalConfig(BaseSettings):
     robot_rotation_diameter: float = 0.6
     nerf_speed: float = 1.0
     mcp_port: int = 9990
+    # Seconds an MCP client waits for a tool to answer. A skill that thinks
+    # for longer than this is cut off at the client, not the server, so the
+    # caller owns the number.
+    mcp_timeout: int = 30
     # `DIMOS_TRANSPORT` (or `.env`) is the single switch read by every process
     # (dimos, humancli, agentspy, dtop). The `transport` alias keeps the bare
     # env name and the `--transport` CLI flag (which sets the field by name) working.
