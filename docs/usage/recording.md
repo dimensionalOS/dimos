@@ -1,13 +1,45 @@
 # Recording
 
-`--record` writes every stream a blueprint publishes to one SQLite memory store. Each stream is tapped on the transport that carries it.
+`--record` writes the selected streams from a blueprint to one recording artifact.
+The stable default remains the Python SQLite recorder. The Rust engine is an
+explicit experimental option while it is evaluated.
 
 ```bash
 dimos --record --simulation run unitree-go2
 dimos --record --robot-ip 192.168.123.161 run unitree-go2
 ```
 
-The file lands at `recordings/<run-id>/memory.db` under the checkout (`~/.local/state/dimos/recordings/` for an installed package). `<run-id>` is the same `YYYYMMDD-HHMMSS-<blueprint>` as the `logs/` directory of that run.
+Bare `--record` means `--record sqlite`. SQLite lands at
+`recordings/<run-id>/memory.db`; MCAP lands at
+`recordings/<run-id>/memory.mcap`. The root is under the checkout, or
+`~/.local/state/dimos/recordings/` for an installed package. `<run-id>` is the
+same `YYYYMMDD-HHMMSS-<blueprint>` used by the run's `logs/` directory.
+
+## Experimental Rust engine
+
+Select the native engine explicitly:
+
+```bash
+dimos --record sqlite --record-engine rust run unitree-go2
+dimos --record mcap --record-engine rust run unitree-go2
+dimos --record mcap --record-engine rust --record-encoding-threads 8 run unitree-go2
+```
+
+`--record-encoding-threads` defaults to `4` and is valid only for the Rust
+engine. Python remains the default because the native recorder is experimental;
+MCAP recording currently requires the Rust engine.
+
+The Rust engine records exact `LCMTransport` and `ZenohTransport` streams. It
+rejects SHM, DDS, ROS, WebRTC, pickled, JPEG-transport, mixed LCM/Zenoh, and
+other specialized transports before creating an artifact. Narrow
+`--record-topics` or use the Python engine when a selection contains one of
+those transports. Payloads must also be dimOS LCM message types.
+
+The native process must report ready within 10 seconds, so build, configuration,
+and subscription failures stop startup. If it exits unexpectedly after startup,
+the error is logged and the rest of `dimos run` continues. Normal shutdown sends
+SIGTERM and lets the existing native module runtime flush the artifact. There is
+no automatic fallback to Python.
 
 ## Choosing streams
 
@@ -21,7 +53,8 @@ dimos --record --record-topics 'global_*' run unitree-go2
 
 A pattern that matches no stream throws an error at startup, listing the valid stream names of the given blueprint.
 
-Streams whose type is not a dimOS message (`Any`, `dict`) are not recorded.
+Streams whose type is not a dimOS message (`Any`, `dict`) are not recorded. If
+none of the selected streams is recordable, startup fails.
 
 ## Inspecting and replaying
 
@@ -62,5 +95,7 @@ dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
 ## Behavior
 
 - Off unless `--record`; never active under `--replay`.
-- One writer thread; transport callbacks only enqueue. Queue holds 1000 messages, then drops and warns.
+- The Python recorder uses one writer thread. Its queue holds 1000 messages, then
+  drops and warns. The Rust recorder uses its existing native encoding pool and
+  ordered writer pipeline.
 - We also still have explicit recorder modules (`unitree-go2-memory`, `unitree-go2-mid360-record`, `unitree-g1-record`) that are unaffected and still record their own streams. These will be deprecated shortly.

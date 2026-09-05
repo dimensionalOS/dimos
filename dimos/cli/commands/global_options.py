@@ -20,6 +20,7 @@ import inspect
 import types
 from typing import get_args, get_origin
 
+from pydantic import ValidationError
 import typer
 
 from dimos.core.global_config import GlobalConfig, global_config
@@ -90,7 +91,10 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
         ctx.obj = overrides
         # Apply overrides (e.g. --transport, --viewer) to the process-global config
         # up front so every subcommand honors flags given before the subcommand name.
-        global_config.update(**overrides)
+        try:
+            global_config.update(**overrides)
+        except ValidationError as error:
+            raise typer.BadParameter(error.errors()[0]["msg"]) from error
 
     callback.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
 

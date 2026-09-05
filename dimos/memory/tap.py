@@ -14,9 +14,9 @@
 
 """``--record``: subscribe to every stream transport in the blueprint and write one store.
 
-Runs in the ``dimos run`` process. Each stream is tapped on its own transport (LCM,
-Zenoh, SHM, ...), so whatever carries it is what gets recorded. One ``memory.db`` per
-run at ``recordings/<run-id>/``, streams named by their blueprint stream name.
+The stable Python SQLite engine runs in the ``dimos run`` process and taps each
+selected transport directly. The experimental Rust engine reuses the standalone
+native recorder. Both name artifact streams by their blueprint stream name.
 Poses are not resolved here; ``tf`` is recorded like any other stream and
 ``dimos map pose-fill`` derives poses on read.
 """
@@ -123,18 +123,36 @@ class TransportRecorder:
 
 
 @contextmanager
-def recording(transports: Mapping[tuple[str, type], Transport[Any]]) -> Iterator[None]:
+def recording(
+    transports: Mapping[tuple[str, type], Transport[Any]],
+) -> Iterator[None]:
     """Record every stream in *transports* for the duration of the block when ``--record`` is set."""
     if not global_config.record or global_config.replay:
         yield
         return
     check_topics(global_config.record_topics, {n for n, _ in transports})
+    if global_config.record_engine == "rust":
+        from dimos.experimental.memory.rust_cli_recorder import (
+            RustRecordingSession,
+            make_plan,
+        )
+
+        session = RustRecordingSession(make_plan(dict(transports)))
+        session.start()
+        try:
+            yield
+        finally:
+            session.stop()
+        return
+
     path = recording_dir() / "memory.db"
     store = SqliteStore(path=str(path))
     store.start()
     recorder = TransportRecorder(store, global_config.record_topics)
     unsubscribes = [
-        u for (name, t), tr in transports.items() if (u := recorder.tap(name, t, tr)) is not None
+        unsubscribe
+        for (name, payload_type), transport in transports.items()
+        if (unsubscribe := recorder.tap(name, payload_type, transport)) is not None
     ]
     logger.info("Recording to %s", path)
     try:

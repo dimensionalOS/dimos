@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pydantic import ValidationError
+import pytest
+
 from dimos.core.global_config import GlobalConfig
 
 
@@ -23,3 +26,29 @@ class TestGlobalConfigSecurityDefaults:
         assert config.listen_host == "127.0.0.1", (
             f"listen_host must default to 127.0.0.1, got {config.listen_host}"
         )
+
+
+class TestRecordingConfig:
+    def test_python_is_the_default_engine_without_rust_thread_configuration(self) -> None:
+        config = GlobalConfig.model_validate({})
+
+        assert config.record_engine == "python"
+        assert config.record_encoding_threads is None
+
+    def test_mcap_requires_rust(self) -> None:
+        with pytest.raises(ValidationError, match="MCAP recording requires --record-engine rust"):
+            GlobalConfig.model_validate({"record": "mcap"})
+
+        assert (
+            GlobalConfig.model_validate({"record": "mcap", "record_engine": "rust"}).record
+            == "mcap"
+        )
+
+    def test_encoding_threads_require_rust(self) -> None:
+        with pytest.raises(ValidationError, match="valid only with --record-engine rust"):
+            GlobalConfig.model_validate({"record_encoding_threads": 8})
+
+        config = GlobalConfig.model_validate(
+            {"record_engine": "rust", "record_encoding_threads": 8}
+        )
+        assert config.record_encoding_threads == 8

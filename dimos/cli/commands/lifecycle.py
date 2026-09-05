@@ -25,6 +25,7 @@ import time
 import traceback
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
 import typer
 
 from dimos.constants import CONFIG_DIR, LOG_DIR
@@ -152,7 +153,11 @@ def run(
         raise typer.Exit(2) from error
     # Some blueprint modules select their composition at import time, so all
     # global sources must be visible before resolving the requested names.
-    global_config.update(**preparsed_global_config)
+    try:
+        global_config.update(**preparsed_global_config)
+    except ValidationError as error:
+        typer.echo(f"Error: {error.errors()[0]['msg']}", err=True)
+        raise typer.Exit(2) from error
 
     blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names))
 
