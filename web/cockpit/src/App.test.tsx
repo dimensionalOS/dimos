@@ -173,6 +173,65 @@ describe("App session states", () => {
     expect(value().textContent).toContain("waiting for data...");
   });
 
+  it("keeps a chat page's transcript since join across tab switches", () => {
+    const TEXT: ChannelSpec = {
+      ch: "human_input",
+      dir: "tx",
+      encoding: "text.json.v1",
+      delivery: "reliable",
+      maxHz: 5,
+      params: {},
+      publish: "shared",
+      requiredScope: null,
+    };
+    const AGENT: ChannelSpec = { ...ODOM, ch: "agent", encoding: "chat.json.v1" };
+    const IDLE: ChannelSpec = {
+      ...ODOM,
+      ch: "agent_idle",
+      encoding: "json.v1",
+      delivery: "latest",
+    };
+    const chat: PanelSpec = {
+      id: "chat",
+      kind: "chat",
+      title: "",
+      channels: ["human_input", "agent", "agent_idle"],
+      params: {},
+    };
+    const line = (seq: number, text: string) => {
+      channels.ingest(
+        "agent",
+        { ch: "agent", seq, ts: seq, delivery: "reliable" },
+        [{ role: "ai", text, ts: seq }],
+        true,
+      );
+    };
+    const tab = (id: string) => {
+      act(() => container.querySelector<HTMLElement>(`[data-testid="tab-${id}"]`)!.click());
+    };
+    act(() => {
+      status.update({
+        watchedRobot: ROBOT,
+        robots: [ROBOT],
+        manifest: { ...mf([ODOM, TEXT, AGENT, IDLE], [chat]), pages: ["chat"] },
+      });
+    });
+    // Frames before the page is first opened, and while another tab shows.
+    act(() => {
+      line(1, "one");
+      line(2, "two");
+    });
+    tab("chat");
+    expect(container.querySelectorAll("[data-role]")).toHaveLength(2);
+    tab("overview");
+    act(() => line(3, "three"));
+    tab("chat");
+    const lines = [...container.querySelectorAll("[data-role]")].map((el) => el.textContent);
+    expect(lines).toHaveLength(3);
+    expect(lines.join(" ")).toContain("one");
+    expect(lines.join(" ")).toContain("three");
+  });
+
   it("shows the multi-robot notice instead of channels", () => {
     act(() => status.update({ robots: [ROBOT, { id: "b", name: "B", model: "go2" }] }));
     expect(container.textContent).toContain("2 robots connected");

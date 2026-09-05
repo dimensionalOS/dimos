@@ -1,7 +1,9 @@
+import { useEffect } from "react";
 import type { Session } from "@dimos/sdk";
 import { teleopHooks } from "@dimos/sdk/internal/teleop";
 import { useStatus } from "@dimos/sdk/react";
 import { LayoutTree } from "./layout/LayoutTree.tsx";
+import { startChatTranscripts } from "./panels/chatTranscript.ts";
 import { Tabs } from "./layout/Tabs.tsx";
 import { ChannelList } from "./ui/ChannelList.tsx";
 import { StatusBar } from "./ui/StatusBar.tsx";
@@ -10,6 +12,11 @@ import styles from "./App.module.css";
 export function App({ session }: { session: Session }) {
   const status = useStatus(session);
   const teleop = teleopHooks(session);
+  // Chat transcripts outlive their panels (an inactive page is unmounted),
+  // so they start as soon as a manifest names them.
+  useEffect(() => {
+    if (status.manifest !== null) startChatTranscripts(session.store, status.manifest);
+  }, [session, status.manifest]);
 
   let content;
   if (status.transport.phase === "failed") {
@@ -31,8 +38,13 @@ export function App({ session }: { session: Session }) {
     content = <p className={styles.notice}>Waiting for a robot to register...</p>;
   } else {
     content = (
-      <Tabs manifest={status.manifest} store={session.store} teleop={teleop}>
-        <LayoutTree manifest={status.manifest} store={session.store} teleop={teleop} />
+      <Tabs manifest={status.manifest} store={session.store} teleop={teleop} session={session}>
+        <LayoutTree
+          manifest={status.manifest}
+          store={session.store}
+          teleop={teleop}
+          session={session}
+        />
         <ChannelList
           channels={status.manifest.channels}
           panels={status.manifest.panels}
