@@ -29,6 +29,8 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+GITHUB_LFS_URL = "https://github.com/dimensionalOS/dimos.git/info/lfs"
+
 
 def _get_user_data_dir() -> Path:
     """Get platform-specific user data directory."""
@@ -221,9 +223,32 @@ def _lfs_pull(file_path: Path, repo_root: Path, *, retries: int = 2) -> None:
             if attempt <= retries:
                 time.sleep(attempt)  # 1s, 2s backoff
 
-    raise RuntimeError(
-        f"Failed to pull LFS file {file_path} after {retries + 1} attempts: {last_err}"
+    logger.warning(
+        "Primary LFS endpoint failed; trying GitHub LFS",
+        file_path=str(relative_path),
+        attempts=retries + 1,
     )
+    try:
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                f"lfs.url={GITHUB_LFS_URL}",
+                "lfs",
+                "pull",
+                "--include",
+                str(relative_path),
+            ],
+            cwd=repo_root,
+            check=True,
+            env=env,
+        )
+        return
+    except subprocess.CalledProcessError as fallback_err:
+        raise RuntimeError(
+            f"Failed to pull LFS file {file_path} from both the primary endpoint "
+            f"({retries + 1} attempts: {last_err}) and GitHub LFS ({fallback_err})"
+        ) from fallback_err
 
 
 def _decompress_archive(filename: str | Path) -> Path:

@@ -165,6 +165,58 @@ def test_backup_file_keep_last_zero_removes_all(tmp_path: Path) -> None:
     assert list(tmp_path.glob("recording_go2.*.db")) == []
 
 
+def test_lfs_pull_falls_back_to_github_without_changing_config(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    archive = tmp_path / "data" / ".lfs" / "sim.tar.gz"
+    run = mocker.patch(
+        "dimos.utils.data.subprocess.run",
+        side_effect=[subprocess.CalledProcessError(2, "git"), None],
+    )
+    mocker.patch("dimos.utils.data.time.sleep")
+
+    data._lfs_pull(archive, tmp_path, retries=0)
+
+    env = os.environ.copy()
+    env["GIT_LFS_FORCE_PROGRESS"] = "1"
+    assert run.call_args_list == [
+        call(
+            ["git", "lfs", "pull", "--include", "data/.lfs/sim.tar.gz"],
+            cwd=tmp_path,
+            check=True,
+            env=env,
+        ),
+        call(
+            [
+                "git",
+                "-c",
+                f"lfs.url={data.GITHUB_LFS_URL}",
+                "lfs",
+                "pull",
+                "--include",
+                "data/.lfs/sim.tar.gz",
+            ],
+            cwd=tmp_path,
+            check=True,
+            env=env,
+        ),
+    ]
+
+
+def test_lfs_pull_reports_both_endpoint_failures(tmp_path: Path, mocker: MockerFixture) -> None:
+    archive = tmp_path / "data" / ".lfs" / "sim.tar.gz"
+    mocker.patch(
+        "dimos.utils.data.subprocess.run",
+        side_effect=[
+            subprocess.CalledProcessError(2, "primary"),
+            subprocess.CalledProcessError(2, "fallback"),
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="both the primary endpoint.*and GitHub LFS"):
+        data._lfs_pull(archive, tmp_path, retries=0)
+
+
 @pytest.mark.self_hosted
 def test_pull_file() -> None:
     repo_root = data.get_project_root()
