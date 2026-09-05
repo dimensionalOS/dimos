@@ -84,4 +84,4 @@ def test_agent_encode_records_activity_when_enabled(tmp_path, monkeypatch) -> No
     event = json.loads((tmp_path / "events.jsonl").read_text())
     assert event["event"] == "agent_encode"
     assert event["message_type"] == "PoseStamped"
-    assert event["output"] == encoded
+    assert event["output"] == {"source_timestamp_s": pose.ts, "encoded": encoded}

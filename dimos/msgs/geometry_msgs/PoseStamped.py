@@ -105,19 +105,13 @@ class PoseStamped(Pose, Timestamped):
 
     def agent_encode(self) -> dict[str, Any]:
         """Encode a stamped pose with explicit frames, component order, and units."""
-        euler = self.orientation.to_euler()
-        encoded = {
-            "frame_id": self.frame_id,
-            "timestamp_s": self.ts,
-            "position_m": [self.x, self.y, self.z],
-            "quaternion_xyzw": self.orientation.to_list(),
-            "roll_pitch_yaw_deg": [
-                math.degrees(euler.roll),
-                math.degrees(euler.pitch),
-                math.degrees(euler.yaw),
-            ],
-        }
-        record_agent_encode(type(self).__name__, encoded)
+        from dimos.msgs.conversions.pose_stamped import pose_stamped_agent_encode
+
+        source_timestamp_s = self.ts
+        encoded = pose_stamped_agent_encode(self)
+        record_agent_encode(
+            type(self).__name__, {"source_timestamp_s": source_timestamp_s, "encoded": encoded}
+        )
         return encoded
 
     def to_rerun(self) -> Archetype:
