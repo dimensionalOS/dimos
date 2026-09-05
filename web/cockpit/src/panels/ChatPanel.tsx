@@ -3,15 +3,17 @@
 // LangChain message) on a reliable channel; the transcript lives in
 // chatTranscript.ts for the session's life, not the panel's. Typed text goes
 // out through session.publish on the tx channel and renders when the agent
-// echoes it back on the message channel, exactly like humancli. Nothing typed
-// here can drive the robot: the teleop pad listens on its own subtree and
-// disarms when focus leaves it.
+// echoes it back on the message channel, exactly like humancli; the
+// composer's push-to-talk mic (ChatMic) joins the same conversation through
+// the audio channel. Nothing typed or held here can drive the robot: the
+// teleop pad listens on its own subtree and disarms when focus leaves it.
 
 import { type FormEvent, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { PanelSpec } from "@dimos/shared";
 import type { ChannelStore, Session } from "@dimos/sdk";
 import { useStatus, useStoreChannel } from "@dimos/sdk/react";
 import { PanelFrame } from "../layout/PanelFrame.tsx";
+import { ChatMic } from "./ChatMic.tsx";
 import { type ChatLine, chatTranscript } from "./chatTranscript.ts";
 import type { PanelProps } from "./registry.tsx";
 import styles from "./ChatPanel.module.css";
@@ -51,7 +53,7 @@ function LineView({ line }: { line: ChatLine }) {
 }
 
 export function ChatPanel({ spec, store, session }: PanelProps) {
-  if (spec.channels.length < 3 || session === undefined) {
+  if (spec.channels.length < 4 || session === undefined) {
     return (
       <PanelFrame spec={spec}>
         <span className={styles.hint}>chat panel {spec.id}: no send path bound</span>
@@ -66,7 +68,7 @@ function Conversation({ spec, store, session }: {
   store: ChannelStore;
   session: Session;
 }) {
-  const [inputCh, messagesCh, idleCh] = spec.channels;
+  const [inputCh, messagesCh, idleCh, audioCh] = spec.channels;
   const transcript = chatTranscript(store, messagesCh);
   const lines = useSyncExternalStore(transcript.subscribe, transcript.getSnapshot);
   const idle = useStoreChannel(store, idleCh).slot?.value;
@@ -101,7 +103,7 @@ function Conversation({ spec, store, session }: {
       .publish(inputCh, text)
       .catch((err: unknown) => {
         // A PublishError message already reads "<code>: <reason>".
-        setError(err instanceof Error ? err.message : String(err));
+        setError(`send failed: ${err instanceof Error ? err.message : String(err)}`);
         // Give a failed message back unless the user already typed on.
         setDraft((current) => (current === "" ? text : current));
       })
@@ -125,7 +127,7 @@ function Conversation({ spec, store, session }: {
         </div>
         {error !== null && (
           <div className={styles.error} role="alert">
-            send failed: {error}
+            {error}
           </div>
         )}
         <form className={styles.composer} onSubmit={onSubmit}>
@@ -138,6 +140,7 @@ function Conversation({ spec, store, session }: {
             data-testid={`chat-${inputCh}-input`}
             onChange={(e) => setDraft(e.target.value)}
           />
+          <ChatMic session={session} ch={audioCh} connected={connected} onError={setError} />
           <button
             type="submit"
             className={styles.send}

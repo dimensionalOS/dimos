@@ -191,11 +191,12 @@ describe("App session states", () => {
       encoding: "json.v1",
       delivery: "latest",
     };
+    const AUDIO: ChannelSpec = { ...TEXT, ch: "audio_in", encoding: "audio.json.v1", maxHz: 20 };
     const chat: PanelSpec = {
       id: "chat",
       kind: "chat",
       title: "",
-      channels: ["human_input", "agent", "agent_idle"],
+      channels: ["human_input", "agent", "agent_idle", "audio_in"],
       params: {},
     };
     const line = (seq: number, text: string) => {
@@ -213,7 +214,7 @@ describe("App session states", () => {
       status.update({
         watchedRobot: ROBOT,
         robots: [ROBOT],
-        manifest: { ...mf([ODOM, TEXT, AGENT, IDLE], [chat]), pages: ["chat"] },
+        manifest: { ...mf([ODOM, TEXT, AGENT, IDLE, AUDIO], [chat]), pages: ["chat"] },
       });
     });
     // Frames before the page is first opened, and while another tab shows.

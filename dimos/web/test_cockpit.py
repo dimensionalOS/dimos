@@ -40,6 +40,7 @@ from dimos.web.cockpit import (
     cockpit,
 )
 from dimos.web.codecs import EncodedPayload, decode_json_v1, encode_json_v1, web_encoder
+from dimos.web.relay_bridge.audio_codec import AudioChunk, decode_audio_chunk
 from dimos.web.relay_bridge.builtin_codecs import decode_text
 from dimos.web.relay_bridge.chat_codec import encode_chat
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
@@ -485,7 +486,8 @@ def test_publish_tx_channel_blueprint() -> None:
 
 
 def test_chat_panel_blueprint() -> None:
-    (atom,) = cockpit(layout=Chat()).blueprints
+    blueprint = cockpit(layout=Chat())
+    (atom,) = blueprint.blueprints
     manifest = atom.kwargs["manifest"]
     assert [
         (c["ch"], c["dir"], c["encoding"], c["delivery"], c["publish"])
@@ -494,21 +496,28 @@ def test_chat_panel_blueprint() -> None:
         ("agent", "rx", "chat.json.v1", "reliable", "none"),
         ("agent_idle", "rx", "json.v1", "latest", "none"),
         ("human_input", "tx", "text.json.v1", "reliable", "shared"),
+        ("audio_in", "tx", "audio.json.v1", "reliable", "shared"),
     ]
     (panel,) = manifest["panels"]
     assert panel["kind"] == "chat"
-    assert panel["channels"] == ["human_input", "agent", "agent_idle"]
+    assert panel["channels"] == ["human_input", "agent", "agent_idle", "audio_in"]
     assert parse_manifest(manifest).model_dump() == manifest
-    # The agent streams ride a generated subclass whose ports autoconnect to
-    # McpClient's by name + type.
+    # The agent and mic streams ride a generated subclass whose ports
+    # autoconnect to McpClient's and VoiceInput's by name + type.
     ports = {(s.name, s.direction): s.type for s in atom.streams}
     assert ports[("agent", "in")] is BaseMessage
     assert ports[("agent_idle", "in")] is bool
     assert ports[("human_input", "out")] is str
+    assert ports[("audio_in", "out")] is AudioChunk
     specs = {s.ch: s for s in atom.kwargs["channels"]}
     assert specs["agent"].encoder is encode_chat and specs["agent"].paced
     assert specs["agent_idle"].paced
     assert specs["human_input"].decoder is decode_text
+    assert specs["audio_in"].decoder is decode_audio_chunk
+    assert not specs["audio_in"].decoder_takes_context and specs["audio_in"].encoder is None
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert {s.ch: s.decoder for s in ratom.kwargs["channels"]}["audio_in"] is decode_audio_chunk
     # Pacing is the chat panel's, not the stream's: the same streams declared
     # by hand are sampled like any channel.
     (atom,) = cockpit(channels=[Channel("agent", BaseMessage, encoding="chat.json.v1")]).blueprints

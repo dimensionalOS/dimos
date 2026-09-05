@@ -321,12 +321,13 @@ def parse_manifest(data: Any) -> Manifest:
                     f"teleop panel {panel.id} needs a twist.json.v1 latest tx channel",
                 )
         if panel.kind == "chat":
-            # channels: the text input (publish tx), the messages, the idle flag.
-            if len(panel.channels) != 3:
+            # channels: the text input (publish tx), the messages, the idle
+            # flag, the push-to-talk audio (publish tx).
+            if len(panel.channels) != 4:
                 raise ManifestError(
-                    "invalid_chat_panel", f"chat panel {panel.id} must bind three channels"
+                    "invalid_chat_panel", f"chat panel {panel.id} must bind four channels"
                 )
-            text, messages, idle = (ch_ids[ch] for ch in panel.channels)
+            text, messages, idle, audio = (ch_ids[ch] for ch in panel.channels)
             if (
                 text.encoding != "text.json.v1"
                 or text.delivery != "reliable"
@@ -350,6 +351,17 @@ def parse_manifest(data: Any) -> Manifest:
                 raise ManifestError(
                     "invalid_chat_panel",
                     f"chat panel {panel.id} needs a json.v1 latest rx channel third",
+                )
+            if (
+                audio.encoding != "audio.json.v1"
+                or audio.delivery != "reliable"
+                or audio.dir != "tx"
+                or audio.publish != "shared"
+            ):
+                raise ManifestError(
+                    "invalid_chat_panel",
+                    f"chat panel {panel.id} needs an audio.json.v1 reliable shared tx "
+                    "channel fourth",
                 )
 
     seen: set[str] = set()

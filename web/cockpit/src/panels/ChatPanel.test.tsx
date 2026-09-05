@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { FrameHeader, Msg, PanelSpec } from "@dimos/shared";
@@ -11,11 +11,23 @@ import { TeleopPanel } from "./TeleopPanel.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+vi.mock("./ChatMic.tsx", () => ({
+  ChatMic: ({ ch, onError }: { ch: string; onError: (message: string | null) => void }) => (
+    <button
+      type="button"
+      data-testid="chat-mic-stub"
+      onClick={() => onError("voice failed: test")}
+    >
+      {ch}
+    </button>
+  ),
+}));
+
 const SPEC: PanelSpec = {
   id: "p0",
   kind: "chat",
   title: "",
-  channels: ["human_input", "agent", "agent_idle"],
+  channels: ["human_input", "agent", "agent_idle", "audio_in"],
   params: {},
 };
 const TELEOP_SPEC: PanelSpec = {
@@ -36,6 +48,16 @@ const MANIFEST: Manifest = {
       maxHz: 15,
       params: { maxLinear: 0.8, maxAngular: 1.0, boost: 2.0, watchdogMs: 300 },
       publish: "none",
+      requiredScope: null,
+    },
+    {
+      ch: "audio_in",
+      dir: "tx",
+      encoding: "audio.json.v1",
+      delivery: "reliable",
+      maxHz: 20,
+      params: {},
+      publish: "shared",
       requiredScope: null,
     },
   ],
@@ -203,6 +225,14 @@ describe("ChatPanel", () => {
   it("renders a notice without a send path", () => {
     act(() => root.render(<ChatPanel spec={SPEC} store={session.store} />));
     expect(container.textContent).toContain("no send path bound");
+  });
+
+  it("binds the composer mic to the audio channel and displays its errors", () => {
+    mount();
+    const mic = find<HTMLButtonElement>("chat-mic-stub");
+    expect(mic.textContent).toBe("audio_in");
+    act(() => mic.click());
+    expect(container.textContent).toContain("voice failed: test");
   });
 
   it("typing in the chat never drives the robot", () => {
