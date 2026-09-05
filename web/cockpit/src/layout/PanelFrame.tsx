@@ -18,13 +18,14 @@ export interface DrawHealth {
   failures: number;
 }
 
-/** Hz/staleness readout for a canvas panel's primary channel. Re-rendered on
- * the 500 ms UI tick via useChannel; `health` is mutated by the sink at draw
- * rate and simply sampled here (intended coupling). */
+/** Hz/staleness readout for a panel's primary channel. Re-rendered on the
+ * 500 ms UI tick via useChannel; `health` is mutated by a canvas sink at
+ * draw rate and simply sampled here (intended coupling); a panel that
+ * renders through React (stats) has no sink and omits it. */
 export function Badge({ store, ch, health, staleMs, unit, testId }: {
   store: ChannelStore;
   ch: string;
-  health: DrawHealth;
+  health?: DrawHealth;
   staleMs: number;
   unit: string;
   testId: string;
@@ -36,14 +37,14 @@ export function Badge({ store, ch, health, staleMs, unit, testId }: {
   if (stats.frames === 0) {
     // Nothing ever arrived; a corrupt first frame is an error, not "waiting".
     text = "waiting";
-  } else if (stats.decodeFailing || health.failures > 0) {
+  } else if (stats.decodeFailing || (health !== undefined && health.failures > 0)) {
     // A single bad frame trips this; the next success clears it.
     text = "decode failing";
     error = true;
   } else if (stats.ageMs !== null && stats.ageMs > staleMs) {
     text = `stale ${(stats.ageMs / 1000).toFixed(1)} s`;
     stale = true;
-  } else if (stats.lastFrameAtMs - health.lastDrawOkAtMs > staleMs) {
+  } else if (health !== undefined && stats.lastFrameAtMs - health.lastDrawOkAtMs > staleMs) {
     // Frames arrive but nothing draws (e.g. a decoder that never settles);
     // both operands are browser milliseconds.
     text = "stalled";

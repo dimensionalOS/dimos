@@ -249,7 +249,14 @@ const chAudio = {
   maxHz: 20.5,
   publish: "shared",
 };
+const chStats = {
+  ch: "resource_stats",
+  encoding: "stats.json.v1",
+  delivery: "latest",
+  maxHz: 2.5,
+};
 const pCamera = { id: "camera", kind: "video", channels: ["color_image"] };
+const pStats = { id: "stats", kind: "stats", channels: ["resource_stats"] };
 const pChat = {
   id: "chat",
   kind: "chat",
@@ -647,6 +654,23 @@ const manifestCases: Record<string, unknown> = {
       { ch: "audio_in", dir: "tx", encoding: "audio.json.v1", delivery: "reliable", maxHz: 20.5 },
     ],
     panels: [pChat],
+  },
+  // Stats page: one stats.json.v1 latest rx channel, placed as a page tab.
+  stats_panel: { version: 1, channels: [chStats], panels: [pStats], pages: ["stats"] },
+  stats_panel_two_channels: {
+    version: 1,
+    channels: [chStats, chOdom],
+    panels: [{ ...pStats, channels: ["resource_stats", "odom"] }],
+  },
+  stats_panel_wrong_encoding: {
+    version: 1,
+    channels: [chOdom],
+    panels: [{ ...pStats, channels: ["odom"] }],
+  },
+  stats_panel_wrong_delivery: {
+    version: 1,
+    channels: [{ ...chStats, delivery: "reliable" }],
+    panels: [pStats],
   },
 };
 

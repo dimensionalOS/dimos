@@ -19,7 +19,7 @@ from both pytest and deno test). The transport (protocol.py) carries the
 manifest as one opaque dict; this module is the single owner of its
 structure and domain rules: version gate, bounded unique ids, positive
 rates, panel/layout/pages references that resolve, and kind-specific panel
-rules (video, map2d, teleop, chat).
+rules (video, map2d, teleop, chat, stats).
 
 Manifest v1 is frozen. Additive changes (new panel kinds, new params) ride
 the existing shape: unknown keys and kinds pass through validation.
@@ -362,6 +362,17 @@ def parse_manifest(data: Any) -> Manifest:
                     "invalid_chat_panel",
                     f"chat panel {panel.id} needs an audio.json.v1 reliable shared tx "
                     "channel fourth",
+                )
+        if panel.kind == "stats":
+            if len(panel.channels) != 1:
+                raise ManifestError(
+                    "invalid_stats_panel", f"stats panel {panel.id} must bind exactly one channel"
+                )
+            stats = ch_ids[panel.channels[0]]
+            if stats.encoding != "stats.json.v1" or stats.delivery != "latest" or stats.dir != "rx":
+                raise ManifestError(
+                    "invalid_stats_panel",
+                    f"stats panel {panel.id} needs a stats.json.v1 latest rx channel",
                 )
 
     seen: set[str] = set()

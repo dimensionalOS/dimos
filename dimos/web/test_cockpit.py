@@ -23,6 +23,8 @@ import sys
 from langchain_core.messages import BaseMessage
 import pytest
 
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
@@ -35,13 +37,14 @@ from dimos.web.cockpit import (
     Map2D,
     Panel,
     Row,
+    Stats,
     Teleop,
     Video,
     cockpit,
 )
 from dimos.web.codecs import EncodedPayload, decode_json_v1, encode_json_v1, web_encoder
 from dimos.web.relay_bridge.audio_codec import AudioChunk, decode_audio_chunk
-from dimos.web.relay_bridge.builtin_codecs import decode_text
+from dimos.web.relay_bridge.builtin_codecs import decode_text, encode_stats
 from dimos.web.relay_bridge.chat_codec import encode_chat
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
 from dimos.web.relay_bridge.protocol import (
@@ -534,6 +537,55 @@ def test_chat_panel_declarations_merge_or_conflict() -> None:
     agent = next(c for c in atom.kwargs["manifest"]["channels"] if c["ch"] == "agent")
     assert agent["maxHz"] == 50.0
     assert next(s for s in atom.kwargs["channels"] if s.ch == "agent").paced
+
+
+def test_stats_panel_blueprint() -> None:
+    blueprint = cockpit(layout=Video("color_image"), pages=[Stats()])
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    assert manifest["channels"][1] == {
+        "ch": "resource_stats",
+        "dir": "rx",
+        "encoding": "stats.json.v1",
+        "delivery": "latest",
+        "maxHz": 2.0,
+        "params": {},
+        "publish": "none",
+        "requiredScope": None,
+    }
+    assert manifest["panels"][1] == {
+        "id": "p1",
+        "kind": "stats",
+        "title": "Stats",
+        "channels": ["resource_stats"],
+        "params": {},
+    }
+    assert manifest["pages"] == ["p1"]
+    assert parse_manifest(manifest).model_dump() == manifest
+    # The producer is the coordinator's resource monitor, not a module: the
+    # generated In[dict] port autoconnects to its pickled /resource_stats
+    # topic by name.
+    ports = {(s.name, s.direction): s.type for s in atom.streams}
+    assert ports[("resource_stats", "in")] is dict
+    spec = next(s for s in atom.kwargs["channels"] if s.ch == "resource_stats")
+    assert spec.encoder is encode_stats and not spec.paced
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert {s.ch: s.encoder for s in ratom.kwargs["channels"]}["resource_stats"] is encode_stats
+
+
+def test_stats_panel_switches_stats_publishing_on() -> None:
+    # The resource monitor only runs under GlobalConfig.dtop: the panel flips
+    # it, composition keeps it, and the CLI's own sources still win.
+    blueprint = cockpit(layout=Stats())
+    assert dict(blueprint.global_config_overrides) == {"dtop": True}
+    composed = autoconnect(blueprint).global_config(n_workers=9)
+    assert dict(composed.global_config_overrides) == {"dtop": True, "n_workers": 9}
+    assert dict(cockpit(layout=Video("color_image")).global_config_overrides) == {}
+    parser = BlueprintConfigParser(blueprint)
+    assert parser.parse(environ={}).global_config["dtop"] is True
+    parsed = parser.parse(environ={}, global_overrides={"dtop": False})
+    assert parsed.global_config["dtop"] is False
 
 
 def test_publish_tx_generic_json_and_dataclass_rejection() -> None:

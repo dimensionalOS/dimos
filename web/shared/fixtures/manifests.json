@@ -3462,6 +3462,141 @@
         ]
       },
       "error": "invalid_chat_panel"
+    },
+    {
+      "name": "stats_panel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "resource_stats",
+            "encoding": "stats.json.v1",
+            "delivery": "latest",
+            "maxHz": 2.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "stats",
+            "kind": "stats",
+            "channels": [
+              "resource_stats"
+            ]
+          }
+        ],
+        "pages": [
+          "stats"
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "resource_stats",
+            "dir": "rx",
+            "encoding": "stats.json.v1",
+            "delivery": "latest",
+            "maxHz": 2.5,
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
+          }
+        ],
+        "panels": [
+          {
+            "id": "stats",
+            "kind": "stats",
+            "title": "",
+            "channels": [
+              "resource_stats"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": null,
+        "pages": [
+          "stats"
+        ]
+      }
+    },
+    {
+      "name": "stats_panel_two_channels",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "resource_stats",
+            "encoding": "stats.json.v1",
+            "delivery": "latest",
+            "maxHz": 2.5
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "stats",
+            "kind": "stats",
+            "channels": [
+              "resource_stats",
+              "odom"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_stats_panel"
+    },
+    {
+      "name": "stats_panel_wrong_encoding",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "stats",
+            "kind": "stats",
+            "channels": [
+              "odom"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_stats_panel"
+    },
+    {
+      "name": "stats_panel_wrong_delivery",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "resource_stats",
+            "encoding": "stats.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "stats",
+            "kind": "stats",
+            "channels": [
+              "resource_stats"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_stats_panel"
     }
   ]
 }

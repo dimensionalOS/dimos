@@ -102,6 +102,11 @@ deno task check          # tsc --noEmit
 deno task build          # dist/ (what the relay serves at /)
 ```
 
+Panels are authored in Python (`dimos.web.cockpit`: `Video`, `Map2D`, `Teleop`, `Chat`, `Stats`) and
+compiled into the manifest; `cockpit(pages=[...])` panels render as full-page tabs. `Stats()` is
+dtop as a tab: the bridge re-encodes the resource monitor's `/resource_stats` dict as
+`stats.json.v1`, and the blueprint switches the monitor on (`GlobalConfig.dtop`) by itself.
+
 Dev workflow: run the relay (`deno task dev` in `web/`, or just `dimos run <bp> --local-relay`) and
 the vite server side by side. `localhost:5173` is a secure context; vite proxies `/api` to the relay
 on `:7780` and the WebTransport connection goes straight to the advertised `wtUrl`.
