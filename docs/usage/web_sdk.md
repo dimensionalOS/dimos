@@ -68,6 +68,8 @@ RELAY_KEY=<key> uv run dimos run unitree-go2 --relay-url https://dimos-relay.exa
 
 The cockpit asks for the viewer token, keeps it in `localStorage`, and "log out" in the status bar forgets it. Your own page passes it to `connect({ url, token })`. `/api/stats` wants it as `Authorization: Bearer <token>` and drops its CORS header. A wrong key or token fails with `auth_failed` and neither client retries: fix the secret and restart. Edits to the file need a relay restart.
 
+To host one on a VM with Docker and a Let's Encrypt certificate, or on a LAN with mkcert, follow [Relay hosting](/docs/usage/relay_hosting.md).
+
 ## Your first page
 
 Create `ui/index.html`:

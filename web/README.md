@@ -118,6 +118,10 @@ until "log out"; the SDK takes `connect({url, token})`). A wrong secret fails wi
 which is terminal: neither client retries. `relay/auth.ts` compares in constant time and never logs
 a secret; edits to the file need a restart.
 
+Hosting a relay on a VM (container image, compose file, certbot, firewall, the auth file) is
+[docs/usage/relay_hosting.md](../docs/usage/relay_hosting.md); `docker/relay/` holds the Dockerfile
+and the compose file.
+
 ## Cockpit
 
 ```bash
