@@ -108,7 +108,9 @@ class UnitreeWebRTCConnection(Resource):
     ) -> None:
         self.ip = ip
         self.mode = mode
-        self.stop_timer: threading.Timer | None = None
+        # Auto-stop watchdog deadline. Armed/cancelled/fired only on self.loop's
+        # thread so a stale expiry can never interleave with a newer command.
+        self._watchdog_handle: asyncio.TimerHandle | None = None
         self.cmd_vel_timeout = 0.2
         self._velocity_api = velocity_api
         self._move_ids = SequentialIds()
@@ -157,12 +159,8 @@ class UnitreeWebRTCConnection(Resource):
         pass
 
     def stop(self) -> None:
-        # Cancel timer
-        if self.stop_timer:
-            self.stop_timer.cancel()
-            self.stop_timer = None
-
         async def async_disconnect() -> None:
+            self._cancel_watchdog()
             try:
                 self._publish_movement(0, 0, 0)
                 await self.conn.disconnect()
@@ -199,6 +197,26 @@ class UnitreeWebRTCConnection(Resource):
             data={"lx": -y, "ly": x, "rx": -yaw, "ry": 0},
         )
 
+    # The watchdog handle is only touched from self.loop's thread. The loop
+    # serializes movement publishes, re-arms, cancels and expiry, so a cancel
+    # is decisive: a cancelled deadline can never fire after a newer command.
+
+    def _arm_watchdog(self) -> None:
+        """(Re)start the auto-stop deadline. Loop thread only."""
+        self._cancel_watchdog()
+        self._watchdog_handle = self.loop.call_later(self.cmd_vel_timeout, self._watchdog_expired)
+
+    def _cancel_watchdog(self) -> None:
+        """Cancel the pending auto-stop deadline, if any. Loop thread only."""
+        if self._watchdog_handle is not None:
+            self._watchdog_handle.cancel()
+            self._watchdog_handle = None
+
+    def _watchdog_expired(self) -> None:
+        """Deadline hit with no newer command: halt the base. Loop thread only."""
+        self._watchdog_handle = None
+        self._publish_movement(0, 0, 0)
+
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send a body-frame movement command using the configured wire API.
 
@@ -213,6 +231,7 @@ class UnitreeWebRTCConnection(Resource):
 
         async def async_move() -> None:
             self._publish_movement(x, y, yaw)
+            self._arm_watchdog()
 
         async def async_move_duration() -> None:
             """Send movement commands continuously for the specified duration."""
@@ -222,15 +241,6 @@ class UnitreeWebRTCConnection(Resource):
             while time.time() - start_time < duration:
                 await async_move()
                 await asyncio.sleep(sleep_time)
-
-        # Cancel existing timer and start a new one
-        if self.stop_timer:
-            self.stop_timer.cancel()
-
-        # Auto-stop after 0.5 seconds if no new commands
-        self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop_movement)
-        self.stop_timer.daemon = True
-        self.stop_timer.start()
 
         try:
             if duration > 0:
@@ -498,12 +508,10 @@ class UnitreeWebRTCConnection(Resource):
         return self.video_stream()
 
     def stop_movement(self) -> None:
-        """Halt the base: publish a zero twist and cancel the auto-stop timer."""
-        if self.stop_timer:
-            self.stop_timer.cancel()
-            self.stop_timer = None
+        """Halt the base: cancel the auto-stop deadline and publish a zero twist."""
 
         async def async_stop() -> None:
+            self._cancel_watchdog()
             self._publish_movement(0, 0, 0)
 
         if not self.loop.is_running():
@@ -515,14 +523,10 @@ class UnitreeWebRTCConnection(Resource):
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""
-        # Cancel timer
-        if self.stop_timer:
-            self.stop_timer.cancel()
-            self.stop_timer = None
-
         if hasattr(self, "conn"):
 
             async def async_disconnect() -> None:
+                self._cancel_watchdog()
                 try:
                     await self.conn.disconnect()
                 except:
