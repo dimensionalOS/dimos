@@ -23,6 +23,7 @@ from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver, PoseTargetI
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.galaxea.r1pro.blueprints.manipulation.teleop import (
@@ -61,7 +62,10 @@ def test_r1pro_quest_blueprint_controls_only_arms_and_torso() -> None:
     ]
     assert task.params["head_target_frame"] == "head_link"
     assert task.params["solver_type"] is R1ProPinkPoseTargetSolver
-    assert manipulation["visualization"] == {"backend": "viser"}
+    # Viser must be reachable off-robot: with mock hardware it is the only
+    # place this blueprint's motion is visible.
+    assert manipulation["visualization"].backend == "viser"
+    assert manipulation["visualization"].host == global_config.listen_host
     assert teleop_quest_r1pro.remapping_map == {
         (HeadsetArmTeleopModule.name, "left_controller_output"): "left_cartesian_command",
         (HeadsetArmTeleopModule.name, "right_controller_output"): "right_cartesian_command",
