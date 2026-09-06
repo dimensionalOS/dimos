@@ -55,6 +55,7 @@ from dimos.cli.commands.cameracalibrate import cameracalibrate
 from dimos.cli.commands.data import data_app
 from dimos.cli.commands.docs import docs
 from dimos.cli.commands.global_options import create_dynamic_callback
+from dimos.cli.commands.graph import graph
 from dimos.cli.commands.imitation import imitation_app
 from dimos.cli.commands.info import list_blueprints, show_config
 from dimos.cli.commands.lifecycle import log_cmd, restart, run, status, stop
@@ -76,7 +77,7 @@ main = typer.Typer(
 load_dotenv()
 
 SIMULATORS = ("mujoco", "dimsim")
-RECORDERS = ("sqlite",)
+RECORDERS = ("sqlite", "mcap")
 
 # Flags with an optional value; bare `--flag` means the first choice.
 OPTIONAL_VALUE_FLAGS = {
@@ -127,6 +128,7 @@ main.command(
     }
 )(bake)
 main.command(name="list")(list_blueprints)
+main.command()(graph)
 main.command()(docs)
 main.add_typer(imitation_app, name="imitation")
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(spy)

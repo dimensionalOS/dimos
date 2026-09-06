@@ -436,3 +436,16 @@ def test_upload_cli_exits_nonzero_on_server_error(
     with pytest.raises(typer.Exit) as e:
         cli.upload(db, None, None, None, None)
     assert e.value.exit_code == 1
+
+
+def test_matching_suffix_uploads_raw_and_unstamped(
+    env: tuple[CloudData, FakeTransport, Path],
+) -> None:
+    """A file already named *.lz4 is sent as-is: no encoding stamp, byte-identical pull."""
+    cloud, t, db = env
+    raw = db.parent / "artifact.lz4"  # arbitrary bytes, NOT lz4-compressed
+    raw.write_bytes(b"not actually lz4" * 1024)
+    r = cloud.upload(raw)
+    assert t.uploads[r["upload_id"]]["content_encoding"] is None
+    out = cloud.pull(r["upload_id"], dest=db.parent / "artifact.back.lz4")
+    assert out.read_bytes() == raw.read_bytes()

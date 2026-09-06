@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from dimos.constants import STATE_DIR
+from dimos.constants import RECORDINGS_DIR
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
@@ -36,8 +36,8 @@ from dimos.teleop.quest.blueprints import (
 
 
 def _session_db(robot: str) -> str:
-    """Timestamped session DB path under the state dir, namespaced by robot."""
-    return str(STATE_DIR / "recordings" / f"session_{robot}_{datetime.now():%Y%m%d_%H%M%S}.db")
+    """Timestamped session DB path under RECORDINGS_DIR, namespaced by robot."""
+    return str(RECORDINGS_DIR / f"session_{robot}_{datetime.now():%Y%m%d_%H%M%S}.db")
 
 
 def _camera_if_real() -> tuple[Blueprint, ...]:

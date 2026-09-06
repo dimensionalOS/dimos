@@ -526,9 +526,12 @@ docs = [
     "mkdocs-minify-plugin>=0.8.0",
     "mkdocs-redirects>=1.2.3",
 ]
+dev = [
+    "optuna>=4.9.0",
+]
 
 [tool.uv]
-required-version = ">=0.9.17"
+required-version = ">=0.9.25"
 default-groups = ["tests"]
 exclude-newer = "7 days"
 exclude-newer-package = { dimos-viewer = false, dimos-lcm = false, lcm-dimos-fork = false, roboplan = false, md-babel-py = false, can-motor-control = false, edgetam-dimos = false, dim-odom = false }
@@ -647,6 +650,7 @@ module = [
     "a750_control.*",
     "bosdyn",
     "bosdyn.*",
+    "builtin_interfaces.*",
     "cyclonedds",
     "cyclonedds.*",
     "dimos_lcm.*",
@@ -713,6 +717,9 @@ module = [
     "pxr.*",
     "trimesh",
     "trimesh.*",
+    # dev-group only (tuning), so absent from the default sync and from CI
+    "optuna",
+    "optuna.*",
 ]
 ignore_missing_imports = true
 
