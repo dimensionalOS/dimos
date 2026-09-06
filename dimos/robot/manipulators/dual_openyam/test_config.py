@@ -14,6 +14,7 @@
 
 import pytest
 
+from dimos.core.global_config import global_config
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_ADAPTER_TYPE,
@@ -21,6 +22,7 @@ from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_HOME_JOINTS,
     DUAL_OPENYAM_JOINTS,
     dual_openyam_hardware,
+    dual_openyam_mock_hardware,
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.openyam.config import OPENYAM_HOME_JOINTS
@@ -53,6 +55,31 @@ def test_dual_openyam_hardware_defaults_to_complete_mock() -> None:
         0.0,
         0.0,
     ]
+
+
+def test_every_arm_joint_declares_limits_the_trajectory_task_can_use() -> None:
+    limits = dual_openyam_mock_hardware().limits
+    assert limits is not None
+    arms = len(DUAL_OPENYAM_ARM_JOINTS)
+    for lower, upper in zip(
+        limits.position_lower[:arms], limits.position_upper[:arms], strict=False
+    ):
+        assert lower is not None and upper is not None and lower < upper
+
+
+def test_dual_openyam_hardware_switches_to_physics_under_mujoco(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(global_config, "simulation", "mujoco")
+    hardware = dual_openyam_hardware()
+
+    assert hardware.adapter_type == "sim_mujoco_whole_body"
+    assert hardware.adapter_kwargs["num_motors"] == len(DUAL_OPENYAM_JOINTS)
+    assert hardware.adapter_kwargs["command_mode"] == "position"
+    assert str(hardware.address).endswith(".xml")
+    # Normalised gripper commands must land in the MJCF's metres, not 0-1.
+    assert hardware.limits is not None
+    assert hardware.limits.position_upper[-2:] == [0.0475, 0.0475]
 
 
 def test_dual_openyam_hardware_uses_both_explicit_can_ports() -> None:

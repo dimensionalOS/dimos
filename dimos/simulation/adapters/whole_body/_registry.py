@@ -14,4 +14,7 @@
 
 ADAPTER_FACTORIES = {
     "sim_mujoco_g1": "dimos.simulation.adapters.whole_body.g1:SimMujocoG1WholeBodyAdapter",
+    "sim_mujoco_whole_body": (
+        "dimos.simulation.adapters.whole_body.generic:SimMujocoWholeBodyAdapter"
+    ),
 }

@@ -41,6 +41,7 @@ class PlanningGroupRegistry:
                 base_link=definition.base_link,
                 tip_link=definition.tip_link,
                 source=definition.source,
+                gripper_hardware_id=definition.gripper_hardware_id,
             )
             self._groups[group_id] = group
 

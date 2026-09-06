@@ -14,7 +14,10 @@
 
 """Arm-only Dual OpenYAM hardware and model configuration."""
 
+from pathlib import Path
+
 from dimos.control.components import HardwareComponent, HardwareType
+from dimos.core.global_config import global_config
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
@@ -45,6 +48,16 @@ DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
 _ARM_KP = (80.0, 80.0, 80.0, 10.0, 10.0, 10.0)
 _ARM_KD = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5)
+# Per-arm joint travel, identical left and right. The trajectory task refuses
+# to execute without finite component limits, so they cannot stay unset.
+DUAL_OPENYAM_ARM_POSITION_LIMITS = (
+    (-2.61799, 3.05433),
+    (0.0, 3.66519),
+    (0.0, 3.66519),
+    (-1.5708, 1.5708),
+    (-1.5708, 1.5708),
+    (-2.0944, 2.0944),
+)
 
 
 def dual_openyam_arm_joints(side: str) -> list[str]:
@@ -58,8 +71,10 @@ def dual_openyam_hardware(
     left_can_port: str | None = None,
     right_can_port: str | None = None,
 ) -> HardwareComponent:
-    """Select mock hardware or an explicitly configured dual-CAN adapter."""
+    """Select simulated, mock, or explicitly configured dual-CAN hardware."""
     if left_can_port is None and right_can_port is None:
+        if global_config.simulation == "mujoco":
+            return dual_openyam_sim_hardware()
         return dual_openyam_mock_hardware()
     if left_can_port is None or right_can_port is None:
         raise ValueError("Dual OpenYAM hardware requires both left and right CAN ports")
@@ -84,19 +99,53 @@ def dual_openyam_mock_hardware() -> HardwareComponent:
     )
 
 
+def dual_openyam_sim_hardware(scene_path: str | Path | None = None) -> HardwareComponent:
+    """Build the physics-backed MuJoCo component for the dual-arm rig.
+
+    The MJCF actuators close their own position loop, so commands go through
+    unchanged and the configured PD gains stay unused. Gripper limits are the
+    MJCF half-opening in metres, which is what the gripper task normalises
+    against.
+    """
+    from dimos.robot.manipulators.dual_openyam.sim import (
+        DUAL_OPENYAM_SCENE_PATH,
+        DUAL_OPENYAM_SIM_GRIPPER_RANGE,
+    )
+
+    gripper_low, gripper_high = DUAL_OPENYAM_SIM_GRIPPER_RANGE
+    return _hardware_component(
+        "sim_mujoco_whole_body",
+        {
+            "num_motors": len(DUAL_OPENYAM_JOINTS),
+            "command_mode": "position",
+        },
+        address=str(DUAL_OPENYAM_SCENE_PATH if scene_path is None else scene_path),
+        gripper_limits=(gripper_low, gripper_high),
+    )
+
+
+def _arm_limits(bound: int) -> list[float]:
+    return [limit[bound] for _ in DUAL_OPENYAM_SIDES for limit in DUAL_OPENYAM_ARM_POSITION_LIMITS]
+
+
 def _hardware_component(
     adapter_type: str,
     adapter_kwargs: dict[str, object],
+    *,
+    address: str | None = None,
+    gripper_limits: tuple[float, float] = (0.0, 1.0),
 ) -> HardwareComponent:
+    gripper_low, gripper_high = gripper_limits
     return HardwareComponent(
         hardware_id=DUAL_OPENYAM_HARDWARE_ID,
         hardware_type=HardwareType.WHOLE_BODY,
         joints=list(DUAL_OPENYAM_JOINTS),
         adapter_type=adapter_type,
+        address=address,
         auto_enable=True,
         limits=JointLimits(
-            position_lower=[*([None] * len(DUAL_OPENYAM_ARM_JOINTS)), 0.0, 0.0],
-            position_upper=[*([None] * len(DUAL_OPENYAM_ARM_JOINTS)), 1.0, 1.0],
+            position_lower=[*_arm_limits(0), gripper_low, gripper_low],
+            position_upper=[*_arm_limits(1), gripper_high, gripper_high],
             velocity_max=[None] * len(DUAL_OPENYAM_JOINTS),
         ),
         adapter_kwargs=adapter_kwargs,
@@ -119,12 +168,14 @@ def dual_openyam_model_config() -> RobotModelConfig:
                 joint_names=tuple(dual_openyam_arm_joints("left")),
                 base_link="dual_openyam_base",
                 tip_link="left_grasp_frame",
+                gripper_hardware_id="left_arm",
             ),
             PlanningGroupDefinition(
                 name="right_manipulator",
                 joint_names=tuple(dual_openyam_arm_joints("right")),
                 base_link="dual_openyam_base",
                 tip_link="right_grasp_frame",
+                gripper_hardware_id="right_arm",
             ),
         ],
         auto_convert_meshes=True,
