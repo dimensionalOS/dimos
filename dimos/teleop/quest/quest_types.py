@@ -54,6 +54,8 @@ class QuestControllerState:
 
     EXPECTED_AXES: ClassVar[int] = 4
     EXPECTED_BUTTONS: ClassVar[int] = 7
+    # X on the left controller, A on the right; the engage button.
+    PRIMARY_BUTTON_INDEX: ClassVar[int] = 4
 
     is_left: bool = True
     # Analog values (0.0-1.0)
@@ -79,10 +81,19 @@ class QuestControllerState:
         buttons = joy.buttons or []
         axes = joy.axes or []
 
-        if len(buttons) < cls.EXPECTED_BUTTONS:
-            raise ValueError(f"Expected {cls.EXPECTED_BUTTONS} buttons, got {len(buttons)}")
+        # Browsers report only the buttons a controller physically has, and the
+        # xr-standard layout is positional: trigger, squeeze, touchpad,
+        # thumbstick, primary, secondary, menu. A PICO 4 sends six -- it has no
+        # menu button -- so pad the tail rather than reject the whole frame and
+        # leave the hand permanently unengaged. Anything shorter than the
+        # primary button is genuinely unusable.
+        if len(buttons) <= cls.PRIMARY_BUTTON_INDEX:
+            raise ValueError(
+                f"Expected at least {cls.PRIMARY_BUTTON_INDEX + 1} buttons, got {len(buttons)}"
+            )
         if len(axes) < cls.EXPECTED_AXES:
             raise ValueError(f"Expected {cls.EXPECTED_AXES} axes, got {len(axes)}")
+        buttons = list(buttons) + [0] * (cls.EXPECTED_BUTTONS - len(buttons))
 
         return cls(
             is_left=is_left,

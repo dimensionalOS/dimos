@@ -46,6 +46,13 @@ logger = setup_logger()
 class ArmCommandConfig(QuestTeleopConfig):
     cmd_stale_after_sec: float = 0.5
     enable_ui_scaling: bool = False
+    # Absolute command timestamps come from the operator's device clock. A
+    # headset that is not NTP-synced (PICO 4 out of the box) reports a clock
+    # tens of seconds off, and every command then looks stale on arrival.
+    # Freshness is enforced regardless by input_timeout_s, which the control
+    # loop measures against local receive time; this only adds the stricter
+    # absolute check for operators whose clock can be trusted.
+    trust_operator_clock: bool = False
 
 
 class ArmCommandModule(ArmTeleopModule):
@@ -113,6 +120,27 @@ class ArmCommandModule(ArmTeleopModule):
         except Exception:
             logger.warning("cmd_raw decode failed", exc_info=True)
 
+    def _reject_by_operator_clock(self, ts: float, kind: str) -> bool:
+        """Age a command against the operator's absolute clock.
+
+        Only consulted when ``trust_operator_clock`` is set: an unsynced
+        headset makes every command look stale or future-stamped.
+        """
+        age = time.time() - ts
+        if age > self.config.cmd_stale_after_sec:
+            now = time.monotonic()
+            if now - self._last_stale_warn >= 1.0:
+                self._last_stale_warn = now
+                logger.warning("dropping stale %s: age=%.2fs — operator link lagging", kind, age)
+            return True
+        if age < 0:  # future-stamped: don't advance the watermark
+            now = time.monotonic()
+            if now - self._last_future_warn >= 1.0:
+                self._last_future_warn = now
+                logger.warning("dropping future-stamped %s — operator clock sync off", kind)
+            return True
+        return False
+
     def _on_pose_bytes(self, data: bytes) -> None:
         """Controller pose → robot frame; stale/future/out-of-order dropped."""
         msg = PoseStamped.lcm_decode(data)
@@ -123,18 +151,7 @@ class ArmCommandModule(ArmTeleopModule):
         ts = float(msg.ts)
         if not math.isfinite(ts):
             return
-        age = time.time() - ts
-        if age > self.config.cmd_stale_after_sec:
-            now = time.monotonic()
-            if now - self._last_stale_warn >= 1.0:
-                self._last_stale_warn = now
-                logger.warning("dropping stale pose: age=%.2fs — operator link lagging", age)
-            return
-        if age < 0:  # future-stamped: don't advance the watermark (would freeze the hand)
-            now = time.monotonic()
-            if now - self._last_future_warn >= 1.0:
-                self._last_future_warn = now
-                logger.warning("dropping future-stamped pose — operator clock sync likely off")
+        if self.config.trust_operator_clock and self._reject_by_operator_clock(ts, "pose"):
             return
         if ts <= self._last_pose_ts[hand]:
             return
@@ -154,18 +171,7 @@ class ArmCommandModule(ArmTeleopModule):
         ts = float(msg.ts)
         if not math.isfinite(ts):
             return
-        age = time.time() - ts
-        if age > self.config.cmd_stale_after_sec:
-            now = time.monotonic()
-            if now - self._last_stale_warn >= 1.0:
-                self._last_stale_warn = now
-                logger.warning("dropping stale ee_twist: age=%.2fs — operator link lagging", age)
-            return
-        if age < 0:  # future-stamped: don't advance _last_twist_ts (would stall the jog)
-            now = time.monotonic()
-            if now - self._last_future_warn >= 1.0:
-                self._last_future_warn = now
-                logger.warning("dropping future-stamped ee_twist — operator clock sync likely off")
+        if self.config.trust_operator_clock and self._reject_by_operator_clock(ts, "ee_twist"):
             return
         if ts <= self._last_twist_ts:  # out-of-order
             return

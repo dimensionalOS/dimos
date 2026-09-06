@@ -243,6 +243,9 @@ web = [
     "fastapi>=0.115.6",
     "python-multipart>=0.0.27",
     "sse-starlette>=2.2.1",
+    # dimos/web/websocket_vis imports socketio unconditionally; it was
+    # only in the lint group, which no documented install ever pulls.
+    "python-socketio>=5.16.1",
     "uvicorn>=0.34.0",
     "jinja2>=3.1.6",
     "ffmpeg-python",
@@ -482,7 +485,6 @@ lint = [
     "openai-whisper",
     "pytest==8.3.5",
     "python-can>=4",
-    "python-socketio>=5.16.1",
     "roboplan>=0.6.0,<0.7.0",
     "sounddevice>=0.5.5",
     "trimesh>=4.12",

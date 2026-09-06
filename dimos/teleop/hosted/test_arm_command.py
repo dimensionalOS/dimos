@@ -53,6 +53,9 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[ArmCommandModule]:
             cmd_stale_after_sec=0.5,
             enable_ui_scaling=False,
             input_timeout_s=1.0,
+            # The absolute-clock checks below are what this fixture exercises;
+            # the shipped default leaves them off (see the unsynced-clock test).
+            trust_operator_clock=True,
         )
 
     monkeypatch.setattr(Module, "__init__", _fake_init)
@@ -330,3 +333,11 @@ def test_operator_pose_survives_a_control_loop_tick(module: ArmCommandModule) ->
 
     assert module._current_poses[Hand.RIGHT] is not None
     assert module._is_engaged[Hand.RIGHT]
+
+
+def test_unsynced_operator_clock_does_not_drop_poses(module: ArmCommandModule) -> None:
+    """A PICO 4 out of the box reports a clock tens of seconds off, so ageing
+    commands against it rejected every one and no hand could ever engage."""
+    module.config.trust_operator_clock = False
+    module._on_pose_bytes(_pose_bytes("right", ts=time.time() - 30.0))
+    assert module._current_poses[Hand.RIGHT] is not None

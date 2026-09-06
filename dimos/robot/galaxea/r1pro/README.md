@@ -32,7 +32,6 @@ cd ~/galaxea-dimos/install/startup_config/share/startup_config/script
   sudo apt-get install -y libturbojpeg   # pyturbojpeg needs the native lib
   uv sync --python /usr/bin/python3.10 --python-preference only-system \
           --no-default-groups --extra base --extra manipulation --extra cpu
-  uv pip install python-socketio         # runtime dep of the viewer, only declared in the lint group
   ```
 
   `--all-extras` does not work on the robot's arm64 board: the `scene` extra
