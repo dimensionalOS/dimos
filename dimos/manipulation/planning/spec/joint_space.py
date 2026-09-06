@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 from itertools import pairwise
 import math
 from typing import Annotated, Literal
@@ -31,8 +31,15 @@ from typing_extensions import Self
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 
-class CoordinateTopology(StrEnum):
-    """Topology of one public scalar joint coordinate."""
+class CoordinateTopology(str, Enum):
+    """Topology of one public scalar joint coordinate.
+
+    ``str`` mixin rather than ``enum.StrEnum``, which is 3.11+; the repo floor
+    is 3.10 (the R1 Pro's ROS 2 Humble rclpy). ``__str__`` is restored to
+    ``str``'s so members render as their value, as StrEnum does.
+    """
+
+    __str__ = str.__str__
 
     INTERVAL = "interval"
     LINE = "line"

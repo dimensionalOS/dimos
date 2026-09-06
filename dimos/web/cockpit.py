@@ -38,7 +38,7 @@ from collections.abc import Mapping, Sequence, Set as AbstractSet
 from dataclasses import dataclass, field, replace
 import json
 import math
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from dimos.web.relay_bridge.manifest import (
     MANIFEST_VERSION,
@@ -50,6 +50,9 @@ from dimos.web.relay_bridge.manifest import (
 )
 
 if TYPE_CHECKING:
+    # typing.Self is 3.11+; annotations are strings here, so it stays type-only.
+    from typing import Self
+
     from dimos.core.coordination.blueprints import Blueprint
 
 
