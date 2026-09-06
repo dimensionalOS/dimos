@@ -397,7 +397,7 @@ class WorldMonitor:
 
         Args:
             path: List of JointState waypoints
-            step_size: Max step size for interpolation (radians)
+            step_size: Max step size for interpolation in native joint coordinates
 
         Returns:
             True if entire path is collision-free

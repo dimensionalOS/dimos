@@ -39,10 +39,7 @@ cd ~/galaxea-dimos/install/startup_config/share/startup_config/script
   needs `usd-core` (x86_64/macOS wheels only) and `mapping` needs
   `gtsam-extended` (arm64 Linux wheels start at cp311). `mapping` is also
   reachable through `unitree` and `all`, so excluding it by name is not enough.
-- The planning model fetches the vendor URDF from the pinned upstream repo. The
-  on-robot build carries extra chassis cameras and names the wrist camera
-  `*_realsense_link` instead of `*_d405_link` / `*_gmsl_link`; point
-  `R1PRO_DESCRIPTION` at that checkout to plan against it.
+- The planning model fetches the vendor URDF from the pinned upstream repo.
 
 ## Blueprints
 
@@ -51,4 +48,5 @@ dimos run r1pro-coordinator     # connection + coordinator + viewer
 dimos run r1pro-teleop          # + chassis teleop from the viewer
 dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
+dimos run r1pro-planner-coordinator  # planar-base planning with fake hardware
 ```

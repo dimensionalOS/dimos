@@ -18,6 +18,7 @@ Each blueprint launches the full stack: keyboard UI, mock controller, IK solver,
 ```bash
 dimos run keyboard-teleop-a750    # A-750 6-DOF
 dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
+dimos run r1pro-planner-coordinator # R1 Pro mobile bimanual planner + fake hardware
 dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
 dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
@@ -468,6 +469,7 @@ planner is locked for its whole native call.
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
 | `dual-xarm6-planner-coordinator` | Dual XArm6 planning with mock coordinator hardware |
+| `r1pro-planner-coordinator` | R1 Pro planar-base, torso, and bimanual planner with fake hardware |
 | `xarm-perception` | XArm7 + RealSense camera for perception |
 | `xarm-perception-agent` | XArm7 perception + LLM agent |
 | `xarm-perception-sim` | XArm7 simulation perception stack |
