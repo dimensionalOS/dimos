@@ -22,7 +22,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -33,11 +33,26 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
 
 
+class HeuristicGraspConfig(ModuleConfig):
+    """Configuration for the heuristic grasp generator.
+
+    Attributes:
+        tool_rotation_rpy: Fixed rotation from the canonical top-down grasp
+            frame to the robot's own grasp frame, in radians. Grippers whose
+            URDF frame does not point Z along the approach need this, or every
+            proposal comes back unreachable.
+    """
+
+    tool_rotation_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+
 class HeuristicGraspModule(Module, GraspGenSpec):
     """Generate one top-down parallel-jaw grasp from a gravity-aligned point cloud.
 
     The input frame's XY plane must be horizontal and its -Z axis must point down.
     """
+
+    config: HeuristicGraspConfig
 
     @rpc
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
@@ -54,14 +69,21 @@ class HeuristicGraspModule(Module, GraspGenSpec):
         xy = points[:, :2]
         center_xy = np.median(xy, axis=0)
         low_z, high_z = np.quantile(points[:, 2], [0.05, 0.95])
+        orientation = Quaternion.from_euler(Vector3(-math.pi, 0.0, self._narrow_axis_yaw(xy)))
         pose = Pose(
             Vector3(float(center_xy[0]), float(center_xy[1]), float((low_z + high_z) / 2.0)),
-            Quaternion.from_euler(Vector3(-math.pi, 0.0, self._narrow_axis_yaw(xy))),
+            self._apply_tool_rotation(orientation),
         )
         return GraspCandidateArray(
             Header(float(object_pointcloud.ts), object_pointcloud.frame_id),
             [GraspCandidate(pose, score=1.0)],
         )
+
+    def _apply_tool_rotation(self, orientation: Quaternion) -> Quaternion:
+        roll, pitch, yaw = self.config.tool_rotation_rpy
+        if (roll, pitch, yaw) == (0.0, 0.0, 0.0):
+            return orientation
+        return orientation * Quaternion.from_euler(Vector3(roll, pitch, yaw))
 
     @staticmethod
     def _narrow_axis_yaw(xy: NDArray[np.float32]) -> float:
