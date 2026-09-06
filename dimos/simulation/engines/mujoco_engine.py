@@ -44,6 +44,20 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+_MJOBJ_GEOM = int(mujoco.mjtObj.mjOBJ_GEOM)
+_MJOBJ_MESH = int(mujoco.mjtObj.mjOBJ_MESH)
+_MJGEOM_MESH = int(mujoco.mjtGeom.mjGEOM_MESH)
+_GEOM_TYPE_NAMES = {
+    int(mujoco.mjtGeom.mjGEOM_PLANE): "plane",
+    int(mujoco.mjtGeom.mjGEOM_HFIELD): "hfield",
+    int(mujoco.mjtGeom.mjGEOM_SPHERE): "sphere",
+    int(mujoco.mjtGeom.mjGEOM_CAPSULE): "capsule",
+    int(mujoco.mjtGeom.mjGEOM_ELLIPSOID): "ellipsoid",
+    int(mujoco.mjtGeom.mjGEOM_CYLINDER): "cylinder",
+    int(mujoco.mjtGeom.mjGEOM_BOX): "box",
+    _MJGEOM_MESH: "mesh",
+}
+
 # Step hook signature: called with the engine instance inside the sim thread.
 StepHook = Callable[["MujocoEngine"], None]
 
@@ -89,6 +103,9 @@ class CameraConfig:
     max_geom: int | None = 10000
     geom_groups: tuple[int, ...] | None = None
     base_body_name: str | None = None
+    # Every rendered pass blocks the sim thread, so cameras that only feed an
+    # RGB stream skip the second one.
+    render_depth: bool = True
 
 
 @dataclass
@@ -122,12 +139,32 @@ class RaycastLidarFrame:
     timestamp: float
 
 
+def _triple_of(values: NDArray[np.float64]) -> tuple[float, float, float]:
+    return (float(values[0]), float(values[1]), float(values[2]))
+
+
+@dataclass(frozen=True)
+class GeomInfo:
+    """One collision/visual primitive of a body, in world frame.
+
+    ``size`` keeps MuJoCo's per-type meaning (sphere radius, box half-extents,
+    capsule radius and half-length); ``mesh`` is set only for mesh geoms.
+    """
+
+    name: str | None
+    type: str
+    size: tuple[float, float, float]
+    position: tuple[float, float, float]
+    orientation: tuple[float, float, float, float]
+    mesh: str | None = None
+
+
 @dataclass
 class _CameraRendererState:
     cfg: CameraConfig
     cam_id: int
     rgb_renderer: mujoco.Renderer
-    depth_renderer: mujoco.Renderer
+    depth_renderer: mujoco.Renderer | None
     scene_option: mujoco.MjvOption | None
     interval: float
     base_body_id: int | None = None
@@ -378,13 +415,15 @@ class MujocoEngine(SimulationEngine):
                 width=cfg.width,
                 max_geom=max_geom,
             )  # type: ignore[call-arg]
-            depth_renderer = mujoco.Renderer(
-                self._model,
-                height=cfg.height,
-                width=cfg.width,
-                max_geom=max_geom,
-            )  # type: ignore[call-arg]
-            depth_renderer.enable_depth_rendering()
+            depth_renderer = None
+            if cfg.render_depth:
+                depth_renderer = mujoco.Renderer(
+                    self._model,
+                    height=cfg.height,
+                    width=cfg.width,
+                    max_geom=max_geom,
+                )  # type: ignore[call-arg]
+                depth_renderer.enable_depth_rendering()
             scene_option = None
             if cfg.geom_groups is not None:
                 scene_option = mujoco.MjvOption()
@@ -456,14 +495,17 @@ class MujocoEngine(SimulationEngine):
             )
             rgb = state.rgb_renderer.render().copy()
 
-            state.depth_renderer.update_scene(
-                self._data, camera=state.cam_id, scene_option=state.scene_option
-            )
-            depth = state.depth_renderer.render().copy()
+            if state.depth_renderer is not None:
+                state.depth_renderer.update_scene(
+                    self._data, camera=state.cam_id, scene_option=state.scene_option
+                )
+                depth = state.depth_renderer.render().copy().astype(np.float32)
+            else:
+                depth = np.zeros((0, 0), dtype=np.float32)
 
             frame = CameraFrame(
                 rgb=rgb,
-                depth=depth.astype(np.float32),
+                depth=depth,
                 cam_pos=self._data.cam_xpos[state.cam_id].copy(),
                 cam_mat=self._data.cam_xmat[state.cam_id].copy(),
                 fovy=float(self._model.cam_fovy[state.cam_id]),
@@ -538,7 +580,8 @@ class MujocoEngine(SimulationEngine):
     def _close_cam_renderers(cam_renderers: dict[str, _CameraRendererState]) -> None:
         for state in cam_renderers.values():
             state.rgb_renderer.close()
-            state.depth_renderer.close()
+            if state.depth_renderer is not None:
+                state.depth_renderer.close()
 
     def _reset_unlocked(self) -> None:
         if self._model.nkey > 0:
@@ -861,6 +904,72 @@ class MujocoEngine(SimulationEngine):
         position = self._data.qpos[qpos_adr : qpos_adr + 3].copy()
         qw, qx, qy, qz = self._data.qpos[qpos_adr + 3 : qpos_adr + 7].copy()
         return position, np.array([qx, qy, qz, qw], dtype=np.float64)
+
+    def get_body_pose(
+        self, body_name: str
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]] | None:
+        """World pose of any body, as (position, xyzw quaternion)."""
+        with self._lock:
+            body_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+            if body_id < 0:
+                return None
+            position = self._data.xpos[body_id].copy()
+            qw, qx, qy, qz = self._data.xquat[body_id].copy()
+            return position, np.array([qx, qy, qz, qw], dtype=np.float64)
+
+    def get_body_geoms(self, body_name: str) -> list[GeomInfo] | None:
+        """World-frame geometry of one rigid body, or None when it is unknown.
+
+        Bodies welded to *body_name* (no joint of their own) count as part of
+        it, because scene assets routinely wrap their geometry in a child body
+        under a freejoint. A child that carries a joint is a separate moving
+        part and is left out.
+        """
+        with self._lock:
+            body_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+            if body_id < 0:
+                return None
+            geoms: list[GeomInfo] = []
+            for member in self._rigid_subtree_unlocked(body_id):
+                geoms.extend(self._body_own_geoms_unlocked(member))
+            return geoms
+
+    def _rigid_subtree_unlocked(self, body_id: int) -> list[int]:
+        members = [body_id]
+        for child in range(body_id + 1, int(self._model.nbody)):
+            parent = int(self._model.body_parentid[child])
+            if parent in members and int(self._model.body_jntnum[child]) == 0:
+                members.append(child)
+        return members
+
+    def _body_own_geoms_unlocked(self, body_id: int) -> list[GeomInfo]:
+        start = int(self._model.body_geomadr[body_id])
+        geoms: list[GeomInfo] = []
+        for geom_id in range(start, start + int(self._model.body_geomnum[body_id])):
+            geom_type = int(self._model.geom_type[geom_id])
+            mesh_name = None
+            if geom_type == _MJGEOM_MESH:
+                mesh_id = int(self._model.geom_dataid[geom_id])
+                if mesh_id >= 0:
+                    mesh_name = mujoco.mj_id2name(self._model, _MJOBJ_MESH, mesh_id)
+            quat = np.zeros(4, dtype=np.float64)
+            mujoco.mju_mat2Quat(quat, self._data.geom_xmat[geom_id])
+            geoms.append(
+                GeomInfo(
+                    name=mujoco.mj_id2name(self._model, _MJOBJ_GEOM, geom_id),
+                    type=_GEOM_TYPE_NAMES.get(geom_type, str(geom_type)),
+                    size=_triple_of(self._model.geom_size[geom_id]),
+                    position=_triple_of(self._data.geom_xpos[geom_id]),
+                    orientation=(
+                        float(quat[1]),
+                        float(quat[2]),
+                        float(quat[3]),
+                        float(quat[0]),
+                    ),
+                    mesh=mesh_name,
+                )
+            )
+        return geoms
 
     def get_actuator_ctrl_range(self, joint_index: int) -> tuple[float, float] | None:
         mapping = self._joint_mappings[joint_index]
