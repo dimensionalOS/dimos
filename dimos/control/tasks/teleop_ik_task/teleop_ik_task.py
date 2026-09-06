@@ -39,10 +39,14 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.protocol.service.spec import BaseConfig
 from dimos.teleop.quest.quest_types import Buttons
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.control.coordinator import TaskConfig
     from dimos.control.hardware_interface import ConnectedHardware, ConnectedWholeBody
+
+
+logger = setup_logger()
 
 
 class OperatorHand(str, Enum):
@@ -132,6 +136,9 @@ class TeleopIKTask(PoseTargetIKTask):
         self._last_button_update_time = 0.0
         self._deadman_satisfied = False
         self._rearm_requires_release = False
+        # The snapshot runs at coordinator tick rate; log the idle reason ~1/s.
+        self._idle_log_counter = 0
+        self._idle_log_every = 100
         target_frames = [binding.target_frame for binding in config.bindings]
         if config.head_target_frame is not None:
             target_frames.append(config.head_target_frame)
@@ -244,6 +251,7 @@ class TeleopIKTask(PoseTargetIKTask):
         self._session_state = _SessionState.ENGAGED
         self._session_epoch += 1
         self._clear_target_session_locked()
+        logger.info("teleop session engaged", task=self._name)
 
     def _end_session_locked(
         self,
@@ -257,6 +265,7 @@ class TeleopIKTask(PoseTargetIKTask):
         self._last_button_update_time = 0.0
         self._rearm_requires_release |= require_release and self._deadman_satisfied
         self._clear_target_session_locked()
+        logger.info("teleop session ended", task=self._name, state=state.name.lower())
 
     def _clear_target_session_locked(self) -> None:
         states = list(self._hands.values())
@@ -268,6 +277,31 @@ class TeleopIKTask(PoseTargetIKTask):
             target_state.controller_reference = None
             target_state.robot_reference = None
 
+    def _log_idle_reason_locked(self) -> None:
+        """Say why an armed operator is getting no motion. Throttled to once a second.
+
+        Every precondition here is otherwise silent, so a missing input stream
+        looks identical to working teleoperation that happens not to move.
+        """
+        if self._session_state is not _SessionState.ENGAGED:
+            return
+        missing = [
+            f"{hand.value} controller pose"
+            for hand, st in self._hands.items()
+            if st.latest_pose is None
+        ]
+        if self._head is not None and self._head.latest_pose is None:
+            missing.append("headset pose")
+        if not missing:
+            return
+        self._idle_log_counter += 1
+        if self._idle_log_counter % self._idle_log_every == 1:
+            logger.warning(
+                "teleop engaged but idle: no target published",
+                task=self._name,
+                missing=", ".join(missing),
+            )
+
     def _frame_target_snapshot(self, state: CoordinatorState) -> FrameTargetSnapshot | None:
         with self._lock:
             if (
@@ -275,6 +309,7 @@ class TeleopIKTask(PoseTargetIKTask):
                 or any(hand.latest_pose is None for hand in self._hands.values())
                 or (self._head is not None and self._head.latest_pose is None)
             ):
+                self._log_idle_reason_locked()
                 return None
             session_epoch = self._session_epoch
             needs_capture = any(
