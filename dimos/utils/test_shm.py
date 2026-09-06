@@ -22,6 +22,7 @@ import uuid
 
 import pytest
 
+from dimos.utils import shm as shm_utils
 from dimos.utils.shm import ShmNotReadyError, attach_shm, create_or_attach_shm
 
 SIZE = 1 << 16
@@ -97,6 +98,21 @@ def test_attach_shm_waits_out_the_race(name, slow_ftruncate):
     owner.close()
 
     assert result == [SIZE], f"attacher did not survive the window: {result}"
+
+
+def test_attach_shm_retries_stale_zero_size(mocker) -> None:
+    """A successful attach with a stale zero size is not ready yet."""
+    stale = mocker.Mock(size=0)
+    ready = mocker.Mock(size=SIZE)
+    shared_memory = mocker.patch.object(shm_utils, "SharedMemory", side_effect=[stale, ready])
+    mocker.patch.object(shm_utils, "unregister", side_effect=lambda shm: shm)
+    mocker.patch.object(shm_utils.time, "sleep")
+
+    result = attach_shm("test-segment", timeout=1.0)
+
+    assert result is ready
+    stale.close.assert_called_once_with()
+    assert shared_memory.call_count == 2
 
 
 def test_attach_shm_times_out_instead_of_hanging(name):

@@ -118,6 +118,7 @@ def teleop_ik_task(
     robot_model: RobotModelConfig,
     bindings: Sequence[TeleopBinding],
     name: str,
+    head_target_frame: str | None = None,
     joint_names: Sequence[str] | None = None,
     priority: int = 10,
     solver_type: type[PinkPoseTargetSolver] = PinkPoseTargetSolver,
@@ -128,6 +129,8 @@ def teleop_ik_task(
         "bindings": list(bindings),
         "solver_type": solver_type,
     }
+    if head_target_frame is not None:
+        task_params["head_target_frame"] = head_target_frame
     if params:
         task_params.update(params)
     return TaskConfig(

@@ -42,6 +42,23 @@ VR_TO_ROBOT_FRAME: NDArray[np.float64] = np.array(
 )
 
 
+def _webxr_matrix_to_robot(
+    pose_stamped: PoseStamped, vr_matrix: NDArray[np.float64]
+) -> PoseStamped:
+    robot_pose = matrix_to_pose(VR_TO_ROBOT_FRAME @ vr_matrix)
+    return PoseStamped(
+        position=robot_pose.position,
+        orientation=robot_pose.orientation,
+        ts=pose_stamped.ts,
+        frame_id=pose_stamped.frame_id,
+    )
+
+
+def webxr_headset_to_robot(pose_stamped: PoseStamped) -> PoseStamped:
+    """Convert an unmodified WebXR headset pose into the robot frame."""
+    return _webxr_matrix_to_robot(pose_stamped, pose_to_matrix(pose_stamped))
+
+
 def webxr_to_robot(
     pose_stamped: PoseStamped,
     is_left_controller: bool = True,
@@ -54,12 +71,4 @@ def webxr_to_robot(
     z_rotation = R.from_euler("z", 90 * direction, degrees=True).as_matrix()
     vr_matrix[:3, :3] = vr_matrix[:3, :3] @ z_rotation
 
-    robot_matrix = VR_TO_ROBOT_FRAME @ vr_matrix
-    robot_pose = matrix_to_pose(robot_matrix)
-
-    return PoseStamped(
-        position=robot_pose.position,
-        orientation=robot_pose.orientation,
-        ts=pose_stamped.ts,
-        frame_id=pose_stamped.frame_id,
-    )
+    return _webxr_matrix_to_robot(pose_stamped, vr_matrix)

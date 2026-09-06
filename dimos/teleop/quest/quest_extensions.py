@@ -37,6 +37,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.teleop.quest.quest_teleop_module import QuestTeleopConfig, QuestTeleopModule
 from dimos.teleop.quest.quest_types import Buttons, Hand, QuestControllerState
+from dimos.teleop.utils.teleop_transforms import webxr_headset_to_robot
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -189,6 +190,15 @@ class ArmTeleopModule(QuestTeleopModule):
             if controller is None or not self._is_engaged[hand]:
                 continue
             outputs[hand].publish(Float32(data=1.0 - float(controller.trigger)))
+
+
+class HeadsetArmTeleopModule(ArmTeleopModule):
+    """Arm teleop that also publishes the Quest headset pose."""
+
+    headset_output: Out[PoseStamped]
+
+    def _on_headset_pose(self, msg: PoseStamped) -> None:
+        self.headset_output.publish(webxr_headset_to_robot(msg))
 
 
 class HandTeleopModule(ArmTeleopModule):
