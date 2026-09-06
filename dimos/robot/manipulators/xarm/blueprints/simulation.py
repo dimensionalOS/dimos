@@ -31,6 +31,7 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm7_sim_robot_config,
 )
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+from dimos.simulation.perception.blueprints import sim_scene_registration
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
@@ -120,6 +121,46 @@ xarm_room_sim = autoconnect(
         # The obstacle stream contains permanent objects only; one explicit
         # room scan must therefore promote its first sightings immediately.
         min_detections_for_permanent=1,
+    ),
+    coordinator(
+        hardware=[_xarm_room_sim_hw],
+        tasks=[
+            trajectory_task(_xarm_room_sim_hw),
+            TaskConfig(
+                name="arm_gripper",
+                type="gripper",
+                joint_names=["arm/gripper"],
+                priority=20,
+            ),
+        ],
+    ),
+)
+
+
+# Ground-truth perception instead of detector + segmenter, so the manipulation
+# half can be exercised without the vision stack in the loop.
+XARM_SIM_ROBOT_BODIES = ("link", "gripper", "finger", "knuckle")
+
+xarm_privileged_sim = autoconnect(
+    ManipulationModule.blueprint(
+        model=_xarm7_sim_model,
+        planning_timeout=10.0,
+        visualization={"backend": "none"},
+    ),
+    ManipulationSkills.blueprint(),
+    PickAndPlaceModule.blueprint(planning_frame="world"),
+    HeuristicGraspModule.blueprint(),
+    MujocoSimModule.blueprint(
+        **{
+            **make_xarm7_sim_module_kwargs(XARM_ROOM_SCENE_PATH),
+            "headless": True,
+            "base_frame_id": "world",
+            "reset_joint_positions": XARM_ROOM_SCAN_JOINTS,
+        }
+    ),
+    sim_scene_registration(
+        target_frame="world",
+        robot_body_substrings=XARM_SIM_ROBOT_BODIES,
     ),
     coordinator(
         hardware=[_xarm_room_sim_hw],

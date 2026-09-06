@@ -851,6 +851,51 @@ class MujocoSimModule(
             return []
         return engine.get_body_geoms(name) or []
 
+    @rpc
+    def list_body_names(self) -> list[str]:
+        """Every named body in the compiled model, worldbody excluded."""
+        engine = self._engine
+        if engine is None:
+            return []
+        model = engine.model
+        names = [
+            mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body_id)
+            for body_id in range(1, int(model.nbody))
+        ]
+        return [name for name in names if name]
+
+    @rpc
+    def sample_body_surface(self, name: str, count: int = 512) -> list[list[float]]:
+        """World-frame surface samples of one body; see ``mujoco_surface``."""
+        from dimos.simulation.perception.mujoco_surface import sample_body_surface
+
+        engine = self._engine
+        if engine is None:
+            return []
+        return sample_body_surface(engine.model, engine.data, name, count).tolist()
+
+    @rpc
+    def sample_scene_surface(
+        self,
+        exclude: list[str] | None = None,
+        voxel_size: float = 0.01,
+        count: int = 20000,
+    ) -> list[list[float]]:
+        """World-frame surface samples of the scene minus *exclude*, voxelised."""
+        from dimos.simulation.perception.mujoco_surface import sample_scene_surface
+
+        engine = self._engine
+        if engine is None:
+            return []
+        points = sample_scene_surface(
+            engine.model,
+            engine.data,
+            tuple(exclude or ()),
+            voxel_size=voxel_size,
+            count=count,
+        )
+        return points.tolist()
+
     def _compute_root_spawn_clearance_z(self) -> float | None:
         engine = self._engine
         qpos_adr = self._root_base_qpos_adr
