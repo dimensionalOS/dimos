@@ -18,7 +18,9 @@ from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.robot.galaxea.r1pro.config import (
     R1PRO_UPPER_BODY_PLANNING_JOINTS,
     make_r1pro_model_config,
@@ -58,6 +60,9 @@ coordinator_teleop_r1pro = autoconnect(
     ),
     ManipulationModule.blueprint(
         model=_r1pro_model,
-        visualization={"backend": "viser"},
+        # Reachable off-robot, like the sibling r1pro blueprint. The mock
+        # adapter moves nothing physical, so viser is the only place the
+        # operator can see this blueprint working at all.
+        visualization=ViserVisualizationConfig(host=global_config.listen_host),
     ),
 )
