@@ -24,8 +24,10 @@ Poses are not resolved here; ``tf`` is recorded like any other stream and
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import fnmatch
+from functools import partial
+from itertools import groupby
 import os
 from pathlib import Path
 import queue
@@ -35,14 +37,17 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.constants import RECORDINGS_DIR
 from dimos.core.global_config import global_config
+from dimos.core.transport import ZenohTransport, pZenohTransport
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.safe_thread_map import safe_thread_map
 
 if TYPE_CHECKING:
     from dimos.core.stream import Transport
     from dimos.memory.stream import Stream
 
 logger = setup_logger()
+MAX_PARALLEL_TAPS = 32
 
 
 def recording_dir() -> Path:
@@ -99,10 +104,10 @@ class TransportRecorder:
         if self.dropped:
             logger.warning("--record: dropped %d messages (writer queue full)", self.dropped)
 
-    def tap(
+    def prepare_tap(
         self, name: str, stream_type: type, transport: Transport[Any]
-    ) -> Callable[[], None] | None:
-        """Subscribe *transport* and record into stream *name*; returns the unsubscribe."""
+    ) -> Callable[[], Callable[[], None]] | None:
+        """Prepare a transport subscription without starting it."""
         if not matching(self._topics, [name]):
             return None
         if not hasattr(stream_type, "lcm_encode"):
@@ -119,7 +124,18 @@ class TransportRecorder:
                     logger.warning("--record: writer queue full, %d dropped so far", self.dropped)
 
         logger.info("Recording %s (%s) via %s", name, stream_type.__name__, transport)
-        return transport.subscribe(on_msg)
+
+        def subscribe() -> Callable[[], None]:
+            return transport.subscribe(on_msg)
+
+        return subscribe
+
+    def tap(
+        self, name: str, stream_type: type, transport: Transport[Any]
+    ) -> Callable[[], None] | None:
+        """Subscribe *transport* and record into stream *name*; returns the unsubscribe."""
+        subscribe = self.prepare_tap(name, stream_type, transport)
+        return subscribe() if subscribe is not None else None
 
 
 @contextmanager
@@ -148,17 +164,51 @@ def recording(
     path = recording_dir() / "memory.db"
     store = SqliteStore(path=str(path))
     store.start()
-    recorder = TransportRecorder(store, global_config.record_topics)
-    unsubscribes = [
-        unsubscribe
-        for (name, payload_type), transport in transports.items()
-        if (unsubscribe := recorder.tap(name, payload_type, transport)) is not None
-    ]
-    logger.info("Recording to %s", path)
-    try:
+    with ExitStack() as cleanup:
+        cleanup.callback(store.stop)
+        recorder = TransportRecorder(store, global_config.record_topics)
+        cleanup.callback(recorder.close)
+
+        def cleanup_started(
+            _outcomes: list[
+                tuple[Callable[[], Callable[[], None]], Callable[[], None] | Exception]
+            ],
+            unsubscribes: list[Callable[[], None]],
+            errors: list[Exception],
+        ) -> None:
+            for unsubscribe in unsubscribes:
+                cleanup.callback(unsubscribe)
+            raise errors[0]
+
+        subscription_locks = {id(tr): threading.Lock() for tr in transports.values()}
+
+        def subscribe_transport(
+            tr: Transport[Any], subscribe: Callable[[], Callable[[], None]]
+        ) -> Callable[[], None]:
+            with subscription_locks[id(tr)]:
+                return subscribe()
+
+        subscriptions: list[tuple[bool, Callable[[], Callable[[], None]]]] = [
+            (
+                isinstance(tr, (ZenohTransport, pZenohTransport)),
+                partial(subscribe_transport, tr, subscribe),
+            )
+            for (name, t), tr in transports.items()
+            if (subscribe := recorder.prepare_tap(name, t, tr)) is not None
+        ]
+        # Do not start other backends past a failed subscription.
+        for parallel, group in groupby(subscriptions, key=lambda item: item[0]):
+            batch = [subscribe for _, subscribe in group]
+            if parallel:
+                for offset in range(0, len(batch), MAX_PARALLEL_TAPS):
+                    for unsubscribe in safe_thread_map(
+                        batch[offset : offset + MAX_PARALLEL_TAPS],
+                        lambda subscribe: subscribe(),
+                        on_errors=cleanup_started,
+                    ):
+                        cleanup.callback(unsubscribe)
+            else:
+                for subscribe in batch:
+                    cleanup.callback(subscribe())
+        logger.info("Recording to %s", path)
         yield
-    finally:
-        for unsubscribe in unsubscribes:
-            unsubscribe()
-        recorder.close()
-        store.stop()
