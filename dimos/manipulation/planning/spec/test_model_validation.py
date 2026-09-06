@@ -28,14 +28,12 @@ from yourdfpy import URDF  # type: ignore[import-untyped]
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.validation import validate_robot_model_config
+from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 
 def _planar_base() -> PlanarBaseDefinition:
     return PlanarBaseDefinition(
-        workspace_lower=(-2.0, -2.0, -3.14),
-        workspace_upper=(2.0, 2.0, 3.14),
         velocity_limits=(1.0, 1.0, 2.0),
         acceleration_limits=(2.0, 2.0, 4.0),
     )
@@ -71,7 +69,7 @@ def _write_slash_model(path: Path) -> None:
 
 def _config(path: Path) -> RobotModelConfig:
     return RobotModelConfig(
-        model=RobotModel.from_file(path),
+        model=RobotModel.from_file(path).with_default_joint_acceleration_limit(2.0),
         joint_names=["left/j1", "right/j1"],
         base_link="world",
         planning_groups=[
@@ -118,7 +116,7 @@ def test_canonical_slash_names_load_natively_in_pinocchio(tmp_path: Path) -> Non
     ]
 
 
-def test_planar_base_joints_are_one_coordinate_in_pinocchio(tmp_path: Path) -> None:
+def test_planar_base_joints_have_scalar_velocities_in_pinocchio(tmp_path: Path) -> None:
     pinocchio = pytest.importorskip("pinocchio")
     urdf = tmp_path / "canonical.urdf"
     _write_slash_model(urdf)
@@ -127,10 +125,14 @@ def test_planar_base_joints_are_one_coordinate_in_pinocchio(tmp_path: Path) -> N
 
     model = pinocchio.buildModelFromXML(loaded.xml)
 
-    for joint_name in planar_base.joint_names:
+    for joint_name in planar_base.joint_names[:2]:
         joint = model.joints[model.getJointId(joint_name)]
         assert joint.nq == 1
         assert joint.nv == 1
+
+    yaw = model.joints[model.getJointId(planar_base.joint_names[2])]
+    assert yaw.nq == 2
+    assert yaw.nv == 1
 
 
 def test_planar_base_loads_natively_in_visualization_parser(tmp_path: Path) -> None:
@@ -148,7 +150,7 @@ def test_prepared_model_validation_accepts_canonical_bimanual_model(tmp_path: Pa
     urdf = tmp_path / "canonical.urdf"
     _write_slash_model(urdf)
 
-    model = validate_robot_model_config(_config(urdf))
+    model = prepare_robot_model(_config(urdf)).description
 
     assert model.root_link == "world"
     assert [joint.name for joint in model.joints if joint.type != "fixed"] == [
@@ -166,7 +168,7 @@ def test_prepared_model_validation_accepts_prismatic_joint(tmp_path: Path) -> No
         )
     )
 
-    validate_robot_model_config(_config(urdf))
+    prepare_robot_model(_config(urdf))
 
 
 @pytest.mark.parametrize("joint_type", ["fixed", "floating", "planar"])
@@ -184,14 +186,16 @@ def test_prepared_model_validation_rejects_non_one_dof_controlled_joint(
     )
 
     with pytest.raises(ValueError, match="one-DoF revolute, continuous, or prismatic"):
-        validate_robot_model_config(_config(urdf))
+        prepare_robot_model(_config(urdf))
 
 
 def test_planar_base_requires_synthetic_root_and_all_base_joints(tmp_path: Path) -> None:
     urdf = tmp_path / "canonical.urdf"
     _write_slash_model(urdf)
     base = _planar_base()
-    model = RobotModel.from_file(urdf).with_planar_base(base)
+    model = (
+        RobotModel.from_file(urdf).with_default_joint_acceleration_limit(2.0).with_planar_base(base)
+    )
     values = _config(urdf).model_dump()
     values.update(
         model=model,
@@ -200,11 +204,11 @@ def test_planar_base_requires_synthetic_root_and_all_base_joints(tmp_path: Path)
     )
     valid = RobotModelConfig.model_validate(values)
 
-    validate_robot_model_config(valid)
+    prepare_robot_model(valid)
     with pytest.raises(ValueError, match="Planar robot base_link"):
-        validate_robot_model_config(valid.model_copy(update={"base_link": "world"}))
+        prepare_robot_model(valid.model_copy(update={"base_link": "world"}))
     with pytest.raises(ValueError, match="Planar robot controllable joints are missing"):
-        validate_robot_model_config(
+        prepare_robot_model(
             valid.model_copy(update={"joint_names": [base.joint_names[0], "left/j1"]})
         )
 
@@ -240,7 +244,7 @@ def test_prepared_model_validation_identifies_invalid_configuration(
     values.update(replacement)
 
     with pytest.raises(ValueError, match=message):
-        validate_robot_model_config(RobotModelConfig.model_validate(values))
+        prepare_robot_model(RobotModelConfig.model_validate(values))
 
 
 def test_prepared_model_validation_wraps_malformed_asset(tmp_path: Path) -> None:
@@ -248,4 +252,4 @@ def test_prepared_model_validation_wraps_malformed_asset(tmp_path: Path) -> None
     urdf.write_text("<robot>")
 
     with pytest.raises(ValueError, match="invalid model asset"):
-        validate_robot_model_config(_config(urdf))
+        prepare_robot_model(_config(urdf))

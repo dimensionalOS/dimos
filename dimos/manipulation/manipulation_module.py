@@ -1092,8 +1092,6 @@ class ManipulationModule(Module):
             "joint_names": config.joint_names,
             "planning_groups": list(planning_groups),
             "base_link": config.base_link,
-            "max_velocity": config.max_velocity,
-            "max_acceleration": config.max_acceleration,
             "home_joints": config.home_joints,
             "pre_grasp_offset": config.pre_grasp_offset,
             "init_joints": list(self._init_joints.position)
