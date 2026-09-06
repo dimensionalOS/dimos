@@ -26,6 +26,8 @@ the camera in different worker processes.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 import math
 from pathlib import Path
 import threading
@@ -56,6 +58,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,
+    GeomInfo,
     MujocoEngine,
     RaycastLidarConfig,
 )
@@ -132,6 +135,47 @@ def _imu_from_mujoco_wxyz(
         linear_acceleration=Vector3(*accelerometer),
         frame_id=frame_id,
         ts=ts,
+    )
+
+
+@dataclass(frozen=True)
+class SimCameraSpec:
+    """One extra MJCF camera published on its own ``Out[Image]`` port.
+
+    ``name`` is the MJCF camera, ``stream`` the port. These render RGB only:
+    every rendered pass runs on the sim thread, and a wrist view feeding a
+    policy or a viewer has no use for the depth pass.
+    """
+
+    name: str
+    stream: str
+    width: int = 320
+    height: int = 240
+    fps: float = 15.0
+
+
+def declare_sim_camera_module(
+    name: str,
+    module_name: str,
+    cameras: Sequence[SimCameraSpec],
+) -> type[MujocoSimModule]:
+    """Declare a ``MujocoSimModule`` subclass with one ``Out[Image]`` per camera.
+
+    Blueprint autoconnect matches on declared ports, so the extra streams have
+    to exist on the class rather than being created per instance.
+    """
+    annotations: dict[str, object] = {spec.stream: Out[Image] for spec in cameras}
+    if len(annotations) != len(cameras):
+        raise ValueError(f"{name}: duplicate camera stream names in {cameras}")
+    return type(
+        name,
+        (MujocoSimModule,),
+        {
+            "__annotations__": annotations,
+            "__doc__": f"MujocoSimModule publishing {sorted(annotations)}.",
+            "__module__": module_name,
+            "__qualname__": name,
+        },
     )
 
 
@@ -256,6 +300,9 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
 
     # Camera config (matches former MujocoCameraConfig).
     camera_name: str = "wrist_camera"
+    # Extra RGB cameras, each on its own Out[Image]. The class must declare
+    # those ports; build it with declare_sim_camera_module.
+    extra_cameras: list[SimCameraSpec] = Field(default_factory=list)
     width: int = 640
     height: int = 480
     fps: int = 15
@@ -344,6 +391,7 @@ class MujocoSimModule(
         self._gripper_joint_range: tuple[float, float] = (0.0, 1.0)
         self._stop_event = threading.Event()
         self._publish_thread: threading.Thread | None = None
+        self._extra_publish_thread: threading.Thread | None = None
         self._state_lock = threading.Lock()
         self._camera_info_base: CameraInfo | None = None
         self._shm_ready_signaled = False
@@ -467,6 +515,25 @@ class MujocoSimModule(
         if primary_needed:
             add_camera(self.config.camera_name)
 
+        for spec in self.config.extra_cameras:
+            if not isinstance(getattr(self, spec.stream, None), Out):
+                raise ValueError(
+                    f"MujocoSimModule: extra camera {spec.name!r} wants stream "
+                    f"{spec.stream!r}, which {type(self).__name__} does not declare - "
+                    "build the class with declare_sim_camera_module"
+                )
+            if spec.name in cameras_by_name:
+                raise ValueError(
+                    f"MujocoSimModule: extra camera {spec.name!r} is already registered"
+                )
+            cameras_by_name[spec.name] = CameraConfig(
+                name=spec.name,
+                width=spec.width,
+                height=spec.height,
+                fps=float(spec.fps),
+                render_depth=False,
+            )
+
         if self.config.enable_pointcloud and self.config.enable_mujoco_lidar:
             for camera_name in self._mujoco_lidar_camera_names():
                 raycast_lidars.append(
@@ -577,6 +644,12 @@ class MujocoSimModule(
         )
         self._publish_thread.start()
 
+        if self.config.extra_cameras:
+            self._extra_publish_thread = threading.Thread(
+                target=self._extra_publish_loop, daemon=True, name="MujocoSimPublishExtra"
+            )
+            self._extra_publish_thread.start()
+
         # Periodic camera_info publishing.
         interval_sec = 1.0 / self.config.camera_info_fps
         self.register_disposable(
@@ -673,6 +746,9 @@ class MujocoSimModule(
         if self._publish_thread and self._publish_thread.is_alive():
             self._publish_thread.join(timeout=2.0)
         self._publish_thread = None
+        if self._extra_publish_thread and self._extra_publish_thread.is_alive():
+            self._extra_publish_thread.join(timeout=2.0)
+        self._extra_publish_thread = None
 
         errors: list[tuple[str, BaseException]] = []
         if self._engine is not None:
@@ -752,6 +828,28 @@ class MujocoSimModule(
             applied=applied,
         )
         return applied
+
+    @rpc
+    def get_body_poses(self, names: list[str]) -> dict[str, list[float]]:
+        """World poses [x, y, z, qx, qy, qz, qw] for named bodies; unknown names omitted."""
+        engine = self._engine
+        if engine is None:
+            return {}
+        poses: dict[str, list[float]] = {}
+        for name in names:
+            pose = engine.get_body_pose(name)
+            if pose is not None:
+                position, orientation = pose
+                poses[name] = [*position.tolist(), *orientation.tolist()]
+        return poses
+
+    @rpc
+    def get_body_geoms(self, name: str) -> list[GeomInfo]:
+        """World-frame geometry of one body; empty when the body is unknown."""
+        engine = self._engine
+        if engine is None:
+            return []
+        return engine.get_body_geoms(name) or []
 
     def _compute_root_spawn_clearance_z(self) -> float | None:
         engine = self._engine
@@ -945,6 +1043,55 @@ class MujocoSimModule(
             sleep_time = interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
+
+    def _extra_publish_loop(self) -> None:
+        """Publish each extra camera's newest frame on its own port.
+
+        One loop for all of them: rendering happens on the sim thread, so this
+        side only forwards whatever the engine has already produced.
+        """
+        engine = self._engine
+        if engine is None:
+            return
+        specs = list(self.config.extra_cameras)
+        fastest = max((spec.fps for spec in specs if spec.fps > 0), default=0.0)
+        interval = 1.0 / fastest if fastest > 0 else 0.1
+        ports = {spec.name: getattr(self, spec.stream) for spec in specs}
+        last_timestamps = dict.fromkeys(ports, 0.0)
+        first_published = False
+
+        while not self._stop_event.is_set():
+            loop_start = time.monotonic()
+            for spec in specs:
+                try:
+                    frame = engine.read_camera(spec.name)
+                except RuntimeError as exc:
+                    logger.error(
+                        "MuJoCo extra camera render failed; stopping publish loop",
+                        camera_name=spec.name,
+                        error=str(exc),
+                        exc_info=True,
+                    )
+                    return
+                if frame is None or frame.timestamp <= last_timestamps[spec.name]:
+                    continue
+                last_timestamps[spec.name] = frame.timestamp
+                ports[spec.name].publish(
+                    Image(
+                        data=frame.rgb,
+                        format=ImageFormat.RGB,
+                        frame_id=f"{spec.name}_color_optical_frame",
+                        ts=frame.timestamp,
+                    )
+                )
+                if not first_published:
+                    first_published = True
+                    logger.info(
+                        "MujocoSimModule extra cameras publishing",
+                        streams=[spec.stream for spec in specs],
+                    )
+            elapsed = time.monotonic() - loop_start
+            self._stop_event.wait(timeout=max(interval - elapsed, interval * 0.25))
 
     def _publish_camera_info(self) -> None:
         with self._state_lock:
