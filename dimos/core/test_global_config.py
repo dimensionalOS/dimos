@@ -28,27 +28,23 @@ class TestGlobalConfigSecurityDefaults:
         )
 
 
-class TestRecordingConfig:
-    def test_python_is_the_default_engine_without_rust_thread_configuration(self) -> None:
-        config = GlobalConfig.model_validate({})
+def test_python_is_the_default_engine_without_rust_thread_configuration() -> None:
+    config = GlobalConfig.model_validate({})
 
-        assert config.record_engine == "python"
-        assert config.record_encoding_threads is None
+    assert config.record_engine == "python"
+    assert config.record_encoding_threads is None
 
-    def test_mcap_requires_rust(self) -> None:
-        with pytest.raises(ValidationError, match="MCAP recording requires --record-engine rust"):
-            GlobalConfig.model_validate({"record": "mcap"})
 
-        assert (
-            GlobalConfig.model_validate({"record": "mcap", "record_engine": "rust"}).record
-            == "mcap"
-        )
+def test_mcap_requires_rust() -> None:
+    with pytest.raises(ValidationError, match="MCAP recording requires --record-engine rust"):
+        GlobalConfig.model_validate({"record": "mcap"})
 
-    def test_encoding_threads_require_rust(self) -> None:
-        with pytest.raises(ValidationError, match="valid only with --record-engine rust"):
-            GlobalConfig.model_validate({"record_encoding_threads": 8})
+    assert GlobalConfig.model_validate({"record": "mcap", "record_engine": "rust"}).record == "mcap"
 
-        config = GlobalConfig.model_validate(
-            {"record_engine": "rust", "record_encoding_threads": 8}
-        )
-        assert config.record_encoding_threads == 8
+
+def test_encoding_threads_require_rust() -> None:
+    with pytest.raises(ValidationError, match="valid only with --record-engine rust"):
+        GlobalConfig.model_validate({"record_encoding_threads": 8})
+
+    config = GlobalConfig.model_validate({"record_engine": "rust", "record_encoding_threads": 8})
+    assert config.record_encoding_threads == 8
