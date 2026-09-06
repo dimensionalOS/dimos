@@ -21,9 +21,24 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_ARM_JOINTS,
+    DUAL_OPENYAM_GRIPPER_JOINTS,
+    DUAL_OPENYAM_SIDES,
     dual_openyam_hardware,
     dual_openyam_model_config,
 )
+
+
+def dual_openyam_gripper_task(side: str, *, priority: int = 20) -> TaskConfig:
+    """Gripper task named to match the group's ``gripper_hardware_id``."""
+    if side not in DUAL_OPENYAM_SIDES:
+        raise ValueError(f"side must be 'left' or 'right', got {side!r}")
+    index = DUAL_OPENYAM_SIDES.index(side)
+    return TaskConfig(
+        name=f"{side}_arm_gripper",
+        type="gripper",
+        joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[index]],
+        priority=priority,
+    )
 
 
 def dual_openyam_trajectory_task(*, priority: int = 20) -> TaskConfig:
@@ -65,6 +80,10 @@ coordinator_dual_openyam = DualOpenYamCoordinator.blueprint(
 dual_openyam_planner_coordinator = autoconnect(
     planner(model=dual_openyam_model_config()),
     DualOpenYamCoordinator.blueprint(
-        tasks=[dual_openyam_trajectory_task()],
+        tasks=[
+            dual_openyam_trajectory_task(),
+            dual_openyam_gripper_task("left"),
+            dual_openyam_gripper_task("right"),
+        ],
     ),
 )

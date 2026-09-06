@@ -20,29 +20,15 @@ The coordinator picks the MuJoCo whole-body adapter from
 
 from __future__ import annotations
 
-from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     DualOpenYamCoordinator,
+    dual_openyam_gripper_task,
     dual_openyam_trajectory_task,
 )
-from dimos.robot.manipulators.dual_openyam.config import (
-    DUAL_OPENYAM_GRIPPER_JOINTS,
-    dual_openyam_model_config,
-)
+from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 from dimos.robot.manipulators.dual_openyam.sim import dual_openyam_sim_module
-
-
-def dual_openyam_gripper_task(side: str, *, priority: int = 20) -> TaskConfig:
-    index = 0 if side == "left" else 1
-    return TaskConfig(
-        name=f"{side}_arm_gripper",
-        type="gripper",
-        joint_names=[DUAL_OPENYAM_GRIPPER_JOINTS[index]],
-        priority=priority,
-    )
-
 
 _dual_openyam_sim_tasks = [
     dual_openyam_trajectory_task(),
