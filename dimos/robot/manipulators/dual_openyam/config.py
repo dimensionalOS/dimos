@@ -48,6 +48,16 @@ DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
 _ARM_KP = (80.0, 80.0, 80.0, 10.0, 10.0, 10.0)
 _ARM_KD = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5)
+# Per-arm joint travel, identical left and right. The trajectory task refuses
+# to execute without finite component limits, so they cannot stay unset.
+DUAL_OPENYAM_ARM_POSITION_LIMITS = (
+    (-2.61799, 3.05433),
+    (0.0, 3.66519),
+    (0.0, 3.66519),
+    (-1.5708, 1.5708),
+    (-1.5708, 1.5708),
+    (-2.0944, 2.0944),
+)
 
 
 def dual_openyam_arm_joints(side: str) -> list[str]:
@@ -114,6 +124,10 @@ def dual_openyam_sim_hardware(scene_path: str | Path | None = None) -> HardwareC
     )
 
 
+def _arm_limits(bound: int) -> list[float]:
+    return [limit[bound] for _ in DUAL_OPENYAM_SIDES for limit in DUAL_OPENYAM_ARM_POSITION_LIMITS]
+
+
 def _hardware_component(
     adapter_type: str,
     adapter_kwargs: dict[str, object],
@@ -130,8 +144,8 @@ def _hardware_component(
         address=address,
         auto_enable=True,
         limits=JointLimits(
-            position_lower=[*([None] * len(DUAL_OPENYAM_ARM_JOINTS)), gripper_low, gripper_low],
-            position_upper=[*([None] * len(DUAL_OPENYAM_ARM_JOINTS)), gripper_high, gripper_high],
+            position_lower=[*_arm_limits(0), gripper_low, gripper_low],
+            position_upper=[*_arm_limits(1), gripper_high, gripper_high],
             velocity_max=[None] * len(DUAL_OPENYAM_JOINTS),
         ),
         adapter_kwargs=adapter_kwargs,

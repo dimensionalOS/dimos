@@ -66,7 +66,10 @@ def dual_openyam_sim_module_kwargs(
     headless: bool = True,
     camera_name: str = "top",
 ) -> dict[str, Any]:
-    from dimos.robot.manipulators.dual_openyam.config import DUAL_OPENYAM_JOINTS
+    from dimos.robot.manipulators.dual_openyam.config import (
+        DUAL_OPENYAM_HOME_JOINTS,
+        DUAL_OPENYAM_JOINTS,
+    )
 
     return {
         "address": scene_path,
@@ -74,6 +77,9 @@ def dual_openyam_sim_module_kwargs(
         "dof": len(DUAL_OPENYAM_JOINTS),
         "camera_name": camera_name,
         "base_frame_id": "world",
+        # MuJoCo starts at qpos zero, which sits exactly on joint2/joint3's
+        # lower limit and makes every plan fail on an invalid start state.
+        "reset_joint_positions": [*DUAL_OPENYAM_HOME_JOINTS, 0.0, 0.0],
         "robot_sim_spec": dual_openyam_sim_spec(tuple(DUAL_OPENYAM_JOINTS)),
     }
 

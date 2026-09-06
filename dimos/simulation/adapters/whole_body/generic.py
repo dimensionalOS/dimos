@@ -45,6 +45,7 @@ _READY_WAIT_TIMEOUT_S = 180.0
 _READY_WAIT_POLL_S = 0.1
 _ATTACH_RETRY_TIMEOUT_S = 30.0
 _ATTACH_RETRY_POLL_S = 0.2
+_REATTACH_INTERVAL_S = 2.0
 
 CommandMode = Literal["position", "pd_tau"]
 
@@ -106,24 +107,26 @@ class SimMujocoWholeBodyAdapter:
 
     def connect(self) -> bool:
         deadline = time.monotonic() + _ATTACH_RETRY_TIMEOUT_S
-        while True:
-            try:
-                self._shm = ManipShmReader(self._shm_key)
-                break
-            except FileNotFoundError:
-                if time.monotonic() > deadline:
-                    logger.error(
-                        "SimMujocoWholeBodyAdapter: SHM buffers not found",
-                        address=self._address,
-                        shm_key=self._shm_key,
-                        timeout_s=_ATTACH_RETRY_TIMEOUT_S,
-                    )
-                    return False
-                time.sleep(_ATTACH_RETRY_POLL_S)
+        while (shm := self._attach()) is None:
+            if time.monotonic() > deadline:
+                logger.error(
+                    "SimMujocoWholeBodyAdapter: SHM buffers not found",
+                    address=self._address,
+                    shm_key=self._shm_key,
+                    timeout_s=_ATTACH_RETRY_TIMEOUT_S,
+                )
+                return False
+            time.sleep(_ATTACH_RETRY_POLL_S)
+        self._shm = shm
 
         # The sim signals ready only after the first joint-state packet, so
         # without this wait the first read_motor_states() returns zeros.
+        # Coordinators are constructed before the sim module starts, so the
+        # buffers found above may be a dead predecessor's that MujocoSimModule
+        # then unlinks and recreates - re-attach while waiting or we hold a
+        # mapping that never goes ready.
         deadline = time.monotonic() + _READY_WAIT_TIMEOUT_S
+        next_reattach = time.monotonic() + _REATTACH_INTERVAL_S
         while not self._shm.is_ready():
             if time.monotonic() > deadline:
                 logger.error(
@@ -133,6 +136,11 @@ class SimMujocoWholeBodyAdapter:
                 self._shm.cleanup()
                 self._shm = None
                 return False
+            if time.monotonic() >= next_reattach:
+                next_reattach = time.monotonic() + _REATTACH_INTERVAL_S
+                if (fresh := self._attach()) is not None:
+                    self._shm.cleanup()
+                    self._shm = fresh
             time.sleep(_READY_WAIT_POLL_S)
 
         published = self._shm.num_joints()
@@ -167,6 +175,12 @@ class SimMujocoWholeBodyAdapter:
             shm_key=self._shm_key,
         )
         return True
+
+    def _attach(self) -> ManipShmReader | None:
+        try:
+            return ManipShmReader(self._shm_key)
+        except FileNotFoundError:
+            return None
 
     def disconnect(self) -> None:
         if self._shm is not None:
