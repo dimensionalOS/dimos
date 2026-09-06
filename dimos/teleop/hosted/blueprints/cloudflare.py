@@ -50,7 +50,7 @@ from dimos.stream.audio.base import AudioEvent
 from dimos.teleop.hosted.arm_command import ArmCommandModule
 from dimos.teleop.hosted.camera_mux import CameraMuxModule
 from dimos.teleop.hosted.go2_audio_bridge import Go2AudioBridgeModule
-from dimos.teleop.hosted.go2_command import Go2CommandModule
+from dimos.teleop.hosted.go2_command import Go2CommandModule, Go2HostedStatsModule
 from dimos.teleop.hosted.hosted_stats import HostedStatsModule
 from dimos.teleop.hosted.map_compress import MapCompressModule
 from dimos.teleop.hosted.robot_type import RobotType
@@ -62,7 +62,7 @@ teleop_hosted_go2_transport = (
         Go2CommandModule.blueprint(allow_acrobatics=True),
         Go2AudioBridgeModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1"]),
-        HostedStatsModule.blueprint(),
+        Go2HostedStatsModule.blueprint(),
         MapCompressModule.blueprint(),
         VoxelGridMapper.blueprint(emit_every=5),
         CostMapper.blueprint(),
@@ -107,7 +107,7 @@ teleop_hosted_go2_multicam = (
         Go2CommandModule.blueprint(allow_acrobatics=True),
         Go2AudioBridgeModule.blueprint(),
         CameraMuxModule.blueprint(cameras=["cam1", "cam2"]),
-        HostedStatsModule.blueprint(),
+        Go2HostedStatsModule.blueprint(),
         MapCompressModule.blueprint(),
         RealSenseCamera.blueprint(enable_depth=False, enable_pointcloud=False),
         VoxelGridMapper.blueprint(emit_every=5),

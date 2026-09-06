@@ -39,6 +39,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.hosted.command_executor import SerializedCommandExecutor
+from dimos.teleop.hosted.hosted_stats import HostedStatsModule
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -437,3 +438,17 @@ class Go2CommandModule(Module):
             self.robot_state.publish(json.dumps(self._robot_state()).encode())
         except Exception:
             logger.warning("robot_state publish failed", exc_info=True)
+
+
+class Go2HostedStatsModule(HostedStatsModule):
+    """Hosted stats with the Go2's battery in the telemetry frame."""
+
+    go2: GO2Connection | None
+
+    def _battery_soc(self) -> float | None:
+        if self.go2 is None:
+            return None
+        try:
+            return self.go2.battery_soc()
+        except Exception:
+            return None

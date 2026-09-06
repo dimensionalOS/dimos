@@ -32,10 +32,9 @@ from dimos.teleop.hosted.hosted_stats import HostedStatsModule
 @pytest.fixture
 def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[HostedStatsModule]:
     """A HostedStatsModule with its tap-path state initialized for real (only the
-    framework Module.__init__ is skipped) and its ports / driver ref / config mocked."""
+    framework Module.__init__ is skipped) and its ports / config mocked."""
     monkeypatch.setattr(Module, "__init__", lambda self, **kwargs: None)
     module = HostedStatsModule()
-    module.go2 = MagicMock()
     module.config = SimpleNamespace(telemetry_hz=3.0)
     for port in ("cmd_vel_stamped", "video_stats", "telemetry_out"):
         setattr(module, port, MagicMock())

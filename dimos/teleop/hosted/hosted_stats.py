@@ -34,7 +34,6 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.teleop.utils.stream_stats import LiveStreamStats
 from dimos.teleop.utils.video_stats import VideoStats
 from dimos.utils.logging_config import setup_logger
@@ -50,10 +49,6 @@ class HostedStatsModule(Module):
     """State-plane stats dispatch, cmd-link stats, and the robot_telemetry push."""
 
     config: HostedStatsConfig
-
-    # RPC ref to the driver, for battery SOC pulled in the telemetry loop.
-    # Optional: the xarm blueprints have no GO2Connection — soc stays None there.
-    go2: GO2Connection | None
 
     state_json: In[bytes]
     cmd_raw: In[bytes]
@@ -141,18 +136,21 @@ class HostedStatsModule(Module):
 
     # ─── telemetry (robot → operator) ─────────────────────────────────
 
+    def _battery_soc(self) -> float | None:
+        """State of charge for the telemetry frame, when the driver exposes one.
+
+        Base robots report nothing. A driver-specific subclass overrides this;
+        keeping it out of here is what lets a non-Unitree robot import the
+        hosted stats plane without the Unitree SDK installed.
+        """
+        return None
+
     def _telemetry_payload(self) -> dict[str, Any]:
         """One robot_telemetry frame: cmd stats + latest robot_state + battery."""
-        soc = None
-        if self.go2 is not None:
-            try:
-                soc = self.go2.battery_soc()
-            except Exception:
-                pass
         return {
             "type": "robot_telemetry",
             "cmd": self._cmd_stats.snapshot(),
-            "soc": soc,
+            "soc": self._battery_soc(),
             "state": self._latest_state,
             "robot_ts": time.time(),
         }

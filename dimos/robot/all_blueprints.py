@@ -235,6 +235,7 @@ all_modules = {
     "go2-command-module": "dimos.teleop.hosted.go2_command.Go2CommandModule",
     "go2-connection": "dimos.robot.unitree.go2.connection.GO2Connection",
     "go2-fleet-connection": "dimos.robot.unitree.go2.fleet_connection.Go2FleetConnection",
+    "go2-hosted-stats-module": "dimos.teleop.hosted.go2_command.Go2HostedStatsModule",
     "go2-memory": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2.Go2Memory",
     "go2-mid360-recorder": "dimos.robot.unitree.go2.go2_mid360_recorder.Go2Mid360Recorder",
     "go2-mid360-static-tf": "dimos.robot.unitree.go2.go2_mid360_static_transforms.Go2Mid360StaticTf",
