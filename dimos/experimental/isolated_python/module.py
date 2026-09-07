@@ -28,6 +28,7 @@ from typing import Any, ClassVar
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.rpc_client import RPCClient
@@ -204,6 +205,7 @@ class IsolatedPythonModule(NativeModule):
             assert self._process.stdin is not None
             kwargs = self.config.model_dump()
             kwargs["instance_name"] = self._runtime_name
+            pickle.dump(global_config.model_dump(), self._process.stdin)
             pickle.dump(kwargs, self._process.stdin)
             self._process.stdin.close()
 

@@ -32,6 +32,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecutionStatus
 from dimos.core.core import rpc
 from dimos.core.module import Module
+from dimos.core.stream import In
 from dimos.imitation.policy.backend import PolicyBackend, PolicyBackendInfo
 from dimos.imitation.policy.module import (
     PolicyControlSpec,
@@ -62,7 +63,7 @@ class _PolicyRuntimeMixin:
     profile: PolicyIOProfile
     backend_type: type[PolicyBackend]
     config: PolicyRolloutConfig
-    button_pressed: Any
+    button_pressed: In[Buttons]
     _control: PolicyControlSpec
     register_disposable: Callable[[Any], None]
 
@@ -230,7 +231,21 @@ class _PolicyRuntimeMixin:
         anchor_buffer = self._buffers[anchor_key]
         if not anchor_buffer:
             raise RuntimeError(f"no {anchor_key!r} observation has been received")
-        anchor = anchor_buffer[-1]
+        error: RuntimeError | None = None
+        for anchor in reversed(anchor_buffer):
+            try:
+                return self._snapshot_at_anchor(now, anchor_key, anchor)
+            except RuntimeError as exc:
+                if error is None:
+                    error = exc
+        assert error is not None
+        raise error
+
+    def _snapshot_at_anchor(
+        self, now: float, anchor_key: str, anchor: _TimedValue
+    ) -> tuple[dict[str, NDArray[Any]], NDArray[np.float32], float]:
+        # Cameras arrive independently. Use the newest complete timestamp set
+        # while retaining the configured age and skew limits for every input.
         selected = {anchor_key: anchor}
         tolerance_s = self.profile.sync.tolerance_ms / 1000.0
 

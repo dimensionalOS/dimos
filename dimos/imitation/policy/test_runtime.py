@@ -318,3 +318,36 @@ def test_backend_reset_failure_does_not_leave_rollout_active(
     wait_until(lambda: module.rollout_status()["active"] is False, timeout=1.0)
     assert "backend state is stuck" in (module.rollout_status()["last_error"] or "")
     control.cancel_trajectory.assert_called_with(task_name="policy_rollout")
+
+
+def test_new_anchor_waits_for_other_cameras_without_losing_last_complete_frame(runtime):
+    module, _ = runtime
+    now = time.time()
+    _provide(module, top_ts=now - 0.05, other_ts=now - 0.05)
+    module._on_observation("top_image", _image(now))
+
+    _, state, timestamp = module._snapshot_observation(now)
+
+    assert timestamp == now - 0.05
+    np.testing.assert_array_equal(state, [1.0, 2.0])
+
+
+def test_incomplete_new_frame_cannot_reuse_stale_observations(runtime):
+    module, _ = runtime
+    now = time.time()
+    _provide(module, top_ts=now - 1.0, other_ts=now - 1.0)
+    module._on_observation("top_image", _image(now))
+
+    with pytest.raises(RuntimeError):
+        module._snapshot_observation(now)
+
+
+def test_runtime_accepts_every_declared_input_transport(runtime, mocker):
+    module, _control = runtime
+    expected = {source.stream for source in PROFILE.observations.values()} | {"button_pressed"}
+    transport = mocker.Mock()
+
+    connected = {name: module.set_transport(name, transport) for name in expected}
+
+    assert connected == dict.fromkeys(expected, True)
+    assert set(module.inputs) == expected

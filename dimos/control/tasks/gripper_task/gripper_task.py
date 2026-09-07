@@ -134,9 +134,11 @@ class GripperControlTask(BaseControlTask):
         )
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
-        """Log preemption; this task is meant to be the sole claimant."""
+        """Drop the old command when another controller takes over these joints."""
         claimed = frozenset(self._joint_names)
         if joints & claimed:
+            with self._lock:
+                self._target = None
             logger.warning(
                 "Gripper joints preempted",
                 task=self._name,

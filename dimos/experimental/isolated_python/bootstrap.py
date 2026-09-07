@@ -27,6 +27,7 @@ from typing import Any
 
 import typer
 
+from dimos.core.global_config import global_config
 from dimos.experimental.isolated_python.module import IsolatedPythonModule, contract_rpc_names
 from dimos.spec.utils import _signatures_compatible
 
@@ -84,6 +85,8 @@ def main(
 ) -> None:
     module: IsolatedPythonModule | None = None
     try:
+        # Resolve transport settings before constructing modules or RPC clients.
+        global_config.update(**pickle.load(sys.stdin.buffer))
         declaration_class = load_class(declaration)
         runtime_class = load_class(implementation)
         if not issubclass(declaration_class, IsolatedPythonModule):

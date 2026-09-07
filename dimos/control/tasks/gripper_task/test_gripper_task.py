@@ -74,6 +74,19 @@ def test_measured_normalized_value_is_not_clamped() -> None:
     assert task.get_normalized() == [1.5]
 
 
+def test_preempted_gripper_does_not_resume_an_old_command() -> None:
+    task = _task()
+    assert task.set_position([100.0])
+    task.on_preempted("policy", frozenset({"arm/tool_joint"}))
+
+    assert task.compute(_state(**{"arm/tool_joint": 425.0})) is None
+    assert task.get_position() == [425.0]
+    assert task.set_position([200.0])
+    output = task.compute(_state())
+    assert output is not None
+    assert output.positions == [200.0]
+
+
 @pytest.mark.parametrize(("opening", "expected"), [(0.0, 0.0), (0.5, 425.0), (1.0, 850.0)])
 def test_stream_input_routes_through_normalized_command(opening: float, expected: float) -> None:
     task = _task()

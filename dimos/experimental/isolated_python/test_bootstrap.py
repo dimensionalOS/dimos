@@ -12,10 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from io import BytesIO
+import pickle
+from types import SimpleNamespace
+
 import pytest
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig
+from dimos.experimental.isolated_python import bootstrap
 from dimos.experimental.isolated_python.bootstrap import load_class, validate_runtime
 from dimos.experimental.isolated_python.module import (
     IsolatedPythonModule,
@@ -117,3 +123,24 @@ def test_load_class_rejects_non_class_reference() -> None:
 def test_load_class_preserves_import_errors(reference: str, error: type[Exception]) -> None:
     with pytest.raises(error):
         load_class(reference)
+
+
+def test_bootstrap_applies_host_transport_settings_before_loading_runtime(mocker):
+    config = GlobalConfig()
+    mocker.patch.object(bootstrap, "global_config", config)
+    payload = BytesIO(pickle.dumps({"zenoh_scout_addr": "224.0.0.224:17467", "transport": "zenoh"}))
+    mocker.patch.object(bootstrap.sys, "stdin", SimpleNamespace(buffer=payload))
+    observed = []
+
+    def load_runtime(reference):
+        observed.append(config.zenoh_scout_addr)
+        raise RuntimeError("Runtime loading boundary")
+
+    mocker.patch.object(bootstrap, "load_class", side_effect=load_runtime)
+    mocker.patch.object(bootstrap.os, "write")
+    mocker.patch.object(bootstrap.os, "close")
+
+    with pytest.raises(RuntimeError, match="Runtime loading boundary"):
+        bootstrap.main("unused:Contract", "unused:Runtime", "test", 99)
+
+    assert observed == ["224.0.0.224:17467"]
