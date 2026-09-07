@@ -52,7 +52,7 @@ FROZEN_FILES = (
     _HERE / "sf_office_pose_answers.json",
     _HERE.parents[1] / "msgs/geometry_msgs/PoseStamped.py",
 )
-EXPECTED_BENCHMARK_DIGEST = "54d4fe0879930d6d2e9a21e75b0e1118a764c8b0d7925510dd666ff1a6171f31"
+EXPECTED_BENCHMARK_DIGEST = "c1b972c174ae23ce3a4979e273c98653ac79078c7f4b5f800bd3bbc77e2ce747"
 
 CATEGORIES = {
     "kinematics": frozenset(
@@ -178,6 +178,21 @@ def _pose_encode_timestamps(run_dir: Path, case_id: str) -> list[float]:
     return timestamps
 
 
+def _contains_complete_pose_traversal(
+    timestamps: Sequence[float], expected_timestamps: Sequence[float]
+) -> bool:
+    """Return whether activity contains one exact, ordered traversal of every pose."""
+    if not expected_timestamps or len(timestamps) < len(expected_timestamps):
+        return False
+    traversal_size = len(expected_timestamps)
+    first_timestamp = expected_timestamps[0]
+    return any(
+        timestamp == first_timestamp
+        and timestamps[index : index + traversal_size] == expected_timestamps
+        for index, timestamp in enumerate(timestamps[: len(timestamps) - traversal_size + 1])
+    )
+
+
 def objective(results: Sequence[EvalResult], run_dir: Path, digest: str) -> dict[str, Any]:
     """Produce stable aggregate and per-case feedback for Evo tree search."""
     by_id = {result.case_id: result for result in results}
@@ -196,7 +211,7 @@ def objective(results: Sequence[EvalResult], run_dir: Path, digest: str) -> dict
         case_id: len(timestamps) for case_id, timestamps in activity_timestamps.items()
     }
     evidence_complete = {
-        case_id: timestamps == expected_timestamps
+        case_id: _contains_complete_pose_traversal(timestamps, expected_timestamps)
         for case_id, timestamps in activity_timestamps.items()
     }
     task_scores = {

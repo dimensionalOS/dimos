@@ -138,6 +138,38 @@ def test_objective_rejects_repeated_pose_instead_of_ordered_coverage(
     assert result["evidence_completion_rate"] == 0.0
 
 
+def test_objective_accepts_complete_ordered_coverage_after_exploratory_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def event(timestamp: float) -> str:
+        return json.dumps(
+            {
+                "event": "agent_encode",
+                "message_type": "PoseStamped",
+                "output": {"source_timestamp_s": timestamp},
+            }
+        )
+
+    results = [
+        EvalResult(case_id=case.id, score=1.0, final_answer="{}", duration_s=1.0) for case in SUITE
+    ]
+    for case in SUITE:
+        activity_dir = tmp_path / case.id / "agent-activity"
+        activity_dir.mkdir(parents=True)
+        (activity_dir / "events.jsonl").write_text(
+            "\n".join([event(12.5), event(12.5), event(13.0)])
+        )
+    monkeypatch.setattr(
+        sf_office_pose_autoresearch, "_expected_pose_timestamps", lambda: [12.5, 13.0]
+    )
+
+    result = objective(results, tmp_path, EXPECTED_BENCHMARK_DIGEST)
+
+    assert set(result["activity_counts"].values()) == {3}
+    assert result["score"] == 1.0
+    assert result["evidence_completion_rate"] == 1.0
+
+
 def test_publish_result_writes_evo_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
