@@ -17,15 +17,22 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from types import MappingProxyType
 from typing import Any, cast
 
 from dimos.core.coordination.blueprint_config.parsed import ParsedBlueprintConfig
-from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom, ModuleRef, TransportSpec
+from dimos.core.coordination.blueprints import (
+    Blueprint,
+    BlueprintAtom,
+    HostedPlacement,
+    ModuleRef,
+    TransportSpec,
+)
 from dimos.core.module import is_module_type
 from dimos.core.transport import ZenohTransport, pZenohTransport
+from dimos.hosted.daemon import HostDescriptor
 from dimos.hosted.fragment import (
     BoundaryStream,
     HostFragment,
@@ -40,35 +47,60 @@ from dimos.spec.utils import is_spec, spec_annotation_compliance, spec_structura
 HOSTED_GLOBAL_OVERRIDES: Mapping[str, Any] = MappingProxyType({"transport": "zenoh"})
 
 StreamKey = tuple[str, type]
+_SCHEDULABLE_HOST_STATES = frozenset({"available", "running"})
 
 
 def compile_fragments(
     blueprint: Blueprint,
     config: ParsedBlueprintConfig,
-    assignments: Mapping[str, str],
+    assignments: Mapping[str, str] | None = None,
     *,
     run_id: str,
     generation: int,
     application_name: str,
     application_revision: str,
+    hosts: Iterable[HostDescriptor] = (),
+    local_host_id: str | None = None,
 ) -> dict[str, HostFragment]:
-    """Compile a Blueprint into one immutable fragment per assigned Host."""
+    """Compile a Blueprint into one immutable fragment per assigned Host.
+
+    Explicit ``assignments`` remain available for callers that already resolved
+    placement. Otherwise, the Blueprint's ``hosted()`` metadata is resolved
+    automatically against ``hosts``; modules without that metadata stay on the
+    controlling Host.
+    """
     _validate_metadata(run_id, generation, application_name, application_revision)
     config.assert_matches(blueprint)
 
+    host_descriptors = tuple(hosts)
+    resolved_assignments: Mapping[str, str]
+    if assignments is None:
+        resolved_assignments = resolve_hosted_assignments(
+            blueprint,
+            host_descriptors,
+            local_host_id=local_host_id if local_host_id is not None else f"local-{run_id}",
+            application_revision=application_revision,
+        )
+    else:
+        if host_descriptors or local_host_id is not None:
+            raise ValueError("Pass either explicit assignments or hosts, not both")
+        resolved_assignments = assignments
+
     atoms = tuple(blueprint.active_blueprints)
     atom_names = {atom.name for atom in atoms}
-    assignment_names = set(assignments)
+    assignment_names = set(resolved_assignments)
     if missing := atom_names - assignment_names:
         raise ValueError(f"Placement is missing modules: {', '.join(sorted(missing))}")
     if unknown := assignment_names - atom_names:
         raise ValueError(f"Placement contains unknown modules: {', '.join(sorted(unknown))}")
     if invalid_hosts := sorted(
-        name for name, host_id in assignments.items() if not isinstance(host_id, str) or not host_id
+        name
+        for name, host_id in resolved_assignments.items()
+        if not isinstance(host_id, str) or not host_id
     ):
         raise ValueError(f"Placement has empty Host IDs for: {', '.join(invalid_hosts)}")
 
-    host_ids = sorted(set(assignments.values()))
+    host_ids = sorted(set(resolved_assignments.values()))
     if len(host_ids) > 1 and (blueprint.requirement_checks or blueprint.configurator_checks):
         raise ValueError(
             "Multi-Host fragments do not yet support Blueprint requirements or configurators"
@@ -79,7 +111,7 @@ def compile_fragments(
     boundary_keys = {
         key
         for key, endpoint_names in stream_endpoints.items()
-        if len({assignments[name] for name in endpoint_names}) > 1
+        if len({resolved_assignments[name] for name in endpoint_names}) > 1
     }
     disabled_atoms = tuple(
         atom for atom in blueprint.blueprints if atom not in blueprint.active_blueprints
@@ -90,7 +122,7 @@ def compile_fragments(
         local_atoms = tuple(
             _with_rpc_name(atom, run_id, host_id)
             for atom in atoms
-            if assignments[atom.name] == host_id
+            if resolved_assignments[atom.name] == host_id
         )
         local_names = {atom.name for atom in local_atoms}
         remote_references = tuple(
@@ -99,10 +131,11 @@ def compile_fragments(
                 consumer_name,
                 reference_name,
                 provider,
-                assignments[provider.name],
+                resolved_assignments[provider.name],
             )
             for (consumer_name, reference_name), provider in sorted(resolved_references.items())
-            if assignments[consumer_name] == host_id and assignments[provider.name] != host_id
+            if resolved_assignments[consumer_name] == host_id
+            and resolved_assignments[provider.name] != host_id
         )
         local_stream_keys = {
             key
@@ -145,6 +178,193 @@ def compile_fragments(
         )
 
     return fragments
+
+
+def resolve_hosted_assignments(
+    blueprint: Blueprint,
+    hosts: Iterable[HostDescriptor],
+    *,
+    local_host_id: str,
+    application_revision: str,
+) -> dict[str, str]:
+    """Resolve Blueprint placement metadata to one Host ID per active module."""
+    if not local_host_id:
+        raise ValueError("local_host_id must not be empty")
+    if not application_revision:
+        raise ValueError("application_revision must not be empty")
+
+    atoms = tuple(blueprint.active_blueprints)
+    active_names = {atom.name for atom in atoms}
+    descriptors = tuple(hosts)
+    _validate_host_descriptors(descriptors, local_host_id)
+
+    parents = {name: name for name in active_names}
+
+    def find(name: str) -> str:
+        while parents[name] != name:
+            parents[name] = parents[parents[name]]
+            name = parents[name]
+        return name
+
+    def union(names: Iterable[str]) -> None:
+        members = tuple(name for name in names if name in active_names)
+        if not members:
+            return
+        root = find(members[0])
+        for name in members[1:]:
+            other = find(name)
+            if other != root:
+                parents[other] = root
+
+    placements = tuple(
+        placement
+        for placement in blueprint.hosted_placements
+        if active_names.intersection(placement.module_names)
+    )
+    for placement in placements:
+        union(placement.module_names)
+
+    for (consumer_name, _reference_name), provider in _resolve_module_references(blueprint).items():
+        union((consumer_name, provider.name))
+
+    units: dict[str, list[str]] = defaultdict(list)
+    for atom in atoms:
+        units[find(atom.name)].append(atom.name)
+
+    constraints_by_name: dict[str, list[HostedPlacement]] = defaultdict(list)
+    for placement in placements:
+        for name in placement.module_names:
+            if name in active_names:
+                constraints_by_name[name].append(placement)
+
+    placement_units = [tuple(sorted(names)) for names in units.values()]
+    placement_units.sort(
+        key=lambda names: (
+            not any(
+                constraint.host is not None
+                for name in names
+                for constraint in constraints_by_name[name]
+            ),
+            names,
+        )
+    )
+
+    commitments = {descriptor.host_id: len(descriptor.active_run_ids) for descriptor in descriptors}
+    assignments: dict[str, str] = {}
+    for names in placement_units:
+        constraints = tuple(
+            constraint for name in names for constraint in constraints_by_name[name]
+        )
+        host_id = _select_host_for_unit(
+            names,
+            constraints,
+            descriptors,
+            local_host_id=local_host_id,
+            application_revision=application_revision,
+            commitments=commitments,
+        )
+        assignments.update(dict.fromkeys(names, host_id))
+        if host_id in commitments:
+            commitments[host_id] += 1
+
+    return assignments
+
+
+def _validate_host_descriptors(descriptors: tuple[HostDescriptor, ...], local_host_id: str) -> None:
+    ids = [descriptor.host_id for descriptor in descriptors]
+    if any(not host_id for host_id in ids):
+        raise ValueError("Discovered Hosts must have non-empty Host IDs")
+    if len(set(ids)) != len(ids):
+        raise ValueError("Discovered Hosts contain duplicate Host IDs")
+    if local_host_id in ids:
+        raise ValueError(f"Local Host ID {local_host_id!r} collides with a discovered Host")
+
+
+def _select_host_for_unit(
+    module_names: tuple[str, ...],
+    constraints: tuple[HostedPlacement, ...],
+    descriptors: tuple[HostDescriptor, ...],
+    *,
+    local_host_id: str,
+    application_revision: str,
+    commitments: Mapping[str, int],
+) -> str:
+    if not constraints:
+        return local_host_id
+
+    local = any(constraint.local for constraint in constraints)
+    remote = any(not constraint.local for constraint in constraints)
+    exact_hosts = {constraint.host for constraint in constraints if constraint.host is not None}
+    required_tags = frozenset(tag for constraint in constraints for tag in constraint.tags)
+
+    unit_label = ", ".join(module_names)
+    if local and remote:
+        raise ValueError(
+            f"Placement unit {unit_label} combines local and remote hosted constraints"
+        )
+    if len(exact_hosts) > 1:
+        raise ValueError(
+            f"Placement unit {unit_label} has conflicting exact Hosts: "
+            f"{', '.join(sorted(exact_hosts))}"
+        )
+    if local:
+        return local_host_id
+
+    exact_host = next(iter(exact_hosts), None)
+    candidates = descriptors
+    if exact_host is not None:
+        id_matches = tuple(host for host in descriptors if host.host_id == exact_host)
+        if id_matches:
+            candidates = id_matches
+        else:
+            name_matches = tuple(host for host in descriptors if host.name == exact_host)
+            if len(name_matches) > 1:
+                ids = ", ".join(sorted(host.host_id for host in name_matches))
+                raise ValueError(
+                    f"Exact Host name {exact_host!r} for placement unit {unit_label} "
+                    f"is ambiguous: {ids}"
+                )
+            candidates = name_matches
+
+    accepted = tuple(
+        descriptor
+        for descriptor in candidates
+        if not _host_rejection_reasons(descriptor, required_tags, application_revision)
+    )
+    if not accepted:
+        selector = f"host={exact_host!r}" if exact_host is not None else "any Host"
+        tags = f", tags={sorted(required_tags)}" if required_tags else ""
+        discovered = "; ".join(
+            f"{host.name} ({host.host_id}): "
+            f"{', '.join(_host_rejection_reasons(host, required_tags, application_revision)) or 'selector mismatch'}"
+            for host in descriptors
+        )
+        raise ValueError(
+            f"No Host satisfies placement for {unit_label} ({selector}{tags}). "
+            f"Discovered: {discovered or 'none'}"
+        )
+
+    return min(accepted, key=lambda host: (commitments[host.host_id], host.host_id)).host_id
+
+
+def _host_rejection_reasons(
+    descriptor: HostDescriptor,
+    required_tags: frozenset[str],
+    application_revision: str,
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    if descriptor.state not in _SCHEDULABLE_HOST_STATES:
+        reasons.append(f"state is {descriptor.state}")
+    if missing_tags := required_tags - descriptor.tags:
+        reasons.append(f"missing tags {sorted(missing_tags)}")
+    host_revision = descriptor.versions.get(
+        "application_revision", descriptor.versions.get("dimos")
+    )
+    if host_revision is not None and str(host_revision) != application_revision:
+        reasons.append(
+            f"application revision is {host_revision!s}, expected {application_revision}"
+        )
+    return tuple(reasons)
 
 
 def _validate_metadata(
