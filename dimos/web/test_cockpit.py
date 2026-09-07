@@ -20,8 +20,11 @@ import struct
 import subprocess
 import sys
 
+from langchain_core.messages import BaseMessage
 import pytest
 
+from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Path import Path
@@ -29,16 +32,21 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.web.cockpit import (
     Channel,
     ChannelRequest,
+    Chat,
     Col,
     Map2D,
     Panel,
     Row,
+    Stats,
     Teleop,
     Video,
     cockpit,
 )
-from dimos.web.codecs import EncodedPayload, encode_json_v1, web_encoder
-from dimos.web.relay_bridge.manifest import parse_manifest
+from dimos.web.codecs import EncodedPayload, decode_json_v1, encode_json_v1, web_encoder
+from dimos.web.relay_bridge.audio_codec import AudioChunk, decode_audio_chunk
+from dimos.web.relay_bridge.builtin_codecs import decode_text, encode_stats
+from dimos.web.relay_bridge.chat_codec import encode_chat
+from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
 from dimos.web.relay_bridge.protocol import (
     MAX_CONTROL_PAYLOAD_BYTES,
     PROTOCOL_VERSION,
@@ -67,6 +75,8 @@ GO2_MANIFEST = {
             "delivery": "latest",
             "maxHz": 30.0,
             "params": {"quality": 75},
+            "publish": "none",
+            "requiredScope": None,
         },
         {
             "ch": "odom",
@@ -75,6 +85,8 @@ GO2_MANIFEST = {
             "delivery": "reliable",
             "maxHz": 20.0,
             "params": {},
+            "publish": "none",
+            "requiredScope": None,
         },
         {
             "ch": "global_costmap",
@@ -83,6 +95,8 @@ GO2_MANIFEST = {
             "delivery": "latest",
             "maxHz": 5.0,
             "params": {},
+            "publish": "none",
+            "requiredScope": None,
         },
         {
             "ch": "tele_cmd_vel",
@@ -91,6 +105,8 @@ GO2_MANIFEST = {
             "delivery": "latest",
             "maxHz": 15.0,
             "params": {"maxLinear": 0.8, "maxAngular": 1.0, "boost": 2.0, "watchdogMs": 300.0},
+            "publish": "none",
+            "requiredScope": None,
         },
     ],
     "panels": [
@@ -272,18 +288,41 @@ def _encode_path_xy(msg: Path) -> EncodedPayload:
     return EncodedPayload(payload, {"n": len(msg.poses)})
 
 
-def test_channel_tx_rejected_until_publish_ticket() -> None:
-    with pytest.raises(ValueError, match="publish ticket"):
-        Channel("goal", dict, dir="tx")
+def test_channel_shared_tx_accepted() -> None:
+    channel = Channel(
+        "human_input",
+        str,
+        dir="tx",
+        encoding="text.json.v1",
+        publish="shared",
+        required_scope="chat:send",
+    )
+    assert channel.publish == "shared"
+    assert channel.required_scope == "chat:send"
+    # required_scope stays optional.
+    assert Channel("goal", dict, dir="tx", publish="shared").required_scope is None
 
 
-def test_channel_rx_publish_policy() -> None:
+def test_channel_publish_policy_rules() -> None:
+    # rx channels never declare a policy or scope.
     with pytest.raises(ValueError, match="publish='none'"):
         Channel("note", dict, publish="shared")
-    with pytest.raises(ValueError, match="publish='none'"):
-        Channel("note", dict, publish="exclusive")
-    with pytest.raises(ValueError, match="required_scope"):
+    with pytest.raises(ValueError, match="required_scope needs a publish policy"):
         Channel("note", dict, required_scope="chat:send")
+    # Exclusive arrives with the lease ticket.
+    with pytest.raises(ValueError, match=r"\(W8\)"):
+        Channel("goal", dict, dir="tx", publish="exclusive")
+    # publish="none" tx streams are the specialized protocol paths (teleop).
+    with pytest.raises(ValueError, match="specialized protocol paths"):
+        Channel("goal", dict, dir="tx")
+    # Generic publish is reliable-only.
+    with pytest.raises(ValueError, match="delivery='reliable'"):
+        Channel("goal", dict, dir="tx", publish="shared", delivery="latest")
+    # Scope uses the manifest id bound.
+    with pytest.raises(ValueError, match="required_scope must be 1..64"):
+        Channel("goal", dict, dir="tx", publish="shared", required_scope="")
+    with pytest.raises(ValueError, match="required_scope must be 1..64"):
+        Channel("goal", dict, dir="tx", publish="shared", required_scope="x" * 65)
 
 
 def test_channel_message_type_must_be_a_class() -> None:
@@ -412,6 +451,179 @@ def test_channels_only_blueprint() -> None:
     assert ratom.kwargs["manifest"] == manifest
 
 
+def test_publish_tx_channel_blueprint() -> None:
+    blueprint = cockpit(
+        channels=[
+            Channel(
+                "human_input",
+                str,
+                dir="tx",
+                encoding="text.json.v1",
+                publish="shared",
+                required_scope="chat:send",
+                max_hz=2.0,
+            ),
+        ]
+    )
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    (channel,) = manifest["channels"]
+    assert channel["dir"] == "tx" and channel["delivery"] == "reliable"
+    assert channel["publish"] == "shared" and channel["requiredScope"] == "chat:send"
+    assert parse_manifest(manifest).model_dump() == manifest
+    # Publish streams ride a generated subclass with a typed Out port.
+    assert issubclass(atom.module, RelayBridgeModule) and atom.module is not RelayBridgeModule
+    assert any(
+        s.name == "human_input" and s.type is str and s.direction == "out" for s in atom.streams
+    )
+    (spec,) = atom.kwargs["channels"]
+    assert spec.dir == "tx" and spec.publish == "shared" and spec.required_scope == "chat:send"
+    assert spec.decoder is decode_text and spec.decoder_takes_context is False
+    assert spec.encoder is None
+    # Blueprint kwargs cross the forkserver Pipe: the by-reference decoder
+    # must survive pickling.
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert ratom.module is atom.module
+    assert ratom.kwargs["channels"][0].decoder is decode_text
+
+
+def test_chat_panel_blueprint() -> None:
+    blueprint = cockpit(layout=Chat())
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    assert [
+        (c["ch"], c["dir"], c["encoding"], c["delivery"], c["publish"])
+        for c in manifest["channels"]
+    ] == [
+        ("agent", "rx", "chat.json.v1", "reliable", "none"),
+        ("agent_idle", "rx", "json.v1", "latest", "none"),
+        ("human_input", "tx", "text.json.v1", "reliable", "shared"),
+        ("audio_in", "tx", "audio.json.v1", "reliable", "shared"),
+    ]
+    (panel,) = manifest["panels"]
+    assert panel["kind"] == "chat"
+    assert panel["channels"] == ["human_input", "agent", "agent_idle", "audio_in"]
+    assert parse_manifest(manifest).model_dump() == manifest
+    # The agent and mic streams ride a generated subclass whose ports
+    # autoconnect to McpClient's and VoiceInput's by name + type.
+    ports = {(s.name, s.direction): s.type for s in atom.streams}
+    assert ports[("agent", "in")] is BaseMessage
+    assert ports[("agent_idle", "in")] is bool
+    assert ports[("human_input", "out")] is str
+    assert ports[("audio_in", "out")] is AudioChunk
+    specs = {s.ch: s for s in atom.kwargs["channels"]}
+    assert specs["agent"].encoder is encode_chat and specs["agent"].paced
+    assert specs["agent_idle"].paced
+    assert specs["human_input"].decoder is decode_text
+    assert specs["audio_in"].decoder is decode_audio_chunk
+    assert not specs["audio_in"].decoder_takes_context and specs["audio_in"].encoder is None
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert {s.ch: s.decoder for s in ratom.kwargs["channels"]}["audio_in"] is decode_audio_chunk
+    # Pacing is the chat panel's, not the stream's: the same streams declared
+    # by hand are sampled like any channel.
+    (atom,) = cockpit(channels=[Channel("agent", BaseMessage, encoding="chat.json.v1")]).blueprints
+    assert not atom.kwargs["channels"][0].paced
+
+
+def test_chat_panel_declarations_merge_or_conflict() -> None:
+    with pytest.raises(ValueError, match="conflicting declarations for stream 'agent'"):
+        cockpit(layout=Chat(), channels=[Channel("agent", dict, encoding="chat.json.v1")])
+    (atom,) = cockpit(
+        layout=Chat(),
+        channels=[Channel("agent", BaseMessage, encoding="chat.json.v1", max_hz=50.0)],
+    ).blueprints
+    agent = next(c for c in atom.kwargs["manifest"]["channels"] if c["ch"] == "agent")
+    assert agent["maxHz"] == 50.0
+    assert next(s for s in atom.kwargs["channels"] if s.ch == "agent").paced
+
+
+def test_stats_panel_blueprint() -> None:
+    blueprint = cockpit(layout=Video("color_image"), pages=[Stats()])
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    assert manifest["channels"][1] == {
+        "ch": "resource_stats",
+        "dir": "rx",
+        "encoding": "stats.json.v1",
+        "delivery": "latest",
+        "maxHz": 2.0,
+        "params": {},
+        "publish": "none",
+        "requiredScope": None,
+    }
+    assert manifest["panels"][1] == {
+        "id": "p1",
+        "kind": "stats",
+        "title": "Stats",
+        "channels": ["resource_stats"],
+        "params": {},
+    }
+    assert manifest["pages"] == ["p1"]
+    assert parse_manifest(manifest).model_dump() == manifest
+    # The producer is the coordinator's resource monitor, not a module: the
+    # generated In[dict] port autoconnects to its pickled /resource_stats
+    # topic by name.
+    ports = {(s.name, s.direction): s.type for s in atom.streams}
+    assert ports[("resource_stats", "in")] is dict
+    spec = next(s for s in atom.kwargs["channels"] if s.ch == "resource_stats")
+    assert spec.encoder is encode_stats and not spec.paced
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert {s.ch: s.encoder for s in ratom.kwargs["channels"]}["resource_stats"] is encode_stats
+
+
+def test_stats_panel_switches_stats_publishing_on() -> None:
+    # The resource monitor only runs under GlobalConfig.dtop: the panel flips
+    # it, composition keeps it, and the CLI's own sources still win.
+    blueprint = cockpit(layout=Stats())
+    assert dict(blueprint.global_config_overrides) == {"dtop": True}
+    composed = autoconnect(blueprint).global_config(n_workers=9)
+    assert dict(composed.global_config_overrides) == {"dtop": True, "n_workers": 9}
+    assert dict(cockpit(layout=Video("color_image")).global_config_overrides) == {}
+    parser = BlueprintConfigParser(blueprint)
+    assert parser.parse(environ={}).global_config["dtop"] is True
+    parsed = parser.parse(environ={}, global_overrides={"dtop": False})
+    assert parsed.global_config["dtop"] is False
+
+
+def test_publish_tx_generic_json_and_dataclass_rejection() -> None:
+    (atom,) = cockpit(channels=[Channel("counter", int, dir="tx", publish="shared")]).blueprints
+    (spec,) = atom.kwargs["channels"]
+    assert spec.decoder is decode_json_v1 and spec.decoder_takes_context is False
+    # Reconstructing a dataclass from untrusted browser JSON needs an
+    # explicit decoder (narrower than the encoder side).
+    with pytest.raises(ValueError, match="register an explicit decoder"):
+        cockpit(channels=[Channel("ops_note", _OpsNote, dir="tx", publish="shared")])
+
+
+def test_publish_tx_codec_errors() -> None:
+    with pytest.raises(ValueError, match=r"@web_decoder\('goal.json.v1'\)"):
+        cockpit(
+            channels=[Channel("goal", dict, dir="tx", encoding="goal.json.v1", publish="shared")]
+        )
+    with pytest.raises(ValueError, match="decodes to str, not int"):
+        cockpit(
+            channels=[
+                Channel("human_input", int, dir="tx", encoding="text.json.v1", publish="shared")
+            ]
+        )
+    # Non-JSON-family encodings fail the manifest's invalid_publish rule.
+    with pytest.raises(ManifestError, match="invalid_publish"):
+        cockpit(channels=[Channel("blob", bytes, dir="tx", encoding="blob.v1", publish="shared")])
+
+
+def test_publish_channel_conflicts_with_teleop_panel() -> None:
+    with pytest.raises(ValueError, match="conflicting requirements for stream 'tele_cmd_vel'"):
+        cockpit(
+            layout=Teleop(),
+            channels=[
+                Channel("tele_cmd_vel", Twist, dir="tx", encoding="twist.json.v1", publish="shared")
+            ],
+        )
+
+
 def test_default_path_channels_kwarg_matches_manifest() -> None:
     (atom,) = cockpit().blueprints
     assert atom.module is RelayBridgeModule
@@ -519,10 +731,11 @@ def test_reserved_stream_names_rejected(stream: str) -> None:
         cockpit(channels=[Channel(stream, dict)])
 
 
-def test_channel_ordering_builtins_then_customs() -> None:
+def test_channel_ordering_builtins_then_customs_then_publish() -> None:
     blueprint = cockpit(
         layout=GO2_LAYOUT,
         channels=[
+            Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
             Channel("target_pose", PoseStamped, encoding="pose.json.v1", max_hz=5.0),
             Channel("ops_note", _OpsNote),
         ],
@@ -535,15 +748,18 @@ def test_channel_ordering_builtins_then_customs() -> None:
         "target_pose",
         "ops_note",
         "tele_cmd_vel",
+        "human_input",
     ]
 
 
 def test_import_stays_light() -> None:
-    # The authoring surface must be importable without the [web] extra:
-    # neither the bridge module nor aioquic may load until cockpit() runs.
+    # The authoring surface must be importable without the [web] extra
+    # (neither the bridge module nor aioquic may load until cockpit() runs)
+    # and without the [agents] extra (langchain is the Chat panel's, on use).
     code = (
         "import sys; import dimos.web.cockpit; "
         "assert 'dimos.web.relay_bridge.relay_bridge_module' not in sys.modules; "
-        "assert 'aioquic' not in sys.modules"
+        "assert 'aioquic' not in sys.modules; "
+        "assert 'langchain_core' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", code], check=True)

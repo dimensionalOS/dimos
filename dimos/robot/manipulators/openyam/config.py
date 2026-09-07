@@ -87,7 +87,7 @@ def make_openyam_model_config(
         package_paths=OPENYAM_PACKAGE_PATHS,
     ).with_renamed_joints(dict(zip(joint_names(OPENYAM_DOF), model_joint_names, strict=True)))
     return RobotModelConfig(
-        model=model,
+        model=model.with_default_joint_acceleration_limit(2.0),
         joint_names=model_joint_names,
         base_link="base",
         planning_groups=[
@@ -100,8 +100,6 @@ def make_openyam_model_config(
         ],
         auto_convert_meshes=True,
         collision_exclusion_pairs=[],
-        gripper_hardware_id="arm",
+        gripper_hardware_id=OPENYAM_HARDWARE_ID,
         home_joints=list(OPENYAM_HOME_JOINTS if home_joints is None else home_joints),
-        velocity_limits=[2.0] * OPENYAM_DOF,
-        max_velocity=2.0,
     )

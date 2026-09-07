@@ -61,6 +61,8 @@ const MIME: Record<string, string> = {
   ".gif": "image/gif",
   ".webp": "image/webp",
   ".wasm": "application/wasm",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
 };
 
 // Deliberate LOCAL-relay policy: this relay binds loopback (enforced in

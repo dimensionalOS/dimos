@@ -8,6 +8,7 @@ import { ChannelStore } from "@dimos/sdk";
 import type { DrawHealth } from "../layout/PanelFrame.tsx";
 import { MapPanel, startMapSink } from "./MapPanel.tsx";
 import { fitTransform, posePath } from "./mapRenderer.ts";
+import { ChatPanel } from "./ChatPanel.tsx";
 import { getPanel, UnknownPanel } from "./registry.tsx";
 import { startVideoSink, VideoPanel } from "./VideoPanel.tsx";
 
@@ -219,6 +220,7 @@ describe("VideoPanel", () => {
     act(() => root.render(<VideoPanel spec={SPEC} store={store} />));
     expect(container.textContent).toContain("waiting for data");
     expect(badge().textContent).toBe("waiting");
+    expect(badge().getAttribute("data-state")).toBe("waiting");
     expect(badge().getAttribute("role")).toBe("status");
     const canvas = container.querySelector("canvas")!;
     expect(canvas.getAttribute("role")).toBe("img");
@@ -231,6 +233,7 @@ describe("VideoPanel", () => {
     });
     expect(container.textContent).not.toContain("waiting for data");
     expect(badge().textContent).toMatch(/fps$/);
+    expect(badge().getAttribute("data-state")).toBe("live");
     expect(badge().getAttribute("data-stale")).toBeNull();
 
     // Silence: source age climbs past the threshold on a later UI tick.
@@ -240,6 +243,7 @@ describe("VideoPanel", () => {
     });
     expect(badge().textContent).toMatch(/^stale/);
     expect(badge().getAttribute("data-stale")).toBe("true");
+    expect(badge().getAttribute("data-state")).toBe("stale");
   });
 
   it("flags decode failures in the badge and recovers", async () => {
@@ -259,6 +263,7 @@ describe("VideoPanel", () => {
     });
     expect(badge().textContent).toBe("decode failing");
     expect(badge().getAttribute("data-error")).toBe("true");
+    expect(badge().getAttribute("data-state")).toBe("error");
 
     await act(async () => {
       frame(store, 3, now / 1000);
@@ -289,6 +294,7 @@ describe("VideoPanel", () => {
     expect(badge().textContent).toBe("stalled");
     expect(badge().textContent).not.toMatch(/^stale/);
     expect(badge().getAttribute("data-stale")).toBe("true");
+    expect(badge().getAttribute("data-state")).toBe("stale");
   });
 
   it("surfaces a createImageBitmap rejection as decode failing", async () => {
@@ -301,6 +307,7 @@ describe("VideoPanel", () => {
     });
     expect(badge().textContent).toBe("decode failing");
     expect(badge().getAttribute("data-error")).toBe("true");
+    expect(badge().getAttribute("data-state")).toBe("error");
   });
 
   it("renders a visible note instead of a canvas when no channel is bound", () => {
@@ -340,6 +347,7 @@ describe("registry", () => {
     // channel of a newer bridge (see channelSubscribable in session.ts).
     expect(getPanel("video")).toBe(VideoPanel);
     expect(getPanel("map2d")).toBe(MapPanel);
+    expect(getPanel("chat")).toBe(ChatPanel);
     expect(getPanel("hologram")).toBeUndefined();
   });
 
@@ -699,6 +707,7 @@ describe("MapPanel", () => {
     act(() => root.render(<MapPanel spec={SPEC} store={store} />));
     expect(container.textContent).toContain("waiting for data");
     expect(badge().textContent).toBe("waiting");
+    expect(badge().getAttribute("data-state")).toBe("waiting");
     expect(badge().getAttribute("role")).toBe("status");
     const canvas = container.querySelector("canvas")!;
     expect(canvas.getAttribute("role")).toBe("img");
@@ -712,6 +721,7 @@ describe("MapPanel", () => {
     });
     expect(container.textContent).not.toContain("waiting for data");
     expect(badge().textContent).toMatch(/Hz$/);
+    expect(badge().getAttribute("data-state")).toBe("live");
     expect(badge().getAttribute("data-stale")).toBeNull();
 
     // Silence: source age climbs past the threshold on a later UI tick.
@@ -721,6 +731,7 @@ describe("MapPanel", () => {
     });
     expect(badge().textContent).toMatch(/^stale/);
     expect(badge().getAttribute("data-stale")).toBe("true");
+    expect(badge().getAttribute("data-state")).toBe("stale");
   });
 
   it("flags a failing inflate in the badge and recovers on the next grid", async () => {
@@ -739,6 +750,7 @@ describe("MapPanel", () => {
     });
     expect(badge().textContent).toBe("decode failing");
     expect(badge().getAttribute("data-error")).toBe("true");
+    expect(badge().getAttribute("data-state")).toBe("error");
 
     await act(async () => {
       realGridFrame(2, now / 1000);

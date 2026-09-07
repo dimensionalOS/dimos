@@ -164,7 +164,7 @@ def dual_openyam_model_config(base_pose: PoseStamped | None = None) -> RobotMode
     for a rig whose base is the world origin.
     """
     return RobotModelConfig(
-        model=DUAL_OPENYAM_MODEL,
+        model=DUAL_OPENYAM_MODEL.with_default_joint_acceleration_limit(1.0),
         base_pose=base_pose if base_pose is not None else PoseStamped(),
         joint_names=list(DUAL_OPENYAM_ARM_JOINTS),
         base_link="dual_openyam_base",
@@ -186,7 +186,5 @@ def dual_openyam_model_config(base_pose: PoseStamped | None = None) -> RobotMode
         ],
         auto_convert_meshes=True,
         home_joints=list(DUAL_OPENYAM_HOME_JOINTS),
-        max_velocity=2.0,
-        max_acceleration=1.0,
         tf_extra_links=[],
     )

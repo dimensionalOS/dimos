@@ -46,6 +46,7 @@ from dimos.utils.logging_config import setup_logger
 from dimos.web.relay_bridge.protocol import (
     CONTROL_CHANNEL,
     MAX_CONTROL_PAYLOAD_BYTES,
+    MAX_PUB_DATA_BYTES,
     DataFrame,
     DataFrameStreamError,
     DataFrameStreamReader,
@@ -154,7 +155,11 @@ class SessionProtocol(QuicConnectionProtocol):
         self.relay_error: Error | None = None
         self.frames = _FrameQueue(_FRAME_QUEUE_MAX, _FRAME_QUEUE_MAX_BYTES)
         self.frames_oversized = 0
-        self.control_msgs: asyncio.Queue[Msg] = asyncio.Queue(maxsize=_CONTROL_QUEUE_MAX)
+        # Control messages plus, on the robot leg, forwarded publish frames
+        # (tx DataFrames from the carrier) - one ordered consumer queue.
+        self.control_msgs: asyncio.Queue[Msg | DataFrame] = asyncio.Queue(
+            maxsize=_CONTROL_QUEUE_MAX
+        )
         self.control_dropped = 0
         self.control_invalid = 0
         # Robot role (set by RelayClient.connect): incoming uni streams are
@@ -232,6 +237,11 @@ class SessionProtocol(QuicConnectionProtocol):
     def _control_msg_received(self, msg: Msg) -> None:
         if isinstance(msg, Welcome):
             self.welcomed.set()
+        elif isinstance(msg, Error) and msg.requestId is not None:
+            # Correlated publish failure: addressed to one request, not the
+            # session, so it joins the consumer queue - it must neither
+            # overwrite the handshake error slot nor unblock a hello() waiter.
+            self._queue_control_msg(msg)
         elif isinstance(msg, Error):
             logger.warning(f"relay error: {msg.code}: {msg.message}")
             self.relay_error = msg
@@ -260,15 +270,17 @@ class SessionProtocol(QuicConnectionProtocol):
             # the consumer queue; see RelayClient.control_messages().
             self._queue_control_msg(msg)
 
-    def _queue_control_msg(self, msg: Msg) -> None:
+    def _queue_control_msg(self, msg: Msg | DataFrame) -> None:
         """Bounded drop-oldest enqueue that never loses subscription state.
 
         A subs snapshot is full state with no resend since the carrier: a new
         one supersedes any queued one (so at most one is ever queued, not
         counted as a drop), and overflow eviction skips it - evicting the
         snapshot under a teleop flood would freeze subscriptions until the
-        next set mutation. All same-loop and await-free, so getters cannot
-        observe the drain-and-requeue.
+        next set mutation. Forwarded publish frames (DataFrames) are ordinary
+        eviction victims: the relay's publish_timeout settles an evicted one.
+        All same-loop and await-free, so getters cannot observe the
+        drain-and-requeue.
         """
         if isinstance(msg, Subs):
             for queued in self._drain_control_msgs():
@@ -284,8 +296,8 @@ class SessionProtocol(QuicConnectionProtocol):
                 self.control_msgs.put_nowait(queued)
         self.control_msgs.put_nowait(msg)
 
-    def _drain_control_msgs(self) -> list[Msg]:
-        msgs: list[Msg] = []
+    def _drain_control_msgs(self) -> list[Msg | DataFrame]:
+        msgs: list[Msg | DataFrame] = []
         while not self.control_msgs.empty():
             msgs.append(self.control_msgs.get_nowait())
         return msgs
@@ -320,6 +332,18 @@ class SessionProtocol(QuicConnectionProtocol):
                     # never the data-frame queue (nothing drains it on the
                     # robot leg).
                     self._control_frame_received(frame)
+                    continue
+                if self._carrier_stream(stream_id):
+                    # A non-control carrier frame is a forwarded publish (tx
+                    # channel data); it joins the same ordered consumer. The
+                    # relay caps serialized publish data, so an over-cap
+                    # payload means a broken control path.
+                    if len(frame.payload) > MAX_PUB_DATA_BYTES:
+                        self._fail_session(
+                            f"carrier tx payload is {len(frame.payload)} B (over the publish cap)"
+                        )
+                        return
+                    self._queue_control_msg(frame)
                     continue
                 limit = _MAX_PAYLOAD_BYTES.get(self._encodings.get(frame.header.ch, ""))
                 if limit is not None and len(frame.payload) > limit:

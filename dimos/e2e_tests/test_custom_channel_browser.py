@@ -38,7 +38,7 @@ import time
 
 import pytest
 
-from dimos.core.transport import pLCMTransport
+from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.web.cockpit import Channel, cockpit
@@ -86,10 +86,10 @@ def custom_path_page_url() -> Iterator[str]:
         serve_dir=str(find_web_dir() / "examples" / "custom-path"),
         **atom.kwargs,
     )
-    bridge_transport = pLCMTransport(TOPIC)
+    bridge_transport = make_transport(TOPIC)
     bridge_transport.start()
     module.nav_path.transport = bridge_transport
-    publisher = pLCMTransport(TOPIC)
+    publisher = make_transport(TOPIC)
     publisher.start()
     stop = threading.Event()
 

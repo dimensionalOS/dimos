@@ -7,6 +7,7 @@ import { registerTeleopHooks } from "@dimos/sdk/internal/teleop";
 import type { ChannelSpec, PanelSpec } from "@dimos/shared";
 import type { Manifest } from "@dimos/shared/manifest";
 import { App } from "./App.tsx";
+import type { View } from "./ui/StatusBar.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,6 +20,8 @@ const ODOM: ChannelSpec = {
   delivery: "reliable",
   maxHz: 20,
   params: {},
+  publish: "none",
+  requiredScope: null,
 };
 const IMAGE: ChannelSpec = {
   ch: "color_image",
@@ -27,6 +30,8 @@ const IMAGE: ChannelSpec = {
   delivery: "latest",
   maxHz: 15,
   params: {},
+  publish: "none",
+  requiredScope: null,
 };
 
 function mf(channels: ChannelSpec[], panels: PanelSpec[] = []): Manifest {
@@ -51,6 +56,7 @@ describe("App session states", () => {
       store: channels,
       watch: () => new Promise(() => {}),
       subscribe: () => () => {},
+      publish: () => new Promise(() => {}),
       close: () => {},
     };
     registerTeleopHooks(session, {
@@ -67,6 +73,10 @@ describe("App session states", () => {
     container.remove();
   });
 
+  const view = (v: View) => {
+    act(() => container.querySelector<HTMLElement>(`[data-testid="view-${v}"]`)!.click());
+  };
+
   it("waits for a robot, shows its channels, and clears them when it leaves", () => {
     expect(container.textContent).toContain("Waiting for a robot");
 
@@ -82,6 +92,7 @@ describe("App session states", () => {
       );
       channels.publishUi();
     });
+    view("channels");
     expect(container.querySelector('[data-testid="ch-odom-seq"]')!.textContent).toBe("7");
     expect(container.querySelector('[data-testid="ch-odom-value"]')!.textContent).toContain(
       '{"x":1}',
@@ -110,6 +121,7 @@ describe("App session states", () => {
       );
       channels.publishUi();
     });
+    view("channels");
     expect(container.querySelector('[data-testid="ch-odom-decode-error"]')).toBeNull();
 
     // Corrupt frames arrive: the row keeps describing the good frame (seq and
@@ -154,6 +166,7 @@ describe("App session states", () => {
         manifest: mf([ODOM, IMAGE]),
       });
     });
+    view("channels");
     const value = () => container.querySelector('[data-testid="ch-color_image-value"]')!;
     expect(value().textContent).toContain("not subscribed (no panel binds it)");
 
@@ -166,6 +179,164 @@ describe("App session states", () => {
       });
     });
     expect(value().textContent).toContain("waiting for data...");
+  });
+
+  it("keeps a chat page's transcript since join across tab switches", () => {
+    const TEXT: ChannelSpec = {
+      ch: "human_input",
+      dir: "tx",
+      encoding: "text.json.v1",
+      delivery: "reliable",
+      maxHz: 5,
+      params: {},
+      publish: "shared",
+      requiredScope: null,
+    };
+    const AGENT: ChannelSpec = { ...ODOM, ch: "agent", encoding: "chat.json.v1" };
+    const IDLE: ChannelSpec = {
+      ...ODOM,
+      ch: "agent_idle",
+      encoding: "json.v1",
+      delivery: "latest",
+    };
+    const AUDIO: ChannelSpec = { ...TEXT, ch: "audio_in", encoding: "audio.json.v1", maxHz: 20 };
+    const chat: PanelSpec = {
+      id: "chat",
+      kind: "chat",
+      title: "",
+      channels: ["human_input", "agent", "agent_idle", "audio_in"],
+      params: {},
+    };
+    const line = (seq: number, text: string) => {
+      channels.ingest(
+        "agent",
+        { ch: "agent", seq, ts: seq, delivery: "reliable" },
+        [{ role: "ai", text, ts: seq }],
+        true,
+      );
+    };
+    const tab = (id: string) => {
+      const testId = id === "overview" ? "tab-overview" : `tab-page-${id}`;
+      act(() => container.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!.click());
+    };
+    act(() => {
+      status.update({
+        watchedRobot: ROBOT,
+        robots: [ROBOT],
+        manifest: { ...mf([ODOM, TEXT, AGENT, IDLE, AUDIO], [chat]), pages: ["chat"] },
+      });
+    });
+    // Frames before the page is first opened, and while another tab shows.
+    act(() => {
+      line(1, "one");
+      line(2, "two");
+    });
+    tab("chat");
+    expect(container.querySelectorAll("[data-role]")).toHaveLength(2);
+    tab("overview");
+    act(() => line(3, "three"));
+    tab("chat");
+    const lines = [...container.querySelectorAll("[data-role]")].map((el) => el.textContent);
+    expect(lines).toHaveLength(3);
+    expect(lines.join(" ")).toContain("one");
+    expect(lines.join(" ")).toContain("three");
+  });
+
+  it("shows the panels by default and the channel table on the channels tab", () => {
+    const cam: PanelSpec = {
+      id: "cam",
+      kind: "video",
+      title: "",
+      channels: ["color_image"],
+      params: {},
+    };
+    act(() => {
+      status.update({ watchedRobot: ROBOT, robots: [ROBOT], manifest: mf([ODOM, IMAGE], [cam]) });
+    });
+    const panel = () => container.querySelector('[data-testid="panel-cam"]');
+    const row = () => container.querySelector('[data-testid="ch-odom-seq"]');
+    const selected = (v: View) =>
+      container.querySelector(`[data-testid="view-${v}"]`)!.getAttribute("aria-selected");
+    expect(panel()).not.toBeNull();
+    expect(row()).toBeNull();
+    expect(selected("panels")).toBe("true");
+
+    view("channels");
+    expect(selected("channels")).toBe("true");
+    expect(panel()).toBeNull();
+    expect(row()).not.toBeNull();
+
+    // A manifest change remounts <main> but keeps the operator's view.
+    act(() => status.update({ manifest: mf([ODOM, IMAGE]), epoch: 1 }));
+    expect(row()).not.toBeNull();
+
+    // cockpit(channels=[...]) alone has nothing to lay out.
+    view("panels");
+    expect(row()).toBeNull();
+    expect(container.textContent).toContain("no panels");
+  });
+
+  it("keeps the open page across a manifest epoch and drops it when it vanishes", () => {
+    const cam: PanelSpec = {
+      id: "cam",
+      kind: "video",
+      title: "Front camera",
+      channels: ["color_image"],
+      params: {},
+    };
+    const withPage: Manifest = { ...mf([ODOM, IMAGE], [cam]), pages: ["cam"] };
+    const tab = (id: string) => {
+      const testId = id === "overview" ? "tab-overview" : `tab-page-${id}`;
+      return container.querySelector(`[data-testid="${testId}"]`);
+    };
+    act(() => status.update({ watchedRobot: ROBOT, robots: [ROBOT], manifest: withPage }));
+    expect(tab("overview")!.getAttribute("aria-selected")).toBe("true");
+    act(() => (tab("cam") as HTMLElement).click());
+    expect(tab("cam")!.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector('[data-testid="panel-cam"]')).not.toBeNull();
+
+    // A robot restart (same manifest, new epoch) keeps the operator on the page.
+    act(() => status.update({ manifest: { ...withPage }, epoch: 1 }));
+    expect(tab("cam")!.getAttribute("aria-selected")).toBe("true");
+
+    // The page is gone from the new manifest: back to the grid, no strip.
+    act(() => status.update({ manifest: mf([ODOM, IMAGE], [cam]), epoch: 2 }));
+    expect(tab("cam")).toBeNull();
+    expect(container.querySelector('[data-testid="panel-cam"]')).not.toBeNull();
+
+    // Reintroducing the page does not resurrect the discarded selection.
+    act(() => status.update({ manifest: withPage, epoch: 3 }));
+    expect(tab("overview")!.getAttribute("aria-selected")).toBe("true");
+    expect(tab("cam")!.getAttribute("aria-selected")).toBe("false");
+    expect(container.querySelector('[data-testid="panel-cam"]')).toBeNull();
+  });
+
+  it("leaves the channels view when a page tab is picked", () => {
+    const cam: PanelSpec = {
+      id: "cam",
+      kind: "video",
+      title: "",
+      channels: ["color_image"],
+      params: {},
+    };
+    const selected = (id: string) =>
+      container.querySelector(`[data-testid="${id}"]`)!.getAttribute("aria-selected");
+    act(() => {
+      status.update({
+        watchedRobot: ROBOT,
+        robots: [ROBOT],
+        manifest: { ...mf([ODOM, IMAGE], [cam]), pages: ["cam"] },
+      });
+    });
+    view("channels");
+    expect(selected("tab-overview")).toBe("false");
+    expect(container.querySelector('[data-testid="ch-odom-seq"]')).not.toBeNull();
+
+    act(() => container.querySelector<HTMLElement>('[data-testid="tab-page-cam"]')!.click());
+    expect(selected("view-panels")).toBe("true");
+    expect(selected("tab-page-cam")).toBe("true");
+    expect(container.querySelector('[data-testid="ch-odom-seq"]')).toBeNull();
+    expect(container.querySelector('[data-testid="panel-cam"]')).not.toBeNull();
   });
 
   it("shows the multi-robot notice instead of channels", () => {
@@ -182,6 +353,7 @@ describe("App session states", () => {
       });
     });
     expect(container.textContent).toContain("newer than this Cockpit build");
+    view("channels");
     expect(container.querySelector('[data-testid="ch-odom-seq"]')).toBeNull();
   });
 

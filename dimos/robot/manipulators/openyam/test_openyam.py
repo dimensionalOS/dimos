@@ -20,7 +20,7 @@ from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.global_config import global_config
-from dimos.manipulation.planning.spec.validation import validate_robot_model_config
+from dimos.manipulation.planning.spec.validation import prepare_robot_model
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
     openyam_planner_coordinator,
@@ -65,16 +65,14 @@ def test_make_openyam_model_config_uses_canonical_arm_joints() -> None:
     assert config.joint_names == OPENYAM_ARM_JOINTS
     assert config.base_link == "base"
     assert config.planning_groups[0].tip_link == "gripper_tip"
-    assert config.gripper_hardware_id == "arm"
+    assert config.gripper_hardware_id == OPENYAM_HARDWARE_ID
     assert config.home_joints == OPENYAM_HOME_JOINTS
-    assert config.velocity_limits == [2.0] * OPENYAM_DOF
-    assert config.max_velocity == 2.0
 
 
 @pytest.mark.self_hosted
 def test_openyam_model_contains_canonical_arm_joints() -> None:
     config = make_openyam_model_config()
-    model = validate_robot_model_config(config)
+    model = prepare_robot_model(config).description
 
     assert [joint.name for joint in model.joints if joint.name in config.joint_names] == (
         OPENYAM_ARM_JOINTS
@@ -166,6 +164,7 @@ def test_openyam_basic_trajectory_accepts_all_hardware_joints(blueprint: Bluepri
         "openyam_gripper",
         [OPENYAM_GRIPPER_JOINT],
     )
+    assert gripper.name == f"{make_openyam_model_config().gripper_hardware_id}_gripper"
 
 
 @pytest.mark.parametrize(

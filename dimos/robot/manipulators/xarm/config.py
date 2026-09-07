@@ -98,7 +98,7 @@ def make_dual_xarm6_model_config() -> RobotModelConfig:
                 "add_gripper_1": "true",
                 "add_gripper_2": "true",
             },
-        ),
+        ).with_default_joint_acceleration_limit(2.0),
         joint_names=canonical_joints,
         base_link="world",
         planning_groups=[
@@ -308,7 +308,7 @@ def make_xarm_model_config(
             XARM_MODEL_PATH,
             package_paths=XARM_PACKAGE_PATHS,
             xacro_args=xacro_args,
-        ),
+        ).with_default_joint_acceleration_limit(2.0),
         base_pose=base_pose if base_pose is not None else PoseStamped(),
         joint_names=model_joint_names,
         base_link=f"{prefix}link_base",

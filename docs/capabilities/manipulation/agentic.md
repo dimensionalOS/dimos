@@ -14,7 +14,9 @@ Install the manipulation dependencies:
 uv sync --extra manipulation --inexact
 ```
 
-The built-in agent requires an `OPENAI_API_KEY`.
+This installs perception, EdgeTAM, MuJoCo, web/MCP, and agent dependencies
+together. The built-in agent requires an `OPENAI_API_KEY`; EdgeTAM requires a
+CUDA or MPS device. Robot assets and model weights are downloaded separately.
 
 
 ## Start and stop

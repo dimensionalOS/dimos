@@ -32,9 +32,13 @@ from dimos.web.relay_bridge.protocol import (
     Hello,
     Msg,
     ProtocolError,
+    Pub,
+    PubAck,
+    PubNack,
     RobotInfo,
     RobotManifest,
     Role,
+    Sub,
     Subs,
     decode_datagram,
     encode_data_frame,
@@ -326,6 +330,37 @@ async def test_robot_hello_control_payload_boundary_is_exact() -> None:
     with pytest.raises(ProtocolError, match=str(MAX_CONTROL_PAYLOAD_BYTES)):
         await _client(over_cap).hello(timeout=0.05, robot=robot, manifest={"pad": "a" * (pad + 1)})
     assert over_cap.sent_frames == []
+
+
+async def test_send_control_frame_uses_the_hello_framing() -> None:
+    # Publish acks ride the same robot-opened one-shot @control path as
+    # hello: a datagram-encoded payload in an @control data frame.
+    session = StubSession()
+    client = _client(session)
+    ack = PubAck(id="p1", ch="human_input", relayTs=1.5, bridgeTs=2.5)
+    stream_id = client.send_control_frame(ack)
+    assert stream_id > 0
+    ((header, payload),) = session.sent_frames
+    assert header.ch == CONTROL_CHANNEL
+    assert decode_datagram(payload) == ack
+    assert session.sent_msgs == []  # nothing rode datagrams
+    with pytest.raises(ProtocolError, match=str(MAX_CONTROL_PAYLOAD_BYTES)):
+        client.send_control_frame(
+            PubNack(id="p2", code="decode_failed", message="x" * MAX_CONTROL_PAYLOAD_BYTES)
+        )
+    assert len(session.sent_frames) == 1
+
+
+async def test_send_control_refuses_an_unsendable_datagram() -> None:
+    # aioquic retries an oversize datagram forever, wedging the whole queue;
+    # the test viewer's control plane must refuse it locally instead.
+    session = StubSession()
+    client = _client(session)
+    client.send_control(Sub(ch="odom"))
+    assert len(session.sent_msgs) == 1
+    with pytest.raises(ProtocolError, match="wedges aioquic"):
+        client.send_control(Pub(id="a", ch="chat", data="x" * 2048))
+    assert len(session.sent_msgs) == 1
 
 
 async def test_robot_hello_cancellation_is_prompt_and_retires_stream() -> None:
