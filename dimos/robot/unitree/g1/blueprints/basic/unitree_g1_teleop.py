@@ -20,13 +20,16 @@ manipulation, and the dimos.imitation data-collection stack. ``--simulation
 mujoco`` and ``--scene-package`` remain supported. Put on the headset, open
 ``https://<host>:8443/teleop``, and:
 
+    Left stick Y      walk forward / backward after neutral-to-arm
+    Left stick X      translate left / right after neutral-to-arm
+    Right stick X     yaw after neutral-to-arm
     X + A             hold to track both arms from a shared reference
     B                 start / save an episode
     Y                 discard the in-progress episode
 
 Controller poses route to the shared ``teleop_g1`` coordinator task declared
-in the groot blueprint. Quest thumbstick locomotion is intentionally deferred;
-this module does not route controller axes to the GR00T WBC task.
+in the groot blueprint. Bounded joystick commands route through the existing
+``cmd_vel`` stream to the GR00T WBC task.
 
 Recording runs continuously into a timestamped session DB under
 ``~/.local/state/dimos/recordings/``; B/Y only place episode markers
@@ -65,7 +68,7 @@ from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _unitree_g1_groot_wbc_core,
 )
 from dimos.robot.unitree.g1.manip_config import g1_manipulation_model_config
-from dimos.teleop.quest.quest_extensions import VideoArmTeleopModule
+from dimos.robot.unitree.g1.quest_teleop import G1QuestTeleopModule
 
 
 class G1CollectionRecorder(CollectionRecorder):
@@ -113,7 +116,7 @@ class G1ManipulationModule(ManipulationModule):
 unitree_g1_teleop = (
     autoconnect(
         _unitree_g1_groot_wbc_core,
-        VideoArmTeleopModule.blueprint(),
+        G1QuestTeleopModule.blueprint(),
         G1ManipulationModule.blueprint(
             instance_name="G1Manipulation",
             model=g1_manipulation_model_config(),
@@ -138,8 +141,9 @@ unitree_g1_teleop = (
     )
     .remappings(
         [
-            (VideoArmTeleopModule, "left_controller_output", "left_cartesian_command"),
-            (VideoArmTeleopModule, "right_controller_output", "right_cartesian_command"),
+            (G1QuestTeleopModule, "left_controller_output", "left_cartesian_command"),
+            (G1QuestTeleopModule, "right_controller_output", "right_cartesian_command"),
+            (G1QuestTeleopModule, "cmd_vel", "cmd_vel"),
             (G1ManipulationModule, "_control_coordinator", _G1GrootCoordinator),
         ]
     )

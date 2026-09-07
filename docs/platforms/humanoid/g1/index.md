@@ -80,9 +80,20 @@ Note: this button combination may vary based on the model of the G1
 
 The robot must already be standing and balancing in sport mode. Use a clear,
 level work area, keep the Unitree remote and emergency stop reachable, and use
-a gantry or spotter for the first hardware run. Keep the robot stationary while
-using Quest arm teleoperation or planned manipulation; Quest thumbsticks do not
-command locomotion in this blueprint.
+a gantry or spotter for the first hardware run. Validate locomotion with the
+arms stationary before combining it with Quest arm teleoperation or planned
+manipulation.
+
+First verify the input mapping and command path in MuJoCo:
+
+```bash
+uv run dimos --simulation mujoco run unitree-g1-teleop
+uv run dimos topic echo /cmd_vel
+```
+
+The Quest producer publishes at the 50 Hz control-loop rate. Confirm neutral,
+forward, lateral, and yaw signs in the echoed stream before enabling hardware
+output.
 
 On the G1 computer:
 
@@ -93,28 +104,58 @@ uv run dimos run unitree-g1-teleop --network-interface eth0
 
 The teleop blueprint excludes navigation and mapping, so no module-disable
 arguments are needed. Wait for the Quest server to listen on port `8443`, then
-activate the robot from a second SSH session:
+arm GR00T in dry-run from a second SSH session:
 
 ```bash
 uv run dimos hardware g1 status
-uv run dimos hardware g1 activate
+uv run dimos hardware g1 arm
 uv run dimos hardware g1 status
-uv run dimos hardware g1 ready
+uv run dimos topic echo /g1/cmd_vel
 ```
 
-`activate` runs the GR00T pose ramp and requires interactive confirmation before
-enabling output. Check the status before `ready` moves both arms to the
-conservative ready pose. Routine startup must use these hardware commands rather
-than `dimos shell`. `activate --ready` remains available as a combined shortcut.
+Seeing data on `/cmd_vel` does not prove the hardware stack received it;
+hardware uses `/g1/cmd_vel`. Declared transports use the process's selected
+DimOS transport backend.
+
+While still in dry-run, move and release each stick, disconnect the Quest, and
+let controller input go stale. Every stop case must produce zero and select the
+balance policy. GR00T independently treats a command as zero after one second
+without an update.
 
 Open `https://<g1-computer-ip>:8443/teleop` in the Quest browser and accept the
 self-signed certificate.
 
 | Input | Operation |
 |---|---|
+| Left stick Y | Forward/backward velocity, bounded to 0.2 m/s by default |
+| Left stick X | Left/right velocity, bounded to 0.2 m/s by default |
+| Right stick X | Yaw rate, bounded to 0.5 rad/s by default |
 | Hold X + A | Engage both arms from a shared reference pose |
 | B | Start or save a recording episode |
 | Y | Discard the current episode |
+
+Locomotion has no held-button deadman. Instead, it starts locked and relocks
+after connection, stale or malformed input, disconnect, and shutdown. To open
+the neutral gate, return both used axes to center and let the stack receive a
+fresh Joy message from both controllers. The configured hard deadzone is 0.18.
+The current sign defaults invert all three WebXR axes; treat these as provisional
+until the displayed raw axes and bounded commands match the operator's view.
+
+Zero velocity is a software stop request, not an emergency stop. It depends on
+the running command path and GR00T controller. Keep the physical emergency stop
+and Unitree remote ready throughout hardware testing.
+
+Only after dry-run evidence is clean, enable output and begin with the lowest
+stick deflections, testing forward, lateral, and yaw separately before combining them:
+
+```bash
+uv run dimos hardware g1 enable
+```
+
+Use `uv run dimos hardware g1 disable` at the first unexpected response. Once
+the robot is stable, `uv run dimos hardware g1 ready` moves both arms to the
+conservative ready pose. Routine startup must use these hardware commands rather
+than `dimos shell`; `activate` remains the interactive arm-and-enable shortcut.
 
 The blueprint also serves the Viser manipulation panel at
 `http://<g1-computer-ip>:8095`. It can execute arm motion; only expose this port

@@ -29,7 +29,9 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.core.global_config import global_config
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
     _G1_TELEOP_MODEL,
     _G1GrootCoordinator,
@@ -46,8 +48,8 @@ from dimos.robot.unitree.g1.manip_config import (
     G1_RIGHT_ARM_JOINTS,
     g1_manipulation_model_config,
 )
+from dimos.robot.unitree.g1.quest_teleop import G1QuestTeleopModule
 from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
-from dimos.teleop.quest.quest_extensions import VideoArmTeleopModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -100,19 +102,23 @@ def test_g1_blueprint_keeps_bounded_trajectory_path_below_teleop() -> None:
     ]
 
 
-def test_g1_teleop_wires_arm_and_recording_streams_without_quest_locomotion() -> None:
-    teleop_kwargs = _module_kwargs(unitree_g1_teleop, VideoArmTeleopModule)
+def test_g1_teleop_wires_arm_recording_and_quest_locomotion_streams() -> None:
+    teleop_kwargs = _module_kwargs(unitree_g1_teleop, G1QuestTeleopModule)
 
     assert "task_names" not in teleop_kwargs
     assert (
-        unitree_g1_teleop.remapping_map[(VideoArmTeleopModule.name, "left_controller_output")]
+        unitree_g1_teleop.remapping_map[(G1QuestTeleopModule.name, "left_controller_output")]
         == "left_cartesian_command"
     )
     assert (
-        unitree_g1_teleop.remapping_map[(VideoArmTeleopModule.name, "right_controller_output")]
+        unitree_g1_teleop.remapping_map[(G1QuestTeleopModule.name, "right_controller_output")]
         == "right_cartesian_command"
     )
-    assert (VideoArmTeleopModule.name, "cmd_vel") not in unitree_g1_teleop.remapping_map
+    assert unitree_g1_teleop.remapping_map[(G1QuestTeleopModule.name, "cmd_vel")] == "cmd_vel"
+    assert unitree_g1_teleop.remapping_map[("ControlCoordinator", "twist_command")] == "cmd_vel"
+    cmd_vel_transport = unitree_g1_teleop.transport_map[("cmd_vel", Twist)]
+    expected_topic = "/cmd_vel" if global_config.simulation else "/g1/cmd_vel"
+    assert cmd_vel_transport.channel == f"{expected_topic}#geometry_msgs.Twist"
     assert "left_cartesian_command" in G1CollectionRecorder.__annotations__
     assert "right_cartesian_command" in G1CollectionRecorder.__annotations__
 
