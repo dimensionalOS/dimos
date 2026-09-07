@@ -216,7 +216,7 @@ def test_zero_timeout_disables_the_wait(zenoh_defaults: None) -> None:
 
 def _free_udp_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.bind(("", 0))
+        sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
 
 
@@ -232,8 +232,8 @@ def test_stock_sessions_discover_each_other_over_loopback(zenoh_defaults: None) 
             time.sleep(0.05)
         assert zid_b in map(str, a.info.peers_zid())
         assert zid_a in map(str, b.info.peers_zid())
-        for link in a.info.links():
-            assert str(link.dst).startswith("tcp/127.0.0.1:"), str(link.dst)
+        links = [str(link.dst) for link in a.info.links()]
+        assert links and all(dst.startswith("tcp/127.0.0.1:") for dst in links), links
     finally:
         for pool in pools:
             pool.close_all()
