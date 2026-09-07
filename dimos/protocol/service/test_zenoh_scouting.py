@@ -14,9 +14,12 @@
 
 """Network scouting is optional, and start() waits for its connect endpoints."""
 
+import socket
 import time
+from typing import cast
 
 import pytest
+import zenoh
 
 from dimos.core.global_config import ZenohMode, global_config
 from dimos.protocol.service.zenohservice import (
@@ -25,6 +28,7 @@ from dimos.protocol.service.zenohservice import (
     LOOPBACK_LISTEN,
     ZenohConfig,
     ZenohService,
+    ZenohSessionPool,
     endpoint_addresses,
 )
 
@@ -154,7 +158,7 @@ def _await_elapsed(
     """Seconds _await_connect blocks against a session with the given links."""
     service = ZenohService(mode=mode, connect=connect, connect_timeout=connect_timeout)
     started = time.monotonic()
-    service._await_connect(session)
+    service._await_connect(cast("zenoh.Session", session))
     return time.monotonic() - started
 
 
@@ -208,3 +212,28 @@ def test_zero_timeout_disables_the_wait(zenoh_defaults: None) -> None:
         _await_elapsed(_FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.0)
         < 1.0
     )
+
+
+def _free_udp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.bind(("", 0))
+        return int(sock.getsockname()[1])
+
+
+def test_stock_sessions_discover_each_other_over_loopback(zenoh_defaults: None) -> None:
+    """Two sessions with the stock config scout each other on loopback and link there."""
+    config = ZenohConfig(scout_addr=f"224.0.0.224:{_free_udp_port()}")
+    pools = [ZenohSessionPool(), ZenohSessionPool()]
+    a, b = (pool.acquire(config) for pool in pools)
+    try:
+        zid_a, zid_b = str(a.info.zid()), str(b.info.zid())
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and zid_b not in map(str, a.info.peers_zid()):
+            time.sleep(0.05)
+        assert zid_b in map(str, a.info.peers_zid())
+        assert zid_a in map(str, b.info.peers_zid())
+        for link in a.info.links():
+            assert str(link.dst).startswith("tcp/127.0.0.1:"), str(link.dst)
+    finally:
+        for pool in pools:
+            pool.close_all()
