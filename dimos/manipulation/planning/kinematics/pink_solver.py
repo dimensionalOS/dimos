@@ -209,6 +209,7 @@ class _PinkSolverCore:
             damping=self.config.damping,
             safety_break=self.config.safety_break,
             constraints=constraints or None,
+            **self.config.solver_kwargs,
         )
         self._after_solve(tasks, velocity, dt)
         configuration.integrate_inplace(velocity, dt)

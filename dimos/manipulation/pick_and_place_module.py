@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-import math
+import time
 from typing import Any, Literal
 
 from pydantic import Field
@@ -47,11 +47,19 @@ from dimos.perception.experimental.object_scene_registration_spec import ObjectS
 class PickAndPlaceModuleConfig(ModuleConfig):
     planning_frame: str = "base_link"
     pregrasp_offset: float = Field(default=0.10, gt=0.0)
+    preplace_offset: float | None = Field(default=None, gt=0.0)
+    transfer_clearance: float | None = Field(default=None, gt=0.0)
+    transfer_speed_scale: float | None = Field(default=None, gt=0.0, le=1.0)
     # The pregrasp normally backs off along the tool's -Z. Grippers whose grasp
     # frame points Z out of the back of the palm need the other side, or the
     # approach starts underneath the object.
     pregrasp_along_tool_z: bool = False
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
+    place_yaw_offsets: tuple[float, ...] = (0.0,)
+    place_orientations_rpy: tuple[tuple[float, float, float], ...] = ()
+    motion_position_tolerance: float | None = Field(default=None, gt=0.0)
+    motion_orientation_tolerance: float = Field(default=0.05, gt=0.0)
+    motion_settle_timeout: float = Field(default=3.0, gt=0.0)
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
 
 
@@ -70,6 +78,7 @@ class PickAndPlaceModule(Module):
         self._selected_object_id: str | None = None
         self._selected_grasp: PoseStamped | None = None
         self._holding_object = False
+        self._holding_group: PlanningGroupID | None = None
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult[ManipulationSkillError]:
@@ -92,6 +101,8 @@ class PickAndPlaceModule(Module):
             {
                 "object_id": str(detection.id),
                 "name": str(detection.results[0].hypothesis.class_id),
+                "position": detection.bbox.center.position.to_list(),
+                "frame_id": detections.header.frame_id,
             }
             for detection in detections.detections
             if detection.id and detection.results
@@ -164,10 +175,9 @@ class PickAndPlaceModule(Module):
                 group,
             )
             pregrasp = self._offset_pose(grasp, self._pregrasp_offset())
-            if failure := self._move(pregrasp, group):
-                last_failure = failure
-                continue
-            if failure := self._move(grasp, group):
+            if failure := self._move_sequence([pregrasp, grasp], group):
+                if failure.error_code != "PLANNING_FAILED":
+                    return failure
                 last_failure = failure
                 continue
             # A verification failure means the jaws already reached the object,
@@ -179,7 +189,10 @@ class PickAndPlaceModule(Module):
             self._selected_object_id = object_id
             self._selected_grasp = grasp
             self._holding_object = True
+            self._holding_group = group
             if failure := self._move(pregrasp, group):
+                return failure
+            if failure := self._verify_held(group):
                 return failure
             return SkillResult.ok(
                 "Pick complete",
@@ -223,24 +236,51 @@ class PickAndPlaceModule(Module):
             return SkillResult.fail(
                 "ROBOT_NOT_FOUND", "Gripper-capable planning group is missing or ambiguous"
             )
-        # The wrist angle that reached the pick is not always reachable over the
-        # place target, and a held object is free to spin about the approach
-        # axis, so the same yaw fallback the pick uses applies here.
+        if group != self._holding_group:
+            return SkillResult.fail("INVALID_STATE", "Place with the arm that picked the object")
         last_failure: SkillResult[ManipulationSkillError] | None = None
-        for yaw in self._place_yaw_offsets():
+        orientations = (
+            [Quaternion.from_euler(Vector3(*rpy)) for rpy in self.config.place_orientations_rpy]
+            if self.config.place_orientations_rpy
+            else [
+                self._selected_grasp.orientation * Quaternion.from_euler(Vector3(0.0, 0.0, yaw))
+                for yaw in self.config.place_yaw_offsets
+            ]
+        )
+        for orientation in orientations:
             place = PoseStamped(
                 frame_id=self.config.planning_frame,
                 position=Vector3(x, y, z),
-                orientation=self._selected_grasp.orientation
-                * Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+                orientation=orientation,
             )
-            preplace = self._offset_pose(place, self._pregrasp_offset())
-            if failure := self._move(preplace, group):
+            offset = self.config.preplace_offset or self.config.pregrasp_offset
+            preplace = self._offset_pose(
+                place, -offset if self.config.pregrasp_along_tool_z else offset
+            )
+            waypoints = [preplace, place]
+            if self.config.transfer_clearance is not None:
+                current = self._manipulation.get_state().groups[group].end_effector_pose
+                if current is None:
+                    return SkillResult.fail("EXECUTION_FAILED", "Tool pose unavailable")
+                height = max(current.position.z, z) + self.config.transfer_clearance
+                preplace = PoseStamped(
+                    frame_id=self.config.planning_frame,
+                    position=Vector3(x, y, height),
+                    orientation=orientation,
+                )
+                carry = PoseStamped(
+                    frame_id=self.config.planning_frame,
+                    position=Vector3(current.position.x, current.position.y, height),
+                    orientation=orientation,
+                )
+                waypoints = [carry, preplace, place]
+            if failure := self._move_sequence(waypoints, group, self.config.transfer_speed_scale):
+                if failure.error_code != "PLANNING_FAILED":
+                    return failure
                 last_failure = failure
                 continue
-            if failure := self._move(place, group):
-                last_failure = failure
-                continue
+            if failure := self._verify_held(group):
+                return failure
             if failure := self._open_gripper(group, "release"):
                 return failure
             self._holding_object = False
@@ -248,14 +288,18 @@ class PickAndPlaceModule(Module):
             return self._move(preplace, group) or SkillResult.ok("Place complete")
         return last_failure or SkillResult.fail("PLANNING_FAILED", "No place pose was reachable")
 
-    def _place_yaw_offsets(self) -> list[float]:
-        step = math.pi / 4.0
-        return [0.0, math.pi, step, -step, 2 * step, -2 * step, 3 * step, -3 * step]
+    @rpc
+    def reset_selection(self) -> None:
+        """Clear held-object bookkeeping after the caller has reset the physical scene."""
+        self._holding_object = False
+        self._objects = {}
+        self._clear_selection()
 
     def _clear_selection(self) -> None:
         self._grasp_candidates = GraspCandidateArray()
         self._selected_object_id = None
         self._selected_grasp = None
+        self._holding_group = None
 
     def _resolve_group(self, planning_group: PlanningGroupID | None) -> PlanningGroupID | None:
         groups = [
@@ -300,7 +344,59 @@ class PickAndPlaceModule(Module):
         execution = self._manipulation.execute(blocking=True)
         if not execution.succeeded:
             return SkillResult.fail("EXECUTION_FAILED", execution.message)
-        return None
+        return self._await_pose(pose, planning_group)
+
+    def _move_sequence(
+        self,
+        poses: list[PoseStamped],
+        planning_group: PlanningGroupID,
+        speed_scale: float | None = None,
+    ) -> SkillResult[ManipulationSkillError] | None:
+        plan = (
+            self._manipulation.plan_pose_sequence(poses, planning_group)
+            if speed_scale is None
+            else self._manipulation.plan_pose_sequence(
+                poses, planning_group, speed_scale=speed_scale
+            )
+        )
+        if not plan.succeeded:
+            return SkillResult.fail("PLANNING_FAILED", plan.message)
+        execution = self._manipulation.execute(blocking=True)
+        if not execution.succeeded:
+            return SkillResult.fail("EXECUTION_FAILED", execution.message)
+        return self._await_pose(poses[-1], planning_group)
+
+    def _await_pose(
+        self, target: PoseStamped, group: PlanningGroupID
+    ) -> SkillResult[ManipulationSkillError] | None:
+        tolerance = self.config.motion_position_tolerance
+        if tolerance is None:
+            return None
+        deadline = time.monotonic() + self.config.motion_settle_timeout
+        previous = None
+        stable = 0
+        while True:
+            pose = self._manipulation.get_state().groups[group].end_effector_pose
+            if pose is not None:
+                error = pose.position.distance(target.position)
+                angle = pose.orientation.angle_to(target.orientation)
+                if error <= tolerance and angle <= self.config.motion_orientation_tolerance:
+                    stable = (
+                        stable + 1
+                        if previous is not None
+                        and pose.position.distance(previous) <= tolerance / 10
+                        else 0
+                    )
+                    if stable >= 2:
+                        return None
+                else:
+                    stable = 0
+                previous = pose.position
+            if time.monotonic() >= deadline:
+                return SkillResult.fail(
+                    "EXECUTION_FAILED", f"Tool did not reach {target}; measured {pose}"
+                )
+            time.sleep(0.05)
 
     def _command_and_settle(
         self,
@@ -360,3 +456,18 @@ class PickAndPlaceModule(Module):
     def _gripper_position(self, planning_group: PlanningGroupID) -> float | None:
         state = self._manipulation.get_state().groups.get(planning_group)
         return state.gripper_position if state is not None else None
+
+    def _verify_held(
+        self, planning_group: PlanningGroupID
+    ) -> SkillResult[ManipulationSkillError] | None:
+        config = self.config.grasp_verification
+        if not config.enabled:
+            return None
+        position = self._gripper_position(planning_group)
+        if position is None:
+            return SkillResult.fail("GRASP_VERIFICATION_FAILED", "Gripper readback unavailable")
+        if not config.held_low < position < config.held_high:
+            self._holding_object = False
+            self._clear_selection()
+            return SkillResult.fail("GRASP_VERIFICATION_FAILED", "Object was lost during motion")
+        return None

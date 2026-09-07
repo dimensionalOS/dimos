@@ -40,6 +40,7 @@ class PinkKinematicsConfig(BaseConfig):
 
     backend: Literal["pink"] = "pink"
     solver: str = "proxqp"
+    solver_kwargs: dict[str, float] = Field(default_factory=dict)
     dt: float = 0.05
     max_iterations: int = 200
     damping: float = 1e-8

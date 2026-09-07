@@ -36,6 +36,7 @@ from dimos.simulation.engines.robot_sim_binding import (
     RobotSimSpec,
     resolve_robot_sim_binding,
 )
+from dimos.simulation.perception.mujoco_surface import sample_body_surface, sample_scene_surface
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
 
@@ -49,10 +50,10 @@ _MJOBJ_MESH = int(mujoco.mjtObj.mjOBJ_MESH)
 _MJGEOM_MESH = int(mujoco.mjtGeom.mjGEOM_MESH)
 _GEOM_TYPE_NAMES = {
     int(mujoco.mjtGeom.mjGEOM_PLANE): "plane",
-    int(mujoco.mjtGeom.mjGEOM_HFIELD): "hfield",
+    int(mujoco.mjtGeom.mjGEOM_HFIELD): "hfield",  # type: ignore[attr-defined]
     int(mujoco.mjtGeom.mjGEOM_SPHERE): "sphere",
     int(mujoco.mjtGeom.mjGEOM_CAPSULE): "capsule",
-    int(mujoco.mjtGeom.mjGEOM_ELLIPSOID): "ellipsoid",
+    int(mujoco.mjtGeom.mjGEOM_ELLIPSOID): "ellipsoid",  # type: ignore[attr-defined]
     int(mujoco.mjtGeom.mjGEOM_CYLINDER): "cylinder",
     int(mujoco.mjtGeom.mjGEOM_BOX): "box",
     _MJGEOM_MESH: "mesh",
@@ -254,7 +255,7 @@ class MujocoEngine(SimulationEngine):
         self._control_frequency = 1.0 / timestep if timestep > 0.0 else 100.0
 
         self._connected = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._reset_requested = False
         self._reset_done_events: list[threading.Event] = []
         self._stop_event = threading.Event()
@@ -488,7 +489,14 @@ class MujocoEngine(SimulationEngine):
         for state in cam_renderers.values():
             if now - state.last_render_time < state.interval:
                 continue
-            state.last_render_time = now
+            # Advance the scheduled deadline, rather than adding every loop's
+            # lateness to the next period. Fixed-rate dataset alignment relies
+            # on a camera clock that does not drift through the sampling grid.
+            if state.last_render_time == 0.0:
+                state.last_render_time = now
+            else:
+                periods = max(1, math.floor((now - state.last_render_time) / state.interval))
+                state.last_render_time += periods * state.interval
 
             state.rgb_renderer.update_scene(
                 self._data, camera=state.cam_id, scene_option=state.scene_option
@@ -664,18 +672,20 @@ class MujocoEngine(SimulationEngine):
                     self._on_before_step(self)
                 except Exception as exc:
                     logger.error("on_before_step failed", error=str(exc))
-            self._apply_control()
-            mujoco.mj_step(self._model, self._data)
-            if sync_viewer:
-                m_viewer.sync()
-            self._update_joint_state()
+            with self._lock:
+                self._apply_control()
+                mujoco.mj_step(self._model, self._data)
+                if sync_viewer:
+                    m_viewer.sync()
+                self._update_joint_state()
             if self._on_after_step is not None:
                 try:
                     self._on_after_step(self)
                 except Exception as exc:
                     logger.error("on_after_step failed", error=str(exc))
-            self._render_cameras(loop_start, cam_renderers)
-            self._raycast_lidars(loop_start, lidar_states)
+            with self._lock:
+                self._render_cameras(loop_start, cam_renderers)
+                self._raycast_lidars(loop_start, lidar_states)
 
             elapsed = time.time() - loop_start
             sleep_time = dt - elapsed
@@ -917,6 +927,52 @@ class MujocoEngine(SimulationEngine):
             qw, qx, qy, qz = self._data.xquat[body_id].copy()
             return position, np.array([qx, qy, qz, qw], dtype=np.float64)
 
+    def sample_body_surface(self, name: str, count: int = 512) -> list[list[float]]:
+        """Sample a coherent world-frame body surface between physics steps."""
+        with self._lock:
+            return cast(
+                "list[list[float]]",
+                sample_body_surface(self._model, self._data, name, count).tolist(),
+            )
+
+    def sample_scene_surface(
+        self, exclude: tuple[str, ...] = (), voxel_size: float = 0.01, count: int = 20000
+    ) -> list[list[float]]:
+        """Sample scene geometry between physics steps."""
+        with self._lock:
+            return cast(
+                "list[list[float]]",
+                sample_scene_surface(
+                    self._model, self._data, exclude, voxel_size=voxel_size, count=count
+                ).tolist(),
+            )
+
+    def set_body_pose(self, body_name: str, xyz: list[float], quat: list[float]) -> None:
+        """Set a free body's world pose (xyzw quaternion), clearing its velocity."""
+        position = np.asarray(xyz, dtype=float)
+        orientation = np.asarray(quat, dtype=float)
+        if position.shape != (3,) or orientation.shape != (4,):
+            raise ValueError("Expected xyz[3] and quaternion xyzw[4]")
+        if not np.all(np.isfinite(position)) or not np.all(np.isfinite(orientation)):
+            raise ValueError("Body pose must be finite")
+        norm = float(np.linalg.norm(orientation))
+        if norm < 1e-12:
+            raise ValueError("Quaternion must have nonzero norm")
+        orientation /= norm
+        with self._lock:
+            body_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+            if body_id < 0:
+                raise ValueError(f"Unknown body: {body_name}")
+            joint_id = int(self._model.body_jntadr[body_id])
+            if joint_id < 0 or self._model.jnt_type[joint_id] != _MJJNT_FREE:
+                raise ValueError(f"Body has no free joint: {body_name}")
+            qadr = int(self._model.jnt_qposadr[joint_id])
+            vadr = int(self._model.jnt_dofadr[joint_id])
+            self._data.qpos[qadr : qadr + 3] = position
+            self._data.qpos[qadr + 3 : qadr + 7] = orientation[[3, 0, 1, 2]]
+            self._data.qvel[vadr : vadr + 6] = 0.0
+            mujoco.mj_forward(self._model, self._data)
+
     def get_body_geoms(self, body_name: str) -> list[GeomInfo] | None:
         """World-frame geometry of one rigid body, or None when it is unknown.
 
@@ -953,7 +1009,7 @@ class MujocoEngine(SimulationEngine):
                 if mesh_id >= 0:
                     mesh_name = mujoco.mj_id2name(self._model, _MJOBJ_MESH, mesh_id)
             quat = np.zeros(4, dtype=np.float64)
-            mujoco.mju_mat2Quat(quat, self._data.geom_xmat[geom_id])
+            mujoco.mju_mat2Quat(quat, self._data.geom_xmat[geom_id])  # type: ignore[attr-defined]
             geoms.append(
                 GeomInfo(
                     name=mujoco.mj_id2name(self._model, _MJOBJ_GEOM, geom_id),

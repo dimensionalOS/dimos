@@ -243,6 +243,13 @@ class ManipulationSpec(Spec, Protocol):
         self, blocking: bool = True, timeout: float | None = None, *, plan_id: str | None = None
     ) -> ExecutionResult: ...
 
+    def plan_pose_sequence(
+        self,
+        poses: list[PoseStamped],
+        planning_group: PlanningGroupID,
+        speed_scale: float | None = None,
+    ) -> PlanResult: ...
+
     def wait_for_execution(self, timeout: float | None = None) -> ExecutionResult: ...
 
     def move_linear(

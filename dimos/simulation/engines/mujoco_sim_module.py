@@ -852,6 +852,14 @@ class MujocoSimModule(
         return engine.get_body_geoms(name) or []
 
     @rpc
+    def set_body_pose(self, name: str, xyz: list[float], quat: list[float]) -> bool:
+        """Move a free body to a world pose (xyzw quaternion) and clear its velocity."""
+        if self._engine is None:
+            return False
+        self._engine.set_body_pose(name, xyz, quat)
+        return True
+
+    @rpc
     def list_body_names(self) -> list[str]:
         """Every named body in the compiled model, worldbody excluded."""
         engine = self._engine
@@ -867,12 +875,10 @@ class MujocoSimModule(
     @rpc
     def sample_body_surface(self, name: str, count: int = 512) -> list[list[float]]:
         """World-frame surface samples of one body; see ``mujoco_surface``."""
-        from dimos.simulation.perception.mujoco_surface import sample_body_surface
-
         engine = self._engine
         if engine is None:
             return []
-        return sample_body_surface(engine.model, engine.data, name, count).tolist()
+        return engine.sample_body_surface(name, count)
 
     @rpc
     def sample_scene_surface(
@@ -882,19 +888,10 @@ class MujocoSimModule(
         count: int = 20000,
     ) -> list[list[float]]:
         """World-frame surface samples of the scene minus *exclude*, voxelised."""
-        from dimos.simulation.perception.mujoco_surface import sample_scene_surface
-
         engine = self._engine
         if engine is None:
             return []
-        points = sample_scene_surface(
-            engine.model,
-            engine.data,
-            tuple(exclude or ()),
-            voxel_size=voxel_size,
-            count=count,
-        )
-        return points.tolist()
+        return engine.sample_scene_surface(tuple(exclude or ()), voxel_size, count)
 
     def _compute_root_spawn_clearance_z(self) -> float | None:
         engine = self._engine
@@ -991,7 +988,7 @@ class MujocoSimModule(
             self._shm_ready_signaled = True
 
     def _build_camera_info(self) -> None:
-        if self._engine is None:
+        if self._engine is None or not self.config.camera_name:
             return
         fovy_deg = self._engine.get_camera_fovy(self.config.camera_name)
         if fovy_deg is None:
@@ -1100,7 +1097,9 @@ class MujocoSimModule(
             return
         specs = list(self.config.extra_cameras)
         fastest = max((spec.fps for spec in specs if spec.fps > 0), default=0.0)
-        interval = 1.0 / fastest if fastest > 0 else 0.1
+        # Poll faster than capture: two unsynchronized loops at the same rate
+        # can skip a new frame and publish different cameras from different ticks.
+        interval = 0.25 / fastest if fastest > 0 else 0.1
         ports = {spec.name: getattr(self, spec.stream) for spec in specs}
         last_timestamps = dict.fromkeys(ports, 0.0)
         first_published = False

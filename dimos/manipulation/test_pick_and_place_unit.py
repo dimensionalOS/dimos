@@ -51,6 +51,9 @@ def module() -> Iterator[PickAndPlaceModule]:
         }
     )
     instance._manipulation.plan_to_poses.return_value = SimpleNamespace(succeeded=True, message="")
+    instance._manipulation.plan_pose_sequence.return_value = SimpleNamespace(
+        succeeded=True, message=""
+    )
     instance._manipulation.execute.return_value = SimpleNamespace(succeeded=True, message="")
     instance._manipulation.set_gripper_position.return_value = SimpleNamespace(
         succeeded=True, message=""
@@ -84,9 +87,12 @@ def test_scan_objects_uses_latest_scan_ids(module: PickAndPlaceModule) -> None:
     scene: Any = module._scene
     scene.scan_scene.return_value = SimpleNamespace(
         detections_length=1,
+        header=Header(1.0, "world"),
         detections=[
             SimpleNamespace(
-                id="cup-1", results=[SimpleNamespace(hypothesis=SimpleNamespace(class_id="cup"))]
+                id="cup-1",
+                results=[SimpleNamespace(hypothesis=SimpleNamespace(class_id="cup"))],
+                bbox=SimpleNamespace(center=Pose(position=Vector3(0.1, 0.2, 0.3))),
             )
         ],
     )
@@ -94,7 +100,12 @@ def test_scan_objects_uses_latest_scan_ids(module: PickAndPlaceModule) -> None:
     result = module.scan_objects([" cup "])
 
     assert result.is_success()
-    assert module.get_object("cup-1") == {"object_id": "cup-1", "name": "cup"}
+    assert module.get_object("cup-1") == {
+        "object_id": "cup-1",
+        "name": "cup",
+        "position": [0.1, 0.2, 0.3],
+        "frame_id": "world",
+    }
     scene.scan_scene.assert_called_once_with(text=["cup"])
 
 
@@ -169,11 +180,12 @@ def test_place_uses_local_axis_and_clears_held_state(module: PickAndPlaceModule)
         orientation=Quaternion.from_euler(Vector3(-3.141592653589793, 0.0, 0.0)),
     )
     module._holding_object = True
+    module._holding_group = "arm/tool"
 
     result = module.place_at(0.4, 0.0, 0.2)
 
     assert result.is_success()
-    preplace = manipulation.plan_to_poses.call_args_list[0].args[0]["arm/tool"]
+    preplace = manipulation.plan_pose_sequence.call_args_list[0].args[0][0]
     assert preplace.position.z == pytest.approx(0.3)
     assert not module._holding_object
     assert module._selected_grasp is None
@@ -195,6 +207,7 @@ def test_scan_failure_clears_stale_selection(module: PickAndPlaceModule) -> None
 def test_pick_rejects_when_already_holding(module: PickAndPlaceModule) -> None:
     manipulation: Any = module._manipulation
     module._holding_object = True
+    module._holding_group = "arm/tool"
     module._selected_grasp = PoseStamped(frame_id="world")
 
     pick = module.pick_object("cup-1")
@@ -215,7 +228,6 @@ def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> No
 def test_pick_retains_held_state_when_retract_fails(module: PickAndPlaceModule) -> None:
     manipulation: Any = module._manipulation
     manipulation.execute.side_effect = [
-        SimpleNamespace(succeeded=True, message=""),
         SimpleNamespace(succeeded=True, message=""),
         SimpleNamespace(succeeded=False, message="retract failed"),
     ]
@@ -313,6 +325,7 @@ def test_place_retains_held_state_when_release_fails(
 ) -> None:
     module._selected_grasp = PoseStamped(frame_id="world")
     module._holding_object = True
+    module._holding_group = "arm/tool"
 
     def settle(read: Any, target: float, config: Any, **_: Any) -> GripperSettle:
         return GripperSettle(True, 0.5, True, 0.1)

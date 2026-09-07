@@ -295,13 +295,25 @@ class PinkIK(_PinkSolverCore):
             )
             joint_positions = self._q_to_dimos_positions(robot_context, configuration.q)
             if not _within_limits(joint_positions, lower_limits, upper_limits):
+                violations = [
+                    f"{name}={value:.6g} outside [{lower:.6g}, {upper:.6g}]"
+                    for name, value, lower, upper in zip(
+                        robot_context.mapping.dimos_joint_names,
+                        joint_positions,
+                        lower_limits,
+                        upper_limits,
+                        strict=True,
+                    )
+                    if value < lower - 1e-8 or value > upper + 1e-8
+                ]
                 return IKResult(
                     status=IKStatus.JOINT_LIMITS,
                     joint_state=None,
                     position_error=final_position_error,
                     orientation_error=final_orientation_error,
                     iterations=iteration + 1,
-                    message="Pink IK candidate violates DimOS joint limits",
+                    message="Pink IK candidate violates DimOS joint limits: "
+                    + "; ".join(violations),
                 )
         return IKResult(
             status=IKStatus.NO_SOLUTION,

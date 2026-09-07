@@ -20,6 +20,7 @@ import math
 
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import Field
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -48,7 +49,8 @@ class HeuristicGraspConfig(ModuleConfig):
     # is symmetric under a half turn, and on a round object the narrow axis is
     # arbitrary, so these are the same physical grasp reached differently -
     # which matters when one wrist angle falls outside an arm's envelope.
-    yaw_candidates: int = 1
+    yaw_candidates: int = Field(default=1, ge=1, le=8)
+    yaw_symmetry_tolerance: float = Field(default=0.05, ge=0.0, lt=1.0)
 
 
 class HeuristicGraspModule(Module, GraspGenSpec):
@@ -75,7 +77,7 @@ class HeuristicGraspModule(Module, GraspGenSpec):
         center_xy = np.median(xy, axis=0)
         low_z, high_z = np.quantile(points[:, 2], [0.05, 0.95])
         position = Vector3(float(center_xy[0]), float(center_xy[1]), float((low_z + high_z) / 2.0))
-        base_yaw, ambiguous = self._narrow_axis_yaw(xy)
+        base_yaw, ambiguous = self._narrow_axis_yaw(xy, self.config.yaw_symmetry_tolerance)
         candidates = [
             GraspCandidate(
                 Pose(
@@ -121,12 +123,14 @@ class HeuristicGraspModule(Module, GraspGenSpec):
         return orientation * Quaternion.from_euler(Vector3(roll, pitch, yaw))
 
     @staticmethod
-    def _narrow_axis_yaw(xy: NDArray[np.float32]) -> tuple[float, bool]:
+    def _narrow_axis_yaw(
+        xy: NDArray[np.float32], symmetry_tolerance: float = 0.05
+    ) -> tuple[float, bool]:
         """Yaw of the cross-section's narrow axis, and whether it is ambiguous."""
         centered = xy - np.mean(xy, axis=0)
         covariance = centered.T @ centered
         values, vectors = np.linalg.eigh(covariance)
-        if values[1] <= 0.0 or np.isclose(values[0], values[1], rtol=0.05):
+        if values[1] <= 0.0 or np.isclose(values[0], values[1], rtol=symmetry_tolerance):
             return 0.0, True
         narrow_axis = vectors[:, 0]
         yaw = math.atan2(float(narrow_axis[1]), float(narrow_axis[0])) - math.pi / 2.0

@@ -64,7 +64,7 @@ from dimos.manipulation.planning.planners.config import (
 )
 from dimos.manipulation.planning.planners.roboplan_config import RoboPlanPlannerConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType
+from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import (
     DEFAULT_OBSTACLE_RGBA,
     CartesianTarget,
@@ -693,6 +693,56 @@ class ManipulationModule(Module):
         plan = self.generate_plan_to_pose_targets(targets, speed_scale=speed_scale)
         if plan is None:
             return PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
+        return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
+
+    @rpc
+    def plan_pose_sequence(
+        self,
+        poses: list[PoseStamped],
+        planning_group: PlanningGroupID,
+        speed_scale: float | None = None,
+    ) -> PlanResult:
+        """Plan every pose from the preceding endpoint before permitting execution."""
+        self._clear_pending_plan()
+        if not poses:
+            return PlanResult(PlanStatus.INVALID_TARGET, "At least one pose is required")
+        if self._world_monitor is None or self._planner is None:
+            return PlanResult(PlanStatus.FAILED, "Planning not initialized")
+        planning = self._begin_group_planning(speed_scale)
+        if planning is None:
+            return PlanResult(PlanStatus.FAILED, self._error_message)
+        epoch, scale = planning
+        groups = (planning_group,)
+        resolved = self._resolve_group_plan_start(groups, epoch)
+        if resolved is None:
+            return PlanResult(PlanStatus.FAILED, self._error_message)
+        selection, start = resolved
+        combined = PlanningResult(status=PlanningStatus.SUCCESS)
+        for index, pose in enumerate(poses):
+            ik = self.inverse_kinematics({planning_group: pose}, seed=start)
+            if not ik.is_success() or ik.joint_state is None:
+                message = f"Pose {index}: IK failed: {ik.message}"
+                self._fail_planning_epoch(epoch, message)
+                return PlanResult(PlanStatus.FAILED, message)
+            result = self._planner.plan_selected_joint_path(
+                world=self._world_monitor.world,
+                selection=selection,
+                start=start,
+                goal=ik.joint_state,
+                timeout=self.config.planning_timeout,
+            )
+            if not result.is_success() or not result.path:
+                message = f"Pose {index}: {result.status.name}: {result.message}"
+                self._fail_planning_epoch(epoch, message)
+                return PlanResult(PlanStatus.FAILED, message)
+            combined.path.extend(result.path if index == 0 else result.path[1:])
+            combined.planning_time += result.planning_time
+            combined.path_length += result.path_length
+            combined.iterations += result.iterations
+            start = result.path[-1]
+        plan = self._store_generated_plan(groups, combined, epoch, scale)
+        if plan is None:
+            return PlanResult(PlanStatus.FAILED, self._error_message)
         return PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
 
     def generate_plan_to_joint_targets(
@@ -1331,7 +1381,13 @@ class ManipulationModule(Module):
         logger.info("Stopping ManipulationModule")
 
         execution_manager = getattr(self, "_execution_manager", None)
-        if execution_manager is not None:
+        if execution_manager is not None and execution_manager.status not in {
+            ExecutionStatus.IDLE,
+            ExecutionStatus.NO_EXECUTION,
+            ExecutionStatus.COMPLETED,
+            ExecutionStatus.ABORTED,
+            ExecutionStatus.REJECTED,
+        }:
             cancellation = execution_manager.cancel()
             if cancellation.status is ExecutionStatus.UNCERTAIN:
                 logger.error(

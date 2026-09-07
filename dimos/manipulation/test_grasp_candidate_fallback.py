@@ -15,7 +15,6 @@
 from collections.abc import Iterator
 import math
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -116,26 +115,82 @@ def test_pick_skips_a_candidate_that_will_not_plan(
         [GraspCandidate(first, score=1.0), GraspCandidate(second, score=0.95)],
     )
 
-    planned: list[PoseStamped] = []
-    first_orientation = None
-
-    def plan(targets: dict[str, PoseStamped], **_: Any) -> SimpleNamespace:
-        nonlocal first_orientation
-        pose = next(iter(targets.values()))
-        planned.append(pose)
-        if first_orientation is None:
-            first_orientation = pose.orientation
-        rejected = pose.orientation == first_orientation
-        return SimpleNamespace(succeeded=not rejected, message="unreachable wrist angle")
-
-    module._manipulation.plan_to_poses.side_effect = plan
+    module._manipulation.plan_pose_sequence.side_effect = [
+        SimpleNamespace(succeeded=False, message="unreachable second waypoint"),
+        SimpleNamespace(succeeded=True, message=""),
+    ]
+    module._manipulation.plan_to_poses.return_value = SimpleNamespace(succeeded=True, message="")
 
     result = module.pick_object("cup-1")
 
     assert result.success, result.message
     assert result.metadata["rank"] == 1
     assert result.metadata["candidates"] == 2
-    assert module._holding_object
-    # The first proposal was planned for and abandoned, not executed.
-    assert planned[0].orientation == first_orientation
-    assert planned[-1].orientation != first_orientation
+    assert module._manipulation.execute.call_count == 2  # selected approach, then retreat
+    attempted = module._manipulation.plan_pose_sequence.call_args_list
+    assert len(attempted) == 2
+    assert attempted[0].args[0][1].orientation == first.orientation
+    assert attempted[1].args[0][1].orientation == second.orientation
+
+
+def test_pick_does_not_retry_an_execution_failure(module, monkeypatch):
+    monkeypatch.setattr(
+        "dimos.manipulation.pick_and_place_module.await_gripper_settle",
+        lambda read, target, config: GripperSettle(True, target, True, 0.1),
+    )
+    candidate = GraspCandidate(Pose(Vector3(0.4, 0.0, 0.2)), score=1.0)
+    module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [candidate, candidate]
+    )
+    module._manipulation.plan_pose_sequence.return_value = SimpleNamespace(succeeded=True)
+    module._manipulation.execute.return_value = SimpleNamespace(succeeded=False, message="fault")
+
+    result = module.pick_object("cup-1")
+
+    assert result.error_code == "EXECUTION_FAILED"
+    module._manipulation.plan_pose_sequence.assert_called_once()
+    module._manipulation.execute.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "positions,expected",
+    [
+        ([0.05, 0.0, 0.0, 0.0], None),
+        ([0.05, 0.05], "EXECUTION_FAILED"),
+    ],
+)
+def test_motion_waits_for_measured_tool_arrival(module, mocker, positions, expected):
+    module.config.motion_position_tolerance = 0.005
+    timer = mocker.patch("dimos.manipulation.pick_and_place_module.time")
+    timer.monotonic.side_effect = [0.0, *([0.0] * (len(positions) - 1)), 4.0]
+    module._manipulation.get_state.side_effect = [
+        SimpleNamespace(
+            groups={
+                "arm/tool": SimpleNamespace(
+                    end_effector_pose=PoseStamped(position=Vector3(x, 0, 0))
+                )
+            }
+        )
+        for x in positions
+    ]
+
+    result = module._await_pose(PoseStamped(), "arm/tool")
+
+    assert (result.error_code if result is not None else None) == expected
+
+
+def test_lost_object_is_not_released_as_a_successful_placement(module, monkeypatch):
+    module.config.grasp_verification.enabled = True
+    module._holding_object = True
+    module._holding_group = "arm/tool"
+    module._selected_grasp = PoseStamped(frame_id="world")
+    module._manipulation.plan_pose_sequence.return_value = SimpleNamespace(succeeded=True)
+    module._manipulation.get_state.return_value = SimpleNamespace(
+        groups={"arm/tool": SimpleNamespace(gripper_position=0.01, end_effector_pose=None)}
+    )
+
+    result = module.place_at(0.4, 0, 0.3, "arm/tool")
+
+    assert result.error_code == "GRASP_VERIFICATION_FAILED"
+    module._manipulation.set_gripper_position.assert_not_called()
+    assert module._holding_object is False
