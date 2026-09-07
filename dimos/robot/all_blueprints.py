@@ -66,6 +66,8 @@ all_blueprints = {
     "drone-basic": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic",
     "dual-openyam-planner-coordinator": "dimos.robot.manipulators.dual_openyam.blueprints.basic:dual_openyam_planner_coordinator",
     "dual-openyam-sim": "dimos.robot.manipulators.dual_openyam.blueprints.simulation:dual_openyam_sim",
+    "dual-openyam-sim-agent": "dimos.robot.manipulators.dual_openyam.blueprints.agentic:dual_openyam_sim_agent",
+    "dual-openyam-sim-pick-place": "dimos.robot.manipulators.dual_openyam.blueprints.simulation:dual_openyam_sim_pick_place",
     "dual-xarm6-planner-coordinator": "dimos.robot.manipulators.xarm.blueprints.basic:dual_xarm6_planner_coordinator",
     "go2-zenoh-basic": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_basic",
     "go2-zenoh-htc": "dimos.robot.unitree.go2.zenoh.blueprints:go2_zenoh_htc",
