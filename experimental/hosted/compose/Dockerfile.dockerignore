@@ -1,0 +1,12 @@
+**
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!dimos/
+!dimos/**
+!experimental/
+!experimental/hosted/
+!experimental/hosted/compose/
+!experimental/hosted/compose/free_body.xml
+!experimental/hosted/compose/requirements.txt

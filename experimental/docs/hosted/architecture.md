@@ -717,6 +717,20 @@ isolated behind the Host client/service protocol so they do not affect module
 APIs. Exact physical-robot selection should eventually use a cryptographic
 identity in addition to a human-readable name.
 
+## Docker Compose validation
+
+The runnable validation environment is documented in
+[`experimental/hosted/compose/README.md`](../../hosted/compose/README.md). It
+starts a dedicated Zenoh router plus independently supervised edge, compute,
+replay, and simulation Hosts. The `basic`, `replay`, and `sim` profiles verify
+automatic placement, remote fragment lifecycle, and application data crossing
+multiple Host boundaries. Each finite profile fails through its controller exit
+code if either the resolved placement or application-level result is incorrect.
+The long-running `visual` profile exercises the same distributed MuJoCo path and
+serves its live Rerun 3D scene through ports 9878 (Web Viewer) and 9877 (gRPC)
+until the user stops Compose. The runner prints the complete Viewer URL with the
+gRPC source query parameter.
+
 ## Compatibility and breaking changes
 
 The design is additive at the user-facing module and blueprint level:

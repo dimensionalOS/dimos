@@ -35,7 +35,12 @@ def reconstruct_pointcloud(points_array):  # type: ignore[no-untyped-def]
 def register_picklers() -> None:
     # Register for the actual PointCloud class that gets instantiated
     # We need to create a dummy PointCloud to get its actual class
-    import open3d as o3d  # type: ignore[import-untyped]
+    try:
+        import open3d as o3d  # type: ignore[import-untyped]
+    except ModuleNotFoundError as error:
+        if error.name != "open3d":
+            raise
+        return
 
     _dummy_pc = o3d.geometry.PointCloud()
     copyreg.pickle(_dummy_pc.__class__, reduce_external)

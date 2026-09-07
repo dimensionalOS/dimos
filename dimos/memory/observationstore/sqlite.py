@@ -35,6 +35,8 @@ from dimos.memory.type.filter import (
 from dimos.memory.type.observation import _UNLOADED, Observation, PoseTuple
 from dimos.memory.utils.sqlite import open_disposable_sqlite_connection
 
+_JSON_FUNCTION = "jsonb" if sqlite3.sqlite_version_info >= (3, 45, 0) else "json"
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -262,7 +264,7 @@ class SqliteObservationStore(ObservationStore[T]):
             "    value   NUMERIC,"
             "    pose_x  REAL, pose_y REAL, pose_z REAL,"
             "    pose_qx REAL, pose_qy REAL, pose_qz REAL, pose_qw REAL,"
-            "    tags    BLOB    DEFAULT (jsonb('{}'))"
+            f"    tags    BLOB    DEFAULT ({_JSON_FUNCTION}('{{}}'))"
             ")"
         )
         self._conn.execute(
@@ -345,7 +347,7 @@ class SqliteObservationStore(ObservationStore[T]):
 
             cur = self._conn.execute(
                 f'INSERT INTO "{self._name}" (ts, value, pose_x, pose_y, pose_z, pose_qx, pose_qy, pose_qz, pose_qw, tags) '
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, jsonb(?))",
+                f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, {_JSON_FUNCTION}(?))",
                 (obs.ts, value, px, py, pz, qx, qy, qz, qw, tags_json),
             )
             row_id = cur.lastrowid

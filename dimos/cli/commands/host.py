@@ -38,7 +38,6 @@ if TYPE_CHECKING:
 host_app = typer.Typer(help="Run and inspect DimOS Hosts", no_args_is_help=True)
 HOST_ID_PATH = STATE_DIR / "hosted" / "host_id"
 HOST_LOCK_PATH = STATE_DIR / "hosted" / "host.lock"
-DISCOVERY_KEY = "dimos/hosts/*/live"
 DEFAULT_DISCOVERY_TIMEOUT = 2.0
 
 
@@ -97,37 +96,6 @@ def _host_rpc() -> Iterator[ZenohRPC]:
         yield rpc
 
 
-def _discover_host_ids(rpc: ZenohRPC, timeout: float) -> list[str]:
-    replies = rpc.session.liveliness().get(DISCOVERY_KEY, timeout=timeout)
-    host_ids: set[str] = set()
-    for reply in replies:
-        sample = reply.ok
-        if sample is None:
-            continue
-        key = str(sample.key_expr)
-        parts = key.split("/")
-        if len(parts) == 4 and parts[:2] == ["dimos", "hosts"] and parts[3] == "live":
-            host_ids.add(parts[2])
-    return sorted(host_ids)
-
-
-def _get_descriptor(rpc: ZenohRPC, host_id: str, timeout: float) -> HostDescriptor:
-    from dimos.hosted.daemon import HOST_CONTROL_RPC_NAME, HostDescriptor
-
-    control_name = HOST_CONTROL_RPC_NAME.format(host_id=host_id)
-    result, unsubscribe = rpc.call_sync(
-        f"{control_name}/describe",
-        ([], {}),
-        rpc_timeout=timeout,
-    )
-    try:
-        if not isinstance(result, HostDescriptor):
-            raise TypeError(f"Host {host_id} returned an invalid descriptor")
-        return result
-    finally:
-        unsubscribe()
-
-
 def _descriptor_dict(descriptor: HostDescriptor) -> dict[str, Any]:
     return {
         "host_id": descriptor.host_id,
@@ -182,13 +150,15 @@ def list_hosts(
     ),
 ) -> None:
     """List Hosts currently visible through Zenoh liveliness."""
+    from dimos.hosted.client import discover_host_ids, get_host_descriptor
+
     try:
         with _host_rpc() as rpc:
-            host_ids = _discover_host_ids(rpc, timeout)
+            host_ids = discover_host_ids(rpc, timeout)
             descriptors: list[HostDescriptor | dict[str, str]] = []
             for discovered_id in host_ids:
                 try:
-                    descriptors.append(_get_descriptor(rpc, discovered_id, timeout))
+                    descriptors.append(get_host_descriptor(rpc, discovered_id, timeout))
                 except Exception as exc:
                     descriptors.append({"host_id": discovered_id, "error": str(exc)})
     except Exception as exc:
@@ -234,15 +204,17 @@ def describe(
     ),
 ) -> None:
     """Describe one online Host by ID or unique exact name."""
+    from dimos.hosted.client import discover_host_ids, get_host_descriptor
+
     try:
         with _host_rpc() as rpc:
-            host_ids = _discover_host_ids(rpc, timeout)
+            host_ids = discover_host_ids(rpc, timeout)
             if host in host_ids:
-                descriptor = _get_descriptor(rpc, host, timeout)
+                descriptor = get_host_descriptor(rpc, host, timeout)
             else:
                 matches = []
                 for discovered_id in host_ids:
-                    item = _get_descriptor(rpc, discovered_id, timeout)
+                    item = get_host_descriptor(rpc, discovered_id, timeout)
                     if item.name == host:
                         matches.append(item)
                 if not matches:
@@ -317,12 +289,12 @@ def serve(
 ) -> None:
     """Serve one Host over the configured Zenoh fabric."""
     from dimos.hosted.daemon import (
-        FRAGMENT_SCHEMA_VERSION,
         HOST_CONTROL_RPC_NAME,
         HOST_LIVELINESS_KEY,
         HOST_PROTOCOL_VERSION,
         HostDaemon,
     )
+    from dimos.hosted.fragment import FRAGMENT_SCHEMA_VERSION
     from dimos.protocol.rpc.zenohrpc import ZenohRPC
     from dimos.protocol.service.zenohservice import ZenohSessionPool
 

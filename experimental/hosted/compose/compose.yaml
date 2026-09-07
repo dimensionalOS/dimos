@@ -1,0 +1,141 @@
+x-runtime-environment: &runtime-environment
+  DIMOS_TRANSPORT: zenoh
+  ZENOH_MODE: client
+  ZENOH_CONNECT: tcp/router:7447
+  ZENOH_CONNECT_TIMEOUT: "10"
+  ZENOH_GOSSIP: "true"
+  ZENOH_MULTICAST: "false"
+  ZENOH_SCOUTING: "false"
+  VIEWER: none
+  N_WORKERS: "2"
+  MUJOCO_GL: egl
+  PYTHONUNBUFFERED: "1"
+
+x-host: &host
+  image: dimos-hosted-validation:local
+  init: true
+  restart: "no"
+  environment: *runtime-environment
+  depends_on:
+    router:
+      condition: service_healthy
+  ulimits:
+    memlock:
+      soft: 67108864
+      hard: 67108864
+
+x-controller: &controller
+  image: dimos-hosted-validation:local
+  init: true
+  restart: "no"
+  environment: *runtime-environment
+  depends_on:
+    edge-host:
+      condition: service_started
+    compute-host:
+      condition: service_started
+    replay-host:
+      condition: service_started
+    sim-host:
+      condition: service_started
+  ulimits:
+    memlock:
+      soft: 67108864
+      hard: 67108864
+
+services:
+  router:
+    image: dimos-hosted-validation:local
+    build:
+      context: ../../..
+      dockerfile: experimental/hosted/compose/Dockerfile
+    init: true
+    restart: "no"
+    command: ["python", "-m", "dimos.hosted.demo_compose_scenarios", "router"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s=socket.create_connection(('127.0.0.1',7447),2); s.close()",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  edge-host:
+    <<: *host
+    hostname: edge-a
+    command:
+      ["python", "-m", "dimos.hosted.demo_compose_scenarios", "host", "--name", "edge-a", "--tag", "edge"]
+
+  compute-host:
+    <<: *host
+    hostname: compute-a
+    command:
+      ["python", "-m", "dimos.hosted.demo_compose_scenarios", "host", "--name", "compute-a", "--tag", "compute", "--tag", "gpu"]
+
+  replay-host:
+    <<: *host
+    hostname: replay-a
+    command:
+      ["python", "-m", "dimos.hosted.demo_compose_scenarios", "host", "--name", "replay-a", "--tag", "replay"]
+
+  sim-host:
+    <<: *host
+    hostname: sim-a
+    shm_size: 256mb
+    command:
+      ["python", "-m", "dimos.hosted.demo_compose_scenarios", "host", "--name", "sim-a", "--tag", "sim"]
+
+  verify-basic:
+    <<: *controller
+    hostname: controller-basic
+    profiles: ["basic"]
+    command: ["python", "-m", "dimos.hosted.demo_compose_scenarios", "run", "basic"]
+
+  verify-replay:
+    <<: *controller
+    hostname: controller-replay
+    profiles: ["replay"]
+    command: ["python", "-m", "dimos.hosted.demo_compose_scenarios", "run", "replay"]
+
+  verify-sim:
+    <<: *controller
+    hostname: controller-sim
+    profiles: ["sim"]
+    shm_size: 256mb
+    command:
+      [
+        "python",
+        "-m",
+        "dimos.hosted.demo_compose_scenarios",
+        "run",
+        "sim",
+        "--result-timeout",
+        "60",
+      ]
+
+  verify-visual:
+    <<: *controller
+    hostname: controller-visual
+    profiles: ["visual"]
+    shm_size: 256mb
+    environment:
+      <<: *runtime-environment
+      LISTEN_HOST: 0.0.0.0
+      RERUN_HOST: 0.0.0.0
+    ports:
+      - "9877:9877"
+      - "9878:9878"
+    command:
+      [
+        "python",
+        "-m",
+        "dimos.hosted.demo_compose_scenarios",
+        "run",
+        "visual",
+        "--result-timeout",
+        "60",
+      ]

@@ -1189,10 +1189,14 @@ def _async_methods_of_spec(spec: Any) -> frozenset[str]:
 
 def _log_blueprint_graph(blueprint: Blueprint, module_coordinator: ModuleCoordinator) -> None:
     """Log the module graph to Rerun if a RerunBridgeModule is active."""
-    from dimos.visualization.rerun.bridge import RerunBridgeModule
-
-    if not any(bp.module is RerunBridgeModule for bp in blueprint.active_blueprints):
+    rerun_bridge_type = "dimos.visualization.rerun.bridge.RerunBridgeModule"
+    if not any(
+        f"{atom.module.__module__}.{atom.module.__qualname__}" == rerun_bridge_type
+        for atom in blueprint.active_blueprints
+    ):
         return
+
+    from dimos.visualization.rerun.bridge import RerunBridgeModule
 
     if not shutil.which("dot"):
         logger.info(
