@@ -31,6 +31,7 @@ import asyncio
 import io
 from pathlib import Path
 from queue import Empty, Queue
+import socket
 import subprocess
 from threading import Lock
 import time
@@ -355,13 +356,45 @@ class FastAPIServer(EdgeIO):
             self.app.get(f"/video_feed/{key}")(self.create_video_feed_route(key))  # type: ignore[no-untyped-call]
 
     @staticmethod
-    def _ensure_certs(certs_dir: Path) -> tuple[str, str]:
+    def _subject_alt_names() -> str:
+        """Every name a headset might dial this host by.
+
+        Chromium (Quest Browser, PICO Browser) ignores the certificate's common
+        name entirely and matches only subjectAltName. A cert without one is
+        rejected as ERR_CERT_COMMON_NAME_INVALID, and for a bare IP the
+        interstitial often offers no way through -- so the operator sees the
+        page fail to load with no obvious cause.
+        """
+        entries = ["DNS:localhost", "IP:127.0.0.1", "IP:::1"]
+        try:
+            import psutil
+
+            for addrs in psutil.net_if_addrs().values():
+                for addr in addrs:
+                    if addr.family is socket.AF_INET and not addr.address.startswith("127."):
+                        entries.append(f"IP:{addr.address}")
+        except Exception:  # no psutil, or an interface we cannot read
+            pass
+        return ",".join(dict.fromkeys(entries))
+
+    @staticmethod
+    def _cert_has_san(cert_path: Path) -> bool:
+        result = subprocess.run(
+            ["openssl", "x509", "-in", str(cert_path), "-noout", "-ext", "subjectAltName"],
+            capture_output=True,
+        )
+        return result.returncode == 0 and b"IP Address" in result.stdout
+
+    @classmethod
+    def _ensure_certs(cls, certs_dir: Path) -> tuple[str, str]:
         """Return (cert_path, key_path), generating self-signed certs if needed.
         HTTPS is required by browsers for sensor APIs (DeviceOrientation)"""
         cert_path = certs_dir / "cert.pem"
         key_path = certs_dir / "key.pem"
 
-        if cert_path.exists() and key_path.exists():
+        # Regenerate a SAN-less cert rather than keeping a pair no browser
+        # will accept: the old one was issued for /CN=localhost only.
+        if cert_path.exists() and key_path.exists() and cls._cert_has_san(cert_path):
             return str(cert_path), str(key_path)
 
         certs_dir.mkdir(parents=True, exist_ok=True)
@@ -381,6 +414,8 @@ class FastAPIServer(EdgeIO):
                 "-nodes",
                 "-subj",
                 "/CN=localhost",
+                "-addext",
+                f"subjectAltName={cls._subject_alt_names()}",
             ],
             capture_output=True,
         )
