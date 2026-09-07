@@ -1,0 +1,58 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from types import SimpleNamespace
+
+import pytest
+
+from dimos.robot.manipulators.dual_openyam.tool_generate_demos import recording_episode
+
+
+def test_verified_episode_is_saved(mocker):
+    monitor = mocker.Mock()
+    monitor.get_status.return_value = SimpleNamespace(state="idle")
+    monitor.command.side_effect = [
+        SimpleNamespace(state="recording"),
+        SimpleNamespace(state="idle"),
+    ]
+
+    with recording_episode(monitor):
+        pass
+
+    assert [call.args[0] for call in monitor.command.call_args_list] == ["start", "save"]
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+def test_failed_or_interrupted_episode_is_discarded_and_propagates(mocker, failure):
+    monitor = mocker.Mock()
+    monitor.get_status.return_value = SimpleNamespace(state="idle")
+    monitor.command.side_effect = [
+        SimpleNamespace(state="recording"),
+        SimpleNamespace(state="idle"),
+    ]
+
+    with pytest.raises(failure), recording_episode(monitor):
+        raise failure("Interrupted take")
+
+    assert [call.args[0] for call in monitor.command.call_args_list] == ["start", "discard"]
+
+
+def test_collection_does_not_autosave_an_existing_take(mocker):
+    monitor = mocker.Mock()
+    monitor.get_status.return_value = SimpleNamespace(state="recording")
+
+    with pytest.raises(RuntimeError, match="already recording"), recording_episode(monitor):
+        pass
+
+    monitor.command.assert_not_called()
