@@ -301,12 +301,13 @@ Descriptors are scheduling hints and may change immediately after discovery.
 The `prepare` operation must revalidate compatibility, tags, devices, and free
 resources while acquiring a bounded lease.
 
-## Blueprint placement API
+## Blueprint hosted API
 
 An application remains a normal `Blueprint`. Placement metadata on one or more
 blueprint atoms or composed fragments activates distributed behavior.
 
-The additive placement API is a `placement()` modifier:
+The additive user-facing API is a `hosted()` modifier. It attaches placement
+metadata without changing placement semantics:
 
 ```python skip
 unitree_go2_markers = autoconnect(
@@ -314,7 +315,7 @@ unitree_go2_markers = autoconnect(
     MarkerDetectionStreamModule.blueprint(
         marker_length_m=0.1,
         camera_info=GO2Connection.camera_info_static,
-    ).placement(tags={"gpu"}),
+    ).hosted(tags={"gpu"}),
 )
 ```
 
@@ -325,15 +326,15 @@ Placement by embodiment and exact robot name uses the same mechanism:
 
 ```python skip
 multi_host_g1 = autoconnect(
-    unitree_g1.blueprint().placement(tags={"g1"}),
+    unitree_g1.blueprint().hosted(tags={"g1"}),
     navigation.blueprint(),
-    expensive.blueprint().placement(tags={"gpu"}),
+    expensive.blueprint().hosted(tags={"gpu"}),
 )
 
 pinned_g1 = autoconnect(
-    unitree_g1.blueprint().placement(host="g1-01"),
+    unitree_g1.blueprint().hosted(host="g1-01"),
     navigation.blueprint(),
-    expensive.blueprint().placement(tags={"gpu"}),
+    expensive.blueprint().hosted(tags={"gpu"}),
 )
 ```
 
@@ -341,21 +342,22 @@ The first application selects one available G1 Host, runs navigation locally,
 and selects one available GPU Host. The second pins only the robot fragment to
 the uniquely advertised name or Host ID `g1-01`.
 
-Placement is immutable blueprint metadata exposed through `placement()`. It is
+Placement is immutable blueprint metadata exposed through `hosted()`. It is
 not forwarded to module constructors, and the same modifier applies to a module
 or a composed fragment.
 
 The API has the following semantics:
 
-- `.placement(host=...)` is an exact selector matching a unique advertised Host
+- `.hosted()` selects one available compatible remote Host automatically.
+- `.hosted(host=...)` is an exact selector matching a unique advertised Host
   name or opaque Host ID.
-- `.placement(tags={...})` requires one Host containing every listed tag.
+- `.hosted(tags={...})` requires one Host containing every listed tag.
 - When both are given, the exact Host must also satisfy all tags.
-- Applying `.placement(...)` to a composed fragment makes it one placement unit;
+- Applying `.hosted(...)` to a composed fragment makes it one placement unit;
   all modules in that fragment are co-located.
 - A module with no placement metadata has a soft preference for the controlling
   machine, preserving current behavior.
-- `.placement(local=True)` can express a hard local constraint when needed.
+- `.hosted(local=True)` can express a hard local constraint when needed.
 - A module instance is assigned to exactly one Host. Replication or “all matching
   Hosts” requires a future explicit cardinality API.
 - Placement is resolved once at startup and recorded by Host ID. A later Host
@@ -647,7 +649,7 @@ is a later deployment-system concern, not part of Host orchestration.
 Tags enable a useful first step:
 
 ```python skip
-unitree_g1.blueprint().placement(tags={"g1"})
+unitree_g1.blueprint().hosted(tags={"g1"})
 ```
 
 This means “bind this placement unit to one live, compatible, available Host
@@ -724,8 +726,8 @@ The design is additive at the user-facing module and blueprint level:
 - `Module`, `In`, `Out`, `@rpc`, and local module-reference APIs do not change.
 - The existing local coordinator and worker implementation remain the runtime
   on every machine.
-- A blueprint with no remote placement metadata remains local.
-- A blueprint with remote placement metadata remains a `Blueprint`.
+- A blueprint with no remote `.hosted(...)` metadata remains local.
+- A blueprint with remote `.hosted(...)` metadata remains a `Blueprint`.
 - Network locators define Zenoh fabric membership; Host descriptors define
   placement candidates.
 
