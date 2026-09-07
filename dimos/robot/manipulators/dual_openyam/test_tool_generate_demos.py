@@ -16,7 +16,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from dimos.robot.manipulators.dual_openyam.tool_generate_demos import recording_episode
+from dimos.robot.manipulators.dual_openyam.tool_generate_demos import (
+    planning_model_sha256,
+    recording_episode,
+)
 
 
 def test_verified_episode_is_saved(mocker):
@@ -56,3 +59,17 @@ def test_collection_does_not_autosave_an_existing_take(mocker):
         pass
 
     monitor.command.assert_not_called()
+
+
+@pytest.mark.parametrize("second_mesh,same_model", [(b"mesh", True), (b"changed", False)])
+def test_recording_model_identity_uses_mesh_contents_instead_of_checkout_path(
+    tmp_path, second_mesh, same_model
+):
+    first = tmp_path / "first.stl"
+    second = tmp_path / "second.stl"
+    first.write_bytes(b"mesh")
+    second.write_bytes(second_mesh)
+    first_xml = f'<robot><link name="arm"><mesh filename="{first}"/></link></robot>'
+    second_xml = f'<robot><link name="arm"><mesh filename="{second}"/></link></robot>'
+
+    assert (planning_model_sha256(first_xml) == planning_model_sha256(second_xml)) is same_model

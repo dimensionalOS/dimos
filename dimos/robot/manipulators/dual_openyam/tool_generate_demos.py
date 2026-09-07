@@ -23,6 +23,7 @@ import json
 from pathlib import Path
 import time
 from typing import Any, TypeVar, cast
+import xml.etree.ElementTree as ET
 
 import numpy as np
 
@@ -158,13 +159,23 @@ def run_episode(
     }
 
 
+def planning_model_sha256(xml: str) -> str:
+    """Hash the expanded URDF and mesh bytes independently of checkout location."""
+    root = ET.fromstring(xml)
+    for mesh in root.iter("mesh"):
+        path = Path(mesh.attrib["filename"].removeprefix("file://"))
+        mesh.set("filename", hashlib.sha256(path.read_bytes()).hexdigest())
+    canonical = ET.canonicalize(ET.tostring(root, encoding="unicode"), strip_text=True)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
 def recording_manifest() -> dict[str, Any]:
     profile = DUAL_OPENYAM_LEROBOT_IO
     return {
         "scene_sha256": hashlib.sha256(DUAL_OPENYAM_SCENE_PATH.read_bytes()).hexdigest(),
-        "planning_model_sha256": hashlib.sha256(
-            dual_openyam_sim_model_config().model.load().xml.encode()
-        ).hexdigest(),
+        "planning_model_sha256": planning_model_sha256(
+            dual_openyam_sim_model_config().model.load().xml
+        ),
         "profile": profile.name,
         "io_contract": profile.model_dump(mode="json"),
         "task": DUAL_OPENYAM_SIM_TASK,
