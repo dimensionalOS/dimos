@@ -9,13 +9,14 @@ It has not been pushed. T7 and the live model acceptance run are incomplete.
 | --- | --- | --- |
 | Planner and simulator calibration | Joint limits agree; maximum measured TCP error 1.472 mm across six poses | `openyam-model-check.json` |
 | Classical bimanual sequence with cameras | 5/5 cycles, both bottles wholly contained after both placements, each lifted at least 5 cm for two seconds | `openyam-bimanual-identical.jsonl` |
-| ACT deployment using a diagnostic checkpoint | Real isolated process, GPU, three camera streams, 14 controlled joints; 12 accepted chunks, stop in 3.7 ms, subsequent reset works | `openyam-policy-smoke3.log`, `smoke-checkpoint/` |
+| ACT deployment using a diagnostic checkpoint | Real isolated process, GPU, three camera streams, 14 controlled joints; 12 accepted chunks, stop RPC returned in 3.7 ms; rollout inactive, subsequent reset works | `openyam-policy-smoke3.log`, `smoke-checkpoint/` |
 | Scripted collection | 47 physically successful saved takes, 34 valid for training, one interrupted take discarded | `openyam-training.db`, `openyam-before-resume-inspect.json` |
 | LeRobot export | 34 episodes, 11,084 frames, three RGB cameras and 14 state/action values, 15 Hz | `dataset-34/` |
 | Training and checkpoint compatibility | 20 CPU ACT training steps completed; saved checkpoint loads through the DimOS adapter and returns a finite 50×14 action chunk | `act-cpu-smoke/`, `trained-checkpoint-roundtrip.json` |
 | Focused regressions | 185 passed, 3 deselected; separate 13 CPU simulation tests and 23 isolated-process tests passed | `openyam-regression-final.log`, `openyam-sim-cpu-final.log`, `openyam-isolated-tests.log` |
 | Reset stability regression | Six tests passed, including moving and never-settling scenes | `openyam-reset-settle-tests.log` |
 | Local MCP execution after reset correction | 5/5 fixed-response trials, both bottles contained, both arms home, no failed skills; cameras disabled | `openyam-local-mcp-settle.jsonl` |
+| Recording portability | Six generator tests passed; equivalent planner assets match across checkouts, changed mesh contents do not | `openyam-manifest-tests.log` |
 
 The artifact directory is `/home/mustafa/dimos/recordings/openyam-completion`.
 `openyam-classical-right.mp4` is a three-camera recording of one actual scripted
@@ -71,12 +72,16 @@ and its manifest are preserved. Resume now keeps existing rows, checks the full
 IO contract and scene/model hashes, and counts only new takes that pass both
 physical and timing validation. Each collection module gets its own worker by
 default. The effect of that worker separation on timing has not yet been measured.
+Planner identity includes mesh contents and excludes machine-specific checkout
+paths. The preserved manifest was upgraded after verifying its previous digest
+and proving identical geometry in the feature and durable hub checkouts.
 
 After restoring the GPU, use the feature checkout and preserved recording:
 
 ```bash
 MUJOCO_GL=egl uv run python -m dimos.robot.manipulators.dual_openyam.tool_generate_demos \
   --resume --episodes 66 --max-attempts 110 --seed 47 \
+  --zenoh-scout-addr 224.0.0.224:17467 \
   --recording /home/mustafa/dimos/recordings/openyam-completion/openyam-training.db \
   --report /home/mustafa/dimos/recordings/openyam-completion/collection-resumed.jsonl
 
@@ -115,3 +120,8 @@ supplied and would need fresh calibration and physical acceptance checks.
 Shutdown still prints shared-memory resource-tracker warnings inherited from
 the SHM attachment/unregister lifecycle. The completed motion and stop checks
 are separate evidence; these warnings have not been resolved.
+
+Targeted mypy passed 34 source files with `--follow-imports=silent`; this excludes
+the separate LeRobot environment and is not a repo-wide type check. Applicable
+pre-commit hooks passed; `lfs_check` was skipped for the downloaded scene, which
+the pinned setup command reproduces.

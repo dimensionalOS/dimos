@@ -15,16 +15,25 @@ conversation. Tool results contain simulated bottle positions, bin bounds,
 joint/end-effector state, grasp/placement status, and error messages.
 
 This blueprint supplies privileged numeric simulation observations. Its camera
-streams feed the local viewer; these skills do not send camera images to the
-model. Repository files, recordings, dataset frames, environment variables,
+streams stay local; these skills do not send camera images to the model.
+Repository files, recordings, dataset frames, environment variables,
 and credential values are not included in the model input.
 
 The model's tool calls execute through the local MCP server at port 19990 and
 can move only this task's MuJoCo rig. The harness uses a separate local transport
-bus and checks physical containment after each trial. Raw model request/response
-bodies and trial outcomes are saved locally under `/tmp/openyam-agent-traces`
-and `/tmp/openyam-agent-acceptance.jsonl`. The harness times out a trial after
-240 seconds and shuts down its own stack.
+bus and checks physical containment after each trial. Use the maintained checker from the feature checkout:
+
+```bash
+MUJOCO_GL=egl .venv/bin/python -m dimos.robot.manipulators.dual_openyam.tool_check_agent \
+  --episodes 5 --mcp-port 19990 --zenoh-scout-addr 224.0.0.224:17467 \
+  --report /home/mustafa/dimos/recordings/openyam-completion/agent-live.jsonl
+```
+
+Raw model request/response bodies, messages, and trial outcomes stay beside
+that report (`agent-live.traces/`, `agent-live.messages.jsonl`). The checker
+times out each trial after 240 seconds and shuts down its own stack. It checks
+successful skills, both arms home, and both bottles contained. The diagnostic
+viewer is disabled; the three camera streams stay local.
 
 The diagnostic ACT policy has already passed real-process preflight, motion,
 stop, and reset checks. The scripted classical sequence has passed five of five
