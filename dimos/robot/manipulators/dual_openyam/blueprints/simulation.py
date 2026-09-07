@@ -14,8 +14,8 @@
 
 """Physics-backed Dual OpenYAM simulation blueprints.
 
-The coordinator picks the MuJoCo whole-body adapter from
-``global_config.simulation``, so these run under ``dimos --simulation mujoco``.
+The coordinator selects the MuJoCo whole-body adapter from the explicit scene
+path, independently of the process-wide simulation default.
 """
 
 from __future__ import annotations
@@ -33,13 +33,14 @@ from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     dual_openyam_gripper_task,
     dual_openyam_trajectory_task,
 )
-from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 from dimos.robot.manipulators.dual_openyam.sim import (
+    DUAL_OPENYAM_SCENE_PATH,
     DUAL_OPENYAM_SIM_CAMERAS,
     DualOpenYamSimModule,
     dual_openyam_sim_model_config,
     dual_openyam_sim_module,
 )
+from dimos.robot.manipulators.dual_openyam.sim_demo import SimDemoSkills
 from dimos.simulation.perception.blueprints import sim_scene_registration
 
 _dual_openyam_sim_tasks = [
@@ -50,9 +51,10 @@ _dual_openyam_sim_tasks = [
 
 dual_openyam_sim = autoconnect(
     dual_openyam_sim_module(),
-    planner(model=dual_openyam_model_config(), visualization={"backend": "viser"}),
+    planner(model=dual_openyam_sim_model_config(), visualization={"backend": "none"}),
     DualOpenYamCoordinator.blueprint(
         instance_name="ControlCoordinator",
+        sim_scene_path=DUAL_OPENYAM_SCENE_PATH,
         tasks=_dual_openyam_sim_tasks,
     ),
 )
@@ -64,6 +66,7 @@ DUAL_OPENYAM_SCENERY = ("world", "table", "gate", "bar", "camera", "bin")
 # Pink's defaults never converge on this model; these are the gains the Quest
 # teleop blueprint already tunes for the same arm.
 DUAL_OPENYAM_PINK = PinkKinematicsConfig(
+    solver_kwargs={"eps_abs": 1e-10, "eps_rel": 1e-10},
     dt=0.01,
     position_cost=8.0,
     orientation_cost=2.0,
@@ -78,18 +81,28 @@ dual_openyam_sim_pick_place = autoconnect(
     planner(
         model=dual_openyam_sim_model_config(),
         kinematics=DUAL_OPENYAM_PINK,
+        default_speed_scale=0.25,
         visualization={"backend": "none"},
     ),
     ManipulationSkills.blueprint(),
+    SimDemoSkills.blueprint(),
     PickAndPlaceModule.blueprint(
         planning_frame="world",
         # The OpenYAM grasp frame points Z out of the back of the palm, so the
         # pregrasp has to back off along +Z or it starts under the table.
         pregrasp_along_tool_z=True,
+        motion_position_tolerance=0.0075,
+        transfer_clearance=0.07,
+        transfer_speed_scale=0.5,
+        place_orientations_rpy=((0.0, 1.3, math.pi), (0.0, 1.0, math.pi)),
     ),
     # Same reason for the half turn about Y; the extra yaws matter because the
     # two arms accept different wrist bands over the same object.
-    HeuristicGraspModule.blueprint(tool_rotation_rpy=(0.0, math.pi, 0.0), yaw_candidates=8),
+    HeuristicGraspModule.blueprint(
+        tool_rotation_rpy=(0.0, math.pi, 0.0),
+        yaw_candidates=8,
+        yaw_symmetry_tolerance=0.15,
+    ),
     sim_scene_registration(
         target_frame="world",
         robot_body_substrings=DUAL_OPENYAM_ROBOT_BODIES,
@@ -97,6 +110,7 @@ dual_openyam_sim_pick_place = autoconnect(
     ),
     DualOpenYamCoordinator.blueprint(
         instance_name="ControlCoordinator",
+        sim_scene_path=DUAL_OPENYAM_SCENE_PATH,
         tasks=_dual_openyam_sim_tasks,
     ),
 )

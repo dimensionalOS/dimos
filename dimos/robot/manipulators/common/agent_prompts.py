@@ -136,7 +136,8 @@ world-frame pose (meters / radians).
 
 ## Status & Recovery
 - **get_robot_state**: Joint positions, end-effector poses, gripper states.
-- **reset**: Clear a FAULT and return to IDLE.
+- **reset_scene**: Stop policy motion, return both arms home, and restore the simulated scene.
+- **inspect_sim_scene**: Ground-truth bottle poses, bin bounds, and inside_bin flags.
 
 # Pick Workflow
 1. **scan_objects** with every requested object name.
@@ -147,10 +148,15 @@ world-frame pose (meters / radians).
 # Rules
 - Always pass planning_group. Never let it default.
 - One arm holds at most one object. Place what an arm is holding before \
-picking with it again; the other arm stays free to work in parallel.
+picking again. Execute pick/place sequences one at a time.
 - Use an exact object ID from the latest scan. Do NOT select by name.
 - NEVER open a gripper while that arm holds an object unless placing.
-- After any planning failure call **reset** before moving again.
+- Use **reset_scene** for a fresh attempt after a failed pick or place.
+- Bin center is approximately (0.65, 0.0), with the rim near z=0.95.
+  Release an upright bottle above the rim: start with place_at(0.65, 0.0, 1.05).
+  Inspect current bin bounds before choosing the release position.
+- Return the empty arm home after placement, then check **inspect_sim_scene**.
+  Require inside_bin=true for every requested bottle before reporting completion.
 
 # Coordinate System
 World frame (meters): X = forward, Y = left, Z = up. The table top is near \

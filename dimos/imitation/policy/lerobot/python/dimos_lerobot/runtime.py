@@ -34,6 +34,7 @@ import torch
 
 from dimos.imitation.policy.backend import PolicyBackendInfo
 from dimos.imitation.policy.lerobot.module import (
+    DualOpenYamLeRobotPolicy,
     LeRobotPolicyConfig,
     OpenYamLeRobotPolicy,
 )
@@ -139,6 +140,10 @@ class LeRobotBackend:
             raise RuntimeError("LeRobot backend is not loaded")
         return self._loaded
 
+
+DualOpenYamLeRobotPolicyRuntime = declare_policy_runtime(
+    "DualOpenYamLeRobotPolicyRuntime", __name__, DualOpenYamLeRobotPolicy, LeRobotBackend
+)
 
 LeRobotPolicyRuntime = declare_policy_runtime(
     "LeRobotPolicyRuntime",

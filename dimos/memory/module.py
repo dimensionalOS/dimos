@@ -273,6 +273,7 @@ class OnExisting(str, enum.Enum):
     ERROR = "error"
     BACKUP = "backup"
     APPEND = "append"
+    RESUME = "resume"
 
 
 class RecorderConfig(MemoryModuleConfig):
@@ -360,8 +361,8 @@ class Recorder(MemoryModule):
         # this module in a deployed blueprint.
         db_path = Path(self.config.db_path)
         if db_path.exists():
-            if self.config.on_existing is OnExisting.APPEND:
-                pass  # keep the db; _prepare_streams handles any per-stream replacement
+            if self.config.on_existing in {OnExisting.APPEND, OnExisting.RESUME}:
+                pass  # APPEND replaces selected streams; RESUME retains their existing rows.
             elif self.config.on_existing is OnExisting.OVERWRITE:
                 db_path.unlink()
                 logger.info("Deleted existing recording %s", db_path)

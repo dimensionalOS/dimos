@@ -11,6 +11,8 @@ dependencies = [
     "mcap>=1.2",
     "opencv-contrib-python>=4.8,<5",
     "transformers[torch]>=5.4,<5.6",
+    "torch==2.10.0",
+    "torchvision==0.25.0",
 ]
 
 [dependency-groups]
@@ -34,6 +36,15 @@ override-dependencies = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["dimos_lerobot*"]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }]
+torchvision = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" }]
 
 [tool.pytest.ini_options]
 testpaths = ["dimos_lerobot"]

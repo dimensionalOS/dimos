@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -24,15 +25,19 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.manipulators.dual_openyam.learning import (
+    DUAL_OPENYAM_SIM_CAMERA_SHAPE,
+    DUAL_OPENYAM_SIM_CAPTURE_FPS,
+)
+from dimos.robot.manipulators.dual_openyam.setup_sim_scene import SIM_ASSET_DIR
 from dimos.simulation.engines.mujoco_sim_module import (
     MujocoSimModule,
     SimCameraSpec,
     declare_sim_camera_module,
 )
 from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
-from dimos.utils.data import LfsPath
 
-DUAL_OPENYAM_SCENE_PATH = LfsPath("dual_openyam_sim/put_bottle.xml")
+DUAL_OPENYAM_SCENE_PATH = SIM_ASSET_DIR / "demo.xml"
 
 # The MJCF drives one finger per gripper and mirrors the other through an
 # equality constraint, so a gripper is a single actuated slide joint whose
@@ -57,13 +62,24 @@ DUAL_OPENYAM_SIM_BASE_XYZ = (0.2525, 0.0, 0.76)
 # `{side}_grasp_frame` sits 5.9 cm off the fingertip midpoint, so driving it to
 # an object's centre closes the jaws past the object. Measured in the sim
 # against the fingertip collision spheres, expressed in the grasp frame.
-DUAL_OPENYAM_TCP_OFFSET = (0.044, 0.0, -0.039)
+DUAL_OPENYAM_TCP_OFFSET = (0.0535023, 0.0, -0.0295359)
 # Stream names and shape match the policy profiles in ``learning.py``, so a
 # rollout sees the same ports in sim as it does on hardware.
 DUAL_OPENYAM_SIM_CAMERAS = (
-    SimCameraSpec("top", "top_image", width=640, height=480, fps=15.0),
-    SimCameraSpec("left", "left_wrist_image", width=640, height=480, fps=15.0),
-    SimCameraSpec("right", "right_wrist_image", width=640, height=480, fps=15.0),
+    *(
+        SimCameraSpec(
+            name,
+            stream,
+            width=DUAL_OPENYAM_SIM_CAMERA_SHAPE[1],
+            height=DUAL_OPENYAM_SIM_CAMERA_SHAPE[0],
+            fps=DUAL_OPENYAM_SIM_CAPTURE_FPS,
+        )
+        for name, stream in (
+            ("top", "top_image"),
+            ("left", "left_wrist_image"),
+            ("right", "right_wrist_image"),
+        )
+    ),
 )
 DualOpenYamSimModule = declare_sim_camera_module(
     "DualOpenYamSimModule", __name__, DUAL_OPENYAM_SIM_CAMERAS
@@ -137,9 +153,10 @@ def dual_openyam_sim_module(
 
 def dual_openyam_sim_model_config() -> RobotModelConfig:
     """Planning model placed in the scene, with a fingertip TCP per arm."""
-    from dataclasses import replace
-
-    from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
+    from dimos.robot.manipulators.dual_openyam.config import (
+        DUAL_OPENYAM_SIM_LIMIT_OVERRIDES,
+        dual_openyam_model_config,
+    )
 
     config = dual_openyam_model_config(
         base_pose=PoseStamped(
@@ -150,6 +167,10 @@ def dual_openyam_sim_model_config() -> RobotModelConfig:
     )
     model = config.model
     for side in ("left", "right"):
+        for index, (lower, upper) in DUAL_OPENYAM_SIM_LIMIT_OVERRIDES.items():
+            model = model.with_joint_position_limits(
+                f"{side}_joint{index}", lower=lower, upper=upper
+            )
         model = model.with_fixed_frame(
             f"{side}_tcp", f"{side}_grasp_frame", xyz=DUAL_OPENYAM_TCP_OFFSET
         )

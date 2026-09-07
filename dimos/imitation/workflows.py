@@ -33,6 +33,7 @@ class CollectionWorkflow:
     builder: str
     profile: str
     dual_can: bool = False
+    simulated: bool = False
 
     def load_builder(self) -> Any:
         return _load_reference(self.builder)
@@ -51,6 +52,7 @@ class RolloutWorkflow:
     builder: str
     profile: str
     dual_can: bool = False
+    simulated: bool = False
 
     def load_builder(self) -> Any:
         return _load_reference(self.builder)
@@ -67,6 +69,14 @@ _DUAL_PROFILE = "dimos.robot.manipulators.dual_openyam.learning"
 COLLECTION_WORKFLOWS = {
     workflow.name: workflow
     for workflow in (
+        CollectionWorkflow(
+            name="dual-openyam-sim",
+            method="scripted MuJoCo pick and place",
+            required_hardware=(),
+            builder=f"{_DUAL_BLUEPRINTS}.sim_learning:build_dual_openyam_sim_collection",
+            profile=f"{_DUAL_PROFILE}:DUAL_OPENYAM_LEROBOT_IO",
+            simulated=True,
+        ),
         CollectionWorkflow(
             name="openyam-teach",
             method="gravity-compensated hand guidance",
@@ -100,6 +110,14 @@ COLLECTION_WORKFLOWS = {
 ROLLOUT_WORKFLOWS = {
     workflow.name: workflow
     for workflow in (
+        RolloutWorkflow(
+            name="dual-openyam-lerobot",
+            backend="LeRobot",
+            required_hardware=(),
+            builder=f"{_DUAL_BLUEPRINTS}.sim_learning:build_dual_openyam_sim_rollout",
+            profile=f"{_DUAL_PROFILE}:DUAL_OPENYAM_LEROBOT_IO",
+            simulated=True,
+        ),
         RolloutWorkflow(
             name="openyam-lerobot",
             backend="LeRobot",

@@ -73,7 +73,8 @@ def _camera_device(value: str) -> int | str:
 
 def _default_recording(workflow: CollectionWorkflow) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    return STATE_DIR / "recordings" / f"{workflow.name}_{timestamp}.mcap"
+    suffix = ".db" if workflow.simulated else ".mcap"
+    return STATE_DIR / "recordings" / f"{workflow.name}_{timestamp}{suffix}"
 
 
 def _camera_devices(values: list[str], profile: PolicyIOProfile) -> dict[str, int | str]:
@@ -201,10 +202,13 @@ class CollectionApp(App[None]):
         Binding("ctrl+c", "force_quit", "Stop", show=False),
     ]
 
-    def __init__(self, session: CollectionSession, workflow_name: str) -> None:
+    def __init__(
+        self, session: CollectionSession, workflow_name: str, *, simulated: bool = False
+    ) -> None:
         super().__init__()
         self._session = session
         self._workflow_name = workflow_name
+        self._simulated = simulated
         self._status = session.get_status()
         self._message = "Reset the scene, then start a take."
         self._disconnected = False
@@ -323,7 +327,11 @@ class CollectionApp(App[None]):
             return
         if not self._quit_armed:
             self._quit_armed = True
-            self._message = "Press Q again to stop; the arm will de-torque."
+            self._message = (
+                "Press Q again to stop the simulation."
+                if self._simulated
+                else "Press Q again to stop; the arm will de-torque."
+            )
             self._refresh()
             return
         self.exit()
@@ -380,10 +388,13 @@ class RolloutApp(App[None]):
         Binding("ctrl+c", "force_quit", "Stop stack", show=False),
     ]
 
-    def __init__(self, session: RolloutSession, workflow_name: str, task: str) -> None:
+    def __init__(
+        self, session: RolloutSession, workflow_name: str, task: str, *, simulated: bool = False
+    ) -> None:
         super().__init__()
         self._session = session
         self._workflow_name = workflow_name
+        self._simulated = simulated
         self._task_label = task
         self._status = session.status()
         self._message = "Preflight passed. Press Space to start the policy."
@@ -438,7 +449,11 @@ class RolloutApp(App[None]):
             return
         if not self._quit_armed:
             self._quit_armed = True
-            self._message = "Press Q again to stop; the arm will de-torque."
+            self._message = (
+                "Press Q again to stop the simulation."
+                if self._simulated
+                else "Press Q again to stop; the arm will de-torque."
+            )
             self._refresh()
             return
         self.exit()
@@ -480,7 +495,9 @@ def list_imitation_workflows() -> None:
 def collect(
     workflow_name: str = typer.Argument(..., metavar="WORKFLOW"),
     task: str = typer.Option(..., "--task", help="Demonstration task description"),
-    recording: Path | None = typer.Option(None, "--recording", help="New MCAP recording path"),
+    recording: Path | None = typer.Option(
+        None, "--recording", help="New recording path (.db for simulation, .mcap for hardware)"
+    ),
     camera: list[str] = typer.Option(
         [],
         "--camera",
@@ -494,7 +511,9 @@ def collect(
     profile = workflow.load_profile()
     if not isinstance(profile, PolicyIOProfile):
         raise TypeError(f"collection workflow {workflow.name!r} has an invalid profile")
-    cameras = _camera_devices(camera, profile)
+    if workflow.simulated and camera:
+        raise typer.BadParameter("Simulation supplies its own cameras; omit --camera")
+    cameras = {} if workflow.simulated else _camera_devices(camera, profile)
     can_kwargs = _dual_can_kwargs(
         enabled=workflow.dual_can,
         left_can_port=left_can_port,
@@ -515,12 +534,15 @@ def collect(
             **can_kwargs,
         )
         typer.echo(f"Recording: {path}")
-        typer.echo("Safety: stopping this command de-torques the arm. Keep the robot supported.")
+        if not workflow.simulated:
+            typer.echo(
+                "Safety: stopping this command de-torques the arm. Keep the robot supported."
+            )
         driver = Dimos()
         driver.run(blueprint)
         session = CollectionSession(driver)
         try:
-            CollectionApp(session, workflow.name).run()
+            CollectionApp(session, workflow.name, simulated=workflow.simulated).run()
         finally:
             session.close()
     except Exception as exc:
@@ -635,7 +657,9 @@ def run_policy(
     profile = workflow.load_profile()
     if not isinstance(profile, PolicyIOProfile):
         raise TypeError(f"rollout workflow {workflow.name!r} has an invalid profile")
-    cameras = _camera_devices(camera, profile)
+    if workflow.simulated and camera:
+        raise typer.BadParameter("Simulation supplies its own cameras; omit --camera")
+    cameras = {} if workflow.simulated else _camera_devices(camera, profile)
     can_kwargs = _dual_can_kwargs(
         enabled=workflow.dual_can,
         left_can_port=left_can_port,
@@ -655,7 +679,10 @@ def run_policy(
             quest_control=quest_control,
             **can_kwargs,
         )
-        typer.echo("Safety: stopping this command de-torques the arm. Keep the robot supported.")
+        if not workflow.simulated:
+            typer.echo(
+                "Safety: stopping this command de-torques the arm. Keep the robot supported."
+            )
         typer.echo("Running non-moving policy preflight...")
         driver = Dimos()
         driver.run(blueprint)
@@ -665,7 +692,7 @@ def run_policy(
             raise RuntimeError(status["last_error"] or "policy preflight failed")
         typer.echo("Preflight passed. No trajectory has been sent.")
         try:
-            RolloutApp(session, workflow.name, task.strip()).run()
+            RolloutApp(session, workflow.name, task.strip(), simulated=workflow.simulated).run()
         finally:
             session.close()
     except Exception as exc:

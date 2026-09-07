@@ -14,6 +14,8 @@
 
 """Dual OpenYAM coordinator and planning blueprints."""
 
+from pathlib import Path
+
 from dimos.control.coordinator import ControlCoordinatorConfig, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
@@ -25,6 +27,7 @@ from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_SIDES,
     dual_openyam_hardware,
     dual_openyam_model_config,
+    dual_openyam_sim_hardware,
 )
 
 
@@ -56,6 +59,7 @@ class DualOpenYamCoordinatorConfig(ControlCoordinatorConfig):
 
     left_can_port: str | None = None
     right_can_port: str | None = None
+    sim_scene_path: str | Path | None = None
 
 
 class DualOpenYamCoordinator(TeleopControlCoordinator):
@@ -64,6 +68,12 @@ class DualOpenYamCoordinator(TeleopControlCoordinator):
     config: DualOpenYamCoordinatorConfig
 
     def _setup_from_config(self) -> None:
+        if self.config.sim_scene_path is not None:
+            if self.config.left_can_port is not None or self.config.right_can_port is not None:
+                raise ValueError("A simulation scene cannot be combined with CAN ports")
+            self.config.hardware = [dual_openyam_sim_hardware(self.config.sim_scene_path)]
+            super()._setup_from_config()
+            return
         self.config.hardware = [
             dual_openyam_hardware(
                 left_can_port=self.config.left_can_port,

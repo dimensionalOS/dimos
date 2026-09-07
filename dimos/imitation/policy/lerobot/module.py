@@ -15,6 +15,7 @@
 """OpenYAM binding for the isolated LeRobot backend."""
 
 from dimos.imitation.policy.module import PolicyRolloutConfig, declare_policy_module
+from dimos.robot.manipulators.dual_openyam.learning import DUAL_OPENYAM_LEROBOT_IO
 from dimos.robot.manipulators.openyam.learning import OPENYAM_QUEST_IO
 
 
@@ -28,4 +29,13 @@ OpenYamLeRobotPolicy = declare_policy_module(
     OPENYAM_QUEST_IO,
     LeRobotPolicyConfig,
     "dimos_lerobot.runtime:LeRobotPolicyRuntime",
+)
+
+
+DualOpenYamLeRobotPolicy = declare_policy_module(
+    "DualOpenYamLeRobotPolicy",
+    __name__,
+    DUAL_OPENYAM_LEROBOT_IO,
+    LeRobotPolicyConfig,
+    "dimos_lerobot.runtime:DualOpenYamLeRobotPolicyRuntime",
 )

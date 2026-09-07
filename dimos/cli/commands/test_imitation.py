@@ -151,6 +151,7 @@ def test_collect_stops_driver_when_stack_start_fails(
     workflow = mocker.Mock(name="workflow")
     workflow.name = "openyam-teach"
     workflow.dual_can = False
+    workflow.simulated = False
     workflow.load_builder.return_value = mocker.Mock(return_value="blueprint")
     workflow.load_profile.return_value = OPENYAM_TEACH_IO
     driver = mocker.Mock()

@@ -27,11 +27,16 @@ from dimos.robot.manipulators.dual_openyam.learning import ABC_JOINTS
 
 def test_collection_and_rollout_catalogs_are_independent() -> None:
     assert list(COLLECTION_WORKFLOWS) == [
+        "dual-openyam-sim",
         "openyam-teach",
         "openyam-quest",
         "dual-openyam-quest",
     ]
-    assert list(ROLLOUT_WORKFLOWS) == ["openyam-lerobot", "dual-openyam-abc"]
+    assert list(ROLLOUT_WORKFLOWS) == [
+        "dual-openyam-lerobot",
+        "openyam-lerobot",
+        "dual-openyam-abc",
+    ]
 
 
 def test_dual_collection_uses_two_wrist_cameras_and_canonical_joint_order() -> None:

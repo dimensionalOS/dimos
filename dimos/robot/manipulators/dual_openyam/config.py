@@ -15,6 +15,7 @@
 """Arm-only Dual OpenYAM hardware and model configuration."""
 
 from functools import cache
+import math
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -51,6 +52,12 @@ DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
 _ARM_KP = (80.0, 80.0, 80.0, 10.0, 10.0, 10.0)
 _ARM_KD = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5)
+# The MJCF has less travel than the URDF on joints 1 and 4. Apply these
+# restrictions to both simulation planning and controller validation.
+DUAL_OPENYAM_SIM_LIMIT_OVERRIDES = {
+    1: (-2.61799, 3.05433),
+    4: (-math.pi / 2, math.pi / 2),
+}
 
 
 @cache
@@ -59,8 +66,8 @@ def dual_openyam_arm_position_limits() -> tuple[tuple[float, float], ...]:
 
     The trajectory task refuses to execute without finite component limits, and
     IK candidates are rejected against them, so they have to agree with the
-    model the planner solves. The MJCF disagrees with the URDF on three joints;
-    the URDF wins because it is what plans.
+    model the planner solves. Simulation additionally restricts these to the
+    physics model's travel.
     """
     root = ET.fromstring(DUAL_OPENYAM_MODEL.load().xml)
     limits: list[tuple[float, float]] = []
@@ -136,22 +143,24 @@ def dual_openyam_sim_hardware(scene_path: str | Path | None = None) -> HardwareC
         # a hardware component should not need the scene on disk.
         address=DUAL_OPENYAM_SCENE_PATH if scene_path is None else scene_path,
         gripper_limits=(gripper_low, gripper_high),
+        arm_limit_overrides=DUAL_OPENYAM_SIM_LIMIT_OVERRIDES,
     )
-
-
-def _arm_limits(bound: int) -> list[float]:
-    per_arm = dual_openyam_arm_position_limits()
-    return [limit[bound] for _ in DUAL_OPENYAM_SIDES for limit in per_arm]
 
 
 def _hardware_component(
     adapter_type: str,
     adapter_kwargs: dict[str, object],
     *,
-    address: str | None = None,
+    address: str | Path | None = None,
     gripper_limits: tuple[float, float] = (0.0, 1.0),
+    arm_limit_overrides: dict[int, tuple[float, float]] | None = None,
 ) -> HardwareComponent:
     gripper_low, gripper_high = gripper_limits
+    overrides = arm_limit_overrides or {}
+    limits = [
+        overrides.get(index, limit)
+        for index, limit in enumerate(dual_openyam_arm_position_limits(), 1)
+    ] * len(DUAL_OPENYAM_SIDES)
     return HardwareComponent(
         hardware_id=DUAL_OPENYAM_HARDWARE_ID,
         hardware_type=HardwareType.WHOLE_BODY,
@@ -160,8 +169,8 @@ def _hardware_component(
         address=address,
         auto_enable=True,
         limits=JointLimits(
-            position_lower=[*_arm_limits(0), gripper_low, gripper_low],
-            position_upper=[*_arm_limits(1), gripper_high, gripper_high],
+            position_lower=[*(limit[0] for limit in limits), gripper_low, gripper_low],
+            position_upper=[*(limit[1] for limit in limits), gripper_high, gripper_high],
             velocity_max=[None] * len(DUAL_OPENYAM_JOINTS),
         ),
         adapter_kwargs=adapter_kwargs,

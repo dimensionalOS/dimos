@@ -15,6 +15,7 @@
 """Distinct Dual OpenYAM collection and released-ABC rollout profiles."""
 
 from dimos.imitation.collection.native_recorder import declare_recorder
+from dimos.imitation.collection.recorder import declare_python_recorder
 from dimos.imitation.dataprep.core import QualityConfig, SyncConfig
 from dimos.imitation.profile import (
     ImageSource,
@@ -104,4 +105,43 @@ DualOpenYamQuestRecorder = declare_recorder(
     "DualOpenYamQuestRecorder",
     __name__,
     DUAL_OPENYAM_TWO_WRIST_IO,
+)
+
+
+DUAL_OPENYAM_SIM_FPS = 15.0
+DUAL_OPENYAM_SIM_CAPTURE_FPS = 30.0
+DUAL_OPENYAM_SIM_CAMERA_SHAPE = (240, 320, 3)
+DUAL_OPENYAM_SIM_TASK = "Put the bottle in the bin"
+
+DUAL_OPENYAM_LEROBOT_IO = PolicyIOProfile(
+    name="dual-openyam-sim",
+    robot_type="dual_openyam",
+    observations={
+        "observation.images.top": ImageSource(
+            stream="top_image", shape=DUAL_OPENYAM_SIM_CAMERA_SHAPE
+        ),
+        "observation.images.left_wrist": ImageSource(
+            stream="left_wrist_image", shape=DUAL_OPENYAM_SIM_CAMERA_SHAPE
+        ),
+        "observation.images.right_wrist": ImageSource(
+            stream="right_wrist_image", shape=DUAL_OPENYAM_SIM_CAMERA_SHAPE
+        ),
+        "observation.state": JointPositionSource(
+            stream="coordinator_joint_state", joints=tuple(DUAL_OPENYAM_JOINTS)
+        ),
+    },
+    action=JointPositionAction(
+        key="action",
+        demonstration=JointPositionSource(
+            stream="applied_joint_position_command", joints=tuple(DUAL_OPENYAM_JOINTS)
+        ),
+    ),
+    sync=SyncConfig(
+        anchor="observation.images.top", rate_hz=DUAL_OPENYAM_SIM_FPS, tolerance_ms=20.0
+    ),
+    quality=_quality,
+)
+
+DualOpenYamSimRecorder = declare_python_recorder(
+    "DualOpenYamSimRecorder", __name__, DUAL_OPENYAM_LEROBOT_IO
 )

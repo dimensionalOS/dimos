@@ -26,6 +26,7 @@ and `coordinator_joint_state` (observation), `status` (episode segmentation).
 from __future__ import annotations
 
 from dimos.core.stream import In
+from dimos.imitation.profile import ImageSource, PolicyIOProfile
 from dimos.memory.module import Recorder, RecorderConfig
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
 from dimos.msgs.sensor_msgs.Image import Image
@@ -44,3 +45,27 @@ class CollectionRecorder(Recorder):
     color_image: In[Image]  # observation (camera)
     coordinator_joint_state: In[JointState]  # observation + action (measured/next state)
     status: In[EpisodeStatus]  # episode start/save/discard segmentation
+
+
+def declare_python_recorder(
+    name: str, module_name: str, profile: PolicyIOProfile
+) -> type[Recorder]:
+    """Declare SQLite recording ports for observations, applied actions and episodes."""
+    annotations: dict[str, object] = {
+        "config": CollectionRecorderConfig,
+        "status": In[EpisodeStatus],
+    }
+    for source in (*profile.observations.values(), profile.action.demonstration):
+        annotations[source.stream] = (
+            In[Image] if isinstance(source, ImageSource) else In[JointState]
+        )
+    return type(
+        name,
+        (Recorder,),
+        {
+            "__annotations__": annotations,
+            "__module__": module_name,
+            "__qualname__": name,
+            "profile": profile,
+        },
+    )
