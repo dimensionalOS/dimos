@@ -89,6 +89,9 @@ class FakeRig:
     def live_store(self) -> Any:
         raise NotImplementedError
 
+    def gt_store(self) -> Any:
+        raise NotImplementedError
+
     def encode(self, stream: Any) -> list[dict[str, Any]]:
         return [{"type": "text", "text": f"{len(list(stream))} observations"}]
 
@@ -253,6 +256,53 @@ def test_interactive_no_samples_is_error() -> None:
     assert "no samples" in case.evaluate(FakeRig()).error
 
 
+# -- ground truth ---------------------------------------------------------------------
+
+
+def test_uses_gt_store_arity() -> None:
+    from dimos.evals.types import uses_gt_store
+
+    assert not uses_gt_store(lambda s: 1.0)
+    assert uses_gt_store(lambda s, gt: 1.0)
+
+    def variadic(*args: Any) -> float:
+        return 1.0
+
+    assert uses_gt_store(variadic)
+
+
+def test_two_arg_score_requires_ground_truth() -> None:
+    case = InteractiveEval(id="gt", inputs="x", score=lambda s, gt: 1.0, simulator="")
+    with pytest.raises(RuntimeError, match="ground_truth=True"):
+        case.preflight(FakeRig())
+
+
+def test_interactive_gt_dispatch() -> None:
+    case = InteractiveEval(
+        id="gt",
+        inputs="pick up the cup",
+        score=lambda s, gt: 1.0,
+        simulator="",
+        ground_truth=True,
+    )
+    rig = FakeRig(series=[(0.0, 0.5), (1.0, 1.0)])
+    result = case.evaluate(rig)
+    assert result.score == 1.0  # final aggregate
+    assert rig.calls == ["setup_env", "instruct:pick up the cup"]
+
+
+def test_gt_recorder_blueprint_wires_in_port_without_local_out() -> None:
+    """The GT recorder blueprint has no Out matching its In — autoconnect must
+    still expose the port so the coordinator wires the /gt_object_poses topic."""
+    pytest.importorskip("torch")  # dimos.memory.module deps in minimal envs
+    from dimos.core.coordination.blueprints import autoconnect
+    from dimos.evals.gt_recorder import GTRecorder
+
+    bp = autoconnect(GTRecorder.blueprint(db_path="gt.db"))
+    streams = [(s.name, s.direction) for atom in bp.blueprints for s in atom.streams]
+    assert ("gt_object_poses", "in") in streams
+
+
 # -- preflight ----------------------------------------------------------------------
 
 
@@ -355,9 +405,9 @@ def test_runner_encode_budget(dataset: str, tmp_path: Path) -> None:
 
 def test_suites_importable() -> None:
     """Suite modules construct without data or network (lambdas stay lazy)."""
-    from dimos.evals.suites import dimsim_house, examples, go2_smoke, go2_vqa
+    from dimos.evals.suites import dimsim_house, examples, go2_smoke, go2_vqa, xarm7_tabletop
 
-    for module in (examples, go2_smoke, go2_vqa, dimsim_house):
+    for module in (examples, go2_smoke, go2_vqa, dimsim_house, xarm7_tabletop):
         assert module.SUITE, module.__name__
 
 

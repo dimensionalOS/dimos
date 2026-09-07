@@ -279,6 +279,7 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     # Opt-in privileged ground truth for eval scoring: world poses of all
     # free-joint scene bodies (robot root excluded, odom covers it). Never
     # consumed by the agent. Off = zero overhead, zero behavior change.
+    # The global --mujoco-publish-ground-truth flag enables this too.
     publish_ground_truth: bool = False
     ground_truth_hz: float = 20.0
     headless: bool = False
@@ -590,7 +591,7 @@ class MujocoSimModule(
             self._imu_base_qpos_slice = None
         self._root_spawn_clearance_z = self._compute_root_spawn_clearance_z()
 
-        if self.config.publish_ground_truth:
+        if self.config.publish_ground_truth or self.config.g.mujoco_publish_ground_truth:
             self._gt_bodies = _resolve_gt_bodies(self._engine.model, self._root_base_qpos_adr)
             logger.info(
                 "MujocoSimModule: ground-truth publishing enabled",

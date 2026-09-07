@@ -34,6 +34,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+import inspect
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
 from pydantic import BaseModel
@@ -54,6 +55,27 @@ Select = Callable[["Store"], "Stream[Any, Any]"]
     lambda s: s.streams.lidar.limit(1)
     lambda s: s.streams.odom.range_time(0, 600)
 """
+
+Score = Callable[["Store"], float]
+"""Interactive scorer over the agent-visible live store (see InteractiveEval)."""
+
+GTScore = Callable[["Store", "Store"], float]
+"""Interactive scorer that also reads the ground-truth store (second arg)."""
+
+
+def uses_gt_store(score: Score | GTScore) -> bool:
+    """True when *score* takes the ground-truth store as a second argument."""
+    try:
+        params = list(inspect.signature(score).parameters.values())
+    except (TypeError, ValueError):  # builtins without an introspectable signature
+        return False
+    positional = [
+        p
+        for p in params
+        if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ]
+    var_positional = any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in params)
+    return len(positional) >= 2 or var_positional
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -80,6 +102,7 @@ class EvalRig(Protocol):
 
     def open_dataset(self, name: str) -> Store: ...
     def live_store(self) -> Store: ...
+    def gt_store(self) -> Store: ...
     def encode(self, stream: Stream[Any, Any]) -> list[dict[str, Any]]: ...
     def ask(self, context: Sequence[dict[str, Any]], question: str) -> str: ...
     def ask_structured(
@@ -95,7 +118,7 @@ class EvalRig(Protocol):
     def check_env(self, case: InteractiveEval) -> None: ...
     def instruct(self, text: str) -> None: ...
     def sample(
-        self, score: Callable[[Store], float], interval_s: float, timeout_s: float
+        self, score: Score | GTScore, interval_s: float, timeout_s: float
     ) -> list[tuple[float, float]]: ...
 
 
@@ -176,13 +199,18 @@ class InteractiveEval(EvalCase):
     """Actions feed back into observations. The case names its environment so
     the eval is reproducible; the runner only decides attach-vs-launch."""
 
-    score: Callable[[Store], float]  # sampled every interval_s against live mem2
+    # Sampled every interval_s against live mem2. Two-arg form also receives
+    # the ground-truth store (requires ground_truth=True).
+    score: Score | GTScore
     aggregate: Callable[[Sequence[float]], float] = final
     interval_s: float = 1.0
     timeout_s: float = 300.0
     blueprint: str = "unitree-go2-agentic"
     simulator: str = "dimsim"  # "" = attach to a running dimos / real robot
     scene: str = "apartment"  # --dimsim-scene name (ScenePackage name later)
+    # True: record the simulator's ground-truth object poses into a per-case
+    # gt db the score callable can read (see dimos.evals.predicates).
+    ground_truth: bool = False
     setup: Callable[[DimSimClient], None] = _no_setup
 
     def evaluate(self, rig: EvalRig) -> EvalResult:
@@ -202,6 +230,8 @@ class InteractiveEval(EvalCase):
 
     def preflight(self, rig: EvalRig) -> None:
         rig.check_env(self)
+        if uses_gt_store(self.score) and not self.ground_truth:
+            raise RuntimeError(f"{self.id}: score reads the GT store — set ground_truth=True")
 
 
 Suite = Sequence[EvalCase]
