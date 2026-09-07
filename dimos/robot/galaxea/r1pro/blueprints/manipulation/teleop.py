@@ -25,7 +25,10 @@ from dimos.robot.galaxea.r1pro.config import (
     R1PRO_UPPER_BODY_PLANNING_JOINTS,
     make_r1pro_model_config,
 )
-from dimos.robot.galaxea.r1pro.teleop_ik import R1ProPinkPoseTargetSolver
+from dimos.robot.galaxea.r1pro.teleop_ik import (
+    R1PRO_TELEOP_PINK,
+    R1ProPinkPoseTargetSolver,
+)
 from dimos.robot.manipulators.common.blueprints import teleop_ik_task
 
 R1PRO_QUEST_TASK_NAME = "teleop_r1pro"
@@ -54,6 +57,7 @@ coordinator_teleop_r1pro = autoconnect(
                 ],
                 head_target_frame=R1ProPinkPoseTargetSolver.HEAD_FRAME,
                 solver_type=R1ProPinkPoseTargetSolver,
+                params={"pink": R1PRO_TELEOP_PINK},
             ),
             joint_trajectory_task(list(R1PRO_UPPER_BODY_PLANNING_JOINTS), priority=20),
         ],

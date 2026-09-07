@@ -66,11 +66,12 @@ dimos run r1pro-hosted-teleop-quest
 
 | Operator input | Effect |
 |---|---|
-| X + A held | Engage both arms; controller poses drive the grippers |
-| Right stick | Drive the chassis (forward/back, strafe) |
-| Left stick X | Yaw the chassis |
-| Left stick Y | Jog the torso up and down, while engaged |
-| Trigger | Gripper opening (no R1 Pro gripper hardware yet, see below) |
+| Side grip (hold) | Engage. One deadman for the whole robot: arms track, base drives, torso jogs. Release and everything stops. |
+| Left stick | Drive the chassis: forward, back, strafe (grips held) |
+| Right stick X | Yaw the chassis (grips held) |
+| Right stick Y | Jog the torso, with the right stick clicked in |
+| Trigger | Gripper opening on that hand, analog |
+| A (hold) | Walk both arms back to the tray pose |
 
 The broker transport needs the `webrtc` extra, which the `uv sync` line above
 does not install:
