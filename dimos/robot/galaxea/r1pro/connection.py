@@ -30,6 +30,7 @@ gatekeeper. ROS env (``ROS_DOMAIN_ID`` etc.) comes from the environment.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import partial
 import math
 import queue
 import threading
@@ -59,21 +60,50 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
+from dimos.robot.galaxea.r1pro.joints import (
+    COMMAND_JOINTS,
+    GRIPPER_JOINTS,
+    UPPER_BODY_JOINTS,
+    coordinator_name,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# Joint layout — flat 18-element MotorCommandArray indexing.
+# Joint layout — flat MotorCommandArray indexing. The first 18 mirror the
+# vendor's three arm/torso segments; the grippers ride on the tail because the
+# driver takes them on their own topics.
 _TORSO_SLICE = slice(0, 4)
 _LEFT_SLICE = slice(4, 11)
 _RIGHT_SLICE = slice(11, 18)
 _NUM_MOTORS = 18
+_LEFT_GRIPPER_IDX = 18
+_RIGHT_GRIPPER_IDX = 19
+_NUM_COMMAND_JOINTS = _NUM_MOTORS + len(GRIPPER_JOINTS)
+
+# The vendor reports and accepts gripper aperture on a 0..100 scale, not
+# radians. GripperControlTask normalizes 0..1 against these limits.
+GRIPPER_POSITION_RANGE = (0.0, 100.0)
+
+_GRIPPER_FEEDBACK_TOPICS = {
+    "left_gripper": "/hdas/feedback_gripper_left",
+    "right_gripper": "/hdas/feedback_gripper_right",
+}
+_GRIPPER_COMMAND_TOPICS = {
+    "left_gripper": "/motion_target/target_position_gripper_left",
+    "right_gripper": "/motion_target/target_position_gripper_right",
+}
 
 _FEEDBACK_DISCOVERY_TIMEOUT_S = 5.0
 
 R1PRO_UPPER_BODY_JOINTS: list[str] = [coordinator_name(j) for j in UPPER_BODY_JOINTS]
 assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
+
+# What the coordinator's whole-body component owns: arms/torso plus grippers.
+R1PRO_COMMAND_JOINTS: list[str] = [coordinator_name(j) for j in COMMAND_JOINTS]
+assert len(R1PRO_COMMAND_JOINTS) == _NUM_COMMAND_JOINTS
+
+R1PRO_GRIPPER_JOINTS: list[str] = [coordinator_name(j) for j in GRIPPER_JOINTS]
 
 # JPEG color streams: stream name → ROS topic.
 _COLOR_CAMERAS: dict[str, str] = {
@@ -152,6 +182,12 @@ class R1ProConnectionConfig(ModuleConfig):
 class R1ProConnection(Module):
     """R1 Pro Module — ROS 2 control and sensor nodes."""
 
+    # Own process: two 30 fps colour streams plus a 10 Hz lidar whose decode
+    # spikes past 400 ms must not share a GIL with a 100 Hz coordinator tick or
+    # a WebRTC encoder. Colocated, those spikes surface as periodic video
+    # stalls on the operator link.
+    dedicated_worker = True
+
     config: R1ProConnectionConfig
 
     # Control inputs.
@@ -190,6 +226,7 @@ class R1ProConnection(Module):
         self._cmd_left_topic: RawROSTopic | None = None
         self._cmd_right_topic: RawROSTopic | None = None
         self._speed_topic: RawROSTopic | None = None
+        self._cmd_gripper_topics: dict[str, RawROSTopic] = {}
         self._control_unsubs: list[Any] = []
         self._sensor_unsubs: list[Any] = []
 
@@ -205,6 +242,11 @@ class R1ProConnection(Module):
         self._latest_right_q: list[float] = [0.0] * 7
         self._latest_right_dq: list[float] = [0.0] * 7
         self._latest_right_eff: list[float] = [0.0] * 7
+        self._latest_gripper_q = dict.fromkeys(GRIPPER_JOINTS, 0.0)
+        self._latest_gripper_dq = dict.fromkeys(GRIPPER_JOINTS, 0.0)
+        self._latest_gripper_eff = dict.fromkeys(GRIPPER_JOINTS, 0.0)
+        self._gripper_seen = dict.fromkeys(GRIPPER_JOINTS, False)
+        self._ts_gripper = dict.fromkeys(GRIPPER_JOINTS, 0.0)
         self._torso_seen = False
         self._ts_torso = 0.0
         self._ts_left = 0.0
@@ -339,6 +381,10 @@ class R1ProConnection(Module):
         self._speed_topic = RawROSTopic(
             "/motion_target/target_speed_chassis", TwistStamped, qos=qos
         )
+        self._cmd_gripper_topics = {
+            joint: RawROSTopic(topic, RosJointState, qos=qos)
+            for joint, topic in _GRIPPER_COMMAND_TOPICS.items()
+        }
 
         for topic, cb in (
             (RawROSTopic("/hdas/feedback_torso", RosJointState, qos=qos), self._on_feedback_torso),
@@ -352,6 +398,14 @@ class R1ProConnection(Module):
             ),
         ):
             self._control_unsubs.append(self._ros.subscribe(topic, cb))
+
+        for joint, feedback_topic in _GRIPPER_FEEDBACK_TOPICS.items():
+            self._control_unsubs.append(
+                self._ros.subscribe(
+                    RawROSTopic(feedback_topic, RosJointState, qos=qos),
+                    partial(self._on_feedback_gripper, joint),
+                )
+            )
 
         if self.config.publish_odom:
             # Executed chassis speed — integrated into wheel odometry.
@@ -510,8 +564,10 @@ class R1ProConnection(Module):
     # Control input handlers
 
     def _on_motor_command(self, msg: MotorCommandArray) -> None:
-        if msg.num_joints != _NUM_MOTORS:
-            logger.warning(f"Expected {_NUM_MOTORS} motor commands, got {msg.num_joints}; ignoring")
+        if msg.num_joints != _NUM_COMMAND_JOINTS:
+            logger.warning(
+                f"Expected {_NUM_COMMAND_JOINTS} motor commands, got {msg.num_joints}; ignoring"
+            )
             return
 
         from sensor_msgs.msg import JointState as RosJointState
@@ -535,6 +591,24 @@ class R1ProConnection(Module):
             cmd.velocity = self._tracking_velocities(msg.dq[sl])
             cmd.effort = [0.0]
             ros.publish(topic, cmd)
+
+        # Grippers take aperture on their own topics, one DOF each, named as
+        # the driver reports them back.
+        for joint, index in (
+            ("left_gripper", _LEFT_GRIPPER_IDX),
+            ("right_gripper", _RIGHT_GRIPPER_IDX),
+        ):
+            gripper_topic = self._cmd_gripper_topics.get(joint)
+            if gripper_topic is None:
+                continue
+            lo, hi = GRIPPER_POSITION_RANGE
+            cmd = RosJointState()
+            cmd.header.stamp = stamp
+            cmd.name = [joint]
+            cmd.position = [min(max(msg.q[index], lo), hi)]
+            cmd.velocity = [0.0]
+            cmd.effort = [0.0]
+            ros.publish(gripper_topic, cmd)
 
     def _tracking_velocities(self, dqs: list[float]) -> list[float]:
         """Map MotorCommand.dq to ROS tracking velocity (0/sentinel → configured)."""
@@ -580,6 +654,16 @@ class R1ProConnection(Module):
             )
             self._ts_right = _stamp_secs(msg)
             self._right_seen = True
+
+    def _on_feedback_gripper(self, joint: str, msg: Any, _topic: Any) -> None:
+        if not msg.position:
+            return
+        with self._lock:
+            self._latest_gripper_q[joint] = float(msg.position[0])
+            self._latest_gripper_dq[joint] = float(msg.velocity[0]) if msg.velocity else 0.0
+            self._latest_gripper_eff[joint] = float(msg.effort[0]) if msg.effort else 0.0
+            self._ts_gripper[joint] = _stamp_secs(msg)
+            self._gripper_seen[joint] = True
 
     @staticmethod
     def _copy_segment(
@@ -670,29 +754,38 @@ class R1ProConnection(Module):
                         list(self._latest_torso_q)
                         + list(self._latest_left_q)
                         + list(self._latest_right_q)
+                        + [self._latest_gripper_q[j] for j in GRIPPER_JOINTS]
                     )
                     velocities = (
                         list(self._latest_torso_dq)
                         + list(self._latest_left_dq)
                         + list(self._latest_right_dq)
+                        + [self._latest_gripper_dq[j] for j in GRIPPER_JOINTS]
                     )
                     efforts = (
                         list(self._latest_torso_eff)
                         + list(self._latest_left_eff)
                         + list(self._latest_right_eff)
+                        + [self._latest_gripper_eff[j] for j in GRIPPER_JOINTS]
                     )
                     imu_chassis = self._latest_imu_chassis
                     imu_torso = self._latest_imu_torso
-                    # Oldest of the three segments: the fused snapshot is only
-                    # as fresh as its stalest part.
-                    ts = min(self._ts_torso, self._ts_left, self._ts_right)
+                    # Oldest reporting source: the fused snapshot is only as
+                    # fresh as its stalest part. Grippers count only once seen,
+                    # so a gripper-less rig does not peg the stamp at 0.
+                    ts = min(
+                        self._ts_torso,
+                        self._ts_left,
+                        self._ts_right,
+                        *(self._ts_gripper[j] for j in GRIPPER_JOINTS if self._gripper_seen[j]),
+                    )
 
             if bootstrapped:
                 self.motor_states.publish(
                     JointState(
                         ts=ts,
                         frame_id=frame_id,
-                        name=R1PRO_UPPER_BODY_JOINTS,
+                        name=R1PRO_COMMAND_JOINTS,
                         position=positions,  # type: ignore[arg-type]
                         velocity=velocities,
                         effort=efforts,

@@ -43,7 +43,11 @@ from dimos.robot.galaxea.r1pro.config import (
     make_r1pro_model_config,
     make_r1pro_planar_model_config,
 )
-from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS
+from dimos.robot.galaxea.r1pro.connection import (
+    R1PRO_COMMAND_JOINTS,
+    R1PRO_GRIPPER_JOINTS,
+    R1PRO_UPPER_BODY_JOINTS,
+)
 from dimos.robot.galaxea.r1pro.joints import (
     LEFT_ARM_JOINTS,
     RIGHT_ARM_JOINTS,
@@ -172,11 +176,16 @@ def test_r1pro_real_control_keeps_planar_positions_unwired() -> None:
         HardwareType.WHOLE_BODY,
         HardwareType.BASE,
     ]
-    assert coordinator.hardware[0].joints == R1PRO_UPPER_BODY_JOINTS
+    # The whole-body component owns the grippers too; the trajectory task does
+    # not, so gripper joints are arbitrated by their own tasks.
+    assert coordinator.hardware[0].joints == R1PRO_COMMAND_JOINTS
     assert coordinator.hardware[1].joints == make_twist_base_joints("chassis")
     assert coordinator.tasks[0].joint_names == R1PRO_UPPER_BODY_JOINTS
     assert coordinator.tasks[1].joint_names == make_twist_base_joints("chassis")
-    assert set(R1PRO_PLANAR_BASE.joint_names).isdisjoint(R1PRO_UPPER_BODY_JOINTS)
+    assert set(R1PRO_PLANAR_BASE.joint_names).isdisjoint(R1PRO_COMMAND_JOINTS)
+
+    gripper_tasks = [task for task in coordinator.tasks if task.type == "gripper"]
+    assert [task.joint_names for task in gripper_tasks] == [[j] for j in R1PRO_GRIPPER_JOINTS]
 
 
 @pytest.mark.self_hosted

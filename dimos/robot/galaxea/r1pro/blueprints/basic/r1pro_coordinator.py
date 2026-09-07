@@ -35,6 +35,7 @@ from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autocon
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
 from dimos.core.transport_factory import make_transport
+from dimos.hardware.spec import JointLimits
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -45,7 +46,13 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
-from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnection
+from dimos.robot.galaxea.r1pro.connection import (
+    GRIPPER_POSITION_RANGE,
+    R1PRO_COMMAND_JOINTS,
+    R1PRO_GRIPPER_JOINTS,
+    R1PRO_UPPER_BODY_JOINTS,
+    R1ProConnection,
+)
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -53,14 +60,54 @@ _chassis_joints = make_twist_base_joints("chassis")
 
 
 def r1pro_whole_body_hardware() -> HardwareComponent:
-    """The 18-DOF upper body behind the ROS bridge."""
+    """The 18-DOF upper body plus both grippers, behind the ROS bridge."""
+    lo, hi = GRIPPER_POSITION_RANGE
+    n_arm = len(R1PRO_UPPER_BODY_JOINTS)
+    n_gripper = len(R1PRO_GRIPPER_JOINTS)
     return HardwareComponent(
         hardware_id="r1pro",
         hardware_type=HardwareType.WHOLE_BODY,
-        joints=R1PRO_UPPER_BODY_JOINTS,
+        joints=R1PRO_COMMAND_JOINTS,
         adapter_type="transport_lcm",
         adapter_kwargs={"transport_cls": make_transport},
+        # GripperControlTask normalizes 0..1 against these. The arm and torso
+        # joints are left unknown: the vendor driver enforces their limits and
+        # nothing here needs to resolve them.
+        limits=JointLimits(
+            position_lower=[None] * n_arm + [lo] * n_gripper,
+            position_upper=[None] * n_arm + [hi] * n_gripper,
+            velocity_max=[None] * (n_arm + n_gripper),
+        ),
     )
+
+
+def r1pro_gripper_tasks(priority: int = 20, *, per_hand: bool = False) -> list[TaskConfig]:
+    """One task per gripper.
+
+    By default both listen on the coordinator's ``gripper_command``, which
+    routes broadcast, so a single normalized command drives both hands
+    together — what the one-button operator UIs send.
+
+    ``per_hand`` binds each task to its own ``{side}_gripper_command`` instead,
+    which is what a VR operator needs: ArmTeleopModule publishes each
+    controller's analog trigger on those streams, and every other arm blueprint
+    in the tree binds them the same way. Without it the trigger value reaches
+    the coordinator and is dropped, because no task is bound to the port.
+    """
+    tasks = []
+    for joint in R1PRO_GRIPPER_JOINTS:
+        name = joint.rsplit("/", 1)[-1]
+        bind = {"gripper_command": f"{name}_command"} if per_hand else None
+        tasks.append(
+            TaskConfig(
+                name=name,
+                type="gripper",
+                joint_names=[joint],
+                priority=priority,
+                **({"stream_bind": bind} if bind else {}),
+            )
+        )
+    return tasks
 
 
 def r1pro_chassis_hardware() -> HardwareComponent:
@@ -204,6 +251,7 @@ def r1pro_control(
                 joint_names=_chassis_joints,
                 priority=10,
             ),
+            *r1pro_gripper_tasks(),
         ]
     )
 

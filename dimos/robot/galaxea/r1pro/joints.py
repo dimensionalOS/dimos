@@ -26,6 +26,14 @@ RIGHT_ARM_JOINTS = tuple(f"right_arm_joint{i}" for i in range(1, 8))
 # Order matches the flat 18-element MotorCommandArray the vendor stack speaks.
 UPPER_BODY_JOINTS = (*TORSO_JOINTS, *LEFT_ARM_JOINTS, *RIGHT_ARM_JOINTS)
 
+# One normalized DOF per gripper, named as the driver reports them on
+# /hdas/feedback_gripper_{left,right}. Not URDF joints: the description models
+# each gripper as two prismatic fingers, which the vendor drives as a unit.
+GRIPPER_JOINTS = ("left_gripper", "right_gripper")
+
+# Flat wire order the coordinator commands and the connection unpacks.
+COMMAND_JOINTS = (*UPPER_BODY_JOINTS, *GRIPPER_JOINTS)
+
 # Driven by the chassis velocity task or the gripper adapter, never planned, so
 # the planning model welds them at their URDF zero.
 PASSIVE_JOINTS = (
