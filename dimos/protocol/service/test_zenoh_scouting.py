@@ -14,9 +14,10 @@
 
 """Network scouting is optional, and start() waits for its connect endpoints."""
 
-import socket
+from collections.abc import Callable
 import time
-from typing import cast
+from typing import Any
+from unittest.mock import create_autospec
 
 import pytest
 import zenoh
@@ -147,28 +148,33 @@ class _FakeInfo:
         return self._links
 
 
-class _FakeSession:
-    def __init__(self, links: list[str]) -> None:
-        self.info = _FakeInfo([_FakeLink(dst) for dst in links])
+def _fake_session(links: list[str]) -> Any:
+    """A session whose only live part is the links _await_connect polls."""
+    return create_autospec(
+        zenoh.Session,
+        spec_set=True,
+        instance=True,
+        info=_FakeInfo([_FakeLink(dst) for dst in links]),
+    )
 
 
 def _await_elapsed(
-    session: _FakeSession, connect: list[str], connect_timeout: float, mode: ZenohMode = "peer"
+    session: zenoh.Session, connect: list[str], connect_timeout: float, mode: ZenohMode = "peer"
 ) -> float:
     """Seconds _await_connect blocks against a session with the given links."""
     service = ZenohService(mode=mode, connect=connect, connect_timeout=connect_timeout)
     started = time.monotonic()
-    service._await_connect(cast("zenoh.Session", session))
+    service._await_connect(session)
     return time.monotonic() - started
 
 
 def test_await_returns_once_endpoint_is_linked(zenoh_defaults: None) -> None:
-    session = _FakeSession(["tcp/192.0.2.10:7447"])
+    session = _fake_session(["tcp/192.0.2.10:7447"])
     assert _await_elapsed(session, connect=["tcp/192.0.2.10:7447"], connect_timeout=5.0) < 1.0
 
 
 def test_await_waits_for_every_endpoint(zenoh_defaults: None) -> None:
-    session = _FakeSession(["tcp/192.0.2.10:7447"])
+    session = _fake_session(["tcp/192.0.2.10:7447"])
     elapsed = _await_elapsed(
         session,
         connect=["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"],
@@ -179,7 +185,7 @@ def test_await_waits_for_every_endpoint(zenoh_defaults: None) -> None:
 
 def test_client_mode_await_is_satisfied_by_one_link(zenoh_defaults: None) -> None:
     """A client session holds a single link, so one linked alternative is done."""
-    session = _FakeSession(["tcp/192.0.2.10:7447"])
+    session = _fake_session(["tcp/192.0.2.10:7447"])
     elapsed = _await_elapsed(
         session,
         connect=["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"],
@@ -192,37 +198,33 @@ def test_client_mode_await_is_satisfied_by_one_link(zenoh_defaults: None) -> Non
 def test_duplicate_endpoints_do_not_satisfy_the_wait(zenoh_defaults: None) -> None:
     """One endpoint listed twice is still one link to wait for."""
     duplicate = "tcp/192.0.2.199:7447"
-    elapsed = _await_elapsed(_FakeSession([]), connect=[duplicate, duplicate], connect_timeout=0.3)
+    elapsed = _await_elapsed(_fake_session([]), connect=[duplicate, duplicate], connect_timeout=0.3)
     assert elapsed >= 0.3
 
 
 def test_await_gives_up_after_timeout(zenoh_defaults: None) -> None:
     elapsed = _await_elapsed(
-        _FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.3
+        _fake_session([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.3
     )
     assert elapsed >= 0.3
 
 
 def test_await_is_skipped_without_connect_endpoints(zenoh_defaults: None) -> None:
-    assert _await_elapsed(_FakeSession([]), connect=[], connect_timeout=30.0) < 3.0
+    assert _await_elapsed(_fake_session([]), connect=[], connect_timeout=30.0) < 3.0
 
 
 def test_zero_timeout_disables_the_wait(zenoh_defaults: None) -> None:
     assert (
-        _await_elapsed(_FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.0)
+        _await_elapsed(_fake_session([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.0)
         < 1.0
     )
 
 
-def _free_udp_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
-def test_stock_sessions_discover_each_other_over_loopback(zenoh_defaults: None) -> None:
+def test_stock_sessions_discover_each_other_over_loopback(
+    zenoh_defaults: None, unused_udp_port_factory: Callable[[], int]
+) -> None:
     """Two sessions with the stock config scout each other on loopback and link there."""
-    config = ZenohConfig(scout_addr=f"224.0.0.224:{_free_udp_port()}")
+    config = ZenohConfig(scout_addr=f"224.0.0.224:{unused_udp_port_factory()}")
     pools = [ZenohSessionPool(), ZenohSessionPool()]
     a, b = (pool.acquire(config) for pool in pools)
     try:

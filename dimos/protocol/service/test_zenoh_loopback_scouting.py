@@ -17,17 +17,11 @@
 Upstream: Fix multicast scouting on loopback#2671.
 """
 
+from collections.abc import Callable
 import json
-import socket
 import time
 
 import zenoh
-
-
-def _free_udp_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
 
 
 def _config(**settings: object) -> zenoh.Config:
@@ -46,8 +40,10 @@ def _loopback_multicast(address: str) -> dict[str, object]:
     }
 
 
-def test_multicast_scouting_works_on_loopback() -> None:
-    address = f"224.0.0.224:{_free_udp_port()}"
+def test_multicast_scouting_works_on_loopback(
+    unused_udp_port_factory: Callable[[], int],
+) -> None:
+    address = f"224.0.0.224:{unused_udp_port_factory()}"
     responder = zenoh.open(
         _config(
             mode="router",
@@ -71,8 +67,10 @@ def test_multicast_scouting_works_on_loopback() -> None:
         responder.close()
 
 
-def test_multicast_autoconnect_works_on_loopback() -> None:
-    address = f"224.0.0.224:{_free_udp_port()}"
+def test_multicast_autoconnect_works_on_loopback(
+    unused_udp_port_factory: Callable[[], int],
+) -> None:
+    address = f"224.0.0.224:{unused_udp_port_factory()}"
     peer1 = zenoh.open(_config(mode="peer", **_loopback_multicast(address)))
     peer2 = zenoh.open(_config(mode="peer", **_loopback_multicast(address)))
     try:
