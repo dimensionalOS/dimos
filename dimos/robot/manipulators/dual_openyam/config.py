@@ -14,7 +14,9 @@
 
 """Arm-only Dual OpenYAM hardware and model configuration."""
 
+from functools import cache
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.global_config import global_config
@@ -49,16 +51,26 @@ DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
 _ARM_KP = (80.0, 80.0, 80.0, 10.0, 10.0, 10.0)
 _ARM_KD = (5.0, 5.0, 5.0, 1.5, 1.5, 1.5)
-# Per-arm joint travel, identical left and right. The trajectory task refuses
-# to execute without finite component limits, so they cannot stay unset.
-DUAL_OPENYAM_ARM_POSITION_LIMITS = (
-    (-2.61799, 3.05433),
-    (0.0, 3.66519),
-    (0.0, 3.66519),
-    (-1.5708, 1.5708),
-    (-1.5708, 1.5708),
-    (-2.0944, 2.0944),
-)
+
+
+@cache
+def dual_openyam_arm_position_limits() -> tuple[tuple[float, float], ...]:
+    """Per-arm joint travel, read from the planning URDF.
+
+    The trajectory task refuses to execute without finite component limits, and
+    IK candidates are rejected against them, so they have to agree with the
+    model the planner solves. The MJCF disagrees with the URDF on three joints;
+    the URDF wins because it is what plans.
+    """
+    root = ET.fromstring(DUAL_OPENYAM_MODEL.load().xml)
+    limits: list[tuple[float, float]] = []
+    for name in dual_openyam_arm_joints("left"):
+        joint = root.find(f"./joint[@name='{name}']")
+        limit = None if joint is None else joint.find("limit")
+        if limit is None:
+            raise ValueError(f"Dual OpenYAM URDF declares no limits for {name!r}")
+        limits.append((float(limit.attrib["lower"]), float(limit.attrib["upper"])))
+    return tuple(limits)
 
 
 def dual_openyam_arm_joints(side: str) -> list[str]:
@@ -120,13 +132,16 @@ def dual_openyam_sim_hardware(scene_path: str | Path | None = None) -> HardwareC
             "num_motors": len(DUAL_OPENYAM_JOINTS),
             "command_mode": "position",
         },
-        address=str(DUAL_OPENYAM_SCENE_PATH if scene_path is None else scene_path),
+        # Left unresolved: str() on an LfsPath fetches the asset, and building
+        # a hardware component should not need the scene on disk.
+        address=DUAL_OPENYAM_SCENE_PATH if scene_path is None else scene_path,
         gripper_limits=(gripper_low, gripper_high),
     )
 
 
 def _arm_limits(bound: int) -> list[float]:
-    return [limit[bound] for _ in DUAL_OPENYAM_SIDES for limit in DUAL_OPENYAM_ARM_POSITION_LIMITS]
+    per_arm = dual_openyam_arm_position_limits()
+    return [limit[bound] for _ in DUAL_OPENYAM_SIDES for limit in per_arm]
 
 
 def _hardware_component(

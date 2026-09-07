@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 
 from pydantic import Field
@@ -46,6 +47,10 @@ from dimos.perception.experimental.object_scene_registration_spec import ObjectS
 class PickAndPlaceModuleConfig(ModuleConfig):
     planning_frame: str = "base_link"
     pregrasp_offset: float = Field(default=0.10, gt=0.0)
+    # The pregrasp normally backs off along the tool's -Z. Grippers whose grasp
+    # frame points Z out of the back of the palm need the other side, or the
+    # approach starts underneath the object.
+    pregrasp_along_tool_z: bool = False
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
 
@@ -141,38 +146,55 @@ class PickAndPlaceModule(Module):
             return SkillResult.fail(
                 "ROBOT_NOT_FOUND", "Gripper-capable planning group is missing or ambiguous"
             )
-        candidate = candidates.candidates[0]
-        grasp = self._apply_yaw_policy(
-            PoseStamped(
-                ts=candidates.header.timestamp,
-                frame_id=candidates.header.frame_id,
-                position=candidate.pose.position,
-                orientation=candidate.pose.orientation,
-            ),
-            group,
-        )
-        pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
         if failure := self._open_gripper(group, "pre-grasp open"):
             return failure
-        if failure := self._move(pregrasp, group):
-            return failure
-        if failure := self._move(grasp, group):
-            return failure
-        if failure := self._close_and_verify(group):
-            return failure
 
-        self._selected_object_id = object_id
-        self._selected_grasp = grasp
-        self._holding_object = True
-        if failure := self._move(pregrasp, group):
-            return failure
-        return SkillResult.ok(
-            "Pick complete",
-            object_id=object_id,
-            rank=0,
-            score=candidate.score,
-            candidates=len(candidates.candidates),
+        # One wrist angle can sit outside an arm's envelope while the same
+        # physical grasp at another angle is fine, so a proposal that will not
+        # plan is skipped rather than failing the pick.
+        last_failure: SkillResult[ManipulationSkillError] | None = None
+        for rank, candidate in enumerate(candidates.candidates):
+            grasp = self._apply_yaw_policy(
+                PoseStamped(
+                    ts=candidates.header.timestamp,
+                    frame_id=candidates.header.frame_id,
+                    position=candidate.pose.position,
+                    orientation=candidate.pose.orientation,
+                ),
+                group,
+            )
+            pregrasp = self._offset_pose(grasp, self._pregrasp_offset())
+            if failure := self._move(pregrasp, group):
+                last_failure = failure
+                continue
+            if failure := self._move(grasp, group):
+                last_failure = failure
+                continue
+            # A verification failure means the jaws already reached the object,
+            # so another wrist angle is not the answer; only an unplannable
+            # proposal is worth skipping.
+            if failure := self._close_and_verify(group):
+                return failure
+
+            self._selected_object_id = object_id
+            self._selected_grasp = grasp
+            self._holding_object = True
+            if failure := self._move(pregrasp, group):
+                return failure
+            return SkillResult.ok(
+                "Pick complete",
+                object_id=object_id,
+                rank=rank,
+                score=candidate.score,
+                candidates=len(candidates.candidates),
+            )
+        return last_failure or SkillResult.fail(
+            "GRASP_GENERATION_FAILED", "No grasp candidate could be executed"
         )
+
+    def _pregrasp_offset(self) -> float:
+        offset = self.config.pregrasp_offset
+        return -offset if self.config.pregrasp_along_tool_z else offset
 
     @rpc
     def get_grasp_candidates(self) -> GraspCandidateArray:
@@ -201,21 +223,34 @@ class PickAndPlaceModule(Module):
             return SkillResult.fail(
                 "ROBOT_NOT_FOUND", "Gripper-capable planning group is missing or ambiguous"
             )
-        place = PoseStamped(
-            frame_id=self.config.planning_frame,
-            position=Vector3(x, y, z),
-            orientation=self._selected_grasp.orientation,
-        )
-        preplace = self._offset_pose(place, self.config.pregrasp_offset)
-        if failure := self._move(preplace, group):
-            return failure
-        if failure := self._move(place, group):
-            return failure
-        if failure := self._open_gripper(group, "release"):
-            return failure
-        self._holding_object = False
-        self._clear_selection()
-        return self._move(preplace, group) or SkillResult.ok("Place complete")
+        # The wrist angle that reached the pick is not always reachable over the
+        # place target, and a held object is free to spin about the approach
+        # axis, so the same yaw fallback the pick uses applies here.
+        last_failure: SkillResult[ManipulationSkillError] | None = None
+        for yaw in self._place_yaw_offsets():
+            place = PoseStamped(
+                frame_id=self.config.planning_frame,
+                position=Vector3(x, y, z),
+                orientation=self._selected_grasp.orientation
+                * Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+            )
+            preplace = self._offset_pose(place, self._pregrasp_offset())
+            if failure := self._move(preplace, group):
+                last_failure = failure
+                continue
+            if failure := self._move(place, group):
+                last_failure = failure
+                continue
+            if failure := self._open_gripper(group, "release"):
+                return failure
+            self._holding_object = False
+            self._clear_selection()
+            return self._move(preplace, group) or SkillResult.ok("Place complete")
+        return last_failure or SkillResult.fail("PLANNING_FAILED", "No place pose was reachable")
+
+    def _place_yaw_offsets(self) -> list[float]:
+        step = math.pi / 4.0
+        return [0.0, math.pi, step, -step, 2 * step, -2 * step, 3 * step, -3 * step]
 
     def _clear_selection(self) -> None:
         self._grasp_candidates = GraspCandidateArray()

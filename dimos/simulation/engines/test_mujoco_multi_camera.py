@@ -32,6 +32,24 @@ from dimos.simulation.engines.mujoco_sim_module import (
 
 pytestmark = pytest.mark.mujoco
 
+
+def _offscreen_gl_available() -> bool:
+    """MuJoCo needs an offscreen GL platform; without one the sim thread dies."""
+    import mujoco
+
+    model = mujoco.MjModel.from_xml_string("<mujoco><worldbody/></mujoco>")
+    try:
+        mujoco.Renderer(model, height=8, width=8).close()
+    except Exception:
+        return False
+    return True
+
+
+requires_gl = pytest.mark.skipif(
+    not _offscreen_gl_available(),
+    reason="no offscreen GL platform; run with MUJOCO_GL=egl",
+)
+
 _SCENE = """
 <mujoco model="two-camera">
   <compiler angle="radian"/>
@@ -103,6 +121,7 @@ def running_module(scene: Path) -> Iterator[MujocoSimModule]:
     module.stop()
 
 
+@requires_gl
 def test_every_extra_camera_publishes_on_its_own_stream(
     running_module: MujocoSimModule,
 ) -> None:

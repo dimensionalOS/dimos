@@ -25,6 +25,7 @@ from dimos.robot.manipulators.dual_openyam.config import (
     dual_openyam_mock_hardware,
     dual_openyam_model_config,
 )
+from dimos.robot.manipulators.dual_openyam.sim import DUAL_OPENYAM_SCENE_PATH
 from dimos.robot.manipulators.openyam.config import OPENYAM_HOME_JOINTS
 
 
@@ -75,7 +76,9 @@ def test_dual_openyam_hardware_switches_to_physics_under_mujoco(
     assert hardware.adapter_type == "sim_mujoco_whole_body"
     assert hardware.adapter_kwargs["num_motors"] == len(DUAL_OPENYAM_JOINTS)
     assert hardware.adapter_kwargs["command_mode"] == "position"
-    assert str(hardware.address).endswith(".xml")
+    # Never resolved here: the scene is a large untracked asset and building a
+    # hardware component must not depend on it being present.
+    assert hardware.address is DUAL_OPENYAM_SCENE_PATH
     # Normalised gripper commands must land in the MJCF's metres, not 0-1.
     assert hardware.limits is not None
     assert hardware.limits.position_upper[-2:] == [0.0475, 0.0475]

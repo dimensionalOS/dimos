@@ -111,3 +111,33 @@ def test_mock_quest_coordinator_commands_both_arms_and_grippers(
         assert [state.q for state in states[12:]] == pytest.approx([0.75, 0.25], abs=0.01)
     finally:
         coordinator.stop()
+
+
+def test_pick_place_blueprint_resolves_with_every_spec_bound() -> None:
+    """The demo stack wires its own perception, grasping and gripper tasks."""
+    from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+    from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+    from dimos.robot.manipulators.dual_openyam.blueprints.simulation import (
+        dual_openyam_sim_pick_place,
+    )
+    from dimos.simulation.perception.sim_scene_registration import SimSceneRegistrationModule
+
+    modules = {atom.module for atom in dual_openyam_sim_pick_place.blueprints}
+    assert {
+        HeuristicGraspModule,
+        PickAndPlaceModule,
+        SimSceneRegistrationModule,
+    } <= modules
+
+    BlueprintConfigParser(dual_openyam_sim_pick_place).parse([], environ={})
+
+    coordinator_kwargs = _module_kwargs(dual_openyam_sim_pick_place, DualOpenYamCoordinator)
+    assert [task.name for task in coordinator_kwargs["tasks"]] == [
+        "joint_trajectory",
+        "left_arm_gripper",
+        "right_arm_gripper",
+    ]
+    # Grasp proposals must arrive in the frame pick/place plans in.
+    assert (
+        _module_kwargs(dual_openyam_sim_pick_place, PickAndPlaceModule)["planning_frame"] == "world"
+    )

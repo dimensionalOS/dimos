@@ -54,6 +54,10 @@ DUAL_OPENYAM_SIM_GRIPPER_RANGE = (0.0, 0.0475)
 # spacing between the arms, so without this the planner treats world targets as
 # base-relative and every reach fails IK.
 DUAL_OPENYAM_SIM_BASE_XYZ = (0.2525, 0.0, 0.76)
+# `{side}_grasp_frame` sits 5.9 cm off the fingertip midpoint, so driving it to
+# an object's centre closes the jaws past the object. Measured in the sim
+# against the fingertip collision spheres, expressed in the grasp frame.
+DUAL_OPENYAM_TCP_OFFSET = (0.044, 0.0, -0.039)
 # Stream names and shape match the policy profiles in ``learning.py``, so a
 # rollout sees the same ports in sim as it does on hardware.
 DUAL_OPENYAM_SIM_CAMERAS = (
@@ -132,13 +136,26 @@ def dual_openyam_sim_module(
 
 
 def dual_openyam_sim_model_config() -> RobotModelConfig:
-    """Planning model placed where the simulated scene stands the rig."""
+    """Planning model placed in the scene, with a fingertip TCP per arm."""
+    from dataclasses import replace
+
     from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
 
-    return dual_openyam_model_config(
+    config = dual_openyam_model_config(
         base_pose=PoseStamped(
             frame_id="world",
             position=Vector3(*DUAL_OPENYAM_SIM_BASE_XYZ),
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         )
     )
+    model = config.model
+    for side in ("left", "right"):
+        model = model.with_fixed_frame(
+            f"{side}_tcp", f"{side}_grasp_frame", xyz=DUAL_OPENYAM_TCP_OFFSET
+        )
+    config.model = model
+    config.planning_groups = [
+        replace(group, tip_link=f"{group.name.split('_')[0]}_tcp")
+        for group in config.planning_groups
+    ]
+    return config

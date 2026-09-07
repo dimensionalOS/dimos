@@ -81,10 +81,15 @@ dual_openyam_sim_pick_place = autoconnect(
         visualization={"backend": "none"},
     ),
     ManipulationSkills.blueprint(),
-    PickAndPlaceModule.blueprint(planning_frame="world"),
-    # The OpenYAM grasp frame does not point Z along the approach, so the
-    # canonical top-down proposal needs a half turn about Y to be reachable.
-    HeuristicGraspModule.blueprint(tool_rotation_rpy=(0.0, math.pi, 0.0)),
+    PickAndPlaceModule.blueprint(
+        planning_frame="world",
+        # The OpenYAM grasp frame points Z out of the back of the palm, so the
+        # pregrasp has to back off along +Z or it starts under the table.
+        pregrasp_along_tool_z=True,
+    ),
+    # Same reason for the half turn about Y; the extra yaws matter because the
+    # two arms accept different wrist bands over the same object.
+    HeuristicGraspModule.blueprint(tool_rotation_rpy=(0.0, math.pi, 0.0), yaw_candidates=8),
     sim_scene_registration(
         target_frame="world",
         robot_body_substrings=DUAL_OPENYAM_ROBOT_BODIES,
