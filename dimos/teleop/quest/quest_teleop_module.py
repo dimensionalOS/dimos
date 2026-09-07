@@ -290,6 +290,20 @@ class QuestTeleopModule(Module):
                 self._controllers[hand] = None
                 self._last_controller_update[hand] = None
             if pose_stale or controller_stale:
+                if self._is_engaged[hand]:
+                    # Silent expiry looks exactly like the operator letting go
+                    # of the deadman; say which stream actually dried up.
+                    missing = ", ".join(
+                        label
+                        for label, stale in (("pose", pose_stale), ("buttons", controller_stale))
+                        if stale
+                    )
+                    logger.warning(
+                        "%s expired after %.1fs with no %s — disengaging",
+                        hand.name,
+                        self.config.input_timeout_s,
+                        missing,
+                    )
                 self._is_engaged[hand] = False
                 self._initial_poses[hand] = None
         if input_expired:

@@ -53,6 +53,11 @@ class ArmCommandConfig(QuestTeleopConfig):
     # loop measures against local receive time; this only adds the stricter
     # absolute check for operators whose clock can be trusted.
     trust_operator_clock: bool = False
+    # The local-WebSocket default of 1s assumes a LAN and a browser sending
+    # every frame. Over the broker the operator is on the public internet, and
+    # the provider reports operator loss explicitly (_on_operator_lost), so
+    # this timer is a backstop rather than the primary detector.
+    input_timeout_s: float = 10.0
 
 
 class ArmCommandModule(ArmTeleopModule):
