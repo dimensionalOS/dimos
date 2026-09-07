@@ -403,13 +403,13 @@ class CameraInfo(Timestamped):
         fx, fy = self.K[0], self.K[4]
         cx, cy = self.K[2], self.K[5]
 
-        pinhole_kwargs: dict[str, Any] = dict(
-            focal_length=[fx, fy],
-            principal_point=[cx, cy],
-            width=self.width,
-            height=self.height,
-            image_plane_distance=image_plane_distance,
-        )
+        pinhole_kwargs: dict[str, Any] = {
+            "focal_length": [fx, fy],
+            "principal_point": [cx, cy],
+            "width": self.width,
+            "height": self.height,
+            "image_plane_distance": image_plane_distance,
+        }
 
         # If no image topic is specified, We don't know which Image this CameraInfo refers to
         # return just the pinhole

@@ -113,8 +113,10 @@ class TestControlCoordinatorE2E:
 
             # Poll for completion
             wait_until(
-                lambda: client.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "get_state")
-                == TrajectoryState.COMPLETED,
+                lambda: (
+                    client.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "get_state")
+                    == TrajectoryState.COMPLETED
+                ),
                 timeout=5.0,
                 message="Trajectory did not complete within timeout",
             )
@@ -229,8 +231,10 @@ class TestControlCoordinatorE2E:
             assert result.status is TrajectoryExecutionStatus.ACCEPTED, result
 
             wait_until(
-                lambda: client.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "get_state")
-                == TrajectoryState.COMPLETED,
+                lambda: (
+                    client.task_invoke(JOINT_TRAJECTORY_TASK_NAME, "get_state")
+                    == TrajectoryState.COMPLETED
+                ),
                 timeout=5.0,
                 message="Trajectory did not complete within timeout",
             )

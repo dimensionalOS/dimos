@@ -28,6 +28,7 @@ app.ReplanningAStarPlanner
 
 # Add another module dynamically.
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+
 app.run(KeyboardTeleop)
 
 # Or start it by name. No need for importing.
@@ -43,6 +44,7 @@ Modules can define `@rpc` methods which you can call. Here's an example:
 
 ```python skip
 from dimos.msgs.geometry_msgs.Twist import Twist
+
 # Rotate right.
 app.GO2Connection.move(Twist(linear=(0, 0, 0), angular=(0, 0, -1)), duration=0.05)
 # Move forward.
@@ -110,6 +112,7 @@ img = app.peek_stream("color_image", 1.0)
 
 # Display it in a window.
 import cv2
+
 cv2.imshow("color_image", img.data)
 cv2.waitKey(0)
 ```
@@ -128,8 +131,8 @@ from dimos import Dimos
 app = Dimos.connect()
 
 # Everything works the same as local mode
-print(app)                     # <Dimos(remote=True, modules=[...])>
-print(app.skills)              # list all skills
+print(app)  # <Dimos(remote=True, modules=[...])>
+print(app.skills)  # list all skills
 app.skills.move_to(x=2.0, relative=True)
 app.stop()  # closes the connection (does NOT stop the remote process)
 ```
@@ -145,9 +148,9 @@ connect across processes or hosts.
 ```python skip
 app = Dimos.connect()
 
-app.run("keyboard-teleop")       # add a module by registry name
-app.run(SomeModule)               # or by Module class
-app.restart(SomeModule)           # hot-restart it on the daemon
+app.run("keyboard-teleop")  # add a module by registry name
+app.run(SomeModule)  # or by Module class
+app.restart(SomeModule)  # hot-restart it on the daemon
 ```
 
 Strings and registered Module classes take a name-based fast path. Other

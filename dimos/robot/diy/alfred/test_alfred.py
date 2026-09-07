@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-import xml.etree.ElementTree as ElementTree
+from xml.etree import ElementTree
 
 from dimos.robot.diy.alfred.blueprints.vis_nav import DEPTH_FRAME, IR_ENTITY_BY_FRAME
 from dimos.robot.diy.alfred.mount_tf import mount_transforms

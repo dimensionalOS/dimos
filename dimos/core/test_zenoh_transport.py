@@ -59,8 +59,6 @@ class TypedMsg:
 class UntypedMsg:
     """A message without lcm_encode. Triggers pickle transport."""
 
-    pass
-
 
 class ProducerModule(Module):
     typed_data: Out[TypedMsg]

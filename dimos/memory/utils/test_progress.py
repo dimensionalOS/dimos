@@ -43,10 +43,9 @@ def test_early_exit_finalizes_partial_bar(capsys: pytest.CaptureFixture[str]) ->
 
 
 def test_cleanup_on_exception(capsys: pytest.CaptureFixture[str]) -> None:
-    with pytest.raises(RuntimeError, match="boom"):
-        with progress(10, "crashy") as bar:
-            bar(_obs(0.0))
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError, match="boom"), progress(10, "crashy") as bar:
+        bar(_obs(0.0))
+        raise RuntimeError("boom")
     out = capsys.readouterr().out
     assert out.count("crashy 10% [1/10]") == 1
 

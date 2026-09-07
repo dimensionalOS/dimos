@@ -166,5 +166,3 @@ class EmbeddingModel(Resource, ABC):
         similarities = self.compare_one_to_many(query_emb, candidates)
         top_values, top_indices = similarities.topk(k=min(top_k, len(candidates)))
         return [(idx.item(), val.item()) for idx, val in zip(top_indices, top_values, strict=False)]
-
-        ...

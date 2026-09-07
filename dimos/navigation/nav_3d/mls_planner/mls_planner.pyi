@@ -35,7 +35,6 @@ class MLSPlanner:
     ) -> None: ...
     def update_global_map(self, points: NDArray[np.float32]) -> None:
         """Voxelize the map and rebuild surfaces, nodes, and edges. Shape (N, 3) float32."""
-        ...
 
     def update_region(
         self,
@@ -50,11 +49,9 @@ class MLSPlanner:
 
         Points are (N, 3) float32. z_max is capped at sensor_z + max_overhead_m.
         """
-        ...
 
     def surface_map(self) -> NDArray[np.float32]:
         """Standable surface cells as (M, 3) float32 centers."""
-        ...
 
     def surface_clearance_map(self) -> NDArray[np.float32]:
         """Surface cells as (M, 4) float32 rows of [x, y, z, clearance].
@@ -62,15 +59,12 @@ class MLSPlanner:
         Clearance is the horizontal distance to the nearest untraversable edge.
         Unreached cells report +inf.
         """
-        ...
 
     def nodes(self) -> NDArray[np.float32]:
         """Graph node positions as (K, 3) float32."""
-        ...
 
     def node_edges(self) -> NDArray[np.float32]:
         """Edge segments as (E, 7) float32 rows of [x0, y0, z0, x1, y1, z1, cost]."""
-        ...
 
     def plan(
         self,
@@ -78,20 +72,14 @@ class MLSPlanner:
         goal: tuple[float, float, float],
     ) -> NDArray[np.float32] | None:
         """Plan a path between start and goal. Returns (W, 3) float32, or None if unreachable."""
-        ...
 
     def voxel_count(self) -> int:
         """Number of occupied voxels in the current map."""
-        ...
 
     def voxel_map(self) -> NDArray[np.float32]:
         """Accumulated occupied voxel centers as (N, 3) float32, for visualization."""
-        ...
 
     def clear(self) -> None:
         """Drop the graph and buffered state."""
-        ...
-
-    def __repr__(self) -> str: ...
 
 __all__ = ["MLSPlanner"]

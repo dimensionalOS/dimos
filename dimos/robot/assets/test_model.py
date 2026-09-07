@@ -354,14 +354,18 @@ def test_structural_model_view_rejects_duplicate_configuration(tmp_path: Path) -
     [
         ("", ("missing",), "Joint not found"),
         (
-            "<joint name='tool_joint' type='fixed'>"
-            "<parent link='base'/><child link='tool'/></joint>",
+            (
+                "<joint name='tool_joint' type='fixed'>"
+                "<parent link='base'/><child link='tool'/></joint>"
+            ),
             ("tool_joint",),
             "already fixed",
         ),
         (
-            "<joint name='tool_joint' type='revolute'>"
-            "<parent link='base'/><child link='tool'/></joint>",
+            (
+                "<joint name='tool_joint' type='revolute'>"
+                "<parent link='base'/><child link='tool'/></joint>"
+            ),
             ("tool_joint", "tool_joint"),
             "already requested",
         ),

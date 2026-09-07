@@ -24,16 +24,17 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sensor_msgs.Imu import Imu
 import time
 
+
 class MyLidarConfig(NativeModuleConfig):
     executable: str = "./build/my_lidar"
     host_ip: str = "192.168.1.5"
     frequency: float = 10.0
 
+
 class MyLidar(NativeModule):
     config: MyLidarConfig
     pointcloud: Out[PointCloud2]
     imu: Out[Imu]
-
 ```
 
 That's it. `MyLidar` is a full dimOS module. You can use it with `autoconnect`, blueprints, transport overrides, and specs. Once this module is started, your `./build/my_lidar` will get called with specific CLI args.
@@ -95,15 +96,17 @@ Any field you add to your config subclass automatically becomes a `--name value`
 ```python skip
 from pydantic import Field
 
+
 class LogFormat(enum.Enum):
     TEXT = "text"
     JSON = "json"
 
+
 class MyConfig(NativeModuleConfig):
-    executable: str = "./build/my_module" # relative or absolute path to your executable
-    host_ip: str = "192.168.1.5"     # becomes --host_ip 192.168.1.5
-    frequency: float = 10.0           # becomes --frequency 10.0
-    enable_imu: bool = True           # becomes --enable_imu true
+    executable: str = "./build/my_module"  # relative or absolute path to your executable
+    host_ip: str = "192.168.1.5"  # becomes --host_ip 192.168.1.5
+    frequency: float = 10.0  # becomes --frequency 10.0
+    enable_imu: bool = True  # becomes --enable_imu true
     filters: list[str] = Field(default_factory=lambda: ["a", "b"])  # becomes --filters a,b
 ```
 
@@ -118,8 +121,8 @@ If a config field shouldn't be a CLI arg, add it to `cli_exclude`:
 ```python skip
 class MyNativeConfig(NativeModuleConfig):
     executable: str = "./build/my_native"
-    acc_cov: float = 1.0                                  # rendered into a config file, not a CLI arg
-    config_path: str | None = None                        # set at start() to the generated file
+    acc_cov: float = 1.0  # rendered into a config file, not a CLI arg
+    config_path: str | None = None  # set at start() to the generated file
     cli_exclude: frozenset[str] = frozenset({"acc_cov"})  # only config_path is passed
 ```
 
@@ -130,9 +133,11 @@ Native modules work with `autoconnect` exactly like Python modules:
 ```python skip
 from dimos.core.coordination.blueprints import autoconnect
 
+
 class PointCloudConsumer(Module):
     pointcloud: In[PointCloud2]
     imu: In[Imu]
+
 
 autoconnect(
     MyLidar.blueprint(host_ip="192.168.1.10"),
@@ -146,9 +151,11 @@ autoconnect(
 blueprint = autoconnect(
     MyLidar.blueprint(),
     PointCloudConsumer.blueprint(),
-).transports({
-    ("pointcloud", PointCloud2): LCMTransport("/my/custom/lidar", PointCloud2),
-})
+).transports(
+    {
+        ("pointcloud", PointCloud2): LCMTransport("/my/custom/lidar", PointCloud2),
+    }
+)
 ```
 
 ## Logging
@@ -239,6 +246,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.spec import perception
 
+
 class Mid360Config(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/mid360_native"
@@ -249,6 +257,7 @@ class Mid360Config(NativeModuleConfig):
     enable_imu: bool = True
     frame_id: str = "lidar_link"
     # ... SDK port configuration
+
 
 class Mid360(NativeModule, perception.Lidar, perception.IMU):
     config: Mid360Config

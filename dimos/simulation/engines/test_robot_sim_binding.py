@@ -71,20 +71,20 @@ def _write_scene_then_robot_xml(path: Path) -> None:
 
 
 def _robot_spec(**overrides: Any) -> RobotSimSpec:
-    kwargs: dict[str, Any] = dict(
-        robot_id="testbot",
-        hardware_joints=("testbot/hip_pitch", "testbot/knee"),
-        root_body_names=("pelvis",),
-        root_joint_names=("floating_base_joint",),
-        require_floating_base=True,
-        model_joint_names=("hip_pitch_joint", "knee_joint"),
-        model_actuator_names=("hip_motor", "knee_motor"),
-        imu_quat_names=("pelvis-orientation",),
-        imu_gyro_names=("pelvis-gyro",),
-        imu_accel_names=("pelvis-accel",),
-        imu_linvel_names=("pelvis-linvel",),
-        require_imu=True,
-    )
+    kwargs: dict[str, Any] = {
+        "robot_id": "testbot",
+        "hardware_joints": ("testbot/hip_pitch", "testbot/knee"),
+        "root_body_names": ("pelvis",),
+        "root_joint_names": ("floating_base_joint",),
+        "require_floating_base": True,
+        "model_joint_names": ("hip_pitch_joint", "knee_joint"),
+        "model_actuator_names": ("hip_motor", "knee_motor"),
+        "imu_quat_names": ("pelvis-orientation",),
+        "imu_gyro_names": ("pelvis-gyro",),
+        "imu_accel_names": ("pelvis-accel",),
+        "imu_linvel_names": ("pelvis-linvel",),
+        "require_imu": True,
+    }
     kwargs.update(overrides)
     return RobotSimSpec(**kwargs)
 

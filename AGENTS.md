@@ -81,10 +81,10 @@ from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 
 unitree_go2_agentic = autoconnect(
-    unitree_go2_spatial,   # robot stack
-    McpServer.blueprint(), # HTTP MCP server — exposes all @skill methods on port 9990
-    McpClient.blueprint(), # LLM agent — fetches tools from McpServer
-    _common_agentic,       # skill containers
+    unitree_go2_spatial,  # robot stack
+    McpServer.blueprint(),  # HTTP MCP server — exposes all @skill methods on port 9990
+    McpClient.blueprint(),  # LLM agent — fetches tools from McpServer
+    _common_agentic,  # skill containers
 )
 ```
 
@@ -158,6 +158,7 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.core import rpc
 from dimos.msgs.sensor_msgs import Image
+
 
 class MyModule(Module):
     color_image: In[Image]
@@ -263,6 +264,7 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 
+
 class MySkillContainer(Module):
     @rpc
     def start(self) -> None:
@@ -281,6 +283,7 @@ class MySkillContainer(Module):
             duration: How long to move in seconds.
         """
         return f"Moving at {x} m/s for {duration}s"
+
 
 my_skill_container = MySkillContainer.blueprint
 ```
@@ -303,13 +306,15 @@ To call methods on another module, declare a `Spec` Protocol and annotate an att
 from typing import Protocol
 from dimos.spec.utils import Spec
 
+
 class NavigatorSpec(Spec, Protocol):
     def set_goal(self, goal: PoseStamped) -> bool: ...
     def cancel_goal(self) -> bool: ...
 
+
 # my_skill_container.py
 class MySkillContainer(Module):
-    _navigator: NavigatorSpec   # injected by blueprint at build time
+    _navigator: NavigatorSpec  # injected by blueprint at build time
 
     @skill
     def go_to(self, x: float, y: float) -> str:

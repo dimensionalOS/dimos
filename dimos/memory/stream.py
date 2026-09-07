@@ -614,7 +614,7 @@ class Stream(CompositeResource, Generic[T, O]):
             store.stream("lidar").live().chain(pipeline)
         """
         ops: list[tuple[Transformer[Any, Any] | None, StreamQuery]] = []
-        current: Stream[Any, Any] | None | Any = other
+        current: Stream[Any, Any] | Any | None = other
         found_root = False
         while isinstance(current, Stream):
             ops.append((current._transform, current._query))

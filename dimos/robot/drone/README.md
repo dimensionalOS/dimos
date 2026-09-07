@@ -194,10 +194,10 @@ drone.tracking.stop_tracking()
 ### PID Tuning
 ```python
 # Indoor (gentle, precise)
-x_pid_params=(0.001, 0.0, 0.0001, (-0.5, 0.5), None, 30)
+x_pid_params = (0.001, 0.0, 0.0001, (-0.5, 0.5), None, 30)
 
 # Outdoor (aggressive, wind-resistant)
-x_pid_params=(0.003, 0.0001, 0.0002, (-1.0, 1.0), None, 10)
+x_pid_params = (0.003, 0.0001, 0.0002, (-1.0, 1.0), None, 10)
 ```
 
 Parameters: `(Kp, Ki, Kd, (min_output, max_output), integral_limit, deadband_pixels)`

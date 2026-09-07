@@ -20,8 +20,8 @@ import pickle
 from types import UnionType
 from typing import get_args, get_origin, get_type_hints
 
+from dimos.manipulation import manipulation_spec
 from dimos.manipulation.manipulation_module import ManipulationModule
-import dimos.manipulation.manipulation_spec as manipulation_spec
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
     ExecutionResult,

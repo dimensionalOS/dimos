@@ -86,10 +86,10 @@ python -m dimos.manipulation.planning.examples.manipulation_client
 ```
 
 ```python skip
-joints()                # Get current joints
-plan([0.1] * 7)         # Plan to target
-preview()               # Preview in Meshcat
-execute()               # Execute via coordinator
+joints()  # Get current joints
+plan([0.1] * 7)  # Plan to target
+preview()  # Preview in Meshcat
+execute()  # Execute via coordinator
 ```
 
 ### Planning backend selection

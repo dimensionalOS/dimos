@@ -25,17 +25,14 @@ class Accumulator(ABC, Generic[T]):
     @abstractmethod
     def add(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         """Add args and kwargs to the accumulator."""
-        pass
 
     @abstractmethod
     def get(self) -> tuple[tuple, dict] | None:  # type: ignore[type-arg]
         """Get the accumulated args and kwargs and reset the accumulator."""
-        pass
 
     @abstractmethod
     def __len__(self) -> int:
         """Return the number of accumulated items."""
-        pass
 
 
 class LatestAccumulator(Accumulator[T]):

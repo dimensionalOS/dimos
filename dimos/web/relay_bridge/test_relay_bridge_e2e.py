@@ -213,8 +213,10 @@ def test_full_session_flow_and_lazy_encode(
 
             frames = await collect_until(
                 viewer,
-                lambda fs: any(f.header.ch == "odom" for f in fs)
-                and any(f.header.ch == "color_image" for f in fs),
+                lambda fs: (
+                    any(f.header.ch == "odom" for f in fs)
+                    and any(f.header.ch == "color_image" for f in fs)
+                ),
                 timeout=15.0,
             )
             odom = next(f for f in frames if f.header.ch == "odom")

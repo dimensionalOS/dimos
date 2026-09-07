@@ -33,10 +33,8 @@ EncodingT = TypeVar("EncodingT")
 class DecodingError(Exception):
     """Raised by decode() to skip a message without calling the callback."""
 
-    pass
 
-
-class PubSubEncoderMixin(Generic[TopicT, MsgT, EncodingT], ABC):
+class PubSubEncoderMixin(ABC, Generic[TopicT, MsgT, EncodingT]):
     """Mixin that encodes messages before publishing and decodes them after receiving.
 
     This will override publish and subscribe methods to add encoding/decoding.

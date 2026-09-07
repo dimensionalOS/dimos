@@ -902,7 +902,7 @@ class ManipulationModule(Module):
             self._fail("At least one Cartesian target is required")
             return None
         auxiliary_ids = tuple(auxiliary_groups)
-        group_ids = tuple((*targets.keys(), *auxiliary_ids))
+        group_ids = (*targets.keys(), *auxiliary_ids)
         planning = self._begin_group_planning(speed_scale)
         if planning is None:
             return None
