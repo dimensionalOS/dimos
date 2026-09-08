@@ -24,7 +24,7 @@ using zenoh_detail::parse_channel_qos;
 using zenoh_detail::settings_from_launch;
 
 // The launch line python sends for a client-mode session.
-constexpr const char* kClientLaunch = R"({
+constexpr const char* CLIENT_LAUNCH = R"({
   "session": {
     "mode": "client",
     "connect": ["tcp/192.0.2.10:7447"],
@@ -64,7 +64,7 @@ TEST_CASE("a session block missing a field is rejected and names it") {
 }
 
 TEST_CASE("a session block with an unknown field is rejected and names it") {
-    nlohmann::json launch = nlohmann::json::parse(kClientLaunch);
+    nlohmann::json launch = nlohmann::json::parse(CLIENT_LAUNCH);
     launch["session"]["bogus"] = 1;
     try {
         settings_from_launch(launch);
@@ -77,7 +77,7 @@ TEST_CASE("a session block with an unknown field is rejected and names it") {
 TEST_CASE("a negative connect timeout is rejected rather than wrapped") {
     // Cast instead of rejected it is a wait of a few hundred million years,
     // so opening the session would look like a hang.
-    nlohmann::json launch = nlohmann::json::parse(kClientLaunch);
+    nlohmann::json launch = nlohmann::json::parse(CLIENT_LAUNCH);
     launch["session"]["connect_timeout_ms"] = -1;
     try {
         settings_from_launch(launch);
@@ -88,7 +88,7 @@ TEST_CASE("a negative connect timeout is rejected rather than wrapped") {
 }
 
 TEST_CASE("the session settings become a zenoh config") {
-    auto settings = settings_from_launch(nlohmann::json::parse(kClientLaunch));
+    auto settings = settings_from_launch(nlohmann::json::parse(CLIENT_LAUNCH));
     REQUIRE(settings.has_value());
     ::zenoh::Config config = zenoh_detail::zenoh_config(*settings);
     CHECK(config.get("mode") == R"("client")");
@@ -138,7 +138,7 @@ TEST_CASE("an ipv6 endpoint keeps the brackets a link reports it with") {
 }
 
 // A session that neither scouts nor dials, so opening it touches no network.
-constexpr const char* kIsolatedLaunch = R"({
+constexpr const char* ISOLATED_LAUNCH = R"({
   "session": {
     "mode": "peer",
     "connect": [],
@@ -152,7 +152,7 @@ constexpr const char* kIsolatedLaunch = R"({
 })";
 
 TEST_CASE("an empty setting leaves zenoh's own default in place") {
-    auto settings = settings_from_launch(nlohmann::json::parse(kIsolatedLaunch));
+    auto settings = settings_from_launch(nlohmann::json::parse(ISOLATED_LAUNCH));
     REQUIRE(settings.has_value());
     ::zenoh::Config config = zenoh_detail::zenoh_config(*settings);
     // Written through, these would be an empty multicast group and a dial that
@@ -165,7 +165,7 @@ TEST_CASE("waiting on an endpoint that never links gives up at the timeout") {
     // Nothing listens there, so the wait can only end at the deadline.
     ::zenoh::Session session =
         ::zenoh::Session::open(zenoh_detail::zenoh_config(*settings_from_launch(
-            nlohmann::json::parse(kIsolatedLaunch))));
+            nlohmann::json::parse(ISOLATED_LAUNCH))));
     const auto started = std::chrono::steady_clock::now();
     zenoh_detail::await_connect(session, {"tcp/127.0.0.1:1"}, "peer",
                                 std::chrono::milliseconds(200));
@@ -176,7 +176,7 @@ TEST_CASE("waiting on an endpoint that never links gives up at the timeout") {
 
 TEST_CASE("a published payload reaches a subscriber unchanged") {
     std::unique_ptr<Transport> transport =
-        ZenohTransport::from_launch(nlohmann::json::parse(kIsolatedLaunch));
+        ZenohTransport::from_launch(nlohmann::json::parse(ISOLATED_LAUNCH));
 
     std::mutex received_mu;
     std::vector<uint8_t> received;
@@ -202,7 +202,7 @@ TEST_CASE("a published payload reaches a subscriber unchanged") {
 TEST_CASE("a publish zenoh rejects is logged rather than thrown") {
     // Publishing runs on a worker thread with no catch of its own.
     std::unique_ptr<Transport> transport =
-        ZenohTransport::from_launch(nlohmann::json::parse(kIsolatedLaunch));
+        ZenohTransport::from_launch(nlohmann::json::parse(ISOLATED_LAUNCH));
     // '?' cannot appear in a key expression, so declaring the publisher fails.
     CHECK_NOTHROW(transport->publish("/bad?key", std::vector<uint8_t>{1, 2, 3}));
 }
@@ -211,7 +211,7 @@ TEST_CASE("a publish zenoh rejects is logged rather than thrown") {
 // Compiled so every inline body is typechecked against zenoh-cpp.
 [[maybe_unused]] static void zenoh_transport_compile_check() {
     std::unique_ptr<Transport> transport =
-        ZenohTransport::from_launch(nlohmann::json::parse(kClientLaunch));
+        ZenohTransport::from_launch(nlohmann::json::parse(CLIENT_LAUNCH));
     transport->set_publisher_qos(nlohmann::json::object());
     transport->publish("/c", std::vector<uint8_t>{1, 2, 3});
     transport->subscribe("/c", [](const uint8_t*, std::size_t) {});

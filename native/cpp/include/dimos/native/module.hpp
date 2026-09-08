@@ -395,9 +395,9 @@ struct StdinConfig {
 };
 
 inline StdinConfig parse_stdin_config(const std::string& line) {
-    const char* kSpace = " \t\n\v\f\r";
-    std::size_t begin = line.find_first_not_of(kSpace);
-    std::size_t end = line.find_last_not_of(kSpace);
+    constexpr const char* WHITESPACE = " \t\n\v\f\r";
+    std::size_t begin = line.find_first_not_of(WHITESPACE);
+    std::size_t end = line.find_last_not_of(WHITESPACE);
     std::string trimmed =
         begin == std::string::npos ? std::string() : line.substr(begin, end - begin + 1);
 

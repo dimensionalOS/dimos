@@ -39,7 +39,7 @@
 
 namespace dimos::native {
 
-inline constexpr const char* kSessionKey = "session";
+inline constexpr const char* SESSION_KEY = "session";
 
 /// Zenoh keys can't start with '/'.
 inline std::string zenoh_key(const std::string& channel) {
@@ -48,7 +48,7 @@ inline std::string zenoh_key(const std::string& channel) {
 
 namespace zenoh_detail {
 
-constexpr std::chrono::milliseconds kConnectPoll{50};
+constexpr std::chrono::milliseconds CONNECT_POLL{50};
 
 /// Python resolves every value, so no field here has a default.
 struct SessionSettings {
@@ -88,7 +88,7 @@ inline std::optional<SessionSettings> settings_from_launch(const nlohmann::json&
     if (!launch.is_object()) {
         return std::nullopt;
     }
-    auto it = launch.find(kSessionKey);
+    auto it = launch.find(SESSION_KEY);
     if (it == launch.end() || it->is_null()) {
         return std::nullopt;
     }
@@ -242,7 +242,7 @@ inline void await_connect(const ::zenoh::Session& session,
                        log::Field("timeout_ms", static_cast<std::int64_t>(timeout.count()))});
             return;
         }
-        std::this_thread::sleep_for(kConnectPoll);
+        std::this_thread::sleep_for(CONNECT_POLL);
     }
 }
 
