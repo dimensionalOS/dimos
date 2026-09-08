@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Record every Spot data stream into a memory2 SQLite db.
+"""Record every Spot data stream into a memory SQLite db.
 
 A ``Recorder`` whose In ports mirror `SpotHighLevel`'s outputs — the five
 grayscale cameras, five depth cameras, and body odometry — so `autoconnect`
@@ -29,7 +29,7 @@ from pydantic import Field
 
 from dimos.core.stream import In
 from dimos.experimental.robot.bosdyn.spot.config import CAMERA_STREAM_SUFFIXES
-from dimos.memory2.module import OnExisting, Recorder, RecorderConfig
+from dimos.memory.module import OnExisting, Recorder, RecorderConfig
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -56,7 +56,7 @@ class SpotRecorderConfig(RecorderConfig):
 
 
 class SpotRecorder(Recorder):
-    """Records Spot's fisheye + depth cameras and odometry to a memory2 db."""
+    """Records Spot's fisheye + depth cameras and odometry to a memory db."""
 
     config: SpotRecorderConfig
 

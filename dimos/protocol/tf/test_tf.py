@@ -21,9 +21,9 @@ import time
 import pytest
 
 from dimos.core.transport_factory import make_transport
-from dimos.memory2.store.memory import MemoryStore
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.tf import StreamTF
+from dimos.memory.store.memory import MemoryStore
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.tf import StreamTF
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -640,7 +640,7 @@ def _t(parent: str, child: str, x: float, ts: float) -> Transform:
         "live",
         "stream_memory",
         # sqlite-vec ships a 32-bit binary in the aarch64 wheel and fails to
-        # load on macOS CI (same guard as memory2/conftest.py).
+        # load on macOS CI (same guard as memory/conftest.py).
         pytest.param("stream_sqlite", marks=[pytest.mark.skipif_aarch64, pytest.mark.skipif_macos]),
     ]
 )

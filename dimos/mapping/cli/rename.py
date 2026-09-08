@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Copy a memory2 sqlite recording into a new file, renaming streams.
+"""Copy a memory sqlite recording into a new file, renaming streams.
 
 Iterates each source stream and re-appends every observation under its new
 name in a fresh destination db. Slower than in-place ``ALTER TABLE`` but
@@ -31,10 +31,10 @@ from typing import Any
 
 import typer
 
-from dimos.memory2.codecs.base import resolve_payload_type
-from dimos.memory2.store.sqlite import SqliteStore
-from dimos.memory2.stream import Stream
-from dimos.memory2.type.observation import Observation
+from dimos.memory.codecs.base import resolve_payload_type
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.stream import Stream
+from dimos.memory.type.observation import Observation
 from dimos.utils.data import resolve_named_path
 
 

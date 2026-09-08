@@ -14,14 +14,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from dimos.manipulation.visualization.viser.animation import (
-    GroupPreviewAnimation,
+    PreviewAnimation,
     PreviewFrame,
-    PreviewTrack,
 )
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
@@ -75,10 +73,8 @@ class ViserManipulationVisualizer:
         self._gui: ViserPanelGui | None = None
         self._session_scene: PlanningSceneInfo | None = None
         self._operator: object | None = None
-        self._current_states: dict[str, JointState] = {}
-        self._robot_names_by_id: dict[str, str] = {}
-        self._robot_ids_by_name: dict[str, str] = {}
-        self._configs_by_name: dict[str, RobotModelConfig] = {}
+        self._current_state: JointState | None = None
+        self._model_config: RobotModelConfig | None = None
         self._closed = False
 
     def _ensure_started(self) -> None:
@@ -96,7 +92,7 @@ class ViserManipulationVisualizer:
                     server,
                     self._session_scene,
                     self._operator,
-                    self._current_states,
+                    lambda: self._current_state,
                     self.config,
                     scene,
                 )
@@ -133,13 +129,7 @@ class ViserManipulationVisualizer:
         """Initialize Viser robot visuals from a one-shot visualization session."""
         self._operator = session.operator
         self._session_scene = session.scene
-        self._robot_names_by_id = {
-            str(robot_id): config.name for robot_id, config in session.scene.robots.items()
-        }
-        self._robot_ids_by_name = {
-            config.name: str(robot_id) for robot_id, config in session.scene.robots.items()
-        }
-        self._configs_by_name = {config.name: config for config in session.scene.robots.values()}
+        self._model_config = session.scene.model
         self._initialize_scene(session.scene)
 
     def _initialize_scene(self, scene: PlanningSceneInfo) -> None:
@@ -150,8 +140,7 @@ class ViserManipulationVisualizer:
         if self._scene is None:
             return
         try:
-            for robot_id, config in scene.robots.items():
-                self._scene.register_robot(str(robot_id), config)
+            self._scene.register_model(scene.model)
             if self._gui is not None:
                 self._gui.refresh()
         except Exception:
@@ -234,10 +223,9 @@ class ViserManipulationVisualizer:
         self._ensure_started()
         if self._scene is None:
             return
-        for robot_id, current in frame.joint_states.items():
-            robot_id_string = str(robot_id)
-            self._current_states[robot_id_string] = JointState(current)
-            self._scene.update_current_robot(robot_id_string, current)
+        if frame.joint_state is not None:
+            self._current_state = JointState(frame.joint_state)
+            self._scene.update_current_model(frame.joint_state)
         if self._gui is not None:
             self._gui.refresh()
 
@@ -255,7 +243,7 @@ class ViserManipulationVisualizer:
                 preview, duration if duration is not None else max(float(trajectory.duration), 0.0)
             )
 
-    def cancel_preview_animation(self, robot_ids: Sequence[str] | None = None) -> None:
+    def cancel_preview_animation(self) -> None:
         """Cancel preview playback without starting a renderer or waiting for it.
 
         The world monitor deliberately invokes this outside its visualization
@@ -267,42 +255,24 @@ class ViserManipulationVisualizer:
         """
         scene = self._scene
         if scene is not None:
-            if robot_ids is None:
-                scene.cancel_preview_animation()
-            else:
-                scene.cancel_preview_animation(robot_ids)
+            scene.cancel_preview_animation()
 
-    def _raw_preview_animation(self, trajectory: JointTrajectory) -> GroupPreviewAnimation | None:
-        robot_indices: dict[str, list[tuple[int, str]]] = {}
-        for index, global_name in enumerate(trajectory.joint_names):
-            if "/" not in str(global_name):
-                return None
-            robot_name, local_name = str(global_name).split("/", 1)
-            if robot_name not in self._robot_ids_by_name:
-                return None
-            robot_indices.setdefault(robot_name, []).append((index, local_name))
-        tracks: list[PreviewTrack] = []
-        for robot_name, indexed_names in robot_indices.items():
-            robot_id = self._robot_ids_by_name[robot_name]
-            config = self._configs_by_name[robot_name]
-            current = self._current_states.get(robot_id)
-            baseline = self._baseline_values(config, current)
-            if baseline is None:
-                return None
-            frames: list[PreviewFrame] = []
-            for point in trajectory.points:
-                selected = {
-                    local_name: float(point.positions[index]) for index, local_name in indexed_names
-                }
-                positions: list[float] = []
-                for local_name in config.joint_names:
-                    value = selected.get(local_name, baseline.get(local_name))
-                    if value is None:
-                        return None
-                    positions.append(float(value))
-                frames.append(PreviewFrame(float(point.time_from_start), tuple(positions)))
-            tracks.append(PreviewTrack(robot_id, tuple(config.joint_names), tuple(frames)))
-        return GroupPreviewAnimation(tuple(tracks)) if tracks else None
+    def _raw_preview_animation(self, trajectory: JointTrajectory) -> PreviewAnimation | None:
+        config = self._model_config
+        if config is None or len(trajectory.joint_names) != len(set(trajectory.joint_names)):
+            return None
+        indices = {str(name): index for index, name in enumerate(trajectory.joint_names)}
+        if not set(indices).issubset(config.joint_names):
+            return None
+        baseline = self._baseline_values(config, self._current_state)
+        if baseline is None:
+            return None
+        frames: list[PreviewFrame] = []
+        for point in trajectory.points:
+            selected = {name: float(point.positions[index]) for name, index in indices.items()}
+            positions = [float(selected.get(name, baseline[name])) for name in config.joint_names]
+            frames.append(PreviewFrame(float(point.time_from_start), tuple(positions)))
+        return PreviewAnimation(tuple(config.joint_names), tuple(frames)) if frames else None
 
     @staticmethod
     def _baseline_values(

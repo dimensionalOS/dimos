@@ -31,6 +31,7 @@ class MLSPlanner:
         wall_buffer_weight: float = 100.0,
         step_threshold_m: float = 0.16,
         step_penalty_weight: float = 4.0,
+        worker_threads: int = 4,
     ) -> None: ...
     def update_global_map(self, points: NDArray[np.float32]) -> None:
         """Voxelize the map and rebuild surfaces, nodes, and edges. Shape (N, 3) float32."""

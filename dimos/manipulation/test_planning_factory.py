@@ -23,10 +23,11 @@ from types import ModuleType
 from typing import Any
 from unittest.mock import ANY
 
+from pydantic import ValidationError
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationModuleConfig
 from dimos.manipulation.planning.factory import (
     create_kinematics,
     create_planner,
@@ -52,6 +53,7 @@ from dimos.manipulation.planning.trajectory_generator.config import (
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.assets.model import RobotModel
 
 
 @pytest.fixture
@@ -72,8 +74,7 @@ def make_module() -> Generator[Callable[..., ManipulationModule], None, None]:
 @pytest.fixture
 def robot_config() -> RobotModelConfig:
     return RobotModelConfig(
-        name="arm",
-        model_path=Path("/path/to/robot.urdf"),
+        model=RobotModel.from_file(Path("/path/to/robot.urdf")),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
         planning_groups=[
@@ -263,7 +264,6 @@ def test_create_planning_stack_defaults_to_roboplan(
     mocker: MockerFixture, robot_config: RobotModelConfig
 ) -> None:
     world = mocker.MagicMock()
-    world.add_robot.return_value = "robot-id"
 
     kinematics = mocker.MagicMock(name="kinematics")
     planner = mocker.MagicMock(name="planner")
@@ -286,7 +286,7 @@ def test_create_planning_stack_defaults_to_roboplan(
 
     result = create_planning_stack(robot_config)
 
-    assert result == (world, kinematics, planner, "robot-id")
+    assert result == (world, kinematics, planner)
     mock_world.assert_called_once_with(backend="roboplan", visualization=None)
     mock_kinematics.assert_called_once_with(config=PinkKinematicsConfig())
     mock_planner.assert_called_once_with(
@@ -294,25 +294,13 @@ def test_create_planning_stack_defaults_to_roboplan(
         world=world,
         world_backend="roboplan",
     )
-    world.add_robot.assert_called_once_with(robot_config)
+    world.load_model.assert_called_once_with(robot_config)
     world.finalize.assert_called_once()
 
 
-def test_start_with_no_robots_skips_planning(
-    mocker: MockerFixture, make_module: Callable[..., ManipulationModule]
-) -> None:
-    module = make_module(robots=[])
-    create_world_mock = mocker.patch("dimos.manipulation.manipulation_module.create_world")
-    create_planning_specs_mock = mocker.patch(
-        "dimos.manipulation.manipulation_module.create_planning_specs"
-    )
-
-    module._initialize_planning()
-
-    assert module._robots == {}
-    assert module._world_monitor is None
-    create_world_mock.assert_not_called()
-    create_planning_specs_mock.assert_not_called()
+def test_configuration_requires_one_model() -> None:
+    with pytest.raises(ValidationError, match="model"):
+        ManipulationModuleConfig()
 
 
 def test_start_uses_configured_planner_and_kinematics(
@@ -322,13 +310,12 @@ def test_start_uses_configured_planner_and_kinematics(
 ) -> None:
     planner_config = RRTConnectPlannerConfig()
     module = make_module(
-        robots=[robot_config],
+        model=robot_config,
         planner=planner_config,
         kinematics=JacobianKinematicsConfig(),
     )
     world = mocker.MagicMock(name="world")
     world_monitor = mocker.MagicMock()
-    world_monitor.add_robot.return_value = "robot-id"
     planner = mocker.MagicMock(name="planner")
     kinematics = mocker.MagicMock(name="kinematics")
     planning_specs = mocker.MagicMock(
@@ -353,10 +340,9 @@ def test_start_uses_configured_planner_and_kinematics(
         world=world,
         world_backend="roboplan",
         planner=planner_config,
-        kinematics_name=None,
         kinematics=module.config.kinematics,
         trajectory_parametrization=ANY,
     )
     assert module._planner is planner
     assert module._kinematics is kinematics
-    assert module._robots["arm"][0] == "robot-id"
+    world_monitor.load_model.assert_called_once_with(robot_config)

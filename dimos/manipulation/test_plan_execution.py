@@ -14,7 +14,6 @@
 
 """Tests for ManipulationModule plan-execution result projection."""
 
-from pathlib import Path
 from unittest.mock import MagicMock
 
 from dimos.control.coordinator import ControlCoordinator
@@ -25,8 +24,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
 )
 from dimos.manipulation.manipulation_module import ManipulationModule, ManipulationState
-from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
-from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.manipulation_spec import ExecutionStatus
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -52,7 +50,7 @@ def _plan(final_position: float = 1.0) -> GeneratedPlan:
         ],
     )
     return GeneratedPlan(
-        group_ids=("arm/manipulator",),
+        group_ids=("manipulator",),
         trajectory=trajectory,
         path=[
             JointState(name=names, position=[0.0]),
@@ -67,22 +65,6 @@ def _module_with_coordinator(
     module_factory,
 ) -> ManipulationModule:
     module = module_factory(coordinator)
-    config = RobotModelConfig(
-        name="arm",
-        model_path=Path("/path/to/robot.urdf"),
-        joint_names=["j0"],
-        base_link="base",
-        planning_groups=[
-            PlanningGroupDefinition(
-                name="manipulator",
-                joint_names=("j0",),
-                base_link="base",
-                tip_link="tool",
-            )
-        ],
-    )
-    module._robots = {"arm": ("arm_id", config)}
-    module._initialize_execution()
     return module
 
 
@@ -97,7 +79,7 @@ def _coordinator(
     return coordinator
 
 
-def test_execute_plan_can_dispatch_cached_plan_repeatedly(
+def test_execute_consumes_cached_plan_after_dispatch(
     module_factory,
 ) -> None:
     coordinator = _coordinator()
@@ -105,31 +87,10 @@ def test_execute_plan_can_dispatch_cached_plan_repeatedly(
     plan = _plan()
     module._last_plan = plan
 
-    assert module.execute_plan()
-    assert module.execute_plan()
-    assert coordinator.execute_trajectory.call_count == 2
-    for call in coordinator.execute_trajectory.call_args_list:
-        dispatched = call.args[0]
-        assert [point.time_from_start for point in dispatched.points] == [
-            point.time_from_start for point in plan.trajectory.points
-        ]
-        assert [point.velocities for point in dispatched.points] == [
-            point.velocities for point in plan.trajectory.points
-        ]
-
-
-def test_direct_plan_does_not_replace_cached_plan(module_factory) -> None:
-    coordinator = _coordinator()
-    module = _module_with_coordinator(coordinator, module_factory)
-    cached = _plan(1.0)
-    direct = _plan(2.0)
-    module._last_plan = cached
-
-    assert module.execute_plan(plan=direct)
-
-    assert module._last_plan is cached
-    dispatched = coordinator.execute_trajectory.call_args.args[0]
-    assert dispatched.points[-1].positions == [2.0]
+    assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
+    assert module.execute(blocking=False).status is ExecutionStatus.NO_PLAN
+    assert module._last_plan is None
+    coordinator.execute_trajectory.assert_called_once_with(plan.trajectory)
 
 
 def test_known_coordinator_rejection_restores_previous_state(
@@ -140,10 +101,10 @@ def test_known_coordinator_rejection_restores_previous_state(
     module._last_plan = _plan()
     module._state = ManipulationState.COMPLETED
 
-    assert not module.execute_plan()
+    assert module.execute(blocking=False).status is ExecutionStatus.REJECTED
 
-    assert module._state is ManipulationState.COMPLETED
-    assert module._last_plan is not None
+    assert module._state is ManipulationState.IDLE
+    assert module._last_plan is None
 
 
 def test_uncertain_execute_projects_to_fault(module_factory) -> None:
@@ -152,7 +113,7 @@ def test_uncertain_execute_projects_to_fault(module_factory) -> None:
     module = _module_with_coordinator(coordinator, module_factory)
     module._last_plan = _plan()
 
-    assert not module.execute_plan()
+    assert module.execute(blocking=False).status is ExecutionStatus.UNCERTAIN
 
     assert module._state is ManipulationState.FAULT
     assert "timed out" in module.get_error()
@@ -164,7 +125,7 @@ def test_uncertain_cancel_projects_to_fault(module_factory) -> None:
     module = _module_with_coordinator(coordinator, module_factory)
     module._state = ManipulationState.EXECUTING
 
-    assert not module.cancel()
+    assert module.cancel().status is ExecutionStatus.UNCERTAIN
 
     assert module._state is ManipulationState.FAULT
     assert "timed out" in module.get_error()

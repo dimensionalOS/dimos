@@ -22,15 +22,14 @@ Real hardware (default):
     start; activate explicitly through ControlCoordinator RPC after
     verifying commands. The policy ramps from the current pose to its
     bent-knee default over 10 s before taking torque control. The 14 arm
-    joints are held at the relaxed GR00T-trained default via a lower-priority
-    servo task.
+    joints accept bounded position commands through the lower-priority joint
+    trajectory task.
 
 Sim (``--simulation``):
     MujocoSimModule (in-process MuJoCo + SHM) + sim_mujoco_g1 adapter.
     50 Hz tick (matches the rate the policy was trained at). No arming
-    ramp and no dry-run. The 14 arm joints are still held with the same
-    lower-priority servo task as hardware so headless and viewer runs do not
-    depend on incidental startup timing.
+    ramp and no dry-run. The same bounded arm-command path is available in
+    simulation and on hardware.
 
 Usage:
     dimos run unitree-g1-groot-wbc                 # real hardware
@@ -46,24 +45,28 @@ Overrides (replace the old env-var dance):
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any, cast
 
 from dimos.control.components import HardwareComponent, HardwareType
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
-    ARM_DEFAULT_POSE,
     G1_GROOT_KD,
     G1_GROOT_KP,
     g1_arms,
     g1_joints,
     g1_legs_waist,
 )
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import WholeBodyConfig
+from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
+from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -80,6 +83,8 @@ from dimos.robot.unitree.g1.g1_rerun import (
     g1_urdf_joint_state,
     g1_urdf_static_robot,
 )
+from dimos.robot.unitree.g1.manip_config import G1_TELEOP_ARM_MODEL
+from dimos.robot.unitree.g1.teleop_ik import G1PinkPoseTargetSolver
 from dimos.simulation.scene_assets.spec import ScenePackage
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
@@ -132,7 +137,7 @@ _G1_NAV_ROTATION_DIAMETER = 0.8
 _G1_NAV_SAFE_RADIUS_MARGIN = 0.6
 
 
-class _G1GrootCoordinator(ControlCoordinator):
+class _G1GrootCoordinator(TeleopControlCoordinator):
     g1_joints: Out[JointState]
 
 
@@ -278,13 +283,11 @@ if global_config.simulation == "mujoco":
     _default_ramp_seconds = 0.0
     _decimation: int | None = 1
     _n_workers = 2  # sim: keep the default worker count
-    _arm_holder = TaskConfig(
-        name="servo_arms",
-        type="servo",
-        joint_names=g1_arms,
+    _arm_holder = joint_trajectory_task(
+        g1_arms,
         priority=10,
-        auto_start=True,
-        params={"default_positions": ARM_DEFAULT_POSE},
+        velocity_limits={name: 1.0 for name in g1_arms},
+        hold_position_when_idle=True,
     )
     _mapper = VoxelGridMapper.blueprint(emit_every=1)
     _nav_stack = autoconnect(
@@ -303,10 +306,7 @@ if global_config.simulation == "mujoco":
         ),
         MovementManager.blueprint(),
     )
-    _remappings = [
-        (VoxelGridMapper, "lidar", "pointcloud"),
-        (_G1GrootCoordinator, "twist_command", "cmd_vel"),
-    ]
+    _nav_remappings = [(VoxelGridMapper, "lidar", "pointcloud")]
 else:
     from dimos.hardware.sensors.lidar.pointlio.module import PointLio
     from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
@@ -327,15 +327,11 @@ else:
     _decimation = 2  # 100 Hz tick / 2 = 50 Hz policy (training + sim rate).
     # One process per heavy module; fewer workers starve the Rerun bridge.
     _n_workers = 10
-    # Real hardware needs the arms held -- kd damping alone would let
-    # them sag toward singular configurations between trajectories.
-    _arm_holder = TaskConfig(
-        name="servo_arms",
-        type="servo",
-        joint_names=g1_arms,
+    _arm_holder = joint_trajectory_task(
+        g1_arms,
         priority=10,
-        auto_start=True,
-        params={"default_positions": ARM_DEFAULT_POSE},
+        velocity_limits={name: 1.0 for name in g1_arms},
+        hold_position_when_idle=True,
     )
     # Same nav middle as unitree-g1-nav-simple, fed by Point-LIO from the
     # MID-360, executed through the coordinator's twist_command.
@@ -363,7 +359,7 @@ else:
         ),
         MovementManager.blueprint(),
     )
-    _remappings = [(_G1GrootCoordinator, "twist_command", "cmd_vel")]
+    _nav_remappings = []
 
 
 def _g1_groot_rerun_blueprint() -> Any:
@@ -392,6 +388,20 @@ def _g1_nav_path(path: NavPath) -> Any:
 _G1_ROOT = G1_RERUN_ROOT if global_config.simulation == "mujoco" else "world/odometry/g1"
 
 _G1_URDF_PATH = Path(__file__).resolve().parents[2] / "g1.urdf"
+_G1_TELEOP_MODEL = RobotModelConfig(
+    model=G1_TELEOP_ARM_MODEL,
+    joint_names=list(g1_arms),
+    base_link="pelvis",
+)
+_G1_TELEOP_PINK = PinkKinematicsConfig(
+    dt=0.01,
+    position_cost=8.0,
+    orientation_cost=2.0,
+    posture_cost=0.01,
+    joint_limit_posture_margin=0.3,
+    lm_damping=0.01,
+    gain=0.25,
+)
 # Nominal standing pelvis height; matches G1GrootWBCTask's height_cmd.
 _G1_NOMINAL_PELVIS_Z = 0.74
 _g1_pelvis_mid360_cache: list[Any] = []
@@ -518,7 +528,27 @@ _coordinator = _G1GrootCoordinator.blueprint(
                 "decimation": _decimation,
             },
         ),
-        *([_arm_holder] if _arm_holder is not None else []),
+        _arm_holder,
+        # Shared bimanual Quest task with G1-only model and objective tuning.
+        TaskConfig(
+            name="teleop_g1",
+            type="teleop_ik",
+            joint_names=g1_arms,
+            priority=20,
+            params={
+                "robot_model": _G1_TELEOP_MODEL,
+                "bindings": [
+                    {"hand": "left", "target_frame": "left_rubber_hand"},
+                    {"hand": "right", "target_frame": "right_rubber_hand"},
+                ],
+                "solver_type": G1PinkPoseTargetSolver,
+                "pink": _G1_TELEOP_PINK,
+                "timeout": 0.5,
+                "max_command_tracking_error_deg": 10.0,
+                "max_joint_velocity_rad_s": math.radians(120.0),
+                "joint_command_filter_cutoff_hz": 5.0,
+            },
+        ),
     ],
 ).transports(
     {
@@ -535,8 +565,12 @@ _coordinator = _G1GrootCoordinator.blueprint(
     }
 )
 
-unitree_g1_groot_wbc = (
-    autoconnect(_backend, _coordinator, _nav_stack, _viewer())
-    .remappings(cast("Any", _remappings))
+_unitree_g1_groot_wbc_core = (
+    autoconnect(_backend, _coordinator)
+    .remappings([(_G1GrootCoordinator, "twist_command", "cmd_vel")])
     .global_config(robot_model="unitree_g1", n_workers=_n_workers)
+)
+
+unitree_g1_groot_wbc = autoconnect(_unitree_g1_groot_wbc_core, _nav_stack, _viewer()).remappings(
+    cast("Any", _nav_remappings)
 )

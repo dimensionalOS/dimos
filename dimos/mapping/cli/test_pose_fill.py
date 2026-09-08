@@ -21,7 +21,7 @@ The end-to-end `dimos map pose-fill` path against a real recording lives in
 from __future__ import annotations
 
 from dimos.mapping.cli.pose_fill import pose_fill
-from dimos.memory2.store.memory import MemoryStore
+from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3

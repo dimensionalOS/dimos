@@ -30,7 +30,7 @@ from dimos.perception.experimental.object import Object
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.memory2.store.base import Store
+    from dimos.memory.store.base import Store
     from dimos.perception.detection.detectors.base import Detector
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 

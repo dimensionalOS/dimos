@@ -79,6 +79,14 @@ class CommandRecordingTask(BaseControlTask):
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         pass
 
+    # Card-consumed streams: add_task resolves handlers at registration,
+    # so a stub registered under servo / g1_groot_wbc must carry them.
+    def on_joint_command(self, msg: Any, t_now: float) -> None:
+        pass
+
+    def on_twist_command(self, msg: Any, t_now: float) -> None:
+        pass
+
     # Trajectory commands
     def execute(self, trajectory: Any) -> bool:
         self.executed = trajectory
@@ -326,14 +334,13 @@ class TestDescribeTask:
         assert execute["params"] == ["trajectory"]
         assert "trajectory" in execute["signature"]
         assert desc["commands"]["cancel"]["params"] == []
-        assert desc["streams"] == []
+        assert desc["streams"] == [("joint_command", "claim_overlap")]
 
-    def test_reports_stream_routes(self, coordinator):
-        # servo declares no commands but consumes joint_command.
-        task = CommandRecordingTask("servo1")
-        coordinator.add_task(task, task_type="servo")
+    def test_reports_velocity_stream_route(self, coordinator):
+        task = CommandRecordingTask("velocity1")
+        coordinator.add_task(task, task_type="velocity")
 
-        desc = coordinator.describe_task("servo1")
+        desc = coordinator.describe_task("velocity1")
 
         assert desc["commands"] == {}
         assert desc["streams"] == [("joint_command", "claim_overlap")]

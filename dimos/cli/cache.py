@@ -27,6 +27,12 @@ app = typer.Typer(help="Manage DimOS caches", no_args_is_help=True)
 
 @app.command("clean")
 def clean(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Delete cached robot Git checkouts containing local work",
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
@@ -58,6 +64,11 @@ def clean(
     else:
         typer.echo(f"  - {CACHE_DIR} (empty cache root)")
 
+    if force:
+        typer.echo("")
+        typer.echo("Force mode:")
+        typer.echo("  - Removes robot Git checkouts with local changes or local-only commits")
+
     typer.echo("")
     if not yes and not typer.confirm("Continue?", default=False):
         typer.echo("Cache cleanup cancelled.")
@@ -66,7 +77,7 @@ def clean(
     try:
         with cache_cleanup_guard():
             _refuse_active_run()
-            result = clean_caches()
+            result = clean_caches(force=force)
     except CacheInUseError:
         typer.echo(
             "Error: DimOS is starting or running. Stop it before cleaning caches.",
@@ -75,6 +86,8 @@ def clean(
         raise typer.Exit(1)
     for path in result.cleaned:
         typer.echo(f"Cleaned cache: {path}")
+    for issue in result.skipped:
+        typer.echo(f"Skipped cache: {issue.path} ({issue.reason})", err=True)
     for issue in result.failed:
         typer.echo(f"Failed to remove cache: {issue.path} ({issue.reason})", err=True)
 

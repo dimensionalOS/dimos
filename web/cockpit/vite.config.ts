@@ -3,10 +3,14 @@ import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-// The cockpit imports the wire protocol straight from the workspace-sibling
-// shared/ package; vite needs the aliases (and fs.allow) because those files
-// live outside the cockpit root. The subpath alias must come first: aliases
-// match in order and the bare one would otherwise swallow it.
+// The cockpit imports the viewer SDK and the wire protocol straight from the
+// workspace-sibling sdk/ and shared/ packages; vite needs the aliases (and
+// fs.allow) because those files live outside the cockpit root. Subpath
+// aliases must come first: aliases match in order and the bare one would
+// otherwise swallow them.
+const sdkIndex = fileURLToPath(new URL("../sdk/src/index.ts", import.meta.url));
+const sdkReact = fileURLToPath(new URL("../sdk/src/react.ts", import.meta.url));
+const sdkTeleop = fileURLToPath(new URL("../sdk/src/internal/teleopMachine.ts", import.meta.url));
 const sharedProtocol = fileURLToPath(new URL("../shared/protocol.ts", import.meta.url));
 const sharedManifest = fileURLToPath(new URL("../shared/manifest.ts", import.meta.url));
 const webRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -15,6 +19,9 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
+      "@dimos/sdk/internal/teleop": sdkTeleop,
+      "@dimos/sdk/react": sdkReact,
+      "@dimos/sdk": sdkIndex,
       "@dimos/shared/manifest": sharedManifest,
       "@dimos/shared": sharedProtocol,
     },

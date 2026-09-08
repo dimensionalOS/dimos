@@ -17,9 +17,9 @@ TASK_FACTORIES = {
 }
 
 TASK_CONSUMES: dict[str, dict[str, tuple[str, str]]] = {
-    "trajectory": {},  # command-driven only; consumes no input streams
+    "trajectory": {"joint_command": ("on_joint_command", "claim_overlap")},
 }
 
 TASK_EXPOSES: dict[str, list[str]] = {
-    "trajectory": ["execute", "cancel", "get_state"],
+    "trajectory": ["execute", "cancel", "get_state", "get_status"],
 }

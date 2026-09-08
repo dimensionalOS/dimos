@@ -1,8 +1,6 @@
----
-title: "Boston Dynamics Spot"
----
+# Boston Dynamics Spot
 
-Boston Dynamics Spot control for DimOS: velocity teleop plus fisheye/depth camera and
+Boston Dynamics Spot control for dimOS: velocity teleop plus fisheye/depth camera and
 odometry streaming.
 
 ## Install
@@ -49,16 +47,16 @@ viewer opens with the fisheye/depth cameras and odometry.
 
 Spot support is experimental and lives in `dimos/experimental/robot/bosdyn/spot/`.
 
-- `config.py` — constants + pure address/credential helpers (no `bosdyn` import).
-- `effectors/high_level.py` — `SpotHighLevel`: the single Spot module —
+- `config.py`: constants + pure address/credential helpers (no `bosdyn` import).
+- `effectors/high_level.py`: `SpotHighLevel`, the single Spot module. It handles
   lease/E-stop/power/stand + velocity commands plus the five fisheye + five depth
   cameras and body odometry.
-- `recorder.py` — `SpotRecorder`: records every Spot stream to disk.
-- `blueprints/spot.py` — the runnable `spot` blueprint (click/teleop + sensors + Rerun).
+- `recorder.py`: `SpotRecorder` records every Spot stream to disk.
+- `blueprints/spot.py`: the runnable `spot` blueprint (click/teleop + sensors + Rerun).
 
 ## Dimos Tools
 
-- [Visualization](/docs/usage/visualization.md) — Rerun, performance tuning
-- [Data Streams](/docs/usage/data_streams/index.md) — RxPY streams, backpressure, quality filtering
-- [Transports](/docs/usage/transports/index.md) — LCM, SHM, DDS
-- [Blueprints](/docs/usage/blueprints.md) — composing modules
+- [Visualization](/docs/usage/visualization.md): Rerun, performance tuning
+- [Data Streams](/docs/usage/data_streams/index.md): RxPY streams, backpressure, quality filtering
+- [Transports](/docs/usage/transports/index.md): LCM, SHM, DDS
+- [Blueprints](/docs/usage/blueprints.md): composing modules

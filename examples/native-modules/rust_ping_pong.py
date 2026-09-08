@@ -17,6 +17,9 @@
 Run with:
     python examples/native-modules/rust_ping_pong.py --transport lcm
     python examples/native-modules/rust_ping_pong.py --transport zenoh
+    python examples/native-modules/rust_ping_pong.py --transport zenoh --topology
+
+With --topology pong is opened as router and ping is opened as client.
 """
 
 from __future__ import annotations
@@ -24,15 +27,21 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from dimos.core.coordination.blueprints import autoconnect
+from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.protocol.service.zenohservice import ZenohConfig
 
 _RUST_DIR = Path(__file__).parent / "rust"
-_EXAMPLES = _RUST_DIR / "target" / "release"
+# The crate is a workspace member, so cargo builds into the repo-root target dir.
+_EXAMPLES = DIMOS_PROJECT_ROOT / "target" / "release"
 _BUILD = "cargo build --release"
+
+# Where pong listens when it runs as the router.
+_ROUTER_ENDPOINT = "tcp/127.0.0.1:17450"
 
 
 class PingConfig(NativeModuleConfig):
@@ -66,14 +75,35 @@ class PongModule(NativeModule):
     confirm: Out[Twist]
 
 
-def blueprint():
-    return autoconnect(PingModule.blueprint(), PongModule.blueprint())
+def blueprint(topology: bool = False) -> Blueprint:
+    ping_zenoh = None
+    pong_zenoh = None
+    if topology:
+        pong_zenoh = ZenohConfig(mode="router", listen=[_ROUTER_ENDPOINT], connect=[])
+        ping_zenoh = ZenohConfig(
+            mode="client",
+            connect=[_ROUTER_ENDPOINT],
+            # The client dials until the router native is up, however slowly it
+            # cold-starts. A client with no router fails hard at open.
+            connect_timeout=10.0,
+        )
+    return autoconnect(
+        PingModule.blueprint(session=ping_zenoh),
+        PongModule.blueprint(session=pong_zenoh),
+    )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--transport", choices=["lcm", "zenoh"], default="lcm")
+    parser.add_argument(
+        "--topology",
+        action="store_true",
+        help="run pong as a zenoh router and ping as its client",
+    )
     args = parser.parse_args()
+    if args.topology and args.transport != "zenoh":
+        parser.error("--topology requires --transport zenoh")
 
-    bp = blueprint().global_config(viewer="none", transport=args.transport)
+    bp = blueprint(args.topology).global_config(viewer="none", transport=args.transport)
     ModuleCoordinator.build(bp).loop()

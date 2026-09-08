@@ -72,7 +72,7 @@ class Suite:
 
     def frame_count(self) -> int:
         """Upper bound on the frames world_frames yields, for a progress bar."""
-        from dimos.memory2.store.sqlite import SqliteStore
+        from dimos.memory.store.sqlite import SqliteStore
         from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
         store = SqliteStore(path=str(self.db_path()))
