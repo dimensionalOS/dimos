@@ -67,7 +67,7 @@ class _Turn:
             self.done.set()
 
 
-class McpClientAgent(Agent):
+class McpClientAdapter(Agent):
     """An eval adapter for the production ``McpClient``.
 
     Send the instruction on ``/human_input`` and capture ``/agent`` until
@@ -84,7 +84,7 @@ class McpClientAgent(Agent):
     def preflight(self, environment: Environment) -> None:
         if not environment.has_robot and not self.config.modules:
             raise RuntimeError(
-                f"McpClientAgent needs a running McpClient; {type(environment).__name__} "
+                f"McpClientAdapter needs a running McpClient; {type(environment).__name__} "
                 "has no robot and this agent adds no modules"
             )
 

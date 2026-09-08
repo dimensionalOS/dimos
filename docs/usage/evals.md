@@ -131,7 +131,7 @@ compare two tool sets on one task, run the suite twice with different
 `--set modules=...`; each `trajectory.json` records the tools exposed.
 
 **Limits.** The case's `timeout_s` sets the time budget for the agent and
-subsequent motion settling. `McpClientAgent` returns what it has when its
+subsequent motion settling. `McpClientAdapter` returns what it has when its
 wait expires, marked `timeout`; `QuestionAnswer` and `Blind` rely on the
 model provider's timeout. Environment startup has a separate
 `launch_timeout_s`. There are no token or cost caps; usage is recorded when
@@ -212,7 +212,7 @@ go_to_bed = EvalCase(
 ```
 
 ```bash
-dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.mcp_client --set modules=unitree-go2-agentic
+dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.mcp_client_adapter --set 'modules=["unitree-go2-agentic"]'
 ```
 
 The recording holds the whole history, so "never left the zone" is `min` over

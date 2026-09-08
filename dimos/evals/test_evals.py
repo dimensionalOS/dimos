@@ -39,7 +39,7 @@ from dimos.core.transport_factory import make_transport
 from dimos.evals.agents.base import Agent
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
-from dimos.evals.agents.mcp_client import McpClientAgent
+from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.cli import load_agent
 from dimos.evals.environments.base import Environment
@@ -213,10 +213,12 @@ def test_dataset_preflight_checks_added_modules(dataset: str) -> None:
     """A tool-using agent's modules become the launched stack, so preflight
     validates the names; adding modules to an attached dimos is a conflict."""
     with pytest.raises(ValueError, match="Unknown blueprint or module: 'no-such-module'"):
-        Dataset(dataset).preflight(McpClientAgent(modules=("no-such-module",)))
-    match = "already attaches to http://x/mcp; McpClientAgent also adds modules"
+        Dataset(dataset).preflight(McpClientAdapter(modules=("no-such-module",)))
+    match = "already attaches to http://x/mcp; McpClientAdapter also adds modules"
     with pytest.raises(RuntimeError, match=match):
-        Dataset(dataset, mcp_url="http://x/mcp").preflight(McpClientAgent(modules=("unitree-go2",)))
+        Dataset(dataset, mcp_url="http://x/mcp").preflight(
+            McpClientAdapter(modules=("unitree-go2",))
+        )
 
 
 def test_dataset_launches_and_cleans_up_the_agents_modules(
@@ -272,7 +274,7 @@ def test_dataset_stops_the_process_when_closing_its_store_fails(
 
 def test_sim_attach_rejects_added_modules() -> None:
     with pytest.raises(RuntimeError, match="attaches.*also adds modules"):
-        _sim(attach=True).preflight(McpClientAgent(modules=("mcp-client",)))
+        _sim(attach=True).preflight(McpClientAdapter(modules=("mcp-client",)))
 
 
 def test_sim_launches_base_blueprints_and_agent_modules_in_order(
@@ -362,10 +364,10 @@ def test_sim_settle_without_motion_data_returns_immediately(mocker: MockerFixtur
 
 def test_agent_preflight_mismatches(dataset: str) -> None:
     frozen = Dataset(dataset)
-    with pytest.raises(RuntimeError, match="McpClientAgent needs a running McpClient"):
-        McpClientAgent().preflight(frozen)
-    McpClientAgent(modules=("mcp-server", "mcp-client")).preflight(frozen)  # brings its own
-    McpClientAgent().preflight(_sim())  # the environment will launch the stack
+    with pytest.raises(RuntimeError, match="McpClientAdapter needs a running McpClient"):
+        McpClientAdapter().preflight(frozen)
+    McpClientAdapter(modules=("mcp-server", "mcp-client")).preflight(frozen)  # brings its own
+    McpClientAdapter().preflight(_sim())  # the environment will launch the stack
 
 
 def test_question_answer_encodes_the_recording_into_one_call(
@@ -650,7 +652,11 @@ def test_suites_and_agents_importable() -> None:
     for module in (examples, go2_smoke, go2_vqa, dimsim_house):
         assert module.SUITE, module.__name__
     agents = list_agents()
-    assert {m.rsplit(".", 1)[1] for m in agents} == {"question_answer", "blind", "mcp_client"}
+    assert {m.rsplit(".", 1)[1] for m in agents} == {
+        "question_answer",
+        "blind",
+        "mcp_client_adapter",
+    }
     for module in agents:
         assert callable(load_agent(module).run), module
 
@@ -671,17 +677,17 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
     with pytest.raises(ValidationError, match="frames_per_stream"):
         load_agent("dimos.evals.agents.blind", ["frames_per_stream=3"])
     with pytest.raises(ValidationError, match="model"):
-        load_agent("dimos.evals.agents.mcp_client", ["model=gpt-4o"])
+        load_agent("dimos.evals.agents.mcp_client_adapter", ["model=gpt-4o"])
     with pytest.raises(TypeError, match="0 agents"):
         load_agent("dimos.evals.agents.lib.single_call")
     with pytest.raises(ValidationError, match="modules"):
-        load_agent("dimos.evals.agents.mcp_client", ["modules=mcp-server mcp-client"])
+        load_agent("dimos.evals.agents.mcp_client_adapter", ["modules=mcp-server mcp-client"])
     with pytest.raises(ValidationError, match="frames_per_stream"):
         load_agent("dimos.evals.agents.question_answer", ["frames_per_stream=0"])
 
 
 @pytest.mark.parametrize("goes_idle", [True, False])
-def test_mcp_client_agent_drives_a_turn_over_real_transports(
+def test_mcp_client_adapter_drives_a_turn_over_real_transports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goes_idle: bool
 ) -> None:
     """The production agent points the McpClient's raw capture at run_dir/raw,
@@ -733,7 +739,7 @@ def test_mcp_client_agent_drives_a_turn_over_real_transports(
     )
     try:
         env = RunningEnvironment(mcp_url="http://localhost:1/mcp", streams=(), artifacts={})
-        agent = McpClientAgent()
+        agent = McpClientAdapter()
         trajectory = agent.run(
             "go to the bed", env, tmp_path / "case", timeout_s=10.0 if goes_idle else 0.5
         )
@@ -768,4 +774,4 @@ def test_agents_report_every_available_tool() -> None:
 
     assert QuestionAnswer().available_tools(environment_tools) == ()
     assert Blind().available_tools(environment_tools) == ()
-    assert McpClientAgent().available_tools(environment_tools) == environment_tools
+    assert McpClientAdapter().available_tools(environment_tools) == environment_tools
