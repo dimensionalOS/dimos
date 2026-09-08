@@ -283,9 +283,15 @@ class SessionProtocol(QuicConnectionProtocol):
         drain-and-requeue.
         """
         if isinstance(msg, Subs):
+            replay = set(msg.replay or [])
             for queued in self._drain_control_msgs():
-                if not isinstance(queued, Subs):
+                if isinstance(queued, Subs):
+                    replay.update(queued.replay or [])
+                else:
                     self.control_msgs.put_nowait(queued)
+            # Replay is an event carried alongside the full subscription state.
+            # Retain pending requests across a burst, bounded by active channels.
+            msg = msg.model_copy(update={"replay": sorted(replay.intersection(msg.chs)) or None})
         if self.control_msgs.full():
             msgs = self._drain_control_msgs()
             # A victim always exists: at most one queued Subs (coalesced

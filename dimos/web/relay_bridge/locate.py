@@ -87,6 +87,7 @@ def relay_run_cmd(
     cockpit_dir: Path | None = None,
     sdk_dir: Path | None = None,
     serve_dir: Path | None = None,
+    entrypoint: Path | None = None,
 ) -> list[str]:
     """Build the argv that runs the relay with the pinned config and least permissions."""
     # Canonical paths: the relay realpath-checks served files against its
@@ -106,6 +107,8 @@ def relay_run_cmd(
     # the cockpit build tooling), which would make this run materialize
     # node_modules next to the config -- inside site-packages under a wheel.
     allow_read = ",".join([str(web_dir), *(str(path) for _, path in dirs)])
+    if entrypoint is not None:
+        allow_read += "," + str(entrypoint.resolve().parent)
     cmd = [
         deno,
         "run",
@@ -115,7 +118,7 @@ def relay_run_cmd(
         "--allow-net",
         "--config",
         str(web_dir / "deno.json"),
-        str(web_dir / "relay" / "main.ts"),
+        str(entrypoint.resolve() if entrypoint else web_dir / "relay" / "main.ts"),
     ]
     for flag, path in dirs:
         cmd += [flag, str(path)]

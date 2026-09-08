@@ -50,6 +50,19 @@ StepHook = Callable[["MujocoEngine"], None]
 _MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
 _RESET_WAIT_TIMEOUT_S = 5.0
 
+# How far behind its wall-clock schedule the sim loop may fall and still spend
+# time on camera rendering. One render legitimately costs several step budgets
+# (a 640x360 camera is ~10 ms against a 5 ms step), so the loop is briefly in
+# debt after every frame and repays it on the next near-empty steps; the
+# threshold has to sit above that normal sawtooth and below the sustained debt
+# that means rendering no longer fits in real time.
+RENDER_LAG_BUDGET = 0.020
+# Debt past this is treated as unrecoverable (a host suspend, a long GC pause)
+# and abandoned, so it cannot suppress rendering forever afterwards.
+MAX_LAG_CATCHUP = 0.25
+# Rate limit for the "skipping renders" warning.
+SKIP_REPORT_INTERVAL = 10.0
+
 
 def _camera_name_candidates(camera_name: str) -> tuple[str, ...]:
     stripped = camera_name.strip("/")
@@ -80,6 +93,9 @@ def _camera_ray_directions(width: int, height: int, fovy_degrees: float) -> NDAr
     return cast("NDArray[np.float64]", directions / norms)
 
 
+camera_ray_directions = _camera_ray_directions
+
+
 @dataclass
 class CameraConfig:
     name: str
@@ -89,12 +105,16 @@ class CameraConfig:
     max_geom: int | None = 10000
     geom_groups: tuple[int, ...] | None = None
     base_body_name: str | None = None
+    # Depth is a second full render of the same scene, so it roughly doubles
+    # the camera's cost on the sim thread. Cameras whose depth nobody reads
+    # (a video feed) turn it off; CameraFrame.depth is then None.
+    render_depth: bool = True
 
 
 @dataclass
 class CameraFrame:
     rgb: NDArray[np.uint8]
-    depth: NDArray[np.float32]
+    depth: NDArray[np.float32] | None
     cam_pos: NDArray[np.float64]
     cam_mat: NDArray[np.float64]
     fovy: float
@@ -127,7 +147,7 @@ class _CameraRendererState:
     cfg: CameraConfig
     cam_id: int
     rgb_renderer: mujoco.Renderer
-    depth_renderer: mujoco.Renderer
+    depth_renderer: mujoco.Renderer | None
     scene_option: mujoco.MjvOption | None
     interval: float
     base_body_id: int | None = None
@@ -378,13 +398,15 @@ class MujocoEngine(SimulationEngine):
                 width=cfg.width,
                 max_geom=max_geom,
             )  # type: ignore[call-arg]
-            depth_renderer = mujoco.Renderer(
-                self._model,
-                height=cfg.height,
-                width=cfg.width,
-                max_geom=max_geom,
-            )  # type: ignore[call-arg]
-            depth_renderer.enable_depth_rendering()
+            depth_renderer = None
+            if cfg.render_depth:
+                depth_renderer = mujoco.Renderer(
+                    self._model,
+                    height=cfg.height,
+                    width=cfg.width,
+                    max_geom=max_geom,
+                )  # type: ignore[call-arg]
+                depth_renderer.enable_depth_rendering()
             scene_option = None
             if cfg.geom_groups is not None:
                 scene_option = mujoco.MjvOption()
@@ -456,14 +478,16 @@ class MujocoEngine(SimulationEngine):
             )
             rgb = state.rgb_renderer.render().copy()
 
-            state.depth_renderer.update_scene(
-                self._data, camera=state.cam_id, scene_option=state.scene_option
-            )
-            depth = state.depth_renderer.render().copy()
+            depth = None
+            if state.depth_renderer is not None:
+                state.depth_renderer.update_scene(
+                    self._data, camera=state.cam_id, scene_option=state.scene_option
+                )
+                depth = state.depth_renderer.render().copy().astype(np.float32)
 
             frame = CameraFrame(
                 rgb=rgb,
-                depth=depth.astype(np.float32),
+                depth=depth,
                 cam_pos=self._data.cam_xpos[state.cam_id].copy(),
                 cam_mat=self._data.cam_xmat[state.cam_id].copy(),
                 fovy=float(self._model.cam_fovy[state.cam_id]),
@@ -538,7 +562,8 @@ class MujocoEngine(SimulationEngine):
     def _close_cam_renderers(cam_renderers: dict[str, _CameraRendererState]) -> None:
         for state in cam_renderers.values():
             state.rgb_renderer.close()
-            state.depth_renderer.close()
+            if state.depth_renderer is not None:
+                state.depth_renderer.close()
 
     def _reset_unlocked(self) -> None:
         if self._model.nkey > 0:
@@ -605,8 +630,23 @@ class MujocoEngine(SimulationEngine):
         cam_renderers = self._init_cameras()
         lidar_states = self._init_raycast_lidars()
 
+        # When this iteration was due to start, on the MONOTONIC clock: pacing
+        # must not be steerable by NTP or a manual clock change, which on
+        # time.time() would show up as the loop sleeping for minutes or
+        # sprinting through its debt. Frame/sensor timestamps stay wall-clock;
+        # only the schedule is monotonic. Cameras render inline on this thread
+        # (see _render_cameras), so without a schedule to measure against a
+        # slow render silently steals from the simulation clock instead of
+        # from the frame rate.
+        next_step_at = time.monotonic()
+        skipped_renders = 0
+        last_skip_report = next_step_at
+
         def _step_once(sync_viewer: bool) -> None:
-            loop_start = time.time()
+            nonlocal next_step_at, skipped_renders, last_skip_report
+            loop_start = time.time()  # wall clock: stamps frames and sensors
+            loop_started_at = time.monotonic()  # monotonic: paces the loop
+            lag = loop_started_at - next_step_at
             reset_done_events: list[threading.Event] = []
             with self._lock:
                 if self._reset_requested:
@@ -631,13 +671,43 @@ class MujocoEngine(SimulationEngine):
                     self._on_after_step(self)
                 except Exception as exc:
                     logger.error("on_after_step failed", error=str(exc))
-            self._render_cameras(loop_start, cam_renderers)
+            # Cameras render inline on this thread and one render costs
+            # several times the whole per-step budget, so they have to yield
+            # to the simulation clock: when the loop is already behind real
+            # time - GPU contention from a screen recorder, another encoder,
+            # the compositor - skip this cycle's renders. Contention then
+            # costs frame rate, which recovers on its own, instead of slowing
+            # simulated time, which does not. Rendering resumes by itself as
+            # soon as the loop catches up; _render_cameras leaves
+            # last_render_time untouched when it does not run, so the next
+            # opportunity is taken immediately.
+            if lag <= RENDER_LAG_BUDGET:
+                self._render_cameras(loop_start, cam_renderers)
+            else:
+                skipped_renders += 1
+            # Lidar is deliberately NOT skipped: it feeds navigation, runs at
+            # ~1 Hz, and is a rounding error next to the cameras.
             self._raycast_lidars(loop_start, lidar_states)
 
-            elapsed = time.time() - loop_start
-            sleep_time = dt - elapsed
+            next_step_at += dt
+            now = time.monotonic()
+            sleep_time = next_step_at - now
             if sleep_time > 0:
                 time.sleep(sleep_time)
+            elif now - next_step_at > MAX_LAG_CATCHUP:
+                # Unrecoverable debt (a long stall, the host suspending).
+                # Abandon it rather than sprint - and rather than let it
+                # suppress every render from here on.
+                next_step_at = now
+            if skipped_renders and now - last_skip_report >= SKIP_REPORT_INTERVAL:
+                logger.warning(
+                    "sim loop behind real time; camera renders skipped to protect the "
+                    "simulation clock (GPU contention?)",
+                    skipped=skipped_renders,
+                    window_s=round(now - last_skip_report, 1),
+                )
+                skipped_renders = 0
+                last_skip_report = now
 
         if self._headless:
             while not self._stop_event.is_set():

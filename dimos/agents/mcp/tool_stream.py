@@ -39,6 +39,7 @@ from typing import Any
 import uuid
 
 from dimos.agents.annotation import current_skill_context
+from dimos.core.global_config import global_config
 from dimos.core.transport import PubSubTransport
 from dimos.core.transport_factory import make_transport
 from dimos.utils.logging_config import setup_logger
@@ -97,7 +98,7 @@ def make_stopped_notification(tool_name: str, token: str | None = None) -> dict[
 
 def subscribe(callback: ToolStreamCallback) -> Callable[[], None]:
     """Subscribe to the tool-stream topic and return a cleanup callable."""
-    transport: PubSubTransport[dict[str, Any]] = make_transport(TOOL_STREAM_TOPIC)
+    transport: PubSubTransport[dict[str, Any]] = make_transport(global_config.tool_stream_topic)
     transport.start()
     unsubscribe = transport.subscribe(callback)
 
@@ -138,6 +139,7 @@ class ToolStream:
 
     def __init__(self, tool_name: str) -> None:
         self.tool_name: str = tool_name
+        self._topic = global_config.tool_stream_topic
         self.id: str = str(uuid.uuid4())
         self._closed: threading.Event = threading.Event()
         self._lock = threading.Lock()
@@ -179,7 +181,7 @@ class ToolStream:
                 logger.warning("send on closed ToolStream", stream_id=self.id)
                 return
             if self._transport is None:
-                self._transport = make_transport(TOOL_STREAM_TOPIC)
+                self._transport = make_transport(self._topic)
                 self._transport.start()
             self._progress += 1
             progress = self._progress
@@ -205,7 +207,7 @@ class ToolStream:
         # If no `send()` ever happened we spin up a transport here so the
         # lifecycle signal isn't lost.
         if transport is None:
-            transport = make_transport(TOOL_STREAM_TOPIC)
+            transport = make_transport(self._topic)
             transport.start()
         try:
             transport.publish(make_stopped_notification(self.tool_name, self._acquire_token))

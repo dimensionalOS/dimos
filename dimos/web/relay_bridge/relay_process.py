@@ -296,7 +296,9 @@ class RelayProcess:
         sdk_dir: Path | None = None,
         serve_dir: Path | None = None,
         timeout: float = 20.0,
+        entrypoint: Path | None = None,
     ) -> None:
+        self._entrypoint = entrypoint
         self._port = port
         self._host = host
         self._web_dir = web_dir
@@ -328,6 +330,7 @@ class RelayProcess:
             cockpit_dir=cockpit_dir,
             sdk_dir=sdk_dir,
             serve_dir=self._serve_dir,
+            entrypoint=self._entrypoint,
         )
         logger.info(f"starting relay: {' '.join(cmd)}")
         env = os.environ | {"NO_COLOR": "1"}

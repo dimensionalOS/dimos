@@ -19,6 +19,7 @@ import controlFrames from "../../shared/fixtures/control_frames.json";
 import dataFrames from "../../shared/fixtures/data_frames.json";
 import datagrams from "../../shared/fixtures/datagrams.json";
 import manifests from "../../shared/fixtures/manifests.json";
+import txMessages from "../../shared/fixtures/tx_messages.json";
 
 function b64ToBytes(b64: string): Uint8Array {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -50,6 +51,21 @@ describe("datagram golden vectors", () => {
     it(`round-trips ${vector.name}`, () => {
       expect(encodeDatagram(vector.message as Msg)).toEqual(b64ToBytes(vector.b64));
       expect(decodeDatagram(b64ToBytes(vector.b64))).toEqual(vector.message);
+    });
+  }
+});
+
+describe("tx message golden vectors", () => {
+  type Vector = { name: string; message: unknown; valid: boolean; b64?: string };
+  for (const vector of txMessages.vectors as Vector[]) {
+    it(`${vector.valid ? "accepts" : "rejects"} ${vector.name}`, () => {
+      const parsed = msgFromUnknown(vector.message);
+      expect(parsed !== null).toBe(vector.valid);
+      if (!vector.valid) return;
+      expect(parsed).toEqual(vector.message);
+      const bytes = b64ToBytes(vector.b64!);
+      expect(encodeDatagram(vector.message as Msg)).toEqual(bytes);
+      expect(decodeDatagram(bytes)).toEqual(vector.message);
     });
   }
 });

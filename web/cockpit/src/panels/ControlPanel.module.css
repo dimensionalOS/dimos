@@ -1,0 +1,162 @@
+.strip {
+  align-items: center;
+  align-self: flex-start;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12px;
+  gap: 0.6rem 1rem;
+  padding: 0.5rem 0.75rem;
+  width: 100%;
+}
+
+.segment {
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  display: inline-flex;
+  overflow: hidden;
+}
+
+.segmentButton,
+.policy,
+.cancel {
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #d7dde3;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 0.3rem 0.7rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.segmentButton {
+  border: none;
+  border-radius: 0;
+}
+
+.segmentButton + .segmentButton {
+  border-left: 1px solid #30363d;
+}
+
+.segmentButton[aria-pressed="true"] {
+  background: #2f81f7;
+  color: #fff;
+}
+
+.segmentButton[data-pending] {
+  background: #1f4b8f;
+  color: #c9d1d9;
+}
+
+.segmentButton:disabled,
+.policy:disabled,
+.cancel:disabled {
+  color: #8b949e;
+  cursor: default;
+}
+
+.group {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
+.groupTitle {
+  color: #8b949e;
+  margin-right: 0.2rem;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.policy[data-state="active"] {
+  background: #2f81f7;
+  border-color: #2f81f7;
+  color: #fff;
+}
+
+.policy[data-state="running"] {
+  border-color: #3fb950;
+  color: #3fb950;
+}
+
+.policy[data-state="pending"] {
+  border-color: #d29922;
+  color: #d29922;
+}
+
+.policy[data-state="unavailable"] {
+  color: #8b949e;
+  opacity: 0.6;
+}
+
+.policy[data-state="disabled"] {
+  color: #8b949e;
+}
+
+.progress {
+  background: rgba(63, 185, 80, 0.25);
+  inset: 0 auto 0 0;
+  position: absolute;
+}
+
+.policyLabel {
+  position: relative;
+}
+
+.chips {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+
+.chip,
+.chipBad,
+.chipWarn,
+.chipNav {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-variant-numeric: tabular-nums;
+  gap: 0.35rem;
+  padding: 0.1rem 0.6rem;
+  background: #21262d;
+  color: #8b949e;
+  max-width: 24rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chipBad {
+  background: #3c1618;
+  color: #f85149;
+}
+
+.chipWarn {
+  background: #3d3017;
+  color: #d4a72c;
+}
+
+.chipNav {
+  background: #12301c;
+  color: #3fb950;
+}
+
+.cancel {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 0.1rem;
+}
+
+.hint {
+  color: #8b949e;
+}

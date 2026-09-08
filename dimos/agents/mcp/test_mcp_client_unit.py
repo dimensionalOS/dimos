@@ -18,7 +18,7 @@ from queue import Empty
 from threading import RLock
 from unittest.mock import MagicMock, create_autospec, patch
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_openai import ChatOpenAI
 import pytest
@@ -265,3 +265,53 @@ def test_on_system_modules_resolves_non_reasoning_models(
         configured_mcp_client.on_system_modules([])
 
     init.assert_called_once_with(model=model_name)
+
+
+@pytest.mark.parametrize("include_text", [False, True])
+def test_observation_is_in_tool_response_before_next_model_turn(
+    mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch, include_text: bool
+) -> None:
+    """The Responses adapter receives the camera in the tool output, not a later user turn."""
+    image = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,/9j/2Q=="}}
+    content = ([{"type": "text", "text": "Current camera"}] if include_text else []) + [image]
+    monkeypatch.setattr(mcp_client, "_mcp_tool_call", lambda name, args: {"content": content})
+    tool = mcp_client._mcp_tool_to_langchain(
+        {"name": "observe", "description": "Get the current camera."}
+    )
+    call = {"name": "observe", "args": {}, "id": "camera-call", "type": "tool_call"}
+
+    result = tool.invoke(call)
+
+    assert isinstance(result, ToolMessage)
+    assert result.content == content
+    with pytest.raises(Empty):
+        mcp_client._message_queue.get_nowait()
+    model = ChatOpenAI(model="gpt-5.6-luna", use_responses_api=True, api_key="test-key")
+    payload = model._get_request_payload(
+        [HumanMessage("Observe."), AIMessage(content="", tool_calls=[call]), result]
+    )
+    expected = ([{"type": "input_text", "text": "Current camera"}] if include_text else []) + [
+        {"type": "input_image", "image_url": "data:image/jpeg;base64,/9j/2Q=="}
+    ]
+    assert payload["input"][-1] == {
+        "type": "function_call_output",
+        "call_id": "camera-call",
+        "output": expected,
+    }
+
+
+def test_legacy_model_keeps_separate_image_fallback(
+    mcp_client: McpClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mcp_client.config, "model", "gpt-4.1")
+    image = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,/9j/2Q=="}}
+    monkeypatch.setattr(mcp_client, "_mcp_tool_call", lambda name, args: {"content": [image]})
+    tool = mcp_client._mcp_tool_to_langchain(
+        {"name": "observe", "description": "Get the current camera."}
+    )
+
+    result = tool.invoke({})
+
+    assert "Tool call started with UUID:" in result
+    message = mcp_client._message_queue.get_nowait()
+    assert message.content[1] == image

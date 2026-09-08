@@ -5,14 +5,18 @@ import { assert, assertEquals } from "@std/assert";
 import {
   type ChannelSpec,
   encodeDataFrame,
+  encodeDatagram,
   type FrameHeader,
   type JsonValue,
   type ManifestMsg,
+  MAX_TX_MSG_BYTES,
   type Msg,
   PROTOCOL_VERSION,
   type RobotInfo,
   type RobotManifest,
   type SubsMsg,
+  TX_DATA_MAX_BYTES,
+  type TxMsg,
 } from "@dimos/shared";
 import type { CarrierStats } from "./carrier.ts";
 import {
@@ -20,7 +24,7 @@ import {
   type FrameSend,
   type FrameWriter,
   LATEST_STALE_MS,
-  LatestChannel,
+  LatestPersistentChannel,
   ReliableChannel,
   type ViewerSink,
 } from "./forward.ts";
@@ -440,7 +444,7 @@ Deno.test("a delivery change disposes the superseded policy", async () => {
   await tick();
   assert(viewer.policies.get("tele") instanceof ReliableChannel);
   reg.onRobotFrame(robot, frame("tele", 2, "latest"));
-  assert(viewer.policies.get("tele") instanceof LatestChannel);
+  assert(viewer.policies.get("tele") instanceof LatestPersistentChannel);
   assertEquals(viewer.sink.streamsAborted, 1); // the reliable writer released
   await tick();
   assertEquals(viewer.sink.sent.length, 2);
@@ -546,7 +550,7 @@ Deno.test("reconnect-stale sub is filtered from snapshots, frames fall back to h
   // ... but if the robot still sends the channel, routing falls back to the
   // frame header's delivery.
   reg.onRobotFrame(second, frame("mystery", 1, "latest"));
-  assert(viewer.policies.get("mystery") instanceof LatestChannel);
+  assertEquals(viewer.policies.get("mystery")!.delivery, "latest");
 });
 
 Deno.test("invalid and unregistered frames are dropped and counted", () => {
@@ -563,9 +567,12 @@ Deno.test("invalid and unregistered frames are dropped and counted", () => {
   assertEquals(stats.framesFromUnregistered, 1);
 });
 
-Deno.test("reapAll resets stale accepted latest streams", async () => {
-  // What server.ts drives on an interval: an idle input stops offering, so
-  // without this the last accepted stream would stay open indefinitely.
+Deno.test("reapAll leaves a healthy latest channel's persistent stream alone", async () => {
+  // What server.ts drives on an interval. Latest now packs frames onto one
+  // persistent stream (LatestPersistentChannel), so there are no per-frame
+  // streams to reap and an idle input leaks nothing: the reap tick must be a
+  // no-op here, and specifically must NOT tear the stream down - the next
+  // frame has to land on it without reopening.
   const reg = new Registry();
   const robot = new FakeRobot("r1", SPECS);
   reg.registerRobot(robot);
@@ -573,12 +580,17 @@ Deno.test("reapAll resets stale accepted latest streams", async () => {
   reg.onRobotFrame(robot, frame("color_image", 1, "latest"));
   await tick();
   const policy = viewer.policies.get("color_image")!;
-  assertEquals(policy.inflight(), 1);
+  assertEquals(policy.inflight(), 0);
+  assertEquals(viewer.sink.streamsOpened, 1);
   // Entries carry real Date.now timestamps; fabricate a clock past staleMs.
   reg.reapAll(Date.now() + LATEST_STALE_MS + 100);
-  assertEquals(policy.inflight(), 0);
-  assertEquals(policy.expired, 1);
-  assertEquals(policy.aborted, 0);
+  assertEquals(policy.expired, 0);
+  assertEquals(policy.aborted, 0); // the write settled: not a stalled viewer
+  assertEquals(viewer.sink.streamsAborted, 0);
+  reg.onRobotFrame(robot, frame("color_image", 2, "latest"));
+  await tick();
+  assertEquals(viewer.sink.streamsOpened, 1); // reused, not reopened
+  assertEquals(policy.sent, 2);
 });
 
 Deno.test("stats project exact per-channel key sets with counters and rates", async () => {
@@ -631,7 +643,7 @@ Deno.test("stats project exact per-channel key sets with counters and rates", as
   ]);
   assertEquals(out.color_image.delivery, "latest");
   assertEquals(out.color_image.sent, 1);
-  assertEquals(out.color_image.inflight, 1); // its stream stays open until reaped
+  assertEquals(out.color_image.inflight, 0); // one persistent stream, nothing to reset
   assertEquals(out.odom.delivery, "reliable");
   assertEquals(out.odom.inflight, 0); // one persistent stream, nothing to reset
   assert((out.odom.bytesOut as number) > 0);
@@ -858,6 +870,210 @@ Deno.test("stats expose the lease holder", () => {
   send(reg, holder, { t: "teleop_start" });
   stats = reg.stats() as typeof stats;
   assertEquals(stats.perRobot.r1.teleop, holder.id);
+});
+
+// --- Generic tx command ---
+
+const TX_SPECS: ChannelSpec[] = [
+  ...SPECS,
+  {
+    ch: "tele_cmd_vel",
+    dir: "tx",
+    encoding: "twist.json.v1",
+    delivery: "latest",
+    maxHz: 15,
+    params: {},
+    publish: "none",
+    requiredScope: null,
+  },
+  {
+    ch: "human_input",
+    dir: "tx",
+    encoding: "text.json.v1",
+    delivery: "reliable",
+    maxHz: 2,
+    params: {},
+    publish: "none",
+    requiredScope: null,
+  },
+  {
+    ch: "goal_request",
+    dir: "tx",
+    encoding: "pose_goal.json.v1",
+    delivery: "reliable",
+    maxHz: 5,
+    params: {},
+    publish: "none",
+    requiredScope: null,
+  },
+];
+
+const TX_CHAT: TxMsg = { t: "tx", ch: "human_input", seq: 1, data: { text: "go to the kitchen" } };
+
+function txMsgs(robot: FakeRobot): Msg[] {
+  return robot.msgs.filter((m) => m.t === "tx");
+}
+
+function txStats(reg: Registry): { forwarded: number; dropped: number } {
+  const stats = reg.stats() as { txForwarded: number; txDropped: number };
+  return { forwarded: stats.txForwarded, dropped: stats.txDropped };
+}
+
+Deno.test("tx to a declared non-twist tx channel is forwarded verbatim, no lease needed", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", TX_SPECS);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []); // never sent teleop_start
+  assert(send(reg, viewer, TX_CHAT));
+  const goal: TxMsg = {
+    t: "tx",
+    ch: "goal_request",
+    seq: 1,
+    data: { x: 1.2, y: -0.5, frame: "world" },
+  };
+  assert(send(reg, viewer, goal));
+  assertEquals(txMsgs(robot), [TX_CHAT, goal]);
+  assertEquals(viewer.replies.filter((m) => m.t === "error"), []);
+  assertEquals(txStats(reg), { forwarded: 2, dropped: 0 });
+  // Not a teleop message: the lease counters and the lease itself stay untouched.
+  const stats = reg.stats() as {
+    teleopForwarded: number;
+    perRobot: Record<string, { teleop: number | null }>;
+  };
+  assertEquals(stats.teleopForwarded, 0);
+  assertEquals(stats.perRobot.r1.teleop, null);
+});
+
+Deno.test("legacy tx cannot bypass acknowledged publish policies", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot(
+    "r1",
+    TX_SPECS.map((spec) => spec.ch === "human_input" ? { ...spec, publish: "shared" } : spec),
+  );
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  send(reg, viewer, TX_CHAT);
+  assertEquals(txMsgs(robot), []);
+  assertEquals(txStats(reg), { forwarded: 0, dropped: 1 });
+});
+
+Deno.test("tx still flows while another viewer holds the teleop lease", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", TX_SPECS);
+  reg.registerRobot(robot);
+  const holder = attach(reg, "r1", []);
+  send(reg, holder, { t: "teleop_start" });
+  const chatter = attach(reg, "r1", []);
+  send(reg, chatter, TX_CHAT);
+  assertEquals(txMsgs(robot), [TX_CHAT]);
+});
+
+Deno.test("tx to an undeclared channel is dropped silently and counted", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", TX_SPECS);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  assert(send(reg, viewer, { ...TX_CHAT, ch: "mystery" }));
+  // An rx channel is not a tx channel either.
+  assert(send(reg, viewer, { ...TX_CHAT, ch: "odom" }));
+  assertEquals(txMsgs(robot), []);
+  assertEquals(viewer.replies.filter((m) => m.t === "error"), []);
+  assertEquals(txStats(reg), { forwarded: 0, dropped: 2 });
+});
+
+Deno.test("tx to the twist channel is refused: motion stays lease-gated", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", TX_SPECS);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  send(reg, viewer, { t: "teleop_start" }); // even the lease holder
+  send(reg, viewer, { t: "tx", ch: "tele_cmd_vel", seq: 1, data: { vx: 1, vy: 0, wz: 0 } });
+  assertEquals(txMsgs(robot), []);
+  assertEquals(txStats(reg), { forwarded: 0, dropped: 1 });
+});
+
+Deno.test("oversized tx is refused before it reaches the robot leg", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", TX_SPECS);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  // Bypasses the wire decoder (fake peers hand Msg objects straight in), so
+  // the registry's own size gate is what refuses it.
+  const big: TxMsg = {
+    t: "tx",
+    ch: "human_input",
+    seq: 1,
+    data: { text: "x".repeat(2 * TX_DATA_MAX_BYTES) },
+  };
+  assert(encodeDatagram(big).byteLength > MAX_TX_MSG_BYTES);
+  send(reg, viewer, big);
+  assertEquals(txMsgs(robot), []);
+  assertEquals(txStats(reg), { forwarded: 0, dropped: 1 });
+  // At the cap it still goes through.
+  const atCap: TxMsg = {
+    t: "tx",
+    ch: "human_input",
+    seq: 2,
+    data: { text: "x".repeat(TX_DATA_MAX_BYTES - 11) },
+  };
+  assertEquals(encodeDatagram(atCap).byteLength <= MAX_TX_MSG_BYTES, true);
+  send(reg, viewer, atCap);
+  assertEquals(txMsgs(robot), [atCap]);
+});
+
+Deno.test("tx needs a watch on a live robot", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", TX_SPECS);
+  reg.registerRobot(robot);
+  const unwatched = new FakeViewer();
+  reg.addViewer(unwatched);
+  send(reg, unwatched, { t: "hello", v: PROTOCOL_VERSION, role: "viewer" });
+  assert(send(reg, unwatched, TX_CHAT)); // non-fatal
+  assertEquals(txMsgs(robot), []);
+
+  const watcher = attach(reg, "r1", []);
+  reg.robotClosed(robot);
+  assert(send(reg, watcher, TX_CHAT));
+  assertEquals(txMsgs(robot), []);
+  assertEquals(txStats(reg), { forwarded: 0, dropped: 2 });
+});
+
+Deno.test("tx is refused on a manifest-less robot (nothing to validate against)", () => {
+  // Subs pass through on such a robot; tx must not, or a viewer could name
+  // arbitrary robot streams.
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", []);
+  reg.registerRobot(robot);
+  const viewer = attach(reg, "r1", []);
+  send(reg, viewer, TX_CHAT);
+  assertEquals(txMsgs(robot), []);
+  assertEquals(txStats(reg), { forwarded: 0, dropped: 1 });
+});
+
+Deno.test("tx before hello is rejected like any viewer command", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", TX_SPECS);
+  reg.registerRobot(robot);
+  const viewer = new FakeViewer();
+  reg.addViewer(viewer);
+  assertEquals(send(reg, viewer, TX_CHAT), false);
+  assertEquals((viewer.replies[0] as { code: string }).code, "hello_required");
+  assertEquals(txMsgs(robot), []);
+});
+
+Deno.test("late reliable viewers request replay once without changing the active set", () => {
+  const reg = new Registry();
+  const robot = new FakeRobot("r1", SPECS);
+  reg.registerRobot(robot);
+  attach(reg, "r1", ["odom"]);
+  const v2 = attach(reg, "r1", ["odom"]);
+  assertEquals(robot.lastSubs(), { t: "subs", chs: ["odom"], n: 3, replay: ["odom"] });
+  send(reg, v2, { t: "sub", ch: "odom" });
+  assertEquals(robot.subs().length, 3);
+  send(reg, v2, { t: "unsub", ch: "odom" });
+  assertEquals(robot.subs().length, 3);
+  send(reg, v2, { t: "sub", ch: "odom" });
+  assertEquals(robot.lastSubs(), { t: "subs", chs: ["odom"], n: 4, replay: ["odom"] });
 });
 
 // ---------- generic publish (W7) ----------

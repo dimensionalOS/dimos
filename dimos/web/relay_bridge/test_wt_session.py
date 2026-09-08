@@ -354,6 +354,23 @@ async def test_newer_subs_snapshot_supersedes_the_queued_one():
     assert session.control_dropped == 0
 
 
+async def test_coalesced_subscriptions_preserve_pending_replays():
+    session = _session()
+    session.incoming_is_carrier = True
+    snapshots = [
+        Subs(chs=["agent", "mode", "places"], n=1, replay=["agent"]),
+        Subs(chs=["agent", "mode", "places"], n=2, replay=["places"]),
+        Subs(chs=["agent", "mode", "places"], n=3, replay=["agent"]),
+        Subs(chs=["agent", "mode"], n=4),
+    ]
+    # One transport read delivers the whole subscription burst before consumption.
+    wire = b"".join(_control_bytes(encode_datagram(msg), seq=i) for i, msg in enumerate(snapshots))
+    session._stream_data_received(3, wire, False)
+    assert session.control_msgs.qsize() == 1
+    assert session.control_msgs.get_nowait() == Subs(chs=["agent", "mode"], n=4, replay=["agent"])
+    assert session.control_dropped == 0
+
+
 async def test_carrier_reset_fails_the_robot_session():
     # The relay never replaces a carrier, so a reset while the connection
     # lives (e.g. the relay's carrier dispose racing its delayed session

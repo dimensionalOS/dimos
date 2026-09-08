@@ -1,7 +1,16 @@
+/* Fill the main area and hand that height to the top node: cells then size
+ * by share from a definite height, so a top-level col (a control strip
+ * above the panels) does not collapse to zero. Taller content (a row-root
+ * video) still grows past it. */
 .root {
   display: flex;
   flex-direction: column;
   margin-bottom: 1rem;
+  min-height: 100%;
+}
+
+.root > * {
+  flex: 1 1 auto;
 }
 
 .row {
@@ -25,5 +34,12 @@
   display: flex;
   flex-basis: 0;
   min-height: 0;
+  min-width: 0;
+}
+
+/* A strip panel's cell: content-sized, never grown or shrunk. */
+.cellStrip {
+  display: flex;
+  flex: 0 0 auto;
   min-width: 0;
 }

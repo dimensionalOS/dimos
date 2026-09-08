@@ -30,6 +30,7 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
+import textwrap
 import threading
 import time
 from typing import Any
@@ -46,6 +47,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.simulation.mujoco.constants import VIDEO_FPS
+from dimos.web.cockpit import cockpit
 from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
@@ -462,6 +464,32 @@ def test_bridge_import_does_not_pull_matplotlib() -> None:
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
+def test_bridge_imports_without_langchain() -> None:
+    # langchain-core is the `agents` extra, not a bridge dependency: a web-only
+    # install (`uv sync --extra web`) must still build every built-in cockpit
+    # and run `--local-relay`. A None entry in sys.modules makes the import
+    # raise exactly like a missing package; nothing under the bridge reaches
+    # for it, because the duck's transcript channel and its encoder are
+    # authored on the microduck side (dimos/robot/pollen/microduck/web_codecs.py).
+    code = textwrap.dedent(
+        """
+        import sys
+        sys.modules["langchain_core"] = None
+        from dimos.web.relay_bridge import relay_bridge_module as m
+        from dimos.web.cockpit import cockpit
+        assert not any(
+            name.split(".")[0].startswith("langchain") and mod is not None
+            for name, mod in sys.modules.items()
+        )
+        cockpit()  # the default preset (go2-style cockpits) still compiles
+        atom = m.RelayBridgeModule.blueprint().blueprints[0]
+        names = [s.name for s in atom.streams]
+        assert "agent" not in names, names
+        """
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
 def test_manifest_omits_pose_binding_when_odom_unwired(monkeypatch) -> None:
     module, clients = make_bridge(monkeypatch, wire=("color_image", "global_costmap"))
     try:
@@ -854,7 +882,6 @@ def test_advertised_unwired_channel_is_not_probed(monkeypatch) -> None:
 def test_default_manifest_matches_cockpit_default_preset() -> None:
     # Drift guard: the auto-mode manifest for a fully-wired go2 must equal
     # what the authoring API's default preset produces.
-    from dimos.web.cockpit import cockpit
 
     (atom,) = cockpit().blueprints
     assert atom.kwargs["manifest"] == default_manifest(
@@ -885,11 +912,11 @@ def test_supervisor_survives_reconcile_error(bridge, monkeypatch) -> None:
     real = module._reconcile
     calls: list[int] = []
 
-    def flaky(session: Any, want: set[str]) -> None:
+    def flaky(session: Any, want: set[str], *, replay: list[str] | None = None) -> None:
         calls.append(1)
         if len(calls) == 1:
             raise RuntimeError("boom")
-        real(session, want)
+        real(session, want, replay=replay)
 
     monkeypatch.setattr(module, "_reconcile", flaky)
     push(module, clients[0], Subs(chs=["odom"], n=1))

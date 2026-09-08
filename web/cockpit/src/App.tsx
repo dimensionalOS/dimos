@@ -14,7 +14,7 @@ export function App({ session }: { session: Session }) {
   let content;
   if (status.transport.phase === "failed") {
     content = <p className={styles.notice}>Connection failed: {status.transport.reason}</p>;
-  } else if (status.robots.length > 1) {
+  } else if (status.robots.length > 1 && status.watchedRobot === null) {
     content = (
       <p className={styles.notice}>
         {status.robots.length} robots connected; the robot picker arrives in a later release.

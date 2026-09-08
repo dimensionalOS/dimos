@@ -249,6 +249,11 @@ def test_blueprint_atom_discovers_exact_stream_refs():
         StreamRef(name="odom", type=PoseStamped, direction="in"),
         StreamRef(name="global_costmap", type=OccupancyGrid, direction="in"),
         StreamRef(name="tele_cmd_vel", type=Twist, direction="out"),
+        # The static generic-tx ports (TX_CHANNELS beyond the twist); they
+        # move onto generated ports when Channel accepts dir="tx" (W7).
+        StreamRef(name="human_input", type=str, direction="out"),
+        StreamRef(name="goal_request", type=PoseStamped, direction="out"),
+        StreamRef(name="ui_command", type=str, direction="out"),
         StreamRef(name="operator_note", type=str, direction="out"),
         StreamRef(name="sensor_ping", type=Vector3, direction="in"),
     )
@@ -291,7 +296,13 @@ def test_module_init_constructs_runtime_streams(local_modules):
     module = generated()
     local_modules.append(module)
     assert sorted(module.inputs) == ["color_image", "global_costmap", "odom", "sensor_ping"]
-    assert sorted(module.outputs) == ["operator_note", "tele_cmd_vel"]
+    assert sorted(module.outputs) == [
+        "goal_request",
+        "human_input",
+        "operator_note",
+        "tele_cmd_vel",
+        "ui_command",
+    ]
     assert isinstance(module.sensor_ping, In)
     assert module.sensor_ping.type is Vector3
     assert isinstance(module.operator_note, Out)

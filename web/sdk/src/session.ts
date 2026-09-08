@@ -11,16 +11,19 @@ import {
   DataFrameStreamReader,
   encodeControlFrame,
   encodeDatagram,
+  isValidTxCh,
   type JsonValue,
   MAX_PUB_DATA_BYTES,
   type Msg,
   PROTOCOL_VERSION,
   type RobotInfo,
+  TX_DATA_MAX_BYTES,
+  txDataBytes,
 } from "@dimos/shared";
 import { type Manifest, ManifestError, parseManifest } from "@dimos/shared/manifest";
 import { createDecoderRegistry, type DecoderRegistry } from "./decoders/index.ts";
 import { PublishError, WatchRejectedError } from "./errors.ts";
-import { registerTeleopHooks, type TeleopHooks } from "./internal/teleopMachine.ts";
+import { registerTeleopHooks, type TeleopHooks, type TxResult } from "./internal/teleopMachine.ts";
 import { type ChannelSnapshot, ChannelStore, StatusStore } from "./store.ts";
 import {
   fetchRelayInfo,
@@ -31,6 +34,9 @@ import {
 } from "./transport.ts";
 
 const DEFAULT_UI_TICK_MS = 500;
+// The one tx encoding the generic tx command never carries: motion goes
+// through the lease-gated twist/stop path only (same gate as the relay).
+const TWIST_ENCODING = "twist.json.v1";
 
 // Local safety net over the relay's own 10 s publish timeout: a wedged-but-
 // alive transport must not leak pending promises forever.
@@ -283,6 +289,10 @@ class SessionImpl implements Session {
   #teleopControl: ((msg: Msg) => void) | null = null;
   #teleopDatagram: ((msg: Msg) => void) | null = null;
   #teleopCbs = new Set<(msg: Msg) => void>();
+  // Per-channel tx sequence, last value sent. Lives for the Session, not the
+  // connection: a reconnect or a manifest change must not restart it, or the
+  // bridge's per-channel dedup would eat the first commands after a reconnect.
+  #txSeq = new Map<string, number>();
   // Off the public Session on purpose (W1 is read-only): the cockpit reaches
   // these through teleopHooks() on the internal teleop entry until W9.
   readonly #teleop: TeleopHooks = {
@@ -293,6 +303,7 @@ class SessionImpl implements Session {
       return () => this.#teleopCbs.delete(cb);
     },
     status: this.status,
+    tx: (ch, data) => this.#tx(ch, data),
   };
 
   constructor(options: ConnectOptions, deps: TransportDeps) {
@@ -500,6 +511,33 @@ class SessionImpl implements Session {
       }
     }
     for (const ch of this.#desired.keys()) this.#syncChannel(ch);
+  }
+
+  /**
+   * TeleopHooks.tx: validate locally in the order a caller can act on
+   * (liveness, then the channel, then the payload), and only then spend a
+   * sequence number and send. The relay re-checks the same gates and drops
+   * silently, so a message that passes here is the only kind that can be
+   * delivered; the checks mirror web/relay/registry.ts `case "tx"`.
+   */
+  #tx(ch: string, data: Record<string, unknown>): TxResult {
+    if (this.status.get().transport.phase !== "connected") {
+      return { ok: false, reason: "disconnected" };
+    }
+    const manifest = this.#manifest;
+    if (manifest === null) return { ok: false, reason: "no_manifest" };
+    if (!isValidTxCh(ch)) return { ok: false, reason: "bad_channel" };
+    const spec = manifest.channels.find((c) => c.ch === ch);
+    if (spec === undefined) return { ok: false, reason: "unknown_channel" };
+    if (spec.dir !== "tx" || spec.publish !== "none" || spec.encoding === TWIST_ENCODING) {
+      return { ok: false, reason: "not_tx" };
+    }
+    if (txDataBytes(data) > TX_DATA_MAX_BYTES) return { ok: false, reason: "too_large" };
+    const seq = (this.#txSeq.get(ch) ?? 0) + 1;
+    this.#txSeq.set(ch, seq);
+    // Exactly these keys: the wire decoder rejects a tx with anything extra.
+    this.#teleopControl?.({ t: "tx", ch, seq, data });
+    return { ok: true, seq };
   }
 
   /**

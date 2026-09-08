@@ -37,7 +37,7 @@ from typing import Any, cast, get_args, get_type_hints
 
 from dimos.core.stream import In, Out
 from dimos.web.relay_bridge.manifest import MAX_MANIFEST_ID_LEN, RESERVED_CHANNEL_PREFIX, Dir
-from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
+from dimos.web.relay_bridge.relay_bridge_module import TX_CHANNELS, RelayBridgeModule
 
 
 @dataclass(frozen=True)
@@ -78,6 +78,10 @@ _RESERVED_NAMES: frozenset[str] = (
     | {"ref", "rpc", "encoded"}
 )
 
+# Legacy command ports may be explicitly retyped for acknowledged publish.
+# Motion retains its dedicated lease path, and methods/state remain reserved.
+_PUBLISHABLE_LEGACY_PORTS = frozenset(tx.ch for tx in TX_CHANNELS if tx.model is not None)
+
 # Process-global on purpose: repeated unpickles of the same class must return
 # the identical class object, because blueprints and the coordinator compare
 # module classes with `is`.
@@ -116,7 +120,9 @@ def _validate_specs(specs: tuple[DynamicPortSpec, ...]) -> None:
             )
         if len(stream) > MAX_MANIFEST_ID_LEN:
             raise ValueError(f"stream id {stream!r} is longer than {MAX_MANIFEST_ID_LEN} chars")
-        if stream in _RESERVED_NAMES:
+        if stream in _RESERVED_NAMES and not (
+            spec.direction == "tx" and stream in _PUBLISHABLE_LEGACY_PORTS
+        ):
             raise ValueError(
                 f"stream id {stream!r} collides with an existing RelayBridgeModule attribute"
             )

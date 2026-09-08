@@ -106,6 +106,8 @@ class GlobalConfig(BaseSettings):
     robot_rotation_diameter: float = 0.6
     nerf_speed: float = 1.0
     mcp_port: int = 9990
+    # Scope background skill updates when several robot runtimes share a transport.
+    tool_stream_topic: str = "/tool_streams"
     # Seconds an MCP client waits for a tool to answer. A skill that thinks
     # for longer than this is cut off at the client, not the server, so the
     # caller owns the number.

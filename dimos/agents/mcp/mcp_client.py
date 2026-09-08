@@ -55,6 +55,10 @@ logger = setup_logger()
 _RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
+def _uses_responses_api(model_name: str) -> bool:
+    return ":" not in model_name and model_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES)
+
+
 def _init_model(model_name: str, trace_dir: Path | None = None) -> Any:
     """Initialize a model while preserving LangChain provider resolution.
 
@@ -63,7 +67,7 @@ def _init_model(model_name: str, trace_dir: Path | None = None) -> Any:
     ``http_client``; other providers keep working, untraced at the wire.
     """
     client = None if trace_dir is None else tracing_http_client(trace_dir)
-    if ":" in model_name or not model_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES):
+    if not _uses_responses_api(model_name):
         model = init_chat_model(model=model_name)
         if client is not None and isinstance(model, ChatOpenAI):
             return init_chat_model(model=model_name, http_client=client)
@@ -205,15 +209,20 @@ class McpClient(Module):
         description = mcp_tool.get("description", "")
         input_schema = mcp_tool.get("inputSchema", {"type": "object", "properties": {}})
 
-        def call_tool(**kwargs: Any) -> str:
+        def call_tool(**kwargs: Any) -> str | list[dict[str, Any]]:
             result = self._mcp_tool_call(name, kwargs)
-            content = result.get("content", [])
+            content: list[dict[str, Any]] = result.get("content", [])
+            # Responses accepts image/file blocks in function outputs. Keep them
+            # in this tool turn so the model can observe before answering.
+            if _uses_responses_api(self.config.model) and any(
+                item.get("type") != "text" for item in content
+            ):
+                return content
             parts = [c.get("text", "") for c in content if c.get("type") == "text"]
             text = "\n".join(parts)
 
-            # Images need to be added to the history separately because they
-            # cannot be included in the tool response for OpenAI models and
-            # probably others.
+            # Preserve the separate-message fallback for model adapters that
+            # do not support multimodal tool outputs.
             for item in content:
                 if item.get("type") != "text":
                     uuid_ = str(uuid.uuid4())

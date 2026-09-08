@@ -13,8 +13,10 @@
 import {
   type ChannelSpec,
   type Delivery,
+  encodeDatagram,
   type FrameHeader,
   MAX_PUB_DATA_BYTES,
+  MAX_TX_MSG_BYTES,
   type Msg,
   PROTOCOL_VERSION,
   type PubAckMsg,
@@ -28,7 +30,7 @@ import { MAX_MANIFEST_ID_LEN } from "@dimos/shared/manifest";
 import type { CarrierStats } from "./carrier.ts";
 import {
   type ChannelPolicy,
-  LatestChannel,
+  LatestPersistentChannel,
   parseRobotFrameHeader,
   Rate,
   ReliableChannel,
@@ -36,6 +38,9 @@ import {
   type ViewerSink,
 } from "./forward.ts";
 
+// The one tx channel encoding that never rides the generic tx command: motion
+// goes through the lease-gated twist/stop path only.
+const TWIST_ENCODING = "twist.json.v1";
 // Publish forwarding bounds. The timeout settles pending routing state when
 // a bridge never answers (SDK outcome "unknown": the bridge may still have
 // published); the caps bound relay memory per viewer and per robot, and keep
@@ -52,7 +57,8 @@ const enc = new TextEncoder();
 export interface RobotPeer {
   /** Set by the session once a valid robot hello arrived. */
   readonly info: RobotInfo | null;
-  /** Normalized channel specs (feeds the delivery map / sub validation). */
+  /** Normalized channel specs (feeds the delivery map / sub validation and
+   * the tx channel gate). */
   readonly channels: ChannelSpec[];
   /** Raw manifest as received; forwarded verbatim in watch replies (the
    * relay never normalizes it and stays layout-blind). */
@@ -130,6 +136,10 @@ interface ViewerPubState {
 
 interface RobotEntry {
   peer: RobotPeer;
+  /** Manifest channels the generic tx command may address: dir=tx and not
+   * the twist encoding. Empty for a manifest-less robot (nothing to validate
+   * against, so tx is refused outright - unlike subs). */
+  txChs: Set<string>;
   /** Normalized manifest spec per channel (delivery, publish policy, rate);
    * frame-header delivery is the undeclared-channel fallback. */
   specs: Map<string, ChannelSpec>;
@@ -168,6 +178,8 @@ export class Registry {
   #framesFromUnregistered = 0;
   #teleopForwarded = 0;
   #teleopDropped = 0;
+  #txForwarded = 0;
+  #txDropped = 0;
   #carrierFailures = 0;
   #pubAccepted = 0;
   #pubAcked = 0;
@@ -227,9 +239,15 @@ export class Registry {
       console.log(`[relay] rejecting duplicate live robot id ${info.id}`);
       return false;
     }
+    const txChs = new Set(
+      peer.channels.filter((c) =>
+        c.dir === "tx" && c.publish === "none" && c.encoding !== TWIST_ENCODING
+      ).map((c) => c.ch),
+    );
     this.#robots.set(info.id, {
       peer,
       specs: new Map(peer.channels.map((c) => [c.ch, c])),
+      txChs,
       teleop: null,
       teleopGen: 0,
       n: 0,
@@ -384,7 +402,13 @@ export class Registry {
             });
             break;
           }
+          const replay = !viewer.subs.has(msg.ch) && entry.lastChs.includes(msg.ch) &&
+              entry.specs.get(msg.ch)?.delivery === "reliable"
+            ? msg.ch
+            : undefined;
           viewer.subs.add(msg.ch);
+          this.#syncSubs(viewer.watched, false, replay);
+          break;
         } else {
           viewer.subs.delete(msg.ch);
           viewer.policies.get(msg.ch)?.dispose();
@@ -445,6 +469,38 @@ export class Registry {
         // overridden, the relay is the only generation authority.
         entry.peer.sendMsg({ ...msg, gen: entry.teleopGen });
         this.#teleopForwarded++;
+        break;
+      }
+      case "tx": {
+        // Generic command to a non-twist tx channel of the watched robot. No
+        // lease: chat text, goals and UI commands are not motion (twist/stop
+        // stay lease-gated). Manifest-gated so a viewer cannot invent robot
+        // stream names, and size-gated so the robot-ward datagram always
+        // fits. Dropped silently like a gated twist: the SDK runs the same
+        // checks before sending, so a drop here is a manifest race or a
+        // misbehaving client, and an error reply would only surface as a
+        // session-level banner.
+        const entry = viewer.watched === null ? undefined : this.#robots.get(viewer.watched);
+        if (entry === undefined) {
+          this.#dropTx(viewer, "not watching a live robot");
+          break;
+        }
+        if (!entry.txChs.has(msg.ch)) {
+          // msg.ch is already bounded (TX_CH_PATTERN, <= 64 chars) by the
+          // wire decoder, so it is safe to echo.
+          this.#dropTx(viewer, `no tx channel ${msg.ch} on ${viewer.watched}`);
+          break;
+        }
+        if (encodeDatagram(msg).byteLength > MAX_TX_MSG_BYTES) {
+          this.#dropTx(viewer, `tx on ${msg.ch} over ${MAX_TX_MSG_BYTES} B`);
+          break;
+        }
+        // Same lossy robot-ward leg as twist/stop (the relay never writes on
+        // robot-opened streams, see session.ts); the bridge's per-channel
+        // seq lets it discard a reordered command. Forwarded as-is: TxMsg
+        // admits no extra keys, so there is no relay stamp to add.
+        entry.peer.sendMsg(msg);
+        this.#txForwarded++;
         break;
       }
       case "pub": {
@@ -561,6 +617,11 @@ export class Registry {
       }
     }
     return true;
+  }
+
+  #dropTx(viewer: ViewerPeer, reason: string): void {
+    this.#txDropped++;
+    console.log(`[relay] dropping tx from viewer ${viewer.id}: ${reason}`);
   }
 
   /** Route one bridge publish result to the originating viewer: settle the
@@ -683,7 +744,7 @@ export class Registry {
         policy?.dispose();
         policy = delivery === "reliable"
           ? new ReliableChannel(viewer.sink)
-          : new LatestChannel(viewer.sink);
+          : new LatestPersistentChannel(viewer.sink);
         viewer.policies.set(ch, policy);
       }
       policy.offer(bytes);
@@ -739,6 +800,8 @@ export class Registry {
       framesFromUnregistered: this.#framesFromUnregistered,
       teleopForwarded: this.#teleopForwarded,
       teleopDropped: this.#teleopDropped,
+      txForwarded: this.#txForwarded,
+      txDropped: this.#txDropped,
       carrierFailures: this.#carrierFailures,
       pub: {
         accepted: this.#pubAccepted,
@@ -808,13 +871,18 @@ export class Registry {
    * Recomputed from scratch on every mutation: no incremental refcounts to
    * drift across watch switches, disconnects, and reconnects.
    */
-  #syncSubs(robotId: string, force = false): void {
+  #syncSubs(robotId: string, force = false, replay?: string): void {
     const entry = this.#robots.get(robotId);
     if (entry === undefined) return;
     const chs = this.#activeChs(robotId, entry.specs);
-    if (!force && chs.join("\n") === entry.lastChs.join("\n")) return;
+    if (!force && replay === undefined && chs.join("\n") === entry.lastChs.join("\n")) return;
     entry.lastChs = chs;
-    entry.peer.sendControl({ t: "subs", chs, n: ++entry.n });
+    entry.peer.sendControl({
+      t: "subs",
+      chs,
+      n: ++entry.n,
+      ...(replay === undefined ? {} : { replay: [replay] }),
+    });
     console.log(`[relay] robot ${robotId} active channels: [${chs.join(", ")}]`);
   }
 

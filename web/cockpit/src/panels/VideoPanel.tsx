@@ -81,7 +81,14 @@ export function startVideoSink(
   };
 
   const unsubscribe = store.subscribe(ch, pump);
-  const onVisibility = (): void => pump();
+  const onVisibility = (): void => {
+    // Coming back from hidden: the gap since the last draw is one WE chose by
+    // not decoding, not a stalled pipeline, so do not let the badge report it
+    // (same reasoning as the fresh-mount reset above). A tab flipped away and
+    // back would otherwise always return reading "stalled".
+    if (!hidden()) health.lastDrawOkAtMs = Date.now();
+    pump();
+  };
   document.addEventListener("visibilitychange", onVisibility);
   pump(); // a slot may predate the mount
   return () => {
@@ -89,6 +96,27 @@ export function startVideoSink(
     unsubscribe();
     document.removeEventListener("visibilitychange", onVisibility);
   };
+}
+
+/** A second bound channel is drawn inset over the first (picture-in-picture);
+ * the manifest guarantees it is also a jpeg.v1 latest rx feed. */
+function InsetVideo({ store, ch }: { store: PanelProps["store"]; ch: string }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const health = useRef<DrawHealth>({ lastDrawOkAtMs: Date.now(), failures: 0 }).current;
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (canvas === null) return;
+    return startVideoSink(store, ch, canvas, health);
+  }, [store, ch, health]);
+  return (
+    <canvas
+      ref={canvasRef}
+      className={styles.inset}
+      data-testid={`video-${ch}-inset`}
+      role="img"
+      aria-label={ch}
+    />
+  );
 }
 
 export function VideoPanel({ spec, store }: PanelProps) {
@@ -102,10 +130,19 @@ export function VideoPanel({ spec, store }: PanelProps) {
       </PanelFrame>
     );
   }
-  return <VideoCanvas spec={spec} store={store} ch={ch} />;
+  return (
+    <VideoCanvas
+      spec={spec}
+      store={store}
+      ch={ch}
+      inset={spec.channels[1] as string | undefined}
+    />
+  );
 }
 
-function VideoCanvas({ spec, store, ch }: PanelProps & { ch: string }) {
+function VideoCanvas(
+  { spec, store, ch, inset }: PanelProps & { ch: string; inset: string | undefined },
+) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const health = useRef<DrawHealth>({ lastDrawOkAtMs: Date.now(), failures: 0 }).current;
   const { slot } = useStoreChannel(store, ch);
@@ -137,6 +174,7 @@ function VideoCanvas({ spec, store, ch }: PanelProps & { ch: string }) {
         role="img"
         aria-label={spec.id}
       />
+      {inset !== undefined && <InsetVideo store={store} ch={inset} />}
       {slot === null && <span className={styles.waiting}>waiting for data...</span>}
     </PanelFrame>
   );

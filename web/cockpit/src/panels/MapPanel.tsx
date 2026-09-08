@@ -14,6 +14,7 @@ import {
   gridBlit,
   type GridPlacement,
   gridToImageData,
+  type MapTransform,
   type Pose2d,
 } from "./mapRenderer.ts";
 import type { PanelProps } from "./registry.tsx";
@@ -23,12 +24,19 @@ import type { PanelProps } from "./registry.tsx";
 // the last grid on subscribe.
 export const MAP_STALE_MS = 5000;
 
-/** Test seams; real inflate is DecompressionStream, real resize an observer. */
+/** View options and injectable decode/visibility hooks. */
 export interface MapSinkDeps {
   inflate?: (value: CostmapValue) => Promise<Uint8Array>;
   hidden?: () => boolean;
   /** Calls back on element size changes; returns the disposer. */
   observeResize?: (el: Element, cb: () => void) => () => void;
+  /** Reports the fitted transform (device pixels) on every draw, so an
+   * overlay (NavMapPanel) can place world features on the same canvas. */
+  onTransform?: (t: MapTransform, place: GridPlacement) => void;
+  /** Alternate view framing; the underlying grid retains its actual placement. */
+  transform?: (place: GridPlacement, width: number, height: number) => MapTransform;
+  /** Channels whose updates change the view without changing grid data. */
+  redrawOn?: readonly string[];
 }
 
 function isCostmapValue(v: unknown): v is CostmapValue {
@@ -97,7 +105,8 @@ export function startMapSink(
       canvas.height = h;
     }
     ctx.clearRect(0, 0, w, h);
-    const t = fitTransform(place, w, h);
+    const t = deps.transform?.(place, w, h) ?? fitTransform(place, w, h);
+    deps.onTransform?.(t, place);
     ctx.imageSmoothingEnabled = false; // crisp cells when zoomed in
     const { ax, ay, rot, dw, dh } = gridBlit(t, place);
     ctx.save();
@@ -148,6 +157,7 @@ export function startMapSink(
   const unsubscribeGrid = store.subscribe(costmapCh, pump);
   // Pose redraws reuse the cached grid bitmap: no inflate at odom rate.
   const unsubscribePose = poseCh === undefined ? null : store.subscribe(poseCh, draw);
+  const unsubscribeView = (deps.redrawOn ?? []).map((ch) => store.subscribe(ch, draw));
   const disposeResize = observeResize(canvas, draw);
   const onVisibility = (): void => {
     pump();
@@ -159,6 +169,7 @@ export function startMapSink(
     stopped = true;
     unsubscribeGrid();
     unsubscribePose?.();
+    for (const unsubscribe of unsubscribeView) unsubscribe();
     disposeResize();
     document.removeEventListener("visibilitychange", onVisibility);
   };

@@ -52,7 +52,7 @@ function certOpts(hashB64: string): WebTransportOptions {
 }
 
 function within<T>(promise: Promise<T>, what: string, ms = 8000): Promise<T> {
-  let timer: number;
+  let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<T>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms);
   });
@@ -320,7 +320,11 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
     const stalled = await attachViewer("stalled");
     void stalled; // never reads incomingUnidirectionalStreams: a suspended tab
 
-    const payload = new Uint8Array(8 * 1024).fill(9);
+    // Big frames on purpose. The old stream-per-frame policy wedged the
+    // stalled viewer on *stream* credit (~100 uni streams), so 8 KB frames
+    // were enough; a persistent stream wedges on the connection's *byte*
+    // window instead, which no realistic frame count of 8 KB would fill.
+    const payload = new Uint8Array(128 * 1024).fill(9);
     const fetchStalled = async () => {
       const stats = await (await fetch(`${httpBase}/api/stats`)).json();
       const viewers = stats.perViewer as {
@@ -332,50 +336,66 @@ async function runBackpressureRound(round: RoundState): Promise<void> {
         .filter((c) => c !== undefined)
         .sort((a, b) => a.sent - b.sent)[0];
     };
+    /** The other one: highest acceptance count. */
+    const fetchHealthy = async () => {
+      const stats = await (await fetch(`${httpBase}/api/stats`)).json();
+      const viewers = stats.perViewer as {
+        channels: Record<string, { aborted: number; queued: number; sent: number }>;
+      }[];
+      return viewers
+        .map((v) => v.channels.color_image)
+        .filter((c) => c !== undefined)
+        .sort((a, b) => b.sent - a.sent)[0];
+    };
 
-    // Pump frames until the stalled viewer's stale streams are being reset
-    // under backpressure. Onset needs its uni-stream credit (~100) exhausted
-    // plus one LATEST_STALE_MS window, so give it a generous frame budget.
+    // Pump frames until the stalled viewer's watchdog has reset its stream.
+    // Latest now packs frames onto one persistent stream
+    // (LatestPersistentChannel), so onset is no longer "~100 uni streams of
+    // credit exhausted" but "one write parked past the reset threshold": the
+    // stalled viewer's write blocks once its flow-control window fills, and
+    // ~2 s later the watchdog resets the stream and counts ONE abort (the
+    // counter means streams reset, not ticks waited).
+    //
+    // The budget is therefore small and deliberate: this harness spends one
+    // robot-leg bidi stream per frame and quinn grants ~100, so a run that
+    // never trips the watchdog must fail on the assertion below rather than
+    // pump itself into a RangeError that says nothing about the relay.
     let lastSeq = 0;
     let stalledStats = await fetchStalled();
-    for (let seq = 1; seq <= 1200; seq++) {
+    for (let seq = 1; seq <= 95; seq++) {
       await sendRobotFrame(
         robot,
         { ch: "color_image", seq, ts: seq / 100, delivery: "latest" },
         payload,
       );
       lastSeq = seq;
-      if (seq % 50 === 0) {
+      if (seq % 10 === 0) {
         stalledStats = await fetchStalled();
-        if (stalledStats !== undefined && stalledStats.aborted >= 3) break;
+        if (stalledStats !== undefined && stalledStats.aborted >= 1) break;
       }
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 40));
     }
     assert(stalledStats !== undefined, "stalled viewer never got a policy");
-    assert(stalledStats.aborted >= 3, `expected aborted resets, got ${stalledStats.aborted}`);
+    assert(stalledStats.aborted >= 1, `expected an aborted reset, got ${stalledStats.aborted}`);
     assert(stalledStats.queued <= 1, `latest queue must stay 0|1, got ${stalledStats.queued}`);
 
     // The healthy viewer kept receiving fresh frames the whole time: drain its
     // queue and require a seq from the era after the stalled viewer wedged.
     let newest = 0;
     const drainUntil = Date.now() + 8000;
-    while (newest < lastSeq - 50 && Date.now() < drainUntil) {
+    while (newest < lastSeq - 10 && Date.now() < drainUntil) {
       newest = Math.max(newest, (await within(healthyFrames(), "healthy frame")).header.seq);
     }
-    assert(newest >= lastSeq - 50, `healthy viewer stalled at seq ${newest} of ${lastSeq}`);
+    assert(newest >= lastSeq - 10, `healthy viewer stalled at seq ${newest} of ${lastSeq}`);
 
-    // The input has quiesced, so no newer offer will reap the healthy viewer's
-    // last accepted stream: only the relay's periodic reap timer can return it
-    // (against real quinn streams).
-    const reapDeadline = Date.now() + 5000;
-    let healthyInflight = -1;
-    while (Date.now() < reapDeadline) {
-      healthyInflight = await fetchHealthyInflight();
-      round.lastInflight = healthyInflight;
-      if (healthyInflight === 0) break;
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    assertEquals(healthyInflight, 0, "idle reap never reset the healthy viewer's last stream");
+    // And the watchdog told the two viewers apart rather than firing on both:
+    // the healthy viewer's writes settled every time, so no reap tick ever
+    // found one outstanding. This is the half that makes `aborted` a usable
+    // stalled-viewer gauge in /api/stats instead of a general noise counter.
+    round.lastInflight = await fetchHealthyInflight();
+    const healthyCh = await fetchHealthy();
+    assertEquals(healthyCh?.aborted, 0, "the healthy viewer must not look stalled");
+    assert((healthyCh?.sent ?? 0) > (stalledStats?.sent ?? 0), "healthy viewer fell behind");
   } catch (e) {
     // A wedge during pump/drain dies before the reap poll but leaves the
     // same stuck-carrier signature; settle one stale window, then probe.
@@ -1225,4 +1245,118 @@ Deno.test("startRelay rejects a bad served dir with a labeled error", async () =
     Error,
     "sdkDir does not exist: /no/such/dir",
   );
+});
+
+// The property a persistent latest stream has to earn: a viewer that reads
+// slower than the robot produces must fall only BOUNDEDLY behind. This is the
+// measurement the persistent-stream design was originally shipped without.
+//
+// Why it is not obvious: once writer.write() resolves, the frame is only
+// accepted into QUIC's send buffer, not delivered. Frames ride one ordered
+// stream, so a backlog inside that buffer cannot be superseded the way
+// #pending can - the slow reader has to receive the stale bytes before it
+// reaches the fresh ones. If nothing bounded that buffer, the viewer's
+// displayed frame would age without limit while the relay reported zero
+// drops. What actually bounds it is QUIC flow control: the window fills,
+// write() stops resolving, #pending starts superseding (drops climb), and the
+// stall watchdog resets the stream and discards the backlog.
+Deno.test({
+  name: "a slow reader falls only boundedly behind on a latest channel",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const relay = await startRelay({ port: 0 });
+  const clients: WebTransport[] = [];
+  try {
+    const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    clients.push(robot);
+    await within(robot.ready, "robot connect");
+    const robotDatagrams = datagramQueue(robot.datagrams.readable);
+    await sendRobotHello(robot, {
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: ROBOT,
+      manifest: MANIFEST,
+    });
+    await nextOfType(robotDatagrams, "welcome", "robot welcome");
+
+    const viewer = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
+    clients.push(viewer);
+    await within(viewer.ready, "viewer connect");
+    const control = await viewer.createBidirectionalStream();
+    const cw = control.writable.getWriter();
+    const nextControl = controlQueue(control.readable);
+    await cw.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
+    await cw.write(encodeControlFrame({ t: "watch", robotId: ROBOT.id }));
+    await cw.write(encodeControlFrame({ t: "sub", ch: "color_image" }));
+    await nextOfType(nextControl, "manifest", "viewer manifest");
+
+    // The slow reader: pulls from the relay's stream on a slack timer, far
+    // slower than the robot publishes, recording the newest seq it has seen.
+    let newestSeen = -1;
+    let framesSeen = 0;
+    (async () => {
+      for await (const stream of viewer.incomingUnidirectionalStreams) {
+        (async () => {
+          const frames = new DataFrameStreamReader();
+          const reader = (stream as ReadableStream<Uint8Array>).getReader();
+          while (true) {
+            const { value, done } = await reader.read();
+            if (value && value.byteLength) {
+              for (const f of frames.push(value)) {
+                if (f.header.ch !== "color_image") continue;
+                framesSeen++;
+                if (f.header.seq > newestSeen) newestSeen = f.header.seq;
+              }
+            }
+            if (done) break;
+            await new Promise((r) => setTimeout(r, 120)); // deliberately slow
+          }
+        })().catch(() => {});
+      }
+    })().catch(() => {});
+
+    // ~32 KB is a realistic 640x360 JPEG frame; 30 fps for ~9 s.
+    const payload = new Uint8Array(32 * 1024).fill(7);
+    const TOTAL = 270;
+    let worstLag = 0;
+    for (let seq = 1; seq <= TOTAL; seq++) {
+      await sendRobotFrame(
+        robot,
+        { ch: "color_image", seq, ts: seq / 30, delivery: "latest" },
+        payload,
+      );
+      if (newestSeen >= 0) worstLag = Math.max(worstLag, seq - newestSeen);
+      await new Promise((r) => setTimeout(r, 33));
+    }
+    const deadline = Date.now() + 6000;
+    while (newestSeen < TOTAL - 60 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    console.log(
+      `[slow-reader] worst lag ${worstLag} frames, final lag ${TOTAL - newestSeen}, ` +
+        `received ${framesSeen} of ${TOTAL}`,
+    );
+    assert(framesSeen > 0, "the slow reader never received a frame at all");
+    // The bound: a reader ~4x too slow must not end up minutes behind. 120
+    // frames at 30 fps is 4 s of video - generous next to the unbounded growth
+    // this test exists to rule out.
+    assert(
+      worstLag < 120,
+      `slow reader fell ${worstLag} frames behind (unbounded backlog?); saw ${framesSeen}`,
+    );
+    assert(
+      TOTAL - newestSeen < 120,
+      `slow reader ended ${TOTAL - newestSeen} frames behind the newest`,
+    );
+  } finally {
+    for (const c of clients) {
+      try {
+        c.close();
+      } catch { /* already gone */ }
+    }
+    await relay.shutdown();
+  }
 });

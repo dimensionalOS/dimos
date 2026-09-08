@@ -173,6 +173,17 @@ class Channel:
     params: Mapping[str, Any] | None = field(default=None, kw_only=True)
     publish: Literal["none", "shared", "exclusive"] = field(default="none", kw_only=True)
     required_scope: str | None = field(default=None, kw_only=True)
+    # Replay the newest message to a channel's first viewer, so a page opened
+    # mid-run shows current state instead of waiting for the next publish.
+    resend_on_subscribe: bool = field(default=False, kw_only=True)
+    # False = every message is encoded, maxHz notwithstanding: for an event
+    # stream (a chat turn, a mode flip) a skipped sample is lost data, not a
+    # dropped frame.
+    rate_gate: bool = field(default=True, kw_only=True)
+    # > 1 replays that many past messages to a first viewer (a transcript must
+    # survive a page reload) instead of only the newest. The bridge numbers
+    # the entries and ships the number as the frame's `n` meta.
+    replay_depth: int = field(default=1, kw_only=True)
 
     def __post_init__(self) -> None:
         _check_stream("stream", self.stream)
@@ -205,6 +216,12 @@ class Channel:
                 "publish='exclusive' channels are enabled by the exclusive publisher "
                 "lease ticket (W8); use publish='shared' for interleavable input"
             )
+        if not isinstance(self.replay_depth, int) or isinstance(self.replay_depth, bool):
+            raise ValueError(f"replay_depth must be an int, got {self.replay_depth!r}")
+        if self.replay_depth < 1:
+            raise ValueError(f"replay_depth must be >= 1, got {self.replay_depth}")
+        if self.replay_depth > 1 and not self.resend_on_subscribe:
+            raise ValueError("replay_depth > 1 requires resend_on_subscribe=True")
         if self.dir == "rx" and self.publish != "none":
             raise ValueError("rx channels must use publish='none'")
         if self.dir == "tx" and self.publish == "none":
@@ -259,12 +276,19 @@ class Panel(ABC):
 
 @dataclass(frozen=True)
 class Video(Panel):
-    """JPEG video feed of one image stream."""
+    """JPEG video feed of one image stream, optionally with a second drawn
+    inset over the first (picture-in-picture): `Video("chase_image",
+    inset="color_image")` puts the close view in the corner of the wide one.
+    The inset keeps its own rate and quality, so a cheap thumbnail can ride
+    along with an expensive main feed."""
 
     kind: ClassVar[str] = "video"
     stream: str = "color_image"
     max_hz: float = field(default=30.0, kw_only=True)
     quality: int = field(default=75, kw_only=True)
+    inset: str | None = field(default=None, kw_only=True)
+    inset_max_hz: float = field(default=10.0, kw_only=True)
+    inset_quality: int = field(default=60, kw_only=True)
     title: str = field(default="", kw_only=True)
 
     def __post_init__(self) -> None:
@@ -276,9 +300,24 @@ class Video(Panel):
             or not 0 <= self.quality <= 100
         ):
             raise ValueError(f"quality must be an int in 0..100, got {self.quality!r}")
+        if self.inset is not None:
+            _check_stream("inset", self.inset)
+            if self.inset == self.stream:
+                raise ValueError(f"inset must differ from stream, both are {self.stream!r}")
+            _check_rate("inset_max_hz", self.inset_max_hz)
+            if (
+                isinstance(self.inset_quality, bool)
+                or not isinstance(self.inset_quality, int)
+                or not 0 <= self.inset_quality <= 100
+            ):
+                raise ValueError(
+                    f"inset_quality must be an int in 0..100, got {self.inset_quality!r}"
+                )
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
-        return (
+        # Main feed first: the web panel draws channels[0] full-bleed and
+        # channels[1], when present, inset over it.
+        requests = [
             ChannelRequest(
                 self.stream,
                 "rx",
@@ -286,8 +325,20 @@ class Video(Panel):
                 self.max_hz,
                 {"quality": self.quality},
                 delivery="latest",
-            ),
-        )
+            )
+        ]
+        if self.inset is not None:
+            requests.append(
+                ChannelRequest(
+                    self.inset,
+                    "rx",
+                    "jpeg.v1",
+                    self.inset_max_hz,
+                    {"quality": self.inset_quality},
+                    delivery="latest",
+                )
+            )
+        return tuple(requests)
 
 
 @dataclass(frozen=True)
@@ -327,6 +378,14 @@ class Teleop(Panel):
     All params ride the tx channel in the manifest: the Cockpit machine
     reads speeds and cadence from there, the bridge reads watchdog_ms (its
     deadman window) and clamps incoming twists to max * boost.
+
+    `mode` names a mode stream some other panel in the cockpit already
+    subscribes (the store is keyed by channel, so the pad can read it without
+    requesting it). Naming it lets the pad refuse to arm on a robot that
+    ignores teleop in agent mode, instead of going green while the robot
+    discards every key. Unset - every robot but the duck - keeps the pad
+    exactly as it was: one tx channel, no extra slot, so the "teleop binds
+    exactly one channel" manifest rule is untouched.
     """
 
     kind: ClassVar[str] = "teleop"
@@ -336,6 +395,7 @@ class Teleop(Panel):
     boost: float = field(default=2.0, kw_only=True)
     publish_hz: float = field(default=15.0, kw_only=True)
     watchdog_ms: float = field(default=300.0, kw_only=True)
+    mode: str | None = field(default=None, kw_only=True)
     title: str = field(default="", kw_only=True)
 
     def __post_init__(self) -> None:
@@ -345,6 +405,8 @@ class Teleop(Panel):
         _check_rate("boost", self.boost)
         _check_rate("publish_hz", self.publish_hz)
         _check_rate("watchdog_ms", self.watchdog_ms)
+        if self.mode is not None:
+            _check_stream("mode", self.mode)
 
     def _channel_requests(self) -> tuple[ChannelRequest, ...]:
         return (
@@ -362,6 +424,144 @@ class Teleop(Panel):
                 delivery="latest",
             ),
         )
+
+    def _panel_params(self) -> dict[str, Any]:
+        return {} if self.mode is None else {"mode": self.mode}
+
+
+# The three panels below bind several streams each. Their role -> channel
+# mapping rides `params` (keyed by role) so the web panel looks channels up
+# by role instead of index-guessing; the channel slot order (request order)
+# is what manifest.py / manifest.ts validate per kind. Rates are fixed: the
+# bridge's channel table caps them anyway and none of these are tunable
+# from the cockpit today.
+
+
+@dataclass(frozen=True, kw_only=True)
+class Chat(Panel):
+    """Agent chat: transcript, idle flag and mode in; typed human input out.
+
+    read_only disables the panel's composer; it is not a transport access policy.
+    """
+
+    kind: ClassVar[str] = "chat"
+    chat: str = "agent"
+    idle: str = "agent_idle"
+    mode: str = "mode"
+    input: str = "human_input"
+    read_only: bool = False
+    title: str = "Agent"
+
+    def __post_init__(self) -> None:
+        _check_stream("chat", self.chat)
+        _check_stream("idle", self.idle)
+        _check_stream("mode", self.mode)
+        _check_stream("input", self.input)
+
+    def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        return (
+            ChannelRequest(self.chat, "rx", "chat.json.v1", 30.0),
+            ChannelRequest(self.idle, "rx", "flag.json.v1", 10.0),
+            ChannelRequest(self.mode, "rx", "mode.json.v1", 10.0),
+            ChannelRequest(self.input, "tx", "text.json.v1", 2.0),
+        )
+
+    def _panel_params(self) -> dict[str, Any]:
+        params = {"chat": self.chat, "idle": self.idle, "mode": self.mode, "input": self.input}
+        if self.read_only:
+            return {**params, "readOnly": True}
+        return params
+
+
+@dataclass(frozen=True, kw_only=True)
+class NavMap(Panel):
+    """Costmap with pose, planned path, named places and nav state overlays;
+    click-to-goal and cancel go out as goal poses / UI commands."""
+
+    kind: ClassVar[str] = "navmap"
+    costmap: str = "global_costmap"
+    pose: str = "odom"
+    path: str = "path"
+    places: str = "places"
+    nav_state: str = "nav_state"
+    goal: str = "goal_request"
+    command: str = "ui_command"
+    title: str = "Nav map"
+    fit_places: bool = False
+
+    def __post_init__(self) -> None:
+        _check_stream("costmap", self.costmap)
+        _check_stream("pose", self.pose)
+        _check_stream("path", self.path)
+        _check_stream("places", self.places)
+        _check_stream("nav_state", self.nav_state)
+        _check_stream("goal", self.goal)
+        _check_stream("command", self.command)
+
+    def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        return (
+            ChannelRequest(self.costmap, "rx", "costmap.zlib.v1", 2.0, delivery="latest"),
+            ChannelRequest(self.pose, "rx", "pose.json.v1", 10.0),
+            ChannelRequest(self.path, "rx", "path.json.v1", 5.0, delivery="latest"),
+            ChannelRequest(self.places, "rx", "places.json.v1", 2.0),
+            # State, not a frame stream: reliable. A latest channel costs one
+            # relay->viewer stream per frame out of a budget shared with the
+            # cameras (web/README.md bug 12), and a dropped nav_state would
+            # leave the chip showing a state the robot has already left.
+            ChannelRequest(self.nav_state, "rx", "navstate.json.v1", 10.0),
+            ChannelRequest(self.goal, "tx", "pose_goal.json.v1", 5.0),
+            ChannelRequest(self.command, "tx", "command.json.v1", 10.0),
+        )
+
+    def _panel_params(self) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "costmap": self.costmap,
+            "pose": self.pose,
+            "path": self.path,
+            "places": self.places,
+            "navState": self.nav_state,
+            "goal": self.goal,
+            "command": self.command,
+        }
+        if self.fit_places:
+            params["fitPlaces"] = True
+        return params
+
+
+@dataclass(frozen=True, kw_only=True)
+class Control(Panel):
+    """Top bar: teleop/agent mode switch, policy buttons and nav status in;
+    UI commands (set_mode / policy / cancel_nav) out."""
+
+    kind: ClassVar[str] = "control"
+    mode: str = "mode"
+    policies: str = "policy_state"
+    nav_state: str = "nav_state"
+    command: str = "ui_command"
+    title: str = "Control"
+
+    def __post_init__(self) -> None:
+        _check_stream("mode", self.mode)
+        _check_stream("policies", self.policies)
+        _check_stream("nav_state", self.nav_state)
+        _check_stream("command", self.command)
+
+    def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        return (
+            ChannelRequest(self.mode, "rx", "mode.json.v1", 10.0),
+            # Both are state, not frames: see the note in NavMap.
+            ChannelRequest(self.policies, "rx", "policy.json.v1", 10.0),
+            ChannelRequest(self.nav_state, "rx", "navstate.json.v1", 10.0),
+            ChannelRequest(self.command, "tx", "command.json.v1", 10.0),
+        )
+
+    def _panel_params(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "policies": self.policies,
+            "navState": self.nav_state,
+            "command": self.command,
+        }
 
 
 class _Split:
@@ -651,7 +851,7 @@ def cockpit(
         tuple(pages),
         registry={b.ch: (b.encoding, b.delivery) for b in BUILTIN_CHANNELS},
         tx_streams={s.name for s in atom.streams if s.direction == "out"},
-        tx_registry={ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS},
+        tx_registry={tx.ch: (tx.encoding, tx.delivery) for tx in TX_CHANNELS},
         channels=tuple(
             ChannelRequest(
                 c.stream,
@@ -731,7 +931,13 @@ def cockpit(
                 params=dict(wire["params"]),
                 encoder=codec.encode,
                 encoder_takes_params=codec.takes_params,
-                resend_on_subscribe=builtin.resend_on_subscribe if builtin is not None else False,
+                resend_on_subscribe=(
+                    builtin.resend_on_subscribe
+                    if builtin is not None
+                    else explicit is not None and explicit.resend_on_subscribe
+                ),
+                rate_gate=explicit.rate_gate if explicit is not None else True,
+                replay_depth=explicit.replay_depth if explicit is not None else 1,
             )
         )
     # Generated classes carry only the custom ports; the built-ins are

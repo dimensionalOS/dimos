@@ -7,10 +7,19 @@ import { PROTOCOL_VERSION } from "@dimos/shared";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { makeEphemeralCert } from "./cert.ts";
 import { LATEST_STALE_MS } from "./forward.ts";
-import { Registry } from "./registry.ts";
+import { Registry, type ViewerPeer } from "./registry.ts";
 import { RobotSession, ViewerSession } from "./session.ts";
 
 export interface RelayOptions {
+  /** Optional application registry and admission hooks; omitted in trusted local mode. */
+  registry?: Registry;
+  authorizeSession?: (url: URL) => boolean;
+  viewerConnected?: (viewer: ViewerPeer, url: URL, close: () => void) => void;
+  handleHttp?: (
+    req: Request,
+    info: { wtUrl: string; certHash: string; v: number },
+  ) => Response | null | Promise<Response | null>;
+
   /** TCP port for the HTTP side. Default 7780; 0 picks an ephemeral port. */
   port?: number;
   /** Bind host for both listeners. The default is the only secure-context-friendly choice. */
@@ -178,7 +187,7 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   const urlHost = host === "0.0.0.0" ? "127.0.0.1" : host;
   const wtUrl = `https://${urlHost}:${quicPort}`;
 
-  const registry = new Registry();
+  const registry = options.registry ?? new Registry();
   const sessions = new Set<WebTransport>();
   let nextViewerId = 1;
 
@@ -201,10 +210,18 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
         const wt = await Deno.upgradeWebTransport(conn);
         await wt.ready;
         track(wt);
-        const path = new URL(wt.url).pathname;
+        const url = new URL(wt.url);
+        const path = url.pathname;
+        if (options.authorizeSession && !options.authorizeSession(url)) {
+          wt.close({ closeCode: 1, reason: "session not authorized" });
+          return;
+        }
         if (path === "/robot") new RobotSession(wt, conn, registry).start();
-        else if (path === "/viewer") new ViewerSession(wt, nextViewerId++, registry).start();
-        else {
+        else if (path === "/viewer") {
+          const viewer = new ViewerSession(wt, nextViewerId++, registry);
+          options.viewerConnected?.(viewer, url, () => wt.close());
+          viewer.start();
+        } else {
           console.log(`[relay] rejecting unknown WebTransport endpoint ${path}`);
           wt.close({ closeCode: 1, reason: "unknown WebTransport endpoint" });
         }
@@ -216,6 +233,14 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
 
   async function handleHttp(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    if (options.handleHttp) {
+      const response = await options.handleHttp(req, {
+        wtUrl: `${wtUrl}/viewer`,
+        certHash: cert.certHashB64,
+        v: PROTOCOL_VERSION,
+      });
+      if (response !== null) return response;
+    }
     if (url.pathname === "/api/info") {
       return Response.json({
         wtUrl: `${wtUrl}/viewer`,

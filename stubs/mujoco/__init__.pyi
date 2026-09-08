@@ -84,6 +84,7 @@ class mjtObj:
     mjOBJ_GEOM: int
     mjOBJ_JOINT: int
     mjOBJ_MESH: int
+    mjOBJ_SENSOR: int
     mjOBJ_SITE: int
     mjOBJ_TENDON: int
 
@@ -96,8 +97,12 @@ class mjtGeom:
     mjGEOM_MESH: int
 
 class mjtJoint:
+    mjJNT_FREE: int
     mjJNT_HINGE: int
     mjJNT_SLIDE: int
+
+class mjtCamLight:
+    mjCAMLIGHT_TRACK: int
 
 class mjtTrn:
     mjTRN_JOINT: int

@@ -381,15 +381,16 @@ class McpServer(Module):
     def on_system_modules(self, modules: list[RPCClient]) -> None:
         # TODO: this is a bit hacky, also not thread-safe
         assert self.rpc is not None
-        app.state.skills = [
-            skill_info for module in modules for skill_info in (module.get_skills() or [])
+        bound_skills = [
+            (module.remote_name, skill_info)
+            for module in modules
+            for skill_info in (module.get_skills() or [])
         ]
+        app.state.skills = [skill_info for _, skill_info in bound_skills]
         app.state.skills_by_name = {s.func_name: s for s in app.state.skills}
         app.state.rpc_calls = {
-            skill_info.func_name: RpcCall(
-                None, self.rpc, skill_info.func_name, skill_info.class_name, []
-            )
-            for skill_info in app.state.skills
+            skill_info.func_name: RpcCall(None, self.rpc, skill_info.func_name, instance_name, [])
+            for instance_name, skill_info in bound_skills
         }
 
     @skill

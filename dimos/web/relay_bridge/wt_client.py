@@ -120,6 +120,9 @@ class RelayClient:
                 f"relay URL path must be {expected_path!r} for role={role}, got {parsed.path!r}"
             )
 
+        if parsed.query:
+            path += "?" + parsed.query
+
         ctx = aioquic_connect(
             host,
             port,
@@ -138,7 +141,9 @@ class RelayClient:
         except BaseException:
             await ctx.__aexit__(None, None, None)
             raise
-        logger.info(f"WebTransport session established: {url} path={path}")
+        logger.info(
+            f"WebTransport session established: {parsed.scheme}://{host}:{port}{expected_path}"
+        )
         return cls(url, role, session, ctx)
 
     async def __aenter__(self) -> RelayClient:

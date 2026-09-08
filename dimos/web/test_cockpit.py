@@ -15,6 +15,7 @@
 """Authoring-API tests: cockpit()/panels/layout compile to pinned manifests."""
 
 from dataclasses import dataclass
+import json
 import pickle
 import struct
 import subprocess
@@ -29,16 +30,21 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.web.cockpit import (
     Channel,
     ChannelRequest,
+    Chat,
     Col,
+    Control,
     Map2D,
+    NavMap,
     Panel,
     Row,
     Teleop,
     Video,
+    build_manifest_data,
     cockpit,
 )
 from dimos.web.codecs import EncodedPayload, decode_json_v1, encode_json_v1, web_encoder
 from dimos.web.relay_bridge.builtin_codecs import decode_text
+from dimos.web.relay_bridge.locate import find_web_dir
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
 from dimos.web.relay_bridge.protocol import (
     MAX_CONTROL_PAYLOAD_BYTES,
@@ -47,7 +53,7 @@ from dimos.web.relay_bridge.protocol import (
     RobotInfo,
     encode_datagram,
 )
-from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
+from dimos.web.relay_bridge.relay_bridge_module import TX_CHANNELS, RelayBridgeModule
 
 # The frozen-contract example (see the plan/spec): what the go2 cockpit
 # blueprint authors. Golden below is exact; edits here are manifest changes
@@ -178,6 +184,25 @@ def test_unknown_tx_stream_raises() -> None:
         cockpit(layout=Teleop(stream="cmd_vel"))
 
 
+def test_teleop_mode_is_a_param_not_a_channel() -> None:
+    # The pad reads a mode stream some other panel already subscribes, so it
+    # can refuse to arm on a robot that ignores teleop in agent mode. It must
+    # stay a params-only role: "a teleop panel binds exactly one channel" is
+    # enforced by manifest.py and mirrored in manifest.ts.
+    plain = manifest_of(cockpit(layout=Teleop()))
+    (panel,) = plain["panels"]
+    assert panel["channels"] == ["tele_cmd_vel"] and panel["params"] == {}
+
+    bound = manifest_of(cockpit(layout=Row(Teleop(mode="odom"), Video("color_image"))))
+    teleop_panel = next(p for p in bound["panels"] if p["kind"] == "teleop")
+    assert teleop_panel["channels"] == ["tele_cmd_vel"]
+    assert teleop_panel["params"] == {"mode": "odom"}
+    assert parse_manifest(bound).model_dump() == bound
+
+    with pytest.raises(ValueError, match="mode"):
+        Teleop(mode="")
+
+
 def test_wrong_tx_encoding_raises() -> None:
     class Sender(Panel):
         kind = "sender"
@@ -188,6 +213,51 @@ def test_wrong_tx_encoding_raises() -> None:
 
     with pytest.raises(ValueError, match="'tele_cmd_vel' encodes twist.json.v1, not chat.json.v1"):
         cockpit(layout=Sender())
+
+
+def test_video_inset_binds_a_second_feed() -> None:
+    # Picture-in-picture: channels[0] is the main feed, channels[1] the
+    # inset. Each keeps its own rate and quality, so a cheap thumbnail can
+    # ride along with an expensive main view.
+    # chase_image is an authored channel, so cockpit() generates a bridge
+    # subclass for its port; read the manifest off the atom directly.
+    (atom,) = cockpit(
+        layout=Video(
+            "chase_image",
+            max_hz=30.0,
+            quality=70,
+            inset="color_image",
+            inset_max_hz=12.0,
+            inset_quality=55,
+        ),
+        channels=[
+            Channel(
+                "chase_image",
+                Image,
+                encoding="jpeg.v1",
+                delivery="latest",
+                max_hz=30.0,
+                params={"quality": 70},
+            )
+        ],
+    ).blueprints
+    manifest = atom.kwargs["manifest"]
+    (panel,) = manifest["panels"]
+    assert panel["kind"] == "video"
+    assert panel["channels"] == ["chase_image", "color_image"]
+    by_ch = {c["ch"]: c for c in manifest["channels"]}
+    assert by_ch["chase_image"]["params"] == {"quality": 70}
+    assert by_ch["color_image"]["params"] == {"quality": 55}
+    assert by_ch["color_image"]["maxHz"] == 12.0
+    # The domain parser accepts two feeds on one video panel.
+    assert parse_manifest(manifest).model_dump() == manifest
+
+    # A single-feed video panel is unchanged, and an inset cannot alias the
+    # main stream (it would draw the same picture over itself).
+    (plain,) = manifest_of(cockpit(layout=Video("color_image")))["panels"]
+    assert plain["channels"] == ["color_image"]
+    with pytest.raises(ValueError, match="inset must differ"):
+        Video("color_image", inset="color_image")
 
 
 def test_pages_get_ids_after_the_grid() -> None:
@@ -654,3 +724,360 @@ def test_import_stays_light() -> None:
         "assert 'aioquic' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+#
+# Compiled through build_manifest_data with stand-in channel tables shaped
+# like the microduck bridge's (rx table, then tx table), so these pins hold
+# regardless of which streams the go2 bridge happens to advertise.
+
+MICRODUCK_RX_REGISTRY = {
+    "color_image": ("jpeg.v1", "latest"),
+    "chase_image": ("jpeg.v1", "latest"),
+    "global_costmap": ("costmap.zlib.v1", "latest"),
+    "odom": ("pose.json.v1", "reliable"),
+    "agent": ("chat.json.v1", "reliable"),
+    "agent_idle": ("flag.json.v1", "reliable"),
+    "path": ("path.json.v1", "latest"),
+    # State, not frames: reliable, so they cost no per-frame relay->viewer
+    # stream out of the budget the cameras need (web/README.md bug 12).
+    "nav_state": ("navstate.json.v1", "reliable"),
+    "mode": ("mode.json.v1", "reliable"),
+    "places": ("places.json.v1", "reliable"),
+    "policy_state": ("policy.json.v1", "reliable"),
+}
+MICRODUCK_TX_REGISTRY = {
+    "tele_cmd_vel": ("twist.json.v1", "latest"),
+    "human_input": ("text.json.v1", "reliable"),
+    "goal_request": ("pose_goal.json.v1", "reliable"),
+    "ui_command": ("command.json.v1", "reliable"),
+}
+
+MICRODUCK_LAYOUT = Col(
+    Control(),
+    Row(
+        Video("chase_image", title="Chase cam"),
+        Col(
+            NavMap(),
+            Row(Video("color_image", title="Head cam"), Teleop(), shares=[1, 1]),
+            shares=[3, 2],
+        ),
+        Chat(),
+        shares=[5, 4, 3],
+    ),
+    shares=[1, 11],
+)
+
+
+def _rx(ch: str, encoding: str, delivery: str, max_hz: float, params: dict | None = None) -> dict:
+    return {
+        "ch": ch,
+        "dir": "rx",
+        "encoding": encoding,
+        "delivery": delivery,
+        "maxHz": max_hz,
+        "params": params or {},
+        "publish": "none",
+        "requiredScope": None,
+    }
+
+
+def _tx(ch: str, encoding: str, delivery: str, max_hz: float, params: dict | None = None) -> dict:
+    return {**_rx(ch, encoding, delivery, max_hz, params), "dir": "tx"}
+
+
+MICRODUCK_MANIFEST = {
+    "version": 1,
+    "channels": [
+        _rx("color_image", "jpeg.v1", "latest", 30.0, {"quality": 75}),
+        _rx("chase_image", "jpeg.v1", "latest", 30.0, {"quality": 75}),
+        _rx("global_costmap", "costmap.zlib.v1", "latest", 2.0),
+        _rx("odom", "pose.json.v1", "reliable", 10.0),
+        _rx("agent", "chat.json.v1", "reliable", 30.0),
+        _rx("agent_idle", "flag.json.v1", "reliable", 10.0),
+        _rx("path", "path.json.v1", "latest", 5.0),
+        _rx("nav_state", "navstate.json.v1", "reliable", 10.0),
+        _rx("mode", "mode.json.v1", "reliable", 10.0),
+        _rx("places", "places.json.v1", "reliable", 2.0),
+        _rx("policy_state", "policy.json.v1", "reliable", 10.0),
+        _tx(
+            "tele_cmd_vel",
+            "twist.json.v1",
+            "latest",
+            15.0,
+            {"maxLinear": 0.8, "maxAngular": 1.0, "boost": 2.0, "watchdogMs": 300.0},
+        ),
+        _tx("human_input", "text.json.v1", "reliable", 2.0),
+        _tx("goal_request", "pose_goal.json.v1", "reliable", 5.0),
+        _tx("ui_command", "command.json.v1", "reliable", 10.0),
+    ],
+    "panels": [
+        {
+            "id": "p0",
+            "kind": "control",
+            "title": "Control",
+            "channels": ["mode", "policy_state", "nav_state", "ui_command"],
+            "params": {
+                "mode": "mode",
+                "policies": "policy_state",
+                "navState": "nav_state",
+                "command": "ui_command",
+            },
+        },
+        {
+            "id": "p1",
+            "kind": "video",
+            "title": "Chase cam",
+            "channels": ["chase_image"],
+            "params": {},
+        },
+        {
+            "id": "p2",
+            "kind": "navmap",
+            "title": "Nav map",
+            "channels": [
+                "global_costmap",
+                "odom",
+                "path",
+                "places",
+                "nav_state",
+                "goal_request",
+                "ui_command",
+            ],
+            "params": {
+                "costmap": "global_costmap",
+                "pose": "odom",
+                "path": "path",
+                "places": "places",
+                "navState": "nav_state",
+                "goal": "goal_request",
+                "command": "ui_command",
+            },
+        },
+        {
+            "id": "p3",
+            "kind": "video",
+            "title": "Head cam",
+            "channels": ["color_image"],
+            "params": {},
+        },
+        {"id": "p4", "kind": "teleop", "title": "", "channels": ["tele_cmd_vel"], "params": {}},
+        {
+            "id": "p5",
+            "kind": "chat",
+            "title": "Agent",
+            "channels": ["agent", "agent_idle", "mode", "human_input"],
+            "params": {
+                "chat": "agent",
+                "idle": "agent_idle",
+                "mode": "mode",
+                "input": "human_input",
+            },
+        },
+    ],
+    "layout": {
+        "col": [
+            "p0",
+            {
+                "row": [
+                    "p1",
+                    {
+                        "col": ["p2", {"row": ["p3", "p4"], "shares": [1, 1]}],
+                        "shares": [3, 2],
+                    },
+                    "p5",
+                ],
+                "shares": [5, 4, 3],
+            },
+        ],
+        "shares": [1, 11],
+    },
+    "pages": [],
+}
+
+
+def build_microduck(layout, pages=(), **overrides) -> dict:
+    kwargs = dict(
+        registry=MICRODUCK_RX_REGISTRY,
+        tx_streams=set(MICRODUCK_TX_REGISTRY),
+        tx_registry=MICRODUCK_TX_REGISTRY,
+    )
+    kwargs.update(overrides)
+    return build_manifest_data(layout, tuple(pages), **kwargs)
+
+
+def test_microduck_layout_manifest_golden() -> None:
+    manifest = build_microduck(MICRODUCK_LAYOUT)
+    assert manifest == MICRODUCK_MANIFEST
+    # The domain parser (what cockpit() runs) accepts it and normalization
+    # is idempotent, so the kind rules and the authoring side agree.
+    assert parse_manifest(manifest).model_dump() == manifest
+
+
+def test_microduck_panel_params_name_bound_channels() -> None:
+    # Every role -> channel entry points at a channel the panel binds, so the
+    # web panel can look channels up by role instead of by slot index.
+    manifest = build_microduck(MICRODUCK_LAYOUT)
+    for panel in manifest["panels"]:
+        if panel["kind"] in ("chat", "navmap", "control"):
+            assert panel["params"]
+            assert set(panel["params"].values()) == set(panel["channels"])
+
+
+def test_microduck_layout_matches_golden_fixture_panels() -> None:
+    # web/shared/fixtures/manifests.json carries the same cockpit as the TS
+    # side sees it (cockpit_microduck). Panel identity (kind, title, slots,
+    # role params) and the layout tree must agree; rates/shares/deliveries
+    # in the fixture are generator-shaped and not compared.
+    with open(find_web_dir() / "shared" / "fixtures" / "manifests.json") as f:
+        vectors = json.load(f)["vectors"]
+    (vector,) = [v for v in vectors if v["name"] == "cockpit_microduck"]
+    fixture = vector["manifest"]
+    manifest = build_microduck(MICRODUCK_LAYOUT)
+    keys = ("id", "kind", "title", "channels", "params")
+    assert [{k: p[k] for k in keys} for p in manifest["panels"]] == [
+        {k: p[k] for k in keys} for p in fixture["panels"]
+    ]
+    assert {(c["ch"], c["dir"], c["encoding"]) for c in manifest["channels"]} == {
+        (c["ch"], c["dir"], c["encoding"]) for c in fixture["channels"]
+    }
+
+    def strip_shares(node):
+        if isinstance(node, str):
+            return node
+        (key,) = [k for k in node if k in ("row", "col")]
+        return {key: [strip_shares(c) for c in node[key]]}
+
+    assert strip_shares(manifest["layout"]) == strip_shares(fixture["layout"])
+
+
+def test_microduck_shared_streams_merge_once() -> None:
+    # Control + NavMap both bind nav_state and ui_command; Chat + Control
+    # both bind mode. Identical (dir, encoding, params) requests collapse to
+    # one channel each, at the max requested rate.
+    manifest = build_microduck(Row(Control(), NavMap(), Chat()))
+    names = [c["ch"] for c in manifest["channels"]]
+    assert len(names) == len(set(names))
+    assert {"nav_state", "ui_command", "mode"} <= set(names)
+    assert [p["channels"].count("nav_state") for p in manifest["panels"]] == [1, 1, 0]
+
+
+def test_microduck_duplicate_panels_merge_to_max_rate() -> None:
+    class SlowControl(Control):
+        def _channel_requests(self):
+            return tuple(
+                ChannelRequest(
+                    r.stream, r.dir, r.encoding, r.max_hz / 2, r.params, delivery=r.delivery
+                )
+                for r in super()._channel_requests()
+            )
+
+    manifest = build_microduck(Row(SlowControl(), Control()))
+    by_ch = {c["ch"]: c for c in manifest["channels"]}
+    assert by_ch["mode"]["maxHz"] == 10.0
+    assert by_ch["ui_command"]["maxHz"] == 10.0
+    assert [p["kind"] for p in manifest["panels"]] == ["control", "control"]
+
+
+@pytest.mark.parametrize(
+    ("layout", "match"),
+    [
+        # Same stream requested with two encodings inside one manifest.
+        (Control(nav_state="mode"), "conflicting requirements for stream 'mode'"),
+        (NavMap(goal="ui_command"), "conflicting requirements for stream 'ui_command'"),
+        (Row(Chat(mode="nav_state"), Control()), "conflicting requirements for stream 'nav_state'"),
+        # Stream exists but the bridge encodes it differently.
+        (Chat(chat="places"), "'places' encodes places.json.v1, not chat.json.v1"),
+        (NavMap(path="policy_state"), "'policy_state' encodes policy.json.v1, not path.json.v1"),
+        (
+            Control(command="tele_cmd_vel"),
+            "'tele_cmd_vel' encodes twist.json.v1, not command.json.v1",
+        ),
+        (Chat(input="goal_request"), "'goal_request' encodes pose_goal.json.v1, not text.json.v1"),
+        # Unknown streams.
+        (Chat(chat="transcript"), "unknown stream 'transcript'"),
+        (NavMap(goal="goal"), "unknown tx stream 'goal'"),
+    ],
+    ids=[
+        "control_nav_state_is_mode",
+        "navmap_goal_is_command",
+        "chat_mode_vs_control_nav_state",
+        "chat_chat_is_places",
+        "navmap_path_is_policy_state",
+        "control_command_is_twist",
+        "chat_input_is_goal",
+        "chat_unknown_rx",
+        "navmap_unknown_tx",
+    ],
+)
+def test_microduck_mismatched_encodings_raise(layout, match) -> None:
+    with pytest.raises(ValueError, match=match):
+        build_microduck(layout)
+
+
+def test_microduck_tx_without_channel_table_entry_raises() -> None:
+    with pytest.raises(ValueError, match="tx stream 'ui_command' has no channel-table entry"):
+        build_microduck(Control(), tx_registry={"tele_cmd_vel": ("twist.json.v1", "latest")})
+
+
+def test_microduck_panels_are_keyword_only() -> None:
+    for panel_type in (Chat, NavMap, Control):
+        with pytest.raises(TypeError):
+            panel_type("agent")
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Chat(chat=""),
+        lambda: Chat(input=None),
+        lambda: NavMap(costmap=""),
+        lambda: NavMap(command=3),
+        lambda: Control(policies=""),
+        lambda: Control(nav_state=""),
+    ],
+    ids=[
+        "chat_empty_chat",
+        "chat_none_input",
+        "navmap_empty_costmap",
+        "navmap_int_command",
+        "control_empty_policies",
+        "control_empty_nav_state",
+    ],
+)
+def test_microduck_panel_validation_errors(build) -> None:
+    with pytest.raises(ValueError):
+        build()
+
+
+def test_microduck_manifest_pickles() -> None:
+    manifest = build_microduck(MICRODUCK_LAYOUT)
+    assert pickle.loads(pickle.dumps(manifest)) == MICRODUCK_MANIFEST
+    assert pickle.loads(pickle.dumps(MICRODUCK_LAYOUT)).children[0] == Control()
+
+
+def test_tx_channel_defs_unpack_as_wire_triples() -> None:
+    # cockpit() and the bridge's manifest check both read TX_CHANNELS by
+    # unpacking each row as (ch, encoding, delivery). The rows carry the tx
+    # model and rate floor too, so that unpacking is what keeps the richer
+    # table compatible with both readers.
+    assert {ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS} == {
+        "tele_cmd_vel": ("twist.json.v1", "latest"),
+        "human_input": ("text.json.v1", "reliable"),
+        "goal_request": ("pose_goal.json.v1", "reliable"),
+        "ui_command": ("command.json.v1", "reliable"),
+    }
+
+
+def test_read_only_chat_preserves_manifest_compatibility() -> None:
+    manifest = build_microduck(Chat(read_only=True))
+    panel = manifest["panels"][0]
+    assert panel["params"]["readOnly"] is True
+    assert panel["channels"] == ["agent", "agent_idle", "mode", "human_input"]
+    parse_manifest(manifest)
+
+
+def test_scene_fitting_is_an_additive_navmap_option() -> None:
+    manifest = build_microduck(NavMap(fit_places=True))
+    assert manifest["panels"][0]["params"]["fitPlaces"] is True
+    parse_manifest(manifest)

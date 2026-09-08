@@ -20,6 +20,24 @@ import type { Msg } from "@dimos/shared";
 import type { ChannelSpec } from "@dimos/shared/manifest";
 import type { StatusStore } from "../store.ts";
 
+/**
+ * Outcome of `TeleopHooks.tx`. Every refusal is decided locally, before
+ * anything is sent: the relay drops bad tx silently, so the session is the
+ * only place a caller gets a reason.
+ */
+export type TxResult =
+  | { ok: true; seq: number }
+  | {
+    ok: false;
+    reason:
+      | "disconnected"
+      | "no_manifest"
+      | "unknown_channel"
+      | "not_tx"
+      | "too_large"
+      | "bad_channel";
+  };
+
 /** The session's teleop surface handed to panels (registry PanelProps). */
 export interface TeleopHooks {
   /** Send on the ordered control stream (teleop_start/teleop_stop, Stop). */
@@ -29,6 +47,15 @@ export interface TeleopHooks {
   /** Teleop-routed relay replies: teleop_started and the teleop_held error. */
   onMsg(cb: (msg: Msg) => void): () => void;
   status: StatusStore;
+  /**
+   * Generic command to a non-twist tx channel of the watched robot (a chat
+   * line, a nav goal). No lease involved; motion stays on control/datagram.
+   * Checks the channel against the live manifest and the payload against the
+   * shared size cap, then sends `{t:"tx", ch, seq, data}` on the control
+   * stream. `seq` counts up per channel from 1 for the life of the session
+   * and only advances on an accepted send.
+   */
+  tx(ch: string, data: Record<string, unknown>): TxResult;
 }
 
 // Internal until W9: the session registers its raw send hooks here so the

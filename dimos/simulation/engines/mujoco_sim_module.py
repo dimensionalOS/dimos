@@ -267,6 +267,11 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
+    # Additional rendered MJCF cameras, name -> (width, height, fps). They
+    # are rendered by the engine alongside the primary camera (each blocks
+    # the sim thread while rendering); subclasses read them back with
+    # ``engine.read_camera(name)`` and publish them however they like.
+    extra_cameras: dict[str, tuple[int, int, float]] = Field(default_factory=dict)
     # Optional MuJoCo-native lidar: cast rays from one or more named cameras
     # and publish world-frame PointCloud2 points on ``pointcloud``.
     enable_mujoco_lidar: bool = False
@@ -434,6 +439,16 @@ class MujocoSimModule(
         cameras_by_name: dict[str, CameraConfig] = {}
         raycast_lidars: list[RaycastLidarConfig] = []
 
+        # The only readers of a rendered depth image: the depth_image publisher
+        # and the RGB-D pointcloud back-projection (which the raycast lidar
+        # replaces when enabled). With neither, the second render per frame is
+        # pure cost on the sim thread. Bound before add_camera rather than
+        # after: the closure reads it, so a future caller placed above the old
+        # assignment would have raised NameError.
+        depth_needed = self.config.enable_depth or (
+            self.config.enable_pointcloud and not self.config.enable_mujoco_lidar
+        )
+
         def add_camera(
             name: str,
             *,
@@ -457,15 +472,27 @@ class MujocoSimModule(
                 max_geom=max_geom,
                 geom_groups=groups,
                 base_body_name=self.config.base_frame_id,
+                render_depth=depth_needed,
             )
 
-        primary_needed = (
-            self.config.enable_color
-            or self.config.enable_depth
-            or (self.config.enable_pointcloud and not self.config.enable_mujoco_lidar)
-        )
+        # Same two readers, plus colour: depth_needed already spells the rest.
+        primary_needed = self.config.enable_color or depth_needed
         if primary_needed:
             add_camera(self.config.camera_name)
+
+        for extra_name, (extra_w, extra_h, extra_fps) in self.config.extra_cameras.items():
+            if not extra_name or extra_name in cameras_by_name:
+                continue
+            cameras_by_name[extra_name] = CameraConfig(
+                name=extra_name,
+                width=int(extra_w),
+                height=int(extra_h),
+                fps=float(extra_fps),
+                base_body_name=self.config.base_frame_id,
+                # Extra cameras are video feeds (e.g. the microduck chase
+                # cam); nothing reads their depth.
+                render_depth=False,
+            )
 
         if self.config.enable_pointcloud and self.config.enable_mujoco_lidar:
             for camera_name in self._mujoco_lidar_camera_names():
@@ -497,6 +524,7 @@ class MujocoSimModule(
         if self.config.robot_mjcf is not None:
             engine_kwargs["config_path"] = Path(self.config.robot_mjcf)
             engine_kwargs["model"] = self._compose_model()
+            engine_kwargs["robot_sim_spec"] = self.config.robot_sim_spec
         else:
             engine_kwargs["config_path"] = Path(self.config.address)
             engine_kwargs["assets"] = engine_assets
@@ -923,6 +951,16 @@ class MujocoSimModule(
                 self.color_image.publish(color_img)
 
             if self.config.enable_depth:
+                # depth_needed in start() must have registered this camera with
+                # render_depth=True. Say so out loud: if that derivation ever
+                # drifts, publishing Image(data=None) would fail somewhere far
+                # from the cause, or not at all.
+                if frame.depth is None:
+                    raise RuntimeError(
+                        f"camera {self.config.camera_name!r} rendered no depth while "
+                        "enable_depth is set; CameraConfig.render_depth and the "
+                        "depth_needed derivation in start() have diverged"
+                    )
                 depth_img = Image(
                     data=frame.depth,
                     format=ImageFormat.DEPTH,
@@ -938,7 +976,7 @@ class MujocoSimModule(
                 logger.info(
                     "MujocoSimModule first frame published",
                     rgb_shape=frame.rgb.shape,
-                    depth_shape=frame.depth.shape,
+                    depth_shape=None if frame.depth is None else frame.depth.shape,
                 )
 
             elapsed = time.monotonic() - loop_start
@@ -1024,6 +1062,15 @@ class MujocoSimModule(
                 frame_id=self._color_optical_frame,
                 ts=frame.timestamp,
             )
+            # Same invariant as the publish path: this branch only runs when
+            # the raycast lidar is off, which is exactly when depth_needed is
+            # true, so a None here means that derivation drifted.
+            if frame.depth is None:
+                raise RuntimeError(
+                    f"camera {self.config.camera_name!r} rendered no depth while the "
+                    "RGB-D pointcloud path is active; CameraConfig.render_depth and "
+                    "the depth_needed derivation in start() have diverged"
+                )
             depth_img = Image(
                 data=frame.depth,
                 format=ImageFormat.DEPTH,

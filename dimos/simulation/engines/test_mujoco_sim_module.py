@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
+from dimos.simulation.engines.mujoco_engine import CameraConfig, CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
 
 
@@ -448,6 +448,141 @@ def freejoint_engine(tmp_path: Path) -> Iterator[MujocoEngine]:
     assert engine.connect() is True
     try:
         yield engine
+    finally:
+        engine.disconnect()
+
+
+@pytest.mark.mujoco
+def test_sim_loop_holds_real_time_with_no_cameras(tmp_path: Path) -> None:
+    """The loop must pace against an absolute deadline, not per iteration.
+
+    time.sleep() overshoots - asking for 5 ms typically returns after ~6 - so a
+    pacer that sleeps `dt - elapsed` and starts the next iteration from
+    scratch throws that overshoot away every step and tops out near RTF 0.83
+    with nothing rendering at all. Only the accumulated `next_step_at`
+    schedule repays it.
+
+    Note this asserts against engine.data.time, MuJoCo's own clock. It cannot
+    be written against the odom message timestamp: that is stamped with
+    time.time(), so odom-vs-wall is wall-vs-wall and reads 1.000 no matter how
+    far behind the simulation actually is.
+    """
+    robot_xml = tmp_path / "freejoint.xml"
+    _write_freejoint_xml(robot_xml)
+    engine = MujocoEngine(config_path=robot_xml, headless=True)
+    assert engine.connect() is True
+    try:
+        time.sleep(0.5)
+        t0, sim0 = time.monotonic(), float(engine.data.time)
+        time.sleep(3.0)
+        rtf = (float(engine.data.time) - sim0) / (time.monotonic() - t0)
+    finally:
+        engine.disconnect()
+    assert rtf > 0.95, f"sim loop cannot hold real time even when idle (RTF={rtf:.3f})"
+
+
+@pytest.mark.mujoco
+def test_slow_renders_cost_frame_rate_not_simulated_time(tmp_path: Path) -> None:
+    """Cameras render inline on the sim thread, so a slow renderer (GPU
+    contention: a screen recorder, another encoder) must be allowed to cost
+    frames, never simulated time. Before the lag governor, a render that
+    overran the step budget silently pushed the simulation clock behind the
+    wall clock - the user-visible symptom being that time ran in slow motion."""
+    robot_xml = tmp_path / "camera.xml"
+    robot_xml.write_text(
+        """
+<mujoco model="camera">
+  <option gravity="0 0 0" timestep="0.005"/>
+  <worldbody>
+    <camera name="cam" pos="0 -1 0.5" xyaxes="1 0 0 0 0 1"/>
+    <body name="base" pos="0 0 0.5">
+      <freejoint name="floating_base_joint"/>
+      <geom name="base_geom" type="sphere" size="0.05" mass="1.0"/>
+    </body>
+  </worldbody>
+</mujoco>
+""".strip()
+    )
+    engine = MujocoEngine(
+        config_path=robot_xml,
+        headless=True,
+        cameras=[CameraConfig(name="cam", width=32, height=32, fps=60.0, render_depth=False)],
+    )
+    assert engine.connect() is True
+    try:
+        # Each render sleeps far longer than the 5 ms step budget: a renderer
+        # roughly 8x slower than real, which is past anything the loop could
+        # absorb by rendering every frame.
+        renders = 0
+        real_render = engine._render_cameras
+
+        def _slow_render(now: float, states: dict[str, Any]) -> None:
+            nonlocal renders
+            renders += 1
+            time.sleep(0.040)
+            real_render(now, states)
+
+        engine._render_cameras = _slow_render  # type: ignore[method-assign]
+
+        time.sleep(0.5)  # let the loop settle before sampling
+        t0, sim0 = time.monotonic(), float(engine.data.time)
+        time.sleep(4.0)
+        wall = time.monotonic() - t0
+        sim = float(engine.data.time) - sim0
+    finally:
+        engine.disconnect()
+
+    rtf = sim / wall
+    # The clock is protected: simulated time keeps up with the wall clock.
+    assert rtf > 0.9, f"simulated time fell behind the wall clock (RTF={rtf:.3f})"
+    # And the cost was paid in frames instead - the governor skipped renders
+    # rather than letting them run every cycle (60 fps over ~4 s would be
+    # ~240; a renderer this slow cannot sustain that and must be throttled).
+    assert 0 < renders < 200, f"expected renders to be throttled, got {renders}"
+
+
+@pytest.mark.mujoco
+@pytest.mark.parametrize("render_depth", [True, False])
+def test_camera_render_depth_controls_the_second_render(tmp_path: Path, render_depth: bool) -> None:
+    """Depth is a whole second render of the scene, so a camera whose depth
+    nobody reads (a video feed) must be able to skip it and still deliver rgb."""
+    robot_xml = tmp_path / "camera.xml"
+    robot_xml.write_text(
+        """
+<mujoco model="camera">
+  <option gravity="0 0 0" timestep="0.01"/>
+  <worldbody>
+    <camera name="cam" pos="0 -1 0.5" xyaxes="1 0 0 0 0 1"/>
+    <body name="base" pos="0 0 0.5">
+      <freejoint name="floating_base_joint"/>
+      <geom name="base_geom" type="sphere" size="0.05" mass="1.0"/>
+    </body>
+  </worldbody>
+</mujoco>
+""".strip()
+    )
+    engine = MujocoEngine(
+        config_path=robot_xml,
+        headless=True,
+        cameras=[
+            CameraConfig(name="cam", width=16, height=16, fps=1000.0, render_depth=render_depth)
+        ],
+    )
+    assert engine.connect() is True
+    try:
+        deadline = time.monotonic() + 5.0
+        frame = None
+        while frame is None and time.monotonic() < deadline:
+            frame = engine.read_camera("cam")
+            if frame is None:
+                time.sleep(0.01)
+        assert frame is not None, "camera never produced a frame"
+        assert frame.rgb.shape == (16, 16, 3)  # rgb is unaffected either way
+        if render_depth:
+            assert frame.depth is not None
+            assert frame.depth.shape == (16, 16)
+        else:
+            assert frame.depth is None
     finally:
         engine.disconnect()
 

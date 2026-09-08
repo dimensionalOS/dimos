@@ -55,6 +55,7 @@ from dimos.web.relay_bridge.protocol import (
     PubAck,
     PubNack,
     Subs,
+    Tx,
 )
 from dimos.web.relay_bridge.relay_bridge_module import (
     RelayBridgeConfig,
@@ -456,6 +457,21 @@ def test_publish_frame_decodes_publishes_then_acks(monkeypatch) -> None:
         push(module, clients[0], _pub_frame(json.dumps("salut β").encode(), seq=2))
         assert wait_until(lambda: len(clients[0].control_frames) == 2)
         assert [value for value, _ in seen] == ["salut β", "salut β"]
+    finally:
+        stop_module(module)
+
+
+def test_legacy_tx_cannot_bypass_acknowledged_publish(monkeypatch) -> None:
+    module, clients = _start_pub_bridge(monkeypatch)
+    try:
+        seen: list[str] = []
+        module.human_input.subscribe(seen.append)
+        push(module, clients[0], Tx(ch="human_input", seq=1, data={"text": "bypass"}))
+        flush_loop(module)
+        assert seen == []
+        push(module, clients[0], _pub_frame(b'"allowed"'))
+        assert wait_until(lambda: clients[0].control_frames)
+        assert seen == ["allowed"]
     finally:
         stop_module(module)
 
