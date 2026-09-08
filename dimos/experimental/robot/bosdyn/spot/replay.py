@@ -30,6 +30,7 @@ from collections.abc import AsyncIterator
 import math
 from pathlib import Path
 
+from dimos.constants import RECORDINGS_DIR
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.experimental.robot.bosdyn.spot.config import (
@@ -73,7 +74,7 @@ class SpotReplayConfig(ModuleConfig):
     # An on-disk path, or the name of a dataset to pull from LFS (e.g.
     # ``spot_small_loop.db``). Empty -> newest ``*.db`` in ``dataset_dir``.
     db_path: str = ""
-    dataset_dir: str = "~/datasets/spot"
+    dataset_dir: str = str(RECORDINGS_DIR / "spot")
 
     speed: float = 1.0
     loop: bool = True
