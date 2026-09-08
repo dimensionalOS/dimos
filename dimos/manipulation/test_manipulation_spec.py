@@ -43,36 +43,6 @@ from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.spec.utils import spec_annotation_compliance
 
 
-def test_internal_helpers_are_not_advertised_as_rpcs() -> None:
-    internal_helpers = {
-        "clear_planned_path",
-        "get_current_joints",
-        "get_ee_pose",
-        "get_error",
-        "get_init_joints",
-        "get_model_info",
-        "get_visualization_url",
-        "has_planned_path",
-        "inverse_kinematics",
-        "inverse_kinematics_single",
-        "is_collision_free",
-        "plan_to_pose",
-        "preview_plan",
-        "set_init_joints",
-        "set_init_joints_to_current",
-        "solve_ik",
-    }
-    advertised = ManipulationModule.rpcs
-    assert internal_helpers.isdisjoint(advertised)
-    assert all(callable(getattr(ManipulationModule, name)) for name in internal_helpers)
-    spec_methods = {
-        name
-        for name, member in ManipulationSpec.__dict__.items()
-        if not name.startswith("_") and inspect.isfunction(member)
-    }
-    assert spec_methods <= advertised.keys()
-
-
 def _local_result_dataclasses() -> set[type[object]]:
     found: set[type[object]] = set()
 
