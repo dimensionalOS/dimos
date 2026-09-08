@@ -15,20 +15,9 @@ TEST_CASE("lcm is a supported transport") {
     CHECK(true);
 }
 
-TEST_CASE("zenoh is supported when the build has it, and says how to get it when not") {
-    if (kZenohSupported) {
-        require_supported_transport("zenoh");  // must not throw
-        CHECK(true);
-        return;
-    }
-    try {
-        require_supported_transport("zenoh");
-        FAIL("expected require_supported_transport(\"zenoh\") to throw");
-    } catch (const std::runtime_error& e) {
-        const std::string msg = e.what();
-        CHECK(msg.find("zenoh") != std::string::npos);
-        CHECK(msg.find("zenoh-cpp") != std::string::npos);
-    }
+TEST_CASE("zenoh is a supported transport") {
+    require_supported_transport("zenoh");  // must not throw
+    CHECK(true);
 }
 
 TEST_CASE("an unknown transport is rejected and names the offending value") {

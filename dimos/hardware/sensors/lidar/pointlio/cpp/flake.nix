@@ -105,8 +105,6 @@
 
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-            # ON, not AUTO: buildInputs guarantees zenoh, so a miss is a bug.
-            "-DDIMOS_NATIVE_ZENOH=ON"
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             "-DFASTLIO_DIR=${fast-lio-patched}"

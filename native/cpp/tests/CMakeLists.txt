@@ -17,6 +17,7 @@ add_executable(dimos_native_tests
   test_config.cpp
   test_module.cpp
   test_lcm_codec.cpp
+  test_zenoh_transport.cpp
 )
 target_link_libraries(dimos_native_tests PRIVATE
   dimos_native
@@ -37,15 +38,6 @@ if(LCM_FOUND)
   target_link_libraries(dimos_native_tests PRIVATE PkgConfig::LCM)
 else()
   message(STATUS "dimos_native: liblcm not found, skipping LcmTransport compile check")
-endif()
-
-# Same for zenoh-cpp. dimos_native already carries its include dirs, its define
-# and its link when the SDK found it.
-if(zenohcxx_FOUND AND DIMOS_NATIVE_ZENOH_UNSTABLE_API)
-  message(STATUS "dimos_native: zenoh-cpp found, including ZenohTransport tests")
-  target_sources(dimos_native_tests PRIVATE test_zenoh_transport.cpp)
-else()
-  message(STATUS "dimos_native: zenoh-cpp not found, skipping ZenohTransport tests")
 endif()
 
 include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
