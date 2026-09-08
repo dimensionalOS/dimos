@@ -15,12 +15,21 @@
 
 export type Delivery = "latest" | "reliable";
 export type Dir = "rx" | "tx";
+// Generic-publish policy for a tx channel: "none" (default; specialized
+// protocol paths like teleop only), "shared" (any authorized viewer may
+// publish), "exclusive" (requires the per-robot publisher lease, W8).
+// Transport delivery and publish authorization are independent: reliable
+// does not imply publishable.
+export type Publish = "none" | "shared" | "exclusive";
 
 // One robot<->viewer stream: dir is the flow direction seen from the viewer
 // (rx = robot->viewer; tx arrives with teleop/chat), encoding names the
 // payload format (e.g. jpeg.v1, pose.json.v1), delivery picks the relay's
-// forwarding policy, maxHz is the bridge's advertised send cap, params are
-// encoder settings (informational for viewers).
+// forwarding policy, maxHz is the bridge's advertised send cap (for a
+// publish channel: the aggregate accepted publish rate), params are encoder
+// settings (informational for viewers). publish/requiredScope gate generic
+// publishing; requiredScope names the operator scope a remote relay demands
+// (null = none; the local relay never checks scopes).
 export interface ChannelSpec {
   ch: string;
   dir: Dir;
@@ -28,6 +37,8 @@ export interface ChannelSpec {
   delivery: Delivery;
   maxHz: number;
   params: Record<string, unknown>;
+  publish: Publish;
+  requiredScope: string | null;
 }
 
 // kind is the panel-component registry key; channels lists the channel ids
@@ -87,6 +98,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 // Raw (pre-normalization) spec shapes: dir/params/title may be absent.
+// requiredScope also accepts explicit null so a normalized manifest parses
+// idempotently (parse(parse(m)) == parse(m)); publish does not (null is a
+// shape error, like dir).
 interface RawChannelSpec {
   ch: string;
   dir?: Dir;
@@ -94,6 +108,8 @@ interface RawChannelSpec {
   delivery: Delivery;
   maxHz: number;
   params?: Record<string, unknown>;
+  publish?: Publish;
+  requiredScope?: string | null;
 }
 
 interface RawPanelSpec {
@@ -112,7 +128,11 @@ function isChannelSpec(value: unknown): value is RawChannelSpec {
     typeof value.encoding === "string" &&
     (value.delivery === "latest" || value.delivery === "reliable") &&
     typeof value.maxHz === "number" &&
-    (value.params === undefined || isRecord(value.params))
+    (value.params === undefined || isRecord(value.params)) &&
+    (value.publish === undefined || value.publish === "none" || value.publish === "shared" ||
+      value.publish === "exclusive") &&
+    (value.requiredScope === undefined || value.requiredScope === null ||
+      typeof value.requiredScope === "string")
   );
 }
 
@@ -135,6 +155,19 @@ function boundedId(s: string): boolean {
 function dirOf(spec: RawChannelSpec): Dir {
   return spec.dir ?? "rx";
 }
+
+function publishOf(spec: RawChannelSpec): Publish {
+  return spec.publish ?? "none";
+}
+
+function scopeOf(spec: RawChannelSpec): string | null {
+  return spec.requiredScope ?? null;
+}
+
+// "Supported JSON encoding" for generic publish is the family-name rule
+// (json.v1, text.json.v1, ...): the manifest layer cannot see the codec
+// registries, so real decodability is enforced at authoring time.
+const JSON_ENCODING_RE = /(^|\.)json\.v[0-9]+$/;
 
 /**
  * Depth-first layout validation + rebuild. A node's own structure (row/col
@@ -247,6 +280,34 @@ export function parseManifest(value: unknown): Manifest {
     // explicit float64 bound (Python parses such integers exactly).
     if (!Number.isFinite(spec.maxHz) || spec.maxHz <= 0) {
       throw new ManifestError("invalid_max_hz", `maxHz for ${spec.ch} must be a positive number`);
+    }
+    // Generic-publish rules. The manifest layer accepts "exclusive" (only
+    // authoring and the bridge reject it until the lease ticket, W8).
+    const publish = publishOf(spec);
+    const scope = scopeOf(spec);
+    if (dirOf(spec) === "rx" && publish !== "none") {
+      throw new ManifestError("invalid_publish", `rx channel ${spec.ch} cannot declare publish`);
+    }
+    if (publish !== "none" && spec.delivery !== "reliable") {
+      throw new ManifestError("invalid_publish", `publish channel ${spec.ch} must be reliable`);
+    }
+    if (publish !== "none" && !JSON_ENCODING_RE.test(spec.encoding)) {
+      throw new ManifestError(
+        "invalid_publish",
+        `publish channel ${spec.ch} needs a JSON encoding`,
+      );
+    }
+    if (scope !== null && publish === "none") {
+      throw new ManifestError(
+        "invalid_scope",
+        `channel ${spec.ch} scope requires a publish policy`,
+      );
+    }
+    if (scope !== null && !boundedId(scope)) {
+      throw new ManifestError(
+        "invalid_scope",
+        `scope for ${spec.ch} must be 1..${MAX_MANIFEST_ID_LEN} chars`,
+      );
     }
   }
 
@@ -363,6 +424,8 @@ export function parseManifest(value: unknown): Manifest {
       delivery: spec.delivery,
       maxHz: spec.maxHz,
       params: { ...(spec.params ?? {}) },
+      publish: publishOf(spec),
+      requiredScope: scopeOf(spec),
     })),
     panels: panels.map((panel) => ({
       id: panel.id,
