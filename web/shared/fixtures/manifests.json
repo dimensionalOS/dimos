@@ -3080,6 +3080,251 @@
         "pages": null
       },
       "error": "invalid_shape"
+    },
+    {
+      "name": "chat_panel",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          },
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "json.v1",
+            "delivery": "latest",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "channels": [
+              "human_input",
+              "agent",
+              "agent_idle"
+            ]
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "params": {},
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          },
+          {
+            "ch": "agent",
+            "dir": "rx",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
+          },
+          {
+            "ch": "agent_idle",
+            "dir": "rx",
+            "encoding": "json.v1",
+            "delivery": "latest",
+            "maxHz": 20.5,
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "title": "",
+            "channels": [
+              "human_input",
+              "agent",
+              "agent_idle"
+            ],
+            "params": {}
+          }
+        ],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "chat_panel_two_channels",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          },
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "channels": [
+              "human_input",
+              "agent"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_input_not_publishable",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5
+          },
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "json.v1",
+            "delivery": "latest",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "channels": [
+              "human_input",
+              "agent",
+              "agent_idle"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_messages_wrong_encoding",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          },
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "json.v1",
+            "delivery": "latest",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "channels": [
+              "human_input",
+              "odom",
+              "agent_idle"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
+    },
+    {
+      "name": "chat_panel_idle_wrong_delivery",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          },
+          {
+            "ch": "agent",
+            "encoding": "chat.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          },
+          {
+            "ch": "agent_idle",
+            "encoding": "json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5
+          }
+        ],
+        "panels": [
+          {
+            "id": "chat",
+            "kind": "chat",
+            "channels": [
+              "human_input",
+              "agent",
+              "agent_idle"
+            ]
+          }
+        ]
+      },
+      "error": "invalid_chat_panel"
     }
   ]
 }

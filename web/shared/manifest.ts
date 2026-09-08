@@ -392,6 +392,40 @@ export function parseManifest(value: unknown): Manifest {
         );
       }
     }
+    if (panel.kind === "chat") {
+      // channels: the text input (publish tx), the messages, the idle flag.
+      if (panel.channels.length !== 3) {
+        throw new ManifestError(
+          "invalid_chat_panel",
+          `chat panel ${panel.id} must bind three channels`,
+        );
+      }
+      const [text, messages, idle] = panel.channels.map((ch) => chIds.get(ch)!);
+      if (
+        text.encoding !== "text.json.v1" || text.delivery !== "reliable" ||
+        dirOf(text) !== "tx" || publishOf(text) !== "shared"
+      ) {
+        throw new ManifestError(
+          "invalid_chat_panel",
+          `chat panel ${panel.id} needs a text.json.v1 reliable shared tx channel first`,
+        );
+      }
+      if (
+        messages.encoding !== "chat.json.v1" || messages.delivery !== "reliable" ||
+        dirOf(messages) !== "rx"
+      ) {
+        throw new ManifestError(
+          "invalid_chat_panel",
+          `chat panel ${panel.id} needs a chat.json.v1 reliable rx channel second`,
+        );
+      }
+      if (idle.encoding !== "json.v1" || idle.delivery !== "latest" || dirOf(idle) !== "rx") {
+        throw new ManifestError(
+          "invalid_chat_panel",
+          `chat panel ${panel.id} needs a json.v1 latest rx channel third`,
+        );
+      }
+    }
   }
 
   const seen = new Set<string>();
