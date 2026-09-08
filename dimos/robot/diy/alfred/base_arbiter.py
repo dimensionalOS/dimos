@@ -145,7 +145,6 @@ def base_hardware() -> HardwareComponent:
 
 def arbiter_tasks(tele_cooldown: float = DEFAULT_TELE_COOLDOWN) -> list[TaskConfig]:
     """One velocity task per twist source, teleop above navigation."""
-    idle = {"zero_on_timeout": False}
     return [
         TaskConfig(
             name="nav",
@@ -153,7 +152,7 @@ def arbiter_tasks(tele_cooldown: float = DEFAULT_TELE_COOLDOWN) -> list[TaskConf
             joint_names=BASE_JOINTS,
             priority=NAV_PRIORITY,
             stream_bind={"joint_command": "nav_joint_command"},
-            params=idle,
+            params={"zero_on_timeout": False},
         ),
         TaskConfig(
             name="tele",
@@ -161,7 +160,7 @@ def arbiter_tasks(tele_cooldown: float = DEFAULT_TELE_COOLDOWN) -> list[TaskConf
             joint_names=BASE_JOINTS,
             priority=TELE_PRIORITY,
             stream_bind={"joint_command": "tele_joint_command"},
-            params={**idle, "timeout": tele_cooldown},
+            params={"zero_on_timeout": False, "timeout": tele_cooldown},
         ),
     ]
 
@@ -169,6 +168,8 @@ def arbiter_tasks(tele_cooldown: float = DEFAULT_TELE_COOLDOWN) -> list[TaskConf
 def alfred_base_arbiter_blueprint(tele_cooldown: float = DEFAULT_TELE_COOLDOWN) -> Blueprint:
     """Blueprint for the arbiter, wired to Alfred's holonomic base."""
     return AlfredBaseArbiter.blueprint(
+        # The shipped E-stop clients address the coordinator by this name, not by class.
+        instance_name="ControlCoordinator",
         hardware=[base_hardware()],
         tasks=arbiter_tasks(tele_cooldown),
     ).remappings(

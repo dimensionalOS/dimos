@@ -52,10 +52,11 @@ IOREG_TIMEOUT_SECONDS = 10.0
 
 
 def find_serials(model: str) -> list[str]:
-    """Serials of every attached camera of ``model``, in bus order."""
+    """Serials of every attached camera of ``model``, in enumeration order."""
     if model not in PRODUCT_IDS:
         raise ValueError(f"Unknown RealSense model {model!r}; known: {sorted(PRODUCT_IDS)}")
-    return _serials_by_product_id().get(PRODUCT_IDS[model], [])
+    # A copy: the enumeration is cached, and handing out the cache invites a caller to edit it.
+    return list(_serials_by_product_id().get(PRODUCT_IDS[model], []))
 
 
 def find_serial(model: str) -> str | None:
