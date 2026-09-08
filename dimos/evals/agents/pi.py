@@ -73,9 +73,8 @@ def recording_file(streams: Sequence[Stream[Any, Any]], path: Path) -> Path:
     return path
 
 
-def _registry_cost(cli: str, model: str) -> dict[str, Any] | None:
-    """*model*'s pricing from the installed Pi's model registry, so Pi can
-    price its own calls; None when the model is not in the registry."""
+def _registry_model(cli: str, model: str) -> dict[str, Any] | None:
+    """Copy Pi's model capabilities without its provider routing settings."""
     exe = shutil.which(cli)
     for parent in Path(exe).resolve().parents if exe else ():
         data = parent / "node_modules" / "@earendil-works" / "pi-ai" / "dist" / "providers" / "data"
@@ -84,7 +83,11 @@ def _registry_cost(cli: str, model: str) -> dict[str, Any] | None:
                 for models in json.loads(f.read_text()).values():
                     entry = models.get(model) if isinstance(models, dict) else None
                     if isinstance(entry, dict) and entry.get("provider") == "openai":
-                        return dict(entry["cost"]) if entry.get("cost") else None
+                        return {
+                            key: value
+                            for key, value in entry.items()
+                            if key not in ("provider", "api", "baseUrl")
+                        }
     return None
 
 
@@ -240,9 +243,9 @@ class PiAdapter(Agent):
         """Route the dimos/<model> provider through the model trace proxy."""
         agent_dir = run_dir / ".pi-agent"
         agent_dir.mkdir(parents=True, exist_ok=True)
-        model: dict[str, Any] = {"id": self.config.model, "reasoning": True}
-        if cost := _registry_cost(self.config.cli, self.config.model):
-            model["cost"] = cost
+        model = _registry_model(self.config.cli, self.config.model)
+        if model is None:
+            model = {"id": self.config.model, "reasoning": True}
         provider = {
             "baseUrl": proxy_url,
             "api": "openai-responses",
