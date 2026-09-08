@@ -300,6 +300,10 @@ def _flake_refs(flake: Path) -> tuple[set[str], set[str]]:
                 f"{os.path.relpath(flake, REPO_ROOT)}: {what} reaches content the inputs hash"
                 " cannot follow; use a relative path literal or a locked flake input instead"
             )
+    # `pkgs.lib.fileset.toSource { root = <dir>; fileset = <members>; }` anchors
+    # the enumerated members at `root`; the copied content is the members, not
+    # `root` itself (typically the repo root). Skip hashing the root itself.
+    uses_fileset = "fileset.toSource" in text
     literals: set[str] = set()
     path_inputs: set[str] = set()
     for match in _FLAKE_REF.finditer(text):
@@ -315,6 +319,8 @@ def _flake_refs(flake: Path) -> tuple[set[str], set[str]]:
                 f" {match.group('path')!r} — the inputs hash can only follow static path"
                 " literals; reference a plain literal (a parent directory is fine) instead"
             )
+        if uses_fileset and re.search(r"\broot\s*=\s*$", text[: match.start()]):
+            continue  # fileset.toSource anchor, not an input
         rel = _resolve_ref(flake, match.group("path"))
         (path_inputs if match.group("scheme") == "path:" else literals).add(rel)
     return literals, path_inputs
@@ -369,9 +375,10 @@ def build_manifest(modules: tuple[DiscoveredModule, ...]) -> str:
     for module in modules:
         paths |= _collect_input_paths(module)
     # Drop paths nested under another (e.g. a patch file inside its build dir).
+    # "." (repo root) sorts first and subsumes everything.
     top: list[str] = []
     for path in sorted(paths):
-        if not any(path == kept or path.startswith(kept + "/") for kept in top):
+        if not any(kept == "." or path == kept or path.startswith(kept + "/") for kept in top):
             top.append(path)
     lines = [
         f"salt {MARKER_SALT}",

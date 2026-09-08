@@ -205,6 +205,18 @@ def test_ast_extraction_matches_runtime() -> None:
         assert runtime_dir == (DIMOS_PROJECT_ROOT / module.build_dir).resolve()
 
 
+def test_no_module_hashes_the_repo_root() -> None:
+    """A collected input of "." puts the whole-repo tree SHA in the marker key,
+    so it changes on every commit and the marker never matches. A
+    fileset.toSource `root` anchor (usually the repo root) must be skipped, not
+    hashed — regression guard for the rust_recorder fileset flake."""
+    for module in _SCRIPT.discover():
+        assert "." not in _SCRIPT._collect_input_paths(module), (
+            f"{module.qualname}: input set includes the repo root — a fileset root anchor "
+            "is being hashed, which busts the publish marker on every commit"
+        )
+
+
 @pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs git HEAD for object hashes")
 def test_manifest_is_deterministic() -> None:
     modules = _SCRIPT.discover()
@@ -270,7 +282,8 @@ def test_flake_refs_resolve_and_are_covered() -> None:
             flake = DIMOS_PROJECT_ROOT / rel / "flake.nix"
             if not flake.is_file():
                 continue  # plain source tree (e.g. native/cpp), nothing to sweep
-            for match in _RAW_REF.finditer(flake.read_text()):
+            raw = flake.read_text()
+            for match in _RAW_REF.finditer(raw):
                 if match.group("scheme") == "git+file:":
                     url = match.group("path").split("?", 1)[0]
                     lock = json.loads((flake.parent / "flake.lock").read_text())
@@ -286,6 +299,8 @@ def test_flake_refs_resolve_and_are_covered() -> None:
                         " derivation on every commit behind the publish gate's back"
                     )
                     continue
+                if "fileset.toSource" in raw and re.search(r"\broot\s*=\s*$", raw[: match.start()]):
+                    continue  # fileset anchor, deliberately not an input (see _flake_refs)
                 token = match.group("path").split("?", 1)[0]
                 target = os.path.relpath(os.path.normpath(flake.parent / token), DIMOS_PROJECT_ROOT)
                 if not (DIMOS_PROJECT_ROOT / target).exists():
