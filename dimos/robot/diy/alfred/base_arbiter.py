@@ -59,7 +59,7 @@ DEFAULT_TELE_COOLDOWN = 1.0
 class PublishingTwistBase:
     """A twist base whose "hardware" is a stream, for platforms an existing module drives."""
 
-    def __init__(self, publish: Callable[[Twist], None], dof: int = 3, **_: object) -> None:
+    def __init__(self, publish: Callable[[Twist], None], dof: int = 3) -> None:
         self._publish = publish
         self._dof = dof
         self._velocities = [0.0] * dof

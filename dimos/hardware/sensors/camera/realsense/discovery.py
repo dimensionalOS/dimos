@@ -37,8 +37,9 @@ logger = setup_logger()
 
 INTEL_VENDOR_ID = 0x8086
 
-# USB product ids, one model per id. A model absent from here is one nobody has needed
-# to single out yet, not one that cannot be found.
+# USB product ids, one model per id, taken from librealsense's own rs400_sku_names
+# (src/ds/d400/d400-private.h). A model absent from here is one nobody has needed to
+# single out yet, not one that cannot be found.
 PRODUCT_IDS = {
     "D405": 0x0B5B,
     "D415": 0x0AD3,
