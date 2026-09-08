@@ -40,8 +40,8 @@ using DecodeFn = std::function<T(const uint8_t*, std::size_t)>;
 template <class T>
 using HandlerFn = std::function<void(T)>;
 
-constexpr std::size_t kInputQueueCapacity = 128;
-constexpr std::size_t kPublishQueueCapacity = 32;
+constexpr std::size_t INPUT_QUEUE_CAPACITY = 128;
+constexpr std::size_t PUBLISH_QUEUE_CAPACITY = 32;
 
 // Process-wide shutdown flag, set from an async-signal-safe handler. A native
 // module exits when the coordinator sends SIGTERM (or on Ctrl-C).
@@ -152,14 +152,14 @@ private:
     void push(T msg) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            if (queue_.size() >= kInputQueueCapacity) {
+            if (queue_.size() >= INPUT_QUEUE_CAPACITY) {
                 std::uint64_t n = dropped_.fetch_add(1, std::memory_order_relaxed) + 1;
                 if (log::check_and_record(last_warn_ns_, log::from_secs(1))) {
                     log::warn("handler full, dropping message",
                               {log::Field("topic", topic_),
                                log::Field("dropped", static_cast<std::int64_t>(n)),
                                log::Field("capacity",
-                                          static_cast<std::int64_t>(kInputQueueCapacity))});
+                                          static_cast<std::int64_t>(INPUT_QUEUE_CAPACITY))});
                 }
                 return;
             }
@@ -189,14 +189,14 @@ public:
             if (stopped_) {
                 return;
             }
-            if (queue_.size() >= kPublishQueueCapacity) {
+            if (queue_.size() >= PUBLISH_QUEUE_CAPACITY) {
                 std::uint64_t n = dropped_.fetch_add(1, std::memory_order_relaxed) + 1;
                 if (log::check_and_record(last_warn_ns_, log::from_secs(1))) {
                     log::warn("publish queue full, dropping message",
                               {log::Field("channel", channel_),
                                log::Field("dropped", static_cast<std::int64_t>(n)),
                                log::Field("capacity",
-                                          static_cast<std::int64_t>(kPublishQueueCapacity))});
+                                          static_cast<std::int64_t>(PUBLISH_QUEUE_CAPACITY))});
                 }
                 return;
             }
@@ -358,7 +358,7 @@ protected:
     // Default main body: round-robin drain inputs (fair, one per input per round)
     // until shutdown. With no inputs, just wait for shutdown.
     void default_handle() {
-        constexpr auto kPoll = std::chrono::milliseconds(100);
+        constexpr auto POLL_INTERVAL = std::chrono::milliseconds(100);
         while (!shutdown_requested()) {
             // Snapshot before draining so a message that lands mid-round blocks
             // the wait below instead of sleeping until the poll timeout.
@@ -373,9 +373,9 @@ protected:
             }
             if (!progressed) {
                 if (notifier_ != nullptr) {
-                    notifier_->wait_for(seq, kPoll, [this] { return shutdown_requested(); });
+                    notifier_->wait_for(seq, POLL_INTERVAL, [this] { return shutdown_requested(); });
                 } else {
-                    std::this_thread::sleep_for(kPoll);
+                    std::this_thread::sleep_for(POLL_INTERVAL);
                 }
             }
         }

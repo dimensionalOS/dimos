@@ -235,7 +235,7 @@ TEST_CASE("a full input queue drops newest and caps at capacity") {
 
     Dispatch dispatch = builder.routes()[0].second;
     // Distinct values so the surviving set proves which end was dropped.
-    for (std::size_t i = 0; i < kInputQueueCapacity + 10; ++i) {
+    for (std::size_t i = 0; i < INPUT_QUEUE_CAPACITY + 10; ++i) {
         uint8_t byte = static_cast<uint8_t>(i);
         dispatch(&byte, 1);
     }
@@ -243,9 +243,9 @@ TEST_CASE("a full input queue drops newest and caps at capacity") {
     InputPort* port = builder.input_ports()[0];
     while (port->drain_one()) {
     }
-    REQUIRE(seen.size() == kInputQueueCapacity);
+    REQUIRE(seen.size() == INPUT_QUEUE_CAPACITY);
     // Drop-newest: the first capacity messages are kept, later ones dropped.
-    for (std::size_t i = 0; i < kInputQueueCapacity; ++i) {
+    for (std::size_t i = 0; i < INPUT_QUEUE_CAPACITY; ++i) {
         CHECK(seen[i] == static_cast<uint8_t>(i));
     }
 }
@@ -331,7 +331,7 @@ TEST_CASE("a decode error drops the message and never reaches the handler") {
 TEST_CASE("a full publish queue drops newest and caps at capacity") {
     PublishQueue queue("/out");
     // Distinct first-bytes so the surviving set proves which end was dropped.
-    for (std::size_t i = 0; i < kPublishQueueCapacity + 5; ++i) {
+    for (std::size_t i = 0; i < PUBLISH_QUEUE_CAPACITY + 5; ++i) {
         queue.push({static_cast<uint8_t>(i)});
     }
     queue.stop();
@@ -341,9 +341,9 @@ TEST_CASE("a full publish queue drops newest and caps at capacity") {
     while (queue.pop(out)) {
         seen.push_back(out[0]);
     }
-    REQUIRE(seen.size() == kPublishQueueCapacity);
+    REQUIRE(seen.size() == PUBLISH_QUEUE_CAPACITY);
     // Drop-newest: the first capacity pushes are kept, later ones dropped.
-    for (std::size_t i = 0; i < kPublishQueueCapacity; ++i) {
+    for (std::size_t i = 0; i < PUBLISH_QUEUE_CAPACITY; ++i) {
         CHECK(seen[i] == static_cast<uint8_t>(i));
     }
 }

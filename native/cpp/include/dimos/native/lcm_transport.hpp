@@ -113,7 +113,7 @@ private:
         if (running_.compare_exchange_strong(expected, true)) {
             recv_thread_ = std::thread([this] {
                 while (running_.load(std::memory_order_relaxed)) {
-                    int rc = lcm_.handleTimeout(kHandleTimeoutMs);
+                    int rc = lcm_.handleTimeout(HANDLE_TIMEOUT_MS);
                     if (rc < 0) {
                         DIMOS_ERROR_THROTTLED(log::from_secs(1), "lcm handleTimeout error",
                                               log::Field("rc", static_cast<std::int64_t>(rc)));
@@ -123,7 +123,7 @@ private:
         }
     }
 
-    static constexpr int kHandleTimeoutMs = 100;
+    static constexpr int HANDLE_TIMEOUT_MS = 100;
 
     lcm::LCM lcm_;
     std::mutex routes_mu_;
