@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import json
 from pathlib import Path
 from typing import Any
@@ -22,31 +23,24 @@ import pytest
 from typer.testing import CliRunner
 
 from dimos.cli.dimos import main as app
-from dimos.evals import runner as runner_module
+from dimos.evals import runner as runner_module, suites
+from dimos.evals.agent import Agent
 from dimos.evals.cli import run_provenance
+from dimos.evals.environment import Environment
 from dimos.evals.runner import EvalRunner
 from dimos.evals.suites import examples
-from dimos.evals.types import EvalCase
+from dimos.evals.types import EvalCase, RunningEnvironment
 
 SUITE_MODULE = "dimos.evals.suites.examples"
 AGENT_MODULE = "dimos.evals.agents.question_answer"
 
 
-class FailingEnvironment:
-    artifacts: tuple[str, ...] = ()
-    has_robot = False
-
-    def preflight(self, agent: Any) -> None:
+class FailingEnvironment(Environment):
+    def preflight(self, agent: Agent) -> None:
         raise RuntimeError("offline preflight")
 
-    def start(self, modules: str) -> Any:
+    def start(self, modules: Sequence[str]) -> RunningEnvironment:
         raise AssertionError("invalid test setup: execution reached")
-
-    def settle(self, budget_s: float) -> None:
-        pass
-
-    def stop(self) -> None:
-        pass
 
 
 def _case(case_id: str, tag: str = "image") -> EvalCase:
@@ -81,6 +75,30 @@ def test_agent_provenance_redacts_secrets_and_unserializable_values() -> None:
     assert provenance["agent"]["kwargs"] is None
     assert provenance["agent"]["unavailable_reason"]
     assert "never-write-me" not in json.dumps(provenance)
+
+
+def test_list_cli_discovers_nested_suites_without_importing_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    for relative in (
+        "go2_smoke.py",
+        "pointcloud/dataset/clearance.py",
+        "pointcloud/lib/generate.py",
+        "pointcloud/dataset/test_clearance.py",
+        "_private.py",
+    ):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("raise AssertionError('listing must not import suites')\n")
+    monkeypatch.setattr(suites, "__path__", [str(tmp_path)])
+
+    result = CliRunner().invoke(app, ["evals", "list"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "dimos.evals.suites.go2_smoke",
+        "dimos.evals.suites.pointcloud.dataset.clearance",
+    ]
 
 
 def test_run_cli_records_exact_selection_and_agent_inputs(

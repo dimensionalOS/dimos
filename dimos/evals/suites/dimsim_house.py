@@ -22,7 +22,7 @@ Exploration (the e2e ``explore_house`` fixture) is the environment's
 ``setup`` — the agent needs spatial memory of the apartment before it can
 navigate it. Run it under the shipped agent::
 
-    dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.mcp_client --set modules=unitree-go2-agentic
+    dimos evals run dimos.evals.suites.dimsim_house --agent dimos.evals.agents.mcp_client --set 'modules=["unitree-go2-agentic"]'
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ go_to_bed = EvalCase(
     id="dimsim_go_to_bed",
     inputs="go to the bed",
     environment=Sim(
-        blueprint="unitree-go2 mcp-server unitree-skill-container",
+        blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
         simulator="dimsim",
         scene="apartment",
         setup=_explore_house,

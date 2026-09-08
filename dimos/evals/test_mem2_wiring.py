@@ -14,7 +14,7 @@
 
 """Integration tests for the memory <-> eval connection.
 
-Frozen: a case's ``Dataset.select`` pulls real Streams from a recording, the
+Frozen: a case's ``Dataset.config.select`` pulls real Streams from a recording, the
 ``QuestionAnswer`` agent encodes them, and the *actual observation data*
 (image blocks, pose text) reaches the model prompt.
 
@@ -25,17 +25,13 @@ Recorder's role); the grader reads the whole history afterwards.
 from __future__ import annotations
 
 from pathlib import Path
-import threading
-import time
-from typing import Any
 
-from langchain_core.callbacks import CallbackManagerForLLMRun
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
+from dimos.evals.agent import Agent
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.environments.dataset import Dataset
@@ -43,10 +39,12 @@ from dimos.evals.runner import EvalRunner
 from dimos.evals.scorers import first_number, ramp, within
 from dimos.evals.types import (
     EvalCase,
+    Outcome,
     RunningEnvironment,
     Trajectory,
     recording,
 )
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
@@ -61,45 +59,15 @@ def _pose(x: float, y: float) -> PoseStamped:
     )
 
 
-def _open_store(path: Path) -> Any:
-    from dimos.memory.store.sqlite import SqliteStore
-
-    try:
-        return SqliteStore(path=str(path))
-    except Exception as e:  # pragma: no cover — sqlite-vec unavailable platforms
-        pytest.skip(f"SqliteStore unavailable: {e}")
+@pytest.fixture
+def store(tmp_path: Path):
+    with SqliteStore(path=str(tmp_path / "rec.db")) as store:
+        yield store
 
 
-class SpyChat(BaseChatModel):
-    """Captures the exact messages the agent sends; replies with a constant."""
-
-    reply: str = "42"
-    seen: list[list[BaseMessage]] = []
-
-    @property
-    def _llm_type(self) -> str:
-        return "spy"
-
-    def _generate(
-        self,
-        messages: list[BaseMessage],
-        stop: list[str] | None = None,
-        run_manager: CallbackManagerForLLMRun | None = None,
-        **kwargs: Any,
-    ) -> ChatResult:
-        self.seen.append(messages)
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.reply))])
-
-
-def _qa(spy: SpyChat, **kwargs: Any) -> QuestionAnswer:
-    return QuestionAnswer(chat_model=spy, model="spy", system_prompt="sys", **kwargs)
-
-
-# -- frozen: recording -> select -> encode -> prompt ---------------------------------
-
-
-def test_selected_streams_reach_the_prompt(tmp_path: Path) -> None:
-    store = _open_store(tmp_path / "rec.db")
+def test_selected_streams_reach_the_prompt(
+    tmp_path: Path, store: SqliteStore, mocker: MockerFixture
+) -> None:
     odom = store.stream("odom", PoseStamped)
     for i in range(20):
         odom.append(_pose(float(i), 2.5), ts=1000.0 + i)
@@ -107,7 +75,6 @@ def test_selected_streams_reach_the_prompt(tmp_path: Path) -> None:
     images = store.stream("color_image", Image)
     for i in range(3):
         images.append(Image.from_numpy(frame, frame_id="cam", ts=1000.0 + i), ts=1000.0 + i)
-    store.stop()
 
     case = EvalCase(
         id="wiring",
@@ -119,113 +86,80 @@ def test_selected_streams_reach_the_prompt(tmp_path: Path) -> None:
         grade=lambda o: within(1.0)(19.0, first_number(o.trajectory.final_answer)),
     )
 
-    spy = SpyChat(reply="19")
-    spy.seen.clear()
-    results = EvalRunner(out_dir=tmp_path / "evals").run([case], _qa(spy))
+    chat = FakeListChatModel(responses=["19"])
+    generate = mocker.spy(FakeListChatModel, "generate")
+    results = EvalRunner(out_dir=tmp_path / "evals").run([case], QuestionAnswer(chat_model=chat))
 
     assert results[0].passed, results[0]
-    blocks = [b for m in spy.seen[0] for b in (m.content if isinstance(m.content, list) else [])]
+    _, (messages,) = generate.call_args.args
+    blocks = messages[-1].content
+    assert isinstance(blocks, list)
     image_blocks = [b for b in blocks if b.get("type") == "image_url"]
     text = " ".join(b["text"] for b in blocks if b.get("type") == "text")
     # the actual observation data crossed from memory into the prompt:
     assert len(image_blocks) == 2, "both selected image observations should be encoded"
     assert image_blocks[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
-    assert "19.000" in text or "19.0" in text, "last odom pose must reach the prompt"
+    assert str(_pose(19.0, 2.5)) in text, "last odom pose must reach the prompt"
     assert case.inputs in text
 
 
-def test_frames_per_stream_downsamples_not_truncates(tmp_path: Path) -> None:
-    store = _open_store(tmp_path / "rec.db")
+@pytest.mark.parametrize(
+    ("frames_per_stream", "positions"), [(1, [0]), (3, [0, 2, 4]), (8, [0, 1, 2, 3, 4])]
+)
+def test_frames_per_stream_downsamples_not_truncates(
+    tmp_path: Path,
+    store: SqliteStore,
+    frames_per_stream: int,
+    positions: list[int],
+    mocker: MockerFixture,
+) -> None:
     odom = store.stream("odom", PoseStamped)
-    for i in range(100):
+    for i in range(5):
         odom.append(_pose(float(i), 0.0), ts=1000.0 + i)
-    store.stop()
 
-    spy = SpyChat(reply="99")
-    spy.seen.clear()
-    env = Dataset(str(tmp_path / "rec.db"))
-    running = env.start("")
-    try:
-        _qa(spy, frames_per_stream=5).run("?", running, tmp_path, timeout_s=60.0)
-    finally:
-        env.stop()
-    texts = [b["text"] for b in spy.seen[0][-1].content if b.get("type") == "text"]  # type: ignore[union-attr]
-    stamped = [t for t in texts if t.startswith("[t=")]
-    assert len(stamped) == 5
-    assert "0.000" in stamped[0] and "99.000" in stamped[-1], "spread must cover the whole window"
+    chat = FakeListChatModel(responses=["42"])
+    generate = mocker.spy(FakeListChatModel, "generate")
+    env = RunningEnvironment(mcp_url="", streams=(odom,), artifacts={})
+    QuestionAnswer(chat_model=chat, frames_per_stream=frames_per_stream).run(
+        "?", env, tmp_path, timeout_s=60.0
+    )
+
+    _, (messages,) = generate.call_args.args
+    content = messages[-1].content
+    assert isinstance(content, list)
+    stamped = [
+        block["text"]
+        for block in content
+        if block["type"] == "text" and block["text"].startswith("[t=")
+    ]
+    assert stamped == [f"[t={float(i):.1f}s] {_pose(float(i), 0.0)}" for i in positions]
 
 
-# -- live: the recording is written while the agent acts; the grader reads it after ----
-
-
-def test_grader_reads_the_history_the_environment_recorded(tmp_path: Path) -> None:
-    """A writer thread plays the Recorder: the robot approaches the goal while
-    the agent 'acts'; the grader then reads the final pose and the path from
-    the recording artifact."""
-    db = tmp_path / "live.db"
-    store = _open_store(db)
+def test_grader_reads_the_history_the_environment_recorded(
+    tmp_path: Path, store: SqliteStore
+) -> None:
+    """Grading sees the initial pose and every pose recorded during agent execution."""
     odom = store.stream("odom", PoseStamped)
-    odom.append(_pose(5.0, 0.0), ts=time.time())  # robot starts 5m from goal
-    stop = threading.Event()
+    odom.append(_pose(5.0, 0.0), ts=1000.0)
 
-    def writer() -> None:
-        for i in range(1, 26):
-            if stop.is_set():
-                return
-            odom.append(_pose(max(0.0, 5.0 - i * 0.2), 0.0), ts=time.time())
-            time.sleep(0.02)
-
-    thread = threading.Thread(target=writer)
-
-    class LiveEnvironment:
-        artifacts = ("recording",)
-        has_robot = False
-
-        def preflight(self, agent: Any) -> None:
-            pass
-
-        def start(self, modules: str) -> RunningEnvironment:
-            thread.start()
-            return RunningEnvironment(mcp_url="", streams=(), artifacts={"recording": db})
-
-        def settle(self, budget_s: float) -> None:
-            return None
-
-        def stop(self) -> None:
-            stop.set()
-            thread.join(timeout=5.0)
-
-    class WaitingAgent:
-        modules = ""
-
-        def preflight(self, environment: Any) -> None:
-            pass
-
-        def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
-            return ()
-
+    class RecordingAgent(Agent):
         def run(
             self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
         ) -> Trajectory:
-            time.sleep(min(1.0, timeout_s))
+            for i, x in enumerate((2.0, 1.0, 0.0), start=1):
+                odom.append(_pose(x, 0.0), ts=1000.0 + i)
             return TrajectoryBuilder(inputs, name="none").build("answer")
 
-    def grade(o: Any) -> float:
-        rec = recording(o)
-        try:
+    def grade(outcome: Outcome) -> float:
+        with recording(outcome) as rec:
             poses = [obs.data.position.x for obs in rec.streams.odom]
-        finally:
-            rec.stop()
-        assert len(poses) >= 3, "the whole history is in the recording"
-        assert poses == sorted(poses, reverse=True), "monotonic approach must be visible"
+        assert poses == [5.0, 2.0, 1.0, 0.0]
         return ramp(abs(poses[-1]), band=2.0)
 
-    case = EvalCase(id="live", inputs="go to the goal", environment=LiveEnvironment(), grade=grade)
-    try:
-        result = EvalRunner(out_dir=tmp_path / "evals").run([case], WaitingAgent())[0]
-    finally:
-        stop.set()
-        store.stop()
+    case = EvalCase(
+        id="live", inputs="go to the goal", environment=Dataset(store.config.path), grade=grade
+    )
+    result = EvalRunner(out_dir=tmp_path / "evals").run([case], RecordingAgent())[0]
 
     assert not result.error, result.error
-    assert result.score >= 0.99  # the last recorded pose is at the goal
+    assert result.score == 1.0

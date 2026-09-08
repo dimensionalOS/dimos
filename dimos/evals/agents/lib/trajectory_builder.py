@@ -48,9 +48,7 @@ def _iso(epoch: float) -> str:
 
 
 class TrajectoryBuilder:
-    """The instruction first, then one :meth:`step` per model call and one
-    :meth:`observe` per tool result, then :meth:`build`. ``model`` is what the
-    agent asked for; a step reporting the provider's own name overrides it."""
+    """Stateful builder for creating an ATIF-compliant trajectory of an agent."""
 
     def __init__(self, inputs: str, *, name: str, model: str = "") -> None:
         self.model_name = model

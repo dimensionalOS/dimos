@@ -55,7 +55,7 @@ logger = setup_logger()
 _RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
-def _init_model(model_name: str, trace_dir: Path | None = None) -> Any:
+def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
     """Initialize a model while preserving LangChain provider resolution.
 
     With *trace_dir*, every request/response body goes to disk whole
@@ -263,7 +263,7 @@ class McpClient(Module):
 
                 model = MockModel(json_path=self.config.model_fixture)
             else:
-                model = _init_model(self.config.model, trace_dir=self.config.trace_dir)
+                model = init_model(self.config.model, trace_dir=self.config.trace_dir)
             self._state_graph = create_agent(
                 model=model,
                 tools=self._agent_tools or [],

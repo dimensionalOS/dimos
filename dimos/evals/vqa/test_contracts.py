@@ -965,7 +965,7 @@ def test_generate_and_evaluate_one_image(tmp_path: Path) -> None:
     assert case.id == "frame-000004-chair-presence"
     assert 'Choices: ["yes", "no"]' in case.inputs
     assert isinstance(case.environment, ImageFile)
-    assert case.environment.path == image_path
+    assert case.environment.config.path == image_path
     assert case.grade(_outcome("yes")) == 1.0
     assert case.grade(_outcome("Yes, there is.")) == 1.0
     assert case.grade(_outcome("no")) == 0.0

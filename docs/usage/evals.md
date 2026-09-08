@@ -9,7 +9,7 @@
 
 ## Quick start (CLI)
 
-```bash
+```bash skip
 # two documentation cases against the go2_short recording (needs OPENAI_API_KEY)
 dimos evals run dimos.evals.suites.examples --agent dimos.evals.agents.question_answer
 
@@ -35,8 +35,8 @@ To generate deterministic image questions from recordings, see
 
 ## Your first eval, end to end
 
-Build a tiny recording. Any memory store works, since this is the same API the
-robot's Recorder uses (see `dimos/memory/intro.md` for the full Stream API):
+Build a tiny SQLite recording using the same Store/Stream API as the robot's
+Recorder (see `dimos/memory/intro.md` for the full Stream API):
 
 ```python session=evals ansi=false no-result
 import os
@@ -61,7 +61,7 @@ for i in range(20):
 store.stop()
 ```
 
-A case is one Python literal. `Dataset.select` is a tuple of callables that
+A case is one Python literal. `Dataset(..., select=...)` takes a tuple of callables that
 receive the opened `Store` and return the `Stream`s the recording holds for
 this case: anything the Stream API expresses (windows, filters, single
 frames). `grade` reads the agent's final answer:
@@ -81,7 +81,7 @@ case = EvalCase(
 ```
 
 Pick an agent and run. `QuestionAnswer` puts `agent_encode()` of every
-selected observation (at most 8 per stream, spread evenly) in front of the
+selected observation (by default, at most 8 per stream, spread evenly) in front of the
 question and makes one model call. `chat_model=` injects any LangChain chat
 model. Here it is a canned fake so this document runs offline; drop it to use
 the agent's `model` with the production construction:
@@ -99,35 +99,43 @@ print(f"n={s.n} mean={s.mean_score} pass_rate={s.pass_rate} errors={s.errors}")
 ```
 
 ```results
-score=1.0 passed=True answer='about 19 meters' steps=1
+score=1.0 passed=True answer='about 19 meters' steps=2
 n=1 mean=1.0 pass_rate=1.0 errors=0
 ```
 
 That's the whole loop: environment -> agent -> trajectory + artifacts ->
 grade -> run dir.
 
+To run your cases through the CLI, put them in an importable module with
+`SUITE: Suite = [case]`, importing `Suite` from `dimos.evals.types`.
+
 ## Agents
 
 Agents live in `dimos/evals/agents/`, one per file. `--agent` takes the
-module path; `--set field=value` sets one of its fields, e.g.
-`--set max_steps=20`.
+module path; `--set field=value` sets an agent option, e.g.
+`--set frames_per_stream=16` for `QuestionAnswer`. In Python, pass the same
+options to the constructor: `QuestionAnswer(frames_per_stream=16)`.
+CLI values are parsed as JSON when possible; quote lists as shown below.
 
-**Tools.** The case's blueprint decides the tool set: `Sim.blueprint`
+**Tools.** The case's blueprint decides the tool set: `Sim(blueprint=...)`
 is the robot stack plus `McpServer`, and its skill containers are the tools.
-There is no tool filter. The agent's `modules` string is appended to the
+There is no tool filter. The agent's `modules` list is appended to the
 launch command (`dimos run <blueprint> <modules>`), and `autoconnect` dedups
-anything shared with the case, so `--set modules=unitree-go2-agentic` adds
+anything shared with the case, so `--set 'modules=["unitree-go2-agentic"]'` adds
 the whole shipped agentic stack. On a `Dataset` case the agent's `modules`
 are the whole launched stack (`dimos run <modules>`, no simulator or robot
-underneath): a tool surface over the frozen recording, torn down with the
-case. `Dataset(mcp_url=...)` attaches an already-running dimos instead. To
+underneath), torn down with the case. Configure those modules to read the
+recording if their tools need it. `Dataset(mcp_url=...)` attaches an
+already-running dimos instead. To
 compare two tool sets on one task, run the suite twice with different
 `--set modules=...`; each `trajectory.json` records the tools exposed.
 
-**Limits.** `max_steps` caps model calls on agents that support it. The
-case's `timeout_s` caps wall-clock time; the agent returns what it has by
-then, marked `timeout`. Tokens and cost have no cap; both are recorded on
-the trajectory and ranked.
+**Limits.** The case's `timeout_s` sets the time budget for the agent and
+subsequent motion settling. `McpClientAgent` returns what it has when its
+wait expires, marked `timeout`; `QuestionAnswer` and `Blind` rely on the
+model provider's timeout. Environment startup has a separate
+`launch_timeout_s`. There are no token or cost caps; usage is recorded when
+the agent supplies it.
 
 **Observation encoding.** Each agent class hard-codes how the recording
 reaches the model. `QuestionAnswer` calls `agent_encode()`; no other agent
@@ -194,7 +202,7 @@ go_to_bed = EvalCase(
     id="go_to_bed",
     inputs="go to the bed",
     environment=Sim(
-        blueprint="unitree-go2 mcp-server unitree-skill-container",
+        blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
         simulator="dimsim",
         scene="apartment",
     ),

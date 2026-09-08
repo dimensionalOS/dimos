@@ -15,34 +15,40 @@
 """Offline unit tests: scorers, cases, environments, agents, runner artifacts.
 
 No network, no robot, no LLM — chat models are fakes, the MCP tool set is a
-stub, and the environment in runner tests is a plain object satisfying the
-Environment protocol structurally.
+stub, and runner environments implement the same lifecycle as real environments.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from datetime import datetime
 import json
 from pathlib import Path
 import threading
-import time
 from types import SimpleNamespace
 from typing import Any
 
-from langchain_core.callbacks import CallbackManagerForLLMRun
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 import numpy as np
+from pydantic import ValidationError
 import pytest
+from pytest_mock import MockerFixture
 
+from dimos.core.transport_factory import make_transport
+from dimos.evals.agent import Agent
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client import McpClientAgent
 from dimos.evals.agents.question_answer import QuestionAnswer
+from dimos.evals.cli import load_agent
+from dimos.evals.environment import Environment
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.image_file import ImageFile
+from dimos.evals.environments.lib.launch import default_mcp_url
 from dimos.evals.environments.sim import Sim
-from dimos.evals.runner import EvalRunner
+from dimos.evals.module import list_agents
+from dimos.evals.runner import EvalRunner, summarize
 from dimos.evals.scorers import (
     choice,
     exact,
@@ -54,6 +60,7 @@ from dimos.evals.scorers import (
     within,
     yes_no,
 )
+from dimos.evals.suites import dimsim_house, examples, go2_smoke, go2_vqa
 from dimos.evals.types import (
     EvalCase,
     Observation,
@@ -62,11 +69,13 @@ from dimos.evals.types import (
     RunningEnvironment,
     ToolCall,
     Trajectory,
-    recording,
 )
+from dimos.memory.store.memory import MemoryStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+from dimos.msgs.sensor_msgs.Image import Image
 
 
 def _pose(x: float, y: float) -> PoseStamped:
@@ -77,53 +86,19 @@ def _pose(x: float, y: float) -> PoseStamped:
     )
 
 
-def _open_store(path: Path) -> Any:
-    from dimos.memory.store.sqlite import SqliteStore
-
-    try:
-        return SqliteStore(path=str(path))
-    except Exception as e:  # pragma: no cover — sqlite-vec unavailable platforms
-        pytest.skip(f"SqliteStore unavailable: {e}")
-
-
 @pytest.fixture
 def dataset(tmp_path: Path) -> str:
     """A tiny on-disk memory dataset: 5 odom poses walking 4m in +x over 4s."""
     path = tmp_path / "tiny.db"
-    store = _open_store(path)
-    stream = store.stream("odom", PoseStamped)
-    for i in range(5):
-        stream.append(_pose(float(i), 0.0), ts=1000.0 + i)
-    store.stop()
+    with SqliteStore(path=str(path)) as store:
+        stream = store.stream("odom", PoseStamped)
+        for i in range(5):
+            stream.append(_pose(float(i), 0.0), ts=1000.0 + i)
     return str(path)
 
 
-class SpyChat(BaseChatModel):
-    """Captures the exact messages an agent sends; replies with a constant."""
-
-    reply: str = "42"
-    seen: list[list[BaseMessage]] = []
-
-    @property
-    def _llm_type(self) -> str:
-        return "spy"
-
-    def _generate(
-        self,
-        messages: list[BaseMessage],
-        stop: list[str] | None = None,
-        run_manager: CallbackManagerForLLMRun | None = None,
-        **kwargs: Any,
-    ) -> ChatResult:
-        self.seen.append(messages)
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.reply))])
-
-
-GO2_STACK = "unitree-go2 mcp-server unitree-skill-container"
-
-
 def _sim(**kwargs: Any) -> Sim:
-    return Sim(blueprint=GO2_STACK, **kwargs)
+    return Sim(blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"], **kwargs)
 
 
 def _trajectory(answer: str, raw: Path, timed_out: bool = False) -> Trajectory:
@@ -147,13 +122,11 @@ def _assert_atif(doc: dict[str, Any]) -> None:
     assert "final_metrics" in doc and "null" not in json.dumps(doc)
 
 
-class FakeEnvironment:
-    """A frozen recording with one declared artifact; records lifecycle calls."""
-
-    artifacts = ("recording",)
-    has_robot = False
+class FakeEnvironment(Environment):
+    """A frozen recording that records lifecycle calls."""
 
     def __init__(self, path: Path, calls: list[str]) -> None:
+        super().__init__()
         self.path = path
         self.calls = calls
         self.settled_budget: float | None = None
@@ -161,7 +134,7 @@ class FakeEnvironment:
     def preflight(self, agent: Any) -> None:
         self.calls.append("preflight")
 
-    def start(self, modules: str) -> RunningEnvironment:
+    def start(self, modules: Sequence[str]) -> RunningEnvironment:
         self.calls.append("start")
         return RunningEnvironment(mcp_url="", streams=(), artifacts={"recording": self.path})
 
@@ -171,18 +144,15 @@ class FakeEnvironment:
 
     def stop(self) -> None:
         self.calls.append("stop")
+        super().stop()
 
 
-class FakeAgent:
-    """Replies with a canned answer after an optional delay; can fail."""
+class FakeAgent(Agent):
+    """Replies with a canned answer or timeout."""
 
-    modules = ""
-
-    def __init__(self, answer: str = "", delay_s: float = 0.0, fail: bool = False) -> None:
-        self.answer, self.delay_s, self.fail = answer, delay_s, fail
-
-    def preflight(self, environment: Any) -> None:
-        pass
+    def __init__(self, answer: str = "", timed_out: bool = False) -> None:
+        super().__init__()
+        self.answer, self.timed_out = answer, timed_out
 
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
         return ("fake_tool",)
@@ -190,23 +160,7 @@ class FakeAgent:
     def run(
         self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
     ) -> Trajectory:
-        time.sleep(min(self.delay_s, timeout_s))
-        if self.fail:
-            raise RuntimeError("boom")
-        return _trajectory(self.answer, run_dir / "raw", timed_out=self.delay_s > timeout_s)
-
-
-def _text(messages: list[BaseMessage]) -> str:
-    blocks = [b for m in messages for b in (m.content if isinstance(m.content, list) else [m])]
-    return " ".join(
-        b["text"]
-        if isinstance(b, dict) and b.get("type") == "text"
-        else str(getattr(b, "content", ""))
-        for b in blocks
-    )
-
-
-# -- scorers ------------------------------------------------------------------------
+        return _trajectory(self.answer, run_dir / "raw", timed_out=self.timed_out)
 
 
 def test_scorer_math() -> None:
@@ -240,12 +194,9 @@ def test_parsers() -> None:
         compass("no idea")
 
 
-# -- environments -------------------------------------------------------------------
-
-
 def test_dataset_start_hands_out_the_selection(dataset: str) -> None:
     env = Dataset(dataset, select=(lambda s: s.streams.odom.limit(2),))
-    running = env.start("")
+    running = env.start(())
     try:
         (odom,) = running.streams
         assert odom.name == "odom"
@@ -258,68 +209,107 @@ def test_dataset_start_hands_out_the_selection(dataset: str) -> None:
         env.stop()
 
 
-def test_dataset_preflight_reports_missing_stream(dataset: str) -> None:
-    env = Dataset(dataset, select=(lambda s: s.streams.lidar.limit(1),))
-    with pytest.raises(AttributeError, match="No stream 'lidar'"):
-        env.preflight(QuestionAnswer())
-
-
 def test_dataset_preflight_checks_added_modules(dataset: str) -> None:
     """A tool-using agent's modules become the launched stack, so preflight
     validates the names; adding modules to an attached dimos is a conflict."""
     with pytest.raises(ValueError, match="Unknown blueprint or module: 'no-such-module'"):
-        Dataset(dataset).preflight(McpClientAgent(modules="no-such-module"))
+        Dataset(dataset).preflight(McpClientAgent(modules=("no-such-module",)))
     match = "already attaches to http://x/mcp; McpClientAgent also adds modules"
     with pytest.raises(RuntimeError, match=match):
-        Dataset(dataset, mcp_url="http://x/mcp").preflight(McpClientAgent(modules="unitree-go2"))
+        Dataset(dataset, mcp_url="http://x/mcp").preflight(McpClientAgent(modules=("unitree-go2",)))
 
 
-def test_dataset_launches_the_agents_modules(dataset: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A frozen recording has no dimos, so a non-empty ``modules`` becomes its
-    own launched stack — ``dimos run <modules>``, no simulator — waited on at
-    the MCP url and torn down with the case."""
-    from dimos.evals.environments.lib.launch import default_mcp_url
-
-    calls: list[str] = []
-
-    class FakeProc:
-        simulator: str | None = "mujoco"
-        demo_args: list[str] | None = None
-
-        def start(self) -> None:
-            calls.append(f"start [{' '.join(self.demo_args or [])}] simulator={self.simulator}")
-
-        def stop(self) -> None:
-            calls.append("stop")
-
-    class FakeAdapter:
-        def __init__(self, url: str) -> None:
-            calls.append(f"wait {url}")
-
-        def wait_for_ready(self, timeout: float, interval: float = 1.0) -> bool:
-            return True
-
-    monkeypatch.setattr("dimos.e2e_tests.dimos_cli_call.DimosCliCall", FakeProc)
-    monkeypatch.setattr("dimos.agents.mcp.mcp_adapter.McpAdapter", FakeAdapter)
+def test_dataset_launches_and_cleans_up_the_agents_modules(
+    dataset: str, mocker: MockerFixture
+) -> None:
+    proc = mocker.patch("dimos.evals.environments.dataset.DimosCliCall").return_value
+    adapter = mocker.patch("dimos.evals.environments.dataset.McpAdapter")
+    adapter.return_value.wait_for_ready.return_value = True
     env = Dataset(dataset)
-    running = env.start("mcp-server mcp-client")
+
+    try:
+        running = env.start(("mcp-server", "mcp-client"))
+        assert running.mcp_url == default_mcp_url()
+    finally:
+        env.stop()
+
+    assert proc.demo_args == ["run", "mcp-server", "mcp-client"]
+    assert proc.simulator is None
+    proc.start.assert_called_once_with()
+    proc.stop.assert_called_once_with()
+    adapter.assert_called_once_with(default_mcp_url())
+
+
+def test_dataset_cleans_up_when_mcp_is_not_ready(dataset: str, mocker: MockerFixture) -> None:
+    proc = mocker.patch("dimos.evals.environments.dataset.DimosCliCall").return_value
+    adapter = mocker.patch("dimos.evals.environments.dataset.McpAdapter")
+    adapter.return_value.wait_for_ready.return_value = False
+    env = Dataset(dataset)
+    try:
+        with pytest.raises(RuntimeError, match="not ready"):
+            env.start(("mcp-server",))
+    finally:
+        env.stop()
+    proc.stop.assert_called_once_with()
+
+
+def test_dataset_stops_the_process_when_closing_its_store_fails(
+    dataset: str, mocker: MockerFixture
+) -> None:
+    proc = mocker.patch("dimos.evals.environments.dataset.DimosCliCall").return_value
+    mocker.patch("dimos.evals.environments.dataset.McpAdapter")
+    store = mocker.patch("dimos.evals.environments.dataset.open_dataset").return_value
+    store.stop.side_effect = RuntimeError("cleanup failed")
+    env = Dataset(dataset)
+
+    env.start(("mcp-server",))
+    with pytest.raises(RuntimeError, match="cleanup failed"):
+        env.stop()
     env.stop()
-    assert running.mcp_url == default_mcp_url()
-    assert calls == [
-        "start [run mcp-server mcp-client] simulator=None",
-        f"wait {running.mcp_url}",
-        "stop",
-    ]
+
+    proc.stop.assert_called_once_with()
+
+
+def test_sim_attach_rejects_added_modules() -> None:
+    with pytest.raises(RuntimeError, match="attaches.*also adds modules"):
+        _sim(attach=True).preflight(McpClientAgent(modules=("mcp-client",)))
+
+
+def test_sim_launches_base_blueprints_and_agent_modules_in_order(
+    dataset: str, mocker: MockerFixture
+) -> None:
+    proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
+    adapter = mocker.patch("dimos.evals.environments.sim.McpAdapter")
+    adapter.return_value.wait_for_ready.return_value = True
+    sim_client = mocker.patch("dimos.evals.environments.sim.DimSimClient")
+    setup = mocker.Mock()
+    env = _sim(scene="empty", launch_timeout_s=4.0, setup=setup)
+    mocker.patch.object(env, "_wait_recording", return_value=Path(dataset))
+
+    try:
+        env.start(("mcp-client", "speak-skill"))
+        assert proc.demo_args == [
+            "run",
+            "unitree-go2",
+            "mcp-server",
+            "unitree-skill-container",
+            "mcp-client",
+            "speak-skill",
+        ]
+        assert proc.global_args == ["--dimsim-scene", "empty", "--record"]
+        adapter.return_value.wait_for_ready.assert_called_once_with(timeout=4.0, interval=2.0)
+        setup.assert_called_once_with(sim_client.return_value)
+        proc.start.assert_called_once_with()
+    finally:
+        env.stop()
 
 
 def test_image_file_environment(tmp_path: Path) -> None:
-    from dimos.msgs.sensor_msgs.Image import Image
-
     path = tmp_path / "frame.png"
     Image.from_numpy(np.full((8, 8, 3), 200, dtype=np.uint8)).save(path)
     env = ImageFile(path)
     env.preflight(QuestionAnswer())
-    running = env.start("")
+    running = env.start(())
     try:
         (image_stream,) = running.streams
         (obs,) = list(image_stream)
@@ -331,133 +321,114 @@ def test_image_file_environment(tmp_path: Path) -> None:
         ImageFile(tmp_path / "missing.png").preflight(QuestionAnswer())
 
 
-def test_sim_is_not_a_case_without_its_stack() -> None:
-    with pytest.raises(TypeError, match="blueprint"):
-        Sim()  # type: ignore[call-arg]
+@pytest.mark.parametrize(
+    ("moving_until", "budget_s", "expected_s"), [(0.3, 10.0, 0.4), (10.0, 0.3, 0.3)]
+)
+def test_sim_settle_stops_at_rest_or_at_the_budget(
+    monkeypatch: pytest.MonkeyPatch, moving_until: float, budget_s: float, expected_s: float
+) -> None:
+    elapsed = 0.0
+    with MemoryStore() as store:
+        odom = store.stream("odom", PoseStamped)
+        odom.append(_pose(0.0, 0.0), ts=0.0)
+
+        def advance(seconds: float) -> None:
+            nonlocal elapsed
+            elapsed += seconds
+            if elapsed <= moving_until:
+                odom.append(_pose(elapsed, 0.0), ts=elapsed)
+
+        monkeypatch.setattr(
+            "dimos.evals.environments.sim.time",
+            SimpleNamespace(monotonic=lambda: elapsed, sleep=advance),
+        )
+        env = _sim(at_rest_m=0.01, at_rest_s=0.1, settle_poll_s=0.02)
+        env._recording = store
+        env.settle(budget_s)
+
+    assert elapsed == pytest.approx(expected_s, abs=env.config.settle_poll_s)
 
 
-def _driving_sim(poses: int, **kwargs: Any) -> tuple[Sim, threading.Thread]:
-    """A Sim over a live store whose robot drives for *poses* samples, then rests."""
-    from dimos.memory.store.memory import MemoryStore
-
-    store = MemoryStore()
-    odom = store.stream("odom", PoseStamped)
-    odom.append(_pose(0.0, 0.0), ts=time.time())
-
-    def drive() -> None:
-        for i in range(poses):
-            odom.append(_pose(0.2 * (i + 1), 0.0), ts=time.time())
-            time.sleep(0.02)
-
-    env = _sim(**kwargs)
-    env._recording = store
-    return env, threading.Thread(target=drive)
-
-
-def test_sim_settle_waits_until_the_robot_is_at_rest() -> None:
-    env, drive = _driving_sim(poses=15, at_rest_s=0.1, settle_poll_s=0.02)  # ~0.3s of motion
-    drive.start()
-    time.sleep(0.05)  # motion underway before settle first samples
-    t0 = time.monotonic()
-    env.settle(10.0)
-    elapsed = time.monotonic() - t0
-    drive.join(timeout=2.0)
-    assert 0.3 <= elapsed < 5.0, "returns once motion ends, not at the budget"
-
-
-def test_sim_settle_gives_up_at_the_budget() -> None:
-    env, drive = _driving_sim(poses=1, at_rest_s=5.0, settle_poll_s=0.02)  # never satisfiable
-    drive.start()
-    t0 = time.monotonic()
-    env.settle(0.3)
-    elapsed = time.monotonic() - t0
-    drive.join(timeout=2.0)
-    assert 0.3 <= elapsed < 2.0, "a world that never settles is bounded by the budget"
-
-
-def test_sim_settle_without_motion_data_returns_immediately() -> None:
-    from dimos.memory.store.memory import MemoryStore
-
+def test_sim_settle_without_motion_data_returns_immediately(mocker: MockerFixture) -> None:
+    sleep = mocker.patch("dimos.evals.environments.sim.time.sleep")
     env = _sim()
-    t0 = time.monotonic()
-    env.settle(10.0)  # not started: no recording
-    env._recording = MemoryStore()
-    env.settle(10.0)  # recording without an odom stream
-    assert time.monotonic() - t0 < 1.0
+    env.settle(10.0)
+    with MemoryStore() as store:
+        env._recording = store
+        env.settle(10.0)
+
+    sleep.assert_not_called()
 
 
-# -- agent / environment mismatches fail in preflight, naming both sides --------------
-
-
-def test_agent_preflight_mismatches(dataset: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_agent_preflight_mismatches(dataset: str) -> None:
     frozen = Dataset(dataset)
     with pytest.raises(RuntimeError, match="McpClientAgent needs a running McpClient"):
         McpClientAgent().preflight(frozen)
-    McpClientAgent(modules="mcp-server mcp-client").preflight(frozen)  # brings its own
-    # attach mode (nothing added) needs a dimos to attach to, else the turn never ends
-    monkeypatch.setattr("dimos.core.run_registry.list_runs", lambda alive_only=True: [])
-    with pytest.raises(RuntimeError, match="no dimos is running to attach to"):
-        McpClientAgent().preflight(_sim(attach=True))
+    McpClientAgent(modules=("mcp-server", "mcp-client")).preflight(frozen)  # brings its own
+    McpClientAgent().preflight(_sim())  # the environment will launch the stack
 
 
-def test_a_limit_an_agent_cannot_honor_is_not_a_parameter_it_has() -> None:
-    with pytest.raises(TypeError, match="max_steps"):
-        QuestionAnswer(max_steps=3)  # type: ignore[call-arg]
-    with pytest.raises(TypeError, match="model"):
-        McpClientAgent(model="gpt-4o")  # type: ignore[call-arg]
-
-
-# -- agents -------------------------------------------------------------------------
-
-
-def test_question_answer_encodes_the_recording_into_one_call(dataset: str, tmp_path: Path) -> None:
-    spy = SpyChat(reply="4")
-    spy.seen.clear()
+def test_question_answer_encodes_the_recording_into_one_call(
+    dataset: str, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    clock = mocker.patch("dimos.evals.agents.lib.single_call.time")
+    clock.time.return_value = 1_700_000_000.0
+    clock.monotonic.side_effect = [10.0, 10.25]
+    chat = FakeListChatModel(responses=["4"])
+    generate = mocker.spy(FakeListChatModel, "generate")
     env = Dataset(dataset)
-    running = env.start("")
+    running = env.start(())
     try:
-        trajectory = QuestionAnswer(chat_model=spy).run(
+        trajectory = QuestionAnswer(chat_model=chat).run(
             "how far?", running, tmp_path / "case", timeout_s=60.0
         )
     finally:
         env.stop()
 
     assert trajectory.final_answer == "4" and trajectory.extra.ended_by == "answer"
-    assert trajectory.agent.model_name == "SpyChat", (
+    assert trajectory.agent.model_name == "FakeListChatModel", (
         "an injected model is recorded, not the default"
     )
-    assert [s.source for s in trajectory.steps] == ["user", "agent"] and len(spy.seen) == 1
+    assert [s.source for s in trajectory.steps] == ["user", "agent"] and generate.call_count == 1
     assert trajectory.steps[0].message == "how far?"
-    text = _text(spy.seen[0])
+    _, (messages,) = generate.call_args.args
+    text = str(messages[-1].content)
     assert "stream 'odom'" in text and "4.000" in text and "how far?" in text
     # every call is recorded whole; a fake model has no wire, so normalized
     extra = trajectory.steps[1].extra
     assert extra and extra.request.exists() and extra.response.exists()
     assert json.loads(extra.request.read_text())["normalized"] is True
     assert extra.request.parent == tmp_path / "case" / "raw"
+    response = json.loads(extra.response.read_text())
+    assert response["normalized"] is True
+    assert response["result"]["generations"][0][0]["message"]["content"] == "4"
+    assert extra.latency_s == 0.25
+    assert datetime.fromisoformat(trajectory.steps[1].timestamp).timestamp() == 1_700_000_000.0
 
 
 def test_question_answer_refuses_an_empty_recording(tmp_path: Path) -> None:
     running = RunningEnvironment(mcp_url="", streams=(), artifacts={})
-    with pytest.raises(RuntimeError, match="would be blind"):
-        QuestionAnswer(chat_model=SpyChat()).run("?", running, tmp_path, timeout_s=60.0)
+    with pytest.raises(ValueError, match="would be blind"):
+        QuestionAnswer(chat_model=FakeListChatModel(responses=["42"])).run(
+            "?", running, tmp_path, timeout_s=60.0
+        )
 
 
-def test_blind_never_reads_the_recording(dataset: str, tmp_path: Path) -> None:
-    spy = SpyChat(reply="7")
-    spy.seen.clear()
+def test_blind_never_reads_the_recording(
+    dataset: str, tmp_path: Path, mocker: MockerFixture
+) -> None:
+    chat = FakeListChatModel(responses=["7"])
+    generate = mocker.spy(FakeListChatModel, "generate")
     env = Dataset(dataset)
-    running = env.start("")
+    running = env.start(())
     try:
-        trajectory = Blind(chat_model=spy).run("how far?", running, tmp_path, timeout_s=60.0)
+        trajectory = Blind(chat_model=chat).run("how far?", running, tmp_path, timeout_s=60.0)
     finally:
         env.stop()
-    text = _text(spy.seen[0])
+    _, (messages,) = generate.call_args.args
+    text = str(messages[-1].content)
     assert BLIND_BLOCK["text"] in text and "odom" not in text
     assert trajectory.final_answer == "7"
-
-
-# -- runner -------------------------------------------------------------------------
 
 
 def test_runner_uses_unique_directory_when_timestamps_match(
@@ -477,8 +448,6 @@ def test_runner_uses_unique_directory_when_timestamps_match(
 
 
 def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:
-    from dimos.evals.runner import EvalRunner, summarize
-
     calls: list[str] = []
     env = FakeEnvironment(Path(dataset), calls)
     cases = [
@@ -529,6 +498,7 @@ def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:
     assert manifest["selection"]["case_ids"] == ["disp", "unparseable", "missing_stream"]
     assert manifest["runner"] == {"threshold": 1.0, "strict": False}
     assert manifest["source"] == {"kind": "unavailable"}
+    assert manifest["agent"] is None
     trajectory = json.loads(Path(by_id["disp"].trajectory).read_text())
     _assert_atif(trajectory)
     assert trajectory["agent"]["tool_definitions"] == [{"name": "fake_tool"}]
@@ -600,65 +570,73 @@ def test_runner_rejects_duplicate_case_ids_before_preflight(tmp_path: Path) -> N
     assert calls == []
 
 
-def test_programmatic_run_manifest_marks_provenance_unavailable(tmp_path: Path) -> None:
-    runner = EvalRunner(out_dir=tmp_path)
-    runner.run([], FakeAgent())
-
-    manifest = json.loads((runner.run_dir / "manifest.json").read_text())
-    assert manifest["source"] == {"kind": "unavailable"}
-    assert manifest["agent"] is None
-
-
-def test_runner_stops_the_environment_before_grading_and_on_failure(
-    dataset: str, tmp_path: Path
+@pytest.mark.parametrize("method", ["start", "settle"])
+def test_runner_stops_after_an_environment_failure(
+    tmp_path: Path, mocker: MockerFixture, method: str
 ) -> None:
-    from dimos.evals.runner import EvalRunner
-
     calls: list[str] = []
-    env = FakeEnvironment(Path(dataset), calls)
+    env = FakeEnvironment(tmp_path, calls)
+    mocker.patch.object(env, method, side_effect=RuntimeError("environment failed"))
+    grade = mocker.Mock()
+    case = EvalCase(id="c", inputs="x", environment=env, grade=grade)
+
+    result = EvalRunner(out_dir=tmp_path).run([case], FakeAgent())[0]
+
+    assert result.error == "RuntimeError('environment failed')"
+    assert calls.count("stop") == 1
+    grade.assert_not_called()
+
+
+def test_runner_stops_after_an_agent_failure(tmp_path: Path, mocker: MockerFixture) -> None:
+    calls: list[str] = []
+    env = FakeEnvironment(tmp_path, calls)
+    agent = FakeAgent()
+    mocker.patch.object(agent, "run", side_effect=RuntimeError("agent failed"))
+    grade = mocker.Mock()
+    case = EvalCase(id="c", inputs="x", environment=env, grade=grade)
+
+    result = EvalRunner(out_dir=tmp_path).run([case], agent)[0]
+
+    assert result.error == "RuntimeError('agent failed')"
+    assert calls == ["preflight", "start", "stop"]
+    grade.assert_not_called()
+
+
+@pytest.mark.parametrize(("elapsed_s", "remaining_s"), [(7.0, 23.0), (35.0, 0.0)])
+def test_runner_gives_the_world_the_budget_the_agent_did_not_use(
+    tmp_path: Path, mocker: MockerFixture, elapsed_s: float, remaining_s: float
+) -> None:
+    clock = mocker.patch("dimos.evals.runner.time.monotonic", return_value=100.0)
+    env = FakeEnvironment(tmp_path, [])
+    agent = FakeAgent()
+
+    def run(*args: Any, **kwargs: Any) -> Trajectory:
+        clock.return_value += elapsed_s
+        return _trajectory("ok", tmp_path / "raw")
+
+    mocker.patch.object(agent, "run", side_effect=run)
+    case = EvalCase(id="c", inputs="x", environment=env, grade=lambda o: 1.0, timeout_s=30.0)
+    EvalRunner(out_dir=tmp_path).run([case], agent)
+
+    assert env.settled_budget == remaining_s
+
+
+def test_runner_stops_before_grading_a_timeout(tmp_path: Path) -> None:
+    calls: list[str] = []
+    env = FakeEnvironment(tmp_path, calls)
 
     def grade(o: Outcome) -> float:
         calls.append("grade")
-        return 1.0
+        return 0.5
 
-    case = EvalCase(id="c", inputs="x", environment=env, grade=grade)
-    runner = EvalRunner(out_dir=tmp_path)
-    runner.run([case], FakeAgent(answer="ok"))
-    assert calls.index("stop") < calls.index("grade"), "the agent phase ends before grading"
-
-    calls.clear()
-    result = runner.run([case], FakeAgent(fail=True))[0]
-    assert "boom" in result.error and result.score == 0.0
-    assert calls == ["preflight", "start", "stop"]
-
-
-def test_runner_gives_the_world_the_budget_the_agent_did_not_use(
-    dataset: str, tmp_path: Path
-) -> None:
-    from dimos.evals.runner import EvalRunner
-
-    calls: list[str] = []
-    env = FakeEnvironment(Path(dataset), calls)
-    case = EvalCase(id="c", inputs="x", environment=env, grade=lambda o: 1.0, timeout_s=30.0)
-    EvalRunner(out_dir=tmp_path).run([case], FakeAgent(answer="ok"))
-
-    assert calls.index("start") < calls.index("settle") < calls.index("stop")
-    assert env.settled_budget == pytest.approx(30.0, abs=1.0)  # FakeAgent answers at once
-
-
-def test_runner_timeout_marks_the_trajectory(dataset: str, tmp_path: Path) -> None:
-    from dimos.evals.runner import EvalRunner
-
-    env = FakeEnvironment(Path(dataset), [])
-    case = EvalCase(id="slow", inputs="x", environment=env, grade=lambda o: 0.5, timeout_s=0.2)
-    result = EvalRunner(out_dir=tmp_path).run([case], FakeAgent(delay_s=5.0))[0]
+    case = EvalCase(id="slow", inputs="x", environment=env, grade=grade, timeout_s=0.2)
+    result = EvalRunner(out_dir=tmp_path).run([case], FakeAgent(timed_out=True))[0]
     assert result.ended_by == "timeout" and not result.error
     assert result.score == 0.5 and not result.passed  # the world is still graded
+    assert calls == ["preflight", "start", "settle", "stop", "grade"]
 
 
 def test_runner_missing_artifact_is_an_error(tmp_path: Path) -> None:
-    from dimos.evals.runner import EvalRunner
-
     graded: list[Outcome] = []
     env = FakeEnvironment(tmp_path / "never-written.db", [])
     case = EvalCase(id="c", inputs="x", environment=env, grade=lambda o: graded.append(o) or 1.0)
@@ -666,21 +644,8 @@ def test_runner_missing_artifact_is_an_error(tmp_path: Path) -> None:
     assert result.error == "missing artifacts: ['recording']" and not graded
 
 
-def test_recording_helper_opens_the_artifact(dataset: str) -> None:
-    store = recording(
-        Outcome(trajectory=_trajectory("", Path()), artifacts={"recording": Path(dataset)})
-    )
-    try:
-        assert store.streams.odom.last().data.position.x == 4.0
-    finally:
-        store.stop()
-
-
 def test_suites_and_agents_importable() -> None:
     """Modules construct without data or network (lambdas stay lazy)."""
-    from dimos.evals.cli import load_agent
-    from dimos.evals.module import list_agents
-    from dimos.evals.suites import dimsim_house, examples, go2_smoke, go2_vqa
 
     for module in (examples, go2_smoke, go2_vqa, dimsim_house):
         assert module.SUITE, module.__name__
@@ -692,22 +657,27 @@ def test_suites_and_agents_importable() -> None:
 
 def test_load_agent_is_the_module_plus_set_overrides() -> None:
     """``--agent`` names a module with one agent class; ``--set`` values are
-    JSON where they parse, else text; a field the agent lacks is a TypeError."""
-    from dimos.evals.cli import load_agent
+    JSON where they parse, else text; a field the agent lacks is a ValidationError."""
 
     agent = load_agent(
         "dimos.evals.agents.question_answer",
-        ["chat_model=null", "modules=rangefinder-skill", "model=x"],
+        ["chat_model=null", 'modules=["rangefinder-skill"]', "model=x"],
     )
-    assert (type(agent).__name__, agent.chat_model, agent.modules, agent.model) == (
-        "QuestionAnswer", None, "rangefinder-skill", "x"
+    assert (type(agent).__name__, agent.config.chat_model, agent.config.modules, agent.config.model) == (
+        "QuestionAnswer", None, ("rangefinder-skill",), "x"
     )  # fmt: skip
     loaded = load_agent("dimos.evals.agents.question_answer", ["frames_per_stream=3"])
-    assert loaded.frames_per_stream == 3
-    with pytest.raises(TypeError, match="frames_per_stream"):
+    assert loaded.config.frames_per_stream == 3
+    with pytest.raises(ValidationError, match="frames_per_stream"):
         load_agent("dimos.evals.agents.blind", ["frames_per_stream=3"])
+    with pytest.raises(ValidationError, match="model"):
+        load_agent("dimos.evals.agents.mcp_client", ["model=gpt-4o"])
     with pytest.raises(TypeError, match="0 agents"):
-        load_agent("dimos.evals.agents.lib.chat")
+        load_agent("dimos.evals.agents.lib.single_call")
+    with pytest.raises(ValidationError, match="modules"):
+        load_agent("dimos.evals.agents.mcp_client", ["modules=mcp-server mcp-client"])
+    with pytest.raises(ValidationError, match="frames_per_stream"):
+        load_agent("dimos.evals.agents.question_answer", ["frames_per_stream=0"])
 
 
 @pytest.mark.parametrize("goes_idle", [True, False])
@@ -719,7 +689,6 @@ def test_mcp_client_agent_drives_a_turn_over_real_transports(
     /agent_idle or its budget runs out, and links every model call to the
     McpClient's trace files (the message must arrive with no flush sleep: LCM
     publish is a synchronous send)."""
-    from dimos.core.transport_factory import make_transport
 
     trace_dir = tmp_path / "case" / "raw"
     trace_dir.mkdir(parents=True)
@@ -742,11 +711,14 @@ def test_mcp_client_agent_drives_a_turn_over_real_transports(
         idle.publish(False)
         agent_t.publish(HumanMessage(content=text))
         for i in range(2):
-            (trace_dir / f"{i:03d}-request.json").write_text("{}")
-            (trace_dir / f"{i:03d}-response.json").write_text("{}")
+            (trace_dir / f"{i:03d}-request.json").write_text(
+                json.dumps({"started_at": 1_700_000_000.0 + i})
+            )
+            (trace_dir / f"{i:03d}-response.json").write_text(json.dumps({"latency_s": 0.25 + i}))
         agent_t.publish(
             AIMessage(
-                content="",
+                content=[{"type": "reasoning", "summary": [{"text": "Navigate to the bed."}]}],
+                response_metadata={"model_provider": "openai"},
                 tool_calls=[{"name": "move_to", "args": {"x": 1.0}, "id": "c1"}],
                 usage_metadata={"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
             )
@@ -775,6 +747,7 @@ def test_mcp_client_agent_drives_a_turn_over_real_transports(
     assert trajectory.final_answer == "I am at the bed"
     assert len(trajectory.steps) == 3 and trajectory.final_metrics.total_prompt_tokens == 10
     user, first, last = trajectory.steps
+    assert first.reasoning_content == "Navigate to the bed."
     assert user.source == "user" and user.message == "go to the bed"
     assert first.tool_calls == (
         ToolCall(tool_call_id="c1", function_name="move_to", arguments={"x": 1.0}),
@@ -784,6 +757,10 @@ def test_mcp_client_agent_drives_a_turn_over_real_transports(
     )
     assert last.extra and last.extra.request == tmp_path / "case" / "raw" / "001-request.json"
     assert last.extra.request.exists()
+    assert first.extra and first.extra.latency_s == 0.25
+    assert last.extra.latency_s == 1.25
+    assert datetime.fromisoformat(first.timestamp).timestamp() == 1_700_000_000.0
+    assert datetime.fromisoformat(last.timestamp).timestamp() == 1_700_000_001.0
 
 
 def test_agents_report_every_available_tool() -> None:

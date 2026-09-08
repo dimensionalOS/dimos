@@ -202,7 +202,7 @@ def test_vqa_run_cli_runs_shared_evaluator(monkeypatch: pytest.MonkeyPatch, tmp_
 
         def run(self, cases: object, agent: Any, *, provenance: dict[str, Any]) -> list[EvalResult]:
             assert cases == ("case",)
-            assert agent.model == "test-model"
+            assert agent.config.model == "test-model"
             assert type(agent).__name__ == "QuestionAnswer"
             assert provenance["source"]["kind"] == "vqa_dataset"
             assert provenance["source"]["path"] == str(tmp_path.resolve())

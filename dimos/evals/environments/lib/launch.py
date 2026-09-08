@@ -14,20 +14,19 @@
 
 """Finding and validating the dimos a live eval case drives."""
 
-from __future__ import annotations
+from collections.abc import Sequence
+
+from dimos.core.global_config import global_config
 
 
 def default_mcp_url() -> str:
-    from dimos.core.global_config import global_config
-
     return f"http://localhost:{global_config.mcp_port}/mcp"
 
 
-def blueprint_modules(blueprint: str) -> tuple[type, ...]:
-    """Module classes a ``dimos run <blueprint>`` composition would deploy.
-    Raises on an unknown name."""
-    from dimos.core.coordination.blueprints import autoconnect
+def validate_blueprints(names: Sequence[str]) -> None:
+    """Validate the registry names passed to ``dimos run``."""
+    # Resolving blueprints loads their optional robot dependencies.
     from dimos.robot.get_all_blueprints import get_by_name
 
-    composed = autoconnect(*(get_by_name(name) for name in blueprint.split()))
-    return tuple(atom.module for atom in composed.blueprints)
+    for name in names:
+        get_by_name(name)
