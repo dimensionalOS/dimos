@@ -170,6 +170,8 @@ class Arm:
             if orientation is None
             else Quaternion(_vector(orientation, 4, "orientation"))
         )
+        if math.hypot(*rotation.to_tuple()) == 0.0:
+            raise ValueError("orientation must have nonzero norm")
         target = PoseStamped(frame_id="world", position=xyz, orientation=rotation)
         plan = self.rpc.plan_to_poses({self.info.id: target}, speed_scale=speed_scale)
         return self._execute("move_pose", plan, timeout)

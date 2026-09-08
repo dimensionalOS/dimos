@@ -251,6 +251,14 @@ def test_invalid_pose_inputs_never_plan_or_execute(arm, rpc, kwargs):
     rpc.execute.assert_not_called()
 
 
+def test_zero_quaternion_never_plans_or_executes(arm, rpc):
+    with pytest.raises(ValueError, match="orientation must have nonzero norm"):
+        arm.move_pose([0.4, 0.0, 0.3], orientation=[0.0, 0.0, 0.0, 0.0])
+
+    rpc.plan_to_poses.assert_not_called()
+    rpc.execute.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "method,rpc_method", [("move_joints", "plan_to_joints"), ("move_pose", "plan_to_poses")]
 )
