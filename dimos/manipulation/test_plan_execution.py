@@ -16,6 +16,8 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from dimos.control.coordinator import ControlCoordinator
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryCancellationResult,
@@ -27,9 +29,11 @@ from dimos.manipulation.manipulation_module import ManipulationModule, Manipulat
 from dimos.manipulation.manipulation_spec import ExecutionStatus
 from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan
+from dimos.manipulation.visualization.operator import ManipulationOperator
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 
 
 def _plan(final_position: float = 1.0) -> GeneratedPlan:
@@ -129,3 +133,50 @@ def test_uncertain_cancel_projects_to_fault(module_factory) -> None:
 
     assert module._state is ManipulationState.FAULT
     assert "timed out" in module.get_error()
+
+
+@pytest.mark.parametrize("reader", ["operator", "snapshot"])
+@pytest.mark.parametrize(
+    ("terminal", "operation"),
+    [
+        (TrajectoryState.COMPLETED, "COMPLETED"),
+        (TrajectoryState.ABORTED, "IDLE"),
+        (TrajectoryState.FAULT, "FAULT"),
+    ],
+)
+def test_status_refresh_observes_nonblocking_execution(module_factory, reader, terminal, operation):
+    coordinator = _coordinator()
+    module = module_factory(coordinator)
+    operator = ManipulationOperator(module, MagicMock())
+
+    def read_status():
+        if reader == "operator":
+            return operator.status().state
+        return module.get_state().operation_status.name
+
+    assert operator.execute(_plan()) is True
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.EXECUTING)
+    assert read_status() == "EXECUTING"
+
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=terminal)
+    assert read_status() == operation
+    assert module.get_state().execution_status.name == terminal.name
+    coordinator.task_invoke.reset_mock()
+    assert read_status() == operation
+    coordinator.task_invoke.assert_not_called()
+
+    assert operator.execute(_plan()) is True
+
+
+def test_status_refresh_reports_coordinator_failure(module_factory):
+    coordinator = _coordinator()
+    module = module_factory(coordinator)
+    operator = ManipulationOperator(module, MagicMock())
+    assert operator.execute(_plan()) is True
+    coordinator.task_invoke.side_effect = TimeoutError("status unavailable")
+
+    status = operator.status()
+
+    assert status.state == "FAULT"
+    assert "status unavailable" in status.error
+    assert module.get_state().execution_status is ExecutionStatus.UNCERTAIN
