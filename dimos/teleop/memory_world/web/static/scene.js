@@ -104,7 +104,13 @@ export class WorldScene {
         this._frameRotate.add(this._imageQuadGroup);
         this._imagePoseMeta = [];                     // per-index {pos, quat}
         this._imageQuadsByIndex = new Map();          // index -> THREE.Mesh
+        this._selectedImageIds = new Set();
         this._odomLine = null;
+
+        // Query results are independent from the recorded odom and can be
+        // replaced atomically when a new answer arrives.
+        this._highlightGroup = new THREE.Group();
+        this._frameRotate.add(this._highlightGroup);
 
         // Top-down map: shared texture, used twice (ground projection + HUD).
         this._topDownTex = null;
@@ -142,6 +148,24 @@ export class WorldScene {
         );
         this._hudPanel.add(this._hudHeading);
         this._hudHeading.position.z = 0.001;
+
+        const answerCanvas = document.createElement('canvas');
+        answerCanvas.width = 1024;
+        answerCanvas.height = 256;
+        this._answerCanvas = answerCanvas;
+        this._answerTexture = new THREE.CanvasTexture(answerCanvas);
+        this._answerPanel = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.62, 0.155),
+            new THREE.MeshBasicMaterial({
+                map: this._answerTexture,
+                transparent: true,
+                depthTest: false,
+                side: THREE.DoubleSide,
+            }),
+        );
+        this._answerPanel.position.set(0, 0.2, 0.002);
+        this._answerPanel.visible = false;
+        this._hudGroup.add(this._answerPanel);
 
         // Teleport-aim visualisation.
         this._teleportArc = null;
@@ -430,6 +454,11 @@ export class WorldScene {
         return p;
     }
 
+    getViewerRobotPosition() {
+        const xy = this._worldPosToRobotXY(this.getCameraPositionWorld());
+        return [xy[0], xy[1], 0];
+    }
+
     _rotateWorldAround(pivot, angle) {
         // Apply R_y(angle) to (worldGroup.position - pivot), then translate back.
         // Three.js right-handed Y rotation: x' = c*x + s*z, z' = -s*x + c*z.
@@ -572,10 +601,14 @@ export class WorldScene {
             const qy = quats[i * 4 + 1];
             const qz = quats[i * 4 + 2];
             const qw = quats[i * 4 + 3];
-            const ring = new THREE.Mesh(ringGeom, ringMat);
+            const ring = new THREE.Mesh(ringGeom, ringMat.clone());
             ring.position.set(rx, ry, 0.02);
             this._imagePoseGroup.add(ring);
-            this._imagePoseMeta.push({ rx, ry, rz, qx, qy, qz, qw });
+            this._imagePoseMeta.push({
+                id: header.ids?.[i] ?? null,
+                rx, ry, rz, qx, qy, qz, qw,
+                ring,
+            });
         }
         this.diag('image_poses_loaded', { n });
     }
@@ -619,7 +652,11 @@ export class WorldScene {
             const baseRot = new THREE.Quaternion().setFromEuler(
                 new THREE.Euler(0, Math.PI / 2, Math.PI / 2)
             );
-            quad.quaternion.copy(q).multiply(baseRot);
+            const clockwise = new THREE.Quaternion().setFromAxisAngle(
+                new THREE.Vector3(0, 0, 1), -Math.PI / 2
+            );
+            quad.quaternion.copy(q).multiply(baseRot).multiply(clockwise);
+            quad.visible = this._selectedImageIds.size === 0 || this._selectedImageIds.has(meta.id);
             this._imageQuadGroup.add(quad);
             this._imageQuadsByIndex.set(index, quad);
         }).catch((e) => {
@@ -630,6 +667,129 @@ export class WorldScene {
     toggleImages() {
         this._imageQuadGroup.visible = !this._imageQuadGroup.visible;
         this.diag('images_toggle', { visible: this._imageQuadGroup.visible });
+    }
+
+    setQueryResult(result) {
+        this._clearHighlightGroup();
+
+        for (const region of result.regions || []) {
+            const points = region.points || [];
+            if (points.length < 3) continue;
+            const shape = new THREE.Shape();
+            shape.moveTo(points[0][0], points[0][1]);
+            for (let i = 1; i < points.length; i++) shape.lineTo(points[i][0], points[i][1]);
+            shape.closePath();
+            const fill = new THREE.Mesh(
+                new THREE.ShapeGeometry(shape),
+                new THREE.MeshBasicMaterial({
+                    color: region.color || '#f9e547',
+                    transparent: true,
+                    opacity: region.opacity ?? 0.35,
+                    depthWrite: false,
+                    side: THREE.DoubleSide,
+                }),
+            );
+            fill.position.z = points.reduce((sum, p) => sum + p[2], 0) / points.length + 0.06;
+            this._highlightGroup.add(fill);
+
+            const boundaryPoints = points.map((p) => new THREE.Vector3(p[0], p[1], p[2] + 0.075));
+            this._highlightGroup.add(new THREE.LineLoop(
+                new THREE.BufferGeometry().setFromPoints(boundaryPoints),
+                new THREE.LineBasicMaterial({ color: region.color || '#f9e547' }),
+            ));
+        }
+
+        for (const path of result.evidence_paths || []) {
+            this._addHighlightTube(path, 0.035, path.color || '#ffd166');
+        }
+        if (result.route) {
+            this._addHighlightTube(result.route, 0.065, result.route.color || '#64ff8f');
+        }
+        for (const point of result.points || []) {
+            const marker = new THREE.Mesh(
+                new THREE.SphereGeometry(0.13, 16, 12),
+                new THREE.MeshBasicMaterial({ color: point.color || '#ff4d6d' }),
+            );
+            marker.position.set(...point.position);
+            this._highlightGroup.add(marker);
+        }
+        if (result.focus_point) {
+            const focus = new THREE.Mesh(
+                new THREE.SphereGeometry(0.18, 20, 16),
+                new THREE.MeshBasicMaterial({ color: 0xffffff }),
+            );
+            focus.position.set(...result.focus_point);
+            this._highlightGroup.add(focus);
+        }
+
+        this._selectedImageIds = new Set(result.observation_ids || []);
+        for (const [index, quad] of this._imageQuadsByIndex) {
+            const meta = this._imagePoseMeta[index];
+            quad.visible = this._selectedImageIds.size === 0 || this._selectedImageIds.has(meta?.id);
+        }
+        for (const meta of this._imagePoseMeta) {
+            const selected = this._selectedImageIds.has(meta.id);
+            meta.ring.material.color.set(selected ? 0xfff06a : 0x4cd9ff);
+            meta.ring.scale.setScalar(selected ? 1.8 : 1.0);
+        }
+        if (this._selectedImageIds.size > 0) this._imageQuadGroup.visible = true;
+
+        this._setAnswer(result.answer || 'Memory result');
+        this.diag('query_result_loaded', {
+            query_id: result.query_id,
+            revision: result.revision,
+            regions: (result.regions || []).length,
+            evidence_paths: (result.evidence_paths || []).length,
+            route: Boolean(result.route),
+        });
+    }
+
+    _addHighlightTube(path, radius, color) {
+        const points = (path.points || []).map((p) => new THREE.Vector3(p[0], p[1], p[2]));
+        if (points.length < 2) return;
+        const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal');
+        const geometry = new THREE.TubeGeometry(curve, Math.max(16, points.length * 3), radius, 8, false);
+        const material = new THREE.MeshBasicMaterial({ color });
+        this._highlightGroup.add(new THREE.Mesh(geometry, material));
+    }
+
+    _clearHighlightGroup() {
+        while (this._highlightGroup.children.length) {
+            const child = this._highlightGroup.children.pop();
+            child.traverse((obj) => {
+                if (obj.geometry) obj.geometry.dispose();
+                if (obj.material) obj.material.dispose();
+            });
+        }
+    }
+
+    _setAnswer(answer) {
+        const ctx = this._answerCanvas.getContext('2d');
+        ctx.clearRect(0, 0, this._answerCanvas.width, this._answerCanvas.height);
+        ctx.fillStyle = 'rgba(5, 10, 16, 0.92)';
+        ctx.fillRect(0, 0, this._answerCanvas.width, this._answerCanvas.height);
+        ctx.strokeStyle = '#7af0a8';
+        ctx.lineWidth = 8;
+        ctx.strokeRect(4, 4, this._answerCanvas.width - 8, this._answerCanvas.height - 8);
+        ctx.fillStyle = '#d8e6f4';
+        ctx.font = '42px monospace';
+        const words = String(answer).split(/\s+/);
+        const lines = [];
+        let line = '';
+        for (const word of words) {
+            const candidate = line ? `${line} ${word}` : word;
+            if (ctx.measureText(candidate).width > 930 && line) {
+                lines.push(line);
+                line = word;
+            } else {
+                line = candidate;
+            }
+            if (lines.length === 3) break;
+        }
+        if (line && lines.length < 4) lines.push(line);
+        lines.slice(0, 4).forEach((text, i) => ctx.fillText(text, 42, 62 + i * 50));
+        this._answerTexture.needsUpdate = true;
+        this._answerPanel.visible = true;
     }
 
     setTopDownMap(header, jpegArrayBuffer) {

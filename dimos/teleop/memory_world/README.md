@@ -26,6 +26,25 @@ Density knobs:
 - `--voxel-scans N` — how many lidar scans to accumulate (default 150). `--voxel-scans 0` uses **every** frame for the densest map (slower build; output stays bounded by `--voxel-size` since voxels dedupe).
 - `--image-markers N` — how many capture-pose markers to sample (default 200).
 
+## Agentic queries
+
+Run the registered blueprint to ask spatial questions about the recording. It
+starts the memory viewer, MCP server, and MCP agent together:
+
+```bash
+uv run dimos run memory-world-agent \
+  --store-path hk_building_park.db \
+  --cloud-source lidar \
+  --background-mode passthrough
+```
+
+Set the API key required by the configured model, then run `uv run dimos
+humancli` in a separate terminal. The agent analyzes the mem2 streams in a
+time-limited subprocess and sends only validated result geometry to the viewer.
+Answers can include highlighted regions and points, historical evidence paths,
+supporting image observations, and a collision-aware route from the current VR
+position when the recording has a `global_costmap` stream.
+
 ## Viewing in VR
 
 1. On the Quest 3, open the browser and go to `https://<host-ip>:8443/memory_world`.

@@ -28,6 +28,8 @@ let xrRefSpace = null;
 let scene = null;
 let input = null;
 let WorldScene = null;
+let pendingQueryResult = null;
+let lastViewerPoseSent = 0;
 const pendingDiag = [];
 
 function log(msg) {
@@ -152,6 +154,11 @@ function handleControl(msg) {
             setStatus('World loaded — left stick walks, pinch both hands to scale');
             diag('server_ready');
             break;
+        case 'query_result':
+            if (scene) scene.setQueryResult(msg);
+            else pendingQueryResult = msg;
+            setStatus(msg.answer || 'Memory result highlighted');
+            break;
         case 'error':
             setStatus(`Server error: ${msg.message || 'unknown'}`);
             break;
@@ -197,6 +204,10 @@ async function startVR() {
         scene = new WorldScene(diag, backgroundMode);
         diag('scene_constructed');
         flushSceneMsgs();
+        if (pendingQueryResult) {
+            scene.setQueryResult(pendingQueryResult);
+            pendingQueryResult = null;
+        }
         diag('scene_msgs_flushed');
     } catch (e) {
         diag('scene_construct_failed', { error: String(e.message || e) });
@@ -247,6 +258,11 @@ async function startVR() {
         if (frameCount === 1) diag('first_frame');
         if (frameCount % 240 === 0) diag('frame_tick', { count: frameCount });
         if (input && frame) input.onFrame(frame, xrRefSpace, performance.now(), scene);
+        const now = performance.now();
+        if (ws && ws.readyState === WebSocket.OPEN && now - lastViewerPoseSent >= 500) {
+            lastViewerPoseSent = now;
+            ws.send(encodeText('viewer_pose', { position: scene.getViewerRobotPosition() }));
+        }
     });
     diag('animation_loop_set');
 

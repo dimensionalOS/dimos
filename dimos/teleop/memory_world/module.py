@@ -32,19 +32,28 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
+import subprocess
+import sys
 import threading
-from typing import Any, Literal
+import time
+from typing import Annotated, Any, Literal
+import uuid
 
 import cv2
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import numpy as np
+from pydantic import Field as PydanticField
 
+from dimos.agents.annotation import skill
+from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.memory.transform import throttle
+from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.teleop.memory_world.messages import (
     MSG_IMAGE_POSES,
     MSG_IMAGE_THUMBNAIL,
@@ -55,7 +64,14 @@ from dimos.teleop.memory_world.messages import (
     encode_binary,
     encode_text,
 )
+from dimos.teleop.memory_world.query import (
+    MEMORY_ANALYSIS_BOOTSTRAP,
+    RESULT_SENTINEL,
+    HighlightPath,
+    MemoryQueryResult,
+)
 from dimos.teleop.quest.quest_teleop_module import QuestTeleopConfig, QuestTeleopModule
+from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -154,6 +170,7 @@ class MemoryWorldConfig(QuestTeleopConfig):
     # Bind on all interfaces by default — the headset connects over Wi-Fi.
     listen_host: str = "0.0.0.0"
     background_mode: Literal["black", "passthrough"] = "black"
+    memory_analysis_max_output_chars: int = PydanticField(default=12_000, gt=0)
 
 
 class MemoryWorldModule(QuestTeleopModule):
@@ -166,7 +183,7 @@ class MemoryWorldModule(QuestTeleopModule):
 
     def __init__(self, **kwargs: Any) -> None:
         self._world_clients: set[_ClientConn] = set()
-        self._clients_lock = threading.RLock()
+        self._clients_lock = threading.Lock()
 
         self._store: SqliteStore | None = None
         # Cached payloads so reconnects are cheap.
@@ -176,17 +193,32 @@ class MemoryWorldModule(QuestTeleopModule):
         self._cached_thumbnails: list[bytes] | None = None
         self._cached_odom: tuple[dict[str, Any], bytes] | None = None
         self._cached_top_down: tuple[dict[str, Any], bytes] | None = None
+        self._viewer_position: tuple[float, float, float] | None = None
+        self._active_query_result: dict[str, Any] | None = None
+        self._query_revision = 0
 
         super().__init__(**kwargs)
+        self.config.store_path = str(self._resolve_store_path(self.config.store_path))
+
+    @staticmethod
+    def _resolve_store_path(name_or_path: str) -> Path:
+        """Resolve explicit paths directly and bare names through the data registry."""
+        path = Path(name_or_path).expanduser()
+        if not path.is_absolute() and path.parts[:1] != ("data",):
+            return get_data(name_or_path).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"memory store not found at {path}")
+        return path.resolve()
 
     # ---- routes ------------------------------------------------------------
 
     def _setup_routes(self) -> None:
         super()._setup_routes()
 
+        assert self._web_server is not None
         app = self._web_server.app
 
-        @app.get(self.config.client_route, response_class=HTMLResponse)
+        @app.get(self.config.client_route, response_class=HTMLResponse)  # type: ignore[misc]
         async def memory_world_index() -> HTMLResponse:
             index_path = STATIC_DIR / "index.html"
             content = index_path.read_text().replace(
@@ -201,7 +233,7 @@ class MemoryWorldModule(QuestTeleopModule):
                 name="memory_world_static",
             )
 
-        @app.websocket(self.config.ws_route)
+        @app.websocket(self.config.ws_route)  # type: ignore[misc]
         async def ws_world(ws: WebSocket) -> None:
             await self._handle_ws(ws)
 
@@ -255,7 +287,7 @@ class MemoryWorldModule(QuestTeleopModule):
 
     def _ensure_store(self) -> SqliteStore:
         if self._store is None:
-            self._store = SqliteStore(path=self.config.store_path)
+            self._store = SqliteStore(path=self.config.store_path, must_exist=True)
             logger.info("opened memory store at %s", self.config.store_path)
         return self._store
 
@@ -294,17 +326,21 @@ class MemoryWorldModule(QuestTeleopModule):
             conn.send_threadsafe(encode_binary(MSG_ODOM_TRAIL, odom_header, odom_payload))
 
             conn.send_threadsafe(encode_text("ready"))
+            with self._clients_lock:
+                active_query_result = self._active_query_result
+            if active_query_result is not None:
+                conn.send_threadsafe(encode_text("query_result", **active_query_result))
         except Exception:
             logger.exception("failed to build/send world payload")
             conn.send_threadsafe(encode_text("error", message="world load failed"))
 
     def _build_cloud(self) -> tuple[dict[str, Any], bytes]:
-        """Dispatch on cloud_source. Falls back to pickle if lidar build fails."""
+        """Build the configured point-cloud source."""
         if self.config.cloud_source == "lidar":
             built = self._build_voxel_cloud_from_lidar()
-            if built is not None:
-                return built
-            logger.warning("voxel-from-lidar produced no cloud; falling back to pickle")
+            if built is None:
+                raise RuntimeError("voxel-from-lidar produced no cloud")
+            return built
         return self._build_point_cloud()
 
     def _build_voxel_cloud_from_lidar(self) -> tuple[dict[str, Any], bytes] | None:
@@ -517,7 +553,7 @@ class MemoryWorldModule(QuestTeleopModule):
             timestamps: list[float] = []
             ids: list[int] = []
             thumbnails: list[bytes] = []
-            for obs in stream.transform(throttle(interval)):
+            for obs in stream.transform(throttle(interval)):  # type: ignore[var-annotated]
                 pose = getattr(obs, "pose_tuple", None)
                 if pose is None:
                     continue
@@ -640,7 +676,7 @@ class MemoryWorldModule(QuestTeleopModule):
             interval = span / n
 
             positions: list[tuple[float, float, float]] = []
-            for obs in stream.transform(throttle(interval)):
+            for obs in stream.transform(throttle(interval)):  # type: ignore[var-annotated]
                 pose = getattr(obs, "pose_tuple", None)
                 if pose is None:
                     continue
@@ -660,6 +696,128 @@ class MemoryWorldModule(QuestTeleopModule):
 
     # ---- client messages (mostly diagnostics) ------------------------------
 
+    @skill
+    def analyze_memory(
+        self,
+        code: str,
+        timeout: Annotated[float, PydanticField(gt=0.0, le=100.0)] = 100.0,
+    ) -> SkillResult:
+        """Analyze the recorded memory and display validated spatial results in VR.
+
+        Run complete Python code in a fresh process with ``store`` (the mem2
+        SqliteStore), ``np`` (NumPy), and ``viewer_position`` available. Inspect
+        streams with ``store.list_streams()`` and ``store.summary()``. Assign a
+        dictionary to ``result`` with a required ``answer`` and optional fields:
+        ``focus_point`` [x,y,z], ``regions`` (polygon point lists),
+        ``evidence_paths`` (path point lists), ``points``, and
+        ``observation_ids``. Every point must be [x,y,z] in the world frame.
+        A route from the current VR position is added automatically when
+        ``focus_point`` and ``global_costmap`` are available.
+
+        Args:
+            code: Complete Python source that assigns the result dictionary.
+            timeout: Maximum execution time in seconds, up to 100 seconds.
+        """
+        started = time.monotonic()
+        with self._clients_lock:
+            viewer_position = self._viewer_position
+        try:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    MEMORY_ANALYSIS_BOOTSTRAP,
+                    self.config.store_path,
+                    json.dumps(viewer_position),
+                ],
+                input=code,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return SkillResult.fail(
+                "EXECUTION_TIMEOUT", f"Memory analysis timed out after {timeout:g} seconds"
+            )
+
+        marker = completed.stdout.rfind(RESULT_SENTINEL)
+        if marker < 0:
+            detail = (completed.stderr or completed.stdout or "analysis returned no result").strip()
+            return SkillResult.fail("EXECUTION_FAILED", self._cap_analysis_output(detail))
+
+        encoded = completed.stdout[marker + len(RESULT_SENTINEL) :].splitlines()[0]
+        if len(encoded) > self.config.memory_analysis_max_output_chars:
+            return SkillResult.fail(
+                "RESULT_TOO_LARGE",
+                "Memory result exceeds the configured output limit of "
+                f"{self.config.memory_analysis_max_output_chars} characters",
+            )
+        try:
+            result = MemoryQueryResult.model_validate_json(encoded)
+            self._add_route_to_result(result)
+        except Exception as exc:
+            return SkillResult.fail("EXECUTION_FAILED", f"Invalid memory result: {exc}")
+
+        with self._clients_lock:
+            query_id = uuid.uuid4().hex
+            self._query_revision += 1
+            payload = result.model_dump(mode="json")
+            payload.update(query_id=query_id, revision=self._query_revision)
+            self._active_query_result = payload
+            clients = tuple(self._world_clients)
+        message = encode_text("query_result", **payload)
+        for client in clients:
+            client.send_threadsafe(message)
+
+        return SkillResult(
+            success=True,
+            message=result.answer,
+            duration_ms=(time.monotonic() - started) * 1000,
+            metadata={
+                "query_id": query_id,
+                "regions": len(result.regions),
+                "evidence_paths": len(result.evidence_paths),
+                "observation_ids": len(result.observation_ids),
+                "route": result.route is not None,
+            },
+        )
+
+    def _cap_analysis_output(self, output: str) -> str:
+        limit = self.config.memory_analysis_max_output_chars
+        if len(output) <= limit:
+            return output
+        return output[:limit] + f"\n... [truncated, {len(output)} chars total]"
+
+    def _add_route_to_result(self, result: MemoryQueryResult) -> None:
+        # Routes are server-owned: only the planner may label one collision-aware.
+        result.route = None
+        with self._clients_lock:
+            viewer_position = self._viewer_position
+        if result.focus_point is None or viewer_position is None:
+            return
+        try:
+            store = self._ensure_store()
+            if "global_costmap" not in store.list_streams():
+                return
+            costmap = store.streams.global_costmap.last().data
+            route = min_cost_astar(
+                costmap,
+                goal=result.focus_point[:2],
+                start=viewer_position[:2],
+            )
+            if route is None:
+                return
+            points = [(pose.x, pose.y, pose.z + 0.08) for pose in route.poses]
+            if len(points) >= 2:
+                result.route = HighlightPath(
+                    points=points,
+                    label="Route to answer",
+                    color="#64ff8f",
+                )
+        except Exception:
+            logger.exception("failed to build route to memory query result")
+
     def _on_client_message(self, conn: _ClientConn, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
         if kind == "ping":
@@ -670,6 +828,19 @@ class MemoryWorldModule(QuestTeleopModule):
                 msg.get("event", "?"),
                 {k: v for k, v in msg.items() if k not in ("type", "event")},
             )
+        elif kind == "viewer_pose":
+            position = msg.get("position")
+            if (
+                isinstance(position, list)
+                and len(position) == 3
+                and all(isinstance(value, int | float) and np.isfinite(value) for value in position)
+            ):
+                with self._clients_lock:
+                    self._viewer_position = (
+                        float(position[0]),
+                        float(position[1]),
+                        float(position[2]),
+                    )
         elif kind in (
             "locomote",
             "yaw",
