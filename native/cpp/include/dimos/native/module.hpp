@@ -18,6 +18,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -289,17 +290,26 @@ public:
         return Output<T>(std::move(encode), queue);
     }
 
-    // A port the coordinator did not wire is a startup error. Falling back to a
-    // bare channel name would leave the module running against a dead topic.
-    std::string topic_for(const std::string& port) const {
+    std::string topic_for(const std::string& port) {
+        requested_.insert(port);
         auto it = topics_.find(port);
-        if (it == topics_.end()) {
-            throw std::runtime_error(
-                "no topic for port '" + port +
-                "': the coordinator did not wire it. Check the port name matches "
-                "the Python module, and that its config sets stdin_config = True.");
+        return it == topics_.end() ? "/" + port : it->second;
+    }
+
+    // An unsent topic leaves the port on a fallback name nothing else publishes
+    // to. Rust also rejects the reverse, a topic no port claimed; C++ cannot,
+    // because it has no tf port type and python publishes those topics itself.
+    void enforce_topics_match_ports() const {
+        std::vector<std::string> missing;
+        for (const std::string& port : requested_) {
+            if (topics_.find(port) == topics_.end()) {
+                missing.push_back(port);
+            }
         }
-        return it->second;
+        if (!missing.empty()) {
+            throw std::runtime_error("topics do not match module ports: missing " +
+                                     quoted_list(missing));
+        }
     }
 
     const std::vector<std::pair<std::string, Dispatch>>& routes() const { return routes_; }
@@ -310,6 +320,7 @@ public:
 
 private:
     std::unordered_map<std::string, std::string> topics_;
+    std::set<std::string> requested_;
     Notifier* notifier_;
     std::vector<std::pair<std::string, Dispatch>> routes_;
     std::vector<std::unique_ptr<InputPort>> owned_inputs_;
@@ -431,6 +442,7 @@ void run_fallible(std::unique_ptr<Transport> transport, StdinConfig parsed) {
     Config config(std::move(parsed.config));
     module.build(builder, config);
     config.enforce_all_consumed();
+    builder.enforce_topics_match_ports();
 
     std::vector<std::thread> workers;
 

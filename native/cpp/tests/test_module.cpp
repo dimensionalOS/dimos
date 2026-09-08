@@ -190,23 +190,41 @@ TEST_CASE("topic_for maps a declared port") {
     CHECK(builder.topic_for("cmd_vel") == "/robot/cmd_vel");
 }
 
-TEST_CASE("topic_for rejects a port the coordinator never wired") {
+TEST_CASE("topic_for falls back for a port the coordinator never wired") {
     Notifier notifier;
     Builder builder({{"cmd_vel", "/robot/cmd_vel"}}, &notifier);
+    CHECK(builder.topic_for("unmapped") == "/unmapped");
+}
+
+TEST_CASE("enforce_topics_match_ports passes when every port is wired") {
+    Notifier notifier;
+    Builder builder({{"data", "/d"}, {"out", "/o"}}, &notifier);
+    builder.input<Bytes>("data", identity_decode, [](Bytes) {});
+    builder.output<Bytes>("out", identity_encode);
+    builder.enforce_topics_match_ports();
+}
+
+TEST_CASE("enforce_topics_match_ports names every port the coordinator never wired") {
+    Notifier notifier;
+    Builder builder({}, &notifier);
+    builder.input<Bytes>("data", identity_decode, [](Bytes) {});
+    builder.output<Bytes>("out", identity_encode);
     try {
-        builder.topic_for("unmapped");
-        FAIL("expected an unmapped port to throw");
+        builder.enforce_topics_match_ports();
+        FAIL("expected an unwired port to throw");
     } catch (const std::runtime_error& e) {
-        CHECK(std::string(e.what()).find("unmapped") != std::string::npos);
+        CHECK(std::string(e.what()) ==
+              "topics do not match module ports: missing [\"data\", \"out\"]");
     }
 }
 
-TEST_CASE("declaring a port the coordinator never wired fails the build") {
+// Rust rejects this; C++ cannot, because python owns the tf port of the pointlio
+// and fastlio2 modules and still sends its topic on the launch line.
+TEST_CASE("enforce_topics_match_ports allows a topic no port asked for") {
     Notifier notifier;
-    Builder builder({}, &notifier);
-    CHECK_THROWS_AS(builder.input<Bytes>("data", identity_decode, [](Bytes) {}),
-                    std::runtime_error);
-    CHECK_THROWS_AS(builder.output<Bytes>("out", identity_encode), std::runtime_error);
+    Builder builder({{"data", "/d"}, {"tf", "/tf"}}, &notifier);
+    builder.input<Bytes>("data", identity_decode, [](Bytes) {});
+    builder.enforce_topics_match_ports();
 }
 
 TEST_CASE("a full input queue drops newest and caps at capacity") {
@@ -544,4 +562,15 @@ TEST_CASE("run_fallible rejects a config field the module never parsed") {
     // never starts and teardown is not owed.
     CHECK_FALSE(g_run.setup_ran);
     CHECK_FALSE(g_run.teardown_ran);
+}
+
+TEST_CASE("run_fallible rejects a port the coordinator never wired") {
+    ShutdownFlagGuard guard;
+    g_run = RunRecord{};
+    StdinLine line(R"({"topics":{"data":"/d"},"config":{"x":5}})");
+
+    CHECK_THROWS_AS(
+        run_fallible<RunModule>(std::make_unique<RecordingTransport>(), read_stdin_config()),
+        std::runtime_error);
+    CHECK_FALSE(g_run.setup_ran);
 }
