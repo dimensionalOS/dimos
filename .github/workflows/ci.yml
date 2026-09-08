@@ -519,6 +519,8 @@ jobs:
       # redirects it to a per-process file under $RUNNER_TEMP/pytest-crash,
       # which is what makes a crash legible under xdist (one file per worker).
       PYTHONFAULTHANDLER: "1"
+      # Zenoh's own scouting decisions, for diagnosing workers that never link.
+      RUST_LOG: "zenoh::net::runtime::orchestrator=debug"
     permissions:
       contents: read  # For checkout
       id-token: write  # For codecov-action's OIDC upload
