@@ -12,38 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Wire capture for agents that run as a subprocess and cannot take an
-``http_client``: a local endpoint that forwards to the provider and records
-every request/response pair whole."""
+"""Forward an external agent's model HTTP requests and record requests and responses."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-import threading
+import subprocess
+import sys
 from typing import Any
-
-import httpx
 
 from dimos.agents.llm_trace import tracing_http_client
 
 
-class RecordingProxy:
-    """``with RecordingProxy(raw_dir, upstream) as url:`` — a request to
-    ``url/<path>`` is sent to ``upstream/<path>`` through
-    :func:`~dimos.agents.llm_trace.tracing_http_client`, so each one becomes a
-    ``<seq>-request.json`` / ``-response.json`` pair under *raw_dir* (auth
-    header dropped). A reply is relayed whole once it has arrived, so a
-    streamed response reaches the caller in one piece."""
-
-    def __init__(self, raw_dir: Path, upstream: str) -> None:
-        self.raw_dir = raw_dir
-        self.upstream = upstream.rstrip("/")
-        self._server: ThreadingHTTPServer | None = None
-
-    def __enter__(self) -> str:
-        client = tracing_http_client(self.raw_dir, timeout=httpx.Timeout(600.0))
-        upstream = self.upstream
+def _serve(raw_dir: Path, upstream: str) -> None:
+    """Own forwarding threads and sockets in a process that can be stopped."""
+    with tracing_http_client(raw_dir, timeout=600.0) as client:
 
         class Forward(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
@@ -71,12 +57,43 @@ class RecordingProxy:
             def log_message(self, format: str, *args: Any) -> None:
                 return None
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Forward)
-        threading.Thread(target=self._server.serve_forever, name="llm-proxy", daemon=True).start()
-        return f"http://127.0.0.1:{self._server.server_port}"
+        with ThreadingHTTPServer(("127.0.0.1", 0), Forward) as server:
+            print(f"http://127.0.0.1:{server.server_port}", flush=True)
+            server.serve_forever()
 
-    def __exit__(self, *exc: object) -> None:
-        if self._server is not None:
-            self._server.shutdown()
-            self._server.server_close()
-            self._server = None
+
+@contextmanager
+def model_trace_proxy(raw_dir: Path, upstream: str) -> Iterator[str]:
+    """Yield a local provider URL; record each complete HTTP exchange in raw_dir.
+
+    Exiting stops the server process, including any requests blocked upstream.
+    A subprocess also works inside the eval module's daemon worker.
+    """
+    with subprocess.Popen(
+        [sys.executable, "-m", __name__, str(raw_dir), upstream.rstrip("/")],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        text=True,
+    ) as process:
+        assert process.stdout is not None
+        try:
+            with process.stdout:
+                url = process.stdout.readline().strip()
+                if not url:
+                    status = process.wait()
+                    raise RuntimeError(
+                        f"Model trace proxy exited before startup with status {status}"
+                    )
+            yield url
+        finally:
+            process.terminate()
+            try:
+                # Bound cleanup even if the worker fails to respond to SIGTERM.
+                process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+
+if __name__ == "__main__":
+    _serve(Path(sys.argv[1]), sys.argv[2])
