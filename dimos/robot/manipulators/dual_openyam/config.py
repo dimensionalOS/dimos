@@ -20,6 +20,7 @@ from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.manipulators.common.connection import PairedCanConnectionConfig, merge_hardware
 from dimos.robot.manipulators.dual_openyam.model import (
     DUAL_OPENYAM_MODEL,
 )
@@ -132,3 +133,12 @@ def dual_openyam_model_config() -> RobotModelConfig:
         max_acceleration=1.0,
         tf_extra_links=[],
     )
+
+
+def resolve_connection(
+    config: PairedCanConnectionConfig, hardware: list[HardwareComponent], simulation: str
+) -> list[HardwareComponent]:
+    resolved = dual_openyam_hardware(
+        left_can_port=config.left_can_port, right_can_port=config.right_can_port
+    )
+    return [merge_hardware(hardware[0], resolved)] if hardware else [resolved]

@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from dimos.control.connection import PiperConnectionConfig
 from dimos.control.coordinator import TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
@@ -27,6 +26,7 @@ from dimos.robot.manipulators.common.blueprints import (
     teleop_ik_task,
     trajectory_task,
 )
+from dimos.robot.manipulators.common.connection import SingleArmConnectionConfig
 from dimos.robot.manipulators.common.coordinators import (
     ArmPoseCoordinator,
     ArmTwistCoordinator,
@@ -49,7 +49,7 @@ _piper_model = make_piper_model_config()
 keyboard_teleop_piper = autoconnect(
     KeyboardTeleopModule.blueprint(),
     ArmTwistCoordinator.blueprint(
-        connection=PiperConnectionConfig(backend="piper_hardware"),
+        connection=SingleArmConnectionConfig(backend="piper_hardware"),
         instance_name="ControlCoordinator",
         tick_rate=100.0,
         publish_joint_state=True,
@@ -98,7 +98,7 @@ _piper_teleop_hw = piper_hardware("arm")
 
 coordinator_teleop_piper = autoconnect(
     TeleopControlCoordinator.blueprint(
-        connection=PiperConnectionConfig(),
+        connection=SingleArmConnectionConfig(backend="piper"),
         instance_name="ControlCoordinator",
         hardware=[_piper_teleop_hw],
         tasks=[
@@ -136,7 +136,7 @@ _piper_cartesian_hw = make_piper_hardware(
 )
 
 coordinator_cartesian_ik_piper = ArmPoseCoordinator.blueprint(
-    connection=PiperConnectionConfig(backend="piper_hardware"),
+    connection=SingleArmConnectionConfig(backend="piper_hardware"),
     instance_name="ControlCoordinator",
     hardware=[_piper_cartesian_hw],
     tasks=[

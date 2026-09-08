@@ -16,11 +16,11 @@
 
 from __future__ import annotations
 
-from dimos.control.connection import OpenArmConnectionConfig
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
+from dimos.robot.manipulators.common.connection import PairedCanConnectionConfig
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
     openarm_bimanual_model_config,
@@ -40,14 +40,14 @@ def _trajectory_task() -> TaskConfig:
 openarm_planner_coordinator = autoconnect(
     planner(model=openarm_bimanual_model_config()),
     ControlCoordinator.blueprint(
-        connection=OpenArmConnectionConfig(),
+        connection=PairedCanConnectionConfig(backend="openarm"),
         instance_name="ControlCoordinator",
         tasks=[_trajectory_task()],
     ),
 )
 
 coordinator_openarm = ControlCoordinator.blueprint(
-    connection=OpenArmConnectionConfig(),
+    connection=PairedCanConnectionConfig(backend="openarm"),
     instance_name="ControlCoordinator",
     tasks=[_trajectory_task()],
 )

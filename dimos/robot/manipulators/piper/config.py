@@ -27,6 +27,7 @@ from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import (
     joint_names,
 )
+from dimos.robot.manipulators.common.connection import SingleArmConnectionConfig, merge_hardware
 from dimos.utils.data import LfsPath
 
 PIPER_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
@@ -105,26 +106,10 @@ def piper_hardware(
     home_joints: list[float] | None = None,
     canonical_joint_names: list[str] | None = None,
 ) -> HardwareComponent:
-    if simulation:
-        return make_piper_hardware(
-            hw_id,
-            adapter_type="sim_mujoco",
-            address=str(PIPER_SIM_PATH),
-            gripper=gripper,
-            home_joints=home_joints,
-            canonical_joint_names=canonical_joint_names,
-        )
-    if address is None:
-        return make_piper_hardware(
-            hw_id,
-            gripper=gripper,
-            home_joints=home_joints,
-            canonical_joint_names=canonical_joint_names,
-        )
     return make_piper_hardware(
         hw_id,
-        adapter_type="piper",
-        address=address,
+        adapter_type="sim_mujoco" if simulation else ("piper" if address is not None else "mock"),
+        address=str(PIPER_SIM_PATH) if simulation else address,
         gripper=gripper,
         home_joints=home_joints,
         canonical_joint_names=canonical_joint_names,
@@ -155,3 +140,17 @@ def make_piper_model_config(
         gripper_hardware_id="arm",
         home_joints=model_home_joints,
     )
+
+
+def resolve_connection(
+    config: SingleArmConnectionConfig, hardware: list[HardwareComponent], simulation: str
+) -> list[HardwareComponent]:
+    return [
+        merge_hardware(
+            hardware[0],
+            piper_hardware(
+                address=config.address,
+                simulation=simulation if config.backend == "piper" else "",
+            ),
+        )
+    ]

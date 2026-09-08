@@ -27,6 +27,7 @@ from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import (
     joint_names,
 )
+from dimos.robot.manipulators.common.connection import SingleArmConnectionConfig, merge_hardware
 from dimos.utils.data import LfsPath
 
 A750_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
@@ -124,3 +125,9 @@ def make_a750_model_config() -> RobotModelConfig:
         gripper_hardware_id="arm",
         home_joints=A750_HOME_JOINTS,
     )
+
+
+def resolve_connection(
+    config: SingleArmConnectionConfig, hardware: list[HardwareComponent], simulation: str
+) -> list[HardwareComponent]:
+    return [merge_hardware(hardware[0], a750_hardware(address=config.address))]

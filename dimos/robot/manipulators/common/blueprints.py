@@ -20,7 +20,6 @@ from collections.abc import Sequence
 from typing import Any, TypedDict
 
 from dimos.control.components import HardwareComponent
-from dimos.control.connection import HardwareConnectionConfig
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
@@ -28,6 +27,7 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.manipulators.common.connection import HardwareConnectionConfig
 from dimos.robot.manipulators.common.topics import (
     CARTESIAN_IK_TASK_NAME,
     COORDINATOR_FRAME_ID,

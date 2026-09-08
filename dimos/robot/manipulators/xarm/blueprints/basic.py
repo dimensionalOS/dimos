@@ -16,10 +16,13 @@
 
 from __future__ import annotations
 
-from dimos.control.connection import DualXArmConnectionConfig, XArmConnectionConfig
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
+from dimos.robot.manipulators.common.connection import (
+    PairedConnectionConfig,
+    SingleArmConnectionConfig,
+)
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
     XARM6_SIM_PATH,
@@ -70,7 +73,7 @@ xarm7_planner_coordinator = autoconnect(
         )
     ),
     coordinator(
-        connection=XArmConnectionConfig(dof=7),
+        connection=SingleArmConnectionConfig(backend="xarm7"),
         instance_name="ControlCoordinator",
         hardware=[_xarm7_hw],
         tasks=[trajectory_task(_xarm7_hw), _gripper_task()],
@@ -81,7 +84,7 @@ _coordinator_xarm7_hw = xarm7_hardware("arm")
 
 coordinator_xarm7 = autoconnect(
     coordinator(
-        connection=XArmConnectionConfig(dof=7),
+        connection=SingleArmConnectionConfig(backend="xarm7"),
         instance_name="ControlCoordinator",
         hardware=[_coordinator_xarm7_hw],
         tasks=[trajectory_task(_coordinator_xarm7_hw), _gripper_task()],
@@ -93,7 +96,7 @@ _coordinator_xarm6_hw = xarm6_hardware("arm", gripper=True)
 
 coordinator_xarm6 = autoconnect(
     coordinator(
-        connection=XArmConnectionConfig(dof=6),
+        connection=SingleArmConnectionConfig(backend="xarm6"),
         instance_name="ControlCoordinator",
         hardware=[_coordinator_xarm6_hw],
         tasks=[trajectory_task(_coordinator_xarm6_hw), _gripper_task()],
@@ -109,7 +112,7 @@ _xarm6_right = xarm6_hardware(
 )
 
 coordinator_dual_xarm = ControlCoordinator.blueprint(
-    connection=DualXArmConnectionConfig(),
+    connection=PairedConnectionConfig(),
     instance_name="ControlCoordinator",
     hardware=[_xarm7_left, _xarm6_right],
     tasks=[

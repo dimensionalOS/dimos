@@ -28,6 +28,7 @@ from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import (
     joint_names,
 )
+from dimos.robot.manipulators.common.connection import SingleArmConnectionConfig, merge_hardware
 from dimos.utils.data import LfsPath
 
 OPENYAM_DOF = 6
@@ -99,3 +100,11 @@ def make_openyam_model_config(
         gripper_hardware_id="arm",
         home_joints=home_joints or [0.0] * OPENYAM_DOF,
     )
+
+
+def resolve_connection(
+    config: SingleArmConnectionConfig, hardware: list[HardwareComponent], simulation: str
+) -> list[HardwareComponent]:
+    return [
+        merge_hardware(hardware[0], openyam_hardware(address=config.address, simulation=simulation))
+    ]

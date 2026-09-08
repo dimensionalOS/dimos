@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,11 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import joint_names
+from dimos.robot.manipulators.common.connection import (
+    PairedConnectionConfig,
+    SingleArmConnectionConfig,
+    merge_hardware,
+)
 from dimos.utils.data import LfsPath
 
 XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
@@ -209,29 +215,11 @@ def xarm7_hardware(
     home_joints: list[float] | None = None,
     canonical_joint_names: list[str] | None = None,
 ) -> HardwareComponent:
-    if simulation:
-        return make_xarm_hardware(
-            hw_id,
-            7,
-            adapter_type="sim_mujoco",
-            address=str(XARM7_SIM_PATH),
-            gripper=gripper,
-            home_joints=home_joints,
-            canonical_joint_names=canonical_joint_names,
-        )
-    if address is None:
-        return make_xarm_hardware(
-            hw_id,
-            7,
-            gripper=gripper,
-            home_joints=home_joints,
-            canonical_joint_names=canonical_joint_names,
-        )
     return make_xarm_hardware(
         hw_id,
         7,
-        adapter_type="xarm",
-        address=address,
+        adapter_type="sim_mujoco" if simulation else ("xarm" if address is not None else "mock"),
+        address=str(XARM7_SIM_PATH) if simulation else address,
         gripper=gripper,
         home_joints=home_joints,
         canonical_joint_names=canonical_joint_names,
@@ -247,29 +235,11 @@ def xarm6_hardware(
     home_joints: list[float] | None = None,
     canonical_joint_names: list[str] | None = None,
 ) -> HardwareComponent:
-    if simulation:
-        return make_xarm_hardware(
-            hw_id,
-            6,
-            adapter_type="sim_mujoco",
-            address=str(XARM6_SIM_PATH),
-            gripper=gripper,
-            home_joints=home_joints,
-            canonical_joint_names=canonical_joint_names,
-        )
-    if address is None:
-        return make_xarm_hardware(
-            hw_id,
-            6,
-            gripper=gripper,
-            home_joints=home_joints,
-            canonical_joint_names=canonical_joint_names,
-        )
     return make_xarm_hardware(
         hw_id,
         6,
-        adapter_type="xarm",
-        address=address,
+        adapter_type="sim_mujoco" if simulation else ("xarm" if address is not None else "mock"),
+        address=str(XARM6_SIM_PATH) if simulation else address,
         gripper=gripper,
         home_joints=home_joints,
         canonical_joint_names=canonical_joint_names,
@@ -338,3 +308,33 @@ def make_xarm7_model_config(
     **kwargs: Any,
 ) -> RobotModelConfig:
     return make_xarm_model_config(7, **kwargs)
+
+
+def resolve_xarm_hardware(
+    component: HardwareComponent, dof: int, address: str | None, simulation: str
+) -> HardwareComponent:
+    factory = xarm6_hardware if dof == 6 else xarm7_hardware
+    resolved = merge_hardware(component, factory(address=address, simulation=simulation))
+    return replace(resolved, adapter_kwargs={**resolved.adapter_kwargs, "arm_dof": dof})
+
+
+def resolve_connection(
+    config: SingleArmConnectionConfig | PairedConnectionConfig,
+    hardware: list[HardwareComponent],
+    simulation: str,
+) -> list[HardwareComponent]:
+    if isinstance(config, PairedConnectionConfig):
+        return [
+            resolve_xarm_hardware(hw, dof, address, simulation)
+            for hw, dof, address in zip(
+                hardware, (7, 6), (config.left_address, config.right_address), strict=True
+            )
+        ]
+    return [
+        resolve_xarm_hardware(
+            hardware[0],
+            6 if config.backend.startswith("xarm6") else 7,
+            config.address,
+            "" if config.backend.endswith("_hardware") else simulation,
+        )
+    ]

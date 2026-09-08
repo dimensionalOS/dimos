@@ -16,17 +16,30 @@
 
 from __future__ import annotations
 
-from dimos.control.connection import MixedArmConnectionConfig
+from dimos.control.components import HardwareComponent
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.robot.manipulators.common.blueprints import teleop_ik_task
+from dimos.robot.manipulators.common.connection import MixedArmConnectionConfig, merge_hardware
 from dimos.robot.manipulators.piper.config import (
     make_piper_hardware,
     make_piper_model_config,
+    piper_hardware,
 )
 from dimos.robot.manipulators.xarm.config import (
     make_xarm6_model_config,
     make_xarm_hardware,
+    resolve_xarm_hardware,
 )
+
+
+def resolve_connection(
+    config: MixedArmConnectionConfig, hardware: list[HardwareComponent], simulation: str
+) -> list[HardwareComponent]:
+    return [
+        resolve_xarm_hardware(hardware[0], 6, config.xarm_address, ""),
+        merge_hardware(hardware[1], piper_hardware(address=config.piper_address)),
+    ]
+
 
 _xarm6_dual = make_xarm_hardware(
     "xarm_arm",

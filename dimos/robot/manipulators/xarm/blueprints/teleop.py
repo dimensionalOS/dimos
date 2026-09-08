@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from dimos.control.connection import XArmConnectionConfig
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
@@ -26,6 +25,7 @@ from dimos.robot.manipulators.common.blueprints import (
     teleop_ik_task,
     trajectory_task,
 )
+from dimos.robot.manipulators.common.connection import SingleArmConnectionConfig
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
@@ -47,7 +47,7 @@ _xarm7_control_model = make_xarm7_model_config(add_gripper=False)
 keyboard_teleop_xarm6 = autoconnect(
     KeyboardTeleopModule.blueprint(),
     ArmTwistCoordinator.blueprint(
-        connection=XArmConnectionConfig(dof=6),
+        connection=SingleArmConnectionConfig(backend="xarm6"),
         instance_name="ControlCoordinator",
         tick_rate=100.0,
         publish_joint_state=True,
@@ -80,7 +80,7 @@ keyboard_teleop_xarm6 = autoconnect(
 keyboard_teleop_xarm7 = autoconnect(
     KeyboardTeleopModule.blueprint(),
     ArmTwistCoordinator.blueprint(
-        connection=XArmConnectionConfig(dof=7),
+        connection=SingleArmConnectionConfig(backend="xarm7"),
         instance_name="ControlCoordinator",
         tick_rate=100.0,
         publish_joint_state=True,
@@ -117,7 +117,7 @@ _xarm6_control_hw = make_xarm_hardware(
 )
 
 coordinator_trajectory_xarm6 = ControlCoordinator.blueprint(
-    connection=XArmConnectionConfig(dof=6, backend="xarm_hardware"),
+    connection=SingleArmConnectionConfig(backend="xarm6_hardware"),
     instance_name="ControlCoordinator",
     hardware=[_xarm6_control_hw],
     tasks=[
@@ -126,7 +126,7 @@ coordinator_trajectory_xarm6 = ControlCoordinator.blueprint(
 )
 
 coordinator_velocity_xarm6 = ControlCoordinator.blueprint(
-    connection=XArmConnectionConfig(dof=6, backend="xarm_hardware"),
+    connection=SingleArmConnectionConfig(backend="xarm6_hardware"),
     instance_name="ControlCoordinator",
     hardware=[_xarm6_control_hw],
     tasks=[
@@ -140,7 +140,7 @@ coordinator_velocity_xarm6 = ControlCoordinator.blueprint(
 )
 
 coordinator_combined_xarm6 = ControlCoordinator.blueprint(
-    connection=XArmConnectionConfig(dof=6, backend="xarm_hardware"),
+    connection=SingleArmConnectionConfig(backend="xarm6_hardware"),
     instance_name="ControlCoordinator",
     hardware=[_xarm6_control_hw],
     tasks=[
@@ -178,7 +178,7 @@ _xarm7_teleop_model = make_xarm7_model_config(
 
 coordinator_teleop_xarm7 = autoconnect(
     TeleopControlCoordinator.blueprint(
-        connection=XArmConnectionConfig(dof=7),
+        connection=SingleArmConnectionConfig(backend="xarm7"),
         instance_name="ControlCoordinator",
         hardware=[_xarm7_teleop_hw],
         tasks=[
@@ -220,7 +220,7 @@ coordinator_teleop_xarm7 = autoconnect(
 
 coordinator_teleop_xarm6 = autoconnect(
     TeleopControlCoordinator.blueprint(
-        connection=XArmConnectionConfig(dof=6),
+        connection=SingleArmConnectionConfig(backend="xarm6"),
         instance_name="TeleopControlCoordinator",
         hardware=[_xarm6_teleop_hw],
         tasks=[

@@ -41,8 +41,6 @@ from dimos.control.components import (
     TaskName,
     split_joint_name,
 )
-from dimos.control.connection import HardwareConnectionConfig
-from dimos.control.connection_factory import resolve_connection
 from dimos.control.hardware_interface import (
     ConnectedHardware,
     ConnectedTwistBase,
@@ -70,6 +68,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.robot.manipulators.common.connection import HardwareConnectionConfig, resolve_connection
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -901,7 +900,7 @@ class ControlCoordinator(Module):
         super().start()
 
         # Setup hardware and tasks from config (if any)
-        if self.config.hardware or self.config.tasks:
+        if self.config.connection is not None or self.config.hardware or self.config.tasks:
             self._setup_from_config()
 
         # Create and start tick loop

@@ -24,6 +24,7 @@ from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
+from dimos.robot.manipulators.common.connection import PairedCanConnectionConfig, merge_hardware
 
 OPENARM_DESCRIPTION_URL = "https://github.com/enactic/openarm_description"
 OPENARM_DESCRIPTION_REF = "1fba2cbc05001f05b4514120b70130b4ac06f409"
@@ -167,3 +168,12 @@ def openarm_bimanual_model_config() -> RobotModelConfig:
         max_acceleration=1.0,
         home_joints=list(OPENARM_HOME_JOINTS),
     )
+
+
+def resolve_connection(
+    config: PairedCanConnectionConfig, hardware: list[HardwareComponent], simulation: str
+) -> list[HardwareComponent]:
+    resolved = openarm_hardware(
+        left_can_port=config.left_can_port, right_can_port=config.right_can_port
+    )
+    return [merge_hardware(hardware[0], resolved)] if hardware else [resolved]

@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from dimos.control.connection import A1ZConnectionConfig
 from dimos.control.coordinator import TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
@@ -30,6 +29,7 @@ from dimos.robot.manipulators.common.blueprints import (
     teleop_ik_task,
     trajectory_task,
 )
+from dimos.robot.manipulators.common.connection import SingleArmConnectionConfig
 from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
@@ -39,7 +39,7 @@ _a1z_model = make_a1z_model_config()
 keyboard_teleop_a1z = autoconnect(
     KeyboardTeleopModule.blueprint(),
     ArmTwistCoordinator.blueprint(
-        connection=A1ZConnectionConfig(),
+        connection=SingleArmConnectionConfig(backend="a1z"),
         instance_name="ControlCoordinator",
         hardware=[_a1z_keyboard_hw],
         tasks=[
@@ -69,7 +69,7 @@ _a1z_quest_model = make_a1z_model_config()
 
 coordinator_teleop_a1z = autoconnect(
     TeleopControlCoordinator.blueprint(
-        connection=A1ZConnectionConfig(),
+        connection=SingleArmConnectionConfig(backend="a1z"),
         instance_name="ControlCoordinator",
         hardware=[_a1z_quest_hw],
         tasks=[

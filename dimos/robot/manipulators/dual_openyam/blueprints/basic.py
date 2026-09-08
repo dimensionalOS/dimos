@@ -14,12 +14,12 @@
 
 """Dual OpenYAM coordinator and planning blueprints."""
 
-from dimos.control.connection import DualOpenYamConnectionConfig
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
+from dimos.robot.manipulators.common.connection import PairedCanConnectionConfig
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_ARM_JOINTS,
     dual_openyam_model_config,
@@ -37,7 +37,7 @@ def dual_openyam_trajectory_task(*, priority: int = 20) -> TaskConfig:
 
 
 coordinator_dual_openyam = TeleopControlCoordinator.blueprint(
-    connection=DualOpenYamConnectionConfig(),
+    connection=PairedCanConnectionConfig(backend="dual_openyam"),
     instance_name="DualOpenYamCoordinator",
     tasks=[dual_openyam_trajectory_task()],
 )
@@ -45,7 +45,7 @@ coordinator_dual_openyam = TeleopControlCoordinator.blueprint(
 dual_openyam_planner_coordinator = autoconnect(
     planner(model=dual_openyam_model_config()),
     TeleopControlCoordinator.blueprint(
-        connection=DualOpenYamConnectionConfig(),
+        connection=PairedCanConnectionConfig(backend="dual_openyam"),
         instance_name="DualOpenYamCoordinator",
         tasks=[dual_openyam_trajectory_task()],
     ),

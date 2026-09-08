@@ -33,6 +33,7 @@ from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     joint_names,
 )
+from dimos.robot.manipulators.common.connection import SingleArmConnectionConfig, merge_hardware
 
 A1Z_DOF = 6
 
@@ -136,3 +137,11 @@ def make_a1z_model_config(
         gripper_hardware_id="arm" if has_gripper else None,
         home_joints=home_joints or [0.0] * A1Z_DOF,
     )
+
+
+def resolve_connection(
+    config: SingleArmConnectionConfig, hardware: list[HardwareComponent], simulation: str
+) -> list[HardwareComponent]:
+    return [
+        merge_hardware(hardware[0], a1z_hardware(address=config.address, simulation=simulation))
+    ]
