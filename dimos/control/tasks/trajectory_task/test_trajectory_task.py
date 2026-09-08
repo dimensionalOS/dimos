@@ -12,73 +12,72 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
-
 import pytest
 
 from dimos.control.task import (
-    BaseControlTask,
-    ControlMode,
     CoordinatorState,
-    JointCommandOutput,
     JointStateSnapshot,
-    ResourceClaim,
 )
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
     TrajectoryExecutionStatus,
 )
-from dimos.control.tick_loop import TickLoop
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 
 @pytest.mark.parametrize("single_point", [False, True])
-def test_execution_after_teleop_starts_from_measured_position(mocker, single_point):
-    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"], priority=20))
-    teleop = mocker.Mock(spec=BaseControlTask)
-    teleop.name = "teleop"
-    teleop.is_active.return_value = False
-    teleop.claim.return_value = ResourceClaim(joints=frozenset({"joint"}), priority=10)
-    teleop.compute.return_value = JointCommandOutput(
-        joint_names=["joint"], positions=[-1.0], mode=ControlMode.SERVO_POSITION
+@pytest.mark.parametrize("preempted", [False, True])
+def test_jtt_does_not_pull_joint_back_after_another_task_moves_it(single_point, preempted):
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]))
+    state = CoordinatorState(
+        joints=JointStateSnapshot(joint_positions={"joint": 0.0}), t_now=0.1, dt=0.1
     )
-    loop = TickLoop(
-        100, {}, threading.Lock(), {task.name: task, "teleop": teleop}, threading.Lock(), {}
+    first_target = 1.0 if preempted else 0.1
+    first = JointTrajectory(
+        joint_names=["joint"], points=[TrajectoryPoint(positions=[first_target])]
     )
-    measured = JointStateSnapshot(joint_positions={"joint": 0.0})
-    mocker.patch.object(loop, "_read_all_hardware", return_value=(measured, {}))
-    route = mocker.spy(loop, "_route_to_hardware")
-    clock = mocker.patch("dimos.control.tick_loop.time.perf_counter", return_value=0.1)
-    first = JointTrajectory(joint_names=["joint"], points=[TrajectoryPoint(positions=[0.1])])
     assert task.execute(first, {}).status is TrajectoryExecutionStatus.ACCEPTED
-    loop._tick()
-    assert route.call_args.args[0]["joint"][0] == pytest.approx(0.1)
+    output = task.compute(state)
+    assert output is not None
+    assert output.positions == pytest.approx([0.1])
+    if preempted:
+        task.on_preempted("other_task", frozenset({"joint"}))
     assert not task.is_active()
 
-    teleop.is_active.return_value = True
-    clock.return_value = 0.2
-    loop._tick()
-    assert route.call_args.args[0]["joint"] == (-1.0, ControlMode.SERVO_POSITION, "teleop")
-    measured.joint_positions["joint"] = -1.0
-    teleop.is_active.return_value = False
-    points = [TrajectoryPoint(positions=[0.1])]
+    # Another task moves the joint away from JTT's previous command.
+    state = CoordinatorState(
+        joints=JointStateSnapshot(joint_positions={"joint": -1.0}), t_now=1.0, dt=0.01
+    )
+    assert task.compute(state) is None
+    points = [TrajectoryPoint(positions=[-1.2])]
     if not single_point:
         points = [
             TrajectoryPoint(positions=[-1.0]),
-            TrajectoryPoint(positions=[0.1], time_from_start=2.0),
+            TrajectoryPoint(positions=[-1.2], time_from_start=0.1),
         ]
     assert (
         task.execute(
-            JointTrajectory(joint_names=["joint"], points=points), measured.joint_positions
+            JointTrajectory(joint_names=["joint"], points=points), state.joints.joint_positions
         ).status
         is TrajectoryExecutionStatus.ACCEPTED
     )
-    clock.return_value = 0.21
-    loop._tick()
-    expected = -0.99 if single_point else -1.0
-    assert route.call_args.args[0]["joint"][0] == pytest.approx(expected)
+
+    # The new motion goes farther away from the old command. Every output
+    # must move toward the new target, bounded from the new starting pose.
+    previous = -1.0
+    for tick in range(30):
+        state.t_now = 1.0 + tick * state.dt
+        output = task.compute(state)
+        if output is None:
+            break
+        commanded = output.positions[0]
+        assert -state.dt - 1e-9 <= commanded - previous <= 1e-9
+        previous = commanded
+    assert previous == pytest.approx(-1.2)
+    assert not task.is_active()
+    assert task.compute(state) is None
 
 
 def test_completed_joint_reanchors_while_other_joint_keeps_command_continuity():
