@@ -19,7 +19,6 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import math
 from pathlib import Path
-import shutil
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -76,8 +75,6 @@ class Sim(Environment):
             if not McpAdapter(mcp_url).wait_for_ready(timeout=2.0):
                 raise RuntimeError(f"attach needs a running dimos at {mcp_url}")
             return
-        if self.config.simulator == "dimsim" and shutil.which("deno") is None:
-            raise RuntimeError("dimsim requires deno on PATH")
         validate_blueprints((*self.config.blueprint, *agent.config.modules))
 
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
