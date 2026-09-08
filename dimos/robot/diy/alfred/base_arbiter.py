@@ -19,8 +19,9 @@ odometry dimSLAM fuses, so this coordinator arbitrates rather than drives: navig
 teleop each land on their own velocity task, per-joint priority picks a winner every tick,
 and the winning velocities go back out on ``cmd_vel`` for AlfredHighLevel to send.
 
-Teleop outranks navigation while the operator is driving. Its task goes inactive one
-``tele_cooldown`` after the last teleop message, and that is what hands the base back.
+Teleop outranks navigation while the operator is driving. Its task goes inactive
+``tele_cooldown`` after the last teleop message, which both bounds how long a dead teleop
+publisher keeps driving and is what hands the base back to navigation.
 
 Neither task holds zeros when it falls idle: a task that zeroes stays active forever and
 would turn every tick into a Portal RPC. Going inactive stops the writes instead, and
@@ -52,8 +53,9 @@ BASE_JOINTS = make_twist_base_joints(BASE_HARDWARE_ID)
 NAV_PRIORITY = 10
 TELE_PRIORITY = 20
 
-# Matches MovementManagerConfig.tele_cooldown_sec, the behaviour this replaces.
-DEFAULT_TELE_COOLDOWN = 1.0
+# How long a dead teleop publisher can keep the base rolling. Matches the velocity task
+# default navigation already uses, so both sources fail stopped at the same bound.
+DEFAULT_TELE_COOLDOWN = 0.2
 
 
 class PublishingTwistBase:
