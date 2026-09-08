@@ -276,7 +276,12 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
     adapter.return_value.wait_for_ready.return_value = True
     sim_client = mocker.patch("dimos.evals.environments.sim.DimSimClient")
     setup = mocker.Mock()
-    env = _sim(scene="empty", launch_timeout_s=4.0, setup=setup)
+    env = _sim(
+        scene="empty",
+        launch_timeout_s=4.0,
+        setup=setup,
+        disable=("wavefront-frontier-explorer", "patrolling-module"),
+    )
     mocker.patch.object(env, "_wait_recording", return_value=Path(dataset))
 
     try:
@@ -288,6 +293,10 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
             "unitree-skill-container",
             "mcp-client",
             "speak-skill",
+            "--disable",
+            "wavefront-frontier-explorer",
+            "--disable",
+            "patrolling-module",
         ]
         assert proc.global_args == ["--dimsim-scene", "empty", "--record"]
         adapter.return_value.wait_for_ready.assert_called_once_with(timeout=4.0, interval=2.0)

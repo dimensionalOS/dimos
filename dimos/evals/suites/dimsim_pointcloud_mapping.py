@@ -27,21 +27,6 @@ from dimos.evals.environments.sim import Sim
 from dimos.evals.scorers import exact, first_number
 from dimos.evals.types import EvalCase, Outcome, Suite, recording
 
-# unitree-go2 decomposed into its atoms
-# (dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py) minus the
-# autonomous WavefrontFrontierExplorer and PatrollingModule: deliberate
-# move_to navigation keeps working, the exploration shortcut is removed at
-# the source.
-STACK = [
-    "unitree-go2-basic",
-    "voxel-grid-mapper",
-    "cost-mapper",
-    "replanning-a-star-planner",
-    "movement-manager",
-    "mcp-server",
-    "unitree-skill-container",
-]
-
 ROOMS: dict[str, tuple[float, float]] = {
     "living_dining": (2.0, 2.5),  # sectional, TV, dining table
     "kitchen": (-4.0, 2.5),  # fridge, gas range, sink
@@ -91,7 +76,13 @@ def grade_rooms(visit_radius_m: float = 1.5) -> Callable[[Outcome], float]:
 count_rooms = EvalCase(
     id="dimsim_count_rooms",
     inputs=INSTRUCTION,
-    environment=Sim(blueprint=STACK, simulator="dimsim", scene="apartment"),
+    environment=Sim(
+        blueprint=["unitree-go2", "mcp-server", "unitree-skill-container"],
+        # Keep the configured stack, but require deliberate move_to navigation.
+        disable=("wavefront-frontier-explorer", "patrolling-module"),
+        simulator="dimsim",
+        scene="apartment",
+    ),
     grade=grade_rooms(),
     timeout_s=1200.0,  # room for several blocking move_to calls (each up to ~100 s)
     tags=frozenset({"nav", "pointcloud", "system"}),
