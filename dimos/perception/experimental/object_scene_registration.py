@@ -27,6 +27,10 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.models.segmentation.edge_tam import BoxPromptImageSegmenter
 from dimos.models.segmentation.yoloe import YoloeBoxSegmenter
+
+# Resolve detector imports while the worker loads the module, before parallel
+# start RPCs can deadlock inside Transformers/scikit-learn's lazy imports.
+from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -35,6 +39,7 @@ from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
+from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.experimental.object import (
@@ -116,13 +121,9 @@ class ObjectSceneRegistrationModule(Module):
         super().start()
 
         if self._detector_backend == "owlv2":
-            from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
-
             self._detector = Owlv2Detector()
             self._detector.start()
         elif self._detector_backend == "moondream":
-            from dimos.models.vl.moondream import MoondreamVlModel
-
             self._detector = MoondreamVlModel()
             self._detector.start()
         else:
