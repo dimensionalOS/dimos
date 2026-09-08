@@ -43,7 +43,9 @@ INSTRUCTIONS = (
     "This is a timed trajectory-analysis benchmark. Use as many small or large tool calls as "
     "the task genuinely needs, but manage the wall-clock deadline. Stop investigating early "
     "enough to return your best estimate in the exact JSON shape requested, even when uncertain. "
-    "Always reserve a final model response for the answer. Do not add Markdown or commentary."
+    "Always reserve a final model response for the answer. Never create or execute scripts at "
+    "fixed shared /tmp paths; use a uniquely named file beside the case recording or a Python "
+    "heredoc so concurrent evaluations cannot overwrite your work. Do not add Markdown or commentary."
 )
 
 _HERE = Path(__file__).parent
@@ -55,7 +57,7 @@ FROZEN_FILES = (
     _HERE / "sf_office_pose_answers.json",
     _HERE.parents[1] / "msgs/geometry_msgs/PoseStamped.py",
 )
-EXPECTED_BENCHMARK_DIGEST = "d3a53a2f6db69eac20ca0a4b21fde90058300a1bf4138539e15701573b2471e6"
+EXPECTED_BENCHMARK_DIGEST = "855320c54802494a9763ed06a0eb12c3a138f27761cd89c3a363fe1a7f499d9c"
 
 CATEGORIES = {
     "kinematics": frozenset(
@@ -181,6 +183,19 @@ def _pose_encode_timestamps(run_dir: Path, case_id: str) -> list[float]:
     return timestamps
 
 
+def _uses_shared_tmp_path(run_dir: Path, case_id: str) -> bool:
+    trajectory_path = run_dir / case_id / "trajectory.json"
+    if not trajectory_path.is_file():
+        return False
+    trajectory = json.loads(trajectory_path.read_text())
+    return any(
+        "/tmp" in str(tool_call.get("arguments", {}).get("command", ""))
+        for step in trajectory.get("steps", [])
+        for tool_call in step.get("tool_calls") or []
+        if tool_call.get("function_name") == "bash"
+    )
+
+
 def _contains_complete_pose_traversal(
     timestamps: Sequence[float], expected_timestamps: Sequence[float]
 ) -> bool:
@@ -205,6 +220,14 @@ def objective(results: Sequence[EvalResult], run_dir: Path, digest: str) -> dict
         raise RuntimeError("pose autoresearch result/category IDs do not match the frozen suite")
     if all(result.error for result in results):
         raise RuntimeError("every pose autoresearch case failed before producing a valid result")
+    shared_tmp_cases = sorted(
+        case_id for case_id in expected_ids if _uses_shared_tmp_path(run_dir, case_id)
+    )
+    if shared_tmp_cases:
+        raise RuntimeError(
+            "pose autoresearch cases used prohibited shared /tmp paths: "
+            + ", ".join(shared_tmp_cases)
+        )
 
     expected_timestamps = _expected_pose_timestamps()
     activity_timestamps = {

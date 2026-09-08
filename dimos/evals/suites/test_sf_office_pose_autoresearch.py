@@ -113,6 +113,40 @@ def test_objective_zeros_scores_without_complete_pose_encoding(
     assert result["evidence_completion_rate"] == 0.0
 
 
+@pytest.mark.parametrize(
+    "command",
+    ["python /tmp/analysis.py", "cd /tmp && python analysis.py", "TMPDIR=/tmp; python -V"],
+)
+def test_objective_rejects_shared_tmp_scripts(
+    command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    results = [
+        EvalResult(case_id=case.id, score=1.0, final_answer="{}", duration_s=1.0) for case in SUITE
+    ]
+    case_dir = tmp_path / SUITE[0].id
+    case_dir.mkdir()
+    (case_dir / "trajectory.json").write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {
+                        "tool_calls": [
+                            {
+                                "function_name": "bash",
+                                "arguments": {"command": command},
+                            }
+                        ]
+                    }
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(sf_office_pose_autoresearch, "_expected_pose_timestamps", lambda: [12.5])
+
+    with pytest.raises(RuntimeError, match="prohibited shared /tmp"):
+        objective(results, tmp_path, EXPECTED_BENCHMARK_DIGEST)
+
+
 def test_objective_rejects_repeated_pose_instead_of_ordered_coverage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -217,17 +217,16 @@ def _least_aligned(answer: dict[str, Any]) -> float:
 
 
 def _repeated_cycle(answer: dict[str, Any]) -> float:
+    expected = _ANSWERS["sf_office_pose_repeated_patrol_cycle"]
     value = answer.get("repeated_cycle")
-    if not isinstance(value, bool) or value:
+    if not isinstance(value, bool) or value is not expected["repeated_cycle"]:
         return 0.0
-    null_score = (
-        sum(
-            key in answer and answer[key] is None
-            for key in ("start_time_s", "duration_s", "length_m")
-        )
-        / 3
-    )
-    return 0.25 + 0.75 * null_score
+    scores = [
+        _numeric_score(answer, "start_time_s", expected["start_time_s"], 1.0, 6.0),
+        _numeric_score(answer, "duration_s", expected["duration_s"], 1.0, 6.0),
+        _numeric_score(answer, "length_m", expected["length_m"], 0.5, 3.0),
+    ]
+    return 0.25 + 0.75 * sum(scores) / len(scores)
 
 
 _SCORERS: dict[str, Callable[[dict[str, Any]], float]] = {

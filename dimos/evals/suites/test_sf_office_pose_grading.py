@@ -70,17 +70,19 @@ def test_extreme_json_integer_scores_zero_without_raising() -> None:
     assert score_answer("sf_office_pose_return_distance", answer) == 0.0
 
 
-def test_cycle_answer_requires_null_metrics_for_full_credit() -> None:
-    incomplete = score_answer("sf_office_pose_repeated_patrol_cycle", {"repeated_cycle": False})
+def test_cycle_answer_requires_positive_metrics_for_full_credit() -> None:
+    incorrect = score_answer("sf_office_pose_repeated_patrol_cycle", {"repeated_cycle": False})
+    incomplete = score_answer("sf_office_pose_repeated_patrol_cycle", {"repeated_cycle": True})
     complete = score_answer(
         "sf_office_pose_repeated_patrol_cycle",
         {
-            "repeated_cycle": False,
-            "start_time_s": None,
-            "duration_s": None,
-            "length_m": None,
+            "repeated_cycle": True,
+            "start_time_s": 309.0,
+            "duration_s": 59.5,
+            "length_m": 16.83461727719095,
         },
     )
 
+    assert incorrect == 0.0
     assert incomplete == 0.25
     assert complete == 1.0

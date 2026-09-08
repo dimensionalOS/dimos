@@ -162,6 +162,7 @@ SUITE: Suite = [
         "square at most 0.75 m. Return null metrics when no cycle exists. For a cycle, start_time_s "
         "is t0, duration_s is the mean of the two traversal durations, and length_m is the mean of "
         "their processed polyline lengths. Return only JSON: "
+        "If multiple triples qualify, select the lexicographically earliest (t0, t1, t2). "
         '{"repeated_cycle": boolean, "start_time_s": number | null, '
         '"duration_s": number | null, "length_m": number | null}.',
         "patterns",

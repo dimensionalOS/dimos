@@ -44,3 +44,4 @@ def test_repeated_cycle_case_defines_non_overlapping_boundaries() -> None:
     assert "t0 < t1 < t2" in case.inputs
     assert "[t0, t1] and [t1, t2]" in case.inputs
     assert "arbitrary overlapping intervals do not qualify" in case.inputs
+    assert "lexicographically earliest (t0, t1, t2)" in case.inputs
