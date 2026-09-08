@@ -14,13 +14,13 @@
 
 """Replay a recorded Spot session to streams, mirroring `SpotHighLevel`'s outputs.
 
-Opens a memory2 SQLite recording (written by `SpotRecorder`) and replays every
+Opens a memory SQLite recording (written by `SpotRecorder`) and replays every
 camera, depth, and odometry stream onto Out ports named exactly like
 `SpotHighLevel`'s, so the same Rerun visualization wires up by name — no robot
 required. The recorded ``tf`` tree (odom->base_link plus the base_link->camera
 mounts) is republished so every frame stays spatially anchored in 3D.
 
-The travelled trail is not built here: ``odometry`` feeds ``OdometryPath``,
+The travelled trail is not built here: ``odometry`` feeds ``OdometryHist``,
 which accumulates it and is equally happy on a live robot.
 """
 
@@ -36,8 +36,8 @@ from dimos.experimental.robot.bosdyn.spot.config import (
     CAMERA_STREAM_SUFFIXES,
     FRONT_CAMERA_ROTATE_UPRIGHT,
 )
-from dimos.memory2.replay import resolve_db_path
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.replay import resolve_db_path
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3

@@ -14,7 +14,7 @@
 
 """Replay the latest Spot recording to Rerun — no robot, runs anywhere.
 
-`SpotReplay` plays a memory2 recording (from `spot-record`) back onto the same
+`SpotReplay` plays a memory recording (from `spot-record`) back onto the same
 stream names `SpotHighLevel` uses, so the Spot camera layout and per-camera
 frustums light up in the Rerun 3D view. The `visual_override` routes the two
 shared CameraInfo streams onto each camera's image entity so every frustum
@@ -23,7 +23,7 @@ anchors to its optical frame.
 Usage:
     # the shared recording, pulled from LFS on first run:
     dimos run spot-replay --db-path=spot_small_loop.db
-    # newest *.db under ~/datasets/spot:
+    # newest *.db under dimos' recordings dir (RECORDINGS_DIR/spot):
     dimos run spot-replay
     # a specific recording:
     dimos run spot-replay --db-path=/path/to/spot.db
@@ -39,7 +39,7 @@ from dimos.experimental.robot.bosdyn.spot.rerun import (
     spot_camera_layout,
     spot_camera_visual_overrides,
 )
-from dimos.mapping.odometry_path import OdometryPath
+from dimos.mapping.odometry_hist import OdometryHist, path_at_true_height
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
@@ -49,14 +49,19 @@ from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 # bundles the WebsocketVisModule, which auto-opens the 7779 Command Center tab.
 spot_replay = autoconnect(
     SpotReplay.blueprint(),
-    OdometryPath.blueprint(),
+    OdometryHist.blueprint(),
     RerunBridgeModule.blueprint(
         pubsubs=[LCM()],
         rerun_open=global_config.rerun_open,
         rerun_web=global_config.rerun_web,
         blueprint=spot_camera_layout,
-        visual_override=spot_camera_visual_overrides(),
+        # Replay has no costmap, so drop the default z lift and draw the trail
+        # on the ground where Spot actually walked.
+        visual_override={
+            **spot_camera_visual_overrides(),
+            "world/odom_hist": path_at_true_height,
+        },
         static=spot_body_static_overrides(),
     ),
     RerunWebSocketServer.blueprint(),
-).remappings([(OdometryPath, "path", "odom_path")])
+)
