@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -31,20 +32,25 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 class HabitatConnectionConfig(NativeModuleConfig):
     """Scene and camera settings for the Habitat native process."""
 
-    # Own flake: habitat-sim is python 3.9 conda-only, so it cannot share the
-    # dimos interpreter. install.sh builds env/ and writes the wrapper, whose
-    # existence is what NativeModule uses as the build sentinel.
+    # habitat-sim is python 3.9 conda-only, so it runs in its own env under
+    # target/habitat (outside the package tree); the wrapper is the build sentinel.
     cwd: str | None = "nix"
-    executable: str = "habitat-native"
+    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "habitat" / "habitat-native")
     build_command: str | None = "nix develop path:. -c ./install.sh"
     stdin_config: bool = True
     log_format: LogFormat = LogFormat.TEXT
 
-    # Relative to cwd, so the module carries its own scenes. hm3d_example is a
-    # real annotated HM3D house and needs no Matterport credentials.
-    scene_dataset_config: str = (
-        "data/versioned_data/hm3d-0.2/hm3d/example"
-        "/hm3d_annotated_example_basis.scene_dataset_config.json"
+    # Annotated HM3D house, no Matterport credentials needed.
+    scene_dataset_config: str = str(
+        DIMOS_PROJECT_ROOT
+        / "target"
+        / "habitat"
+        / "data"
+        / "versioned_data"
+        / "hm3d-0.2"
+        / "hm3d"
+        / "example"
+        / "hm3d_annotated_example_basis.scene_dataset_config.json"
     )
     scene_id: str = "00861-GLAQ4DNUx5U"
 
@@ -56,27 +62,21 @@ class HabitatConnectionConfig(NativeModuleConfig):
     max_depth_m: float = Field(default=5.0, gt=0.0)
 
     sim_rate_hz: float = Field(default=10.0, gt=0.0)
-    # Subsample the depth image before unprojection: stride 2 is 4x fewer points
-    # into the voxel grid, which is where the frame time goes.
+    # Zero the command when stale, like the real connections.
+    cmd_vel_timeout_s: float = Field(default=0.2, gt=0.0)
+    # Subsample depth before unprojection; 2 is 4x fewer points.
     scan_stride: int = Field(default=2, ge=1)
     seed: int = 0
     publish_semantic: bool = False
-    # Off for teleop-only stacks: unprojection is the frame's main cost.
+    # Unprojection is the frame's main cost; off for teleop-only stacks.
     publish_scan: bool = True
-    # Frame the scan is published in. "world" pre-registers it, which is what
-    # VoxelGridMapper wants. RayTracingVoxelMap instead needs the sensor frame,
-    # because it raytraces from the sensor origin and places the cloud itself by
-    # the tf lookup world_frame -> cloud frame_id; set "camera_optical" for it.
+    # "world" pre-registers the scan for VoxelGridMapper; "camera_optical" lets
+    # RayTracingVoxelMap register it via tf.
     scan_frame: str = "world"
 
 
 class HabitatConnection(NativeModule):
-    """Drive a Habitat scene with Twist and publish what a depth robot would see.
-
-    ``registered_scan`` is already in world frame, which is what
-    :class:`~dimos.mapping.voxels.module.VoxelGridMapper` requires. Habitat hands
-    the native exact ground-truth pose, so there is no odometry drift to correct.
-    """
+    """Drive a Habitat scene with Twist; publish what a depth robot would see."""
 
     config: HabitatConnectionConfig
 

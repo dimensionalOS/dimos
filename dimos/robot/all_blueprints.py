@@ -199,8 +199,6 @@ all_modules = {
     "collection-recorder": "dimos.imitation.collection.recorder.CollectionRecorder",
     "control-coordinator": "dimos.control.coordinator.ControlCoordinator",
     "cost-mapper": "dimos.mapping.costmapper.CostMapper",
-    "ctypes-module": "dimos.simulation.habitat.nix.env.lib.python3.9.site-packages.numba.cuda.cudadrv.driver.CtypesModule",
-    "cuda-python-module": "dimos.simulation.habitat.nix.env.lib.python3.9.site-packages.numba.cuda.cudadrv.driver.CudaPythonModule",
     "dan-holonomic-tc": "dimos.navigation.dannav.holonomic_tc.module.DanHolonomicTC",
     "dan-local-planner": "dimos.navigation.dannav.local_planner.module.DanLocalPlanner",
     "demo-calculator-skill": "dimos.agents.skills.demo_calculator_skill.DemoCalculatorSkill",

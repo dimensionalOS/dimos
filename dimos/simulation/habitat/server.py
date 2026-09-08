@@ -13,19 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Habitat-sim native module: drives a scene from Twist, publishes on zenoh.
+"""Habitat-sim native: drives a scene from Twist, publishes dimos messages on zenoh.
 
-habitat-sim ships python 3.9 conda builds only, so this runs in its own env
-(``nix/env``) as a NativeModule subprocess. It must stay importable under 3.9
-with only numpy, zenoh and dimos_lcm: no dimos imports, no 3.10+ syntax.
-``test_server.py`` enforces both.
+Runs under python 3.9 in its own env, so: no dimos imports, no 3.10+ syntax
+(``test_server.py`` enforces both). ``dimos_lcm`` provides the encoders.
 
-``dimos_lcm`` is the standalone message package and carries the same
-``lcm_encode`` payloads ZenohTransport puts on the wire, so this speaks dimos
-without being dimos. The LCM *runtime* is deliberately absent -- see nix/install.sh.
-
-Launch contract (NativeModule ``stdin_config``): one JSON line on stdin holding
-``topics`` (port name -> zenoh key expression), ``config`` and ``session``.
+Reads one JSON line on stdin: ``topics`` (port -> zenoh key), ``config``, ``session``.
 """
 
 from __future__ import annotations
@@ -62,7 +55,13 @@ _spec.loader.exec_module(frames)
 
 
 def log(msg: str) -> None:
-    """Plain-text line for NativeModule's log reader (LogFormat.TEXT)."""
+    """stdout: NativeModule logs it as INFO."""
+    sys.stdout.write(f"[habitat] {msg}\n")
+    sys.stdout.flush()
+
+
+def warn(msg: str) -> None:
+    """stderr: NativeModule logs it as WARNING."""
     sys.stderr.write(f"[habitat] {msg}\n")
     sys.stderr.flush()
 
@@ -183,15 +182,11 @@ def tf_msg(links: list[tuple[str, str, Any, Any]], ts: float) -> bytes:
     out = []
     for parent, child, xyz, quat in links:
         t = TransformStamped()
-        # Fresh Header per link: the generated bindings hand out a shared default,
-        # so reusing it makes every transform alias the last one's frame_id.
+        # Fresh nested messages: the generated bindings share defaults across instances.
         t.header = Header()
         _stamp(t.header, ts)
         t.header.frame_id = parent
         t.child_frame_id = child
-        # Same story one level down: Transform().translation is shared between
-        # instances, so mutating it in place makes all three links serialize the
-        # last one's pose -- which reads as the whole map pointing up.
         transform = Transform()
         transform.translation = Vector3()
         transform.rotation = Quaternion()
@@ -214,11 +209,7 @@ def tf_msg(links: list[tuple[str, str, Any, Any]], ts: float) -> bytes:
 def unproject(
     depth: np.ndarray, rgb: np.ndarray, k: dict[str, float], trunc: float, stride: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Depth + colour -> points in the camera OPTICAL frame (x right, y down, z fwd).
-
-    Plain numpy rather than open3d: the py3.9 env has no use for a second heavy
-    dependency when the unprojection is six lines.
-    """
+    """Depth + colour to points in the camera optical frame (x right, y down, z fwd)."""
     d = depth[::stride, ::stride]
     c = rgb[::stride, ::stride]
     fx, fy = k["fx"] / stride, k["fy"] / stride
@@ -312,8 +303,7 @@ class HabitatHost:
         forward, left = frames.habitat_heading(self.yaw)
         target = start + forward * (vx * dt) + left * (vy * dt)
 
-        # try_step slides along geometry instead of teleporting through it. The
-        # achieved position is what gets published: never dead-reckon the command.
+        # try_step slides along geometry; publish the achieved pose, not the command.
         achieved = np.asarray(self._sim.pathfinder.try_step(start, target), dtype=np.float64)
 
         state.position = achieved
@@ -325,17 +315,33 @@ class HabitatHost:
         return frames.position_to_ros(achieved), self.yaw, self._sim.get_sensor_observations()
 
 
+# Mirrors _ZENOH_KEYS in dimos/protocol/service/zenohservice.py.
+_ZENOH_KEYS = {
+    "mode": "mode",
+    "connect": "connect/endpoints",
+    "listen": "listen/endpoints",
+    "multicast": "scouting/multicast/enabled",
+    "scout_addr": "scouting/multicast/address",
+    "interface": "scouting/multicast/interface",
+    "gossip": "scouting/gossip/enabled",
+    "connect_timeout_ms": "connect/timeout_ms",
+}
+# Empty means zenoh's own default.
+_ZENOH_DEFAULTED_WHEN_EMPTY = ("connect", "listen", "scout_addr", "connect_timeout_ms")
+
+
 def zenoh_session(session: dict[str, Any]) -> Any:
     """Open a zenoh session on the settings NativeModule handed us."""
+    if not session.get("mode"):
+        # {} is an LCM-transport launch; fail loudly rather than publish into the void.
+        warn("no zenoh session on stdin; habitat is zenoh-only (DIMOS_TRANSPORT=zenoh)")
+        sys.exit(2)
     cfg = zenoh.Config()
-    if session.get("mode"):
-        cfg.insert_json5("mode", json.dumps(session["mode"]))
-    if session.get("connect"):
-        cfg.insert_json5("connect/endpoints", json.dumps(session["connect"]))
-    if session.get("listen"):
-        cfg.insert_json5("listen/endpoints", json.dumps(session["listen"]))
-    if session.get("multicast") is not None:
-        cfg.insert_json5("scouting/multicast/enabled", json.dumps(bool(session["multicast"])))
+    for name, value in session.items():
+        key = _ZENOH_KEYS.get(name)
+        if key is None or (not value and name in _ZENOH_DEFAULTED_WHEN_EMPTY):
+            continue
+        cfg.insert_json5(key, json.dumps(value))
     return zenoh.open(cfg)
 
 
@@ -349,14 +355,15 @@ def main() -> None:
     z = zenoh_session(session)
     pubs = {name: z.declare_publisher(key) for name, key in topics.items() if name != "cmd_vel"}
 
-    cmd = {"vx": 0.0, "vy": 0.0, "wz": 0.0}
+    cmd = {"vx": 0.0, "vy": 0.0, "wz": 0.0, "ts": 0.0}
 
     def on_cmd_vel(sample: Any) -> None:
         try:
             t = LCMTwist.lcm_decode(bytes(sample.payload.to_bytes()))
             cmd["vx"], cmd["vy"], cmd["wz"] = t.linear.x, t.linear.y, t.angular.z
+            cmd["ts"] = time.time()
         except Exception as exc:
-            log(f"bad cmd_vel: {exc}")
+            warn(f"bad cmd_vel: {exc}")
 
     if "cmd_vel" in topics:
         z.declare_subscriber(topics["cmd_vel"], on_cmd_vel)
@@ -378,10 +385,19 @@ def main() -> None:
         if pub is not None:
             pub.put(payload)
 
+    timeout = float(cfg.get("cmd_vel_timeout_s", 0.2))
     prev: tuple[np.ndarray, float, float] | None = None
+    next_tick = last = time.time()
     while True:
-        tick = time.time()
-        position, yaw, obs = host.step(cmd["vx"], cmd["vy"], cmd["wz"], dt)
+        now = time.time()
+        # Integrate real elapsed time (clamped): a fixed dt under-drives on overrun.
+        step_dt = min(now - last, 2.0 * dt)
+        last = now
+        if now - cmd["ts"] > timeout:
+            vx = vy = wz = 0.0
+        else:
+            vx, vy, wz = cmd["vx"], cmd["vy"], cmd["wz"]
+        position, yaw, obs = host.step(vx, vy, wz, step_dt)
         now = time.time()
 
         rgb = np.ascontiguousarray(obs["rgb"][:, :, :3])
@@ -402,8 +418,7 @@ def main() -> None:
 
         quat = np.array([0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0)])
 
-        # Achieved velocity, not the command: try_step slides along walls, so the
-        # two differ whenever the robot is in contact with geometry.
+        # Achieved velocity, not the command: try_step slides along walls.
         if prev is None:
             vel = (0.0, 0.0, 0.0)
         else:
@@ -425,8 +440,7 @@ def main() -> None:
                 [
                     ("world", "base_link", position, quat),
                     ("base_link", "camera", (0.0, 0.0, cam_h), (0.0, 0.0, 0.0, 1.0)),
-                    # Body -> optical. Images hang off camera_optical: a pinhole
-                    # points down its frame's +z, which in the body frame is up.
+                    # A pinhole looks down +z; in the body frame that is up.
                     ("camera", "camera_optical", (0.0, 0.0, 0.0), frames.OPTICAL_QUAT_XYZW),
                 ],
                 now,
@@ -440,7 +454,11 @@ def main() -> None:
                 pts = pts @ world[:3, :3].T + world[:3, 3]
             put("registered_scan", cloud_msg(pts, colors, scan_frame, now))
 
-        time.sleep(max(0.0, dt - (time.time() - tick)))
+        # Anchored schedule; re-anchor after a stall instead of catching up.
+        next_tick += dt
+        if next_tick < time.time() - dt:
+            next_tick = time.time()
+        time.sleep(max(0.0, next_tick - time.time()))
 
 
 if __name__ == "__main__":

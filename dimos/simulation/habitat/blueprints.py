@@ -14,11 +14,11 @@
 
 """Habitat blueprints, layered so a failure can be bisected by dropping a level.
 
-- ``habitat-teleop`` — sim plus streams and teleop, no mapping.
-- ``habitat-raycaster`` — adds :class:`RayTracingVoxelMap` on a sensor-frame scan.
-- ``habitat-nav`` — adds the MLS planner and follower; click the surface to set a goal.
-- ``habitat-voxel`` — the :class:`VoxelGridMapper` alternative, on a pre-registered
-  scan. Not a layer: the two mappers want the scan in different frames.
+- ``habitat-teleop``: sim, streams, teleop.
+- ``habitat-raycaster``: + :class:`RayTracingVoxelMap` on a sensor-frame scan.
+- ``habitat-nav``: + MLS planner and follower; click the surface to set a goal.
+- ``habitat-voxel``: :class:`VoxelGridMapper` on a world-frame scan. An alternative,
+  not a layer: the two mappers want the scan in different frames.
 """
 
 from typing import Any
@@ -37,63 +37,37 @@ from dimos.simulation.habitat.connection import HabitatConnection
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 from dimos.visualization.vis_module import vis_module
 
-# The connection's scan port and VoxelGridMapper's input are the same stream under
-# two names, so remap rather than rename either port.
+# One stream, two port names: remap rather than rename.
 SCAN_TOPIC = "habitat_scan"
 
-# Viewer teleop and the path follower both publish straight onto the sim's
-# cmd_vel. No MovementManager: its arbitration is real-robot safety behaviour that
-# fights the viewer here -- releasing a movement key publishes a zero twist, which
-# latches _teleop_active, cancels the active goal with a NaN and then blocks
-# nav_cmd_vel for the cooldown. Manual driving worked; navigation never moved.
+# Teleop and the follower publish straight onto cmd_vel. No MovementManager: it
+# cancels the goal on the zero twist the viewer sends on every key release.
 CMD_VEL_TOPIC = "cmd_vel"
-# The viewer's clicked point IS the planner's goal, so it needs no translation.
+# The viewer's clicked point is already the planner's goal.
 GOAL_TOPIC = "goal"
 
-# VoxelGridMapper assumes world-frame clouds. RayTracingVoxelMap needs the sensor
-# frame instead: it raytraces from the sensor origin and registers the cloud itself
-# via the tf lookup world_frame -> cloud frame_id.
+# VoxelGridMapper wants world-frame clouds; RayTracingVoxelMap registers via tf
+# and raytraces from the sensor origin, so it needs the sensor frame.
 SCAN_FRAME_REGISTERED = "world"
 SCAN_FRAME_SENSOR = "camera_optical"
 
 WORLD_FRAME = "world"
 voxel_size = 0.05
-# The planner's surface_map is what you click to set a goal, so this cannot be 0:
-# with viz off there is nothing in the 3D view to click and no goal is ever sent.
+# Must be > 0: the planner's surface_map is what you click to set a goal.
 planner_viz_hz = 2.0
-
-# Habitat's agent sits on the navmesh, so base_link is already at floor level and
-# needs no start_z offset -- unlike a real robot, whose base_link rides above it.
 ROBOT_HEIGHT = 0.5
 
-
-# Hidden rather than dropped: still in the entity tree, tickable in the viewer.
-HIDDEN = ("world/nodes",)
+# Hidden, not dropped: still tickable in the viewer.
+HIDDEN = ("world/nodes", "world/depth_image")
 
 
 def _small_points(cloud: Any) -> Any:
-    """Flat dots at half the default radius; a dense RGB-D scan is a lot of them.
-
-    ``mode`` is explicit so this does not depend on to_rerun's default.
-    """
+    """Flat dots; mode is explicit so this does not track to_rerun's default."""
     return cloud.to_rerun(mode="points", ui_radius=1.0)
 
 
-def _camera_info_to_pinhole(camera_info: Any) -> Any:
-    """Log the pinhole onto the colour image's entity, not camera_info's own.
-
-    Entities are named after topics, so the two land on sibling paths and a
-    Pinhole only projects its own entity and its children -- without this the
-    frustum draws but stays empty and the image is placed by whatever transform
-    its entity inherits. No ``optical_frame``: the image's frame_id already
-    anchors it and a second parent is rejected.
-    """
-    return camera_info.to_rerun(image_topic="world/color_image")
-
-
 def _render_path(msg: Any) -> Any:
-    """Drop empty paths: the planner emits one when it finds no route, and logging
-    it would blank the line rather than leave the last good path up."""
+    """Skip empty paths so a failed plan keeps the last good one drawn."""
     return None if len(msg.poses) == 0 else msg
 
 
@@ -124,7 +98,6 @@ def _rerun_config(extra: dict[str, Any] | None = None) -> dict[str, Any]:
         "blueprint": _view,
         "tf_axes": 0.3,
         "visual_override": {
-            "world/camera_info": _camera_info_to_pinhole,
             f"world/{SCAN_TOPIC}": _small_points,
             "world/global_map": _small_points,
             "world/local_map": _small_points,
@@ -133,12 +106,13 @@ def _rerun_config(extra: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+# The native is zenoh-only, so every layer pins the transport.
 habitat_teleop = autoconnect(
     HabitatConnection.blueprint(publish_scan=False),
     vis_module(global_config.viewer, rerun_config=_rerun_config()).remappings(
         [(RerunWebSocketServer, "tele_cmd_vel", CMD_VEL_TOPIC)]
     ),
-)
+).global_config(transport="zenoh")
 
 
 habitat_voxel = autoconnect(
@@ -151,7 +125,7 @@ habitat_voxel = autoconnect(
     vis_module(global_config.viewer, rerun_config=_rerun_config()).remappings(
         [(RerunWebSocketServer, "tele_cmd_vel", CMD_VEL_TOPIC)]
     ),
-)
+).global_config(transport="zenoh")
 
 
 _ray_tracing_config = RayTracingVoxelMapConfig(
@@ -164,14 +138,13 @@ _ray_tracing_config = RayTracingVoxelMapConfig(
     support_min=4,
 )
 
-# global_map is remapped off so the planner runs on the incremental local_map +
-# region_bounds pair, as it does on the robot.
+# Planner runs on local_map + region_bounds only, as on the robot.
 _mls_planner = MLSPlannerNative.blueprint(
     **MLSPlannerNativeConfig(
         world_frame=WORLD_FRAME,
         voxel_size=voxel_size,
         robot_height=ROBOT_HEIGHT,
-        start_z_offset_m=0.0,
+        start_z_offset_m=0.0,  # base_link sits on the navmesh
         surface_closing_radius=0.3,
         wall_clearance_m=0.1,
         wall_buffer_m=0.75,
@@ -183,8 +156,7 @@ _mls_planner = MLSPlannerNative.blueprint(
 ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")])
 
 
-# Re-declares HabitatConnection with the sensor-frame scan the raycaster needs;
-# autoconnect keeps the newest duplicate, so this wins over habitat_teleop's.
+# Newest duplicate wins: re-declared with the sensor-frame scan.
 habitat_raycaster = autoconnect(
     habitat_teleop,
     HabitatConnection.blueprint(publish_scan=True, scan_frame=SCAN_FRAME_SENSOR).remappings(
@@ -193,18 +165,14 @@ habitat_raycaster = autoconnect(
     RayTracingVoxelMap.blueprint(**_ray_tracing_config.model_dump(exclude_unset=True)).remappings(
         [(RayTracingVoxelMap, "lidar", SCAN_TOPIC)]
     ),
-)
+).global_config(transport="zenoh")
 
 
-# A goal is a click on the planner's surface_map in the 3D view. The follower's
-# nav_cmd_vel lands on the same cmd_vel the viewer's keys drive, so a keypress just
-# overrides the follower for as long as it is held.
+# Click the surface to set a goal; a held key overrides the follower.
 habitat_nav = autoconnect(
     habitat_raycaster,
     _mls_planner,
-    # world_frame defaults to "odom", which nothing here publishes: the sim's tf
-    # root is `world`. Left wrong, the follower never resolves the robot pose and
-    # silently emits no cmd_vel.
+    # Defaults to odom; the sim's tf root is world.
     BasicPathFollower.blueprint(
         world_frame=WORLD_FRAME, speed=0.5, heading_gain=1.5, max_angular=1.5
     ).remappings([(BasicPathFollower, "nav_cmd_vel", CMD_VEL_TOPIC)]),
@@ -224,4 +192,4 @@ habitat_nav = autoconnect(
             (RerunWebSocketServer, "clicked_point", GOAL_TOPIC),
         ]
     ),
-)
+).global_config(transport="zenoh")

@@ -19,8 +19,7 @@ from __future__ import annotations
 import numpy as np
 import numpy.typing as npt
 
-# ros = R_ROS_HAB @ habitat. Proper rotation (det = +1), so handedness and
-# rotation sign are preserved: forward -z -> +x, left -x -> +y, up +y -> +z.
+# ros = R_ROS_HAB @ habitat. Proper rotation: -z -> +x, -x -> +y, +y -> +z.
 R_ROS_HAB: npt.NDArray[np.float64] = np.array(
     [
         [0.0, 0.0, -1.0],
@@ -30,7 +29,6 @@ R_ROS_HAB: npt.NDArray[np.float64] = np.array(
 )
 
 # Camera optical (x right, y down, z forward) to ROS body (x forward, y left, z up).
-# open3d's create_from_rgbd_image emits points in the optical convention.
 R_ROS_OPT: npt.NDArray[np.float64] = np.array(
     [
         [0.0, 0.0, 1.0],
@@ -40,10 +38,8 @@ R_ROS_OPT: npt.NDArray[np.float64] = np.array(
 )
 
 
-# R_ROS_OPT as a quaternion (x, y, z, w) — the transform a `camera` (body) frame
-# needs to reach its `camera_optical` child, i.e. REP-103's rpy (-pi/2, 0, -pi/2).
-# Without this frame the images hang off a body frame whose +z is UP, and any
-# viewer that points the pinhole down +z renders the camera looking at the ceiling.
+# R_ROS_OPT as (x, y, z, w): the camera -> camera_optical link, REP-103's
+# rpy (-pi/2, 0, -pi/2).
 OPTICAL_QUAT_XYZW: tuple[float, float, float, float] = (-0.5, 0.5, -0.5, 0.5)
 
 
@@ -58,12 +54,7 @@ def position_to_habitat(p_ros: npt.ArrayLike) -> npt.NDArray[np.float64]:
 
 
 def quat_to_ros(q_hab_wxyz: npt.ArrayLike) -> npt.NDArray[np.float64]:
-    """Habitat quaternion (w, x, y, z) to ROS (x, y, z, w).
-
-    Conjugating a rotation by the proper rotation ``R_ROS_HAB`` maps the axis and
-    leaves the angle alone, so the scalar part is unchanged and the vector part
-    rotates like any other vector.
-    """
+    """Habitat (w, x, y, z) to ROS (x, y, z, w): the vector part rotates, w is unchanged."""
     q = np.asarray(q_hab_wxyz, dtype=np.float64)
     w, v = q[0], R_ROS_HAB @ q[1:]
     return np.array([v[0], v[1], v[2], w])

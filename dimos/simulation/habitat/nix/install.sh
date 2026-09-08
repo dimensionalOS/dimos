@@ -1,44 +1,37 @@
 #!/usr/bin/env bash
-# Build the habitat-sim environment and the wrapper NativeModule launches.
-#
-# Run through the flake: `nix develop path:. -c ./install.sh`, which is what
-# HabitatNativeConfig.build_command does. NativeModule treats the wrapper's
-# existence as the build sentinel, so it must be written last.
+# build_command for HabitatConnection: `nix develop path:. -c ./install.sh`.
+# Builds into <repo>/target/habitat, outside the package tree. NativeModule
+# treats the wrapper as the build sentinel, so it is written last.
 set -euo pipefail
-cd "$(dirname "$0")"
+HERE=$(cd "$(dirname "$0")" && pwd)
+ROOT=$(cd "$HERE/../../../.." && pwd)
+OUT="$ROOT/target/habitat"
+mkdir -p "$OUT"
+cd "$OUT"
 
-export MAMBA_ROOT_PREFIX="$PWD/mm"
+export MAMBA_ROOT_PREFIX="$OUT/mm"
 
 if [ ! -x ./env/bin/python ]; then
     micromamba create -y -p ./env -c conda-forge -c aihabitat \
         python=3.9 habitat-sim headless withbullet
 fi
 
-# dimos_lcm is the standalone message package (pure python, >=3.8) carrying the
-# same lcm_encode payloads ZenohTransport puts on the wire, so the py3.9 side
-# speaks dimos without importing dimos.
-#
-# --no-deps drops lcm-dimos-fork on purpose. That is the LCM *runtime* (a C/CMake
-# build) and we publish over zenoh, so only the pure-python encoders are needed.
-# Building it here also fails: nix develop is not a pure shell, CMake finds the
-# host JDK, enables the lcm-java target and dies on a missing jchart2d jar.
-./env/bin/pip install --no-input --no-deps dimos-lcm
-./env/bin/pip install --no-input eclipse-zenoh numpy
+# Pinned to uv.lock: the native must speak the same zenoh wire version as the
+# dimos peers, or SHM payloads arrive as unreadable handles. --no-deps skips
+# lcm-dimos-fork, the LCM runtime; only dimos_lcm's pure-python encoders are needed.
+./env/bin/pip install --no-input --no-deps "dimos-lcm==0.1.3"
+./env/bin/pip install --no-input "eclipse-zenoh==1.10.1" numpy
 
-# Scenes live beside the env so the module is self-contained: hm3d_example is
-# a real annotated HM3D house (908 semantic instances) that needs no Matterport
-# credentials. The licensed HM3D splits are a --uids change once a key exists.
-if [ ! -d ./data/versioned_data/hm3d-0.2 ]; then
-    ./env/bin/python -m habitat_sim.utils.datasets_download \
-        --uids hm3d_example --data-path ./data
-fi
+# Annotated HM3D house, no credentials. --no-replace resumes a partial download
+# by the downloader's own per-package markers; a dir check would not.
+./env/bin/python -m habitat_sim.utils.datasets_download \
+    --uids hm3d_example --data-path ./data --no-replace
 
-cat > habitat-native <<'WRAP'
+cat > habitat-native <<WRAP
 #!/bin/sh
-# NativeModule always builds CLI args (stdin_config only adds the JSON line), so
-# the script path cannot go in extra_args -- it would land after the flags.
-here=$(dirname "$0")
-exec "$here/env/bin/python" "$here/../server.py" "$@"
+# NativeModule appends CLI args after the executable, so the script path cannot
+# go in extra_args.
+exec "$OUT/env/bin/python" "$HERE/../server.py" "\$@"
 WRAP
 chmod +x habitat-native
-echo "built: $PWD/habitat-native"
+echo "built: $OUT/habitat-native"
