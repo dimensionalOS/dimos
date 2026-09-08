@@ -23,7 +23,7 @@ from typer.testing import CliRunner
 
 import dimos.cli.commands.lifecycle as lifecycle
 from dimos.cli.commands.lifecycle import _with_relay_bridge
-from dimos.cli.dimos import _normalize_simulation_argv, main
+from dimos.cli.dimos import main, normalize_argv
 import dimos.cli.spy.run_spy as run_spy
 import dimos.core.coordination.module_coordinator as module_coordinator
 import dimos.core.coordination.process_lifecycle as process_lifecycle
@@ -67,6 +67,9 @@ class RunModuleB(Module):
         # Bare `--simulation` followed by another option, or nothing.
         (["dimos", "--simulation", "-d", "run"], ["dimos", "--simulation", "mujoco", "-d", "run"]),
         (["dimos", "--simulation"], ["dimos", "--simulation", "mujoco"]),
+        (["dimos", "--record", "run", "go2"], ["dimos", "--record", "sqlite", "run", "go2"]),
+        (["dimos", "--record", "sqlite", "run"], ["dimos", "--record", "sqlite", "run"]),
+        (["dimos", "--record", "mcap", "run"], ["dimos", "--record", "mcap", "run"]),
         # Explicit simulator — left untouched.
         (["dimos", "--simulation", "mujoco", "run"], ["dimos", "--simulation", "mujoco", "run"]),
         (["dimos", "--simulation", "dimsim", "run"], ["dimos", "--simulation", "dimsim", "run"]),
@@ -75,8 +78,8 @@ class RunModuleB(Module):
         (["dimos", "run", "go2"], ["dimos", "run", "go2"]),
     ],
 )
-def test_normalize_simulation_argv(argv: list[str], expected: list[str]):
-    assert _normalize_simulation_argv(argv) == expected
+def test_normalize_argv(argv: list[str], expected: list[str]) -> None:
+    assert normalize_argv(argv) == expected
 
 
 def test_global_config_flag_applies_before_subcommand():
@@ -173,6 +176,7 @@ def stubbed_run(
 
     class FakeCoordinator:
         n_modules = 1
+        transports: dict[tuple[str, type], Any] = {}
 
         @classmethod
         def build(cls, blueprint: Any, parsed_config: Any = None) -> "FakeCoordinator":
@@ -232,6 +236,53 @@ def stubbed_run(
         yield recorded
     finally:
         global_config.update(**original_global_config)
+
+
+def test_run_rejects_record_topics_matching_nothing(stubbed_run: dict[str, Any]) -> None:
+    result = CliRunner().invoke(
+        main, ["--record", "sqlite", "--record-topics", "nope", "run", "alpha"]
+    )
+
+    assert result.exit_code == 2
+    assert "matched none of" in result.output
+    assert "blueprint" not in stubbed_run  # failed before build
+
+
+def test_python_recording_rejects_rust_encoding_threads(
+    stubbed_run: dict[str, Any],
+) -> None:
+    result = CliRunner().invoke(
+        main,
+        [
+            "--record",
+            "sqlite",
+            "--record-engine",
+            "python",
+            "--record-encoding-threads",
+            "4",
+            "run",
+            "alpha",
+        ],
+    )
+
+    assert result.exit_code == 2
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "valid only with" in output_plain
+    assert "--record-engine rust" in output_plain
+    assert "blueprint" not in stubbed_run
+
+
+def test_python_mcap_is_rejected_before_build(
+    stubbed_run: dict[str, Any],
+) -> None:
+    result = CliRunner().invoke(
+        main, ["--record", "mcap", "--record-engine", "python", "run", "alpha"]
+    )
+
+    assert result.exit_code == 2
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "MCAP recording requires --record-engine rust" in output_plain
+    assert "blueprint" not in stubbed_run
 
 
 def test_run_parses_spaced_and_equals_config_flags(stubbed_run: dict[str, Any]) -> None:

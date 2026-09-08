@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { SessionStatus } from "../session/store.ts";
+import type { SessionStatus } from "@dimos/sdk";
 import { StatusBar } from "./StatusBar.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -10,8 +10,8 @@ import { StatusBar } from "./StatusBar.tsx";
 function makeStatus(over: Partial<SessionStatus> = {}): SessionStatus {
   return {
     transport: { phase: "connected" },
-    robot: null,
-    robotCount: 0,
+    robots: [],
+    watchedRobot: null,
     manifest: null,
     manifestUnsupported: false,
     epoch: 0,
@@ -44,7 +44,7 @@ describe("StatusBar", () => {
   }
 
   it("shows the transport phase and the picked robot", () => {
-    render(makeStatus({ robot: { id: "a", name: "Go2", model: "go2" } }));
+    render(makeStatus({ watchedRobot: { id: "a", name: "Go2", model: "go2" } }));
     expect(testId("status").getAttribute("data-phase")).toBe("connected");
     expect(testId("status").textContent).toBe("connected");
     expect(testId("robot").textContent).toBe("Go2 (go2)");
@@ -72,7 +72,9 @@ describe("StatusBar", () => {
   });
 
   it("shows lastError while set and drops it once cleared", () => {
-    render(makeStatus({ lastError: "unknown_robot: no robot a" }));
+    render(makeStatus({
+      lastError: { code: "relay_error", message: "unknown_robot: no robot a" },
+    }));
     expect(container.textContent).toContain("unknown_robot: no robot a");
     render(makeStatus({ lastError: null }));
     expect(container.textContent).not.toContain("unknown_robot");

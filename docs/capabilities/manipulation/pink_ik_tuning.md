@@ -60,13 +60,13 @@ with the same objective:
 ```python skip
 from dimos.robot.manipulators.common.blueprints import planner
 
-yourarm_planner = planner(robots=[robot_model], kinematics=pink)
+yourarm_planner = planner(model=robot_model, kinematics=pink)
 ```
 
 ## Customize the task stack
 
-Subclass `PinkPoseTargetSolver` when scalar weights are insufficient—for
-example, when a robot needs per-joint posture weights or a manipulability task.
+Subclass `PinkPoseTargetSolver` when scalar weights are insufficient, for
+example when a robot needs per-joint posture weights or a manipulability task.
 Override `_create_tasks()`, call `super()`, and change only the required values:
 
 ```python skip

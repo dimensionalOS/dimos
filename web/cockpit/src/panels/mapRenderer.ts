@@ -3,7 +3,7 @@
 // ImageData and calls on a caller-supplied 2D context, so it all unit-tests
 // without a canvas.
 
-import type { CostmapValue } from "../session/decoders/costmap.ts";
+import type { CostmapValue } from "@dimos/sdk";
 
 export type GridPlacement = Pick<CostmapValue, "w" | "h" | "res" | "origin">;
 

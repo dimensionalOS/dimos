@@ -25,6 +25,7 @@ import time
 import traceback
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
 import typer
 
 from dimos.constants import CONFIG_DIR, LOG_DIR
@@ -95,6 +96,10 @@ def run(
     show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
+
+    # Log this at the start so that people get immediate feedback that the program has started.
+    logger.info("Starting DimOS")
+
     if config_path == DEFAULT_CONFIG_PATH:
         _reject_legacy_config()
     from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
@@ -103,7 +108,7 @@ def run(
         split_run_arguments,
     )
     from dimos.core.coordination.blueprints import autoconnect
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator, stream_name_types
     from dimos.core.coordination.process_lifecycle import (
         DIMOS_RUN_ID_ENV,
         spawn_watchdog,
@@ -113,6 +118,7 @@ def run(
         cleanup_stale,
         generate_run_id,
     )
+    from dimos.memory.tap import check_topics, recording
     from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
     from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
 
@@ -147,7 +153,11 @@ def run(
         raise typer.Exit(2) from error
     # Some blueprint modules select their composition at import time, so all
     # global sources must be visible before resolving the requested names.
-    global_config.update(**preparsed_global_config)
+    try:
+        global_config.update(**preparsed_global_config)
+    except ValidationError as error:
+        typer.echo(f"Error: {error.errors()[0]['msg']}", err=True)
+        raise typer.Exit(2) from error
 
     blueprint = autoconnect(*map(get_by_name_or_exit, blueprint_names))
 
@@ -158,6 +168,12 @@ def run(
         blueprint = blueprint.disabled_modules(*disabled_classes)
 
     blueprint = _with_relay_bridge(blueprint)
+    if global_config.record:
+        try:
+            check_topics(global_config.record_topics, {n for n, _ in stream_name_types(blueprint)})
+        except ValueError as error:
+            typer.echo(f"Error: {error}", err=True)
+            raise typer.Exit(2) from error
     parser = BlueprintConfigParser(blueprint)
 
     if show_help:
@@ -185,8 +201,6 @@ def run(
     except BlueprintConfigError as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(2) from error
-
-    logger.info("Starting DimOS")
 
     # Clean stale registry entries only after the full command has validated.
     stale = cleanup_stale()
@@ -282,8 +296,12 @@ def run(
         os.close(status_fd)
         # The launcher's exit released the pre-fork cache-usage marker (shared
         # flock); hold a fresh one for the daemon's lifetime.
-        with cache_usage_guard():
-            coordinator.loop()
+        try:
+            with cache_usage_guard(), recording(coordinator.transports):
+                coordinator.loop()
+        except Exception:
+            coordinator.stop()
+            raise
     else:
         coordinator = ModuleCoordinator.build(blueprint, parsed_config)
         entry = RunEntry(
@@ -303,7 +321,11 @@ def run(
         # runs with a visible traceback.
         install_signal_handlers(entry, coordinator, sigint=False)
         try:
-            coordinator.loop()
+            with recording(coordinator.transports):
+                coordinator.loop()
+        except Exception:
+            coordinator.stop()
+            raise
         finally:
             entry.remove()
 

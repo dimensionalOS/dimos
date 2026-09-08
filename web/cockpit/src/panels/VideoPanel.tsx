@@ -3,8 +3,8 @@
 
 import { useEffect, useRef } from "react";
 import { Badge, type DrawHealth, PanelFrame } from "../layout/PanelFrame.tsx";
-import { useChannel } from "../session/hooks.ts";
-import type { ChannelStore } from "../session/store.ts";
+import type { ChannelStore } from "@dimos/sdk";
+import { useStoreChannel } from "@dimos/sdk/react";
 import type { PanelProps } from "./registry.tsx";
 import styles from "./VideoPanel.module.css";
 
@@ -108,7 +108,7 @@ export function VideoPanel({ spec, store }: PanelProps) {
 function VideoCanvas({ spec, store, ch }: PanelProps & { ch: string }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const health = useRef<DrawHealth>({ lastDrawOkAtMs: Date.now(), failures: 0 }).current;
-  const { slot } = useChannel(store, ch);
+  const { slot } = useStoreChannel(store, ch);
 
   useEffect(() => {
     const canvas = canvasRef.current;

@@ -171,7 +171,7 @@ class ShmMujocoAdapter:
         return self._control_mode
 
     def read_joint_positions(self) -> list[float]:
-        """Read arm positions, then the gripper's MJCF joint position."""
+        """Read arm positions, then the gripper, in the units commands use."""
         if self._shm is None:
             return [0.0] * self._dof
         positions = self._shm.read_positions(self._arm_dof)

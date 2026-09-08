@@ -37,6 +37,8 @@ use crate::voxel::{voxelize, VoxelKey};
 #[validate(schema(function = "validate_wall_buffer"))]
 pub struct Config {
     pub world_frame: String,
+    /// Frame whose tf pose in the world frame is the planning start.
+    pub base_frame: String,
     #[validate(range(exclusive_min = 0.0))]
     pub voxel_size: f32,
     #[validate(range(exclusive_min = 0.0))]
@@ -706,6 +708,7 @@ mod region_tests {
     fn test_config() -> Config {
         Config {
             world_frame: String::new(),
+            base_frame: String::new(),
             voxel_size: 0.1,
             robot_height: 0.5,
             start_z_offset_m: 0.0,

@@ -14,16 +14,22 @@
 
 """Network scouting is optional, and start() waits for its connect endpoints."""
 
+from collections.abc import Callable
 import time
+from typing import Any
+from unittest.mock import create_autospec
 
 import pytest
+import zenoh
 
 from dimos.core.global_config import ZenohMode, global_config
 from dimos.protocol.service.zenohservice import (
     ALL_INTERFACES,
     LOOPBACK_INTERFACE,
+    LOOPBACK_LISTEN,
     ZenohConfig,
     ZenohService,
+    ZenohSessionPool,
     endpoint_addresses,
 )
 
@@ -67,6 +73,60 @@ def test_interface_separates_pooled_sessions(zenoh_defaults: None) -> None:
     )
 
 
+def test_unscouted_session_listens_only_on_loopback(zenoh_defaults: None) -> None:
+    assert ZenohConfig().listen_endpoints == [LOOPBACK_LISTEN]
+
+
+def test_scouting_on_restores_the_default_listener(
+    zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A peer the LAN can scout has to be a peer the LAN can link to."""
+    monkeypatch.setattr(global_config, "zenoh_scouting", True)
+    assert ZenohConfig().listen_endpoints == []
+
+
+def test_named_interface_restores_the_default_listener(
+    zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(global_config, "zenoh_interface", "wlan0")
+    assert ZenohConfig().listen_endpoints == []
+
+
+def test_explicit_listen_is_never_overridden(zenoh_defaults: None) -> None:
+    assert ZenohConfig(listen=["tcp/0.0.0.0:7447"]).listen_endpoints == ["tcp/0.0.0.0:7447"]
+
+
+def test_loopback_pin_reaches_the_wire(zenoh_defaults: None) -> None:
+    """Native modules read the same pinned listener off stdin."""
+    assert ZenohConfig().to_wire()["listen"] == [LOOPBACK_LISTEN]
+
+
+def test_dialing_a_robot_restores_the_default_listener(
+    zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Peers behind the robot's router learn this locator via gossip and dial it."""
+    monkeypatch.setattr(global_config, "robot_ip", "192.0.2.10")
+    config = ZenohConfig()
+    assert config.connect == ["tcp/192.0.2.10:7447"]
+    assert config.listen_endpoints == []
+
+
+def test_dialing_a_hub_restores_the_default_listener(
+    zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two peers on one hub mesh via gossip, which needs a reachable listener."""
+    monkeypatch.setattr(global_config, "zenoh_connect", "tcp/hub.example:7447")
+    assert ZenohConfig().listen_endpoints == []
+
+
+def test_pinned_and_unpinned_sessions_are_pooled_apart(
+    zenoh_defaults: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pinned = ZenohConfig().session_key
+    monkeypatch.setattr(global_config, "zenoh_scouting", True)
+    assert ZenohConfig().session_key != pinned
+
+
 def test_endpoint_addresses_keeps_literal_host_and_port() -> None:
     assert "192.0.2.10:7447" in endpoint_addresses("tcp/192.0.2.10:7447")
 
@@ -88,13 +148,18 @@ class _FakeInfo:
         return self._links
 
 
-class _FakeSession:
-    def __init__(self, links: list[str]) -> None:
-        self.info = _FakeInfo([_FakeLink(dst) for dst in links])
+def _fake_session(links: list[str]) -> Any:
+    """A session whose only live part is the links _await_connect polls."""
+    return create_autospec(
+        zenoh.Session,
+        spec_set=True,
+        instance=True,
+        info=_FakeInfo([_FakeLink(dst) for dst in links]),
+    )
 
 
 def _await_elapsed(
-    session: _FakeSession, connect: list[str], connect_timeout: float, mode: ZenohMode = "peer"
+    session: zenoh.Session, connect: list[str], connect_timeout: float, mode: ZenohMode = "peer"
 ) -> float:
     """Seconds _await_connect blocks against a session with the given links."""
     service = ZenohService(mode=mode, connect=connect, connect_timeout=connect_timeout)
@@ -104,12 +169,12 @@ def _await_elapsed(
 
 
 def test_await_returns_once_endpoint_is_linked(zenoh_defaults: None) -> None:
-    session = _FakeSession(["tcp/192.0.2.10:7447"])
+    session = _fake_session(["tcp/192.0.2.10:7447"])
     assert _await_elapsed(session, connect=["tcp/192.0.2.10:7447"], connect_timeout=5.0) < 1.0
 
 
 def test_await_waits_for_every_endpoint(zenoh_defaults: None) -> None:
-    session = _FakeSession(["tcp/192.0.2.10:7447"])
+    session = _fake_session(["tcp/192.0.2.10:7447"])
     elapsed = _await_elapsed(
         session,
         connect=["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"],
@@ -120,7 +185,7 @@ def test_await_waits_for_every_endpoint(zenoh_defaults: None) -> None:
 
 def test_client_mode_await_is_satisfied_by_one_link(zenoh_defaults: None) -> None:
     """A client session holds a single link, so one linked alternative is done."""
-    session = _FakeSession(["tcp/192.0.2.10:7447"])
+    session = _fake_session(["tcp/192.0.2.10:7447"])
     elapsed = _await_elapsed(
         session,
         connect=["tcp/192.0.2.10:7447", "tcp/192.0.2.11:7447"],
@@ -133,23 +198,44 @@ def test_client_mode_await_is_satisfied_by_one_link(zenoh_defaults: None) -> Non
 def test_duplicate_endpoints_do_not_satisfy_the_wait(zenoh_defaults: None) -> None:
     """One endpoint listed twice is still one link to wait for."""
     duplicate = "tcp/192.0.2.199:7447"
-    elapsed = _await_elapsed(_FakeSession([]), connect=[duplicate, duplicate], connect_timeout=0.3)
+    elapsed = _await_elapsed(_fake_session([]), connect=[duplicate, duplicate], connect_timeout=0.3)
     assert elapsed >= 0.3
 
 
 def test_await_gives_up_after_timeout(zenoh_defaults: None) -> None:
     elapsed = _await_elapsed(
-        _FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.3
+        _fake_session([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.3
     )
     assert elapsed >= 0.3
 
 
 def test_await_is_skipped_without_connect_endpoints(zenoh_defaults: None) -> None:
-    assert _await_elapsed(_FakeSession([]), connect=[], connect_timeout=30.0) < 3.0
+    assert _await_elapsed(_fake_session([]), connect=[], connect_timeout=30.0) < 3.0
 
 
 def test_zero_timeout_disables_the_wait(zenoh_defaults: None) -> None:
     assert (
-        _await_elapsed(_FakeSession([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.0)
+        _await_elapsed(_fake_session([]), connect=["tcp/192.0.2.199:7447"], connect_timeout=0.0)
         < 1.0
     )
+
+
+def test_stock_sessions_discover_each_other_over_loopback(
+    zenoh_defaults: None, unused_udp_port_factory: Callable[[], int]
+) -> None:
+    """Two sessions with the stock config scout each other on loopback and link there."""
+    config = ZenohConfig(scout_addr=f"224.0.0.224:{unused_udp_port_factory()}")
+    pools = [ZenohSessionPool(), ZenohSessionPool()]
+    a, b = (pool.acquire(config) for pool in pools)
+    try:
+        zid_a, zid_b = str(a.info.zid()), str(b.info.zid())
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and zid_b not in map(str, a.info.peers_zid()):
+            time.sleep(0.05)
+        assert zid_b in map(str, a.info.peers_zid())
+        assert zid_a in map(str, b.info.peers_zid())
+        links = [str(link.dst) for link in a.info.links()]
+        assert links and all(dst.startswith("tcp/127.0.0.1:") for dst in links), links
+    finally:
+        for pool in pools:
+            pool.close_all()

@@ -28,19 +28,35 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from dimos.constants import STATE_DIR
 from dimos.evals.vqa.author import OpenAIQuestionAuthor, QuestionAuthor
+from dimos.evals.vqa.contracts import (
+    FamilyAnswer,
+    FamilySpec,
+    InsufficientEvidenceError,
+    InvalidQuestionProposalError,
+    NonEmptyString,
+    ObjectMaskEstimator,
+    ObjectRangeEstimator,
+    QuestionProposal,
+)
 from dimos.evals.vqa.families import (
     AVAILABLE_FAMILIES,
-    FamilyAnswer,
-    InsufficientEvidenceError,
-    NonEmptyString,
-    QuestionProposal,
     answer_question,
 )
-from dimos.memory.cli.dataset import open_dataset
+from dimos.evals.vqa.pointcloud_frame import (
+    PointCloudFrame,
+    PointCloudFrameLoader,
+    PointCloudFrameUnavailableError,
+)
+from dimos.evals.vqa.primitives.edge_tam import EdgeTAMObjectMaskPipeline
+from dimos.evals.vqa.primitives.range import LidarRangeEstimator
 from dimos.msgs.sensor_msgs.Image import Image
 
 if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel
+
+_UNORDERED_FAMILIES = frozenset(
+    family.name for family in AVAILABLE_FAMILIES if not family.object_order_matters
+)
 
 
 class GenerationRequest(BaseModel):
@@ -77,6 +93,14 @@ class GenerationRequest(BaseModel):
         if self.output is not None:
             return self.output.expanduser()
         return STATE_DIR / "datasets" / "vqa" / f"{Path(self.dataset).stem}-frames"
+
+
+class VqaGenerationConfig(BaseModel):
+    """Processing policy shared by VQA generation runs."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    synchronization_tolerance_s: float = Field(default=0.1, gt=0)
 
 
 class PublicCase(BaseModel):
@@ -116,70 +140,92 @@ class GenerationResult(BaseModel):
 
 
 @dataclass(frozen=True)
+class GenerationFrame:
+    """One indexed image with optional image-aligned point-cloud evidence."""
+
+    index: int
+    image: Image
+    pointcloud_frame: PointCloudFrame | None = None
+
+
+@dataclass(frozen=True)
 class _GeneratedFrame:
     index: int
     image: Image
     cases: tuple[PublicCase, ...]
     labels: tuple[PrivateLabel, ...]
     audit_rows: tuple[dict[str, object], ...]
+    families: tuple[FamilySpec, ...]
 
 
-def generate_dataset(request: GenerationRequest) -> GenerationResult:
+def generate_dataset(
+    request: GenerationRequest,
+    config: VqaGenerationConfig | None = None,
+) -> GenerationResult:
     """Generate a standalone dataset from selected Memory images."""
     # Load optional model dependencies only when generation is requested.
     from dimos.models.vl.moondream import MoondreamVlModel
     from dimos.models.vl.openai import OpenAIVlModel
 
+    config = config or VqaGenerationConfig()
     indices = request.frame_indices()
-    store = open_dataset(request.dataset)
-    author_model = OpenAIVlModel()
-    detector_model = MoondreamVlModel()
-    try:
-        images = store.streams.color_image
-        image_count = images.count()
+    with PointCloudFrameLoader(
+        request.dataset,
+        tolerance_s=config.synchronization_tolerance_s,
+    ) as loader:
+        image_count = loader.image_count
         if indices[-1] >= image_count:
             raise IndexError(
                 f"color_image index {indices[-1]} is out of range for {image_count} images"
             )
 
-        def selected_frames() -> Iterable[tuple[int, Image]]:
-            for index in indices:
-                observation = images.offset(index).first()
-                yield index, _copy_observation_image(observation.data, observation.ts)
-
-        return generate_frames_dataset(
-            request,
-            selected_frames(),
-            OpenAIQuestionAuthor(author_model),
-            detector_model,
-            model_names={
+        author_model = OpenAIVlModel()
+        detector_model = MoondreamVlModel()
+        try:
+            detector = detector_model
+            model_names = {
                 "author": author_model.config.model_name,
                 "detector": detector_model.config.model_name,
-            },
-        )
-    finally:
-        store.stop()
-        author_model.stop()
-        detector_model.stop()
+            }
+            mask_estimator = EdgeTAMObjectMaskPipeline(detector)
 
+            def pointcloud_frames() -> Iterable[GenerationFrame]:
+                for index in indices:
+                    try:
+                        pointcloud_frame = loader.load(index)
+                    except PointCloudFrameUnavailableError:
+                        yield GenerationFrame(index, loader.load_image(index))
+                    else:
+                        yield GenerationFrame(index, pointcloud_frame.image, pointcloud_frame)
 
-def _copy_observation_image(value: object, timestamp: float) -> Image:
-    if not isinstance(value, Image):
-        raise TypeError("color_image stream must contain dimos Image values")
-    image = value.copy()
-    image.ts = timestamp
-    return image
+            return generate_frames_dataset(
+                request,
+                pointcloud_frames(),
+                OpenAIQuestionAuthor(author_model),
+                detector,
+                LidarRangeEstimator(mask_estimator),
+                mask_estimator,
+                config=config,
+                model_names=model_names,
+            )
+        finally:
+            author_model.stop()
+            detector_model.stop()
 
 
 def generate_frames_dataset(
     request: GenerationRequest,
-    frames: Iterable[tuple[int, Image]],
+    frames: Iterable[GenerationFrame],
     author: QuestionAuthor,
     detector: VlModel,
+    range_estimator: ObjectRangeEstimator | None = None,
+    mask_estimator: ObjectMaskEstimator | None = None,
     *,
+    config: VqaGenerationConfig | None = None,
     model_names: dict[str, str] | None = None,
 ) -> GenerationResult:
     """Generate and write one dataset from already loaded indexed images."""
+    config = config or VqaGenerationConfig()
     output = request.output_directory()
     _prepare_output(output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -189,12 +235,14 @@ def generate_frames_dataset(
         all_labels: list[PrivateLabel] = []
         frame_count = 0
         rejected_count = 0
-        for index, image in frames:
-            frame = _generate_frame(index, image, author, detector)
+        used_family_names: set[str] = set()
+        for source in frames:
+            frame = _generate_frame(source, author, detector, range_estimator, mask_estimator)
             _write_frame(staging, frame)
             all_cases.extend(frame.cases)
             all_labels.extend(frame.labels)
             frame_count += 1
+            used_family_names.update(family.name for family in frame.families)
             rejected_count += sum(row.get("status") == "rejected" for row in frame.audit_rows)
 
         if frame_count == 0:
@@ -213,7 +261,10 @@ def generate_frames_dataset(
             staging / "audit" / "run.json",
             {
                 "generation": request.model_dump(mode="json", exclude={"output"}),
-                "families": [family.name for family in AVAILABLE_FAMILIES],
+                "configuration": config.model_dump(mode="json"),
+                "families": [
+                    family.name for family in AVAILABLE_FAMILIES if family.name in used_family_names
+                ],
                 "models": model_names or {},
                 "frame_count": frame_count,
                 "question_count": len(all_cases),
@@ -227,21 +278,40 @@ def generate_frames_dataset(
 
 
 def _generate_frame(
-    image_index: int,
-    image: Image,
+    source: GenerationFrame,
     author: QuestionAuthor,
     detector: VlModel,
+    range_estimator: ObjectRangeEstimator | None,
+    mask_estimator: ObjectMaskEstimator | None,
 ) -> _GeneratedFrame:
-    proposals = _deduplicate_proposals(author.propose(image, AVAILABLE_FAMILIES))
+    image_index = source.index
+    image = source.image
+    families = tuple(
+        family
+        for family in AVAILABLE_FAMILIES
+        if not (family.requires_masks and mask_estimator is None)
+        and not (
+            family.requires_pointcloud
+            and (source.pointcloud_frame is None or range_estimator is None)
+        )
+    )
+    proposals = _deduplicate_proposals(author.propose(image, families))
     answered: list[tuple[QuestionProposal, FamilyAnswer]] = []
     audit_rows: list[dict[str, object]] = []
     for proposal in proposals:
         try:
-            answer = answer_question(proposal, image, detector)
-        except InsufficientEvidenceError as exc:
+            answer = answer_question(
+                proposal,
+                image,
+                detector,
+                source.pointcloud_frame,
+                range_estimator,
+                mask_estimator,
+            )
+        except (InsufficientEvidenceError, InvalidQuestionProposalError) as exc:
             audit_rows.append(
                 {
-                    "proposal": proposal.model_dump(mode="json"),
+                    "proposal": proposal.model_dump(mode="json", exclude_none=True),
                     "status": "rejected",
                     "reason": str(exc),
                 }
@@ -250,7 +320,7 @@ def _generate_frame(
             answered.append((proposal, answer))
             audit_rows.append(
                 {
-                    "proposal": proposal.model_dump(mode="json"),
+                    "proposal": proposal.model_dump(mode="json", exclude_none=True),
                     "status": "answered",
                     "answer": answer.model_dump(mode="json"),
                 }
@@ -276,12 +346,22 @@ def _generate_frame(
         cases=cases,
         labels=labels,
         audit_rows=tuple(audit_rows),
+        families=tuple(families),
     )
 
 
 def _deduplicate_proposals(proposals: Sequence[QuestionProposal]) -> tuple[QuestionProposal, ...]:
     unique: list[QuestionProposal] = []
+    seen_object_sets: set[tuple[str, frozenset[str]]] = set()
     for proposal in proposals:
+        if proposal.family in _UNORDERED_FAMILIES:
+            object_set = (
+                proposal.family,
+                frozenset(name.casefold() for name in proposal.object_names),
+            )
+            if object_set in seen_object_sets:
+                continue
+            seen_object_sets.add(object_set)
         if proposal not in unique:
             unique.append(proposal)
     return tuple(unique)
@@ -291,7 +371,11 @@ def _case_ids(image_index: int, proposals: tuple[QuestionProposal, ...]) -> tupl
     counts: dict[str, int] = {}
     identifiers: list[str] = []
     for proposal in proposals:
-        object_id = re.sub(r"[^a-z0-9]+", "-", proposal.object_name.casefold()).strip("-")
+        object_names = proposal.object_names
+        if proposal.family in _UNORDERED_FAMILIES:
+            object_names = tuple(sorted(object_names, key=str.casefold))
+        joined_names = "-vs-".join(object_names)
+        object_id = re.sub(r"[^a-z0-9]+", "-", joined_names.casefold()).strip("-")
         base = f"frame-{image_index:06d}-{object_id or 'object'}-{proposal.family}"
         count = counts.get(base, 0) + 1
         counts[base] = count

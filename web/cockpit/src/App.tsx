@@ -1,21 +1,23 @@
+import type { Session } from "@dimos/sdk";
+import { teleopHooks } from "@dimos/sdk/internal/teleop";
+import { useStatus } from "@dimos/sdk/react";
 import { LayoutTree } from "./layout/LayoutTree.tsx";
 import { Tabs } from "./layout/Tabs.tsx";
-import { useStatus } from "./session/hooks.ts";
-import type { SessionHandle } from "./session/session.ts";
 import { ChannelList } from "./ui/ChannelList.tsx";
 import { StatusBar } from "./ui/StatusBar.tsx";
 import styles from "./App.module.css";
 
-export function App({ session }: { session: SessionHandle }) {
-  const status = useStatus(session.status);
+export function App({ session }: { session: Session }) {
+  const status = useStatus(session);
+  const teleop = teleopHooks(session);
 
   let content;
   if (status.transport.phase === "failed") {
     content = <p className={styles.notice}>Connection failed: {status.transport.reason}</p>;
-  } else if (status.robotCount > 1) {
+  } else if (status.robots.length > 1) {
     content = (
       <p className={styles.notice}>
-        {status.robotCount} robots connected; the robot picker arrives in a later release.
+        {status.robots.length} robots connected; the robot picker arrives in a later release.
       </p>
     );
   } else if (status.manifestUnsupported) {
@@ -29,12 +31,12 @@ export function App({ session }: { session: SessionHandle }) {
     content = <p className={styles.notice}>Waiting for a robot to register...</p>;
   } else {
     content = (
-      <Tabs manifest={status.manifest} store={session.channels} teleop={session.teleop}>
-        <LayoutTree manifest={status.manifest} store={session.channels} teleop={session.teleop} />
+      <Tabs manifest={status.manifest} store={session.store} teleop={teleop}>
+        <LayoutTree manifest={status.manifest} store={session.store} teleop={teleop} />
         <ChannelList
           channels={status.manifest.channels}
           panels={status.manifest.panels}
-          store={session.channels}
+          store={session.store}
         />
       </Tabs>
     );

@@ -52,26 +52,28 @@ def test_openarm_model_uses_pinned_official_bimanual_xacro() -> None:
     )
 
 
-def test_openarm_config_exposes_one_bimanual_robot() -> None:
+def test_openarm_config_exposes_one_bimanual_model() -> None:
     config = openarm_bimanual_model_config()
-    registry = PlanningGroupRegistry([config])
+    registry = PlanningGroupRegistry(config.planning_groups)
 
     assert config.model is OPENARM_BIMANUAL_MODEL
-    assert config.get_coordinator_joint_names() == OPENARM_ARM_JOINTS
+    assert config.joint_names == OPENARM_ARM_JOINTS
     assert [group.name for group in config.planning_groups] == [
-        "left_manipulator",
-        "right_manipulator",
+        "left_arm",
+        "right_arm",
+        "both_arms",
     ]
     assert [group.joint_names for group in config.planning_groups] == [
         tuple(openarm_urdf_joints(side)) for side in OPENARM_SIDES
-    ]
+    ] + [tuple(OPENARM_ARM_JOINTS)]
     assert config.collision_exclusion_pairs == [
         ("openarm_left_ee_link1", "openarm_left_ee_link2"),
         ("openarm_right_ee_link1", "openarm_right_ee_link2"),
     ]
     assert [group.id for group in registry.list()] == [
-        "openarm/left_manipulator",
-        "openarm/right_manipulator",
+        "left_arm",
+        "right_arm",
+        "both_arms",
     ]
 
 
@@ -104,7 +106,8 @@ def test_openarm_hardware_defaults_to_mock_without_can_ports() -> None:
         HardwareType.WHOLE_BODY,
         "mock_whole_body",
     )
-    limits = hardware.adapter_kwargs["limits"]
+    limits = hardware.limits
+    assert limits is not None
     assert limits.position_lower == [*([None] * len(OPENARM_ARM_JOINTS)), 0.0, 0.0]
     assert limits.position_upper == [*([None] * len(OPENARM_ARM_JOINTS)), 1.0, 1.0]
     assert limits.velocity_max == [None] * len(OPENARM_JOINTS)
@@ -116,7 +119,7 @@ def test_openarm_hardware_uses_physical_adapter_with_explicit_can_ports() -> Non
     assert hardware.adapter_type == "openarm_damiao"
     runtime_config = hardware.adapter_kwargs["runtime_config"]
     assert isinstance(runtime_config, DamiaoRuntimeConfig)
-    assert runtime_config.bus_addresses == {"left": "can1", "right": "can0"}
+    assert runtime_config.bus_devices == {"left": "can1", "right": "can0"}
 
 
 @pytest.mark.parametrize(

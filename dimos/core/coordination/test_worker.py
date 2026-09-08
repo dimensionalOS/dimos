@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -49,6 +50,14 @@ class SimpleModule(Module):
     @rpc
     def read_global_robot_ip(self) -> str | None:
         return global_config.robot_ip
+
+    @rpc
+    def unpicklable(self) -> threading.Lock:
+        return threading.Lock()
+
+    @rpc
+    def make_lock(self) -> None:
+        self.lock = threading.Lock()
 
 
 class AnotherModule(Module):
@@ -132,6 +141,38 @@ def test_worker_manager_basic(create_worker_manager):
 
     result = module.get_counter()
     assert result == 2
+
+    module.stop()
+
+
+@pytest.mark.skipif_macos_bug
+def test_unpicklable_rpc_result_raises_without_killing_the_worker(create_worker_manager):
+    """An RPC result that cannot pickle comes back as the error, not a dead worker."""
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(SimpleModule, global_config, {})
+    module.start()
+
+    with pytest.raises(TypeError, match="cannot pickle"):
+        module.unpicklable()
+
+    assert module.increment() == 1
+
+    module.stop()
+
+
+@pytest.mark.skipif_macos_bug
+def test_unpicklable_pipe_response_raises_without_killing_the_worker(create_worker_manager):
+    """A response the worker pipe cannot pickle errors out; the worker lives on."""
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(SimpleModule, global_config, {})
+    module.start()
+    module.make_lock()
+
+    # Attribute access rides the pipe, unlike rpc calls, which ride the transport.
+    with pytest.raises(RuntimeError, match="(?i)pickle"):
+        module.actor_instance.lock  # noqa: B018
+
+    assert module.increment() == 1
 
     module.stop()
 

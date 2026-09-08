@@ -4,8 +4,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Msg, PanelSpec } from "@dimos/shared";
 import type { Manifest } from "@dimos/shared/manifest";
-import { ChannelStore, StatusStore } from "../session/store.ts";
-import type { TeleopHooks } from "./teleopMachine.ts";
+import { ChannelStore, StatusStore } from "@dimos/sdk";
+import type { TeleopHooks } from "@dimos/sdk/internal/teleop";
 import { TeleopPanel } from "./TeleopPanel.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -22,6 +22,8 @@ const MANIFEST: Manifest = {
       delivery: "latest",
       maxHz: 15,
       params: { maxLinear: 0.8, maxAngular: 1.0, boost: 2.0, watchdogMs: 300 },
+      publish: "none",
+      requiredScope: null,
     },
   ],
   panels: [SPEC],

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compatibility trajectory parametrizer using segmented trapezoids."""
+"""Trajectory parametrizer using segmented trapezoids."""
 
 import math
 
@@ -79,28 +79,19 @@ class SimpleTrapezoidParametrizer(BaseTrajectoryParametrizer):
         world: WorldSpec,
         selection: PlanningGroupSelection,
     ) -> tuple[tuple[float, ...], tuple[float, ...]]:
-        configs = {}
-        for robot_id in world.get_robot_ids():
-            config = world.get_robot_config(robot_id)
-            configs[config.name] = config
+        config = world.get_model_config()
         velocities: list[float] = []
         accelerations: list[float] = []
-        for global_name in selection.joint_names:
-            if "/" not in global_name:
-                raise TrajectoryParametrizationError(f"Joint '{global_name}' is not globally named")
-            robot_name, local_name = global_name.split("/", 1)
-            selected_config = configs.get(robot_name)
-            if selected_config is None:
-                raise TrajectoryParametrizationError(f"Unknown robot for joint '{global_name}'")
-            if local_name not in selected_config.joint_names:
-                raise TrajectoryParametrizationError(f"Unknown local joint '{global_name}'")
-            velocity = float(selected_config.max_velocity)
-            acceleration = float(selected_config.max_acceleration)
+        for joint_name in selection.joint_names:
+            if joint_name not in config.joint_names:
+                raise TrajectoryParametrizationError(f"Unknown model joint '{joint_name}'")
+            velocity = float(config.max_velocity)
+            acceleration = float(config.max_acceleration)
             if not math.isfinite(velocity) or velocity <= 0.0:
-                raise TrajectoryParametrizationError(f"Invalid velocity limit for '{global_name}'")
+                raise TrajectoryParametrizationError(f"Invalid velocity limit for '{joint_name}'")
             if not math.isfinite(acceleration) or acceleration <= 0.0:
                 raise TrajectoryParametrizationError(
-                    f"Invalid acceleration limit for '{global_name}'"
+                    f"Invalid acceleration limit for '{joint_name}'"
                 )
             velocities.append(velocity)
             accelerations.append(acceleration)

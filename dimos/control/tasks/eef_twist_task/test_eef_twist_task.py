@@ -33,10 +33,8 @@ from dimos.robot.assets.model import RobotModel
 
 def _robot_model() -> RobotModelConfig:
     return RobotModelConfig(
-        name="arm",
         model=RobotModel.from_file(Path("fake.urdf")),
-        joint_names=["joint1", "joint2"],
-        joint_name_mapping={"arm/joint1": "joint1", "arm/joint2": "joint2"},
+        joint_names=["arm/joint1", "arm/joint2"],
     )
 
 

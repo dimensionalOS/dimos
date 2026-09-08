@@ -52,7 +52,7 @@ More information on this in [doclinks](/docs/coding-agents/docs/doclinks.md)
 
 [Pikchr](https://pikchr.org/) is a diagram language from SQLite. Use it for flowcharts and architecture diagrams.
 
-**Important:** Always wrap pikchr blocks in `<details>` tags so the source is collapsed by default on GitHub. The rendered SVG stays visible outside the fold. Code blocks (Python, etc.) should NOT be folded—they're meant to be read.
+**Important:** Always wrap pikchr blocks in `<details>` tags so the source is collapsed by default on GitHub. The rendered SVG stays visible outside the fold. Code blocks (Python, etc.) should NOT be folded. They're meant to be read.
 
 ## Basic syntax
 

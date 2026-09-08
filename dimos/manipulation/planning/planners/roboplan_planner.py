@@ -44,7 +44,6 @@ from dimos.manipulation.planning.spec.models import (
     CartesianTarget,
     PlanningGroupID,
     PlanningResult,
-    WorldRobotID,
 )
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
 from dimos.manipulation.planning.world.roboplan_model import (
@@ -83,43 +82,41 @@ class RoboPlanPlanner:
     def plan_joint_path(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         start: JointState,
         goal: JointState,
         timeout: float = 10.0,
     ) -> PlanningResult:
-        """Plan using the legacy robot-scoped local-name contract."""
+        """Plan a path for the configured model's canonical joints."""
         if world is not self._world:
             return PlanningResult(
                 status=PlanningStatus.NO_SOLUTION,
                 message="RoboPlan-native planner requires its RoboPlanWorld instance",
             )
         try:
-            q_start = self._world._joint_state_to_q(robot_id, start)
+            q_start = self._world.ordered_joint_positions(start)
         except ValueError as exc:
             return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
         try:
-            q_goal = self._world._joint_state_to_q(robot_id, goal)
+            q_goal = self._world.ordered_joint_positions(goal)
         except ValueError as exc:
             return PlanningResult(status=PlanningStatus.INVALID_GOAL, message=str(exc))
-        if not self._world._is_ready():
+        if not self._world.is_ready():
             return PlanningResult(
                 status=PlanningStatus.INVALID_START,
                 message="RoboPlan planning scene is not ready: authoritative state is incomplete",
             )
-        robot = self._world._get_robot(robot_id)
-        group = self._world._legacy_group(robot.config.name)
+        config = self._world.get_model_config()
+        group = self._world.all_planning_group()
         with self._world.scratch_context() as ctx:
             self._world.set_joint_state(
                 ctx,
-                robot_id,
-                JointState(name=list(robot.config.joint_names), position=q_start.tolist()),
+                JointState(name=list(config.joint_names), position=q_start.tolist()),
             )
             return self._plan_group(
                 ctx,
                 group,
-                dict(zip(robot.config.joint_names, q_start, strict=True)),
-                dict(zip(robot.config.joint_names, q_goal, strict=True)),
+                dict(zip(config.joint_names, q_start, strict=True)),
+                dict(zip(config.joint_names, q_goal, strict=True)),
                 timeout,
                 5000,
             )
@@ -144,7 +141,7 @@ class RoboPlanPlanner:
                 status=PlanningStatus.INVALID_GOAL,
                 message="No planning groups selected",
             )
-        group = self._world._require_model().groups.get(frozenset(selection.group_ids))
+        group = self._world.planning_group(selection.group_ids)
         if group is None:
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
@@ -197,7 +194,7 @@ class RoboPlanPlanner:
         except ValueError as exc:
             return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
 
-        group = self._world._require_model().groups.get(frozenset(selection.group_ids))
+        group = self._world.planning_group(selection.group_ids)
         if group is None:
             return PlanningResult(
                 status=PlanningStatus.UNSUPPORTED,
@@ -262,7 +259,7 @@ class RoboPlanPlanner:
         start: JointState,
     ) -> JointState:
         """Validate readiness and normalize the request's authoritative start."""
-        if not self._world._is_ready():
+        if not self._world.is_ready():
             raise ValueError(
                 "RoboPlan planning scene is not ready: authoritative state is incomplete"
             )
@@ -351,13 +348,12 @@ class RoboPlanPlanner:
 
     def _apply_selected_state(self, ctx: RoboPlanContext, state: JointState) -> None:
         positions = dict(zip(state.name, state.position, strict=True))
-        for robot_id, robot in self._world._robots.items():
-            q = ctx.q_by_robot[robot_id].copy()
-            for index, local_name in enumerate(robot.config.joint_names):
-                global_name = f"{robot.config.name}/{local_name}"
-                if global_name in positions:
-                    q[index] = positions[global_name]
-            ctx.q_by_robot[robot_id] = q
+        config = self._world.get_model_config()
+        q = ctx.q.copy()
+        for index, name in enumerate(config.joint_names):
+            if name in positions:
+                q[index] = positions[name]
+        ctx.q = q
 
     def _build_cartesian_path(
         self,
@@ -365,7 +361,6 @@ class RoboPlanPlanner:
         selection: PlanningGroupSelection,
         targets: Mapping[PlanningGroupID, CartesianTarget],
     ) -> Any:
-        model = self._world._require_model()
         base_frames: list[str] = []
         tip_frames: list[str] = []
         waypoint_paths: list[list[NDArray[np.float64]]] = []
@@ -385,7 +380,7 @@ class RoboPlanPlanner:
                     f"Cartesian target for '{group.id}' must begin at its current TCP pose"
                 )
             base_frames.append(ROBOPLAN_WORLD_FRAME)
-            tip_frames.append(model.native_link(group.robot_name, group.tip_link))
+            tip_frames.append(self._world.native_link_name(group.tip_link))
             waypoint_paths.append(target_matrices)
         return roboplan_core.CartesianPath(base_frames, tip_frames, waypoint_paths)
 
@@ -516,13 +511,11 @@ class RoboPlanPlanner:
                     position=(q_start + fraction * (q_end - q_start)).tolist(),
                 )
                 self._apply_selected_state(ctx, sample)
-                first_robot_id = next(iter(self._world._robots))
-                if not self._world.is_collision_free(ctx, first_robot_id):
+                if not self._world.is_collision_free(ctx):
                     return False
         if len(path) == 1:
             self._apply_selected_state(ctx, path[0])
-            first_robot_id = next(iter(self._world._robots))
-            return self._world.is_collision_free(ctx, first_robot_id)
+            return self._world.is_collision_free(ctx)
         return True
 
     def _plan_group(

@@ -14,10 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Image import Image
 
 
 class JpegCodec:
@@ -30,10 +27,13 @@ class JpegCodec:
     def __init__(self, quality: int = 50) -> None:
         self._quality = quality
 
+    @property
+    def payload_type(self) -> type[Image]:
+        """Message type decoded by this storage codec."""
+        return Image
+
     def encode(self, value: Image) -> bytes:
         return value.lcm_jpeg_encode(quality=self._quality)
 
     def decode(self, data: bytes) -> Image:
-        from dimos.msgs.sensor_msgs.Image import Image
-
         return Image.lcm_jpeg_decode(data)

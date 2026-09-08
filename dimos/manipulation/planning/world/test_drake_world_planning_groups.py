@@ -73,6 +73,23 @@ def _write_urdf(path: Path) -> None:
     )
 
 
+def _write_canonical_urdf(path: Path) -> None:
+    path.write_text(
+        """
+<robot name="canonical">
+  <link name="world"/><link name="left/base"/><link name="left/tool"/>
+  <joint name="left/mount" type="fixed">
+    <parent link="world"/><child link="left/base"/>
+  </joint>
+  <joint name="left/j1" type="revolute">
+    <parent link="left/base"/><child link="left/tool"/>
+    <axis xyz="0 0 1"/><limit lower="-1" upper="1" effort="1" velocity="1"/>
+  </joint>
+</robot>
+"""
+    )
+
+
 def _write_urdf_with_world_base_joint(path: Path) -> None:
     path.write_text(
         """
@@ -104,7 +121,6 @@ def _config(
     path: Path, groups: list[PlanningGroupDefinition], joints: list[str] | None = None
 ) -> RobotModelConfig:
     return RobotModelConfig(
-        name="arm",
         model=RobotModel.from_file(path),
         base_pose=PoseStamped(position=[0, 0, 0], orientation=[0, 0, 0, 1]),
         joint_names=joints or ["joint1", "joint2"],
@@ -121,17 +137,41 @@ def _arm_group(
     )
 
 
+@requires_drake
+def test_drake_loads_canonical_slash_names_natively(tmp_path: Path) -> None:
+    urdf = tmp_path / "canonical.urdf"
+    _write_canonical_urdf(urdf)
+    config = RobotModelConfig(
+        model=RobotModel.from_file(urdf),
+        joint_names=["left/j1"],
+        base_link="left/base",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="left_arm",
+                joint_names=("left/j1",),
+                base_link="left/base",
+                tip_link="left/tool",
+            )
+        ],
+    )
+    world = DrakeWorld()
+
+    world.load_model(config)
+    world.finalize()
+
+    assert world.get_model_config().joint_names == ["left/j1"]
+
+
 def test_drake_config_group_helpers_resolve_groups_without_drake_runtime(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     config = _config(urdf, [_arm_group("joint2", "joint1", name="wrist")])
 
-    group = DrakeWorld._planning_group_from_config(config, "arm/wrist")
+    group = DrakeWorld._planning_group_from_config(config, "wrist")
 
-    assert DrakeWorld._primary_pose_group_id_for_config(config) == "arm/wrist"
-    assert group.id == "arm/wrist"
-    assert group.joint_names == ("arm/joint2", "arm/joint1")
-    assert group.local_joint_names == ("joint2", "joint1")
+    assert DrakeWorld._primary_pose_group_id_for_config(config) == "wrist"
+    assert group.id == "wrist"
+    assert group.joint_names == ("joint2", "joint1")
     assert group.tip_link == "tool0"
 
 
@@ -154,7 +194,7 @@ def test_drake_config_group_helpers_validate_duplicate_and_ambiguous_groups(
     with pytest.raises(ValueError, match="multiple pose"):
         DrakeWorld._primary_pose_group_id_for_config(ambiguous)
     with pytest.raises(KeyError, match="Unknown planning group ID"):
-        DrakeWorld._planning_group_from_config(ambiguous, "arm/missing")
+        DrakeWorld._planning_group_from_config(ambiguous, "missing")
 
 
 @requires_drake
@@ -164,7 +204,7 @@ def test_drake_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    robot_id = world.add_robot(_config(urdf, [_arm_group("joint1", "joint2")]))
+    world.load_model(_config(urdf, [_arm_group("joint1", "joint2")]))
 
     obstacle = Obstacle(
         name="box",
@@ -189,7 +229,7 @@ def test_drake_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
     assert world.add_obstacle(unnamed) is None
     assert world.add_obstacle(obstacle) == "box"
     joint_state = JointState(name=["joint1", "joint2"], position=[0.0, 0.0])
-    assert world.check_config_collision_free(robot_id, joint_state)
+    assert world.check_config_collision_free(joint_state)
     original_geometry_id = world._obstacles["box"].geometry_id
     assert world.add_obstacle(obstacle) is None
     assert world.remove_obstacle("missing") is False
@@ -199,7 +239,7 @@ def test_drake_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
     assert world.update_obstacle_pose("box", moved_pose)
     assert world._obstacles["box"].geometry_id != original_geometry_id
     assert world.get_obstacles()[0].pose.position.x == pytest.approx(0.0)
-    assert not world.check_config_collision_free(robot_id, joint_state)
+    assert not world.check_config_collision_free(joint_state)
 
     replacement = replace(
         obstacle,
@@ -208,7 +248,7 @@ def test_drake_obstacle_ids_are_world_owned_and_invalid_insertions_are_rejected(
         color=(0.0, 1.0, 0.0, 1.0),
     )
     assert world.update_obstacle(replacement)
-    assert world.check_config_collision_free(robot_id, joint_state)
+    assert world.check_config_collision_free(joint_state)
     replacement.dimensions = (9.0,)
     retrieved = world.get_obstacles()[0]
     retrieved.dimensions = (8.0,)
@@ -222,7 +262,7 @@ def test_drake_obstacle_replacement_failure_invalidates_world(
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    world.add_robot(_config(urdf, [_arm_group("joint1", "joint2")]))
+    world.load_model(_config(urdf, [_arm_group("joint1", "joint2")]))
     world.finalize()
     obstacle = Obstacle(
         name="box",
@@ -244,23 +284,21 @@ def test_drake_obstacle_replacement_failure_invalidates_world(
 
 
 @requires_drake
-def test_drake_group_fk_uses_tip_link_and_legacy_unique_pose_group(tmp_path: Path) -> None:
+def test_drake_group_fk_uses_tip_link_and_unique_pose_group(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    robot_id = world.add_robot(_config(urdf, [_arm_group("joint1", "joint2")]))
+    world.load_model(_config(urdf, [_arm_group("joint1", "joint2")]))
     world.finalize()
     ctx = world.get_live_context()
-    world.set_joint_state(
-        ctx, robot_id, JointState({"name": ["joint1", "joint2"], "position": [0.0, 0.0]})
-    )
+    world.set_joint_state(ctx, JointState({"name": ["joint1", "joint2"], "position": [0.0, 0.0]}))
 
-    group_pose = world.get_group_ee_pose(ctx, "arm/arm")
-    legacy_pose = world.get_ee_pose(ctx, robot_id)
+    group_pose = world.get_group_ee_pose(ctx, "arm")
+    default_pose = world.get_ee_pose(ctx)
 
     assert group_pose.position.x == pytest.approx(2.0)
-    assert legacy_pose.position.x == pytest.approx(group_pose.position.x)
-    assert world.get_jacobian(ctx, robot_id).shape == (6, 2)
+    assert default_pose.position.x == pytest.approx(group_pose.position.x)
+    assert world.get_jacobian(ctx).shape == (6, 2)
 
 
 @requires_drake
@@ -270,21 +308,10 @@ def test_drake_applies_config_base_pose_when_urdf_has_world_base_joint(
     urdf = tmp_path / "robot_with_world.urdf"
     _write_urdf_with_world_base_joint(urdf)
     world = DrakeWorld(enable_viz=False)
-    left_id = world.add_robot(
+    world.load_model(
         RobotModelConfig(
-            name="left_arm",
             model=RobotModel.from_file(urdf),
             base_pose=PoseStamped(position=[0, 0.5, 0], orientation=[0, 0, 0, 1]),
-            joint_names=["joint1", "joint2"],
-            base_link="base_link",
-            planning_groups=[_arm_group("joint1", "joint2")],
-        )
-    )
-    right_id = world.add_robot(
-        RobotModelConfig(
-            name="right_arm",
-            model=RobotModel.from_file(urdf),
-            base_pose=PoseStamped(position=[0, -0.5, 0], orientation=[0, 0, 0, 1]),
             joint_names=["joint1", "joint2"],
             base_link="base_link",
             planning_groups=[_arm_group("joint1", "joint2")],
@@ -293,12 +320,9 @@ def test_drake_applies_config_base_pose_when_urdf_has_world_base_joint(
     world.finalize()
     ctx = world.get_live_context()
 
-    left_base_pose = world.get_link_pose(ctx, left_id, "base_link")
-    right_base_pose = world.get_link_pose(ctx, right_id, "base_link")
+    base_pose = world.get_link_pose(ctx, "base_link")
 
-    assert left_base_pose[1, 3] == pytest.approx(0.5)
-    assert right_base_pose[1, 3] == pytest.approx(-0.5)
-    assert left_base_pose[1, 3] != pytest.approx(right_base_pose[1, 3])
+    assert base_pose[1, 3] == pytest.approx(0.5)
 
 
 @requires_drake
@@ -306,7 +330,7 @@ def test_drake_group_jacobian_shape_and_group_local_order(tmp_path: Path) -> Non
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    robot_id = world.add_robot(
+    world.load_model(
         _config(
             urdf,
             [
@@ -317,12 +341,10 @@ def test_drake_group_jacobian_shape_and_group_local_order(tmp_path: Path) -> Non
     )
     world.finalize()
     ctx = world.get_live_context()
-    world.set_joint_state(
-        ctx, robot_id, JointState({"name": ["joint1", "joint2"], "position": [0.0, 0.0]})
-    )
+    world.set_joint_state(ctx, JointState({"name": ["joint1", "joint2"], "position": [0.0, 0.0]}))
 
-    forward_jacobian = world.get_group_jacobian(ctx, "arm/wrist_forward")
-    reverse_jacobian = world.get_group_jacobian(ctx, "arm/wrist_reverse")
+    forward_jacobian = world.get_group_jacobian(ctx, "wrist_forward")
+    reverse_jacobian = world.get_group_jacobian(ctx, "wrist_reverse")
 
     assert reverse_jacobian.shape == (6, 2)
     np.testing.assert_allclose(reverse_jacobian[:, 0], forward_jacobian[:, 1])
@@ -330,17 +352,17 @@ def test_drake_group_jacobian_shape_and_group_local_order(tmp_path: Path) -> Non
 
 
 @requires_drake
-def test_drake_legacy_wrappers_fail_at_call_time_for_no_or_ambiguous_pose(tmp_path: Path) -> None:
+def test_drake_default_pose_methods_fail_for_no_or_ambiguous_pose(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     no_pose = DrakeWorld()
-    no_pose_id = no_pose.add_robot(_config(urdf, [_arm_group("joint1", tip_link=None)]))
+    no_pose.load_model(_config(urdf, [_arm_group("joint1", tip_link=None)]))
     no_pose.finalize()
     with pytest.raises(ValueError, match="no pose-targetable"):
-        no_pose.get_ee_pose(no_pose.get_live_context(), no_pose_id)
+        no_pose.get_ee_pose(no_pose.get_live_context())
 
     ambiguous = DrakeWorld()
-    ambiguous_id = ambiguous.add_robot(
+    ambiguous.load_model(
         _config(
             urdf,
             [
@@ -351,193 +373,138 @@ def test_drake_legacy_wrappers_fail_at_call_time_for_no_or_ambiguous_pose(tmp_pa
     )
     ambiguous.finalize()
     with pytest.raises(ValueError, match="multiple pose"):
-        ambiguous.get_jacobian(ambiguous.get_live_context(), ambiguous_id)
+        ambiguous.get_jacobian(ambiguous.get_live_context())
 
 
 @requires_drake
-def test_drake_group_jacobian_rejects_non_controllable_group_joints(tmp_path: Path) -> None:
+def test_drake_load_rejects_group_joints_outside_controllable_set(tmp_path: Path) -> None:
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    world.add_robot(_config(urdf, [_arm_group("joint1", "joint2")], joints=["joint1"]))
-    world.finalize()
-
-    with pytest.raises(ValueError, match="non-controllable"):
-        world.get_group_jacobian(world.get_live_context(), "arm/arm")
+    with pytest.raises(ValueError, match="outside the controllable model set"):
+        world.load_model(_config(urdf, [_arm_group("joint1", "joint2")], joints=["joint1"]))
 
 
 @requires_drake
-def test_drake_animate_trajectory_projects_all_robots_on_shared_ticks(
-    tmp_path: Path, monkeypatch
+def test_drake_animate_trajectory_projects_selected_joints_on_shared_ticks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    left_config = _config(urdf, [_arm_group("joint1")]).model_copy(update={"name": "left"})
-    right_config = _config(urdf, [_arm_group("joint2")]).model_copy(update={"name": "right"})
-    left_id = world.add_robot(left_config)
-    right_id = world.add_robot(right_config)
+    world.load_model(_config(urdf, [_arm_group("joint1")]))
     world.finalize()
     world._meshcat = object()  # type: ignore[assignment]
-    ctx = world.get_live_context()
-    world.set_joint_state(ctx, left_id, JointState(name=["joint1", "joint2"], position=[0.1, 0.2]))
-    world.set_joint_state(ctx, right_id, JointState(name=["joint1", "joint2"], position=[0.3, 0.4]))
-    updates: list[tuple[str, list[float]]] = []
-    shown: list[tuple[str, ...]] = []
-    hidden: list[tuple[str, ...]] = []
+    world.set_joint_state(
+        world.get_live_context(),
+        JointState(name=["joint1", "joint2"], position=[0.1, 0.2]),
+    )
+    updates: list[list[float]] = []
+    visibility: list[bool] = []
     sleeps: list[float] = []
     monkeypatch.setattr(
         world,
         "_set_preview_positions",
-        lambda _ctx, robot_id, positions: updates.append((robot_id, positions.tolist())),
+        lambda _ctx, positions: updates.append(positions.tolist()),
     )
-    monkeypatch.setattr(
-        world,
-        "_set_preview_visibility",
-        lambda robot_id, visible: (shown if visible else hidden).append((robot_id,)),
-    )
+    monkeypatch.setattr(world, "_set_preview_visibility", visibility.append)
     monkeypatch.setattr(world, "_publish_visualization", lambda: None)
     monkeypatch.setattr("time.sleep", sleeps.append)
-    plan = type("Plan", (), {})()
-    plan.trajectory = _trajectory(["left/joint1", "right/joint2"], [1.0, 2.0], [3.0, 4.0])
 
-    world.animate_trajectory(plan.trajectory, duration=2.0)
+    world.animate_trajectory(_trajectory(["joint1"], [1.0], [3.0]), duration=2.0)
 
-    assert shown == [(left_id,), (right_id,)]
-    assert hidden == [(left_id,), (right_id,)]
-    assert updates == [
-        (left_id, [1.0, 0.2]),
-        (right_id, [0.3, 2.0]),
-        (left_id, [3.0, 0.2]),
-        (right_id, [0.3, 4.0]),
-    ]
+    assert visibility == [True, False]
+    assert updates == [[1.0, 0.2], [3.0, 0.2]]
     assert sleeps == [2.0]
 
 
 @requires_drake
 def test_drake_animate_trajectory_validates_before_visibility_and_cleans_up(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    robot_id = world.add_robot(_config(urdf, [_arm_group("joint1")]))
+    world.load_model(_config(urdf, [_arm_group("joint1")]))
     world.finalize()
     world._meshcat = object()  # type: ignore[assignment]
     world.set_joint_state(
         world.get_live_context(),
-        robot_id,
         JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
     )
-    shown: list[tuple[str, ...]] = []
-    hidden: list[tuple[str, ...]] = []
-    monkeypatch.setattr(
-        world,
-        "_set_preview_visibility",
-        lambda robot_id, visible: (shown if visible else hidden).append((robot_id,)),
-    )
+    visibility: list[bool] = []
+    monkeypatch.setattr(world, "_set_preview_visibility", visibility.append)
     monkeypatch.setattr(world, "_publish_visualization", lambda: None)
-    malformed = _trajectory(["unknown/joint1"], [0.0], [1.0])
-    with pytest.raises(ValueError, match="unknown robot"):
-        world.animate_trajectory(malformed)
-    assert shown == []
 
-    valid = _trajectory(["arm/joint1"], [0.0], [1.0])
+    with pytest.raises(ValueError, match="unknown joints"):
+        world.animate_trajectory(_trajectory(["unknown/joint1"], [0.0], [1.0]))
+    assert visibility == []
 
     def fail_preview_update(*_args: object) -> None:
         raise RuntimeError("boom")
 
     monkeypatch.setattr(world, "_set_preview_positions", fail_preview_update)
     with pytest.raises(RuntimeError, match="boom"):
-        world.animate_trajectory(valid)
-    assert shown == [(robot_id,)]
-    assert hidden == [(robot_id,)]
+        world.animate_trajectory(_trajectory(["joint1"], [0.0], [1.0]))
+    assert visibility == [True, False]
 
 
 @requires_drake
-def test_drake_cancel_preview_hides_ghosts_before_animation_resumes(
-    tmp_path: Path, monkeypatch
+def test_drake_cancel_preview_hides_model_before_animation_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    robot_id = world.add_robot(_config(urdf, [_arm_group("joint1")]))
+    world.load_model(_config(urdf, [_arm_group("joint1")]))
     world.finalize()
     world._meshcat = object()  # type: ignore[assignment]
     world.set_joint_state(
         world.get_live_context(),
-        robot_id,
         JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
     )
-    hidden: list[tuple[str, ...]] = []
-    hidden_snapshots_during_sleep: list[list[tuple[str, ...]]] = []
-    monkeypatch.setattr(
-        world,
-        "_set_preview_visibility",
-        lambda robot_id, visible: None if visible else hidden.append((robot_id,)),
-    )
+    visibility: list[bool] = []
+    snapshots_during_sleep: list[list[bool]] = []
+    monkeypatch.setattr(world, "_set_preview_visibility", visibility.append)
     monkeypatch.setattr(world, "_publish_visualization", lambda: None)
 
     def cancel_during_sleep(_duration: float) -> None:
         world.cancel_preview_animation()
-        hidden_snapshots_during_sleep.append(list(hidden))
+        snapshots_during_sleep.append(list(visibility))
 
     monkeypatch.setattr("time.sleep", cancel_during_sleep)
 
-    world.animate_trajectory(_trajectory(["arm/joint1"], [0.0], [1.0]))
+    world.animate_trajectory(_trajectory(["joint1"], [0.0], [1.0]))
 
-    assert hidden_snapshots_during_sleep == [[(robot_id,)]]
-    assert hidden[0] == (robot_id,)
+    assert snapshots_during_sleep == [[True, False]]
 
 
 @requires_drake
-def test_drake_animate_trajectory_rejects_unknown_robot_before_visibility(
-    tmp_path: Path, monkeypatch
+def test_drake_animate_trajectory_cancellation_stops_stale_frames(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     urdf = tmp_path / "robot.urdf"
     _write_urdf(urdf)
     world = DrakeWorld()
-    world.add_robot(_config(urdf, [_arm_group("joint1")]))
-    world.finalize()
-    world._meshcat = object()  # type: ignore[assignment]
-    shown: list[tuple[str, ...]] = []
-    with pytest.raises(ValueError, match="unknown robot"):
-        world.animate_trajectory(_trajectory(["missing/joint1"], [0.0], [1.0]))
-
-    assert shown == []
-
-
-@requires_drake
-def test_drake_animate_trajectory_cancellation_stops_stale_frames_and_hides_preview(
-    tmp_path: Path, monkeypatch
-) -> None:
-    urdf = tmp_path / "robot.urdf"
-    _write_urdf(urdf)
-    world = DrakeWorld()
-    robot_id = world.add_robot(_config(urdf, [_arm_group("joint1")]))
+    world.load_model(_config(urdf, [_arm_group("joint1")]))
     world.finalize()
     world._meshcat = object()  # type: ignore[assignment]
     world.set_joint_state(
         world.get_live_context(),
-        robot_id,
         JointState(name=["joint1", "joint2"], position=[0.0, 0.0]),
     )
     updates: list[list[float]] = []
-    hidden: list[tuple[str, ...]] = []
+    visibility: list[bool] = []
     monkeypatch.setattr(
         world,
         "_set_preview_positions",
-        lambda _ctx, _robot_id, positions: updates.append(positions.tolist()),
+        lambda _ctx, positions: updates.append(positions.tolist()),
     )
-    monkeypatch.setattr(
-        world,
-        "_set_preview_visibility",
-        lambda robot_id, visible: hidden.append((robot_id,)) if not visible else None,
-    )
+    monkeypatch.setattr(world, "_set_preview_visibility", visibility.append)
     monkeypatch.setattr(world, "_publish_visualization", lambda: None)
     monkeypatch.setattr("time.sleep", lambda _duration: world.cancel_preview_animation())
 
-    world.animate_trajectory(_trajectory(["arm/joint1"], [1.0], [2.0]))
+    world.animate_trajectory(_trajectory(["joint1"], [1.0], [2.0]))
 
     assert updates == [[1.0, 0.0]]
-    assert hidden[0] == (robot_id,)
+    assert visibility == [True, False]

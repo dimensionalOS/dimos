@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import subprocess
+import sys
 from unittest.mock import Mock
 
 from click.testing import Result
@@ -29,6 +30,80 @@ def _subprocess_argv(run: Mock) -> list[list[str]]:
 
 def _invoke_can(args: list[str]) -> Result:
     return CliRunner().invoke(main, ["hardware", "can", *args])
+
+
+def test_list_linux_can_interfaces(mocker: MockerFixture) -> None:
+    mocker.patch("dimos.cli.can.sys.platform", "linux")
+    run = mocker.patch(
+        "dimos.cli.can.subprocess.run",
+        return_value=subprocess.CompletedProcess(
+            [], 0, stdout="can0             UP\ncan1             DOWN\n", stderr=""
+        ),
+    )
+
+    result = _invoke_can(["list"])
+
+    assert result.exit_code == 0, result.output
+    assert "can0" in result.stdout
+    assert "can1" in result.stdout
+    run.assert_called_once_with(
+        ["ip", "-brief", "link", "show", "type", "can"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_list_macos_gs_usb_serials(mocker: MockerFixture) -> None:
+    mocker.patch("dimos.cli.can.sys.platform", "darwin")
+    list_gs_usb = mocker.patch.object(
+        sys.modules["can_motor_control"],
+        "list_gs_usb_devices",
+        create=True,
+        return_value=[
+            Mock(index=0, serial_number="LEFT123"),
+            Mock(index=1, serial_number="RIGHT456"),
+        ],
+    )
+
+    result = _invoke_can(["list"])
+
+    assert result.exit_code == 0, result.output
+    assert "INDEX  SERIAL" in result.stdout
+    assert "0      LEFT123" in result.stdout
+    assert "1      RIGHT456" in result.stdout
+    list_gs_usb.assert_called_once_with(vendor_id=0x1D50, product_id=0x606F)
+
+
+def test_list_macos_warns_about_missing_serial(mocker: MockerFixture) -> None:
+    mocker.patch("dimos.cli.can.sys.platform", "darwin")
+    mocker.patch.object(
+        sys.modules["can_motor_control"],
+        "list_gs_usb_devices",
+        create=True,
+        return_value=[Mock(index=0, serial_number=None)],
+    )
+
+    result = _invoke_can(["list"])
+
+    assert result.exit_code == 0, result.output
+    assert "<missing>" in result.stdout
+    assert "unique, non-empty USB serials" in result.stderr
+
+
+def test_list_macos_reports_discovery_error(mocker: MockerFixture) -> None:
+    mocker.patch("dimos.cli.can.sys.platform", "darwin")
+    mocker.patch.object(
+        sys.modules["can_motor_control"],
+        "list_gs_usb_devices",
+        create=True,
+        side_effect=sys.modules["can_motor_control"].TransportError("USB unavailable"),
+    )
+
+    result = _invoke_can(["list"])
+
+    assert result.exit_code == 1
+    assert "CAN device discovery failed: USB unavailable" in result.stderr
 
 
 def test_setup_valid_options_configures_and_verifies_can_interface(

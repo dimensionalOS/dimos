@@ -40,6 +40,7 @@ from dimos.web.relay_bridge.locate import (
     WEB_DIR_ENV_VAR,
     build_allowed,
     find_cockpit_dist,
+    find_sdk_dist,
     find_web_dir,
     relay_run_cmd,
 )
@@ -48,7 +49,8 @@ logger = setup_logger()
 
 _STDERR_TAIL_LINES = 60
 
-_COCKPIT_BUILD_TIMEOUT_S = 600.0
+# One shared deadline across both child builds (sdk + cockpit).
+_WEB_BUILD_TIMEOUT_S = 600.0
 # SIGTERM-to-SIGKILL grace when a build child is cancelled or times out.
 _BUILD_KILL_GRACE_S = 5.0
 _BUILD_POLL_S = 0.2
@@ -71,82 +73,101 @@ def _cancel_builds_at_exit() -> None:
 atexit.register(_cancel_builds_at_exit)
 
 
-def ensure_cockpit_dist(
+def ensure_web_dist(
     web_dir: Path,
-    timeout: float = _COCKPIT_BUILD_TIMEOUT_S,
+    timeout: float = _WEB_BUILD_TIMEOUT_S,
     cancel: threading.Event | None = None,
-) -> Path | None:
-    """Path to the built Cockpit app, building it first when possible.
+) -> None:
+    """Build the web distributions (SDK bundle + Cockpit app) when possible.
 
-    Wheel installs ship a pre-built dist and no sources: return it (or None on
-    a cockpit-less wheel). Checkouts rebuild when the dist's input stamp (a
-    hash over the cockpit/shared sources, workspace config, and lockfile) no
-    longer matches; the build runs under a cross-process lock, into a
-    temporary directory published atomically, so concurrent starts serialize
-    and a failed build leaves the served dist untouched (the relay still runs;
-    with no dist at all it serves only /api plus a build hint at /). Setting
-    `cancel` kills the build child within a bounded grace.
+    Wheel installs ship pre-built dists and no sources: serve them as-is.
+    Checkouts rebuild when either dist's input stamp (a hash over the
+    cockpit/shared/sdk sources, workspace config, and lockfile) no longer
+    matches; the builds run under a cross-process lock, into temporary
+    directories published by rename only after both products built, so
+    concurrent starts serialize and a failed build leaves both served dists
+    untouched (the relay still runs; without dists it serves only /api plus
+    build hints). Setting `cancel` kills the build child within a bounded
+    grace.
     """
-    dist = find_cockpit_dist(web_dir)
+    sdk = web_dir / "sdk"
     cockpit = web_dir / "cockpit"
-    if not (cockpit / "src").is_dir():
-        return dist
+    if not ((sdk / "src").is_dir() and (cockpit / "src").is_dir()):
+        return  # wheel shape: never lock or build in site-packages
     if not build_allowed(web_dir):
         logger.warning(
-            f"{WEB_DIR_ENV_VAR} is set; serving its cockpit as-is "
+            f"{WEB_DIR_ENV_VAR} is set; serving its web dists as-is "
             f"(set {WEB_DIR_BUILD_ENV_VAR}=1 to allow building that tree)"
         )
-        return dist
+        return
     if cancel is None:
         cancel = threading.Event()
     deadline = time.monotonic() + timeout
     _live_build_cancels.add(cancel)
     try:
-        with _build_lock(cockpit, deadline, cancel) as locked:
+        with _build_lock(web_dir, deadline, cancel) as locked:
             if not locked:
-                logger.warning("another cockpit build is running; serving the existing dist")
-                return find_cockpit_dist(web_dir)
+                logger.warning("another web build is running; serving the existing dists")
+                return
             stamp = _input_stamp(web_dir)
-            dist = find_cockpit_dist(web_dir)  # a previous lock holder may have rebuilt
-            if dist is not None and _read_stamp(dist) == stamp:
-                return dist
-            state = "missing" if dist is None else "stale"
-            logger.warning(f"cockpit dist is {state}; building it (takes a minute)")
-            for leftover in cockpit.glob(".dist-*"):  # crashed builds; ours is the lock
-                shutil.rmtree(leftover, ignore_errors=True)
-            out_dir = Path(tempfile.mkdtemp(prefix=".dist-new-", dir=cockpit))
-            out_dir.chmod(0o755)  # mkdtemp gives 0o700; this becomes the dist
+            if _dists_fresh(web_dir, stamp):  # a previous lock holder may have rebuilt
+                return
+            logger.warning("web dist is missing or stale; building sdk + cockpit (takes a minute)")
+            out_dirs: dict[Path, Path] = {}
             try:
-                # Fixed argv (what cockpit/deno.json's build task runs), not
-                # the tree's task definition; --outDir keeps a failed build
-                # away from the served dist.
-                cmd = [
-                    ensure_deno(),
-                    "run",
-                    "--frozen",
-                    "-A",
-                    "npm:vite",
-                    "build",
-                    "--outDir",
-                    str(out_dir),
-                ]
-                if _run_build(cmd, cockpit, deadline, cancel):
-                    (out_dir / _STAMP_NAME).write_text(stamp)
-                    _swap_dist(cockpit, out_dir)
-                    logger.info("cockpit dist built")
+                built = True
+                for package in (sdk, cockpit):  # sdk first: it fails fastest
+                    for leftover in package.glob(".dist-*"):  # crashed builds; ours is the lock
+                        shutil.rmtree(leftover, ignore_errors=True)
+                    out_dir = Path(tempfile.mkdtemp(prefix=".dist-new-", dir=package))
+                    out_dir.chmod(0o755)  # mkdtemp gives 0o700; this becomes the dist
+                    out_dirs[package] = out_dir
+                    # Fixed argv (what the package's build task runs), not the
+                    # tree's task definition; --outDir keeps a failed build
+                    # away from the served dist.
+                    cmd = [
+                        ensure_deno(),
+                        "run",
+                        "--frozen",
+                        "-A",
+                        "npm:vite",
+                        "build",
+                        "--outDir",
+                        str(out_dir),
+                    ]
+                    if not _run_build(cmd, package, deadline, cancel):
+                        built = False
+                        break
+                if built:
+                    # Swap only after both built: a failed build must not
+                    # destroy either previously valid dist, and with one shared
+                    # stamp a half-swap would leave the other side permanently
+                    # stale (rebuild on every start). The two renames are not
+                    # atomic together; a crash between them leaves the old
+                    # stamp on the un-swapped side, so the next start rebuilds.
+                    for out_dir in out_dirs.values():
+                        (out_dir / _STAMP_NAME).write_text(stamp)
+                    for package, out_dir in out_dirs.items():
+                        _swap_dist(package, out_dir)
+                    logger.info("web dist built (sdk + cockpit)")
             except Exception:
-                logger.exception("cockpit build did not run")
+                logger.exception("web build did not run")
             finally:
-                shutil.rmtree(out_dir, ignore_errors=True)
-            return find_cockpit_dist(web_dir)
+                for out_dir in out_dirs.values():
+                    shutil.rmtree(out_dir, ignore_errors=True)  # no-op once swapped
     finally:
         _live_build_cancels.discard(cancel)
 
 
+def _dists_fresh(web_dir: Path, stamp: str) -> bool:
+    dists = (find_sdk_dist(web_dir), find_cockpit_dist(web_dir))
+    return all(dist is not None and _read_stamp(dist) == stamp for dist in dists)
+
+
 @contextlib.contextmanager
-def _build_lock(cockpit: Path, deadline: float, cancel: threading.Event) -> Iterator[bool]:
+def _build_lock(web_dir: Path, deadline: float, cancel: threading.Event) -> Iterator[bool]:
     """Cross-process flock; yields False when it stays busy until the deadline."""
-    with (cockpit / ".build.lock").open("w") as lock_file:
+    with (web_dir / ".build.lock").open("w") as lock_file:
         while True:
             try:
                 fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -173,7 +194,7 @@ def _input_stamp(web_dir: Path) -> str:
 
 def _build_inputs(web_dir: Path) -> list[Path]:
     files = [path for path in (web_dir / "deno.json", web_dir / "deno.lock") if path.is_file()]
-    for tree in (web_dir / "cockpit", web_dir / "shared"):
+    for tree in (web_dir / "cockpit", web_dir / "shared", web_dir / "sdk"):
         if not tree.is_dir():
             continue
         for path in sorted(tree.rglob("*")):
@@ -206,17 +227,17 @@ def _run_build(cmd: list[str], cwd: Path, deadline: float, cancel: threading.Eve
         while (code := proc.poll()) is None:
             if cancel.is_set():
                 _kill_group(proc)
-                logger.warning("cockpit build cancelled")
+                logger.warning(f"{cwd.name} build cancelled")
                 return False
             if time.monotonic() >= deadline:
                 _kill_group(proc)
-                logger.error("cockpit build timed out")
+                logger.error(f"{cwd.name} build timed out")
                 return False
             time.sleep(_BUILD_POLL_S)
         if code != 0:
             output.seek(0)
             tail = "\n".join(output.read().decode(errors="replace").strip().splitlines()[-20:])
-            logger.error(f"cockpit build failed (exit {code}); output tail:\n{tail}")
+            logger.error(f"{cwd.name} build failed (exit {code}); output tail:\n{tail}")
             return False
         return True
 
@@ -236,10 +257,10 @@ def _kill_group(proc: subprocess.Popen[bytes]) -> None:
         proc.wait()
 
 
-def _swap_dist(cockpit: Path, new_dist: Path) -> None:
+def _swap_dist(package: Path, new_dist: Path) -> None:
     """Publish atomically: renames, so readers never see a half-written dist."""
-    dist = cockpit / "dist"
-    old = cockpit / ".dist-old"
+    dist = package / "dist"
+    old = package / ".dist-old"
     if dist.exists():
         os.rename(dist, old)
     os.rename(new_dist, dist)
@@ -272,12 +293,16 @@ class RelayProcess:
         host: str = "127.0.0.1",
         web_dir: Path | None = None,
         cockpit_dir: Path | None = None,
+        sdk_dir: Path | None = None,
+        serve_dir: Path | None = None,
         timeout: float = 20.0,
     ) -> None:
         self._port = port
         self._host = host
         self._web_dir = web_dir
         self._cockpit_dir = cockpit_dir
+        self._sdk_dir = sdk_dir
+        self._serve_dir = serve_dir
         self._timeout = timeout
         self._process: subprocess.Popen[str] | None = None
         self._threads: list[threading.Thread] = []
@@ -289,11 +314,20 @@ class RelayProcess:
         deno = ensure_deno()
         web_dir = self._web_dir or find_web_dir()
         # No build here: start() must stay cheap (tests spawn many relays).
-        # The build-if-needed step is ensure_cockpit_dist(), called by the
+        # The build-if-needed step is ensure_web_dist(), called by the
         # RelayBridgeModule before spawning.
         cockpit_dir = self._cockpit_dir or find_cockpit_dist(web_dir)
+        sdk_dir = self._sdk_dir or find_sdk_dist(web_dir)
         cmd = relay_run_cmd(
-            deno, web_dir, "--port", str(self._port), "--host", self._host, cockpit_dir=cockpit_dir
+            deno,
+            web_dir,
+            "--port",
+            str(self._port),
+            "--host",
+            self._host,
+            cockpit_dir=cockpit_dir,
+            sdk_dir=sdk_dir,
+            serve_dir=self._serve_dir,
         )
         logger.info(f"starting relay: {' '.join(cmd)}")
         env = os.environ | {"NO_COLOR": "1"}

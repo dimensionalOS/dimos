@@ -62,22 +62,6 @@ class SpatialVectorDB:
         # Use provided client or create in-memory client
         self.client = chroma_client if chroma_client is not None else chromadb.Client()
 
-        # Check if collection already exists - in newer ChromaDB versions list_collections returns names directly
-        existing_collections = self.client.list_collections()
-
-        # Handle different versions of ChromaDB API
-        try:
-            collection_exists = collection_name in existing_collections
-        except:
-            try:
-                collection_exists = collection_name in [c.name for c in existing_collections]
-            except:
-                try:
-                    self.client.get_collection(name=collection_name)
-                    collection_exists = True
-                except Exception:
-                    collection_exists = False
-
         # Get or create the collection
         self.image_collection = self.client.get_or_create_collection(
             name=collection_name, metadata={"hnsw:space": "cosine"}
@@ -94,21 +78,6 @@ class SpatialVectorDB:
         self.location_collection = self.client.get_or_create_collection(
             name=location_collection_name, metadata={"hnsw:space": "cosine"}
         )
-
-        # Log initialization info with details about whether using existing collection
-        client_type = "persistent" if chroma_client is not None else "in-memory"
-        try:
-            count = len(self.image_collection.get(include=[])["ids"])
-            if collection_exists:
-                logger.info(
-                    f"Using EXISTING {client_type} collection '{collection_name}' with {count} entries"
-                )
-            else:
-                logger.info(f"Created NEW {client_type} collection '{collection_name}'")
-        except Exception as e:
-            logger.info(
-                f"Initialized {client_type} collection '{collection_name}' (count error: {e!s})"
-            )
 
     def add_image_vector(
         self,

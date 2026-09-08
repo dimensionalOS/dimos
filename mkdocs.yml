@@ -37,6 +37,9 @@ watch:
 
 theme:
   name: material
+  custom_dir: misc/mkdocs/overrides
+  static_templates:
+    - llms.txt
   favicon: assets/favicon.png
   logo: assets/dimensional-logo-master-transparent.png
   font:

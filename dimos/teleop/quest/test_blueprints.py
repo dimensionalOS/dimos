@@ -55,7 +55,7 @@ def test_single_arm_blueprint_uses_one_frame_binding_and_right_stream() -> None:
     binding = _binding(tasks[0])
     assert binding["hand"] == "right"
     assert binding["target_frame"] == "link_tcp"
-    assert tasks[0].params["robot_model"].name == "arm"
+    assert tasks[0].params["robot_model"].joint_names == tasks[0].joint_names
     gripper = _gripper_tasks(teleop_quest_xarm7)[0]
     assert gripper.stream_bind == {"gripper_command": "right_gripper_command"}
     assert (
@@ -82,14 +82,20 @@ def test_mixed_arm_blueprint_keeps_two_independent_one_binding_tasks() -> None:
     by_name = {task.name: task for task in tasks}
     assert _binding(by_name["teleop_xarm"]) == {
         "hand": "left",
-        "target_frame": "link_tcp",
+        "target_frame": "xarm_arm/link6",
     }
-    assert by_name["teleop_xarm"].params["robot_model"].name == "xarm_arm"
+    assert (
+        by_name["teleop_xarm"].params["robot_model"].joint_names
+        == by_name["teleop_xarm"].joint_names
+    )
     assert _binding(by_name["teleop_piper"]) == {
         "hand": "right",
         "target_frame": "gripper_base",
     }
-    assert by_name["teleop_piper"].params["robot_model"].name == "piper_arm"
+    assert (
+        by_name["teleop_piper"].params["robot_model"].joint_names
+        == by_name["teleop_piper"].joint_names
+    )
     grippers = {task.name: task for task in _gripper_tasks(teleop_quest_dual)}
     assert grippers["xarm_arm_gripper"].stream_bind == {"gripper_command": "left_gripper_command"}
     assert grippers["piper_arm_gripper"].stream_bind == {"gripper_command": "right_gripper_command"}

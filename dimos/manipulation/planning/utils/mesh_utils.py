@@ -21,6 +21,7 @@ Provides utilities for preparing in-memory URDF descriptions for use with Drake:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 from pathlib import Path
 import re
@@ -146,6 +147,19 @@ def _convert_meshes(urdf_content: str, output_dir: Path) -> str:
     return re.sub(pattern, convert_mesh, urdf_content)
 
 
+@dataclass(frozen=True)
+class ConvexHullMesh:
+    """A convex hull written to disk, with the point it was centered on.
+
+    Attributes:
+        path: Path to the OBJ file
+        centroid: World-frame mean of the input cloud, the mesh's local origin
+    """
+
+    path: str
+    centroid: NDArray[np.float64]
+
+
 def pointcloud_to_convex_hull_obj(
     points: NDArray[np.float64],
     output_path: Path | str | None = None,
@@ -153,11 +167,13 @@ def pointcloud_to_convex_hull_obj(
     cache_key: str | None = None,
     voxel_size: float = 0.005,
     min_points: int = 4,
-) -> str | None:
+) -> ConvexHullMesh | None:
     """Compute convex hull from point cloud and save as OBJ file.
 
-    Points are centered at origin so the mesh is in local frame.
-    The caller sets the obstacle pose to place it in the world.
+    The mesh is centered on the returned centroid and stays axis-aligned with
+    the world frame: place it at that centroid with identity orientation. Any
+    other pose (a bounding-box center, an oriented-box rotation) moves the hull
+    off the points it was built from.
 
     Args:
         points: Nx3 numpy array of 3D points (world frame)
@@ -169,7 +185,7 @@ def pointcloud_to_convex_hull_obj(
         min_points: Minimum points required for convex hull
 
     Returns:
-        Path to OBJ file, or None if hull computation fails
+        The written hull and its centroid, or None if hull computation fails
     """
     import numpy as np
 
@@ -183,8 +199,10 @@ def pointcloud_to_convex_hull_obj(
         logger.warning("open3d not installed, cannot compute convex hull")
         return None
 
-    # Center at origin so mesh is in local frame
-    centered = points - points.mean(axis=0)
+    # Mean of the raw cloud, before any downsampling: this is the point the
+    # caller must place the mesh at.
+    centroid = points.mean(axis=0)
+    centered = points - centroid
 
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(centered.astype(np.float64))
@@ -221,7 +239,7 @@ def pointcloud_to_convex_hull_obj(
         logger.debug(
             f"Convex hull: {len(hull.vertices)} verts, {len(hull.triangles)} faces -> {output_path}"
         )
-        return str(output_path)
+        return ConvexHullMesh(path=str(output_path), centroid=centroid)
     except Exception as e:
         logger.warning(f"Failed to write convex hull OBJ: {e}")
         return None

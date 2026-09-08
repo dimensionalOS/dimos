@@ -1,0 +1,17 @@
+[package]
+name = "dimos-mls-planner-py"
+version = "0.1.0"
+edition = "2021"
+description = "Python bindings for the MLS planner module"
+license = "Apache-2.0"
+
+[lib]
+name = "dimos_mls_planner_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+dimos-mls-planner = { path = ".." }
+numpy = "0.25"
+pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+validator = { version = "0.21", features = ["derive"] }

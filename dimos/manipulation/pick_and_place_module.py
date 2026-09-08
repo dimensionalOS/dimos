@@ -12,742 +12,305 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pick-and-place manipulation module.
-
-Extends ManipulationModule with perception integration and long-horizon skills:
-- Perception: objects port, obstacle monitor, scan_objects, get_scene_info
-- @rpc: generate_grasps (GraspGen Docker), refresh_obstacles, perception status
-- @skill: pick, place, place_back, pick_and_place, scan_objects, get_scene_info
-"""
+"""Capability-composed pick-and-place workflow."""
 
 from __future__ import annotations
 
-import math
-import time
-from typing import TYPE_CHECKING, Any
+from typing import Any, Literal
+
+from pydantic import Field
 
 from dimos.agents.annotation import skill
+from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
-from dimos.core.stream import In
-from dimos.manipulation.manipulation_module import (
-    ManipulationModule,
-    ManipulationModuleConfig,
+from dimos.core.module import Module, ModuleConfig
+from dimos.manipulation.grasp_verification import (
+    GraspVerificationConfig,
+    GripperSettle,
+    await_gripper_settle,
+    grasp_failure,
+    open_failure,
 )
+from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
+from dimos.manipulation.manipulation_spec import ManipulationSpec
 from dimos.manipulation.planning.spec.models import PlanningGroupID
 from dimos.manipulation.skill_errors import ManipulationSkillError
-from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.perception.experimental.object import (
-    Object as DetObject,
-)
-from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs.PoseArray import PoseArray
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-logger = setup_logger()
-
-# Beyond this XY distance from the base, the arm cannot reach both high and far,
-# so pre-grasp/pre-place offsets are reduced.
-_FAR_REACH_XY_THRESHOLD = 0.7
-
-# Beyond this XY distance, the occlusion inset is increased so the grasp
-# targets closer to the true center rather than the front surface.
-_FAR_OCCLUSION_XY_THRESHOLD = 0.8
-
-# Objects taller than this are grasped in the upper third to avoid
-# plunging deep and colliding with the object body.
-_TALL_OBJECT_MIN_HEIGHT = 0.06
+from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
 
 
-class PickAndPlaceModuleConfig(ManipulationModuleConfig):
-    """Configuration for PickAndPlaceModule."""
+class PickAndPlaceModuleConfig(ModuleConfig):
+    planning_frame: str = "base_link"
+    pregrasp_offset: float = Field(default=0.10, gt=0.0)
+    yaw_policy: Literal["generated", "preserve_current"] = "generated"
+    grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
 
 
-class PickAndPlaceModule(ManipulationModule):
-    """Manipulation module with perception integration and pick-and-place skills.
-
-    Extends ManipulationModule with:
-    - Perception: objects port, obstacle monitor, scan_objects, get_scene_info
-    - @rpc: generate_grasps (GraspGen Docker), refresh_obstacles, perception status
-    - @skill: pick, place, place_back, pick_and_place, scan_objects, get_scene_info
-    """
+class PickAndPlaceModule(Module):
+    """Coordinate scene registration, grasp generation, and manipulation execution."""
 
     config: PickAndPlaceModuleConfig
-
-    # Input: Objects from perception (for obstacle integration)
-    objects: In[list[DetObject]]
+    _scene: ObjectSceneRegistrationSpec
+    _grasp_generator: GraspGenSpec
+    _manipulation: ManipulationSpec
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._objects: dict[str, dict[str, Any]] = {}
+        self._grasp_candidates = GraspCandidateArray()
+        self._selected_object_id: str | None = None
+        self._selected_grasp: PoseStamped | None = None
+        self._holding_object = False
 
-        # Last pick pose: stored during pick so place_back() can return the object
-        self._last_pick_pose: Pose | None = None
+    @skill
+    def scan_objects(self, prompts: list[str]) -> SkillResult[ManipulationSkillError]:
+        """Scan the latest RGB-D frame for prompted objects.
 
-        # Snapshotted detections from the last scan_objects/refresh call.
-        # The live detection cache is volatile (labels change every frame),
-        # so pick/place use this stable snapshot instead.
-        self._detection_snapshot: list[DetObject] = []
-
-    @rpc
-    def start(self) -> None:
-        """Start the pick-and-place module (adds perception subscriptions)."""
-        super().start()
-
-        # Subscribe to objects port for perception obstacle integration
-        if self.objects is not None:
-            self.objects.observable().subscribe(self._on_objects)
-            logger.info("Subscribed to objects port (async)")
-
-        # Start obstacle monitor for perception integration
-        if self._world_monitor is not None:
-            self._world_monitor.start_obstacle_monitor()
-
-        logger.info("PickAndPlaceModule started")
-
-    def _on_objects(self, objects: list[DetObject]) -> None:
-        """Callback when objects received from perception (runs on RxPY thread pool)."""
+        Args:
+            prompts: Object labels to detect. Use an ID from this scan with pick_object.
+        """
+        prompts = [prompt.strip() for prompt in prompts if prompt.strip()]
+        if not prompts:
+            return SkillResult.fail("INVALID_INPUT", "At least one object prompt is required")
+        if not self._holding_object:
+            self._clear_selection()
+        self._objects = {}
         try:
-            if self._world_monitor is not None:
-                self._world_monitor.on_objects(objects)
-        except Exception as e:
-            logger.error(f"Exception in _on_objects: {e}")
-
-    @rpc
-    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, Any]]:
-        """Refresh perception obstacles. Returns the list of obstacles added.
-
-        Also snapshots the current detections so pick/place can use stable labels.
-        """
-        if self._world_monitor is None:
-            return []
-        result = self._world_monitor.refresh_obstacles(min_duration)
-        # Snapshot detections at refresh time — the live cache is volatile
-        self._detection_snapshot = self._world_monitor.get_cached_objects()
-        logger.info(f"Detection snapshot: {[d.name for d in self._detection_snapshot]}")
-        return result
-
-    @skill
-    def clear_perception_obstacles(self) -> SkillResult[ManipulationSkillError]:
-        """Clear all perception obstacles from the planning world.
-
-        Use this when the planner reports COLLISION_AT_START — detected objects
-        may overlap the robot's current position and block planning.
-        """
-        if self._world_monitor is None:
-            return SkillResult.fail(
-                "WORLD_MONITOR_UNAVAILABLE",
-                "No world monitor available",
-            )
-        count = self._world_monitor.clear_perception_obstacles()
-        self._detection_snapshot = []
-        return SkillResult.ok(f"Cleared {count} perception obstacle(s) from planning world")
-
-    @rpc
-    def get_perception_status(self) -> dict[str, int]:
-        """Get perception obstacle status (cached/added counts)."""
-        if self._world_monitor is None:
-            return {"cached": 0, "added": 0}
-        return self._world_monitor.get_perception_status()
-
-    @rpc
-    def list_cached_detections(self) -> list[dict[str, Any]]:
-        """List cached detections from perception."""
-        if self._world_monitor is None:
-            return []
-        return self._world_monitor.list_cached_detections()
-
-    @rpc
-    def list_added_obstacles(self) -> list[dict[str, Any]]:
-        """List perception obstacles currently in the planning world."""
-        if self._world_monitor is None:
-            return []
-        return self._world_monitor.list_added_obstacles()
-
-    @rpc
-    def generate_grasps(
-        self,
-        pointcloud: PointCloud2,
-        scene_pointcloud: PointCloud2 | None = None,
-    ) -> PoseArray | None:
-        """Generate grasp poses for the given point cloud via GraspGen module."""
-        raise NotImplementedError(
-            "GraspGen Docker support removed; see issue #1266 for re-implementation as NativeModule subclass"
+            detections = self._scene.scan_scene(text=prompts)
+        except RuntimeError as exc:
+            return SkillResult.fail("PERCEPTION_FAILED", str(exc))
+        objects = [
+            {
+                "object_id": str(detection.id),
+                "name": str(detection.results[0].hypothesis.class_id),
+            }
+            for detection in detections.detections
+            if detection.id and detection.results
+        ]
+        self._objects = {str(obj["object_id"]): obj for obj in objects if "object_id" in obj}
+        return SkillResult.ok(
+            f"Detected {detections.detections_length} object(s)",
+            prompts=prompts,
+            objects=list(self._objects.values()),
         )
 
-    def _compute_pre_grasp_pose(self, grasp_pose: Pose, offset: float = 0.10) -> Pose:
-        """Compute a pre-grasp pose offset along the approach direction (local -Z).
+    @rpc
+    def get_object(self, object_id: str) -> dict[str, Any] | None:
+        return self._objects.get(object_id)
 
-        Args:
-            grasp_pose: The final grasp pose
-            offset: Distance to retract along the approach direction (meters)
-
-        Returns:
-            Pre-grasp pose offset from the grasp pose
-        """
-        from dimos.utils.transform_utils import offset_distance
-
-        return offset_distance(grasp_pose, offset)
-
-    def _find_object_in_detections(
-        self, object_name: str, object_id: str | None = None
-    ) -> DetObject | None:
-        """Find an object in the detection snapshot by name or ID.
-
-        Uses the snapshot taken during the last scan_objects/refresh call,
-        not the volatile live cache (which changes labels every frame).
-
-        Args:
-            object_name: Name/label to search for
-            object_id: Optional specific object ID
-
-        Returns:
-            Matching DetObject, or None
-        """
-        if not self._detection_snapshot:
-            logger.warning("No detection snapshot — call scan_objects() first")
-            return None
-
-        # First pass: match by object_id (supports both full and truncated IDs)
-        if object_id:
-            matches = [
-                det
-                for det in self._detection_snapshot
-                if det.object_id == object_id or det.object_id.startswith(object_id)
-            ]
-            if len(matches) == 1:
-                return matches[0]
-            if len(matches) > 1:
-                ids = [det.object_id for det in matches]
-                logger.warning(f"Ambiguous object_id prefix '{object_id}' matches {ids}")
-                return None
-
-        # Second pass: match by name
-        for det in self._detection_snapshot:
-            if object_name.lower() in det.name.lower() or det.name.lower() in object_name.lower():
-                return det
-
-        available = [det.name for det in self._detection_snapshot]
-        logger.warning(f"Object '{object_name}' not found in snapshot. Available: {available}")
-        return None
-
-    @staticmethod
-    def _occlusion_offset(
-        center: Vector3, size: Vector3, inset: float = 0.02
-    ) -> tuple[float, float]:
-        """Offset a detected object center toward the robot to compensate for single-viewpoint occlusion.
-
-        Returns adjusted (x, y) shifted toward the nearest visible surface + inset.
-        """
-        xy_dist = (center.x**2 + center.y**2) ** 0.5
-        if xy_dist > 1e-3:
-            dx, dy = -center.x / xy_dist, -center.y / xy_dist
-            half_depth = max(size.x, size.y) / 2.0
-            offset = half_depth - inset
-            return center.x + dx * offset, center.y + dy * offset
-        return center.x, center.y
-
-    @staticmethod
-    def _grasp_orientation(gx: float, gy: float, xy_dist: float) -> Quaternion:
-        """Compute grasp orientation that tilts toward the object for far reaches.
-
-        Close objects (< 0.6m): top-down (pitch = 180°)
-        Far objects (> 1.0m): tilted 45° toward object
-        In between: linear interpolation
-        """
-        near = 0.6
-        far = 1.0
-        max_tilt = math.pi / 4  # 45° from vertical
-
-        if xy_dist <= near:
-            tilt = 0.0
-        elif xy_dist >= far:
-            tilt = max_tilt
-        else:
-            tilt = max_tilt * (xy_dist - near) / (far - near)
-
-        # Yaw to face the object direction
-        yaw = math.atan2(gy, gx)
-        pitch = math.pi - tilt
-        return Quaternion.from_euler(Vector3(0.0, pitch, yaw))
-
-    def _generate_grasps_for_pick(
-        self, object_name: str, object_id: str | None = None
-    ) -> list[Pose] | None:
-        """Generate a grasp pose for an object.
-
-        Near objects (< 0.6m XY): apply occlusion offset to compensate for
-        single-viewpoint depth underestimation.
-        Far objects (>= 0.6m XY): use raw detected center — depth error
-        already pushes the center too deep, offset would overshoot.
-
-        Uses distance-adaptive pitch tilt for all distances.
-
-        Args:
-            object_name: Name of the object
-            object_id: Optional object ID
-
-        Returns:
-            List with one grasp pose, or None if object not found
-        """
-        det = self._find_object_in_detections(object_name, object_id)
-        if det is None:
-            logger.warning(f"Object '{object_name}' not found in detections")
-            return None
-
-        cx, cy, cz = det.center.x, det.center.y, det.center.z
-        xy_dist = (cx**2 + cy**2) ** 0.5
-
-        # Distance-adaptive occlusion offset:
-        # Near (< 0.8m): small inset — grasp shifted well toward robot (front surface)
-        # Far (>= 0.8m): larger inset — less toward-robot shift (grasp closer to true center)
-        inset = 0.01 if xy_dist < _FAR_OCCLUSION_XY_THRESHOLD else 0.05
-        gx, gy = self._occlusion_offset(det.center, det.size, inset=inset)
-
-        # For tall objects, grasp in the upper third instead of center
-        # to avoid plunging deep and colliding with the object.
-        obj_height = det.size.z
-        if obj_height > _TALL_OBJECT_MIN_HEIGHT:
-            gz = cz + obj_height * 0.2  # shift up ~20% from center (upper third)
-        else:
-            gz = cz
-
-        grasp_dist = (gx**2 + gy**2) ** 0.5
-        orientation = self._grasp_orientation(gx, gy, grasp_dist)
-        pose = Pose(Vector3(gx, gy, gz), orientation)
-
-        logger.info(
-            f"Heuristic grasp for '{object_name}': center=({cx:.3f}, {cy:.3f}, {cz:.3f}), "
-            f"grasp=({gx:.3f}, {gy:.3f}, {gz:.3f}), xy_dist={xy_dist:.2f}m, "
-            f"inset={inset:.2f}m, "
-            f"size=({det.size.x:.3f}, {det.size.y:.3f}, {det.size.z:.3f})"
-        )
-        return [pose]
-
-    def _resolve_object_position(self, object_name: str) -> tuple[float, float, float] | None:
-        """Resolve an object name to its detected center position.
-
-        Returns (x, y, z) or None if object not found in detections.
-        No occlusion offset — used for drop_on where we want the true center.
-        """
-        det = self._find_object_in_detections(object_name)
-        if det is None:
-            return None
-        return det.center.x, det.center.y, det.center.z
-
-    def _gripper_group_id(self, robot_name: str | None) -> PlanningGroupID | None:
-        """Resolve the pose planning group that owns a robot's gripper."""
-        robot = self._get_robot(robot_name)
-        if robot is None or self._world_monitor is None:
-            return None
-        return self._world_monitor.planning_groups.primary_pose_group_id_for_robot(robot[0])
-
-    @skill
-    def get_scene_info(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
-        """Get current robot state, detected objects, and scene information.
-
-        Returns a summary of the robot's joint positions, end-effector pose,
-        gripper state, detected objects, and obstacle count.
-
-        Args:
-            robot_name: Robot to query (only needed for multi-arm setups).
-        """
-        lines: list[str] = []
-
-        # Robot state
-        joints = self.get_current_joints(robot_name)
-        if joints is not None:
-            lines.append(f"Joints: [{', '.join(f'{j:.3f}' for j in joints)}]")
-        else:
-            lines.append("Joints: unavailable (no state received)")
-
-        ee_pose = self.get_ee_pose(robot_name)
-        if ee_pose is not None:
-            p = ee_pose.position
-            lines.append(f"EE pose: ({p.x:.4f}, {p.y:.4f}, {p.z:.4f})")
-        else:
-            lines.append("EE pose: unavailable")
-
-        # Gripper
-        group_id = self._gripper_group_id(robot_name)
-        group_state = self.get_state().groups.get(group_id) if group_id is not None else None
-        gripper_pos = group_state.gripper_position if group_state is not None else None
-        if gripper_pos is not None:
-            lines.append(f"Gripper: {gripper_pos:.0%} open")
-        else:
-            lines.append("Gripper: not configured")
-
-        # Perception
-        perception = self.get_perception_status()
-        lines.append(
-            f"Perception: {perception.get('cached', 0)} cached, "
-            f"{perception.get('added', 0)} obstacles added"
-        )
-
-        detections = self._detection_snapshot
-        if detections:
-            lines.append(f"Detected objects ({len(detections)}):")
-            for det in detections:
-                c = det.center
-                lines.append(f"  - {det.name}: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
-        else:
-            lines.append("Detected objects: none")
-
-        # Visualization
-        url = self.get_visualization_url()
-        if url:
-            lines.append(f"Visualization: {url}")
-
-        # State
-        lines.append(f"State: {self.get_state()}")
-
-        return SkillResult.ok("\n".join(lines))
-
-    @skill
-    def look(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
-        """Quick check of what objects are visible from the current camera position.
-
-        Does NOT move the arm. Returns objects currently detected in the camera view.
-
-        Args:
-            robot_name: Robot context (only needed for multi-arm setups).
-        """
-        obstacles = self.refresh_obstacles(0.0)
-
-        detections = self._detection_snapshot
-        if not detections:
-            return SkillResult.ok("No objects visible from current position")
-
-        lines = [f"Currently see {len(detections)} object(s):"]
-        for det in detections:
-            c = det.center
-            lines.append(
-                f"  - {det.name} [id={det.object_id[:8]}]: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})"
-            )
-
-        if obstacles:
-            lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
-
-        return SkillResult.ok("\n".join(lines))
-
-    @skill
-    def scan_objects(
-        self,
-        min_duration: float = 0.0,
-        robot_name: str | None = None,
+    @skill(uses=[CAP_MOVEMENT])
+    def pick_object(
+        self, object_id: str, planning_group: PlanningGroupID | None = None
     ) -> SkillResult[ManipulationSkillError]:
-        """Scan for objects — moves to init position first for a clear camera view, \
-then refreshes perception obstacles.
-
-        Use this before pick/place operations or after a failed attempt.
+        """Generate ranked grasps and pick one object from the latest scan.
 
         Args:
-            min_duration: Minimum time an object must be seen to be included.
-            robot_name: Robot context (only needed for multi-arm setups).
+            object_id: Exact object ID returned by the latest scan_objects call.
+            planning_group: Gripper-capable pose group; omitted only when unambiguous.
         """
-        # Go to init for a clear camera view. Pick/place remains a legacy
-        # subclass, so resolve its robot selector internally and call primitives.
-        robot = self._get_robot(robot_name)
-        if robot is None or self._world_monitor is None:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
-        resolved_name, _, _ = robot
-        group_id = self._world_monitor.planning_groups.default_group_id_for_robot(resolved_name)
-        if group_id is None:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "Planning group is ambiguous")
-        init = self.get_state().groups[group_id].joint_presets.get("init")
-        if init is None:
-            return SkillResult.fail("NOT_CONFIGURED", "No init joints captured")
-        plan = self.plan_to_joints({group_id: init})
+        if self._holding_object:
+            return SkillResult.fail(
+                "INVALID_STATE", "Place the held object before starting another pick"
+            )
+        self._clear_selection()
+        if object_id not in self._objects:
+            return SkillResult.fail("OBJECT_NOT_DETECTED", f"Unknown object_id: {object_id}")
+        try:
+            pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
+            if pointcloud is None:
+                return SkillResult.fail(
+                    "OBJECT_NOT_DETECTED", f"No pointcloud for object_id: {object_id}"
+                )
+            candidates = self._grasp_generator.propose_grasps(pointcloud)
+        except (RuntimeError, ValueError) as exc:
+            return SkillResult.fail("GRASP_GENERATION_FAILED", str(exc))
+        self._grasp_candidates = candidates
+        if candidates.header.frame_id != self.config.planning_frame:
+            return SkillResult.fail(
+                "GRASP_FRAME_MISMATCH",
+                f"Expected {self.config.planning_frame}, got {candidates.header.frame_id}",
+            )
+        if not candidates.candidates:
+            return SkillResult.fail("GRASP_GENERATION_FAILED", "No grasp candidates generated")
+        group = self._resolve_group(planning_group)
+        if group is None:
+            return SkillResult.fail(
+                "ROBOT_NOT_FOUND", "Gripper-capable planning group is missing or ambiguous"
+            )
+        candidate = candidates.candidates[0]
+        grasp = self._apply_yaw_policy(
+            PoseStamped(
+                ts=candidates.header.timestamp,
+                frame_id=candidates.header.frame_id,
+                position=candidate.pose.position,
+                orientation=candidate.pose.orientation,
+            ),
+            group,
+        )
+        pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
+        if failure := self._open_gripper(group, "pre-grasp open"):
+            return failure
+        if failure := self._move(pregrasp, group):
+            return failure
+        if failure := self._move(grasp, group):
+            return failure
+        if failure := self._close_and_verify(group):
+            return failure
+
+        self._selected_object_id = object_id
+        self._selected_grasp = grasp
+        self._holding_object = True
+        if failure := self._move(pregrasp, group):
+            return failure
+        return SkillResult.ok(
+            "Pick complete",
+            object_id=object_id,
+            rank=0,
+            score=candidate.score,
+            candidates=len(candidates.candidates),
+        )
+
+    @rpc
+    def get_grasp_candidates(self) -> GraspCandidateArray:
+        return self._grasp_candidates
+
+    @skill(uses=[CAP_MOVEMENT])
+    def place_at(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        planning_group: PlanningGroupID | None = None,
+    ) -> SkillResult[ManipulationSkillError]:
+        """Place the held object at an explicit planning-frame position.
+
+        Args:
+            x: Planning-frame X coordinate in meters.
+            y: Planning-frame Y coordinate in meters.
+            z: Planning-frame Z coordinate in meters.
+            planning_group: Gripper-capable pose group; omitted only when unambiguous.
+        """
+        if self._selected_grasp is None or not self._holding_object:
+            return SkillResult.fail("INVALID_STATE", "Pick an object before placing")
+        group = self._resolve_group(planning_group)
+        if group is None:
+            return SkillResult.fail(
+                "ROBOT_NOT_FOUND", "Gripper-capable planning group is missing or ambiguous"
+            )
+        place = PoseStamped(
+            frame_id=self.config.planning_frame,
+            position=Vector3(x, y, z),
+            orientation=self._selected_grasp.orientation,
+        )
+        preplace = self._offset_pose(place, self.config.pregrasp_offset)
+        if failure := self._move(preplace, group):
+            return failure
+        if failure := self._move(place, group):
+            return failure
+        if failure := self._open_gripper(group, "release"):
+            return failure
+        self._holding_object = False
+        self._clear_selection()
+        return self._move(preplace, group) or SkillResult.ok("Place complete")
+
+    def _clear_selection(self) -> None:
+        self._grasp_candidates = GraspCandidateArray()
+        self._selected_object_id = None
+        self._selected_grasp = None
+
+    def _resolve_group(self, planning_group: PlanningGroupID | None) -> PlanningGroupID | None:
+        groups = [
+            group
+            for group in self._manipulation.list_planning_groups()
+            if group.has_gripper and group.tip_frame is not None
+        ]
+        if planning_group is not None:
+            return planning_group if any(group.id == planning_group for group in groups) else None
+        return groups[0].id if len(groups) == 1 else None
+
+    def _apply_yaw_policy(self, pose: PoseStamped, group: PlanningGroupID) -> PoseStamped:
+        if self.config.yaw_policy == "generated":
+            return pose
+        current = self._manipulation.get_state().groups[group].end_effector_pose
+        if current is None:
+            return pose
+        euler = pose.orientation.to_euler()
+        current_euler = current.orientation.to_euler()
+        return PoseStamped(
+            ts=pose.ts,
+            frame_id=pose.frame_id,
+            position=pose.position,
+            orientation=Quaternion.from_euler(Vector3(euler.x, euler.y, current_euler.z)),
+        )
+
+    @staticmethod
+    def _offset_pose(pose: PoseStamped, offset: float) -> PoseStamped:
+        return PoseStamped(
+            ts=pose.ts,
+            frame_id=pose.frame_id,
+            position=pose.position + pose.orientation.rotate_vector(Vector3(0.0, 0.0, -offset)),
+            orientation=pose.orientation,
+        )
+
+    def _move(
+        self, pose: PoseStamped, planning_group: PlanningGroupID
+    ) -> SkillResult[ManipulationSkillError] | None:
+        plan = self._manipulation.plan_to_poses({planning_group: pose})
         if not plan.succeeded:
             return SkillResult.fail("PLANNING_FAILED", plan.message)
-        execution = self.execute(blocking=True)
+        execution = self._manipulation.execute(blocking=True)
         if not execution.succeeded:
             return SkillResult.fail("EXECUTION_FAILED", execution.message)
+        return None
 
-        obstacles = self.refresh_obstacles(min_duration)
-
-        detections = self._detection_snapshot
-        if not detections:
-            # See look(): an empty scan is a valid observation, not a failure.
-            return SkillResult.ok("No objects detected in scene")
-
-        lines = [f"Detected {len(detections)} object(s):"]
-        for det in detections:
-            c = det.center
-            lines.append(
-                f"  - {det.name}: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f}) [{det.detections_count} views]"
-            )
-
-        if obstacles:
-            lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
-
-        return SkillResult.ok("\n".join(lines))
-
-    @skill
-    def pick(
-        self,
-        object_name: str,
-        object_id: str | None = None,
-        robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
-        """Pick up an object by name using grasp planning and motion execution.
-
-        Generates grasp poses, plans collision-free approach/grasp/retract motions,
-        and executes them.
-
-        Args:
-            object_name: Name of the object to pick (e.g. "cup", "bottle", "can").
-            object_id: Optional unique object ID from perception for precise identification.
-            robot_name: Robot to use (only needed for multi-arm setups).
-        """
-        robot = self._get_robot(robot_name)
-        if robot is None:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
-        rname, _, config = robot
-        pre_grasp_offset = config.pre_grasp_offset
-
-        # 1. Generate grasps (uses already-cached detections — call scan_objects first)
-        logger.info(f"Generating grasp poses for '{object_name}'...")
-        grasp_poses = self._generate_grasps_for_pick(object_name, object_id)
-        if not grasp_poses:
+    def _command_and_settle(
+        self, position: float, planning_group: PlanningGroupID
+    ) -> GripperSettle | SkillResult[ManipulationSkillError]:
+        result = self._manipulation.set_gripper_position(position, planning_group)
+        if not result.succeeded:
             return SkillResult.fail(
-                "GRASP_GENERATION_FAILED",
-                f"No grasp poses found for '{object_name}'. Object may not be detected.",
+                "GRIPPER_FAILED", result.message or "Gripper command was rejected"
             )
-
-        # Lift if EE is low before approaching
-        lift = self._lift_if_low(rname)
-        if not lift.is_success():
-            return lift
-
-        # 2. Try each grasp candidate
-        max_attempts = min(len(grasp_poses), 5)
-        for i, grasp_pose in enumerate(grasp_poses[:max_attempts]):
-            # Reduce pre-grasp height for far objects (arm can't reach high + far)
-            gp = grasp_pose.position
-            xy_dist = (gp.x**2 + gp.y**2) ** 0.5
-            offset = pre_grasp_offset if xy_dist < _FAR_REACH_XY_THRESHOLD else 0.05
-            pre_grasp_pose = self._compute_pre_grasp_pose(grasp_pose, offset)
-
-            logger.info(f"Planning approach to pre-grasp (attempt {i + 1}/{max_attempts})...")
-            if not self.plan_to_pose(pre_grasp_pose, rname):
-                logger.info(f"Grasp candidate {i + 1} approach planning failed, trying next")
-                continue  # Try next candidate
-
-            # 3. Open gripper before approach
-            logger.info("Opening gripper...")
-            self.set_gripper_position(1.0, self._gripper_group_id(rname))
-            time.sleep(0.5)
-
-            # 4. Execute approach to pre-grasp
-            exec_result = self._preview_execute_wait(rname)
-            if not exec_result.is_success():
-                return exec_result
-
-            # 5. Move to grasp pose
-            logger.info("Moving to grasp position...")
-            if not self.plan_to_pose(grasp_pose, rname):
-                return SkillResult.fail("PLANNING_FAILED", "Grasp pose planning failed")
-            exec_result = self._preview_execute_wait(rname)
-            if not exec_result.is_success():
-                return exec_result
-
-            # 6. Close gripper
-            logger.info("Closing gripper...")
-            self.set_gripper_position(0.0, self._gripper_group_id(rname))
-            time.sleep(1.5)  # Wait for gripper to close
-
-            # 7. Retract to pre-grasp
-            logger.info("Retracting with object...")
-            if not self.plan_to_pose(pre_grasp_pose, rname):
-                return SkillResult.fail("PLANNING_FAILED", "Retract planning failed")
-            exec_result = self._preview_execute_wait(rname)
-            if not exec_result.is_success():
-                return exec_result
-
-            # Store pick pose so place_back() can return with same orientation
-            self._last_pick_pose = grasp_pose
-
-            return SkillResult.ok(f"Pick complete — grasped '{object_name}' successfully")
-
-        return SkillResult.fail(
-            "GRASP_ATTEMPTS_EXHAUSTED",
-            f"All {max_attempts} grasp attempts failed for '{object_name}'",
+        return await_gripper_settle(
+            lambda: self._gripper_position(planning_group), position, self.config.grasp_verification
         )
 
-    @skill
-    def place(
-        self,
-        x: float,
-        y: float,
-        z: float,
-        robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
-        """Place a held object at the specified position.
-
-        Plans and executes an approach, lowers to the target, releases the gripper,
-        and retracts.
-
-        Args:
-            x: Target X position in meters.
-            y: Target Y position in meters.
-            z: Target Z position in meters.
-            robot_name: Robot to use (only needed for multi-arm setups).
-        """
-        xy_dist = (x**2 + y**2) ** 0.5
-        orientation = self._grasp_orientation(x, y, xy_dist)
-        return self._place_with_orientation(x, y, z, orientation, robot_name)
-
-    def _place_with_orientation(
-        self,
-        x: float,
-        y: float,
-        z: float,
-        orientation: Quaternion,
-        robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
-        """Internal place with explicit orientation."""
-        robot = self._get_robot(robot_name)
-        if robot is None:
-            return SkillResult.fail("ROBOT_NOT_FOUND", "Robot not found")
-        rname, _, config = robot
-        pre_place_offset = config.pre_grasp_offset
-
-        # Reduce pre-place height for far targets
-        xy_dist = (x**2 + y**2) ** 0.5
-        if xy_dist >= _FAR_REACH_XY_THRESHOLD:
-            pre_place_offset = 0.05
-
-        place_pose = Pose(Vector3(x, y, z), orientation)
-        pre_place_pose = self._compute_pre_grasp_pose(place_pose, pre_place_offset)
-
-        # Lift if EE is low before approaching
-        lift = self._lift_if_low(rname)
-        if not lift.is_success():
-            return lift
-
-        # 1. Move to pre-place
-        logger.info(f"Planning approach to place position ({x:.3f}, {y:.3f}, {z:.3f})...")
-        if not self.plan_to_pose(pre_place_pose, rname):
-            return SkillResult.fail("PLANNING_FAILED", "Pre-place approach planning failed")
-
-        exec_result = self._preview_execute_wait(rname)
-        if not exec_result.is_success():
-            return exec_result
-
-        # 2. Lower to place position
-        logger.info("Lowering to place position...")
-        if not self.plan_to_pose(place_pose, rname):
-            return SkillResult.fail("PLANNING_FAILED", "Place pose planning failed")
-        exec_result = self._preview_execute_wait(rname)
-        if not exec_result.is_success():
-            return exec_result
-
-        # 3. Release
-        logger.info("Releasing object...")
-        self.set_gripper_position(1.0, self._gripper_group_id(rname))
-        time.sleep(1.0)
-
-        # 4. Retract
-        logger.info("Retracting...")
-        if not self.plan_to_pose(pre_place_pose, rname):
-            return SkillResult.fail("PLANNING_FAILED", "Retract planning failed")
-        exec_result = self._preview_execute_wait(rname)
-        if not exec_result.is_success():
-            return exec_result
-
-        return SkillResult.ok(f"Place complete — object released at ({x:.3f}, {y:.3f}, {z:.3f})")
-
-    @skill
-    def place_back(self, robot_name: str | None = None) -> SkillResult[ManipulationSkillError]:
-        """Place the held object back at its original pick position.
-
-        Uses the position stored from the last successful pick operation.
-
-        Args:
-            robot_name: Robot to use (only needed for multi-arm setups).
-        """
-        if self._last_pick_pose is None:
-            return SkillResult.fail(
-                "NO_PRIOR_POSE",
-                "No previous pick position stored — run pick() first",
-            )
-
-        p = self._last_pick_pose.position
-        o = self._last_pick_pose.orientation
-        logger.info(f"Placing back at original position ({p.x:.3f}, {p.y:.3f}, {p.z:.3f})...")
-        return self._place_with_orientation(p.x, p.y, p.z, o, robot_name)
-
-    @skill
-    def drop_on(
-        self,
-        target_object_name: str,
-        z_offset: float = 0.1,
-        robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
-        """Drop a held object on top of a detected object.
-
-        Resolves the target object's position with occlusion correction and
-        places the held object above it.
-
-        Args:
-            target_object_name: Name of the target object to drop onto (e.g. "cup", "bowl").
-            z_offset: Height above the target object's center to release (meters).
-            robot_name: Robot to use (only needed for multi-arm setups).
-        """
-        pos = self._resolve_object_position(target_object_name)
-        if pos is None:
-            return SkillResult.fail(
-                "OBJECT_NOT_DETECTED",
-                f"Target object '{target_object_name}' not found in detections",
-            )
-        x, y, z = pos
-        z += z_offset
-        logger.info(
-            f"Dropping on '{target_object_name}' at corrected position ({x:.3f}, {y:.3f}, {z:.3f})"
+    def _open_gripper(
+        self, planning_group: PlanningGroupID, step: str
+    ) -> SkillResult[ManipulationSkillError] | None:
+        settle = self._command_and_settle(
+            self.config.grasp_verification.open_position, planning_group
         )
-        return self.place(x, y, z, robot_name)
+        if isinstance(settle, SkillResult):
+            return settle
+        if settle.position is None:
+            return None
+        if failure := open_failure(settle, self.config.grasp_verification):
+            return SkillResult.fail("GRIPPER_FAILED", f"{step}: {failure}")
+        return None
 
-    @skill
-    def pick_and_place(
-        self,
-        object_name: str,
-        place_x: float,
-        place_y: float,
-        place_z: float,
-        object_id: str | None = None,
-        robot_name: str | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
-        """Pick up an object and place it at a target location.
-
-        Combines the pick and place skills into a single end-to-end operation.
-
-        Args:
-            object_name: Name of the object to pick (e.g. "cup", "bottle").
-            place_x: Target X position to place the object (meters).
-            place_y: Target Y position to place the object (meters).
-            place_z: Target Z position to place the object (meters).
-            object_id: Optional unique object ID from perception.
-            robot_name: Robot to use (only needed for multi-arm setups).
-        """
-        logger.info(
-            f"Starting pick and place: pick '{object_name}' → place at "
-            f"({place_x:.3f}, {place_y:.3f}, {place_z:.3f})"
+    def _close_and_verify(
+        self, planning_group: PlanningGroupID
+    ) -> SkillResult[ManipulationSkillError] | None:
+        settle = self._command_and_settle(
+            self.config.grasp_verification.closed_position, planning_group
         )
+        if isinstance(settle, SkillResult):
+            return settle
+        if not self.config.grasp_verification.enabled:
+            return None
+        if failure := grasp_failure(settle, self.config.grasp_verification):
+            if settle.position is not None and "nothing in the jaws" in failure:
+                recovered = self._open_gripper(planning_group, "empty-grasp recovery")
+                if recovered:
+                    return recovered
+            return SkillResult.fail("GRASP_VERIFICATION_FAILED", failure)
+        return None
 
-        # Pick phase
-        pick_result = self.pick(object_name, object_id, robot_name)
-        if not pick_result.is_success():
-            return pick_result
-
-        # Place phase
-        return self.place(place_x, place_y, place_z, robot_name)
-
-    @rpc
-    def stop(self) -> None:
-        """Stop the pick-and-place module."""
-        logger.info("Stopping PickAndPlaceModule")
-        super().stop()
+    def _gripper_position(self, planning_group: PlanningGroupID) -> float | None:
+        state = self._manipulation.get_state().groups.get(planning_group)
+        return state.gripper_position if state is not None else None

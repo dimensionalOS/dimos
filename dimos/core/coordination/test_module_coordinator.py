@@ -34,12 +34,12 @@ from dimos.core.coordination.blueprints import (
 from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
 from dimos.core.coordination.module_coordinator import (
     ModuleCoordinator,
-    _all_name_types,
     _check_requirements,
     _deploy_all_modules,
     _materialize_transports,
     _verify_no_conflicts_with_existing,
     _verify_no_name_conflicts,
+    stream_name_types,
 )
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
@@ -47,6 +47,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import IO, In, Out, Stream
 from dimos.core.transport import CloudflareTransport, PubSubTransport
+from dimos.core.transport_factory import transport_topic
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -446,7 +447,7 @@ def test_remapping() -> None:
     assert blueprint_set.remapping_map[(SourceModule.name, "color_image")] == "remapped_data"
 
     # Verify that remapped names are used in name resolution
-    all_names = _all_name_types(blueprint_set)
+    all_names = stream_name_types(blueprint_set)
     assert ("remapped_data", Data1) in all_names
     # The original name shouldn't be in the name types since it's remapped
     assert ("color_image", Data1) not in all_names
@@ -471,8 +472,8 @@ def test_remapping() -> None:
             == target_instance.remapped_data.transport.topic
         )
 
-        # The topic should be /remapped_data since that's the remapped name
-        assert target_instance.remapped_data.transport.topic == "/remapped_data"
+        # The topic should be the remapped name, spelled for the active backend.
+        assert target_instance.remapped_data.transport.topic == transport_topic("/remapped_data")
 
     finally:
         coordinator.stop()

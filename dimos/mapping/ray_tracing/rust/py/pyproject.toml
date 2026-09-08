@@ -1,0 +1,10 @@
+[build-system]
+requires = ["maturin>=1,<2"]
+build-backend = "maturin"
+
+[project]
+name = "dimos-voxel-ray-tracing"
+version = "0.1.0"
+
+[tool.maturin]
+module-name = "dimos_voxel_ray_tracing"

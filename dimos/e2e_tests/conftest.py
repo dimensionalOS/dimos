@@ -13,11 +13,14 @@
 # limitations under the License.
 
 from collections.abc import Callable, Generator, Iterator
+import subprocess
+import sys
 import threading
 import time
 
 import pytest
 
+from dimos.core.global_config import global_config
 from dimos.core.transport import pLCMTransport
 from dimos.e2e_tests.conf_types import StartPersonTrack
 from dimos.e2e_tests.dim_sim_client import DimSimClient
@@ -29,6 +32,26 @@ from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 from dimos.simulation.mujoco.person_on_track import PersonTrackPublisher
+
+
+@pytest.fixture(autouse=True)
+def _pin_to_lcm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This package can only run on LCM.
+
+    ``LcmSpy`` sniffs the raw LCM bus, so it observes nothing at all under the
+    zenoh default -- every wait_for_topic here would just time out. The env var
+    is what reaches the ``dimos`` CLI these tests spawn; the singleton covers
+    the transports the test process itself builds.
+    """
+    monkeypatch.setenv("DIMOS_TRANSPORT", "lcm")
+    monkeypatch.setattr(global_config, "transport", "lcm")
+
+
+@pytest.fixture(scope="session")
+def playwright_browsers() -> None:
+    subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium", "firefox"], check=True
+    )
 
 
 def _pose(x: float, y: float, theta: float) -> PoseStamped:

@@ -90,7 +90,7 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 
 ### Auto CLI arg generation
 
-Any field you add to your config subclass automatically becomes a `--name value` CLI arg. Fields from `NativeModuleConfig` itself (like `executable`, `extra_args`, `cwd`) are **not** passed — they're for Python-side orchestration only.
+Any field you add to your config subclass automatically becomes a `--name value` CLI arg. Fields from `NativeModuleConfig` itself (like `executable`, `extra_args`, `cwd`) are **not** passed. They're for Python-side orchestration only.
 
 ```python skip
 from pydantic import Field

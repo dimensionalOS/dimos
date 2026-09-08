@@ -71,10 +71,10 @@ class MySkillContainer(Module):
 
 | Skill | Module | Description |
 |-------|--------|-------------|
-| `relative_move(forward, left, degrees)` | `UnitreeSkillContainer` | Move robot relative to current position |
+| `move_to(x, y, degrees, relative)` | `UnitreeSkillContainer` | Drive to a world position; `relative=True` for a forward/left offset from where it stands |
 | `execute_sport_command(command_name)` | `UnitreeSkillContainer` | Unitree sport commands (sit, stand, flip, etc.) |
 | `wait(seconds)` | `UnitreeSkillContainer` | Pause execution |
-| `observe()` | `GO2Connection` | Capture and return current camera frame |
+| `observe()` | `ObserveSkill` | Capture and return current camera frame |
 | `navigate_with_text(query)` | `NavigationSkillContainer` | Navigate to a location by description |
 | `tag_location(location_name)` | `NavigationSkillContainer` | Tag current position for later recall |
 | `stop_navigation()` | `NavigationSkillContainer` | Cancel current navigation goal |
@@ -97,7 +97,7 @@ CLI access:
 
 ```bash
 dimos mcp list-tools                                # List available skills
-dimos mcp call relative_move --arg forward=0.5      # Call a skill
+dimos mcp call move_to --arg x=0.5 --arg relative=true  # Call a skill
 dimos mcp status                                    # Server status
 ```
 
@@ -105,7 +105,7 @@ dimos mcp status                                    # Server status
 
 | Method | How it works |
 |--------|-------------|
-| `humancli` | Standalone terminal — type messages, see responses |
+| `humancli` | Standalone terminal: type messages, see responses |
 | `dimos agent-send "text"` | One-shot CLI command via LCM |
 | `WebInput` | Web interface at localhost:5555 with Whisper STT |
 

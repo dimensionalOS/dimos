@@ -1,15 +1,13 @@
-import type { ChannelSpec, PanelSpec } from "@dimos/shared";
-import { useChannel } from "../session/hooks.ts";
-import { getDecoder } from "../session/decoders/index.ts";
-import { channelSubscribable } from "../session/session.ts";
-import type { ChannelStore } from "../session/store.ts";
+import type { ChannelSpec, ChannelStore, PanelSpec } from "@dimos/sdk";
+import { useStoreChannel } from "@dimos/sdk/react";
+import { channelSubscribable, cockpitDecoders } from "../subscriptions.ts";
 import styles from "./ChannelList.module.css";
 
 function ChannelRow(
   { spec, panels, store }: { spec: ChannelSpec; panels: PanelSpec[]; store: ChannelStore },
 ) {
-  const { slot, stats } = useChannel(store, spec.ch);
-  const supported = getDecoder(spec.encoding) !== undefined;
+  const { slot, stats } = useStoreChannel(store, spec.ch);
+  const supported = cockpitDecoders.get(spec.encoding) !== undefined;
   const subscribed = channelSubscribable(spec, panels);
 
   let value;
