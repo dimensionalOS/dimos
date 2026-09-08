@@ -44,7 +44,7 @@ from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
 import dimos.evals.agents.pi as pi_mod
-from dimos.evals.agents.pi import Pi, render_tools
+from dimos.evals.agents.pi import PiAdapter, render_tools
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.cli import load_agent
 from dimos.evals.environments.base import Environment
@@ -732,6 +732,37 @@ def test_load_agent_is_the_module_plus_set_overrides() -> None:
         load_agent("dimos.evals.agents.question_answer", ["frames_per_stream=0"])
 
 
+@pytest.mark.parametrize(("override", "max_steps"), [("null", None), ("3", 3)])
+def test_load_pi_adapter_with_config_overrides(override: str, max_steps: int | None) -> None:
+    agent = load_agent(
+        "dimos.evals.agents.pi",
+        [f"max_steps={override}", 'modules=["rangefinder-skill"]', "model=x"],
+    )
+
+    assert isinstance(agent, PiAdapter)
+    assert (agent.config.max_steps, agent.config.modules, agent.config.model) == (
+        max_steps,
+        ("rangefinder-skill",),
+        "x",
+    )
+
+
+@pytest.mark.parametrize(
+    ("override", "field"),
+    [
+        ("modules=rangefinder-skill", "modules"),
+        ("tools=read,bash", "tools"),
+        ("skills=spatial/SKILL.md", "skills"),
+        ("passthrough_env=OPENAI_API_KEY", "passthrough_env"),
+        ("max_steps=several", "max_steps"),
+        ("frames_per_stream=3", "frames_per_stream"),
+    ],
+)
+def test_load_pi_adapter_rejects_invalid_config(override: str, field: str) -> None:
+    with pytest.raises(ValidationError, match=field):
+        load_agent("dimos.evals.agents.pi", [override])
+
+
 @pytest.mark.parametrize("goes_idle", [True, False])
 def test_mcp_client_adapter_drives_a_turn_over_real_transports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goes_idle: bool
@@ -907,11 +938,12 @@ def test_pi_runs_headless_over_the_recording_and_records_every_call(
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     try:
-        agent = Pi(cli=str(fake_pi), model="gpt-fake")
+        agent = PiAdapter(cli=str(fake_pi), model="gpt-fake")
         agent.preflight(env)
         trajectory = agent.run("how far?", running, run_dir, timeout_s=60.0)
     finally:
         env.stop()
+    assert trajectory.agent.name == "PiAdapter"
     assert (trajectory.final_answer, trajectory.extra.ended_by, trajectory.agent.model_name) == (
         "4.0",
         "answer",
@@ -954,7 +986,9 @@ def test_pi_is_told_the_robots_tools_and_stopped_at_max_steps(
     env = Dataset(dataset, mcp_url="http://localhost:1/mcp")
     running = env.start(())
     try:
-        trajectory = Pi(cli=str(fake_pi), max_steps=2).run("go", running, tmp_path, timeout_s=60.0)
+        trajectory = PiAdapter(cli=str(fake_pi), max_steps=2).run(
+            "go", running, tmp_path, timeout_s=60.0
+        )
     finally:
         env.stop()
     assert (trajectory.extra.ended_by, len(trajectory.steps), trajectory.final_answer) == (
@@ -975,7 +1009,7 @@ def test_pi_is_killed_at_the_time_budget_and_keeps_its_steps(
     running = env.start(())
     try:
         started = time.monotonic()
-        trajectory = Pi(cli=str(fake_pi)).run("go", running, tmp_path, timeout_s=0.5)
+        trajectory = PiAdapter(cli=str(fake_pi)).run("go", running, tmp_path, timeout_s=0.5)
         took = time.monotonic() - started
     finally:
         env.stop()
@@ -988,12 +1022,12 @@ def test_pi_preflight_and_tool_rendering(
     dataset: str, fake_pi: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with pytest.raises(RuntimeError, match="not on PATH"):
-        Pi(cli=str(tmp_path / "missing")).preflight(ImageFile(tmp_path / "x.png"))
-    with pytest.raises(RuntimeError, match="Pi.tools is a string"):
-        Pi(cli=str(fake_pi), tools="read,bash").preflight(ImageFile(tmp_path / "x.png"))
+        PiAdapter(cli=str(tmp_path / "missing")).preflight(ImageFile(tmp_path / "x.png"))
+    with pytest.raises(ValidationError, match="tools"):
+        PiAdapter(cli=str(fake_pi), tools="read,bash")
     robot = Dataset(dataset, mcp_url="http://localhost:1/mcp")
     with pytest.raises(RuntimeError, match="bash tool, which is not enabled"):
-        Pi(cli=str(fake_pi), tools=("read",)).preflight(robot)
+        PiAdapter(cli=str(fake_pi), tools=("read",)).preflight(robot)
     tools = [
         {
             "name": "move_to",
@@ -1009,7 +1043,7 @@ def test_pi_skills_become_native_flags_and_preflight_checks_paths(
 ) -> None:
     """Explicit skill paths become repeated ``--skill`` flags, absolute (Pi's
     cwd is the run dir) with ambient discovery still off; a missing path or a
-    bare string fails preflight before a simulator or model starts."""
+    bare string fails validation before a simulator or model starts."""
     skill = tmp_path / "spatial" / "SKILL.md"
     skill.parent.mkdir()
     skill.write_text("# spatial skill")
@@ -1020,9 +1054,9 @@ def test_pi_skills_become_native_flags_and_preflight_checks_paths(
     for d in ("with-skills", "bare"):
         (tmp_path / d).mkdir()
     try:
-        agent = Pi(skills=(str(skill), "spatial/SKILL.md"))  # absolute and relative
+        agent = PiAdapter(skills=(str(skill), "spatial/SKILL.md"))  # absolute and relative
         command = agent._command("go", running, tmp_path / "with-skills")
-        bare = Pi()._command("go", running, tmp_path / "bare")
+        bare = PiAdapter()._command("go", running, tmp_path / "bare")
     finally:
         env.stop()
     assert [command[i + 1] for i, a in enumerate(command) if a == "--skill"] == [
@@ -1033,9 +1067,9 @@ def test_pi_skills_become_native_flags_and_preflight_checks_paths(
     assert "--skill" not in bare
 
     with pytest.raises(RuntimeError, match="do not exist"):
-        Pi(skills=(str(tmp_path / "missing.md"),)).preflight(env)
-    with pytest.raises(RuntimeError, match="Pi.skills is a string"):
-        Pi(skills="spatial/SKILL.md").preflight(env)
+        PiAdapter(skills=(str(tmp_path / "missing.md"),)).preflight(env)
+    with pytest.raises(ValidationError, match="skills"):
+        PiAdapter(skills="spatial/SKILL.md")
 
 
 def test_pi_prompt_is_composed_from_its_fields(
@@ -1050,8 +1084,8 @@ def test_pi_prompt_is_composed_from_its_fields(
     for d in ("default", "bare"):
         (tmp_path / d).mkdir()
     try:
-        Pi(instructions="Use only odometry.")._command("go", running, tmp_path / "default")
-        Pi(builtin_guidance=False, tools=("read", "bash"))._command(
+        PiAdapter(instructions="Use only odometry.")._command("go", running, tmp_path / "default")
+        PiAdapter(builtin_guidance=False, tools=("read", "bash"))._command(
             "go", running, tmp_path / "bare"
         )
     finally:
@@ -1077,7 +1111,7 @@ def test_pi_that_exits_with_a_failure_status_is_an_error(
     running = env.start(())
     try:
         with pytest.raises(RuntimeError, match="exit status 1: unknown tool: bahs"):
-            Pi(cli=str(fake_pi), tools=("read", "bahs")).run(
+            PiAdapter(cli=str(fake_pi), tools=("read", "bahs")).run(
                 "go", running, tmp_path, timeout_s=60.0
             )
     finally:
@@ -1090,7 +1124,7 @@ def test_agents_report_every_available_tool() -> None:
     assert QuestionAnswer().available_tools(environment_tools) == ()
     assert Blind().available_tools(environment_tools) == ()
     assert McpClientAdapter().available_tools(environment_tools) == environment_tools
-    assert Pi().available_tools(environment_tools) == (
+    assert PiAdapter().available_tools(environment_tools) == (
         "read",
         "bash",
         "edit",

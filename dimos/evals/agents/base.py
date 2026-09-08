@@ -31,6 +31,10 @@ class AgentConfig(BaseConfig):
     modules: tuple[str, ...] = ()
 
 
+class ModelAgentConfig(AgentConfig):
+    model: str = "gpt-5.6-luna"
+
+
 class Agent(Configurable, ABC):
     """Run an instruction independently of the case and its grader.
 
