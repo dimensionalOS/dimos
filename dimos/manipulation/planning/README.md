@@ -10,7 +10,7 @@ planning from conversion to an executable timed trajectory.
 dimos run xarm7-planner-coordinator
 
 # Plan for the mobile, bimanual R1 Pro with fake hardware:
-dimos run r1pro-planner-coordinator
+dimos run r1pro-planar-preview
 
 # 2. Keyboard teleop with mock arm (single command):
 dimos run keyboard-teleop-xarm7
@@ -305,7 +305,7 @@ accepted.
 |-----------|-------------|
 | `xarm7-planner-coordinator` | XArm 7-DOF with coordinator |
 | `dual-xarm6-planner-coordinator` | Dual XArm 6-DOF with mock coordinator hardware |
-| `r1pro-planner-coordinator` | R1 Pro planar base, torso, and both arms with fake hardware |
+| `r1pro-planar-preview` | R1 Pro planar base, torso, and both arms with fake hardware |
 | `xarm-perception-sim` | XArm 7-DOF simulation perception stack |
 
 ## Directory Structure
