@@ -92,8 +92,7 @@ class CompressedVideo(Timestamped):
             "h264": rr.VideoCodec.H264,
             "h265": rr.VideoCodec.H265,
             "av1": rr.VideoCodec.AV1,
-            "vp8": rr.VideoCodec.VP8,
-            "vp9": rr.VideoCodec.VP9,
+            # no vp8/vp9: the pinned rerun 0.32.0-alpha.1 has no such codec
         }
         codec = codecs.get(self.format.lower())
         if codec is None:
