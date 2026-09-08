@@ -16,27 +16,29 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import closing
+import io
 import json
 import os
 from pathlib import Path
-import queue
+import selectors
 import shutil
 import subprocess
-import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import IO, TYPE_CHECKING, Any
 
-from dimos.agents.llm_trace import latest_pair
+from pydantic import Field
+
+from dimos.core.coordination.process_lifecycle import kill_run_processes
 from dimos.evals.agents.base import Agent, ModelAgentConfig
-from dimos.evals.agents.lib.proxy import RecordingProxy
+from dimos.evals.agents.lib.model_trace_proxy import model_trace_proxy
+from dimos.evals.agents.lib.pi_to_atif import PiToAtif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.environments.base import Environment
 from dimos.evals.types import (
     EndedBy,
-    Metrics,
     RunningEnvironment,
-    ToolCall,
     Trajectory,
 )
 
@@ -44,20 +46,16 @@ if TYPE_CHECKING:
     from dimos.memory.stream import Stream
 
 
-def render_tools(tools: list[dict[str, Any]]) -> str:
-    """One line per MCP tool: name, argument names, first line of the description."""
+def tool_listing(mcp_url: str) -> str:
+    """List each MCP tool's name, arguments, and first description line for Pi."""
+    from dimos.agents.mcp.mcp_adapter import McpAdapter
+
     lines = []
-    for t in tools:
+    for t in McpAdapter(mcp_url).list_tools():
         args = ", ".join((t.get("inputSchema") or {}).get("properties") or {})
         summary = str(t.get("description") or "").strip().partition("\n")[0]
         lines.append(f"- {t['name']}({args}): {summary}")
     return "\n".join(lines)
-
-
-def tool_listing(mcp_url: str) -> str:
-    from dimos.agents.mcp.mcp_adapter import McpAdapter
-
-    return render_tools(McpAdapter(mcp_url).list_tools())
 
 
 def recording_file(streams: Sequence[Stream[Any, Any]], path: Path) -> Path:
@@ -65,16 +63,13 @@ def recording_file(streams: Sequence[Stream[Any, Any]], path: Path) -> Path:
     so a subprocess can open what the case selected and nothing more."""
     from dimos.memory.store.sqlite import SqliteStore
 
-    store = SqliteStore(path=str(path))
-    try:
+    with SqliteStore(path=str(path)) as store:
         for stream in streams:
             if stream.name is None:
                 raise ValueError("a stream must be bound to a store to be written out")
             target: Stream[Any, Any] = store.stream(stream.name, stream.data_type)
             for obs in stream:
                 target.append(obs.data, ts=obs.ts, pose=obs.pose_tuple, tags=obs.tags)
-    finally:
-        store.stop()
     return path
 
 
@@ -93,83 +88,26 @@ def _registry_cost(cli: str, model: str) -> dict[str, Any] | None:
     return None
 
 
-def _result_text(result: Any) -> str:
-    content = result.get("content") if isinstance(result, dict) else None
-    if isinstance(content, list):
-        return "\n".join(str(c.get("text", "")) for c in content if c.get("type") == "text")
-    return str(result)
-
-
-def _pump(stream: Any, into: queue.Queue[str | None]) -> None:
-    """Every line of *stream* onto the queue, then None at EOF."""
-    for line in stream:
-        into.put(line)
-    into.put(None)
-
-
-class _Events:
-    """Pi's ``--mode json`` stream folded into a trajectory: one step per
-    assistant ``message_end``, each paired with the request/response the proxy
-    recorded for it; each tool result is attached to the call that produced it."""
-
-    def __init__(self, raw_dir: Path, trajectory: TrajectoryBuilder) -> None:
-        self.raw_dir = raw_dir
-        self.trajectory = trajectory
-        self.calls = 0  # model calls seen
-        self.wants_tool = False  # the latest one asked for a tool
-        self.error = ""
-        self._next_seq = 0
-
-    def feed(self, line: str) -> None:
-        event = json.loads(line)
-        if event.get("type") == "tool_execution_end" and self.calls:
-            self.trajectory.observe(str(event["toolCallId"]), _result_text(event.get("result")))
-        elif event.get("type") == "message_end" and event["message"].get("role") == "assistant":
-            self._step(event["message"])
-
-    def _step(self, message: dict[str, Any]) -> None:
-        pair = latest_pair(self.raw_dir, self._next_seq)
-        if pair is None:
-            raise RuntimeError(
-                f"Pi made a model call that left no trace under {self.raw_dir}; "
-                "every call must go through the recording proxy"
-            )
-        self._next_seq = pair[0] + 1
-        usage = message.get("usage") or {}
-        content = message.get("content") or []
-        if message.get("stopReason") in ("error", "aborted"):
-            self.error = str(message.get("errorMessage") or message["stopReason"])
-        tool_calls = tuple(
-            ToolCall(
-                tool_call_id=str(c["id"]),
-                function_name=str(c["name"]),
-                arguments=dict(c.get("arguments") or {}),
-            )
-            for c in content
-            if c.get("type") == "toolCall"
-        )
-        # Pi's ``input`` excludes cache traffic: what was sent is the three together.
-        cached = int(usage.get("cacheRead", 0))
-        self.trajectory.step(
-            message="".join(str(c.get("text", "")) for c in content if c.get("type") == "text"),
-            reasoning="\n\n".join(
-                str(c.get("thinking", "")) for c in content if c.get("type") == "thinking"
-            ),
-            tool_calls=tool_calls,
-            metrics=Metrics(
-                prompt_tokens=int(usage.get("input", 0)) + int(usage.get("cacheWrite", 0)) + cached,
-                completion_tokens=int(usage.get("output", 0)),
-                cached_tokens=cached,
-                cost_usd=float((usage.get("cost") or {}).get("total") or 0.0),
-            ),
-            model_name=str(message.get("responseModel") or message.get("model") or ""),
-            latency_s=float(json.loads(pair[2].read_text()).get("latency_s") or 0.0),
-            reasoning_tokens=int(usage.get("reasoning", 0)),
-            request=pair[1],
-            response=pair[2],
-        )
-        self.calls += 1
-        self.wants_tool = bool(tool_calls)
+def read_pi_events(stream: IO[bytes], deadline: float) -> Generator[dict[str, Any], None, None]:
+    """Read Pi's JSON events until EOF, raising TimeoutError at the deadline."""
+    pending = b""
+    with selectors.DefaultSelector() as selector:
+        selector.register(stream, selectors.EVENT_READ)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not selector.select(timeout=remaining):
+                raise TimeoutError
+            chunk = os.read(stream.fileno(), io.DEFAULT_BUFFER_SIZE)
+            if not chunk:
+                if pending:
+                    yield json.loads(pending)
+                return
+            # Keep partial lines as bytes so split UTF-8 characters remain intact.
+            *lines, pending = (pending + chunk).split(b"\n")
+            for line in lines:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError
+                yield json.loads(line)
 
 
 class PiAdapterConfig(ModelAgentConfig):
@@ -196,6 +134,9 @@ class PiAdapterConfig(ModelAgentConfig):
     # preserving recorded steps. None disables this limit; the timeout still applies.
     max_steps: int | None = 40
 
+    # Grace period for Pi, then remaining tools, before forceful termination.
+    shutdown_timeout_s: float = Field(default=2.0, ge=0.0, allow_inf_nan=False)
+
     # Pi executable name or path.
     cli: str = "pi"
 
@@ -208,12 +149,7 @@ class PiAdapterConfig(ModelAgentConfig):
 
 
 class PiAdapter(Agent):
-    """The Pi coding agent, headless (``pi --mode json``), with the run dir as
-    its working directory. The case's artifacts and the recording are files
-    named in the system prompt; a live robot is reached through ``dimos mcp
-    call`` from Pi's ``bash`` tool. Model traffic goes through a local
-    :class:`RecordingProxy`, so every call is captured whole under ``run_dir/raw``.
-    """
+    """Run headless Pi against case files and robot tools, recording an ATIF trajectory."""
 
     config: PiAdapterConfig
 
@@ -240,21 +176,23 @@ class PiAdapter(Agent):
         self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
     ) -> Trajectory:
         raw_dir = run_dir / "raw"
-        events = _Events(
+        events = PiToAtif(
             raw_dir, TrajectoryBuilder(inputs, name=type(self).__name__, model=self.config.model)
         )
         upstream = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        with RecordingProxy(raw_dir, upstream) as proxy_url:
-            self._write_agent_dir(run_dir, proxy_url)
-            ended_by = self._drive(self._command(inputs, env, run_dir), run_dir, events, timeout_s)
+        with model_trace_proxy(raw_dir, upstream) as proxy_url:
+            self._write_model_config(run_dir, proxy_url)
+            files = dict(env.artifacts)
+            if env.streams:
+                files["recording"] = recording_file(env.streams, run_dir / "recording.db")
+            system_prompt = self._write_system_prompt(files, env.mcp_url, run_dir)
+            command = self._build_pi_command(inputs, system_prompt, run_dir)
+            ended_by = self._run_pi_process(command, run_dir, events, timeout_s)
         if events.error:
             raise RuntimeError(f"Pi stopped: {events.error}")
         return events.trajectory.build(ended_by)
 
-    def _command(self, inputs: str, env: RunningEnvironment, run_dir: Path) -> list[str]:
-        files = dict(env.artifacts)
-        if env.streams:  # the selection, not the whole source the artifact names
-            files["recording"] = recording_file(env.streams, run_dir / "recording.db")
+    def _write_system_prompt(self, files: dict[str, Path], mcp_url: str, run_dir: Path) -> str:
         parts = [self.config.system_prompt, self.config.instructions]
         parts.append("Files:\n" + "\n".join(f"- {name}: {path}" for name, path in files.items()))
         if self.config.builtin_guidance and "recording" in files:
@@ -265,15 +203,18 @@ class PiAdapter(Agent):
                 "store.streams.<name> is a stream, .last().data its latest message; iterating "
                 "a stream yields observations with .ts and .data. Inspect with dir() and help()."
             )
-        if env.mcp_url:
+        if mcp_url:
             if self.config.builtin_guidance:
                 parts.append(
                     "The robot is live. Call one of its tools from bash as\n"
                     "  dimos mcp call <tool> --json-args '{\"arg\": value}'"
                 )
-            parts.append("Tools:\n" + tool_listing(env.mcp_url))
+            parts.append("Tools:\n" + tool_listing(mcp_url))
         prompt = "\n\n".join(p for p in parts if p)
         (run_dir / "system-prompt.txt").write_text(prompt)
+        return prompt
+
+    def _build_pi_command(self, inputs: str, system_prompt: str, run_dir: Path) -> list[str]:
         # Absolute before Pi changes to the run dir; --no-skills disables only
         # ambient discovery, explicit --skill paths still load.
         skills = [
@@ -285,12 +226,11 @@ class PiAdapter(Agent):
             "--tools", ",".join(self.config.tools),
             "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
             "--no-context-files", "--no-approve", *skills,
-            "--system-prompt", prompt, inputs,
+            "--system-prompt", system_prompt, inputs,
         ]  # fmt: skip
 
-    def _write_agent_dir(self, run_dir: Path, proxy_url: str) -> None:
-        """A private Pi config dir with one provider, ``dimos``, which is the
-        proxy; ``_command`` names models as ``dimos/<model>``."""
+    def _write_model_config(self, run_dir: Path, proxy_url: str) -> None:
+        """Route the dimos/<model> provider through the model trace proxy."""
         agent_dir = run_dir / ".pi-agent"
         agent_dir.mkdir(parents=True, exist_ok=True)
         model: dict[str, Any] = {"id": self.config.model, "reasoning": True}
@@ -306,7 +246,7 @@ class PiAdapter(Agent):
             json.dumps({"providers": {"dimos": provider}}, indent=2)
         )
 
-    def _env(self, run_dir: Path) -> dict[str, str]:
+    def _build_process_env(self, run_dir: Path) -> dict[str, str]:
         keep = self.config.passthrough_env
         passed = {k: v for k, v in os.environ.items() if k in keep or k.startswith("DIMOS_")}
         return {
@@ -316,53 +256,57 @@ class PiAdapter(Agent):
             "PI_TELEMETRY": "0",
         }
 
-    def _drive(
-        self, command: list[str], run_dir: Path, events: _Events, timeout_s: float
+    def _run_pi_process(
+        self, command: list[str], run_dir: Path, events: PiToAtif, timeout_s: float
     ) -> EndedBy:
-        """Run Pi to completion, or kill it at ``max_steps`` model calls or
-        when *timeout_s* runs out. Pi's events are read on a helper thread so
-        the wait for the next one can carry the deadline. A Pi that exits on
-        its own with a failure status (a rejected flag, say) is an error, not
-        an answer."""
+        """Run Pi, consume its events, and stop its tools when the run ends."""
         deadline = time.monotonic() + timeout_s
-        lines: queue.Queue[str | None] = queue.Queue()
+        max_steps = self.config.max_steps
         stderr_path = run_dir / "pi-stderr.txt"
+        process_env = self._build_process_env(run_dir)
         with (
             stderr_path.open("w") as stderr,
             subprocess.Popen(
                 command,
                 cwd=run_dir,
-                env=self._env(run_dir),
+                env=process_env,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=stderr,
-                text=True,
+                start_new_session=True,
             ) as proc,  # fmt: skip
         ):
-            reader = threading.Thread(target=_pump, args=(proc.stdout, lines), daemon=True)
-            reader.start()
+            assert proc.stdout is not None
             try:
-                while True:
-                    try:
-                        line = lines.get(timeout=max(0.0, deadline - time.monotonic()))
-                    except queue.Empty:
-                        return "timeout"
-                    if line is None:
-                        break
-                    events.feed(line)
-                    if self._over_budget(events):
-                        return "max_steps"
+                with closing(read_pi_events(proc.stdout, deadline)) as event_stream:
+                    for event in event_stream:
+                        events.append_event(event)
+                        if (
+                            max_steps is not None
+                            and events.calls >= max_steps
+                            and events.wants_tool
+                        ):
+                            return "max_steps"
+                # EOF can precede process exit. Preserve Pi's own exit status.
+                proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+            except (TimeoutError, subprocess.TimeoutExpired):
+                return "timeout"
             finally:
-                proc.kill()  # a no-op once Pi has exited on its own
-                reader.join()
+                # Pi handles SIGTERM by stopping its active bash process groups.
+                proc.terminate()  # a no-op once Pi has exited on its own
+                try:
+                    proc.wait(timeout=self.config.shutdown_timeout_s)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                # Background tools may already be orphaned or in separate sessions.
+                # Their inherited Pi directory identifies this run after Pi exits.
+                kill_run_processes(
+                    process_env["PI_CODING_AGENT_DIR"],
+                    env_var="PI_CODING_AGENT_DIR",
+                    exclude_pids=(proc.pid,),
+                    term_timeout=self.config.shutdown_timeout_s,
+                )
         if proc.returncode and not events.error:
             events.error = f"exit status {proc.returncode}: {stderr_path.read_text().strip()}"
         return "answer"
-
-    def _over_budget(self, events: _Events) -> bool:
-        """``max_steps`` calls made and the last one still asks for a tool."""
-        return (
-            self.config.max_steps is not None
-            and events.calls >= self.config.max_steps
-            and events.wants_tool
-        )
