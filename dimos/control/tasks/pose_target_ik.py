@@ -402,7 +402,6 @@ class PinkPoseTargetSolver(_PinkSolverCore):
         self._update_frame_task_targets(tasks, targets)
         self._update_current_posture_target(tasks, configuration)
         self._step_configuration(
-            robot_context=robot_context,
             configuration=configuration,
             tasks=tasks,
             dt=step_dt,

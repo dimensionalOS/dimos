@@ -60,7 +60,7 @@ with the same objective:
 ```python skip
 from dimos.robot.manipulators.common.blueprints import planner
 
-yourarm_planner = planner(robots=[robot_model], kinematics=pink)
+yourarm_planner = planner(model=robot_model, kinematics=pink)
 ```
 
 ## Customize the task stack

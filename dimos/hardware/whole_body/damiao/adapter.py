@@ -19,6 +19,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
+import sys
 from typing import Any, NoReturn
 
 import can_motor_control
@@ -43,7 +44,9 @@ class DamiaoWholeBodyAdapter(ABC):
 
     arm_joints: dict[str, tuple[str, ...]] = {}
     gripper_joints: dict[str, str] = {}
-    bus_defaults: dict[str, str] = {}
+    bus_names: tuple[str, ...] = ()
+    gs_usb_vendor_id = 0x1D50
+    gs_usb_product_id = 0x606F
     kinematic_joint_names: tuple[str, ...] = ()
     feedback_clamp_margin_rad = 0.05
 
@@ -60,21 +63,23 @@ class DamiaoWholeBodyAdapter(ABC):
 
         ``address`` is accepted for the coordinator's common adapter factory
         convention, but one scalar cannot represent a multi-bus whole body.
-        Configure physical CAN interfaces by logical bus name through
-        ``runtime_config.bus_addresses`` instead.
+        Configure physical CAN devices by logical bus name through
+        ``runtime_config.bus_devices`` instead.
         """
         del domain_id
         if address is not None:
-            raise ValueError("configure Damiao CAN buses through runtime_config.bus_addresses")
+            raise ValueError("configure Damiao CAN buses through runtime_config.bus_devices")
         if runtime_config is None:
             config = DamiaoRuntimeConfig()
         elif isinstance(runtime_config, DamiaoRuntimeConfig):
             config = runtime_config
         else:
             config = DamiaoRuntimeConfig(**runtime_config)
-        unknown_buses = config.bus_addresses.keys() - self.bus_defaults.keys()
+        unknown_buses = config.bus_devices.keys() - set(self.bus_names)
         if unknown_buses:
             raise ValueError(f"unknown CAN bus overrides: {sorted(unknown_buses)}")
+        if len(self.bus_names) != len(set(self.bus_names)):
+            raise ValueError("Damiao topology contains duplicate logical bus names")
 
         joint_names = self.joint_names
         if len(joint_names) != len(set(joint_names)):
@@ -106,12 +111,33 @@ class DamiaoWholeBodyAdapter(ABC):
             joint for group_joints in self.arm_joints.values() for joint in group_joints
         ) + tuple(self.gripper_joints.values())
 
-    def bus_address(self, name: str) -> str:
-        """Resolve a subclass-declared bus name through runtime overrides."""
+    def _bus_index(self, name: str) -> int:
+        """Return the stable platform-default index for a logical CAN bus."""
         try:
-            return self._runtime_config.bus_addresses.get(name, self.bus_defaults[name])
-        except KeyError as exc:
+            return self.bus_names.index(name)
+        except ValueError as exc:
             raise ValueError(f"subclass did not declare CAN bus {name!r}") from exc
+
+    def _make_can_bus(self, name: str) -> Any:
+        """Build the native CAN transport for a subclass-declared logical bus.
+
+        Linux maps ordered logical buses to ``can0``, ``can1``, and so on.
+        macOS maps them to matching gs_usb enumeration indices. A runtime
+        ``bus_devices`` override is a SocketCAN interface on Linux and a USB
+        serial number on macOS.
+        """
+        index = self._bus_index(name)
+        device = self._runtime_config.bus_devices.get(name)
+        if sys.platform == "linux":
+            return can_motor_control.SocketCanBus(device or f"can{index}")
+        if sys.platform == "darwin":
+            selector = {"serial_number": device} if device is not None else {"index": index}
+            return can_motor_control.GsUsbBus(
+                vendor_id=self.gs_usb_vendor_id,
+                product_id=self.gs_usb_product_id,
+                **selector,
+            )
+        raise RuntimeError(f"Damiao CAN transport is unsupported on {sys.platform}")
 
     @property
     def kinematic_model(self) -> RobotModel | None:

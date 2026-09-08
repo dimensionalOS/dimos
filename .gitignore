@@ -97,3 +97,6 @@ yolo11n*.pt
 *.ignore
 *.ignore.*
 site/
+
+# Optuna study store, written by the relocalization eval (see lidar/eval.md)
+optuna.db

@@ -26,6 +26,11 @@ class LcmCodec:
     def __init__(self, msg_type: type[DimosMsg]) -> None:
         self._msg_type = msg_type
 
+    @property
+    def payload_type(self) -> type[DimosMsg]:
+        """Message type encoded by this codec."""
+        return self._msg_type
+
     def encode(self, value: DimosMsg) -> bytes:
         return value.lcm_encode()
 

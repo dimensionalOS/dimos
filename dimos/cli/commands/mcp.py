@@ -27,9 +27,9 @@ from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 mcp_app = typer.Typer(help="Interact with the running MCP server")
 
 
-def _get_adapter() -> McpAdapter:
+def _get_adapter(timeout: int | None = None) -> McpAdapter:
     """Get an McpAdapter from the latest RunEntry or default URL."""
-    return McpAdapter.from_run_entry()
+    return McpAdapter.from_run_entry(timeout=timeout)
 
 
 @mcp_app.command("list-tools")
@@ -72,6 +72,9 @@ def mcp_call_tool(
         [], "--arg", "-a", callback=_validate_key_value_args, help="Arguments as key=value"
     ),
     json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
+    timeout: int = typer.Option(
+        None, "--timeout", "-t", help="Seconds to wait for the tool (default: mcp_timeout)"
+    ),
 ) -> None:
     """Call an MCP tool by name."""
     arguments: dict[str, Any] = {}
@@ -89,7 +92,7 @@ def mcp_call_tool(
             raise typer.Exit(1)
 
     try:
-        result = _get_adapter().call_tool(tool_name, arguments)
+        result = _get_adapter(timeout).call_tool(tool_name, arguments)
     except requests.ConnectionError:
         typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
         raise typer.Exit(1)

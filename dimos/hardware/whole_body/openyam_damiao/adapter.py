@@ -33,7 +33,7 @@ class OpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
         "arm": tuple(f"yam_joint{index}" for index in range(1, 7)),
     }
     gripper_joints = {"gripper": "arm/gripper"}
-    bus_defaults = {bus_name: "can0"}
+    bus_names = (bus_name,)
     kinematic_joint_names = tuple(f"yam_joint{index}" for index in range(1, 7))
 
     def get_limits(self) -> JointLimits:
@@ -69,7 +69,7 @@ class OpenYamDamiaoAdapter(DamiaoWholeBodyAdapter):
             can_motor_control.Robot.builder()
             .add_bus(
                 self.bus_name,
-                can_motor_control.SocketCanBus(self.bus_address(self.bus_name)),
+                self._make_can_bus(self.bus_name),
                 damiao.DamiaoCodec(),
             )
             .add_arm("arm", bus=self.bus_name, motors=arm_motors)

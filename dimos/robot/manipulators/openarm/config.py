@@ -108,7 +108,7 @@ def openarm_hardware(
     limits: JointLimits | None = None
     if left_can_port is not None and right_can_port is not None:
         adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
-            bus_addresses={"left": left_can_port, "right": right_can_port},
+            bus_devices={"left": left_can_port, "right": right_can_port},
             gravity_comp=True,
         )
     else:

@@ -19,7 +19,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
 from dimos.mapping.costmapper import CostMapper
-from dimos.mapping.relocalization.module import RelocalizationModule
+from dimos.mapping.relocalization.go2.module import Go2Relocalization
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -98,7 +98,7 @@ unitree_go2_markers = (
 
 unitree_go2_relocalization = autoconnect(
     unitree_go2,
-    RelocalizationModule.blueprint(),
+    Go2Relocalization.blueprint(),
 ).global_config(n_workers=11)
 
 unitree_go2_memory = autoconnect(

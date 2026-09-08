@@ -26,6 +26,14 @@ const ROBOT: RobotInfo = { id: "deno-bot", name: "Deno Bot", model: "test" };
 const CHANNELS = [
   { ch: "color_image", encoding: "jpeg.v1", delivery: "latest", maxHz: 15.5 },
   { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 },
+  {
+    ch: "human_input",
+    dir: "tx",
+    encoding: "text.json.v1",
+    delivery: "reliable",
+    maxHz: 50.5,
+    publish: "shared",
+  },
 ];
 const MANIFEST: RobotManifest = {
   version: 1,
@@ -144,6 +152,40 @@ function robotControl(wt: WebTransport): () => Promise<Msg> {
     const msg = decodeDatagram(payload);
     assert(msg !== null, "undecodable @control payload");
     return msg;
+  };
+}
+
+/** Like robotControl, but splits the carrier into @control messages and
+ * forwarded publish (tx data) frames. Serial use only: nextMsg/nextPub share
+ * one frame cursor. */
+function robotCarrier(wt: WebTransport): {
+  nextMsg: () => Promise<Msg>;
+  nextPub: () => Promise<{ header: FrameHeader; payload: Uint8Array }>;
+} {
+  const nextFrame = frameQueue(wt);
+  const msgs: Msg[] = [];
+  const pubs: { header: FrameHeader; payload: Uint8Array }[] = [];
+  const pump = async (want: "msg" | "pub") => {
+    while ((want === "msg" ? msgs : pubs).length === 0) {
+      const { header, payload } = await nextFrame();
+      if (header.ch === CONTROL_CHANNEL) {
+        const msg = decodeDatagram(payload);
+        assert(msg !== null, "undecodable @control payload");
+        msgs.push(msg);
+      } else {
+        pubs.push({ header, payload });
+      }
+    }
+  };
+  return {
+    nextMsg: async () => {
+      await pump("msg");
+      return msgs.shift()!;
+    },
+    nextPub: async () => {
+      await pump("pub");
+      return pubs.shift()!;
+    },
   };
 }
 
@@ -418,7 +460,8 @@ Deno.test({
   const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
   await within(robot.ready, "robot connect");
   const robotDatagrams = datagramQueue(robot.datagrams.readable);
-  const robotCtrl = robotControl(robot);
+  const carrier = robotCarrier(robot);
+  const robotCtrl = carrier.nextMsg;
 
   await t.step(
     "robot hello (@control stream frame) -> welcome + carrier baseline subs",
@@ -579,6 +622,80 @@ Deno.test({
     assertEquals(got.header.seq, 5);
   });
 
+  await t.step(
+    "publish: pub -> stamped carrier tx frame -> bridge ack -> exactly one pub_ack",
+    async () => {
+      await controlWriter.write(
+        encodeControlFrame({
+          t: "pub",
+          id: "v-1",
+          ch: "human_input",
+          data: { text: "salut β" },
+          clientTs: 42.5,
+        }),
+      );
+      const { header, payload } = await within(carrier.nextPub(), "carrier tx frame");
+      assertEquals(header.ch, "human_input");
+      assertEquals(header.delivery, "reliable");
+      const meta = header.meta as Record<string, unknown>;
+      // Relay-authored token + synthetic local principal, never the viewer id.
+      assertEquals(meta.id, "p1");
+      assertEquals(meta.principal, "local");
+      assertEquals(meta.clientTs, 42.5);
+      assert(typeof meta.relayTs === "number");
+      assertEquals(JSON.parse(new TextDecoder().decode(payload)), { text: "salut β" });
+
+      // The bridge acks on a robot-opened one-shot @control stream after
+      // publishing; the relay routes it back with the viewer's own id.
+      await sendRobotFrame(
+        robot,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 43.5, delivery: "reliable" },
+        encodeDatagram({
+          t: "pub_ack",
+          id: "p1",
+          ch: "human_input",
+          relayTs: 42.5,
+          bridgeTs: 43.5,
+        }),
+      );
+      assertEquals(await nextOfType(nextControl, "pub_ack", "viewer pub_ack"), {
+        t: "pub_ack",
+        id: "v-1",
+        ch: "human_input",
+        relayTs: 42.5,
+        bridgeTs: 43.5,
+      });
+
+      // A duplicate ack is dropped: the ordered control stream shows nothing
+      // between here and the next pong.
+      await sendRobotFrame(
+        robot,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 44.5, delivery: "reliable" },
+        encodeDatagram({
+          t: "pub_ack",
+          id: "p1",
+          ch: "human_input",
+          relayTs: 42.5,
+          bridgeTs: 44.5,
+        }),
+      );
+      await controlWriter.write(encodeControlFrame({ t: "ping", n: 77, ts: 77.5 }));
+      assertEquals(await within(nextControl(), "pong after duplicate ack"), {
+        t: "pong",
+        n: 77,
+        ts: 77.5,
+      });
+    },
+  );
+
+  await t.step("publish: a rejected pub settles with a correlated error", async () => {
+    await controlWriter.write(encodeControlFrame({ t: "pub", id: "v-2", ch: "odom", data: 1.5 }));
+    const err = await nextOfType(nextControl, "error", "correlated error");
+    assert(err.t === "error");
+    assertEquals(err.code, "not_publishable");
+    assertEquals(err.requestId, "v-2");
+  });
+
   await t.step("/api/stats reflects sessions and traffic", async () => {
     // The idle viewer's close is asynchronous on the relay side; poll it out.
     let stats = await (await fetch(`${httpBase}/api/stats`)).json();
@@ -717,6 +834,15 @@ Deno.test({
         wt,
         { ch: "@future", seq: 0, ts: 0.5, delivery: "reliable" },
         encodeDatagram({ t: "ping", n: 1, ts: 1.5 }),
+      ));
+  });
+
+  await t.step("pub_ack before registration -> invalid_control + close", async () => {
+    await expectRobotReject("preregistration-ack", "invalid_control", (wt) =>
+      sendRobotFrame(
+        wt,
+        { ch: CONTROL_CHANNEL, seq: 0, ts: 0.5, delivery: "reliable" },
+        encodeDatagram({ t: "pub_ack", id: "p1", ch: "chat", relayTs: 1.5, bridgeTs: 2.5 }),
       ));
   });
 

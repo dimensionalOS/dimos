@@ -48,6 +48,7 @@ def upload(
 
 @data_app.command("ls")
 def data_ls() -> None:
+    """List cloud uploads: interactive browser on a terminal, plain table when piped."""
     from dimos.cloud import cli
 
     cli.ls()

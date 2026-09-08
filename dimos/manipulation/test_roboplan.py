@@ -568,10 +568,10 @@ def test_roboplan_loads_canonical_slash_names_natively(
 
 
 def _selection(
-    configs: tuple[RobotModelConfig, ...],
+    config: RobotModelConfig,
     *group_ids: str,
 ) -> PlanningGroupSelection:
-    registry = PlanningGroupRegistry(configs)
+    registry = PlanningGroupRegistry(config.planning_groups)
     return PlanningGroupSelection.from_groups(
         tuple(registry.get(group_id) for group_id in group_ids)
     )
@@ -680,7 +680,7 @@ def test_scene_joint_limits_validate_joint_names(
     )
     monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint2", "extra_joint"])
 
-    with pytest.raises(ValueError, match="does not match the composed model"):
+    with pytest.raises(ValueError, match="does not match the prepared model"):
         _make_world(fake_roboplan, config)
 
 
@@ -1665,11 +1665,11 @@ def test_native_planner_names_path_from_robot_config_when_start_is_unnamed(
     assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
 
 
-def test_native_selected_planner_returns_global_selected_joint_names(
+def test_native_selected_planner_returns_canonical_selected_joint_names(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
-    selection = _selection((robot_config,), "manipulator")
+    selection = _selection(robot_config, "manipulator")
 
     result = _planner_for(world).plan_selected_joint_path(
         world,
@@ -1690,7 +1690,7 @@ def test_native_selected_planner_uses_explicit_start_after_live_state_advances(
     mocker: MockerFixture,
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
-    selection = _selection((robot_config,), "manipulator")
+    selection = _selection(robot_config, "manipulator")
     observed_scene_start: list[float] = []
     native_plan = FakeRRT.plan
 
@@ -1732,7 +1732,7 @@ def test_native_selected_planner_supports_non_overlapping_multi_group_selection(
         }
     )
     world = _make_world(fake_roboplan, config)
-    selection = _selection((config,), "left", "right")
+    selection = _selection(config, "left", "right")
 
     result = _planner_for(world).plan_selected_joint_path(
         world,
@@ -1746,11 +1746,11 @@ def test_native_selected_planner_supports_non_overlapping_multi_group_selection(
     assert result.path[-1].position == pytest.approx([0.1, 0.1])
 
 
-def test_cartesian_planner_returns_timed_global_joint_states_and_options(
+def test_cartesian_planner_returns_timed_canonical_joint_states_and_options(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
-    selection = _selection((robot_config,), "manipulator")
+    selection = _selection(robot_config, "manipulator")
     option_overrides = {
         "dt": 0.02,
         "max_linear_speed": 0.2,
@@ -1818,7 +1818,7 @@ def test_cartesian_zero_rotation_preserves_start_orientation(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
-    selection = _selection((robot_config,), "manipulator")
+    selection = _selection(robot_config, "manipulator")
 
     result = _planner_for(world).plan_cartesian_path(
         world,
@@ -1844,7 +1844,7 @@ def test_cartesian_uses_explicit_start_after_live_state_advances(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
-    selection = _selection((robot_config,), "manipulator")
+    selection = _selection(robot_config, "manipulator")
     start = JointState(name=list(selection.joint_names), position=[0.1, 0.0])
     world.sync_from_joint_state(
         JointState(name=["joint1", "joint2"], position=[0.3, 0.2]),
@@ -1870,7 +1870,7 @@ def test_cartesian_rejects_official_planner_failure(
     mocker: MockerFixture,
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
-    selection = _selection((robot_config,), "manipulator")
+    selection = _selection(robot_config, "manipulator")
     mocker.patch.object(
         FakeCartesianPathPlanner,
         "plan",
@@ -1896,7 +1896,7 @@ def test_cartesian_postvalidation_checks_between_waypoints(
     mocker: MockerFixture,
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
-    selection = _selection((robot_config,), "manipulator")
+    selection = _selection(robot_config, "manipulator")
 
     def two_point_trajectory(
         planner: FakeCartesianPathPlanner,

@@ -29,13 +29,12 @@ from dimos.robot.assets.model import RobotModel
 
 
 class RobotModelConfig(ModuleConfig):
-    """Configuration for adding a robot to the world.
+    """Configuration for the logical robot model loaded into the world.
 
     Attributes:
         model: Portable robot model loaded by backend adapters
         srdf_path: Optional path to SRDF file containing planning group definitions
-        base_pose: Placement transform. This is the canonical world placement for
-            robot instances.
+        base_pose: Placement transform for the model's base link in the world.
         joint_names: Ordered list of controllable joints in the canonical model
             namespace. This is not a planning group.
         base_link: Robot-scoped link that base_pose places in the world and

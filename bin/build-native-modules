@@ -29,7 +29,8 @@ Modes:
 Why git object hashes are sound gate keys: a nix sandbox only sees store paths,
 and for these flakes every store path copied out of the repo is some tracked
 subtree — the build dir itself, a relative path literal (`../../common`), or a
-`path:` flake input. `git rev-parse HEAD:<path>` hashes exactly that (tracked
+`path:` flake input. `git rev-parse HEAD:<path>` (or `HEAD^{tree}` for the
+repository root) hashes exactly that (tracked
 content + modes), so `result` symlinks and other untracked junk can never
 perturb the key, which is what broke the old hashFiles() marker (#2733).
 `git+file:` self-inputs are pinned to a rev + narHash in the module's
@@ -347,8 +348,9 @@ def _collect_input_paths(module: DiscoveredModule) -> set[str]:
 
 
 def _git_object_hash(rel: str) -> str:
+    revision = "HEAD^{tree}" if rel == "." else f"HEAD:{rel}"
     proc = subprocess.run(
-        ("git", "-C", str(REPO_ROOT), "rev-parse", f"HEAD:{rel}"),
+        ("git", "-C", str(REPO_ROOT), "rev-parse", revision),
         capture_output=True,
         text=True,
         check=False,

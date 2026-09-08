@@ -136,7 +136,7 @@ def _install_generated_plan(
     """Install a canonical generated plan and current model state."""
     module.config.model = config
     module._world_monitor = MagicMock()
-    module._world_monitor.planning_groups = PlanningGroupRegistry([config])
+    module._world_monitor.planning_groups = PlanningGroupRegistry(config.planning_groups)
     module._world_monitor.current_model_joint_state.return_value = JointState(
         name=config.joint_names,
         position=[0.0 for _ in config.joint_names],
@@ -578,13 +578,13 @@ class TestPlanningInitialization:
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
         module._world_monitor.world.get_model_config.return_value = robot_config
-        module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         current = JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])
-        current_global = JointState(
+        current_model_state = JointState(
             name=["joint1", "joint2", "joint3"],
             position=[0.0, 0.0, 0.0],
         )
-        module._world_monitor.current_model_joint_state.return_value = current_global
+        module._world_monitor.current_model_joint_state.return_value = current_model_state
         expected = IKResult(
             status=IKStatus.SUCCESS,
             joint_state=JointState(name=robot_config.joint_names, position=[0.1, 0.2, 0.3]),
@@ -605,7 +605,7 @@ class TestPlanningInitialization:
         module._kinematics.solve_pose_targets.assert_called_once()
         _, kwargs = module._kinematics.solve_pose_targets.call_args
         assert kwargs["world"] is module._world_monitor.world
-        assert kwargs["seed"].name == current_global.name
+        assert kwargs["seed"].name == current_model_state.name
         assert kwargs["seed"].position == current.position
         assert kwargs["check_collision"] is True
         [(group, target_pose)] = kwargs["pose_targets"].items()
@@ -619,7 +619,7 @@ class TestPlanningInitialization:
         module.config.model = robot_config
         module.config.model = robot_config
         module._world_monitor = MagicMock()
-        module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=[], position=[]
         )
@@ -642,7 +642,7 @@ class TestPlanningInitialization:
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
         module._world_monitor.world.get_model_config.return_value = robot_config
-        module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = None
         explicit_seed = JointState(name=robot_config.joint_names, position=[0.2, 0.1, 0.0])
         expected = IKResult(status=IKStatus.SUCCESS, joint_state=explicit_seed)
@@ -664,7 +664,7 @@ class TestPlanningGroupApis:
     def test_list_planning_groups_and_model_info_include_groups(self, robot_config, module_factory):
         module = module_factory()
         module.config.model = robot_config
-        registry = PlanningGroupRegistry([robot_config])
+        registry = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor = MagicMock()
         module._world_monitor.planning_groups = registry
         module._init_joints = None
@@ -674,12 +674,12 @@ class TestPlanningGroupApis:
 
         assert [group.id for group in groups] == ["manipulator"]
         assert info["planning_groups"] == list(groups)
-        assert info["end_effector_link"] == "link_tcp"
+        assert info["planning_groups"][0].tip_frame == "link_tcp"
 
-    def test_plan_to_joint_targets_stores_generated_plan(self, robot_config, module_factory):
+    def test_generate_joint_plan_stores_generated_plan(self, robot_config, module_factory):
         module = module_factory()
         module.config.model = robot_config
-        registry = PlanningGroupRegistry([robot_config])
+        registry = PlanningGroupRegistry(robot_config.planning_groups)
         _enable_simple_parametrization(module)
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
@@ -709,7 +709,7 @@ class TestPlanningGroupApis:
             message="ok",
         )
 
-        success = module.plan_to_joint_targets(
+        plan = module.generate_plan_to_joint_targets(
             {
                 "manipulator": JointState(
                     name=robot_config.joint_names,
@@ -718,7 +718,7 @@ class TestPlanningGroupApis:
             }
         )
 
-        assert success is True
+        assert plan is not None
         assert module._last_plan is not None
         assert module._last_plan.group_ids == ("manipulator",)
         assert module._last_plan.path == result_path
@@ -732,7 +732,7 @@ class TestPlanningGroupApis:
             "joint3",
         ]
 
-        success = module.plan_to_joint_targets(
+        plan = module.generate_plan_to_joint_targets(
             {
                 "manipulator": JointState(
                     name=robot_config.joint_names,
@@ -741,15 +741,13 @@ class TestPlanningGroupApis:
             }
         )
 
-        assert success is True
+        assert plan is not None
         assert module._planner.plan_selected_joint_path.call_count == 2
 
-    def test_plan_to_pose_targets_uses_group_ik_and_selected_path(
-        self, robot_config, module_factory
-    ):
+    def test_generate_pose_plan_uses_group_ik_and_selected_path(self, robot_config, module_factory):
         module = module_factory()
         module.config.model = robot_config
-        registry = PlanningGroupRegistry([robot_config])
+        registry = PlanningGroupRegistry(robot_config.planning_groups)
         _enable_simple_parametrization(module)
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
@@ -781,9 +779,9 @@ class TestPlanningGroupApis:
         )
         pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
 
-        success = module.plan_to_pose_targets({"manipulator": pose})
+        plan = module.generate_plan_to_pose_targets({"manipulator": pose})
 
-        assert success is True
+        assert plan is not None
         module._kinematics.solve_pose_targets.assert_called_once()
         _, ik_kwargs = module._kinematics.solve_pose_targets.call_args
         target_groups = list(ik_kwargs["pose_targets"].keys())
@@ -801,7 +799,7 @@ class TestPlanningGroupApis:
     def test_failed_plan_materialization_clears_generated_plan(self, robot_config, module_factory):
         module = module_factory()
         module.config.model = robot_config
-        registry = PlanningGroupRegistry([robot_config])
+        registry = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
         module._world_monitor.planning_groups = registry
@@ -840,11 +838,11 @@ class TestPlanningGroupApis:
             ],
         )
 
-        success = module.plan_to_joint_targets(
+        plan = module.generate_plan_to_joint_targets(
             {"manipulator": JointState(position=[0.1, 0.2, 0.3])}
         )
 
-        assert success is False
+        assert plan is None
         assert module._state == ManipulationState.IDLE
         assert module._last_plan is None
         assert module.has_planned_path() is False
@@ -857,7 +855,7 @@ class TestPlanningGroupApis:
         module.config.model = model
         module._init_joints = JointState(name=model.joint_names, position=[0.1, -0.1])
         module._world_monitor = MagicMock(spec=WorldMonitor)
-        module._world_monitor.planning_groups = PlanningGroupRegistry([model])
+        module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
         module._world_monitor.current_group_joint_state.return_value = None
         module._world_monitor.get_group_ee_pose.return_value = None
 
@@ -873,7 +871,7 @@ class TestPlanningGroupApis:
         module = module_factory()
         module.config.model = model
         module._world_monitor = MagicMock(spec=WorldMonitor)
-        module._world_monitor.planning_groups = PlanningGroupRegistry([model])
+        module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
         module._world_monitor.get_group_ee_pose.side_effect = [
             PoseStamped(position=Vector3(0.4, 0.2, 0.3)),
             PoseStamped(position=Vector3(0.4, -0.2, 0.3)),
@@ -914,7 +912,9 @@ class TestPlanningGroupApis:
         module = module_factory()
         module.config.model = no_pose_config
         module._world_monitor = MagicMock()
-        module._world_monitor.planning_groups = PlanningGroupRegistry([no_pose_config])
+        module._world_monitor.planning_groups = PlanningGroupRegistry(
+            no_pose_config.planning_groups
+        )
         module._world_monitor.get_ee_pose.side_effect = ValueError("no pose group")
         module._kinematics = MagicMock()
 
@@ -952,7 +952,9 @@ class TestPlanningGroupApis:
         module = module_factory()
         module.config.model = multi_pose_config
         module._world_monitor = MagicMock()
-        module._world_monitor.planning_groups = PlanningGroupRegistry([multi_pose_config])
+        module._world_monitor.planning_groups = PlanningGroupRegistry(
+            multi_pose_config.planning_groups
+        )
         module._world_monitor.get_ee_pose.side_effect = ValueError("multiple pose groups")
         module._kinematics = MagicMock()
 
@@ -970,7 +972,7 @@ class TestPlanningGroupApis:
         module.config.model = robot_config
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=robot_config.joint_names,
             position=[0.0, 0.0, 0.0],
@@ -993,7 +995,7 @@ class TestPlanningDiagnostics:
         module = module_factory()
         module.config.model = robot_config
         module._world_monitor = MagicMock()
-        module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=robot_config.joint_names,
             position=[0.0, 0.0, 0.0],

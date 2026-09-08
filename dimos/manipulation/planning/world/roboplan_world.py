@@ -71,7 +71,7 @@ logger = setup_logger()
 
 
 @dataclass
-class _RoboPlanRobotData:
+class _RoboPlanModelData:
     config: RobotModelConfig
     lower_limits: NDArray[np.float64] | None = None
     upper_limits: NDArray[np.float64] | None = None
@@ -94,7 +94,7 @@ class RoboPlanWorld:
         if enable_viz:
             logger.warning("RoboPlanWorld does not currently provide manipulation visualization")
 
-        self._model_data: _RoboPlanRobotData | None = None
+        self._model_data: _RoboPlanModelData | None = None
         self._planning_groups = PlanningGroupRegistry()
         self._obstacles: dict[str, Obstacle] = {}
         self._has_authoritative_state = False
@@ -109,14 +109,14 @@ class RoboPlanWorld:
     def load_model(self, config: RobotModelConfig) -> None:
         """Register the logical robot model for :meth:`finalize`."""
         if self._finalized:
-            raise RuntimeError("Cannot add robot after world is finalized")
+            raise RuntimeError("Cannot load a model after the world is finalized")
         if self._model_data is not None:
             raise ValueError("A model is already loaded")
         validate_robot_model_config(config)
         self._validate_planning_group_config(config)
-        self._validate_robot_config(config)
-        self._model_data = _RoboPlanRobotData(config=config)
-        self._planning_groups.add_model(config)
+        self._validate_model_config(config)
+        self._model_data = _RoboPlanModelData(config=config)
+        self._planning_groups = PlanningGroupRegistry(config.planning_groups)
         self._live_context.q = np.zeros(len(config.joint_names), dtype=np.float64)
 
     def get_model_config(self) -> RobotModelConfig:
@@ -124,11 +124,11 @@ class RoboPlanWorld:
         return self._get_model_data().config
 
     def get_joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Get joint limits in DimOS joint order."""
-        robot = self._get_model_data()
-        if robot.lower_limits is None or robot.upper_limits is None:
+        """Get joint limits in canonical model order."""
+        model_data = self._get_model_data()
+        if model_data.lower_limits is None or model_data.upper_limits is None:
             raise RuntimeError("Joint limits are available after RoboPlan finalization")
-        return robot.lower_limits.copy(), robot.upper_limits.copy()
+        return model_data.lower_limits.copy(), model_data.upper_limits.copy()
 
     def ordered_joint_positions(self, joint_state: JointState) -> NDArray[np.float64]:
         """Return a canonical joint state in configured model order."""
@@ -148,8 +148,8 @@ class RoboPlanWorld:
         return self._require_model().all_group
 
     def native_link_name(self, canonical_name: str) -> str:
-        """Return the backend link name for a canonical model link."""
-        return self._require_model().native_link(canonical_name)
+        """Return a canonical model link name for the backend."""
+        return canonical_name
 
     # Obstacle Management
 
@@ -241,18 +241,18 @@ class RoboPlanWorld:
             if self._finalized:
                 return
             model = build_roboplan_model(
-                self._get_model_data(),
+                self._get_model_data().config,
                 self._planning_groups,
                 roboplan_core.Scene,
             )
             self._model = model
             self._scene = model.scene
             try:
-                robot = self._get_model_data()
+                model_data = self._get_model_data()
                 group = model.all_group
-                lower, upper = self._extract_joint_limits(robot.config, group)
-                robot.lower_limits = lower
-                robot.upper_limits = upper
+                lower, upper = self._extract_joint_limits(model_data.config, group)
+                model_data.lower_limits = lower
+                model_data.upper_limits = upper
                 for obstacle_id, obstacle in self._obstacles.items():
                     self._add_obstacle_to_scene(obstacle, obstacle_id)
             except BaseException:
@@ -299,11 +299,11 @@ class RoboPlanWorld:
 
     def get_joint_state(self, ctx: RoboPlanContext) -> JointState:
         """Get robot joint state from a context."""
-        robot = self._get_model_data()
+        model_data = self._get_model_data()
         q = ctx.q
         if not len(q):
-            q = np.zeros(len(robot.config.joint_names), dtype=np.float64)
-        return JointState(name=robot.config.joint_names, position=q.astype(float).tolist())
+            q = np.zeros(len(model_data.config.joint_names), dtype=np.float64)
+        return JointState(name=model_data.config.joint_names, position=q.astype(float).tolist())
 
     # Collision Checking
 
@@ -343,8 +343,8 @@ class RoboPlanWorld:
 
     def get_ee_pose(self, ctx: RoboPlanContext) -> PoseStamped:
         """Get end-effector pose if RoboPlan exposes FK."""
-        robot = self._get_model_data()
-        group_id = self._primary_pose_group_id_for_config(robot.config)
+        model_data = self._get_model_data()
+        group_id = self._primary_pose_group_id_for_config(model_data.config)
         if group_id is None:
             raise ValueError("Model has no pose-targetable planning group")
         return self.get_group_ee_pose(ctx, group_id)
@@ -376,15 +376,15 @@ class RoboPlanWorld:
             scene.setJointPositions(scene_q)
             result = scene.forwardKinematics(
                 scene_q,
-                self._require_model().native_link(link_name),
+                link_name,
                 "",
             )
         return np.asarray(result, dtype=np.float64)
 
     def get_jacobian(self, ctx: RoboPlanContext) -> NDArray[np.float64]:
         """Get end-effector Jacobian if RoboPlan exposes a compatible API."""
-        robot = self._get_model_data()
-        group_id = self._primary_pose_group_id_for_config(robot.config)
+        model_data = self._get_model_data()
+        group_id = self._primary_pose_group_id_for_config(model_data.config)
         if group_id is None:
             raise ValueError("Model has no pose-targetable planning group")
         return self.get_group_jacobian(ctx, group_id)
@@ -392,18 +392,17 @@ class RoboPlanWorld:
     def get_group_jacobian(
         self, ctx: RoboPlanContext, group_id: PlanningGroupID
     ) -> NDArray[np.float64]:
-        """Get planning-group Jacobian projected to group-local joint order."""
+        """Get a planning-group Jacobian in planning-group joint order."""
         group = self._planning_group_from_id(group_id)
         if group.tip_link is None:
             raise ValueError(f"Planning group '{group_id}' has no tip link")
         scene = self._require_scene()
-        model = self._require_model()
         with self._lock:
             scene_q = self._full_scene_q(ctx)
             scene.setJointPositions(scene_q)
             result = scene.computeFrameJacobian(
                 scene_q,
-                model.native_link(group.tip_link),
+                group.tip_link,
                 True,
             )
         arr = np.asarray(result, dtype=np.float64)
@@ -411,15 +410,14 @@ class RoboPlanWorld:
             raise ValueError(f"Unexpected RoboPlan Jacobian shape: {arr.shape}; expected 6 x n")
         scene_joint_order = list(scene.getJointNames())
         if arr.shape[1] == len(scene_joint_order):
-            native_names = [model.native_joint(name) for name in group.joint_names]
-            return arr[:, [scene_joint_order.index(name) for name in native_names]]
+            return arr[:, [scene_joint_order.index(name) for name in group.joint_names]]
         raise ValueError(
             f"Unexpected RoboPlan Jacobian shape: {arr.shape}; cannot project group '{group_id}'"
         )
 
     # PlannerSpec for native RoboPlan planning
 
-    def _validate_robot_config(self, config: RobotModelConfig) -> None:
+    def _validate_model_config(self, config: RobotModelConfig) -> None:
         if not config.joint_names:
             raise ValueError("RoboPlanWorld requires explicit joint_names")
         if config.base_pose.frame_id not in ("", "world"):
@@ -436,20 +434,10 @@ class RoboPlanWorld:
             lower, upper = scene.getPositionLimitVectors(group.name, False)
             lower = np.asarray(lower, dtype=np.float64)
             upper = np.asarray(upper, dtype=np.float64)
-            native_names = tuple(scene.getJointGroupInfo(group.name).joint_names)
-            native_to_canonical = {
-                native: canonical
-                for canonical, native in self._require_model().native_joints.items()
-            }
-            try:
-                canonical_names = tuple(native_to_canonical[name] for name in native_names)
-            except KeyError as exc:
-                raise ValueError(
-                    f"RoboPlan joint-limit group contains unknown native joint '{exc.args[0]}'"
-                ) from exc
+            canonical_names = tuple(scene.getJointGroupInfo(group.name).joint_names)
             if set(canonical_names) != set(config.joint_names):
                 raise ValueError(
-                    "RoboPlan joint-limit group does not match the composed model: "
+                    "RoboPlan joint-limit group does not match the prepared model: "
                     f"{sorted(canonical_names)} != {sorted(config.joint_names)}"
                 )
             by_name = dict(zip(canonical_names, zip(lower, upper, strict=True), strict=True))
@@ -463,7 +451,7 @@ class RoboPlanWorld:
 
     def _validate_planning_group_config(self, config: RobotModelConfig) -> None:
         """Validate planning groups before mutating backend state."""
-        PlanningGroupRegistry([config])
+        PlanningGroupRegistry(config.planning_groups)
 
     def _planning_group_from_id(self, group_id: PlanningGroupID) -> PlanningGroup:
         return self._planning_groups.get(group_id)
@@ -471,16 +459,16 @@ class RoboPlanWorld:
     def _primary_pose_group_id_for_config(self, config: RobotModelConfig) -> PlanningGroupID | None:
         return self._planning_groups.primary_pose_group_id()
 
-    def _get_model_data(self) -> _RoboPlanRobotData:
+    def _get_model_data(self) -> _RoboPlanModelData:
         if self._model_data is None:
             raise RuntimeError("Model is not loaded")
         return self._model_data
 
     def _joint_state_to_q(self, joint_state: JointState) -> NDArray[np.float64]:
-        robot = self._get_model_data()
+        model_data = self._get_model_data()
         return joint_state_to_ordered_positions(
             joint_state,
-            joint_names=robot.config.joint_names,
+            joint_names=model_data.config.joint_names,
         )
 
     def _require_finalized(self) -> None:
@@ -527,11 +515,11 @@ class RoboPlanWorld:
         overlay: NDArray[np.float64] | None = None,
     ) -> dict[str, float]:
         context = ctx if ctx is not None else self._live_context
-        robot = self._get_model_data()
+        model_data = self._get_model_data()
         q = overlay if overlay is not None else context.q
-        if len(q) != len(robot.config.joint_names):
+        if len(q) != len(model_data.config.joint_names):
             raise RuntimeError("Missing authoritative model state")
-        return dict(zip(robot.config.joint_names, map(float, q), strict=True))
+        return dict(zip(model_data.config.joint_names, map(float, q), strict=True))
 
     def _has_collisions(
         self,

@@ -84,7 +84,7 @@ Joint-space planning targets group IDs. Each target `JointState` may be
 unnamed in the group's joint order or named with the group's canonical joints.
 
 ```python skip
-ok = manip.plan_to_joint_targets(
+result = manip.plan_to_joints(
     {
         "left_arm": JointState(
             name=["left/joint1", "left/joint2", "left/joint3"],
@@ -94,30 +94,27 @@ ok = manip.plan_to_joint_targets(
 )
 ```
 
-Pose planning targets pose-capable group IDs. Add auxiliary groups when another
-chain should participate as free DOFs but does not have its own pose target.
-Pose targets are `Pose` values keyed by planning group ID:
+Pose planning targets pose-capable group IDs with `PoseStamped` values:
 
 ```python skip
-ok = manip.plan_to_pose_targets(
-    {"left_arm": target_pose},
-    auxiliary_groups=["torso"],
-)
+result = manip.plan_to_poses({"left_arm": target_pose})
 ```
 
 After a successful planning call, preview and execution use the module's current
 stored plan:
 
 ```python skip
-manip.preview_plan()
-manip.execute_plan()
+if result.succeeded:
+    manip.preview_plan(result.plan)
+    manip.execute()
 ```
 
-Callers that already hold a `GeneratedPlan` may pass it explicitly:
+Callers that already hold a `GeneratedPlan` may preview it explicitly; execution
+always consumes the module's current stored plan:
 
 ```python skip
 manip.preview_plan(plan)
-manip.execute_plan(plan)
+manip.execute()
 ```
 
 A generated plan is the execution boundary. The canonical trajectory is sent
