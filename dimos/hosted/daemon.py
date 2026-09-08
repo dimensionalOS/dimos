@@ -1,0 +1,344 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Supervisor for hosted deployments on one machine."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import multiprocessing
+from multiprocessing.connection import Connection
+from multiprocessing.process import BaseProcess
+import os
+from pathlib import Path
+import signal
+import socket
+import threading
+from typing import Literal
+import uuid
+
+from dimos.constants import STATE_DIR
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.process_lifecycle import DIMOS_RUN_ID_ENV, kill_run_processes
+from dimos.core.core import rpc
+from dimos.hosted.fragment import (
+    FRAGMENT_FORMAT,
+    FRAGMENT_SCHEMA_VERSION,
+    HostFragment,
+    run_coordinator_rpc_name,
+)
+from dimos.utils.logging_config import set_run_log_dir
+
+HostState = Literal["available", "starting", "running", "stopping", "failed"]
+
+HOST_PROTOCOL_VERSION = 2
+HOST_LIVELINESS_KEY = "dimos/hosts/{host_id}/live"
+HOST_CONTROL_RPC_NAME = "hosts/{host_id}"
+DEFAULT_STARTUP_TIMEOUT = 60.0
+DEFAULT_STOP_TIMEOUT = 5.0
+DEFAULT_LOG_ROOT = STATE_DIR / "hosted" / "runs"
+
+
+@dataclass(frozen=True, slots=True)
+class HostDescriptor:
+    host_id: str
+    epoch: str
+    name: str
+    tags: frozenset[str]
+    versions: dict[str, str | int]
+    state: HostState
+    active_run_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentStatus:
+    state: HostState
+    run_id: str | None
+    generation: int | None
+    pid: int | None
+    log_dir: str | None
+    error: str | None
+
+
+@dataclass(slots=True)
+class _Deployment:
+    fragment: HostFragment
+    state: HostState
+    log_dir: Path
+    process: BaseProcess
+    error: str | None = None
+
+
+class HostDaemon:
+    """Supervise independent deployment processes for multiple runs."""
+
+    def __init__(
+        self,
+        host_id: str,
+        *,
+        name: str | None = None,
+        tags: set[str] | frozenset[str] = frozenset(),
+        versions: dict[str, str | int] | None = None,
+        log_root: Path = DEFAULT_LOG_ROOT,
+        startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
+        stop_timeout: float = DEFAULT_STOP_TIMEOUT,
+    ) -> None:
+        self._host_id = host_id
+        self._name = name or socket.gethostname()
+        self._tags = frozenset(tags)
+        self._versions = dict(versions or {})
+        self._log_root = log_root
+        self._startup_timeout = startup_timeout
+        self._stop_timeout = stop_timeout
+        self._process_context = multiprocessing.get_context("spawn")
+        self._epoch = uuid.uuid4().hex
+        self._deployments: dict[str, _Deployment] = {}
+        self._lock = threading.RLock()
+
+    @rpc
+    def describe(self) -> HostDescriptor:
+        with self._lock:
+            self._refresh_locked()
+            return HostDescriptor(
+                host_id=self._host_id,
+                epoch=self._epoch,
+                name=self._name,
+                tags=self._tags,
+                versions=dict(self._versions),
+                state=self._host_state_locked(),
+                active_run_ids=tuple(sorted(self._deployments)),
+            )
+
+    @rpc
+    def start(self, epoch: str, fragment: HostFragment) -> DeploymentStatus:
+        self._check_epoch(epoch)
+        self._check_fragment(fragment)
+
+        with self._lock:
+            self._refresh_locked()
+            existing = self._deployments.get(fragment.run_id)
+            if existing is not None:
+                current = existing.fragment
+                if current.generation != fragment.generation:
+                    raise RuntimeError(
+                        f"Run {fragment.run_id} is already running generation {current.generation}"
+                    )
+                if current.payload_digest != fragment.payload_digest:
+                    raise ValueError("Fragment digest conflicts with the accepted deployment")
+                return self._status_locked(fragment.run_id)
+
+            log_dir = self._log_root / fragment.run_id
+            log_dir.mkdir(parents=True, exist_ok=True)
+            receive_ready, send_ready = self._process_context.Pipe(duplex=False)
+            process = self._process_context.Process(
+                target=_run_fragment,
+                args=(fragment, log_dir, send_ready),
+                daemon=False,
+            )
+            deployment = _Deployment(fragment, "starting", log_dir, process)
+            self._deployments[fragment.run_id] = deployment
+            try:
+                process.start()
+            except Exception as exc:
+                receive_ready.close()
+                send_ready.close()
+                deployment.state = "failed"
+                deployment.error = str(exc)
+                return self._status_locked(fragment.run_id)
+            send_ready.close()
+
+        error = self._wait_for_start(receive_ready)
+        if error is not None:
+            _terminate(process, self._stop_timeout)
+            kill_run_processes(fragment.run_id)
+
+        with self._lock:
+            if self._deployments.get(fragment.run_id) is not deployment:
+                return self._status_locked(fragment.run_id)
+            if error is not None:
+                deployment.state = "failed"
+                deployment.error = error
+            elif process.exitcode is not None:
+                deployment.state = "failed"
+                deployment.error = f"Deployment process exited with code {process.exitcode}"
+            else:
+                deployment.state = "running"
+            return self._status_locked(fragment.run_id)
+
+    @rpc
+    def status(self, epoch: str, run_id: str) -> DeploymentStatus:
+        self._check_epoch(epoch)
+        with self._lock:
+            self._refresh_locked()
+            return self._status_locked(run_id)
+
+    @rpc
+    def stop(
+        self,
+        epoch: str,
+        run_id: str,
+        generation: int,
+        fragment_digest: str,
+    ) -> DeploymentStatus:
+        self._check_epoch(epoch)
+        with self._lock:
+            deployment = self._deployments.get(run_id)
+            if deployment is None:
+                return self._status_locked(run_id)
+            fragment = deployment.fragment
+            if (fragment.run_id, fragment.generation, fragment.payload_digest) != (
+                run_id,
+                generation,
+                fragment_digest,
+            ):
+                raise ValueError("Stop request does not match the active deployment")
+            if deployment.state == "stopping":
+                return self._status_locked(run_id)
+            deployment.state = "stopping"
+
+        _terminate(deployment.process, self._stop_timeout)
+        kill_run_processes(run_id)
+
+        with self._lock:
+            if self._deployments.get(run_id) is deployment:
+                del self._deployments[run_id]
+            return self._status_locked(run_id)
+
+    def shutdown(self) -> None:
+        """Stop every active deployment when the Host service exits."""
+        with self._lock:
+            deployments = tuple(self._deployments.values())
+            self._deployments.clear()
+        for deployment in deployments:
+            _terminate(deployment.process, self._stop_timeout)
+            kill_run_processes(deployment.fragment.run_id)
+
+    def _check_epoch(self, epoch: str) -> None:
+        if epoch != self._epoch:
+            raise ValueError("Host epoch does not match the current daemon instance")
+
+    def _check_fragment(self, fragment: HostFragment) -> None:
+        if fragment.host_id != self._host_id:
+            raise ValueError(f"Fragment targets Host {fragment.host_id}, not {self._host_id}")
+        if fragment.schema_version != FRAGMENT_SCHEMA_VERSION:
+            raise ValueError(f"Unsupported fragment schema: {fragment.schema_version}")
+        if fragment.format != FRAGMENT_FORMAT:
+            raise ValueError(f"Unsupported fragment format: {fragment.format}")
+        required_revision = self._versions.get(
+            "application_revision",
+            self._versions.get("dimos"),
+        )
+        if required_revision is not None and fragment.application_revision != str(
+            required_revision
+        ):
+            raise ValueError(
+                f"Fragment requires application revision {fragment.application_revision}, "
+                f"Host has {required_revision}"
+            )
+        fragment.validate_digest()
+
+    def _wait_for_start(self, ready: Connection) -> str | None:
+        try:
+            if not ready.poll(self._startup_timeout):
+                return f"Deployment startup timed out after {self._startup_timeout}s"
+            started, error = ready.recv()
+            return None if started else error or "Deployment failed during startup"
+        except EOFError:
+            return "Deployment process exited before reporting startup status"
+        finally:
+            ready.close()
+
+    def _refresh_locked(self) -> None:
+        for deployment in self._deployments.values():
+            if deployment.state not in {"starting", "running"}:
+                continue
+            if deployment.process.exitcode is not None:
+                deployment.state = "failed"
+                deployment.error = (
+                    f"Deployment process exited with code {deployment.process.exitcode}"
+                )
+
+    def _host_state_locked(self) -> HostState:
+        states = {deployment.state for deployment in self._deployments.values()}
+        for state in ("failed", "stopping", "starting", "running"):
+            if state in states:
+                return state
+        return "available"
+
+    def _status_locked(self, run_id: str) -> DeploymentStatus:
+        deployment = self._deployments.get(run_id)
+        if deployment is None:
+            return DeploymentStatus("available", None, None, None, None, None)
+        return DeploymentStatus(
+            state=deployment.state,
+            run_id=deployment.fragment.run_id,
+            generation=deployment.fragment.generation,
+            pid=deployment.process.pid,
+            log_dir=str(deployment.log_dir),
+            error=deployment.error,
+        )
+
+
+def _terminate(process: BaseProcess, timeout: float) -> None:
+    if not process.is_alive():
+        process.join(timeout=0)
+        return
+    process.terminate()
+    process.join(timeout=timeout)
+    if process.is_alive():
+        process.kill()
+        process.join(timeout=timeout)
+
+
+def _run_fragment(fragment: HostFragment, log_dir: Path, ready: Connection) -> None:
+    os.environ[DIMOS_RUN_ID_ENV] = fragment.run_id
+    set_run_log_dir(log_dir)
+    stop_requested = threading.Event()
+    coordinator: ModuleCoordinator | None = None
+
+    def stop(_signum: int, _frame: object) -> None:
+        stop_requested.set()
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    try:
+        payload = fragment.load_payload()
+        remote_module_refs = {
+            (reference.consumer_name, reference.reference_name): (
+                reference.provider_type,
+                reference.rpc_name,
+            )
+            for reference in payload.remote_module_references
+        }
+        coordinator = ModuleCoordinator.build(
+            payload.blueprint,
+            payload.config,
+            remote_module_refs=remote_module_refs,
+        )
+        coordinator.start_rpc_service(
+            name=run_coordinator_rpc_name(fragment.run_id, fragment.host_id)
+        )
+        if not coordinator.health_check():
+            raise RuntimeError("Deployment failed its initial health check")
+        ready.send((True, None))
+        stop_requested.wait()
+    except Exception as exc:
+        try:
+            ready.send((False, str(exc)))
+        except (BrokenPipeError, OSError):
+            pass
+    finally:
+        ready.close()
+        if coordinator is not None:
+            coordinator.stop()
