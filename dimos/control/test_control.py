@@ -283,6 +283,72 @@ class TestConnectedHardware:
 
 
 class TestConnectedWholeBody:
+    def test_idle_trajectory_leaves_holding_to_shared_hardware(self, mocker):
+        adapter = mocker.Mock(spec=WholeBodyAdapter)
+        adapter.has_motor_states.return_value = True
+        adapter.read_motor_states.return_value = [MotorState(q=0.0), MotorState(q=0.0)]
+        adapter.write_motor_commands.return_value = True
+        hardware = ConnectedWholeBody(
+            adapter,
+            HardwareComponent(
+                hardware_id="robot",
+                hardware_type=HardwareType.WHOLE_BODY,
+                joints=["leg", "arm"],
+            ),
+        )
+        task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["arm"]))
+        other = mocker.Mock(spec=BaseControlTask)
+        other.name = "other"
+        other.is_active.return_value = False
+        other.claim.return_value = ResourceClaim(joints=frozenset({"leg", "arm"}), priority=20)
+        loop = TickLoop(
+            10,
+            {"robot": hardware},
+            threading.Lock(),
+            {task.name: task, other.name: other},
+            threading.Lock(),
+            {"leg": "robot", "arm": "robot"},
+        )
+        clock = mocker.patch("dimos.control.tick_loop.time.perf_counter", return_value=0.1)
+        loop._tick()
+        adapter.write_motor_commands.assert_not_called()
+        trajectory = JointTrajectory(joint_names=["arm"], points=[TrajectoryPoint(positions=[0.1])])
+        assert task.execute(trajectory, {}).status is TrajectoryExecutionStatus.ACCEPTED
+        clock.return_value = 0.2
+        loop._tick()
+        assert not task.is_active()
+        assert adapter.write_motor_commands.call_args.args[0][1].q == pytest.approx(0.1)
+
+        other.is_active.return_value = True
+        other.compute.return_value = JointCommandOutput(
+            joint_names=["leg"], positions=[0.2], mode=ControlMode.SERVO_POSITION
+        )
+        clock.return_value = 0.3
+        loop._tick()
+        commands = adapter.write_motor_commands.call_args.args[0]
+        assert [command.q for command in commands] == pytest.approx([0.2, 0.1])
+        assert [command.kp for command in commands] == [40.0, 40.0]
+
+        other.compute.return_value = JointCommandOutput(
+            joint_names=["arm"], positions=[-0.2], mode=ControlMode.SERVO_POSITION
+        )
+        clock.return_value = 0.4
+        loop._tick()
+        other.compute.return_value = JointCommandOutput(
+            joint_names=["leg"], positions=[0.3], mode=ControlMode.SERVO_POSITION
+        )
+        clock.return_value = 0.5
+        loop._tick()
+        assert [
+            command.q for command in adapter.write_motor_commands.call_args.args[0]
+        ] == pytest.approx([0.3, -0.2])
+
+        other.is_active.return_value = False
+        adapter.write_motor_commands.reset_mock()
+        clock.return_value = 0.6
+        loop._tick()
+        adapter.write_motor_commands.assert_not_called()
+
     def test_partial_commands_retain_last_targets_for_omitted_joints(self) -> None:
         adapter = MagicMock()
         adapter.has_motor_states.return_value = True
@@ -577,55 +643,6 @@ class TestJointTrajectoryTask:
         assert trajectory_task.name == JOINT_TRAJECTORY_TASK_NAME
         assert not trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.IDLE
-
-    def test_idle_hold_latches_measured_positions(self):
-        task = JointTrajectoryTask(
-            JointTrajectoryTaskConfig(
-                joint_names=["arm/joint1", "arm/joint2"],
-                hold_position_when_idle=True,
-            )
-        )
-        state = JointStateSnapshot(joint_positions={"arm/joint1": 0.25, "arm/joint2": -0.5})
-
-        output = task.compute(CoordinatorState(joints=state, t_now=1.0, dt=0.1))
-
-        assert task.is_active()
-        assert output is not None
-        assert output.joint_names == ["arm/joint1", "arm/joint2"]
-        assert output.positions == [0.25, -0.5]
-
-    def test_idle_hold_retains_final_target_after_trajectory(self):
-        task = JointTrajectoryTask(
-            JointTrajectoryTaskConfig(
-                joint_names=["arm/joint1", "arm/joint2"],
-                start_position_tolerance=2.0,
-                velocity_limits={"arm/joint1": 10.0, "arm/joint2": 10.0},
-                hold_position_when_idle=True,
-            )
-        )
-        trajectory = JointTrajectory(
-            joint_names=["arm/joint1"],
-            points=[
-                TrajectoryPoint(
-                    positions=[1.0],
-                    velocities=[0.0],
-                    time_from_start=0.0,
-                )
-            ],
-        )
-        state = JointStateSnapshot(joint_positions={"arm/joint1": 0.0, "arm/joint2": -0.5})
-        assert (
-            task.execute(trajectory, {"arm/joint1": 0.0}).status
-            is TrajectoryExecutionStatus.ACCEPTED
-        )
-
-        completed = task.compute(CoordinatorState(joints=state, t_now=1.0, dt=0.1))
-        held = task.compute(CoordinatorState(joints=state, t_now=1.1, dt=0.1))
-
-        assert completed is not None
-        assert completed.positions == [1.0, -0.5]
-        assert held is not None
-        assert held.positions == [1.0, -0.5]
 
     def test_claim(self, trajectory_task):
         claim = trajectory_task.claim()
