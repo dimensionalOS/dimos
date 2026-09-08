@@ -31,7 +31,8 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 mcap_writer = pytest.importorskip("mcap.writer", reason="mcap not installed")
 
 
-def test_lcm_channel_decodes_with_explicit_codec(tmp_path: Path) -> None:
+@pytest.mark.parametrize("explicit", [False, True])
+def test_native_lcm_channel_decodes(tmp_path: Path, explicit: bool) -> None:
     path = tmp_path / "recording.mcap"
     expected = Imu(
         ts=12.5,
@@ -64,7 +65,7 @@ def test_lcm_channel_decodes_with_explicit_codec(tmp_path: Path) -> None:
         )
         writer.finish()
 
-    with McapStore(path=str(path), codecs={"imu": LcmCodec(Imu)}) as store:
+    with McapStore(path=str(path), codecs={"imu": LcmCodec(Imu)} if explicit else None) as store:
         assert store.list_streams() == ["imu"]
         observation: Observation[Imu] = store.stream("imu").order_by("ts").first()
         assert observation.ts == 11.5
@@ -75,7 +76,8 @@ def test_lcm_channel_decodes_with_explicit_codec(tmp_path: Path) -> None:
         assert latest_observation.data.lcm_encode() == expected.lcm_encode()
 
 
-def test_wrapped_codec_decodes_with_explicit_codec(tmp_path: Path) -> None:
+@pytest.mark.parametrize("explicit", [False, True])
+def test_native_wrapped_codec_decodes(tmp_path: Path, explicit: bool) -> None:
     path = tmp_path / "recording.mcap"
     expected = Imu(
         ts=12.5,
@@ -103,7 +105,7 @@ def test_wrapped_codec_decodes_with_explicit_codec(tmp_path: Path) -> None:
         )
         writer.finish()
 
-    with McapStore(path=str(path), codecs={"imu": codec}) as store:
+    with McapStore(path=str(path), codecs={"imu": codec} if explicit else None) as store:
         observation: Observation[Imu] = store.stream("imu").first()
         assert observation.ts == 12.5
         assert observation.data.lcm_encode() == expected.lcm_encode()

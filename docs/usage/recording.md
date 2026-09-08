@@ -35,8 +35,20 @@ other specialized transports before creating an artifact. Narrow
 `--record-topics` or use the Python engine when a selection contains one of
 those transports. Payloads must also be dimOS LCM message types.
 
-The native process must report ready within 10 seconds, so build, configuration,
-and subscription failures stop startup. If it exits unexpectedly after startup,
+The engine automatically prepares `dimos-memory-recorder` through the shared
+[Nix package workflow](/docs/usage/native_modules.md#preparing-native-packages).
+This works from pip installations and editable checkouts; a cache miss builds
+from source. To prepare ahead of time, run `dimos native prepare dimos-memory-recorder`.
+MCAP reading is included in the core Python dependencies. Built-in DimOS
+message channels decode from their recorded type and codec metadata, so
+`dimos mem rerun memory.mcap` can render them directly.
+
+Selected LCM streams must use one explicit connection URL. The recorder uses
+that URL even when it differs from `LCM_DEFAULT_URL`. Conflicting URLs and
+externally supplied LCM connections are rejected.
+
+After preparation, the native process must report ready within 10 seconds.
+Preparation, configuration, and subscription failures stop startup. If it exits unexpectedly after startup,
 the error is logged and the rest of `dimos run` continues. Normal shutdown sends
 SIGTERM and lets the existing native module runtime flush the artifact. There is
 no automatic fallback to Python.

@@ -20,6 +20,8 @@ on:
       - web/deno.json
       - web/deno.lock
       - dimos/utils/deno.py
+      - dimos/native_packages.json
+      - dimos/core/native_package.py
 
 permissions: {}
 
@@ -39,6 +41,8 @@ jobs:
         uses: ./.github/actions/build-cockpit
       - name: Build one wheel
         uses: pypa/cibuildwheel@v4.2.0
+        env:
+          CIBW_ENVIRONMENT: DIMOS_BUILD_REVISION=${{ github.sha }}
         with:
           only: cp312-manylinux_x86_64
 

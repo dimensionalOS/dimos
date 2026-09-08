@@ -60,6 +60,7 @@ from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.native_package import ensure_native_package
 from dimos.core.transport_factory import session_config
 from dimos.protocol.service.spec import SessionConfig
 from dimos.utils.logging_config import setup_logger
@@ -117,7 +118,8 @@ _PYTHON_TO_RUST_LEVELS = {
 class NativeModuleConfig(ModuleConfig):
     """Configuration for a native subprocess module."""
 
-    executable: str
+    executable: str = ""
+    native_package: str | None = None
     build_command: str | None = None
     cwd: str | None = None
     extra_args: list[str] = Field(default_factory=list)
@@ -139,7 +141,13 @@ class NativeModuleConfig(ModuleConfig):
     base_fields: frozenset[str] = frozenset()
 
     @model_validator(mode="after")
-    def _session_needs_the_stdin_line(self) -> NativeModuleConfig:
+    def _validate_native_config(self) -> NativeModuleConfig:
+        if not self.executable and not self.native_package:
+            raise ValueError("A native module requires an executable or native_package")
+        if self.native_package and (self.executable or self.build_command or self.cwd):
+            raise ValueError(
+                "native_package cannot be combined with executable, build_command, or cwd"
+            )
         if self.session is not None and not self.stdin_config:
             raise ValueError(
                 f"{self.executable} pins a session config but has stdin_config off, "
@@ -211,10 +219,15 @@ class NativeModule(Module):
     _watchdog: threading.Thread | None = None
     _stopping: bool = False
     _stop_lock: threading.Lock
+    _prepared_executable: str | None = None
+
+    @property
+    def _executable(self) -> str:
+        return self._prepared_executable or self.config.executable
 
     @functools.cached_property
     def _module_label(self) -> str:
-        exe = Path(self.config.executable).name if self.config.executable else "?"
+        exe = Path(self._executable).name if self._executable else self.config.native_package
         return f"{type(self).__name__}({exe})"
 
     def __init__(self, **kwargs: Any) -> None:
@@ -224,7 +237,7 @@ class NativeModule(Module):
         if self.config.cwd is not None and not Path(self.config.cwd).is_absolute():
             base_dir = Path(inspect.getfile(type(self))).resolve().parent
             self.config.cwd = str(base_dir / self.config.cwd)
-        if not Path(self.config.executable).is_absolute():
+        if self.config.executable and not Path(self.config.executable).is_absolute():
             # The spawn runs from the executable's own directory, so a relative
             # path has to be resolved before then or it resolves against itself.
             base = Path(self.config.cwd) if self.config.cwd is not None else Path.cwd()
@@ -260,7 +273,7 @@ class NativeModule(Module):
 
     def _argv(self, topics: dict[str, str]) -> list[str]:
         """The command line the native process is spawned with."""
-        cmd = [self.config.executable]
+        cmd = [self._executable]
         for name, topic_str in topics.items():
             cmd.extend([f"--{name}", topic_str])
         cmd.extend(self.config.to_cli_args())
@@ -299,7 +312,7 @@ class NativeModule(Module):
         stdin_blob = self._stdin_blob(topics) if self.config.stdin_config else None
 
         env = self._spawn_env()
-        cwd = self.config.cwd or str(Path(self.config.executable).resolve().parent)
+        cwd = self.config.cwd or str(Path(self._executable).resolve().parent)
 
         logger.info(
             "Starting native process",
@@ -461,6 +474,9 @@ class NativeModule(Module):
         stream.close()
 
     def _maybe_build(self) -> None:
+        if self.config.native_package:
+            self._prepared_executable = str(ensure_native_package(self.config.native_package))
+            return
         exe = Path(self.config.executable)
 
         if self.config.build_command is None:

@@ -57,9 +57,7 @@ from dimos.spec import perception
 
 
 class FastLio2Config(NativeModuleConfig):
-    cwd: str | None = "cpp"
-    executable: str = "result/bin/fastlio2_native"
-    build_command: str | None = "nix build -L .#fastlio2_native"
+    native_package: str | None = "fastlio2"
     stdin_config: bool = True
     base_fields: frozenset[str] = frozenset({"frame_id"})
     # Livox SDK hardware config. lidar_ip required; host_ip optional (auto-derived

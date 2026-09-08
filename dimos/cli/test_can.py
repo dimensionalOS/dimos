@@ -24,6 +24,11 @@ from typer.testing import CliRunner
 from dimos.cli.dimos import main
 
 
+@pytest.fixture(autouse=True)
+def can_backend(mocker: MockerFixture) -> None:
+    mocker.patch.dict(sys.modules, {"can_motor_control": Mock(TransportError=RuntimeError)})
+
+
 def _subprocess_argv(run: Mock) -> list[list[str]]:
     return [call.args[0] for call in run.call_args_list]
 

@@ -61,6 +61,7 @@ from dimos.cli.commands.info import list_blueprints, show_config
 from dimos.cli.commands.lifecycle import log_cmd, restart, run, status, stop
 from dimos.cli.commands.map import map_app
 from dimos.cli.commands.mcp import agent_send_cmd, mcp_app
+from dimos.cli.commands.native import native_app
 from dimos.cli.commands.rerun_bridge import rerun_bridge_cmd
 from dimos.cli.commands.topic import topic_app
 from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
@@ -146,6 +147,7 @@ main.add_typer(dataprep_app, name="dataprep")
 from dimos.memory.cli.app import mem_app
 
 main.add_typer(mem_app, name="mem")
+main.add_typer(native_app, name="native")
 
 from dimos.evals.cli import app as evals_app
 

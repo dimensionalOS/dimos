@@ -16,12 +16,12 @@
 
 from __future__ import annotations
 
+import importlib
 import os
 import shlex
 import subprocess
 import sys
 
-import can_motor_control
 import typer
 
 app = typer.Typer(help="Discover and configure CAN interfaces", no_args_is_help=True)
@@ -64,6 +64,7 @@ def list_devices() -> None:
         typer.echo(output or "No SocketCAN interfaces found")
         return
     if sys.platform == "darwin":
+        can_motor_control = importlib.import_module("can_motor_control")
         try:
             devices = can_motor_control.list_gs_usb_devices(
                 vendor_id=GS_USB_VENDOR_ID,

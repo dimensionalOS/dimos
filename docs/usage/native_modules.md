@@ -79,7 +79,8 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 
 | Field              | Type             | Default       | Description                                                 |
 |--------------------|------------------|---------------|-------------------------------------------------------------|
-| `executable`       | `str`            | *(required)*  | Path to the native binary (relative to `cwd` if set)        |
+| `native_package`   | `str \| None` | `None` | Package ID from the native catalog; automatically prepared by Nix |
+| `executable`       | `str`            | `""` | Explicit binary path; required when `native_package` is unset |
 | `build_command`    | `str \| None`    | `None`        | Shell command to run if executable is missing (auto-build)  |
 | `cwd`              | `str \| None`    | `None`        | Working directory for build and runtime. Relative paths are resolved against the Python file defining the module |
 | `extra_args`       | `list[str]`      | `[]`          | Additional CLI arguments appended after auto-generated ones |
@@ -267,32 +268,70 @@ autoconnect(
 )
 ```
 
-## Auto Building
+## Preparing native packages
 
-If `build_command` is set in the module config, and the executable doesn't exist when `start()` is called, NativeModule runs the build command automatically.
-Build output is streamed line by line through structlog at `info`, with stderr merged into
-stdout. `nix build` prints no build logs unless `-L` is passed, so the built-in modules all
-include it.
+The Rust recorder, Livox Mid360, PointLIO, and FastLIO2 use shared native
+package preparation. First use evaluates the package's Nix inputs, reuses a
+local result, downloads a matching result from the configured binary cache,
+or builds from source. Compilation uses one Nix build job with two cores.
+Preparation failures stop startup before the affected process launches.
 
-```python skip
-class MyLidarConfig(NativeModuleConfig):
-    cwd: str | None = "cpp"
-    executable: str = "result/bin/my_lidar"
-    build_command: str | None = "nix build -L .#my_lidar"
+| Term | Meaning |
+|------|---------|
+| Native package | A versioned executable and its runtime dependencies |
+| Prepared executable | A native package's installed, runnable binary |
+| Recording engine | The implementation that records streams, currently Python or Rust |
+
+Nix with flakes enabled is required. A pip-installed DimOS uses the immutable
+source revision embedded in its wheel or source distribution. An editable
+checkout uses its local native sources. Nix determines reuse from the build
+inputs: unrelated Python edits do not force recompilation. Add newly created
+native source files to Git so local Git flakes include them.
+
+To prepare before starting hardware:
+
+```bash skip
+dimos native prepare dimos-memory-recorder
+dimos native prepare mid360
+dimos native prepare pointlio
+dimos native prepare fastlio2
 ```
 
-`cwd` is used for both the build command and the runtime subprocess. Relative paths are resolved against the directory of the Python file that defines the module
+The same commands prepare local edits in a checkout. `--build-native` reruns
+preparation during module building; it does not bypass Nix's reuse of identical
+outputs. Executables and their dependencies stay in the Nix store, with output
+links under the DimOS cache root. Runtime processes do not need a source-tree
+working directory. Different native builds have independent output links.
 
-If the executable already exists, the build step is skipped entirely.
+Package declarations live in `dimos/native_packages.json` and are consumed by
+both runtime preparation and the CI publisher. Set `native_package` on a
+`NativeModuleConfig` to select one; do not also set `executable`, `cwd`, or
+`build_command`. For an explicitly provisioned binary, set `native_package=None`
+and supply `executable`.
 
-### Faster builds via the Cachix substituter
+RealSense, Cargo-only modules, and GPU-specific DimSLAM retain their existing
+build workflows. Modules using `build_command` build when their executable is
+missing, when `auto_build` is enabled, or when `--build-native` is requested.
+Their relative paths resolve against the Python module defining them.
 
-Nix-built native modules can be substituted from the `dimensionalos` Cachix
-cache (the same substituter CI uses) instead of compiled from source. Opt in
-locally to skip cold compiles when the cache has them:
+### Configure Cachix
 
-```
-# ~/.config/nix/nix.conf  (single-user)  or  /etc/nix/nix.conf  (multi-user)
+DimOS requests the same cache CI publishes to on each Nix invocation. For a
+multi-user installation whose daemon does not trust user-supplied caches, an
+administrator must configure the cache in `/etc/nix/nix.conf`:
+
+```text
 extra-substituters = https://dimensionalos.cachix.org
 extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
 ```
+
+Follow Nix's installation instructions when configuring daemon trust. DimOS
+does not edit system Nix configuration. If Nix warns that it ignored an
+untrusted substituter, configure daemon trust to avoid compiling packages
+that are already available from Cachix. The shared
+publishing job currently covers x86-64 Linux; other supported targets may
+compile locally. An absent cached result permits a source build; download or
+build failures are reported rather than retried through a separate installer.
+
+See [Nix installation](/docs/installation/nix.md) and the
+[preparation decision](/docs/adr/0001-native-package-preparation.md).

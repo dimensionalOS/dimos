@@ -45,6 +45,7 @@ import ast
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 import hashlib
+import json
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -54,7 +55,7 @@ import time
 import urllib.error
 import urllib.request
 
-MARKER_SALT = 1
+MARKER_SALT = 2
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_DIR = REPO_ROOT / "dimos"
@@ -137,7 +138,9 @@ def is_nix_build(command: str | None) -> bool:
 
 
 def discover() -> tuple[DiscoveredModule, ...]:
+    catalog = json.loads((PACKAGE_DIR / "native_packages.json").read_text())
     found = []
+    packages_seen = set()
     provisioned_seen = set()
     for dirpath, dirnames, filenames in os.walk(PACKAGE_DIR):
         dirnames[:] = sorted(d for d in dirnames if d not in IGNORED_DIRS)
@@ -159,6 +162,21 @@ def discover() -> tuple[DiscoveredModule, ...]:
                     provisioned_seen.add(qualname)
                     continue
                 build_command = _literal_default(node, "build_command", source)
+                package_id = _literal_default(node, "native_package", source)
+                if package_id:
+                    if package_id not in catalog:
+                        raise SystemExit(f"{source}: unknown native_package {package_id!r}")
+                    package = catalog[package_id]
+                    packages_seen.add(package_id)
+                    found.append(
+                        DiscoveredModule(
+                            qualname=qualname,
+                            source=source,
+                            build_command=f"nix build -L .#{package['attribute']}",
+                            build_dir=package["flake_dir"],
+                        )
+                    )
+                    continue
                 if not is_nix_build(build_command):
                     continue
                 cwd = _literal_default(node, "cwd", source)
@@ -179,6 +197,10 @@ def discover() -> tuple[DiscoveredModule, ...]:
         raise SystemExit(
             f"EXTERNALLY_PROVISIONED entries not found in the tree: {sorted(stale)}"
             " — remove them from bin/build-native-modules"
+        )
+    if packages_seen != set(catalog):
+        raise SystemExit(
+            f"Native packages without a module: {sorted(set(catalog) - packages_seen)}"
         )
     return tuple(sorted(found))
 
@@ -377,6 +399,7 @@ def build_manifest(modules: tuple[DiscoveredModule, ...]) -> str:
         f"salt {MARKER_SALT}",
         f"script {_git_object_hash('bin/build-native-modules')}",
         f"cachix {os.environ.get('CACHIX_CACHE_NAME', '')}",
+        f"catalog {(PACKAGE_DIR / 'native_packages.json').read_text().strip()}",
         *(f"module {m.qualname} dir={m.build_dir} cmd={m.build_command}" for m in modules),
         *(f"path {path} {_git_object_hash(path)}" for path in top),
     ]

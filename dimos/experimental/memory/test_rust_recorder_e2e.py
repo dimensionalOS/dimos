@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import os
 from pathlib import Path
 import select
@@ -57,7 +56,6 @@ pytestmark = pytest.mark.self_hosted
 
 _RUST_PACKAGE = DIMOS_PROJECT_ROOT / "dimos" / "experimental" / "memory" / "rust"
 _EXECUTABLE = _RUST_PACKAGE / "result" / "bin" / "dimos-memory-recorder"
-_MCAP_AVAILABLE = importlib.util.find_spec("mcap") is not None
 
 
 class InteropRustRecorder(RustRecorder):
@@ -126,10 +124,7 @@ def _free_port() -> int:
     "store_kind",
     [
         "sqlite",
-        pytest.param(
-            "mcap",
-            marks=pytest.mark.skipif(not _MCAP_AVAILABLE, reason="mcap not installed"),
-        ),
+        "mcap",
     ],
 )
 def test_rust_artifact_is_readable_by_python_memory2(
@@ -149,6 +144,7 @@ def test_rust_artifact_is_readable_by_python_memory2(
     endpoint = f"tcp/127.0.0.1:{_free_port()}"
     monkeypatch.setattr(global_config, "transport", "zenoh")
     recorder = InteropRustRecorder(
+        native_package=None,
         executable=str(rust_recorder_executable),
         store=store,
         record_tf=False,
@@ -280,8 +276,9 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
     monkeypatch.setattr(global_config, "record_encoding_threads", 2)
     monkeypatch.setattr(global_config, "transport", "lcm")
     monkeypatch.setattr(global_config, "build_native", False)
-    monkeypatch.setattr(rust_cli_recorder, "_EXECUTABLE", rust_recorder_executable)
-    monkeypatch.setattr(rust_cli_recorder, "_RUST_DIR", _RUST_PACKAGE)
+    monkeypatch.setattr(
+        rust_cli_recorder, "ensure_native_package", lambda package_id: rust_recorder_executable
+    )
     monkeypatch.setattr(rust_cli_recorder, "recording_dir", lambda: tmp_path)
     channel = f"/rust-recorder-{uuid.uuid4().hex[:8]}"
     publisher: LCMTransport[Imu] = LCMTransport(channel, Imu, url=lcm_url)
@@ -298,11 +295,6 @@ def test_cli_recording_uses_existing_binary_for_both_formats(
         publisher.stop()
 
     memory: SqliteStore | McapStore
-    if store_kind == "mcap" and not _MCAP_AVAILABLE:
-        data = artifact.read_bytes()
-        assert data.startswith(b"\x89MCAP0\r\n")
-        assert data.endswith(b"\x89MCAP0\r\n")
-        return
     if store_kind == "sqlite":
         memory = SqliteStore(path=str(artifact))
     else:
@@ -322,6 +314,7 @@ def test_tf_records_over_zenoh_and_replays_through_python(
     endpoint = f"tcp/127.0.0.1:{_free_port()}"
     monkeypatch.setattr(global_config, "transport", "zenoh")
     recorder = RustRecorder(
+        native_package=None,
         executable=str(rust_recorder_executable),
         store=RustSqliteStoreConfig(path=str(artifact)),
         record_tf=True,
