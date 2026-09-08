@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <cstdlib>
+
 #include "dimos/native/config.hpp"
 #include "dimos/native/lcm_codec.hpp"
 #include "dimos/native/lcm_transport.hpp"
@@ -23,6 +25,10 @@ namespace dimos::native {
 template <class M>
 void run_with_transport() {
     try {
+        // Checked before stdin so a missing variable fails loudly instead of
+        // blocking on a line the coordinator is never going to send.
+        const char* name = std::getenv("DIMOS_TRANSPORT");
+        require_supported_transport(name != nullptr ? name : "");
         StdinConfig parsed = read_stdin_config();
         std::unique_ptr<Transport> transport = make_transport_from_env(parsed.launch);
         run<M>(std::move(transport), std::move(parsed));
