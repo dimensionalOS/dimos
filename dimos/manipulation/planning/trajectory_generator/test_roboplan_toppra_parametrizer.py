@@ -79,8 +79,6 @@ def _model(*, unbounded_acceleration: bool = False) -> RoboPlanModel:
     return RoboPlanModel(
         scene=_Scene(unbounded_acceleration=unbounded_acceleration),
         groups={frozenset(group.group_ids): group},
-        native_joints={},
-        native_links={},
         all_group=group,
     )
 

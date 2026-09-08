@@ -25,6 +25,7 @@ The site also serves the markdown it was built from, for agents: every page
 at its docs/ path, indexed by llms.txt (overrides/llms.txt).
 """
 
+import hashlib
 from pathlib import Path
 import posixpath
 import re
@@ -169,6 +170,9 @@ def _readme_as_home() -> str:
     # a line box, plus a lightbox anchor around a blank image.
     text = re.sub(r"\s*<img[^>]*spacer\.png[^>]*>", "", text)
 
+    # A bare <br> between blocks becomes an empty paragraph: a 1.5em hole.
+    text = re.sub(r"^<br\s*/?>\s*$", "", text, flags=re.M)
+
     # <big> is deprecated, and being an inline tag it re-blocks markdown even
     # inside a div that asked for it. Material sizes the banner text anyway.
     text = text.replace("<big>", "").replace("</big>", "")
@@ -203,11 +207,18 @@ def _readme_as_home() -> str:
     return f'---\ntitle: "Welcome to dimOS"\n---\n\n{text}'
 
 
+def on_config(config):
+    """Content-hash the theme stylesheet's name so a restyle busts caches."""
+    digest = hashlib.md5(THEME_CSS.read_bytes()).hexdigest()[:8]
+    config.extra_css = [f"assets/mkdocs-theme.{digest}.css"]
+    return config
+
+
 def on_files(files, config):
     """Ship the theme and the readme-as-home without adding files to docs/."""
     from mkdocs.structure.files import File
 
-    files.append(File.generated(config, "assets/mkdocs-theme.css", content=THEME_CSS.read_text()))
+    files.append(File.generated(config, config.extra_css[0], content=THEME_CSS.read_text()))
     files.append(File.generated(config, "index.md", content=_readme_as_home()))
 
     # The readme's screenshots live outside docs/, so pull them in by path
@@ -224,6 +235,22 @@ def on_page_markdown(markdown, page, config, files):
     markdown = _github_alerts(markdown)
     markdown = _normalize_fences(markdown)
     return _LINK.sub(lambda m: _rewrite_link(m, page.file.src_uri), markdown)
+
+
+_SVG_VIEWBOX = re.compile(r"<svg(?![^>]* width=)[^>]*?viewBox=['\"]0 0 ([\d.]+) ([\d.]+)['\"]")
+
+
+def on_post_build(config):
+    """Pikchr svgs carry only a viewBox; an <img> of one has no intrinsic size,
+    so the browser stretches it to the column. Stamp the natural size on."""
+    for svg in Path(config["site_dir"]).rglob("*.svg"):
+        text = svg.read_text(encoding="utf-8")
+        if 'class="pikchr"' not in text[:300]:
+            continue
+        match = _SVG_VIEWBOX.search(text)
+        if match:
+            size = f'<svg width="{match.group(1)}" height="{match.group(2)}"'
+            svg.write_text(text.replace("<svg", size, 1), encoding="utf-8")
 
 
 def on_post_page(output, page, config):

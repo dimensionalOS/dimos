@@ -250,7 +250,8 @@ jobs:
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
 
-  cpp:
+  native:
+    name: Native builds (C++ and Rust)
     timeout-minutes: 30
     runs-on: ubuntu-latest
     permissions:
@@ -305,6 +306,11 @@ jobs:
             extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
           INPUT_SET_AS_TRUSTED_USER: "true"
         run: bash docker/ros/install-nix.sh
+      - name: Build Rust memory recorder Nix package
+        run: |
+          cd dimos/experimental/memory/rust
+          nix build .#dimos-memory-recorder --no-write-lock-file --print-build-logs
+          test -x result/bin/dimos-memory-recorder
       # PCL, GTSAM and the SLAM cores come from each module's flake, not apt.
       - name: Build C++ native modules
         env:
@@ -482,7 +488,8 @@ jobs:
         run: >-
           uv run pytest -m web_browser dimos/e2e_tests/test_cockpit_browser.py
           dimos/e2e_tests/test_sdk_browser.py
-          dimos/e2e_tests/test_custom_channel_browser.py --no-cov
+          dimos/e2e_tests/test_custom_channel_browser.py
+          dimos/e2e_tests/test_publish_browser.py --no-cov
 
   tests:
     if: |
@@ -512,6 +519,8 @@ jobs:
       # redirects it to a per-process file under $RUNNER_TEMP/pytest-crash,
       # which is what makes a crash legible under xdist (one file per worker).
       PYTHONFAULTHANDLER: "1"
+      # Zenoh's own scouting decisions, for diagnosing workers that never link.
+      RUST_LOG: "zenoh::net::runtime::orchestrator=debug"
     permissions:
       contents: read  # For checkout
       id-token: write  # For codecov-action's OIDC upload
@@ -633,11 +642,10 @@ jobs:
                 - /var/cache/dimos-root-cache:/root/.cache
             markers: "self_hosted or skipif_no_ros"
             experimental: false
-          # macOS runner disabled for now — we don't want Mac tests.
-          # - os: macOS
-          #   container: null  # run on host — `container:` is Linux-only
-          #   markers: "self_hosted"
-          #   experimental: true
+          - os: macOS
+            container: null  # run on host — `container:` is Linux-only
+            markers: "self_hosted"
+            experimental: true
     runs-on:
       - self-hosted
       - ${{ matrix.os }}
@@ -955,7 +963,7 @@ jobs:
     needs:
     - lint
     - rust
-    - cpp
+    - native
     - md-babel
     - web
     - tests

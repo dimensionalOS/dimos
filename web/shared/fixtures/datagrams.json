@@ -22,7 +22,9 @@
               "maxHz": 15.5,
               "params": {
                 "quality": 75.5
-              }
+              },
+              "publish": "none",
+              "requiredScope": null
             },
             {
               "ch": "odom",
@@ -30,7 +32,9 @@
               "encoding": "pose.json.v1",
               "delivery": "reliable",
               "maxHz": 20.5,
-              "params": {}
+              "params": {},
+              "publish": "none",
+              "requiredScope": null
             }
           ],
           "panels": [
@@ -52,7 +56,7 @@
           "pages": []
         }
       },
-      "b64": "eyJ0IjoiaGVsbG8iLCJ2Ijo1LCJyb2xlIjoicm9ib3QiLCJyb2JvdCI6eyJpZCI6ImdvMi1sYWIiLCJuYW1lIjoiR28yIExhYm9yYXRvciDOsiIsIm1vZGVsIjoidW5pdHJlZS1nbzIifSwibWFuaWZlc3QiOnsidmVyc2lvbiI6MSwiY2hhbm5lbHMiOlt7ImNoIjoiY29sb3JfaW1hZ2UiLCJkaXIiOiJyeCIsImVuY29kaW5nIjoianBlZy52MSIsImRlbGl2ZXJ5IjoibGF0ZXN0IiwibWF4SHoiOjE1LjUsInBhcmFtcyI6eyJxdWFsaXR5Ijo3NS41fX0seyJjaCI6Im9kb20iLCJkaXIiOiJyeCIsImVuY29kaW5nIjoicG9zZS5qc29uLnYxIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsIm1heEh6IjoyMC41LCJwYXJhbXMiOnt9fV0sInBhbmVscyI6W3siaWQiOiJwMCIsImtpbmQiOiJ2aWRlbyIsInRpdGxlIjoiQ2FtZXJhIM6yIiwiY2hhbm5lbHMiOlsiY29sb3JfaW1hZ2UiXSwicGFyYW1zIjp7fX1dLCJsYXlvdXQiOnsicm93IjpbInAwIl19LCJwYWdlcyI6W119fQ=="
+      "b64": "eyJ0IjoiaGVsbG8iLCJ2Ijo1LCJyb2xlIjoicm9ib3QiLCJyb2JvdCI6eyJpZCI6ImdvMi1sYWIiLCJuYW1lIjoiR28yIExhYm9yYXRvciDOsiIsIm1vZGVsIjoidW5pdHJlZS1nbzIifSwibWFuaWZlc3QiOnsidmVyc2lvbiI6MSwiY2hhbm5lbHMiOlt7ImNoIjoiY29sb3JfaW1hZ2UiLCJkaXIiOiJyeCIsImVuY29kaW5nIjoianBlZy52MSIsImRlbGl2ZXJ5IjoibGF0ZXN0IiwibWF4SHoiOjE1LjUsInBhcmFtcyI6eyJxdWFsaXR5Ijo3NS41fSwicHVibGlzaCI6Im5vbmUiLCJyZXF1aXJlZFNjb3BlIjpudWxsfSx7ImNoIjoib2RvbSIsImRpciI6InJ4IiwiZW5jb2RpbmciOiJwb3NlLmpzb24udjEiLCJkZWxpdmVyeSI6InJlbGlhYmxlIiwibWF4SHoiOjIwLjUsInBhcmFtcyI6e30sInB1Ymxpc2giOiJub25lIiwicmVxdWlyZWRTY29wZSI6bnVsbH1dLCJwYW5lbHMiOlt7ImlkIjoicDAiLCJraW5kIjoidmlkZW8iLCJ0aXRsZSI6IkNhbWVyYSDOsiIsImNoYW5uZWxzIjpbImNvbG9yX2ltYWdlIl0sInBhcmFtcyI6e319XSwibGF5b3V0Ijp7InJvdyI6WyJwMCJdfSwicGFnZXMiOltdfX0="
     },
     {
       "name": "hello_viewer",
@@ -228,6 +232,75 @@
         "t": "teleop_stop"
       },
       "b64": "eyJ0IjoidGVsZW9wX3N0b3AifQ=="
+    },
+    {
+      "name": "pub",
+      "message": {
+        "t": "pub",
+        "id": "s7k2β-1",
+        "ch": "human_input",
+        "data": {
+          "text": "Salut, robotule! β",
+          "urgency": 0.75
+        },
+        "clientTs": 1752576000.25
+      },
+      "b64": "eyJ0IjoicHViIiwiaWQiOiJzN2syzrItMSIsImNoIjoiaHVtYW5faW5wdXQiLCJkYXRhIjp7InRleHQiOiJTYWx1dCwgcm9ib3R1bGUhIM6yIiwidXJnZW5jeSI6MC43NX0sImNsaWVudFRzIjoxNzUyNTc2MDAwLjI1fQ=="
+    },
+    {
+      "name": "pub_no_client_ts",
+      "message": {
+        "t": "pub",
+        "id": "s7k2β-2",
+        "ch": "human_input",
+        "data": [
+          1.5,
+          "β",
+          true
+        ]
+      },
+      "b64": "eyJ0IjoicHViIiwiaWQiOiJzN2syzrItMiIsImNoIjoiaHVtYW5faW5wdXQiLCJkYXRhIjpbMS41LCLOsiIsdHJ1ZV19"
+    },
+    {
+      "name": "pub_null_data",
+      "message": {
+        "t": "pub",
+        "id": "s7k2β-3",
+        "ch": "human_input",
+        "data": null
+      },
+      "b64": "eyJ0IjoicHViIiwiaWQiOiJzN2syzrItMyIsImNoIjoiaHVtYW5faW5wdXQiLCJkYXRhIjpudWxsfQ=="
+    },
+    {
+      "name": "pub_ack",
+      "message": {
+        "t": "pub_ack",
+        "id": "s7k2β-1",
+        "ch": "human_input",
+        "relayTs": 1752576000.5,
+        "bridgeTs": 1752576000.75
+      },
+      "b64": "eyJ0IjoicHViX2FjayIsImlkIjoiczdrMs6yLTEiLCJjaCI6Imh1bWFuX2lucHV0IiwicmVsYXlUcyI6MTc1MjU3NjAwMC41LCJicmlkZ2VUcyI6MTc1MjU3NjAwMC43NX0="
+    },
+    {
+      "name": "pub_nack",
+      "message": {
+        "t": "pub_nack",
+        "id": "p3",
+        "code": "decode_failed",
+        "message": "text prea lung β"
+      },
+      "b64": "eyJ0IjoicHViX25hY2siLCJpZCI6InAzIiwiY29kZSI6ImRlY29kZV9mYWlsZWQiLCJtZXNzYWdlIjoidGV4dCBwcmVhIGx1bmcgzrIifQ=="
+    },
+    {
+      "name": "error_with_request_id",
+      "message": {
+        "t": "error",
+        "code": "rate_limited",
+        "message": "publish peste limită β",
+        "requestId": "s7k2β-1"
+      },
+      "b64": "eyJ0IjoiZXJyb3IiLCJjb2RlIjoicmF0ZV9saW1pdGVkIiwibWVzc2FnZSI6InB1Ymxpc2ggcGVzdGUgbGltaXTEgyDOsiIsInJlcXVlc3RJZCI6InM3azLOsi0xIn0="
     },
     {
       "name": "twist",

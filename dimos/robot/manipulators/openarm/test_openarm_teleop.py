@@ -128,7 +128,6 @@ def test_openarm_quest_blueprint_has_one_bimanual_mock_task() -> None:
     assert task.priority == 10
     assert trajectory.joint_names == OPENARM_JOINTS
     assert trajectory.priority == 20
-    assert "robots" not in manipulation_kwargs
     assert manipulation_kwargs["kinematics"] == task.params["pink"]
     assert manipulation_kwargs["visualization"] == {"backend": "viser"}
     assert teleop_kwargs == {}

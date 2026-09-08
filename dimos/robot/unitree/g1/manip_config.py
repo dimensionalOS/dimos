@@ -1,0 +1,97 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Upper-body planning model for the Unitree G1."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
+    g1_arms,
+    g1_joints,
+    g1_legs_waist,
+)
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
+from dimos.utils.data import LfsPath
+
+G1_URDF_PATH = Path(__file__).resolve().parent / "g1.urdf"
+G1_WAIST_JOINTS = tuple(g1_legs_waist[-3:])
+G1_LEFT_ARM_JOINTS = tuple(g1_arms[:7])
+G1_RIGHT_ARM_JOINTS = tuple(g1_arms[7:])
+
+
+def _urdf_joint_name(coordinator_name: str) -> str:
+    return f"{coordinator_name.partition('/')[2]}_joint"
+
+
+G1_MANIPULATION_JOINTS = tuple(g1_joints)
+_G1_TELEOP_MODEL_JOINTS = (*G1_WAIST_JOINTS, *g1_arms)
+_G1_PELVIS_MODEL = RobotModel.from_file(
+    G1_URDF_PATH,
+    package_paths={"g1_description": LfsPath("g1_urdf")},
+).with_subtree_rooted_at("pelvis")
+G1_MANIPULATION_MODEL = _G1_PELVIS_MODEL.with_renamed_joints(
+    {_urdf_joint_name(joint_name): joint_name for joint_name in G1_MANIPULATION_JOINTS}
+)
+G1_TELEOP_ARM_MODEL = (
+    _G1_PELVIS_MODEL.without_joint_subtrees("left_hip_pitch_joint", "right_hip_pitch_joint")
+    .with_renamed_joints(
+        {_urdf_joint_name(joint_name): joint_name for joint_name in _G1_TELEOP_MODEL_JOINTS}
+    )
+    .with_fixed_joints(*(_urdf_joint_name(name) for name in G1_WAIST_JOINTS))
+)
+
+G1_READY_JOINTS = {
+    "left_arm": (-0.4, 0.2, 0.0, 1.2, 0.0, 0.0, 0.0),
+    "right_arm": (-0.4, -0.2, 0.0, 1.2, 0.0, 0.0, 0.0),
+}
+G1_READY_SPEED_SCALE = 0.25
+
+
+def g1_manipulation_model_config() -> RobotModelConfig:
+    """Build the full-body G1 collision model for arm manipulation.
+
+    All measured joints participate in collision checks while only the two arm
+    groups are eligible for planning and trajectory execution.
+    """
+    return RobotModelConfig(
+        model=G1_MANIPULATION_MODEL,
+        joint_names=list(G1_MANIPULATION_JOINTS),
+        base_link="pelvis",
+        planning_groups=[
+            PlanningGroupDefinition(
+                name="left_arm",
+                joint_names=G1_LEFT_ARM_JOINTS,
+                base_link="pelvis",
+                tip_link="left_rubber_hand",
+            ),
+            PlanningGroupDefinition(
+                name="right_arm",
+                joint_names=G1_RIGHT_ARM_JOINTS,
+                base_link="pelvis",
+                tip_link="right_rubber_hand",
+            ),
+        ],
+        collision_exclusion_pairs=[
+            ("torso_link", "left_shoulder_yaw_link"),
+            ("torso_link", "left_shoulder_roll_link"),
+            ("torso_link", "right_shoulder_yaw_link"),
+            ("torso_link", "right_shoulder_roll_link"),
+        ],
+        max_velocity=1.0,
+        max_acceleration=2.0,
+    )

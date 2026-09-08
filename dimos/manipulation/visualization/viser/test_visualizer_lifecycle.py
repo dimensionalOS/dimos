@@ -565,11 +565,11 @@ def test_selected_display_mode_survives_primary_recreation_and_joint_updates(
 
     scene.register_model(config)
     scene.robot_display_mode = mode
-    old_current = scene._urdfs["model:current"]
-    scene._urdfs.pop("model:current")
+    old_current = scene._urdfs["current"]
+    scene._urdfs.pop("current")
 
     scene.register_model(config)
-    current = scene._urdfs["model:current"]
+    current = scene._urdfs["current"]
     scene.update_current_model(JointState({"name": ["joint1"], "position": [0.75]}))
 
     assert current is not old_current

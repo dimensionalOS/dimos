@@ -28,7 +28,9 @@
             "encoding": "jpeg.v1",
             "delivery": "latest",
             "maxHz": 15.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           },
           {
             "ch": "odom",
@@ -36,7 +38,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [],
@@ -133,7 +137,9 @@
             "encoding": "jpeg.v1",
             "delivery": "latest",
             "maxHz": 15.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           },
           {
             "ch": "odom",
@@ -141,7 +147,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -242,7 +250,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -534,7 +544,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [],
@@ -575,6 +587,315 @@
       "error": "invalid_shape"
     },
     {
+      "name": "publish_shared_tx",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "params": {},
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          }
+        ],
+        "panels": [],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "publish_exclusive_tx",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "exclusive",
+            "requiredScope": "chat:send"
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "params": {},
+            "publish": "exclusive",
+            "requiredScope": "chat:send"
+          }
+        ],
+        "panels": [],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "publish_none_roundtrip",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "none"
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "dir": "rx",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
+          }
+        ],
+        "panels": [],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "required_scope_null_roundtrip",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": null
+          }
+        ]
+      },
+      "manifest": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "params": {},
+            "publish": "shared",
+            "requiredScope": null
+          }
+        ],
+        "panels": [],
+        "layout": null,
+        "pages": []
+      }
+    },
+    {
+      "name": "publish_on_rx",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "shared"
+          }
+        ]
+      },
+      "error": "invalid_publish"
+    },
+    {
+      "name": "publish_bad_value",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "always"
+          }
+        ]
+      },
+      "error": "invalid_shape"
+    },
+    {
+      "name": "publish_null",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": null
+          }
+        ]
+      },
+      "error": "invalid_shape"
+    },
+    {
+      "name": "publish_shared_latest",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "latest",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          }
+        ]
+      },
+      "error": "invalid_publish"
+    },
+    {
+      "name": "publish_shared_binary_encoding",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "jpeg.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "chat:send"
+          }
+        ]
+      },
+      "error": "invalid_publish"
+    },
+    {
+      "name": "scope_without_publish",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "requiredScope": "chat:send"
+          }
+        ]
+      },
+      "error": "invalid_scope"
+    },
+    {
+      "name": "scope_empty",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": ""
+          }
+        ]
+      },
+      "error": "invalid_scope"
+    },
+    {
+      "name": "scope_too_long",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        ]
+      },
+      "error": "invalid_scope"
+    },
+    {
+      "name": "scope_not_string",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "human_input",
+            "dir": "tx",
+            "encoding": "text.json.v1",
+            "delivery": "reliable",
+            "maxHz": 2.5,
+            "publish": "shared",
+            "requiredScope": 1.5
+          }
+        ]
+      },
+      "error": "invalid_shape"
+    },
+    {
+      "name": "publish_rx_before_scope",
+      "data": {
+        "version": 1,
+        "channels": [
+          {
+            "ch": "odom",
+            "encoding": "pose.json.v1",
+            "delivery": "reliable",
+            "maxHz": 20.5,
+            "publish": "shared",
+            "requiredScope": ""
+          }
+        ]
+      },
+      "error": "invalid_publish"
+    },
+    {
       "name": "channel_params_roundtrip",
       "data": {
         "version": 1,
@@ -602,7 +923,9 @@
             "maxHz": 15.5,
             "params": {
               "quality": 75.5
-            }
+            },
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [],
@@ -734,7 +1057,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -1061,7 +1386,9 @@
             "encoding": "costmap.zlib.v1",
             "delivery": "latest",
             "maxHz": 5.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           },
           {
             "ch": "odom",
@@ -1069,7 +1396,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -1119,7 +1448,9 @@
             "encoding": "costmap.zlib.v1",
             "delivery": "latest",
             "maxHz": 5.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -1376,7 +1707,9 @@
               "maxAngular": 1.5,
               "boost": 2.5,
               "watchdogMs": 300.5
-            }
+            },
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -1580,7 +1913,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -1652,7 +1987,9 @@
             "encoding": "jpeg.v1",
             "delivery": "latest",
             "maxHz": 15.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           },
           {
             "ch": "odom",
@@ -1660,7 +1997,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -1760,7 +2099,9 @@
             "encoding": "jpeg.v1",
             "delivery": "latest",
             "maxHz": 15.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           },
           {
             "ch": "odom",
@@ -1768,7 +2109,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -1848,7 +2191,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -2493,7 +2838,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [
@@ -2561,7 +2908,9 @@
             "encoding": "jpeg.v1",
             "delivery": "latest",
             "maxHz": 15.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           },
           {
             "ch": "odom",
@@ -2569,7 +2918,9 @@
             "encoding": "pose.json.v1",
             "delivery": "reliable",
             "maxHz": 20.5,
-            "params": {}
+            "params": {},
+            "publish": "none",
+            "requiredScope": null
           }
         ],
         "panels": [

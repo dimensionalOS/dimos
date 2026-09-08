@@ -30,14 +30,3 @@ class TargetEvaluation(TypedDict, total=False):
     ee_pose: PoseStamped | Pose | None
     position_error: float
     orientation_error: float
-
-
-class ModelInfo(TypedDict):
-    joint_names: list[str]
-    end_effector_link: str | None
-    base_link: str
-    max_velocity: float
-    max_acceleration: float
-    home_joints: list[float] | None
-    pre_grasp_offset: float
-    init_joints: list[float] | None

@@ -39,6 +39,7 @@ import asyncio
 from collections.abc import AsyncIterator, Callable, Collection
 from dataclasses import dataclass, field, replace
 import functools
+import json
 import math
 from pathlib import Path
 import socket
@@ -72,7 +73,7 @@ from dimos.web.cockpit import (
     Video,
     build_manifest_data,
 )
-from dimos.web.codecs import EncodedPayload, encoder_definition
+from dimos.web.codecs import EncodedPayload, PublishContext, encoder_definition
 
 # Imported for its registration side effect: the built-in encoders must be in
 # the codec registry wherever this module runs (parent and worker).
@@ -80,8 +81,13 @@ from dimos.web.relay_bridge import builtin_codecs  # noqa: F401
 from dimos.web.relay_bridge.locate import find_web_dir
 from dimos.web.relay_bridge.manifest import Dir, parse_manifest
 from dimos.web.relay_bridge.protocol import (
+    MAX_REQUEST_ID_LEN,
     ChannelSpec,
+    DataFrame,
     Delivery,
+    Msg,
+    PubAck,
+    PubNack,
     RobotInfo,
     RobotManifest,
     Stop as WireStop,
@@ -197,11 +203,11 @@ async def _cancel_task(task: asyncio.Task[None] | None, name: str) -> None:
 class RuntimeChannelSpec:
     """One channel's immutable runtime contract.
 
-    Compiled by cockpit() in the parent (encoder resolved from the codec
-    registry, ready to pickle by reference into the worker) or resolved from
-    the manifest against BUILTIN_CHANNELS at module start. The bridge's rx
-    behavior is driven entirely by these specs; publish/required_scope are
-    carried for the tx publish ticket (W7).
+    Compiled by cockpit() in the parent (codecs resolved from the registry,
+    ready to pickle by reference into the worker) or resolved from the
+    manifest against BUILTIN_CHANNELS at module start. The bridge's rx
+    encode behavior and its tx publish decode behavior are driven entirely
+    by these specs.
     """
 
     ch: str
@@ -216,6 +222,10 @@ class RuntimeChannelSpec:
     # bytes | EncodedPayload | None (None skips the sample); None for tx.
     encoder: Callable[..., Any] | None = None
     encoder_takes_params: bool = False
+    # browser JSON value (+ optional PublishContext) -> message; publish tx
+    # channels only, None otherwise.
+    decoder: Callable[..., Any] | None = None
+    decoder_takes_context: bool = False
     # Keep an always-on raw-input cache (decode only, no encode) and replay
     # the newest message when the channel goes from zero viewers to some
     # viewer: a new session must not wait for the next publish (the producer
@@ -276,6 +286,74 @@ def _passes_rate_gate(
         return False
     last_input[ch] = now
     return True
+
+
+def _matches_message_type(value: Any, message_type: type[Any]) -> bool:
+    """Decoded-result check with JSON's number/bool subtleties: bool is exact
+    (Python bool subclasses int), int excludes bool, float accepts int (JSON
+    has one number type) but not bool."""
+    if message_type is bool:
+        return isinstance(value, bool)
+    if message_type is int:
+        return isinstance(value, int) and not isinstance(value, bool)
+    if message_type is float:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, message_type)
+
+
+# Publish values nesting deeper than this are rejected before json.loads; the
+# SDK enforces the same cap, so both ends agree on what "too deep" means.
+_MAX_PUB_DEPTH = 100
+
+
+def _pub_depth_ok(payload: bytes) -> bool:
+    """True when the JSON payload's bracket nesting stays within
+    _MAX_PUB_DEPTH (string contents are skipped, so braces in text never
+    count). Keeps deep-but-valid JSON from reaching json.loads, whose own
+    depth bound is a RecursionError near the interpreter limit."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for byte in payload:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == 0x5C:  # backslash
+                escaped = True
+            elif byte == 0x22:  # quote
+                in_string = False
+        elif byte == 0x22:  # quote
+            in_string = True
+        elif byte in (0x5B, 0x7B):  # [ {
+            depth += 1
+            if depth > _MAX_PUB_DEPTH:
+                return False
+        elif byte in (0x5D, 0x7D):  # ] }
+            depth -= 1
+    return True
+
+
+def _parse_pub_meta(meta: dict[str, Any] | None) -> tuple[str, str, float, float | None] | None:
+    """(request id, principal, relayTs, clientTs) from a publish frame's
+    relay-stamped meta; None when the shape is unusable (a compliant relay
+    never produces one)."""
+    if not isinstance(meta, dict):
+        return None
+    request_id = meta.get("id")
+    principal = meta.get("principal")
+    relay_ts = meta.get("relayTs")
+    client_ts = meta.get("clientTs")
+    if not isinstance(request_id, str) or not 1 <= len(request_id) <= MAX_REQUEST_ID_LEN:
+        return None
+    if not isinstance(principal, str):
+        return None
+    if isinstance(relay_ts, bool) or not isinstance(relay_ts, (int, float)):
+        return None
+    if client_ts is not None and (
+        isinstance(client_ts, bool) or not isinstance(client_ts, (int, float))
+    ):
+        return None
+    return request_id, principal, float(relay_ts), None if client_ts is None else float(client_ts)
 
 
 @dataclass(slots=True)
@@ -418,6 +496,9 @@ class RelayBridgeModule(Module):
         self._robot_info: RobotInfo | None = None
         self._manifest: RobotManifest | None = None
         self._channel_specs: tuple[RuntimeChannelSpec, ...] = ()
+        # Generic-publish tx specs by channel id (decoder resolved); the rx
+        # machinery (_reconcile, rate gates, encode counters) never sees them.
+        self._pub_specs: dict[str, RuntimeChannelSpec] = {}
         self._min_interval: dict[str, float] = {}
         self._last_input: dict[str, float] = {}
         # Last "encoder failed" log time per channel: a broken encoder on a
@@ -445,6 +526,9 @@ class RelayBridgeModule(Module):
         # Live-path encode counters, keyed by the advertised rx channels at
         # start (main() fills it once the manifest resolves).
         self.encoded: dict[str, int] = {}
+        # Publish frames dropped for an unusable meta shape (no correlatable
+        # request id to nack with); a compliant relay never produces one.
+        self._pub_invalid = 0
 
     async def main(self) -> AsyncIterator[None]:
         supervisor: asyncio.Task[None] | None = None
@@ -479,14 +563,17 @@ class RelayBridgeModule(Module):
             manifest = parse_manifest(manifest_data)
             rx_wire = [spec for spec in manifest.channels if spec.dir == "rx"]
             if self.config.channels is not None:
-                self._channel_specs = self._adopt_authored_specs(rx_wire)
+                self._channel_specs, self._pub_specs = self._adopt_authored_specs(manifest.channels)
             else:
                 self._channel_specs = self._resolve_builtin_specs(rx_wire)
             self._min_interval = {s.ch: 1.0 / s.max_hz for s in self._channel_specs}
             self.encoded = {s.ch: 0 for s in self._channel_specs}
             by_tx = {ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS}
             for spec in manifest.channels:
-                if spec.dir != "tx":
+                if spec.dir != "tx" or spec.publish != "none":
+                    # Publish tx channels are declaration-driven (adopted
+                    # above); the static tx table covers only the
+                    # specialized protocol paths.
                     continue
                 if by_tx.get(spec.ch) != (spec.encoding, spec.delivery):
                     raise RuntimeError(
@@ -601,52 +688,93 @@ class RelayBridgeModule(Module):
             cancel.set()
         super()._close_module()
 
-    def _adopt_authored_specs(self, rx_wire: list[ChannelSpec]) -> tuple[RuntimeChannelSpec, ...]:
+    def _adopt_authored_specs(
+        self, wire_channels: list[ChannelSpec]
+    ) -> tuple[tuple[RuntimeChannelSpec, ...], dict[str, RuntimeChannelSpec]]:
         """cockpit() compiled config.channels together with the manifest;
         cross-check the pair and finish config-dependent params.
 
         Every advertised field that drives runtime behavior must agree, so a
         stale or independently overridden half fails start instead of gating
-        and encoding differently from what viewers were told. The encoder
-        callable and the internal resend flag are runtime-only and not
-        advertised, so they have no wire side to compare against.
+        and encoding differently from what viewers were told. The codec
+        callables and the internal resend flag are runtime-only and not
+        advertised, so they have no wire side to compare against. Returns
+        (rx specs, publish tx specs by channel); publish="none" tx channels
+        (teleop) stay with the static tx table.
         """
         assert self.config.channels is not None
         by_ch = {s.ch: s for s in self.config.channels}
-        if {w.ch for w in rx_wire} != set(by_ch):
+        covered = [w for w in wire_channels if w.dir == "rx" or w.publish != "none"]
+        if {w.ch for w in covered} != set(by_ch):
             raise RuntimeError(
-                f"manifest rx channels {sorted(w.ch for w in rx_wire)} do not match the "
-                f"compiled runtime specs {sorted(by_ch)}; author both through cockpit()"
+                f"manifest rx/publish channels {sorted(w.ch for w in covered)} do not match "
+                f"the compiled runtime specs {sorted(by_ch)}; author both through cockpit()"
             )
-        specs = []
-        for wire in rx_wire:
+        rx_specs = []
+        pub_specs: dict[str, RuntimeChannelSpec] = {}
+        for wire in covered:
             spec = by_ch[wire.ch]
-            advertised = (wire.dir, wire.encoding, wire.delivery, float(wire.maxHz), wire.params)
-            compiled = (spec.dir, spec.encoding, spec.delivery, spec.max_hz, spec.params)
+            advertised = (
+                wire.dir,
+                wire.encoding,
+                wire.delivery,
+                float(wire.maxHz),
+                wire.params,
+                wire.publish,
+                wire.requiredScope,
+            )
+            compiled = (
+                spec.dir,
+                spec.encoding,
+                spec.delivery,
+                spec.max_hz,
+                spec.params,
+                spec.publish,
+                spec.required_scope,
+            )
             if advertised != compiled:
                 raise RuntimeError(
                     f"manifest channel {wire.ch!r} does not match its compiled runtime "
                     "spec; author both through cockpit()"
                 )
-            if spec.publish != "none" or spec.required_scope is not None:
+            if spec.publish == "exclusive":
                 raise RuntimeError(
-                    f"runtime spec {wire.ch!r} sets publish={spec.publish!r}/"
-                    f"required_scope={spec.required_scope!r}; generic publish arrives "
-                    "with the publish ticket (W7)"
+                    f"runtime spec {wire.ch!r} sets publish='exclusive'; exclusive "
+                    "publishers arrive with the lease ticket (W8)"
                 )
-            if wire.ch not in self.inputs:
+            if spec.dir == "rx":
+                if wire.ch not in self.inputs:
+                    raise RuntimeError(
+                        f"runtime spec {wire.ch!r} has no matching input port "
+                        f"on {type(self).__name__}"
+                    )
+                port_type = self.inputs[wire.ch].type
+                if port_type is not spec.message_type:
+                    raise RuntimeError(
+                        f"runtime spec {wire.ch!r} message type "
+                        f"{spec.message_type.__qualname__} does not match the "
+                        f"{type(self).__name__} port type {port_type.__qualname__}"
+                    )
+                rx_specs.append(self._finalize_spec(spec))
+                continue
+            if spec.decoder is None:
                 raise RuntimeError(
-                    f"runtime spec {wire.ch!r} has no matching input port on {type(self).__name__}"
+                    f"publish spec {wire.ch!r} has no resolved decoder; author "
+                    "both through cockpit()"
                 )
-            port_type = self.inputs[wire.ch].type
-            if port_type is not spec.message_type:
+            if wire.ch not in self.outputs:
+                raise RuntimeError(
+                    f"runtime spec {wire.ch!r} has no matching output port on {type(self).__name__}"
+                )
+            out_type = self.outputs[wire.ch].type
+            if out_type is not spec.message_type:
                 raise RuntimeError(
                     f"runtime spec {wire.ch!r} message type "
                     f"{spec.message_type.__qualname__} does not match the "
-                    f"{type(self).__name__} port type {port_type.__qualname__}"
+                    f"{type(self).__name__} port type {out_type.__qualname__}"
                 )
-            specs.append(self._finalize_spec(spec))
-        return tuple(specs)
+            pub_specs[wire.ch] = spec
+        return tuple(rx_specs), pub_specs
 
     def _resolve_builtin_specs(self, rx_wire: list[ChannelSpec]) -> tuple[RuntimeChannelSpec, ...]:
         """Runtime specs for a hand-written or auto (default_manifest)
@@ -787,6 +915,10 @@ class RelayBridgeModule(Module):
                         if isinstance(msg, Subs) and msg.n > session.last_n:
                             session.last_n = msg.n
                             self._reconcile(session, set(msg.chs))
+                        elif isinstance(msg, DataFrame):
+                            # A forwarded viewer publish (tx channel data on
+                            # the carrier); never raises out of the loop.
+                            self._on_pub_frame(session, msg)
                         elif isinstance(msg, WireTwist):
                             self._on_wire_twist(msg)
                         elif isinstance(msg, WireStop):
@@ -816,6 +948,83 @@ class RelayBridgeModule(Module):
             await _cancel_task(deadman, "teleop watchdog")
             await _cancel_task(watchdog, "watchdog")
             await self._disconnect(session)
+
+    def _on_pub_frame(self, session: _Session, frame: DataFrame) -> None:
+        """One forwarded viewer publish from the carrier: decode the JSON
+        value, publish on the channel's Out port, then acknowledge on a
+        robot-opened one-shot @control stream - pub_ack only after
+        Out.publish() returned, pub_nack for decode/publish failures (bounded
+        messages, no tracebacks). Failures never raise (an exception would
+        recycle the whole relay session) and never touch other channels.
+        """
+        ch = frame.header.ch
+        parsed = _parse_pub_meta(frame.header.meta)
+        if parsed is None:
+            # No trustworthy request id to nack with; the relay's publish
+            # timeout settles the viewer side.
+            self._pub_invalid += 1
+            logger.warning(f"dropping publish frame on {ch!r}: unusable meta")
+            return
+        request_id, principal, relay_ts, client_ts = parsed
+
+        def nack(code: str, error: Exception | str) -> None:
+            message = error if isinstance(error, str) else f"{type(error).__name__}: {error}"
+            self._send_pub_result(session, PubNack(id=request_id, code=code, message=message[:200]))
+
+        spec = self._pub_specs.get(ch)
+        if spec is None:
+            nack("unknown_channel", f"no publishable channel {ch!r}")
+            return
+        if not _pub_depth_ok(frame.payload):
+            nack("decode_failed", f"value nests deeper than {_MAX_PUB_DEPTH} levels")
+            return
+        try:
+            value = json.loads(frame.payload)
+        except (ValueError, RecursionError) as e:
+            # RecursionError as backstop: escaping here would recycle the
+            # whole relay session over one request's payload.
+            nack("decode_failed", e)
+            return
+        assert self._robot_info is not None  # set before the supervisor starts
+        assert spec.decoder is not None  # _adopt_authored_specs required it
+        context = PublishContext(
+            robot=self._robot_info.id,
+            ch=ch,
+            relay_ts=relay_ts,
+            request_id=request_id,
+            principal=principal,
+            client_ts=client_ts,
+        )
+        try:
+            if spec.decoder_takes_context:
+                result = spec.decoder(value, context)
+            else:
+                result = spec.decoder(value)
+        except Exception as e:
+            nack("decode_failed", e)
+            return
+        if not _matches_message_type(result, spec.message_type):
+            nack(
+                "decode_failed",
+                f"decoder returned {type(result).__name__}, not {spec.message_type.__name__}",
+            )
+            return
+        try:
+            self.outputs[ch].publish(result)
+        except Exception as e:
+            nack("publish_failed", e)
+            return
+        self._send_pub_result(
+            session, PubAck(id=request_id, ch=ch, relayTs=relay_ts, bridgeTs=time.time())
+        )
+
+    def _send_pub_result(self, session: _Session, msg: Msg) -> None:
+        try:
+            session.client.send_control_frame(msg)
+        except Exception as e:
+            # A session death racing the result is routine; the relay's
+            # publish timeout covers the viewer side.
+            logger.warning(f"relay bridge: sending a publish result failed: {e}")
 
     async def _watch_child(self) -> None:
         """Close the session promptly when the local relay child dies (a kill
