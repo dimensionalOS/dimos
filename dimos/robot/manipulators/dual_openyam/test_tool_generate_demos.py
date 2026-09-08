@@ -26,12 +26,12 @@ def test_verified_episode_is_saved(mocker):
     monitor = mocker.Mock()
     monitor.get_status.return_value = SimpleNamespace(state="idle")
     monitor.command.side_effect = [
-        SimpleNamespace(state="recording"),
+        SimpleNamespace(state="recording", ts=123.0),
         SimpleNamespace(state="idle"),
     ]
 
-    with recording_episode(monitor):
-        pass
+    with recording_episode(monitor) as start_ts:
+        assert start_ts == 123.0
 
     assert [call.args[0] for call in monitor.command.call_args_list] == ["start", "save"]
 
@@ -41,7 +41,7 @@ def test_failed_or_interrupted_episode_is_discarded_and_propagates(mocker, failu
     monitor = mocker.Mock()
     monitor.get_status.return_value = SimpleNamespace(state="idle")
     monitor.command.side_effect = [
-        SimpleNamespace(state="recording"),
+        SimpleNamespace(state="recording", ts=123.0),
         SimpleNamespace(state="idle"),
     ]
 

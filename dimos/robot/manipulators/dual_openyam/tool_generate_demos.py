@@ -31,6 +31,7 @@ from dimos.agents.skill_result import SkillResult
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.dataprep.core import (
+    Episode,
     EpisodeExtractor,
     EpisodeQualityReport,
     OutputConfig,
@@ -80,17 +81,18 @@ class EpisodeSetup:
 
 
 @contextmanager
-def recording_episode(monitor: EpisodeMonitorModule | None) -> Iterator[None]:
+def recording_episode(monitor: EpisodeMonitorModule | None) -> Iterator[float | None]:
     """Save only a completed verified take; discard failures and interruptions."""
     if monitor is None:
-        yield
+        yield None
         return
     if monitor.get_status().state != "idle":
         raise RuntimeError("An episode is already recording")
     try:
-        if monitor.command("start").state != "recording":
+        status = monitor.command("start")
+        if status.state != "recording":
             raise RuntimeError("Recorder did not start an episode")
-        yield
+        yield status.ts
         if monitor.command("save").state != "idle":
             raise RuntimeError("Recorder did not finish the episode")
     except BaseException:
@@ -183,6 +185,30 @@ def recording_manifest() -> dict[str, Any]:
         "dataset_rate_hz": profile.sync.rate_hz,
         "joint_names": list(profile.action.demonstration.joints),
     }
+
+
+def quality_of_active_episode(path: Path, start_ts: float) -> EpisodeQualityReport:
+    """Check the completed motion before committing the active take."""
+    episode = Episode(id="pending", start_ts=start_ts, end_ts=time.time())
+    config = DUAL_OPENYAM_LEROBOT_IO.dataprep_config(
+        source=str(path), output=OutputConfig(path=path.with_suffix(""))
+    )
+    features = {**config.observation, **config.action}
+    store = SqliteStore(path=str(path), must_exist=True)
+    deadline = time.monotonic() + 10.0
+    try:
+        while time.monotonic() < deadline:
+            latest: list[Observation[Any] | None] = [
+                store.stream(feature.stream).last() for feature in features.values()
+            ]
+            if all(value is not None and value.ts >= episode.end_ts for value in latest):
+                return inspect_episode_quality(
+                    store, episode, features, config.sync, config.quality
+                )
+            time.sleep(0.05)
+        raise RuntimeError("Recorder did not persist the completed motion within 10 seconds")
+    finally:
+        store.stop()
 
 
 def quality_of_saved_episode(path: Path, after_ts: float) -> EpisodeQualityReport:
@@ -326,10 +352,16 @@ def main() -> int:
                     for selected in targets:
                         setup = prepare_episode(sim, pick, selected, rng, args.jitter)
                         recording_started = time.time()
-                        with recording_episode(monitor):
+                        with recording_episode(monitor) as episode_start:
                             outcomes.append(
                                 run_episode(sim, pick, skills, setup, args.hold_seconds)
                             )
+                            if args.recording and episode_start is not None:
+                                row["physical_success"] = True
+                                quality = quality_of_active_episode(args.recording, episode_start)
+                                row["pre_save_quality"] = quality.model_dump()
+                                if not quality.valid:
+                                    raise RuntimeError("; ".join(quality.rejection_reasons))
                     if args.bimanual:
                         for selected in targets:
                             if not inside_bin(

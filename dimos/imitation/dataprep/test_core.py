@@ -470,6 +470,31 @@ def test_fill_quality_accepts_gap_and_reports_filled_slot() -> None:
     )
 
 
+@pytest.mark.parametrize("filled_count,valid", [(3, True), (4, False)])
+def test_fill_limit_accepts_three_percent_and_rejects_more(filled_count, valid):
+    timestamps = range(100)
+    store = _FakeStore(
+        {
+            "anchor": _scalar_stream([(float(t), float(t)) for t in timestamps]),
+            "other": _scalar_stream(
+                [(float(t), float(t)) for t in timestamps if not 1 <= t <= filled_count]
+            ),
+        }
+    )
+    report = inspect_episode_quality(
+        store,
+        Episode(id="ep_0", start_ts=0.0, end_ts=99.0),
+        {"anchor": _feature("anchor"), "other": _feature("other")},
+        SyncConfig(anchor="anchor", rate_hz=1.0, tolerance_ms=20.0),
+        QualityConfig(mode="fill", max_filled_frame_ratio=0.03),
+    )
+
+    assert report.emitted_frames == 100
+    assert report.filled_frames == filled_count
+    assert report.valid is valid
+    assert bool(report.rejection_reasons) is not valid
+
+
 def test_sync_missing_anchor_raises() -> None:
     ep = Episode(id="ep_0", start_ts=0.0, end_ts=1.0)
     streams = {"x": _feature("x")}

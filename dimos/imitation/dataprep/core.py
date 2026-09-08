@@ -104,6 +104,7 @@ class QualityConfig(BaseConfig):
     min_source_rate_ratio: float = 0.95
     max_camera_gap_ms: float = 100.0
     max_alignment_error_ms: float = 20.0
+    max_filled_frame_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class OutputConfig(BaseConfig):
@@ -547,6 +548,13 @@ def inspect_episode_quality(
     report.emitted_frames = len(plan.frames)
     report.filled_frames = sum(frame.filled for frame in plan.frames)
     report.max_alignment_error_ms = plan.max_error_s * 1000.0
+    if report.emitted_frames and (
+        report.filled_frames / report.emitted_frames > quality.max_filled_frame_ratio
+    ):
+        report.rejection_reasons.append(
+            f"filled frames {report.filled_frames}/{report.emitted_frames} exceed "
+            f"{quality.max_filled_frame_ratio:.1%} limit"
+        )
     if quality.mode == "strict" and plan.first_incomplete is not None:
         report.rejection_reasons.append(
             f"fixed-rate target at {plan.first_incomplete:.6f} has no complete aligned sample"

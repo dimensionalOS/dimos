@@ -85,12 +85,16 @@ dimos imitation prepare dual-openyam-sim outputs/openyam-training.db \
 
 The generator warms up one unrecorded cycle, randomizes the right bottle by up
 to 1.5 cm in each horizontal axis before recording, and saves only physically
-verified takes. Failed takes and interrupted active takes are discarded. The target count includes only takes that also pass the strict timing checks.
+verified takes. Failed takes and interrupted active takes are discarded. Before saving, the
+generator checks the completed motion against the dataset quality gate. It
+checks the final saved interval again before counting a take.
 It refuses to overwrite a recording or report. Collection gives each module its
 own worker so camera rendering does not share a Python process with recording.
 Use `--resume --episodes N --recording <same.db> --report <new.jsonl>` to add N
 new valid takes; a matching `.scene.json` manifest is required. The scene and
-planning-model hashes, full IO contract, task, and joint order must match. Resume preserves
+planning-model hashes, full IO contract, task, and joint order must match. A
+quality-only manifest migration is required when changing preparation settings;
+verify every other field and preserve the previous manifest. Resume preserves
 old rows; it does not use the recorder's legacy `append` mode, which replaces
 selected streams. `--arm both` alternates arms for
 experimentation; the trained task in this run uses the default right arm.
@@ -98,9 +102,14 @@ experimentation; the trained task in this run uses the default right arm.
 SQLite records all three 320×240 RGB cameras at 30 Hz, measured state, and the
 coordinator's applied position commands. Dataset alignment and policy control
 run at 15 Hz. This intentionally differs from the original 30 Hz training plan:
-rendering at twice the target sample rate provides timing margin while retaining
-strict 20 ms alignment and 100 ms maximum camera-gap checks. Preparation
-excludes invalid saved episodes and records rejection reasons in
+rendering at twice the target sample rate provides timing margin. The sim
+profile uses a 20 ms normal alignment limit, then holds the previous causal
+source value for missing samples. At most 3% of emitted frames may contain
+held values; the generator and exporter enforce the same cap. Leading targets
+without complete causal data are trimmed. Filled samples can be older than
+20 ms, and their count and maximum age are reported. Camera rate and gap
+limits remain diagnostic in fill mode. Hardware profiles still use strict
+quality checks. Preparation excludes invalid saved episodes and records rejection reasons in
 `dimos_meta.json`. Verify at least 100 valid exported episodes before the full
 training run. Avoid other GPU workloads during collection.
 

@@ -139,7 +139,7 @@ DUAL_OPENYAM_LEROBOT_IO = PolicyIOProfile(
     sync=SyncConfig(
         anchor="observation.images.top", rate_hz=DUAL_OPENYAM_SIM_FPS, tolerance_ms=20.0
     ),
-    quality=_quality,
+    quality=_quality.model_copy(update={"mode": "fill", "max_filled_frame_ratio": 0.03}),
 )
 
 DualOpenYamSimRecorder = declare_python_recorder(
