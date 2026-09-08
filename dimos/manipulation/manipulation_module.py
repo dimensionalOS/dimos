@@ -94,7 +94,6 @@ from dimos.manipulation.visualization.config import (
 )
 from dimos.manipulation.visualization.factory import create_manipulation_visualization
 from dimos.manipulation.visualization.operator import ManipulationOperator
-from dimos.manipulation.visualization.types import TargetEvaluation
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -385,7 +384,7 @@ class ManipulationModule(Module):
                 groups[group.id] = PlanningGroupState(
                     joints=joints,
                     end_effector_pose=pose,
-                    gripper_position=self._get_group_gripper_position(group),
+                    gripper_position=self._get_group_gripper_position(),
                     joint_presets=self._group_joint_presets(group),
                 )
         with self._lock:
@@ -432,7 +431,7 @@ class ManipulationModule(Module):
 
         result = self._execution_manager.cancel()
         if plan is not None:
-            self._dismiss_preview(plan.group_ids)
+            self._dismiss_preview()
         if is_planning and result.status is ExecutionStatus.NO_EXECUTION:
             result = ExecutionResult(ExecutionStatus.ABORTED, "Planning cancelled")
         self._apply_execution_result(result)
@@ -586,7 +585,7 @@ class ManipulationModule(Module):
             plan = self._last_plan
             self._last_plan = None
         if plan is not None:
-            self._dismiss_preview(plan.group_ids)
+            self._dismiss_preview()
 
     def _fail(self, msg: str) -> bool:
         """Finish a planning request with an error while remaining retryable."""
@@ -608,33 +607,11 @@ class ManipulationModule(Module):
             self._error_message = msg
             return False
 
-    def _dismiss_preview(self, group_ids: Sequence[PlanningGroupID]) -> None:
+    def _dismiss_preview(self) -> None:
         """Hide the preview ghost if the world supports it."""
         if self._world_monitor is None:
             return
         self._world_monitor.cancel_preview_animation()
-
-    def _solve_ik_for_pose(
-        self,
-        pose: Pose,
-        seed: JointState,
-        check_collision: bool,
-    ) -> IKResult:
-        """Run the configured kinematics backend for a world-frame pose."""
-        assert self._world_monitor and self._kinematics
-
-        target_pose = PoseStamped(
-            frame_id="world",
-            position=pose.position,
-            orientation=pose.orientation,
-        )
-
-        return self._kinematics.solve(
-            world=self._world_monitor.world,
-            target_pose=target_pose,
-            seed=seed,
-            check_collision=check_collision,
-        )
 
     @rpc
     def inverse_kinematics(
@@ -681,71 +658,6 @@ class ManipulationModule(Module):
             seed=seed_state,
             check_collision=check_collision,
         )
-
-    @rpc
-    def inverse_kinematics_single(
-        self,
-        pose: Pose,
-        group_id: PlanningGroupID | None = None,
-        seed: JointState | None = None,
-        check_collision: bool = True,
-    ) -> IKResult:
-        """Solve IK for one selected or unambiguous pose-targetable group."""
-        if self._world_monitor is None:
-            return IKResult(status=IKStatus.NO_SOLUTION, message="Planning not initialized")
-        try:
-            selected_group_id = group_id or self._require_unique_pose_group_id()
-        except ValueError as exc:
-            return IKResult(status=IKStatus.NO_SOLUTION, message=str(exc))
-        target_pose = PoseStamped(
-            frame_id="world",
-            position=pose.position,
-            orientation=pose.orientation,
-        )
-        return self.inverse_kinematics(
-            {selected_group_id: target_pose}, seed=seed, check_collision=check_collision
-        )
-
-    @rpc
-    def solve_ik(
-        self,
-        pose: Pose,
-        group_id: PlanningGroupID | None = None,
-        check_collision: bool = True,
-        seed: JointState | None = None,
-    ) -> IKResult:
-        """Solve IK for a pose without planning a joint path.
-
-        Args:
-            pose: Target end-effector pose
-            group_id: Planning group to solve for; omission requires one compatible group
-            check_collision: Whether to reject IK candidates in collision
-            seed: Optional joint state to initialize local IK. Uses current state when omitted.
-        """
-        if self._kinematics is None or self._world_monitor is None:
-            self._record_error("Planning not initialized")
-            return IKResult(status=IKStatus.NO_SOLUTION, message="Planning not initialized")
-        with self._lock:
-            if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
-                self._record_error(f"Cannot solve IK while state is {self._state.name}")
-                return IKResult(
-                    status=IKStatus.NO_SOLUTION,
-                    message=f"Cannot solve IK while state is {self._state.name}",
-                )
-            self._state = ManipulationState.PLANNING
-        result = self.inverse_kinematics_single(
-            pose,
-            group_id=group_id,
-            seed=seed,
-            check_collision=check_collision,
-        )
-        self._state = ManipulationState.COMPLETED if result.is_success() else ManipulationState.IDLE
-        if result.is_success():
-            logger.info("IK solved", position_error=result.position_error)
-        else:
-            detail = f": {result.message}" if result.message else ""
-            self._record_error(f"IK failed: {result.status.name}{detail}")
-        return result
 
     @rpc
     def plan_to_joints(
@@ -997,9 +909,7 @@ class ManipulationModule(Module):
                 self._planning_epoch += 1
                 self._state = ManipulationState.IDLE
         if plan is not None:
-            # Preserve the group selection until the public visualization
-            # transaction has invalidated and hidden its preview.
-            self._dismiss_preview(plan.group_ids)
+            self._dismiss_preview()
         return CommandResult(CommandStatus.SUCCEEDED, "Pending plan cleared")
 
     @rpc
@@ -1038,7 +948,7 @@ class ManipulationModule(Module):
             presets["init"] = selected(self._init_joints)
         return presets
 
-    def _get_group_gripper_position(self, group: PlanningGroup) -> float | None:
+    def _get_group_gripper_position(self) -> float | None:
         hardware_id = self.config.model.gripper_hardware_id
         if hardware_id is None:
             return None
@@ -1079,71 +989,6 @@ class ManipulationModule(Module):
     def get_init_joints(self) -> JointState | None:
         """Get the init joint state captured at startup or set manually."""
         return self._init_joints
-
-    def evaluate_joint_target(self, joints: JointState | None) -> TargetEvaluation:
-        """Evaluate a joint target for visualization without planning a path."""
-        if self._world_monitor is None:
-            return {
-                "success": False,
-                "status": "UNAVAILABLE",
-                "message": "Planning is not initialized",
-                "collision_free": False,
-                "ee_pose": None,
-                "joint_state": None,
-            }
-        if joints is None:
-            return {
-                "success": False,
-                "status": "NO_TARGET",
-                "message": "No joint target provided",
-                "collision_free": False,
-                "ee_pose": None,
-                "joint_state": None,
-            }
-        target = JointState(joints)
-        collision_free = self._world_monitor.is_state_valid(target)
-        return {
-            "success": True,
-            "status": "FEASIBLE" if collision_free else "COLLISION",
-            "message": "Target is collision-free" if collision_free else "Target is in collision",
-            "collision_free": collision_free,
-            "ee_pose": self._world_monitor.get_ee_pose(target),
-            "joint_state": target,
-        }
-
-    def evaluate_pose_target(self, pose: Pose) -> TargetEvaluation:
-        """Evaluate a Cartesian target for visualization without planning a path."""
-        if self._world_monitor is None or self._kinematics is None:
-            return {
-                "success": False,
-                "joint_state": None,
-                "status": "UNAVAILABLE",
-                "message": "Planning is not initialized or current state is unavailable",
-                "collision_free": False,
-            }
-        current = self._world_monitor.get_current_joint_state()
-        if current is None:
-            return {
-                "success": False,
-                "joint_state": None,
-                "status": "UNAVAILABLE",
-                "message": "Planning is not initialized or current state is unavailable",
-                "collision_free": False,
-            }
-        ik = self._solve_ik_for_pose(pose, current, check_collision=True)
-        joint_state = JointState(ik.joint_state) if ik.is_success() and ik.joint_state else None
-        collision_free = bool(
-            joint_state is not None and self._world_monitor.is_state_valid(joint_state)
-        )
-        return {
-            "success": joint_state is not None and collision_free,
-            "joint_state": joint_state,
-            "status": ik.status.name,
-            "message": ik.message,
-            "position_error": ik.position_error,
-            "orientation_error": ik.orientation_error,
-            "collision_free": collision_free,
-        }
 
     @rpc
     def set_init_joints(self, joint_state: JointState) -> bool:

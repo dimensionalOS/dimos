@@ -326,16 +326,11 @@ class TestManipulationPreview:
         assert module.clear_planned_path().succeeded
         assert module._last_plan is None
 
-    def test_dismiss_preview_noop_without_monitor(self, module_factory):
-        module = module_factory()
-
-        module._dismiss_preview(["manipulator"])
-
     def test_dismiss_preview_routes_to_monitor(self, module_factory):
         module = module_factory()
         module._world_monitor = MagicMock()
 
-        module._dismiss_preview(["manipulator"])
+        module._dismiss_preview()
 
         module._world_monitor.cancel_preview_animation.assert_called_once_with()
 
