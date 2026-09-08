@@ -221,6 +221,8 @@ def _repeated_cycle(answer: dict[str, Any]) -> float:
     value = answer.get("repeated_cycle")
     if not isinstance(value, bool) or value is not expected["repeated_cycle"]:
         return 0.0
+    if not value:
+        return 1.0
     scores = [
         _numeric_score(answer, "start_time_s", expected["start_time_s"], 1.0, 6.0),
         _numeric_score(answer, "duration_s", expected["duration_s"], 1.0, 6.0),

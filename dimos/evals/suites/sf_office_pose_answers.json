@@ -86,10 +86,10 @@
       "position_m": [5.31169264301306, -1.1255418905434056]
     },
     "sf_office_pose_repeated_patrol_cycle": {
-      "repeated_cycle": true,
-      "start_time_s": 309.0,
-      "duration_s": 59.5,
-      "length_m": 16.83461727719095
+      "repeated_cycle": false,
+      "start_time_s": null,
+      "duration_s": null,
+      "length_m": null
     }
   }
 }

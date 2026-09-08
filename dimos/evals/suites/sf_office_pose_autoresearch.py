@@ -45,7 +45,11 @@ INSTRUCTIONS = (
     "enough to return your best estimate in the exact JSON shape requested, even when uncertain. "
     "Always reserve a final model response for the answer. Never create or execute scripts at "
     "fixed shared /tmp paths; use a uniquely named file beside the case recording or a Python "
-    "heredoc so concurrent evaluations cannot overwrite your work. Do not add Markdown or commentary."
+    "heredoc so concurrent evaluations cannot overwrite your work. Import and call "
+    "preprocess_encoded_poses(encoded_poses) without inspecting its source; it returns a mapping "
+    "with time_s, position_m, yaw_rad, velocity_xy_m_s, and speed_m_s NumPy arrays. Every tool "
+    "command must succeed without a traceback or timeout, otherwise the replicate is invalid. Do "
+    "not add Markdown or commentary."
 )
 
 _HERE = Path(__file__).parent
@@ -57,7 +61,7 @@ FROZEN_FILES = (
     _HERE / "sf_office_pose_answers.json",
     _HERE.parents[1] / "msgs/geometry_msgs/PoseStamped.py",
 )
-EXPECTED_BENCHMARK_DIGEST = "855320c54802494a9763ed06a0eb12c3a138f27761cd89c3a363fe1a7f499d9c"
+EXPECTED_BENCHMARK_DIGEST = "91201930be9b2ca3820bff76d9f4a8c8a61756d140860a3e49e29a6437a3b124"
 
 CATEGORIES = {
     "kinematics": frozenset(
@@ -183,17 +187,55 @@ def _pose_encode_timestamps(run_dir: Path, case_id: str) -> list[float]:
     return timestamps
 
 
-def _uses_shared_tmp_path(run_dir: Path, case_id: str) -> bool:
+def _trajectory_violations(run_dir: Path, case_id: str) -> set[str]:
     trajectory_path = run_dir / case_id / "trajectory.json"
     if not trajectory_path.is_file():
-        return False
+        return set()
     trajectory = json.loads(trajectory_path.read_text())
-    return any(
-        "/tmp" in str(tool_call.get("arguments", {}).get("command", ""))
-        for step in trajectory.get("steps", [])
-        for tool_call in step.get("tool_calls") or []
-        if tool_call.get("function_name") == "bash"
-    )
+    violations: set[str] = set()
+    for step in trajectory.get("steps", []):
+        for tool_call in step.get("tool_calls") or []:
+            function_name = tool_call.get("function_name")
+            arguments = tool_call.get("arguments", {})
+            command = str(arguments.get("command", ""))
+            serialized_arguments = json.dumps(arguments)
+            if function_name == "bash" and "/tmp" in command:
+                violations.add("shared /tmp path")
+            if function_name == "bash" and any(
+                marker in command
+                for marker in (
+                    "inspect",
+                    "getsource",
+                    "__file__",
+                    "__code__",
+                    "dis.dis",
+                    "dimos/evals/suites",
+                    "sf_office_pose_preprocessing.py",
+                )
+            ):
+                violations.add("frozen helper source inspection")
+            if function_name in {"read", "grep"} and any(
+                marker in serialized_arguments
+                for marker in ("dimos/evals/suites", "sf_office_pose_preprocessing.py")
+            ):
+                violations.add("frozen helper source inspection")
+        for tool_result in (step.get("observation") or {}).get("results", []):
+            content = str(tool_result.get("content", "")).lower()
+            if any(
+                marker in content
+                for marker in (
+                    "traceback (most recent call last):",
+                    "command timed out after ",
+                    "command not found",
+                    "no such file or directory",
+                    "syntaxerror:",
+                    "syntax error near unexpected token",
+                    "jq: error",
+                    "jq: parse error",
+                )
+            ):
+                violations.add("tool execution failure")
+    return violations
 
 
 def _contains_complete_pose_traversal(
@@ -218,16 +260,20 @@ def objective(results: Sequence[EvalResult], run_dir: Path, digest: str) -> dict
     category_ids = set().union(*CATEGORIES.values())
     if set(by_id) != expected_ids or category_ids != expected_ids:
         raise RuntimeError("pose autoresearch result/category IDs do not match the frozen suite")
-    if all(result.error for result in results):
-        raise RuntimeError("every pose autoresearch case failed before producing a valid result")
-    shared_tmp_cases = sorted(
-        case_id for case_id in expected_ids if _uses_shared_tmp_path(run_dir, case_id)
-    )
-    if shared_tmp_cases:
-        raise RuntimeError(
-            "pose autoresearch cases used prohibited shared /tmp paths: "
-            + ", ".join(shared_tmp_cases)
+    failed_cases = sorted(result.case_id for result in results if result.error)
+    if failed_cases:
+        raise RuntimeError("pose autoresearch cases failed: " + ", ".join(failed_cases))
+    trajectory_violations = {
+        case_id: violations
+        for case_id in expected_ids
+        if (violations := _trajectory_violations(run_dir, case_id))
+    }
+    if trajectory_violations:
+        details = ", ".join(
+            f"{case_id} ({', '.join(sorted(violations))})"
+            for case_id, violations in sorted(trajectory_violations.items())
         )
+        raise RuntimeError("pose autoresearch trajectory violations: " + details)
 
     expected_timestamps = _expected_pose_timestamps()
     activity_timestamps = {

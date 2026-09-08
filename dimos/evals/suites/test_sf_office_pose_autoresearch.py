@@ -143,7 +143,94 @@ def test_objective_rejects_shared_tmp_scripts(
     )
     monkeypatch.setattr(sf_office_pose_autoresearch, "_expected_pose_timestamps", lambda: [12.5])
 
-    with pytest.raises(RuntimeError, match="prohibited shared /tmp"):
+    with pytest.raises(RuntimeError, match="shared /tmp path"):
+        objective(results, tmp_path, EXPECTED_BENCHMARK_DIGEST)
+
+
+@pytest.mark.parametrize(
+    ("trajectory_step", "violation"),
+    [
+        (
+            {
+                "tool_calls": [
+                    {
+                        "function_name": "bash",
+                        "arguments": {"command": "print(inspect.getsource(helper))"},
+                    }
+                ]
+            },
+            "frozen helper source inspection",
+        ),
+        (
+            {
+                "tool_calls": [
+                    {
+                        "function_name": "read",
+                        "arguments": {
+                            "filePath": "dimos/evals/suites/sf_office_pose_preprocessing.py"
+                        },
+                    }
+                ]
+            },
+            "frozen helper source inspection",
+        ),
+        (
+            {
+                "observation": {
+                    "results": [{"content": "Traceback (most recent call last):\nValueError"}]
+                }
+            },
+            "tool execution failure",
+        ),
+        (
+            {
+                "observation": {
+                    "results": [{"content": "bash: syntax error near unexpected token `)'"}]
+                }
+            },
+            "tool execution failure",
+        ),
+        (
+            {"observation": {"results": [{"content": "jq: parse error: Invalid literal"}]}},
+            "tool execution failure",
+        ),
+        (
+            {"observation": {"results": [{"content": "Command timed out after 30 seconds"}]}},
+            "tool execution failure",
+        ),
+    ],
+)
+def test_objective_rejects_trajectory_violations(
+    trajectory_step: dict[str, object],
+    violation: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results = [
+        EvalResult(case_id=case.id, score=1.0, final_answer="{}", duration_s=1.0) for case in SUITE
+    ]
+    case_dir = tmp_path / SUITE[0].id
+    case_dir.mkdir()
+    (case_dir / "trajectory.json").write_text(json.dumps({"steps": [trajectory_step]}))
+    monkeypatch.setattr(sf_office_pose_autoresearch, "_expected_pose_timestamps", lambda: [12.5])
+
+    with pytest.raises(RuntimeError, match=violation):
+        objective(results, tmp_path, EXPECTED_BENCHMARK_DIGEST)
+
+
+def test_objective_rejects_case_errors(tmp_path: Path) -> None:
+    results = [
+        EvalResult(
+            case_id=case.id,
+            score=0.0,
+            final_answer="",
+            duration_s=1.0,
+            error="failed",
+        )
+        for case in SUITE
+    ]
+
+    with pytest.raises(RuntimeError, match="cases failed"):
         objective(results, tmp_path, EXPECTED_BENCHMARK_DIGEST)
 
 
