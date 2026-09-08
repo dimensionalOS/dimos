@@ -25,15 +25,16 @@ from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.manipulators._modeling import (
     joint_names,
 )
 from dimos.utils.data import LfsPath
 
 PIPER_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
-    ("gripper_base", "link7"),
-    ("gripper_base", "link8"),
-    ("link7", "link8"),
+    ("gripper_base", "gripper_link1"),
+    ("gripper_base", "gripper_link2"),
+    ("gripper_link1", "gripper_link2"),
     ("link6", "gripper_base"),
 ]
 PIPER_DESCRIPTION_REPO = "https://github.com/agilexrobotics/agx_arm_urdf"
