@@ -51,19 +51,31 @@ app.GO2Connection.move(Twist(linear=(1, 0, 0), angular=(0, 0, 0)), duration=0.05
 
 ## Manipulation SDK
 
-For sequential arm motion, use the client-only convenience layer on top of the
-typed RPCs:
+For manual arm control, open `dimos shell` against a running manipulation
+blueprint. Import the client-only SDK and reuse the shell's connected `app`:
+
+```python skip
+from dimos.sdk.manipulation import Arm
+
+arm = Arm.from_app(app)
+arm.joints()
+arm.pose()
+```
+
+Use `arm.` followed by Tab for completion and `arm.move_linear?` for help.
+For scripts, create and close your own connection:
 
 ```python skip
 from dimos.porcelain.dimos import Dimos
 from dimos.sdk.manipulation import Arm
 
 app = Dimos.connect()
-arm = Arm.from_app(app)
-print(arm.joints())
-print(arm.pose())
-arm.move_linear(dz=0.01, check_collision=True)
-app.stop()
+try:
+    arm = Arm.from_app(app)
+    print(arm.joints())
+    print(arm.pose())
+finally:
+    app.stop()
 ```
 
 `Arm` selects the unique pose-capable group and raises on failed actions. It
@@ -81,8 +93,8 @@ deployed Module whose advertised RPCs match the Spec's signatures. Several
 matches require an explicit `instance_name`, for example
 `app.get_module(MySpec, instance_name="robot0/manipulation")`. Matching requires
 the module classes to be importable locally. See the
-[manipulation Python guide](/docs/capabilities/manipulation/python_api.md) for a
-complete client example.
+[manipulation Python guide](/docs/capabilities/manipulation/python_api.md) for
+the shell walkthrough and script setup.
 
 ```python skip
 # Live structured records for exact deployed instances.

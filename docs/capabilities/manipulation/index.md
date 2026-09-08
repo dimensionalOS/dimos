@@ -81,15 +81,24 @@ dimos run xarm-perception-sim \
   --kinematics.backend=pink
 ```
 
-Then run the typed Python motion example:
+Then open an attached Python shell in a second terminal:
 
-```bash
-python -m dimos.manipulation.planning.examples.manipulation_client
+```bash skip
+dimos shell
 ```
 
-The example uses `Dimos.connect()` and `Arm.from_app(app)` to select the arm and
-run sequential joint, pose, linear, and gripper commands. The
-[Python guide](/docs/capabilities/manipulation/python_api.md) also covers scan, pick, and place.
+Import the SDK and reuse the shell's connected `app`:
+
+```python skip
+from dimos.sdk.manipulation import Arm
+
+arm = Arm.from_app(app)
+arm.joints()
+arm.pose()
+```
+
+The [Python guide](/docs/capabilities/manipulation/python_api.md) walks through
+joint, pose, linear, and gripper commands, plus manual scan, pick, and place.
 
 ### Planning backend selection
 

@@ -12,19 +12,25 @@ dimos run xarm7-planner-coordinator
 # 2. Keyboard teleop with mock arm (single command):
 dimos run keyboard-teleop-xarm7
 
-# 3. Interactive RPC client (plan, preview, execute from Python):
-dimos run xarm7-planner-coordinator                                    # terminal 1
-python -i -m dimos.manipulation.planning.examples.manipulation_client  # terminal 2
+# 3. SDK and RPCs in the generic Python shell:
+dimos run xarm7-planner-coordinator  # terminal 1
+dimos shell                         # terminal 2
 ```
 
-In the interactive client:
+In the shell, import the SDK and reuse the connected `app`:
+
 ```python skip
-commands()              # List available commands
-joints()                # Get current joint positions
-plan([0.1] * 7)         # Plan to target
-preview()               # Preview in Meshcat (url() for link)
-execute()               # Execute via coordinator
+from dimos.sdk.manipulation import Arm
+
+arm = Arm.from_app(app)
+arm.joints()
+arm.pose()
+help(arm)
 ```
+
+Use `arm.` followed by Tab for completion and `arm.move_linear?` for method help.
+The [manipulation guide](/docs/capabilities/manipulation/python_api.md) covers
+manual motion and explicit planning, preview, and execution through `arm.rpc`.
 
 ## Architecture
 
@@ -263,9 +269,7 @@ planning/
 ├── planners/
 │   └── rrt_planner.py       # RRTConnectPlanner
 ├── monitor/                 # WorldMonitor (live state sync)
-├── trajectory_generator/    # Time-parameterized trajectories
-└── examples/
-    └── manipulation_client.py    # Interactive RPC client (python -i)
+└── trajectory_generator/    # Time-parameterized trajectories
 ```
 
 ## Obstacle Types

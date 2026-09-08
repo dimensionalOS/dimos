@@ -4,31 +4,39 @@ Use the client-only `Arm` SDK for ordinary sequential motion. It wraps the
 existing typed RPCs without changing robot behavior or owning the connection.
 The client uses the same provisioned DimOS environment as the runtime.
 
-## Start and connect
+## Start the runtime and shell
 
-The existing agentic simulation blueprint includes motion planning, the simulated
-xArm, camera, perception, grasp generation, and pick/place:
+Start the classical manipulation stack in terminal one. It includes motion
+planning, the simulated xArm, camera, perception, grasp generation, and pick/place,
+without requiring LLM credentials:
 
-```bash
-dimos run xarm-perception-sim-agent
+```bash skip
+dimos --simulation run xarm-perception-sim
 ```
 
-For Python-only use without LLM credentials, run `xarm-perception-sim`; it
-contains the same classical manipulation stack. On a headless Linux host:
+On a headless Linux host:
 
-```bash
-MUJOCO_GL=egl dimos --viewer none run xarm-perception-sim --headless true
+```bash skip
+MUJOCO_GL=egl dimos --simulation --viewer none run xarm-perception-sim --headless true
 ```
 
-Wait for the Modules and sensor streams to start. Use a second terminal for the
-client; leave the agent idle while the script commands the arm.
+Wait for the Modules and sensor streams to start. In terminal two, using the same
+project environment, open the generic [DimOS shell](/docs/usage/cli.md#dimos-shell):
+
+```bash skip
+dimos shell
+```
+
+The shell provides a connected `app`. Import the SDK and select an arm explicitly;
+there are no manipulation-specific preloads or setup helpers:
 
 ```python skip
-from dimos.porcelain.dimos import Dimos
 from dimos.sdk.manipulation import Arm
 
-app = Dimos.connect()
 arm = Arm.from_app(app)
+arm.info
+arm.joints()
+arm.pose()
 ```
 
 `Arm.from_app()` resolves `ManipulationSpec` and selects the unique pose-capable
@@ -46,22 +54,50 @@ as blueprint Spec injection. Deployed module classes must be importable in the
 client. Import `Arm` directly from `dimos.sdk.manipulation`; this is a convenience
 module in DimOS, not a separate SDK installation.
 
+### Explore without moving
+
+Type `arm.` and press Tab to complete SDK methods. Use `arm.move_linear?` to see
+its signature and docstring in IPython, or use ordinary Python help:
+
+```python skip
+help(arm)
+describe(arm.rpc.move_linear)
+```
+
+`describe()` inspects raw modules and RPCs; use `help()` or `?` for SDK methods.
+Importing, selecting the arm, reading state, and inspecting help do not command
+motion. An agentic blueprint such as `xarm-perception-sim-agent` also works, but
+keep its agent idle while you command the arm.
+
 ## Basic motion
 
-Read state, adjust a joint, and move. These calls command the arm; try them in
-simulation with room for the requested movement:
+Run these commands one at a time in simulation, observing each result before
+continuing. Allow space for a small joint offset and a 1 cm vertical translation.
+Save the initial joints before moving:
 
 ```python skip
 print(arm.info)   # Group ID, joint order, and capabilities.
 print(arm.state())
-q = arm.joints()  # Fresh NumPy array in arm.info.joint_names order.
+initial = arm.joints()  # Fresh NumPy array in arm.info.joint_names order.
+q = initial.copy()
 q[0] += 0.02
 result = arm.move_joints(q, speed_scale=0.2)
 print(result)
+```
 
+Move to an endpoint, then translate in a straight line:
+
+```python skip
 pose = arm.pose()
 arm.move_pose([pose.x, pose.y, pose.z + 0.01], speed_scale=0.2)
 arm.move_linear(dz=-0.01, check_collision=True)
+```
+
+After successful moves, restore the initial joints and open the gripper. If a
+command failed, inspect its result and the current state before issuing another:
+
+```python skip
+arm.move_joints(initial, speed_scale=0.2)
 arm.open_gripper()
 ```
 
@@ -119,8 +155,10 @@ exceptions propagate unchanged. Failed planning never proceeds to execution.
 A timeout does not imply motion stopped, and the SDK neither retries nor cancels
 automatically. Use the underlying RPC to inspect execution or request cancellation.
 
-`Arm` borrows the app's connection. Call `app.stop()` when finished; for a
-connected app this disconnects without stopping the blueprint or cancelling motion.
+`Arm` borrows the app's connection. Exit IPython with `exit` or Ctrl-D when
+finished; the shell disconnects while the blueprint keeps running. Neither shell
+exit nor Ctrl-C during a call establishes that remote motion has stopped.
+Use `arm.rpc.cancel()` and inspect its result when cancellation is needed.
 
 ## Advanced motion RPCs
 
@@ -173,9 +211,34 @@ latest scan; names are not necessarily unique.
 
 ```python skip
 scan = pick_place.scan_objects(["cup"])
-if scan.succeeded:
-    for detected in scan.objects:
-        print(detected.object_id, detected.name)
+if not scan.succeeded:
+    raise RuntimeError(scan)
+for detected in scan.objects:
+    print(detected.object_id, detected.name)
+```
+
+Enter an exact ID from that scan, then inspect the pick result before deciding
+whether to place. Explicitly pass the selected arm's group:
+
+```python skip
+object_id = input("Object ID from the latest scan: ").strip()
+if object_id not in {detected.object_id for detected in scan.objects}:
+    raise ValueError("Choose an object ID from the latest scan")
+picked = pick_place.pick_object(object_id, planning_group=arm.info.id)
+print(picked)
+print("Holding object:", picked.holding_object)
+```
+
+Only after a successful pick, enter a release position verified in your scene.
+This block refuses to place after a failed pick, even if the object is still held:
+
+```python skip
+if not picked.succeeded:
+    raise RuntimeError(picked)
+x, y, z = map(float, input("Verified release position X Y Z (metres): ").split())
+placed = pick_place.place_at(x, y, z, planning_group=arm.info.id)
+print(placed)
+print("Holding object:", placed.holding_object)
 ```
 
 `pick_object(object_id)` returns `PickResult`. `place_at(x, y, z)` returns
@@ -193,27 +256,22 @@ Agent tools call the same implementations. They receive a formatted version of
 these domain results through `agent_encode()`; Python clients receive dataclasses,
 not agent text or a metadata dictionary.
 
-## Runnable example
+## Use the same SDK in scripts
 
-The example demonstrates SDK joint and pose moves, a short linear move, and
-gripper control. Each motion completes before the next begins:
+The SDK works outside IPython too. Scripts create their own connection and
+disconnect in `finally`; inside `dimos shell`, reuse its existing `app` instead:
 
-```bash
-python -m dimos.manipulation.planning.examples.manipulation_client
+```python skip
+from dimos.porcelain.dimos import Dimos
+from dimos.sdk.manipulation import Arm
+
+app = Dimos.connect()
+try:
+    arm = Arm.from_app(app)
+    print(arm.joints())
+    print(arm.pose())
+finally:
+    app.stop()
 ```
 
-To include pick/place, supply a unique description and a placement position
-verified in your simulated scene:
-
-```bash
-python -m dimos.manipulation.planning.examples.manipulation_client \
-  --object cup --place X Y Z
-```
-
-Replace `X Y Z` with numeric planning-frame coordinates. The example rejects
-ambiguous scans and stops on a failed action, including a failure while holding
-an object. Its motion sequence requires space for a small joint offset and a
-1 cm vertical translation. It restores the initial arm pose before scanning.
-
-The example closes the connection in `finally`. For interactive use, call
-`app.stop()` when finished; this disconnects without stopping the remote blueprint.
+Disconnecting does not stop the remote blueprint or cancel its motion.

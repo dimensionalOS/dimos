@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import atexit
 from dataclasses import replace
 
+from IPython.core.completer import provisionalcompleter
+from IPython.core.interactiveshell import InteractiveShell
 import numpy as np
 import pytest
+from traitlets.config import Config
 
+from dimos.cli.shell import _shell_namespace
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
     CommandStatus,
@@ -86,6 +91,45 @@ def app(mocker, rpc):
 @pytest.fixture
 def arm(app):
     return Arm.from_app(app)
+
+
+@pytest.fixture
+def ipython(app, tmp_path):
+    shell = InteractiveShell(
+        user_ns=_shell_namespace(app),
+        ipython_dir=str(tmp_path),
+        config=Config({"HistoryManager": {"enabled": False}}),
+    )
+    try:
+        yield shell
+    finally:
+        shell.cleanup()
+        atexit.unregister(shell.atexit_operations)
+        shell.atexit_operations()
+
+
+def test_sdk_manual_import_completion_and_help_in_dimos_shell(ipython, app, rpc, mocker):
+    # Exercise IPython itself, not a replacement parser or completion provider.
+    mocker.patch("IPython.core.page.page")
+    result = ipython.run_cell("from dimos.sdk.manipulation import Arm\narm = Arm.from_app(app)")
+
+    assert result.success
+    assert isinstance(ipython.user_ns["arm"], Arm)
+    app.get_module.assert_called_once_with(ManipulationSpec, instance_name=None)
+    with provisionalcompleter():
+        completions = list(ipython.Completer.completions("arm.move_", len("arm.move_")))
+    assert "move_linear" in {completion.text for completion in completions}
+    info = ipython.object_inspect("arm.move_linear")
+    assert "check_collision" in info["definition"]
+    assert "world-frame translation primitive" in info["docstring"]
+    assert ipython.run_cell("arm.move_linear?").success
+    assert ipython.run_cell("help(arm)").success
+    assert rpc.mock_calls == [mocker.call.list_planning_groups()]
+    app.run.assert_not_called()
+    app.stop.assert_not_called()
+
+    assert ipython.run_cell("positions = arm.joints()").success
+    np.testing.assert_array_equal(ipython.user_ns["positions"], [0.1, 0.2])
 
 
 def test_discovery_binds_unique_pose_group_without_requiring_gripper(app, rpc):

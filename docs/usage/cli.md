@@ -225,6 +225,11 @@ The shell normally displays the CLI run ID and blueprint. Coordinators launched
 directly from Python have no run-registry metadata and are shown as
 `unregistered coordinator`.
 
+SDKs use ordinary Python imports and the existing `app`; the shell does not
+preload robot-specific interfaces. See the
+[manipulation walkthrough](/docs/capabilities/manipulation/python_api.md) for
+using `Arm`, inspecting methods, and testing motion interactively.
+
 ### `dimos status`
 
 Show the running dimOS instance.
