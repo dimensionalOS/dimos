@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.constants import STATE_DIR
+from dimos.control.connection import XArmConnectionConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.experimental.world_belief.worldbelief_module import (
     WorldBeliefModule,
@@ -35,7 +36,6 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import make_xarm6_model_config, xarm6_hardware
-from dimos.robot.manipulators.xarm.coordinator import XArm6Coordinator
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 if TYPE_CHECKING:
@@ -129,7 +129,7 @@ xarm6_worldbelief = autoconnect(
     ),
     McpServer.blueprint(),
     coordinator(
-        cls=XArm6Coordinator,
+        connection=XArmConnectionConfig(dof=6),
         instance_name="ControlCoordinator",
         hardware=[_hw],
         tasks=[trajectory_task(_hw)],

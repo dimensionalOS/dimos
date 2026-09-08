@@ -31,7 +31,7 @@ dimos run teleop-quest-openarm # OpenArm, bimanual IK + planner/Viser + mock har
 Select a CAN interface explicitly to control real A1Z hardware:
 
 ```bash
-dimos run teleop-quest-a1z --address a1zcan
+dimos run teleop-quest-a1z --connection.address a1zcan
 ```
 
 Open `https://<host-ip>:8443/teleop` on Quest browser. Accept cert, tap Connect.
@@ -54,7 +54,7 @@ Specify both CAN interfaces to select real OpenArm hardware. Supplying only one
 is rejected:
 
 ```bash
-dimos run teleop-quest-openarm --left-can-port can1 --right-can-port can0
+dimos run teleop-quest-openarm --connection.left-can-port can1 --connection.right-can-port can0
 ```
 
 The blueprint also includes `ManipulationModule` with the same bimanual model

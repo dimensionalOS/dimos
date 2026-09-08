@@ -399,6 +399,39 @@ def test_discriminated_union_exposes_one_logical_nested_path() -> None:
     }
 
 
+def test_optional_discriminated_union_exposes_nested_cli_and_environment_fields() -> None:
+    class FirstConfig(BaseModel):
+        backend: Literal["first"] = "first"
+
+    class SecondConfig(BaseModel):
+        backend: Literal["second"] = "second"
+        level: int = 1
+
+    BackendConfig = Annotated[FirstConfig | SecondConfig, Field(discriminator="backend")]
+
+    class UnionConfig(ModuleConfig):
+        backend_config: BackendConfig | None = None
+
+    class UnionModule(Module):
+        config: UnionConfig
+
+    parser = BlueprintConfigParser(UnionModule.blueprint(backend_config=SecondConfig()))
+    environment = {"UNIONMODULE__BACKEND_CONFIG__LEVEL": "3"}
+    assert parser.parse(environ=environment).module_kwargs("unionmodule") == {
+        "backend_config": {"backend": "second", "level": 3}
+    }
+    assert parser.parse(["--backend-config.level", "4"], environ=environment).module_kwargs(
+        "unionmodule"
+    ) == {"backend_config": {"backend": "second", "level": 4}}
+    assert "--backend-config.level" in parser.format_help()
+    assert (
+        BlueprintConfigParser(UnionModule.blueprint())
+        .parse(environ={})
+        .module_kwargs("unionmodule")
+        == {}
+    )
+
+
 def test_discriminated_union_leaf_override_preserves_default_backend() -> None:
     class FirstConfig(BaseModel):
         backend: Literal["first"] = "first"

@@ -14,15 +14,14 @@
 
 """Dual OpenYAM coordinator and planning blueprints."""
 
+from dimos.control.connection import DualOpenYamConnectionConfig
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
-from dimos.robot.manipulators.common.connection import PairedCanCoordinatorConfig
 from dimos.robot.manipulators.dual_openyam.config import (
     DUAL_OPENYAM_ARM_JOINTS,
-    dual_openyam_hardware,
     dual_openyam_model_config,
 )
 
@@ -37,32 +36,17 @@ def dual_openyam_trajectory_task(*, priority: int = 20) -> TaskConfig:
     )
 
 
-class DualOpenYamCoordinatorConfig(PairedCanCoordinatorConfig):
-    """Dual OpenYAM deployment configuration."""
-
-
-class DualOpenYamCoordinator(TeleopControlCoordinator):
-    """Select mock or explicit dual-CAN hardware during coordinator setup."""
-
-    config: DualOpenYamCoordinatorConfig
-
-    def _setup_from_config(self) -> None:
-        self.config.hardware = [
-            dual_openyam_hardware(
-                left_can_port=self.config.left_can_port,
-                right_can_port=self.config.right_can_port,
-            )
-        ]
-        super()._setup_from_config()
-
-
-coordinator_dual_openyam = DualOpenYamCoordinator.blueprint(
+coordinator_dual_openyam = TeleopControlCoordinator.blueprint(
+    connection=DualOpenYamConnectionConfig(),
+    instance_name="DualOpenYamCoordinator",
     tasks=[dual_openyam_trajectory_task()],
 )
 
 dual_openyam_planner_coordinator = autoconnect(
     planner(model=dual_openyam_model_config()),
-    DualOpenYamCoordinator.blueprint(
+    TeleopControlCoordinator.blueprint(
+        connection=DualOpenYamConnectionConfig(),
+        instance_name="DualOpenYamCoordinator",
         tasks=[dual_openyam_trajectory_task()],
     ),
 )

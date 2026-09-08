@@ -18,6 +18,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.control.tasks.teleop_ik_task.teleop_ik_task import TeleopIKTask
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.control.tick_loop import TickLoop
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
@@ -25,9 +26,6 @@ from dimos.hardware.whole_body.spec import WholeBodyAdapter
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
-    DualOpenYamCoordinator,
-)
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
     DUAL_OPENYAM_QUEST_TASK_NAME,
     teleop_quest_dual_openyam,
@@ -50,9 +48,9 @@ def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
 def test_quest_blueprint_selects_physical_hardware_from_both_can_ports() -> None:
     parsed = BlueprintConfigParser(teleop_quest_dual_openyam).parse(
         [
-            "--left-can-port",
+            "--connection.left-can-port",
             "follower_l",
-            "--right-can-port",
+            "--connection.right-can-port",
             "follower_r",
             "--manipulationmodule.visualization.host=0.0.0.0",
         ],
@@ -60,15 +58,15 @@ def test_quest_blueprint_selects_physical_hardware_from_both_can_ports() -> None
     )
 
     coordinator = parsed.module_kwargs("ControlCoordinator")
-    assert coordinator["left_can_port"] == "follower_l"
-    assert coordinator["right_can_port"] == "follower_r"
+    assert coordinator["connection"]["left_can_port"] == "follower_l"
+    assert coordinator["connection"]["right_can_port"] == "follower_r"
     assert parsed.module_kwargs("manipulationmodule")["visualization"]["host"] == "0.0.0.0"
 
 
 def test_mock_quest_coordinator_commands_both_arms_and_grippers(
     mocker: MockerFixture,
 ) -> None:
-    kwargs = _module_kwargs(teleop_quest_dual_openyam, DualOpenYamCoordinator)
+    kwargs = _module_kwargs(teleop_quest_dual_openyam, TeleopControlCoordinator)
     mocker.patch.object(DualOpenYamPinkPoseTargetSolver, "_validate_frame_targets")
     mocker.patch.object(
         DualOpenYamPinkPoseTargetSolver,
@@ -84,7 +82,7 @@ def test_mock_quest_coordinator_commands_both_arms_and_grippers(
         return_value=JointState(name=DUAL_OPENYAM_ARM_JOINTS, position=[0.01] * 12),
     )
     mocker.patch.object(TickLoop, "start")
-    coordinator = DualOpenYamCoordinator(publish_joint_state=False, **kwargs)
+    coordinator = TeleopControlCoordinator(publish_joint_state=False, **kwargs)
 
     coordinator.start()
     try:

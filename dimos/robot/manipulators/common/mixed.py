@@ -16,9 +16,9 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import TaskConfig
+from dimos.control.connection import MixedArmConnectionConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.robot.manipulators.common.blueprints import teleop_ik_task
-from dimos.robot.manipulators.common.mixed_coordinator import MixedArmCoordinator
 from dimos.robot.manipulators.piper.config import (
     make_piper_hardware,
     make_piper_model_config,
@@ -37,7 +37,8 @@ _piper_dual = make_piper_hardware(
     gripper=True,
 )
 
-coordinator_piper_xarm = MixedArmCoordinator.blueprint(
+coordinator_piper_xarm = ControlCoordinator.blueprint(
+    connection=MixedArmConnectionConfig(),
     instance_name="ControlCoordinator",
     hardware=[_xarm6_dual, _piper_dual],
     tasks=[
@@ -63,7 +64,8 @@ _piper_teleop_hw = make_piper_hardware(
 _xarm6_teleop_model = make_xarm6_model_config(add_gripper=False, prefix="xarm_arm/")
 _piper_teleop_model = make_piper_model_config()
 
-coordinator_teleop_dual = MixedArmCoordinator.blueprint(
+coordinator_teleop_dual = ControlCoordinator.blueprint(
+    connection=MixedArmConnectionConfig(),
     instance_name="ControlCoordinator",
     hardware=[_xarm6_teleop_hw, _piper_teleop_hw],
     tasks=[

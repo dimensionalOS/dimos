@@ -22,6 +22,7 @@ from pytest_mock import MockerFixture
 
 from dimos.control.tasks.pose_target_ik import PoseTargetIKTaskConfig
 from dimos.control.tasks.teleop_ik_task.teleop_ik_task import TeleopIKTask
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.control.tick_loop import TickLoop
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
 from dimos.core.coordination.blueprints import Blueprint
@@ -34,7 +35,6 @@ from dimos.msgs.std_msgs.Float32 import Float32
 from dimos.robot.manipulators.openarm.blueprints.basic import openarm_planner_coordinator
 from dimos.robot.manipulators.openarm.blueprints.teleop import (
     OPENARM_QUEST_TASK_NAME,
-    OpenArmTeleopCoordinator,
     _OpenArmManipulationModule,
     teleop_quest_openarm,
 )
@@ -75,7 +75,7 @@ def test_openarm_model_uses_canonical_zero_start() -> None:
 
 
 def test_openarm_quest_blueprint_has_one_bimanual_mock_task() -> None:
-    coordinator_kwargs = _module_kwargs(teleop_quest_openarm, OpenArmTeleopCoordinator)
+    coordinator_kwargs = _module_kwargs(teleop_quest_openarm, TeleopControlCoordinator)
     teleop_kwargs = _module_kwargs(teleop_quest_openarm, ArmTeleopModule)
     manipulation_kwargs = _module_kwargs(teleop_quest_openarm, _OpenArmManipulationModule)
     tasks = coordinator_kwargs["tasks"]
@@ -105,7 +105,7 @@ def test_openarm_quest_blueprint_has_one_bimanual_mock_task() -> None:
         "right_gripper_command",
     }
     assert isinstance(task.params["pink"], PinkKinematicsConfig)
-    assert "robot_model" not in task.params
+    assert task.params["robot_model"].joint_names == OPENARM_ARM_JOINTS
     assert task.params["solver_type"] is OpenArmPinkPoseTargetSolver
     assert task.params["pink"].joint_limit_posture_margin == 0.3
     assert task.params["pink"].position_cost == 8.0
@@ -142,19 +142,19 @@ def test_openarm_quest_blueprint_has_one_bimanual_mock_task() -> None:
 def test_openarm_can_ports_are_blueprint_cli_options() -> None:
     for blueprint in (teleop_quest_openarm, openarm_planner_coordinator):
         parsed = BlueprintConfigParser(blueprint).parse(
-            ["--left-can-port", "can1", "--right-can-port", "can0"],
+            ["--connection.left-can-port", "can1", "--connection.right-can-port", "can0"],
             environ={},
         )
 
         coordinator = parsed.module_kwargs("ControlCoordinator")
-        assert coordinator["left_can_port"] == "can1"
-        assert coordinator["right_can_port"] == "can0"
+        assert coordinator["connection"]["left_can_port"] == "can1"
+        assert coordinator["connection"]["right_can_port"] == "can0"
 
 
 def test_openarm_quest_commands_both_arms_and_grippers_through_coordinator(
     mocker: MockerFixture,
 ) -> None:
-    coordinator_kwargs = _module_kwargs(teleop_quest_openarm, OpenArmTeleopCoordinator)
+    coordinator_kwargs = _module_kwargs(teleop_quest_openarm, TeleopControlCoordinator)
     mocker.patch.object(OpenArmPinkPoseTargetSolver, "_validate_frame_targets")
     frame_poses = mocker.patch.object(
         OpenArmPinkPoseTargetSolver,
@@ -173,7 +173,7 @@ def test_openarm_quest_commands_both_arms_and_grippers_through_coordinator(
         ),
     )
     mocker.patch.object(TickLoop, "start")
-    coordinator = OpenArmTeleopCoordinator(publish_joint_state=False, **coordinator_kwargs)
+    coordinator = TeleopControlCoordinator(publish_joint_state=False, **coordinator_kwargs)
 
     try:
         coordinator.start()

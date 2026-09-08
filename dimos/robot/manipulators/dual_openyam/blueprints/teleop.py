@@ -14,13 +14,14 @@
 
 """Coupled Quest teleoperation for the complete Dual OpenYAM entity."""
 
+from dimos.control.connection import DualOpenYamConnectionConfig
 from dimos.control.coordinator import TaskConfig
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.robot.manipulators.common.blueprints import teleop_ik_task
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
-    DualOpenYamCoordinator,
     dual_openyam_trajectory_task,
 )
 from dimos.robot.manipulators.dual_openyam.config import (
@@ -75,7 +76,8 @@ _dual_openyam_quest_task = teleop_ik_task(
 
 teleop_quest_dual_openyam = autoconnect(
     ArmTeleopModule.blueprint(),
-    DualOpenYamCoordinator.blueprint(
+    TeleopControlCoordinator.blueprint(
+        connection=DualOpenYamConnectionConfig(),
         instance_name="ControlCoordinator",
         tasks=[
             _dual_openyam_quest_task,

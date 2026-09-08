@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from dimos.control.connection import XArmConnectionConfig
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprint_config.errors import BlueprintConfigError
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
@@ -39,7 +40,6 @@ from dimos.robot.manipulators.xarm.blueprints.basic import (
     coordinator_xarm7,
 )
 from dimos.robot.manipulators.xarm.config import XARM7_SIM_PATH, xarm7_hardware
-from dimos.robot.manipulators.xarm.coordinator import XArm7Coordinator
 from dimos.utils.data import LfsPath
 
 
@@ -94,27 +94,42 @@ def test_local_address_selects_hardware_without_changing_blueprint_defaults(
     physical_adapter: str,
     mock_adapter: str,
 ) -> None:
-    real = resolve_connection(blueprint, ["--address", address], environ={})
+    real = resolve_connection(blueprint, ["--connection.address", address], environ={})
     mock = resolve_connection(blueprint, [], environ={})
     assert real.config.hardware[0].adapter_type == physical_adapter
     assert mock.config.hardware[0].adapter_type == mock_adapter
     assert real.config.hardware[0].joints == mock.config.hardware[0].joints
     assert mock.config.hardware[0].address is None
-    if physical_adapter == "openyam_damiao":
-        assert real.config.hardware[0].adapter_kwargs["runtime_config"].bus_devices == {
-            "openyam": address
-        }
-    else:
-        assert real.config.hardware[0].address == address
+    assert real.config.connection.address == address
 
 
 @pytest.mark.parametrize(
     ("blueprint", "left_flag", "right_flag", "adapters"),
     [
-        (coordinator_dual_xarm, "--left-address", "--right-address", ["xarm", "xarm"]),
-        (coordinator_piper_xarm, "--xarm-address", "--piper-address", ["xarm", "piper"]),
-        (coordinator_openarm, "--left-can-port", "--right-can-port", ["openarm_damiao"]),
-        (coordinator_dual_openyam, "--left-can-port", "--right-can-port", ["dual_openyam_damiao"]),
+        (
+            coordinator_dual_xarm,
+            "--connection.left-address",
+            "--connection.right-address",
+            ["xarm", "xarm"],
+        ),
+        (
+            coordinator_piper_xarm,
+            "--connection.xarm-address",
+            "--connection.piper-address",
+            ["xarm", "piper"],
+        ),
+        (
+            coordinator_openarm,
+            "--connection.left-can-port",
+            "--connection.right-can-port",
+            ["openarm_damiao"],
+        ),
+        (
+            coordinator_dual_openyam,
+            "--connection.left-can-port",
+            "--connection.right-can-port",
+            ["dual_openyam_damiao"],
+        ),
     ],
 )
 def test_assembly_requires_all_addresses(
@@ -137,24 +152,26 @@ def test_assembly_requires_all_addresses(
 @pytest.mark.parametrize("address", ["", " ", " can0", "can0 "])
 def test_empty_or_padded_addresses_are_not_mock(address: str) -> None:
     with pytest.raises(BlueprintConfigError, match="Device address"):
-        BlueprintConfigParser(coordinator_xarm7).parse(["--address", address], environ={})
+        BlueprintConfigParser(coordinator_xarm7).parse(
+            ["--connection.address", address], environ={}
+        )
 
 
 def test_address_source_precedence_and_isolation(
     resolve_connection: Callable[..., ControlCoordinator],
 ) -> None:
-    env = {"CONTROLCOORDINATOR__ADDRESS": "environment"}
+    env = {"CONTROLCOORDINATOR__CONNECTION__ADDRESS": "environment"}
     cli = resolve_connection(
         coordinator_xarm7,
-        ["--address", "cli"],
+        ["--connection.address", "cli"],
         environ=env,
-        overrides={"ControlCoordinator": {"address": "programmatic"}},
+        overrides={"ControlCoordinator": {"connection": {"address": "programmatic"}}},
     )
     programmatic = resolve_connection(
         coordinator_xarm7,
         [],
         environ=env,
-        overrides={"ControlCoordinator": {"address": "programmatic"}},
+        overrides={"ControlCoordinator": {"connection": {"address": "programmatic"}}},
     )
     environment = resolve_connection(coordinator_xarm7, [], environ=env)
     assert [item.config.hardware[0].address for item in (cli, programmatic, environment)] == [
@@ -166,17 +183,22 @@ def test_address_source_precedence_and_isolation(
 
 def test_qualified_address_disambiguates_two_module_instances() -> None:
     blueprint = autoconnect(
-        XArm7Coordinator.blueprint(instance_name="left", hardware=[xarm7_hardware()]),
-        XArm7Coordinator.blueprint(instance_name="right", hardware=[xarm7_hardware()]),
+        ControlCoordinator.blueprint(
+            connection=XArmConnectionConfig(), instance_name="left", hardware=[xarm7_hardware()]
+        ),
+        ControlCoordinator.blueprint(
+            connection=XArmConnectionConfig(), instance_name="right", hardware=[xarm7_hardware()]
+        ),
     )
     parser = BlueprintConfigParser(blueprint)
     with pytest.raises(BlueprintConfigError, match="[Aa]mbiguous"):
-        parser.parse(["--address", "192.0.2.1"], environ={})
+        parser.parse(["--connection.address", "192.0.2.1"], environ={})
     parsed = parser.parse(
-        ["--left.address", "192.0.2.1", "--right.address", "192.0.2.2"], environ={}
+        ["--left.connection.address", "192.0.2.1", "--right.connection.address", "192.0.2.2"],
+        environ={},
     )
-    assert parsed.module_kwargs("left")["address"] == "192.0.2.1"
-    assert parsed.module_kwargs("right")["address"] == "192.0.2.2"
+    assert parsed.module_kwargs("left")["connection"]["address"] == "192.0.2.1"
+    assert parsed.module_kwargs("right")["connection"]["address"] == "192.0.2.2"
 
 
 @pytest.mark.parametrize(
@@ -192,7 +214,7 @@ def test_simulation_ignores_physical_address(
     resolve_connection: Callable[..., ControlCoordinator], blueprint: Blueprint, adapter: str
 ) -> None:
     coordinator = resolve_connection(
-        blueprint, ["--simulation", "mujoco", "--address", "physical"], environ={}
+        blueprint, ["--simulation", "mujoco", "--connection.address", "physical"], environ={}
     )
     assert coordinator.config.hardware[0].adapter_type == adapter
     assert coordinator.config.hardware[0].address != "physical"
@@ -207,7 +229,7 @@ def test_xarm_simulation_uses_the_blueprint_discovery_path(
     blueprint = autoconnect(coordinator_xarm7, *simulation)
     coordinator = resolve_connection(
         blueprint,
-        ["--simulation", "mujoco", "--controlcoordinator.address", "physical"],
+        ["--simulation", "mujoco", "--controlcoordinator.connection.address", "physical"],
         environ={},
     )
     simulator = simulation[0].active_blueprints[0]
@@ -216,7 +238,8 @@ def test_xarm_simulation_uses_the_blueprint_discovery_path(
 
 
 def test_default_xarm_starts_with_mock_hardware() -> None:
-    with XArm7Coordinator(
+    with ControlCoordinator(
+        connection=XArmConnectionConfig(),
         instance_name="ControlCoordinator",
         hardware=[xarm7_hardware(gripper=True)],
         publish_joint_state=False,
@@ -228,7 +251,18 @@ def test_default_xarm_starts_with_mock_hardware() -> None:
         assert len(hardware.adapter.read_joint_positions()) == 8
 
 
-@pytest.mark.parametrize("option", ["--xarm6-ip", "--xarm7-ip", "--can-port", "--device-path"])
+@pytest.mark.parametrize(
+    "option",
+    [
+        "--xarm6-ip",
+        "--xarm7-ip",
+        "--can-port",
+        "--device-path",
+        "--address",
+        "--left-address",
+        "--left-can-port",
+    ],
+)
 def test_removed_global_connection_options_are_rejected(option: str) -> None:
     with pytest.raises(BlueprintConfigError, match="Unknown"):
         BlueprintConfigParser(coordinator_xarm7).parse([option, "endpoint"], environ={})

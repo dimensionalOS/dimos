@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import TaskConfig
+from dimos.control.connection import OpenYamConnectionConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import coordinator, planner
@@ -27,7 +28,6 @@ from dimos.robot.manipulators.openyam.config import (
     make_openyam_model_config,
     openyam_hardware,
 )
-from dimos.robot.manipulators.openyam.coordinator import OpenYamCoordinator
 
 
 def _trajectory_task() -> TaskConfig:
@@ -48,7 +48,7 @@ _openyam_planner_hw = openyam_hardware()
 openyam_planner_coordinator = autoconnect(
     planner(model=make_openyam_model_config()),
     coordinator(
-        cls=OpenYamCoordinator,
+        connection=OpenYamConnectionConfig(),
         instance_name="ControlCoordinator",
         hardware=[_openyam_planner_hw],
         tasks=[_trajectory_task(), _gripper_task()],
@@ -57,7 +57,8 @@ openyam_planner_coordinator = autoconnect(
 
 _openyam_hw = openyam_hardware()
 
-coordinator_openyam = OpenYamCoordinator.blueprint(
+coordinator_openyam = ControlCoordinator.blueprint(
+    connection=OpenYamConnectionConfig(),
     instance_name="ControlCoordinator",
     hardware=[_openyam_hw],
     tasks=[_trajectory_task(), _gripper_task()],

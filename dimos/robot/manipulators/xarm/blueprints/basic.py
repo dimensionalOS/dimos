@@ -16,7 +16,8 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import TaskConfig
+from dimos.control.connection import DualXArmConnectionConfig, XArmConnectionConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
@@ -28,11 +29,6 @@ from dimos.robot.manipulators.xarm.config import (
     make_xarm_hardware,
     xarm6_hardware,
     xarm7_hardware,
-)
-from dimos.robot.manipulators.xarm.coordinator import (
-    DualXArmCoordinator,
-    XArm6Coordinator,
-    XArm7Coordinator,
 )
 
 _dual_xarm6_model = make_dual_xarm6_model_config()
@@ -74,7 +70,7 @@ xarm7_planner_coordinator = autoconnect(
         )
     ),
     coordinator(
-        cls=XArm7Coordinator,
+        connection=XArmConnectionConfig(dof=7),
         instance_name="ControlCoordinator",
         hardware=[_xarm7_hw],
         tasks=[trajectory_task(_xarm7_hw), _gripper_task()],
@@ -85,7 +81,7 @@ _coordinator_xarm7_hw = xarm7_hardware("arm")
 
 coordinator_xarm7 = autoconnect(
     coordinator(
-        cls=XArm7Coordinator,
+        connection=XArmConnectionConfig(dof=7),
         instance_name="ControlCoordinator",
         hardware=[_coordinator_xarm7_hw],
         tasks=[trajectory_task(_coordinator_xarm7_hw), _gripper_task()],
@@ -97,7 +93,7 @@ _coordinator_xarm6_hw = xarm6_hardware("arm", gripper=True)
 
 coordinator_xarm6 = autoconnect(
     coordinator(
-        cls=XArm6Coordinator,
+        connection=XArmConnectionConfig(dof=6),
         instance_name="ControlCoordinator",
         hardware=[_coordinator_xarm6_hw],
         tasks=[trajectory_task(_coordinator_xarm6_hw), _gripper_task()],
@@ -112,7 +108,8 @@ _xarm6_right = xarm6_hardware(
     "right_arm", canonical_joint_names=[f"right_arm/joint{i}" for i in range(1, 7)]
 )
 
-coordinator_dual_xarm = DualXArmCoordinator.blueprint(
+coordinator_dual_xarm = ControlCoordinator.blueprint(
+    connection=DualXArmConnectionConfig(),
     instance_name="ControlCoordinator",
     hardware=[_xarm7_left, _xarm6_right],
     tasks=[

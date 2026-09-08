@@ -16,7 +16,7 @@
 """Teleop blueprints for testing and deployment.
 
 Pass `--simulation` to run inside MuJoCo. Without simulation, supply the arm's
-local `--address` for physical hardware; no address selects a mock arm.
+local `--connection.address` for physical hardware; no address selects a mock arm.
 """
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE

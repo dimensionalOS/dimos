@@ -139,10 +139,10 @@ def test_openarm_hardware_rejects_partial_can_configuration(
 
 def test_openarm_can_ports_are_blueprint_cli_options() -> None:
     parsed = BlueprintConfigParser(openarm_planner_coordinator).parse(
-        ["--left-can-port", "can1", "--right-can-port", "can0"],
+        ["--connection.left-can-port", "can1", "--connection.right-can-port", "can0"],
         environ={},
     )
 
     coordinator = parsed.module_kwargs("ControlCoordinator")
-    assert coordinator["left_can_port"] == "can1"
-    assert coordinator["right_can_port"] == "can0"
+    assert coordinator["connection"]["left_can_port"] == "can1"
+    assert coordinator["connection"]["right_can_port"] == "can0"

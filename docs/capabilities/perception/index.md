@@ -13,7 +13,7 @@ embedding, and 3D object primitives remain in their standard packages.
 Run the hardware blueprint:
 
 ```bash
-dimos run xarm6-worldbelief --address <ROBOT_IP>
+dimos run xarm6-worldbelief --connection.address <ROBOT_IP>
 ```
 
 Then request a scan or recall from another terminal:

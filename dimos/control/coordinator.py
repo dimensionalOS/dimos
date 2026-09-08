@@ -41,6 +41,8 @@ from dimos.control.components import (
     TaskName,
     split_joint_name,
 )
+from dimos.control.connection import HardwareConnectionConfig
+from dimos.control.connection_factory import resolve_connection
 from dimos.control.hardware_interface import (
     ConnectedHardware,
     ConnectedTwistBase,
@@ -99,6 +101,7 @@ class ControlCoordinatorConfig(ModuleConfig):
     joint_state_frame_id: str = "coordinator"
     log_ticks: bool = False
     hardware: list[HardwareComponent] = field(default_factory=lambda: [])
+    connection: HardwareConnectionConfig | None = None
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
 
 
@@ -204,6 +207,10 @@ class ControlCoordinator(Module):
 
     def _setup_from_config(self) -> None:
         """Create hardware and tasks from config (called on start)."""
+        if self.config.connection is not None:
+            self.config.hardware = resolve_connection(
+                self.config.connection, self.config.hardware, self.config.g.simulation
+            )
         hardware_added: list[str] = []
         tasks_added: list[TaskName] = []
 

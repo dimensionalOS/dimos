@@ -16,21 +16,18 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
+from dimos.control.connection import OpenArmConnectionConfig
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
-from dimos.robot.manipulators.common.connection import PairedCanCoordinatorConfig
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
     OPENARM_GRIPPER_JOINTS,
     OPENARM_JOINTS,
     openarm_bimanual_model_config,
-    openarm_hardware,
 )
 from dimos.robot.manipulators.openarm.teleop_ik import OpenArmPinkPoseTargetSolver
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
@@ -58,37 +55,6 @@ def _trajectory_task(*, priority: int = 10) -> TaskConfig:
     )
 
 
-class OpenArmTeleopCoordinatorConfig(PairedCanCoordinatorConfig):
-    """OpenArm teleop deployment configuration requiring a complete bus pair."""
-
-
-class OpenArmTeleopCoordinator(TeleopControlCoordinator):
-    """Install the fixed OpenArm model and resolved hardware adapter."""
-
-    config: OpenArmTeleopCoordinatorConfig
-
-    def _setup_from_config(self) -> None:
-        self.config.tasks = [
-            replace(
-                task,
-                params={
-                    **task.params,
-                    "robot_model": openarm_bimanual_model_config(),
-                },
-            )
-            if task.name == OPENARM_QUEST_TASK_NAME
-            else task
-            for task in self.config.tasks
-        ]
-        self.config.hardware = [
-            openarm_hardware(
-                left_can_port=self.config.left_can_port,
-                right_can_port=self.config.right_can_port,
-            )
-        ]
-        super()._setup_from_config()
-
-
 class _OpenArmManipulationModule(ManipulationModule):
     """Own the fixed OpenArm model outside blueprint CLI configuration."""
 
@@ -111,6 +77,7 @@ _openarm_quest_task = TaskConfig(
     type="teleop_ik",
     joint_names=OPENARM_ARM_JOINTS,
     params={
+        "robot_model": openarm_bimanual_model_config(),
         "bindings": [
             {
                 "hand": "left",
@@ -135,7 +102,8 @@ _openarm_quest_task = TaskConfig(
 # hardware. Supplying both CAN ports selects the physical adapter.
 teleop_quest_openarm = autoconnect(
     ArmTeleopModule.blueprint(),
-    OpenArmTeleopCoordinator.blueprint(
+    TeleopControlCoordinator.blueprint(
+        connection=OpenArmConnectionConfig(),
         instance_name="ControlCoordinator",
         tasks=[
             _openarm_quest_task,

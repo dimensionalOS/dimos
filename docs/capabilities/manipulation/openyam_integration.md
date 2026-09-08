@@ -9,7 +9,7 @@ arm and its gripper; motor topology is independent of the host operating system.
 The generic Damiao layer selects the native transport provided by
 `can-motor-control>=0.0.8`:
 
-| Host | `--address` value |
+| Host | `--connection.address` value |
 |------|-------------------|
 | Linux | SocketCAN interface, such as `can1` |
 | macOS | USB serial number of a `1d50:606f` gs_usb adapter |
@@ -53,13 +53,13 @@ dimos run coordinator-openyam
 Connect physical hardware through a Linux SocketCAN interface:
 
 ```bash
-dimos run coordinator-openyam --address can1
+dimos run coordinator-openyam --connection.address can1
 ```
 
 Select a macOS adapter by USB serial number:
 
 ```bash
-dimos run coordinator-openyam --address <USB-SERIAL>
+dimos run coordinator-openyam --connection.address <USB-SERIAL>
 ```
 
 The dual-arm Quest blueprint is identical on both operating systems; only the
@@ -67,12 +67,12 @@ selector values differ:
 
 ```bash
 # Linux
-dimos run teleop-quest-dual-openyam --left-can-port can0 --right-can-port can1
+dimos run teleop-quest-dual-openyam --connection.left-can-port can0 --connection.right-can-port can1
 
 # macOS
 dimos run teleop-quest-dual-openyam \
-  --left-can-port <LEFT-USB-SERIAL> \
-  --right-can-port <RIGHT-USB-SERIAL>
+  --connection.left-can-port <LEFT-USB-SERIAL> \
+  --connection.right-can-port <RIGHT-USB-SERIAL>
 ```
 
 Linux interfaces must already be configured for classical CAN at 1 Mbit/s.

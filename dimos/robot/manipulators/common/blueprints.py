@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from typing import Any, TypedDict
 
 from dimos.control.components import HardwareComponent
+from dimos.control.connection import HardwareConnectionConfig
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.pose_target_ik import PinkPoseTargetSolver
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
@@ -146,6 +147,7 @@ def teleop_ik_task(
 def coordinator(
     *,
     hardware: Sequence[HardwareComponent] = (),
+    connection: HardwareConnectionConfig | None = None,
     tasks: Sequence[TaskConfig] = (),
     tick_rate: float = 100.0,
     publish_joint_state: bool = True,
@@ -163,6 +165,7 @@ def coordinator(
         joint_state_frame_id=joint_state_frame_id,
         instance_name=instance_name,
         hardware=list(hardware),
+        connection=connection,
         tasks=list(tasks),
     )
 

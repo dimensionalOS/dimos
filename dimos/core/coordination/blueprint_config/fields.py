@@ -87,14 +87,13 @@ def leaf_fields(
 
 def _base_model_types(annotation: Any) -> tuple[type[BaseModel], ...]:
     annotation = _unwrap_annotated(annotation)
-    candidates = (
-        get_args(annotation) if get_origin(annotation) in (Union, UnionType) else (annotation,)
-    )
-    return tuple(
-        candidate
-        for candidate in candidates
-        if inspect.isclass(candidate) and issubclass(candidate, BaseModel)
-    )
+    if get_origin(annotation) in (Union, UnionType):
+        return tuple(
+            model for member in get_args(annotation) for model in _base_model_types(member)
+        )
+    if inspect.isclass(annotation) and issubclass(annotation, BaseModel):
+        return (annotation,)
+    return ()
 
 
 def _unwrap_annotated(annotation: Any) -> Any:

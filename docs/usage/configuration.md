@@ -44,26 +44,39 @@ https://errors.pydantic.dev/2.12/v/extra_forbidden
 
 ## Manipulator connections
 
+Coordinators accept a typed `connection` config, using the same discriminated-union
+pattern as manipulation backends. A blueprint selects a backend such as
+`XArmConnectionConfig(dof=7)`; CLI and environment overrides configure its nested
+fields without changing the coordinator class. Backend schemas are lightweight,
+and robot factories are loaded only when resolving the selected connection at startup.
+The resolver describes hardware; the coordinator owns connection and cleanup.
+
+Normal, twist, and teleop coordinators can use the same connection config. Paired
+and mixed backends own their assembly-wide validation. An omitted `connection`
+leaves explicitly configured hardware unchanged. The `xarm_hardware` and
+`piper_hardware` backend variants preserve existing blueprints without simulation
+support; blueprints select them, so endpoint overrides need no backend option.
+
 Manipulator assemblies own their connection settings. For a single arm, pass
-`--address` after the blueprint name; qualify it as `--controlcoordinator.address`
+`--connection.address` after the blueprint name; qualify it as `--controlcoordinator.connection.address`
 when another module also exposes an address. The value can be an IP/hostname,
 CAN interface or USB selector, or serial device path, depending on the robot.
 
 ```bash
-dimos run coordinator-xarm7 --address 192.168.1.185
-dimos run coordinator-piper --address can0
+dimos run coordinator-xarm7 --connection.address 192.168.1.185
+dimos run coordinator-piper --connection.address can0
 ```
 
 With no address, these assemblies use mock hardware. Dual xArm uses
-`--left-address` and `--right-address`; mixed xArm/Piper uses `--xarm-address` and
-`--piper-address`. OpenArm and dual OpenYAM use `--left-can-port` and
-`--right-can-port`. Supply every endpoint for an assembly or none: partial sets,
+`--connection.left-address` and `--connection.right-address`; mixed xArm/Piper uses `--connection.xarm-address` and
+`--connection.piper-address`. OpenArm and dual OpenYAM use `--connection.left-can-port` and
+`--connection.right-can-port`. Supply every endpoint for an assembly or none: partial sets,
 empty values, and surrounding whitespace are errors. Connection failure stops
 startup and cleans up acquired connections; it never selects mock hardware.
 
 These are ordinary module config fields, so the existing configuration sources
 and precedence apply. For an instance named `ControlCoordinator`, the environment
-variable is `CONTROLCOORDINATOR__ADDRESS`. The existing `--simulation` behavior
+variable is `CONTROLCOORDINATOR__CONNECTION__ADDRESS`. The existing `--simulation` behavior
 and supported simulation stacks are unchanged.
 
 ## Configurable Modules

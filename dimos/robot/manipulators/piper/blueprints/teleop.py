@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+from dimos.control.connection import PiperConnectionConfig
 from dimos.control.coordinator import TaskConfig
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.common.blueprints import (
@@ -27,6 +29,7 @@ from dimos.robot.manipulators.common.blueprints import (
 )
 from dimos.robot.manipulators.common.coordinators import (
     ArmPoseCoordinator,
+    ArmTwistCoordinator,
 )
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.piper.config import (
@@ -34,11 +37,6 @@ from dimos.robot.manipulators.piper.config import (
     make_piper_hardware,
     make_piper_model_config,
     piper_hardware,
-)
-from dimos.robot.manipulators.piper.coordinator import (
-    PiperPoseCoordinator,
-    PiperTeleopCoordinator,
-    PiperTwistCoordinator,
 )
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
@@ -50,7 +48,8 @@ _piper_model = make_piper_model_config()
 
 keyboard_teleop_piper = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    PiperTwistCoordinator.blueprint(
+    ArmTwistCoordinator.blueprint(
+        connection=PiperConnectionConfig(backend="piper_hardware"),
         instance_name="ControlCoordinator",
         tick_rate=100.0,
         publish_joint_state=True,
@@ -98,7 +97,8 @@ _piper_teleop_hw = piper_hardware("arm")
 
 
 coordinator_teleop_piper = autoconnect(
-    PiperTeleopCoordinator.blueprint(
+    TeleopControlCoordinator.blueprint(
+        connection=PiperConnectionConfig(),
         instance_name="ControlCoordinator",
         hardware=[_piper_teleop_hw],
         tasks=[
@@ -135,7 +135,8 @@ _piper_cartesian_hw = make_piper_hardware(
     gripper=True,
 )
 
-coordinator_cartesian_ik_piper = PiperPoseCoordinator.blueprint(
+coordinator_cartesian_ik_piper = ArmPoseCoordinator.blueprint(
+    connection=PiperConnectionConfig(backend="piper_hardware"),
     instance_name="ControlCoordinator",
     hardware=[_piper_cartesian_hw],
     tasks=[
