@@ -398,6 +398,7 @@ export class WorldScene {
             this._teleportArc = new THREE.Line(geom, mat);
             this.scene.add(this._teleportArc);
         }
+        this._teleportArc.visible = true;
         this._teleportMarker.position.copy(hit);
         this._teleportMarker.position.y += 0.005;
         this._teleportMarker.material.opacity = 0.9;
@@ -655,7 +656,10 @@ export class WorldScene {
             const clockwise = new THREE.Quaternion().setFromAxisAngle(
                 new THREE.Vector3(0, 0, 1), -Math.PI / 2
             );
-            quad.quaternion.copy(q).multiply(baseRot).multiply(clockwise);
+            const upright = new THREE.Quaternion().setFromAxisAngle(
+                new THREE.Vector3(0, 0, 1), Math.PI
+            );
+            quad.quaternion.copy(q).multiply(baseRot).multiply(clockwise).multiply(upright);
             quad.visible = this._selectedImageIds.size === 0 || this._selectedImageIds.has(meta.id);
             this._imageQuadGroup.add(quad);
             this._imageQuadsByIndex.set(index, quad);

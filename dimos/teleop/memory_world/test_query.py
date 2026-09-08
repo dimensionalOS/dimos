@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 from pydantic import ValidationError
 import pytest
 
@@ -90,6 +91,27 @@ def test_lidar_cloud_does_not_fall_back_to_unrelated_pickle(
 
     with pytest.raises(RuntimeError, match="produced no cloud"):
         memory_world._build_cloud()
+
+
+def test_top_down_map_uses_the_rendered_cloud(
+    memory_world: MemoryWorldModule, tmp_path: Path
+) -> None:
+    positions = np.asarray([[10.0, 20.0, 0.5], [14.0, 22.0, 0.5]], dtype=np.float32)
+    colors = np.zeros((2, 3), dtype=np.uint8)
+    memory_world._cached_cloud = (
+        {"n": 2},
+        positions.tobytes() + colors.tobytes(),
+    )
+    unrelated_map = tmp_path / "unrelated.pickle"
+    unrelated_map.write_bytes(b"not a point cloud")
+    memory_world.config.global_map_path = str(unrelated_map)
+
+    built = memory_world._build_top_down_map()
+
+    assert built is not None
+    header, _payload = built
+    assert (header["x_min"] + header["x_max"]) / 2 == pytest.approx(12.0)
+    assert (header["y_min"] + header["y_max"]) / 2 == pytest.approx(21.0)
 
 
 def test_analyze_memory_publishes_and_replaces_result(memory_world: MemoryWorldModule) -> None:

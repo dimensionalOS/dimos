@@ -603,8 +603,15 @@ class MemoryWorldModule(QuestTeleopModule):
         """
         import pickle
 
-        path = Path(self.config.global_map_path) if self.config.global_map_path else None
-        if path is not None and path.is_file():
+        if self._cached_cloud is not None:
+            cloud_header, cloud_payload = self._cached_cloud
+            n = int(cloud_header.get("n", 0))
+            xyz = np.frombuffer(cloud_payload, dtype=np.float32, count=n * 3).reshape(n, 3)
+        else:
+            path = Path(self.config.global_map_path) if self.config.global_map_path else None
+            if path is None or not path.is_file():
+                logger.info("no point cloud available; skipping top-down render")
+                return None
             try:
                 obj = pickle.loads(path.read_bytes())
             except Exception:
@@ -615,13 +622,6 @@ class MemoryWorldModule(QuestTeleopModule):
             if not callable(as_np):
                 return None
             xyz, _colors = as_np()
-        elif self._cached_cloud is not None:
-            cloud_header, cloud_payload = self._cached_cloud
-            n = int(cloud_header.get("n", 0))
-            xyz = np.frombuffer(cloud_payload, dtype=np.float32, count=n * 3).reshape(n, 3)
-        else:
-            logger.info("no point cloud available; skipping top-down render")
-            return None
         if xyz is None or xyz.size == 0:
             return None
 
@@ -641,7 +641,8 @@ class MemoryWorldModule(QuestTeleopModule):
         hist, _, _ = np.histogram2d(
             xy[:, 0], xy[:, 1], bins=size, range=[[x_min, x_max], [y_min, y_max]]
         )
-        norm = np.clip(hist / max(np.percentile(hist, 99), 1.0), 0.0, 1.0)
+        density_scale = max(float(np.percentile(hist, 99)), 1.0)
+        norm = np.clip(hist / density_scale, 0.0, 1.0)
         gray = (norm.T * 255).astype(np.uint8)
         gray = np.flipud(gray)
         # Light cyan walls on dark navy background — matches the world theme.
