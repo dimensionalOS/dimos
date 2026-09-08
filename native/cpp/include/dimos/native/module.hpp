@@ -384,9 +384,14 @@ struct StdinConfig {
 };
 
 inline StdinConfig parse_stdin_config(const std::string& line) {
+    const char* kSpace = " \t\n\v\f\r";
+    std::size_t begin = line.find_first_not_of(kSpace);
+    std::size_t end = line.find_last_not_of(kSpace);
+    std::string trimmed =
+        begin == std::string::npos ? std::string() : line.substr(begin, end - begin + 1);
+
     StdinConfig out;
-    nlohmann::json blob =
-        line.empty() ? nlohmann::json::object() : nlohmann::json::parse(line);
+    nlohmann::json blob = nlohmann::json::parse(trimmed);
     if (!blob.is_object()) {
         throw std::runtime_error("stdin config must be a JSON object");
     }
@@ -397,7 +402,12 @@ inline StdinConfig parse_stdin_config(const std::string& line) {
             }
         }
     }
-    out.config = blob.contains("config") ? blob["config"] : nlohmann::json();
+    auto config = blob.find("config");
+    if (config == blob.end()) {
+        throw std::runtime_error(
+            "missing 'config' field in stdin JSON: coordinator must always send a config object");
+    }
+    out.config = *config;
     out.launch = std::move(blob);
     return out;
 }

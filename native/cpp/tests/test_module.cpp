@@ -366,15 +366,18 @@ TEST_CASE("parse_stdin_config extracts topics and config, ignoring other keys") 
     CHECK(p.config.at("x") == 1);
 }
 
-TEST_CASE("parse_stdin_config tolerates a missing config") {
-    StdinConfig p = parse_stdin_config(R"({"topics":{}})");
-    CHECK(p.config.is_null());
+TEST_CASE("parse_stdin_config rejects a missing config") {
+    CHECK_THROWS_AS(parse_stdin_config(R"({"topics":{}})"), std::runtime_error);
 }
 
-TEST_CASE("parse_stdin_config treats an empty line as an empty blob") {
-    StdinConfig p = parse_stdin_config("");
-    CHECK(p.topics.empty());
-    CHECK(p.config.is_null());
+TEST_CASE("parse_stdin_config rejects an empty line") {
+    CHECK_THROWS(parse_stdin_config(""));
+    CHECK_THROWS(parse_stdin_config("   \n"));
+}
+
+TEST_CASE("parse_stdin_config trims the line the coordinator wrote") {
+    StdinConfig p = parse_stdin_config("  {\"config\":{\"x\":1}}\r\n");
+    CHECK(p.config.at("x") == 1);
 }
 
 TEST_CASE("parse_stdin_config rejects a blob that is not an object") {
@@ -387,7 +390,7 @@ TEST_CASE("parse_stdin_config rejects malformed JSON") {
 }
 
 TEST_CASE("parse_stdin_config skips a topic whose value is not a string") {
-    StdinConfig p = parse_stdin_config(R"({"topics":{"good":"/g","bad":7}})");
+    StdinConfig p = parse_stdin_config(R"({"topics":{"good":"/g","bad":7},"config":{}})");
     CHECK(p.topics.at("good") == "/g");
     CHECK(p.topics.count("bad") == 0);
 }
@@ -521,7 +524,7 @@ TEST_CASE("run_fallible wires stdin topics and config, then runs the lifecycle")
 TEST_CASE("run_fallible runs teardown when handle throws, and rethrows") {
     ShutdownFlagGuard guard;
     g_run = RunRecord{};
-    StdinLine line("{}");
+    StdinLine line(R"({"config":{}})");
 
     CHECK_THROWS_AS(run_fallible<ThrowingHandleModule>(std::make_unique<RecordingTransport>(),
                                                        read_stdin_config()),
