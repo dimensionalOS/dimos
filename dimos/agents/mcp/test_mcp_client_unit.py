@@ -279,7 +279,7 @@ def test_set_trace_dir_rebuilds_the_model_with_capture(
 
     with (
         patch("dimos.agents.mcp.mcp_client.create_agent") as create_agent,
-        patch("dimos.agents.mcp.mcp_client._init_model", return_value=resolved) as init,
+        patch("dimos.agents.mcp.mcp_client.init_model", return_value=resolved) as init,
     ):
         configured_mcp_client.set_trace_dir("/eval/case/raw")  # no agent yet: stored only
         assert init.call_count == 0

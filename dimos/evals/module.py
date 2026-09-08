@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 import pkgutil
 
 from dimos.agents.annotation import skill
@@ -25,12 +26,18 @@ from dimos.core.module import Module
 
 
 def list_suites() -> list[str]:
-    """Dotted module paths under dimos.evals.suites exporting ``SUITE``."""
+    """Suite module paths, including nested suites and excluding shared helpers."""
     from dimos.evals import suites
 
-    return [
-        name for _, name, _ in pkgutil.iter_modules(suites.__path__, prefix=f"{suites.__name__}.")
-    ]
+    return sorted(
+        f"{suites.__name__}.{'.'.join(path.relative_to(root).with_suffix('').parts)}"
+        for root in map(Path, suites.__path__)
+        for path in root.rglob("*.py")
+        if not any(
+            part == "lib" or part.startswith(("_", "test_"))
+            for part in path.relative_to(root).parts
+        )
+    )
 
 
 def list_agents() -> list[str]:
@@ -40,7 +47,7 @@ def list_agents() -> list[str]:
     return [
         name
         for _, name, ispkg in pkgutil.iter_modules(agents.__path__, prefix=f"{agents.__name__}.")
-        if not ispkg  # agents/lib is shared plumbing
+        if not ispkg and not name.endswith(".base")
     ]
 
 

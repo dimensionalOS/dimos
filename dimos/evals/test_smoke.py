@@ -21,26 +21,23 @@ are exercised locally via ``dimos evals run dimos.evals.suites.examples``.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
+
+from dimos.evals.agents.question_answer import QuestionAnswer
+from dimos.evals.runner import EvalRunner, summarize
+from dimos.evals.suites.go2_smoke import SUITE
+from dimos.utils.data import get_data
 
 pytestmark = [pytest.mark.self_hosted, pytest.mark.skipif_no_openai]
 
 
 def test_question_answer_smoke(tmp_path: Path) -> None:
-    from dimos.evals.agents.question_answer import QuestionAnswer
-    from dimos.evals.runner import EvalRunner, summarize
-    from dimos.evals.suites.go2_smoke import SUITE
-    from dimos.utils.data import get_data
-
     get_data("go2_short.db")
 
     runner = EvalRunner(out_dir=tmp_path / "evals")
-    results = runner.run(
-        SUITE, replace(QuestionAnswer(), model="gpt-4o-mini"), tags=frozenset({"numeric"})
-    )
+    results = runner.run(SUITE, QuestionAnswer(model="gpt-4o-mini"), tags=frozenset({"numeric"}))
 
     assert not any(r.error for r in results), [r.error for r in results]
     s = summarize(results)

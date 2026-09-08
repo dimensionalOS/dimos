@@ -31,8 +31,8 @@ import time
 from typing import Any
 
 from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
+from dimos.evals.agents.base import Agent
 from dimos.evals.types import (
-    Agent,
     EvalCase,
     EvalResult,
     Outcome,
@@ -154,24 +154,24 @@ class EvalRunner(Configurable):
         case_dir.mkdir(parents=True, exist_ok=True)
         trajectory: Trajectory | None = None
         try:
-            env = case.environment.start(agent.modules)
-            tools = list(dict.fromkeys(agent.available_tools(tuple(_tools_exposed(env.mcp_url)))))
-            started = time.monotonic()
-            trajectory = agent.run(case.inputs, env, case_dir, timeout_s=case.timeout_s)
-            case.environment.settle(max(0.0, case.timeout_s - (time.monotonic() - started)))
-            # The agent phase is over before grading; for a live environment
-            # that closes the recording.
-            case.environment.stop()
+            try:
+                env = case.environment.start(agent.config.modules)
+                tools = list(
+                    dict.fromkeys(agent.available_tools(tuple(_tools_exposed(env.mcp_url))))
+                )
+                started = time.monotonic()
+                trajectory = agent.run(case.inputs, env, case_dir, timeout_s=case.timeout_s)
+                case.environment.settle(max(0.0, case.timeout_s - (time.monotonic() - started)))
+            finally:
+                case.environment.stop()
             _write_trajectory(case_dir, trajectory, tools)
-            missing = [n for n in case.environment.artifacts if not env.artifacts[n].exists()]
+            missing = [name for name, path in env.artifacts.items() if not path.exists()]
             if missing:
                 return self._result(case, t0, trajectory, error=f"missing artifacts: {missing}")
             score = case.grade(Outcome(trajectory=trajectory, artifacts=env.artifacts))
             return self._result(case, t0, trajectory, score=score)
         except Exception as e:
             return self._result(case, t0, trajectory, error=repr(e))
-        finally:
-            case.environment.stop()
 
     def _result(
         self,

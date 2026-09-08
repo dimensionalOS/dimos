@@ -16,100 +16,101 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Sequence
 import math
 from pathlib import Path
-import shutil
 import time
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any
 
-from dimos.evals.environments.lib.launch import blueprint_modules, default_mcp_url
-from dimos.evals.types import Agent, RunningEnvironment
+from dimos.agents.mcp.mcp_adapter import McpAdapter
+from dimos.constants import RECORDINGS_DIR
+from dimos.core.run_registry import list_runs
+from dimos.e2e_tests.dim_sim_client import DimSimClient
+from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+from dimos.evals.environments.base import Environment
+from dimos.evals.environments.lib.launch import default_mcp_url, validate_blueprints
+from dimos.evals.types import RunningEnvironment
+from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
-    from dimos.e2e_tests.dim_sim_client import DimSimClient
-    from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+    from dimos.evals.agents.base import Agent
     from dimos.memory.store.base import Store
 
 
-def _no_setup(sim: DimSimClient) -> None:
-    return None
-
-
-@dataclass(kw_only=True)
-class Sim:
-    """A live simulator. ``start(modules)`` launches ``dimos --simulation
-    <simulator> --dimsim-scene <scene> --record run <blueprint> <modules>``,
-    waits for MCP, runs ``setup``, and hands out the recording ``--record``
-    writes. ``blueprint`` is the world every agent gets — robot, mapping,
-    ``McpServer``, motion skills; its skill containers are the tool set.
-    ``attach`` drives an already-running dimos instead (it must have been
-    started with ``--record``); ``blueprint`` is then a declaration."""
-
-    blueprint: str
+class SimConfig(BaseConfig):
+    blueprint: list[str]
     simulator: str = "dimsim"
     scene: str = "apartment"
-    setup: Callable[[DimSimClient], None] = _no_setup
+    setup: Callable[[DimSimClient], None] | None = None
     attach: bool = False
-    launch_timeout_s: float = 1200.0  # blueprint + MCP readiness (e2e parity)
-    at_rest_m: float = 0.05  # settle: at rest = moved less than this for at_rest_s
+    launch_timeout_s: float = 1200.0
+    at_rest_m: float = 0.05
     at_rest_s: float = 2.0
     settle_poll_s: float = 0.5
 
-    artifacts: ClassVar[tuple[str, ...]] = ("recording",)
-    has_robot: ClassVar[bool] = True
-    _proc: DimosCliCall | None = field(default=None, init=False, repr=False, compare=False)
-    _sim: DimSimClient | None = field(default=None, init=False, repr=False, compare=False)
-    _recording: Store | None = field(default=None, init=False, repr=False, compare=False)
+
+class Sim(Environment):
+    """A live simulator composed from blueprint names shared by every evaluated agent.
+
+    Agent modules extend that composition. ``attach`` uses an existing dimos
+    instead, which must have been started with ``--record``.
+    """
+
+    has_robot = True
+
+    config: SimConfig
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._recording: Store | None = None
 
     def preflight(self, agent: Agent) -> None:
-        from dimos.agents.mcp.mcp_adapter import McpAdapter
-
-        if self.attach:
-            if not McpAdapter(default_mcp_url()).wait_for_ready(timeout=2.0):
-                raise RuntimeError(f"attach needs a running dimos at {default_mcp_url()}")
+        if self.config.attach:
+            if agent.config.modules:
+                raise RuntimeError(
+                    "Sim attaches to an existing dimos; "
+                    f"{type(agent).__name__} also adds modules {agent.config.modules!r}"
+                )
+            mcp_url = default_mcp_url()
+            if not McpAdapter(mcp_url).wait_for_ready(timeout=2.0):
+                raise RuntimeError(f"attach needs a running dimos at {mcp_url}")
             return
-        if self.simulator == "dimsim" and shutil.which("deno") is None:
-            raise RuntimeError("dimsim requires deno on PATH")
-        blueprint_modules(f"{self.blueprint} {agent.modules}")  # raises: unknown name
+        validate_blueprints((*self.config.blueprint, *agent.config.modules))
 
-    def start(self, modules: str) -> RunningEnvironment:
-        from dimos.agents.mcp.mcp_adapter import McpAdapter
+    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+        # SQLite memory codecs are only needed for a running simulator.
         from dimos.memory.store.sqlite import SqliteStore
 
-        deadline = time.monotonic() + self.launch_timeout_s
-        if not self.attach:
-            from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-
+        deadline = time.monotonic() + self.config.launch_timeout_s
+        pid = None
+        if not self.config.attach:
             proc = DimosCliCall()
-            proc.simulator = self.simulator
-            proc.global_args = ["--dimsim-scene", self.scene, "--record"]
-            proc.demo_args = ["run", *self.blueprint.split(), *modules.split()]
+            proc.simulator = self.config.simulator
+            proc.global_args = ["--dimsim-scene", self.config.scene, "--record"]
+            proc.demo_args = ["run", *self.config.blueprint, *modules]
+            self._resources.callback(proc.stop)
             proc.start()
-            self._proc = proc
+            assert proc.process is not None
+            pid = proc.process.pid
         mcp_url = default_mcp_url()
-        if not McpAdapter(mcp_url).wait_for_ready(timeout=self.launch_timeout_s, interval=2.0):
+        if not McpAdapter(mcp_url).wait_for_ready(
+            timeout=self.config.launch_timeout_s, interval=2.0
+        ):
             raise RuntimeError(f"MCP at {mcp_url} not ready — is dimos up?")
-        if self.setup is not _no_setup:
-            from dimos.e2e_tests.dim_sim_client import DimSimClient
-
+        if self.config.setup is not None:
             sim = DimSimClient()
+            self._resources.callback(sim.stop)
             sim.start()
-            self._sim = sim
-            self.setup(sim)
-        path = self._wait_recording(deadline)
+            self.config.setup(sim)
+        path = self._wait_recording(deadline, pid)
         self._recording = SqliteStore(path=str(path), must_exist=True)
+        self._resources.callback(self._recording.stop)
         return RunningEnvironment(mcp_url=mcp_url, streams=(), artifacts={"recording": path})
 
-    def _wait_recording(self, deadline: float) -> Path:
-        """``recordings/<run-id>/memory.db`` of the dimos this environment drives."""
-        from dimos.constants import RECORDINGS_DIR
-        from dimos.core.run_registry import list_runs
-
-        pid = self._proc.process.pid if self._proc is not None and self._proc.process else None
+    def _wait_recording(self, deadline: float, pid: int | None) -> Path:
+        """Find the recording of the launched process, or the attached dimos."""
         while True:
-            runs = [r for r in list_runs(alive_only=True) if pid is None or r.pid == pid]
+            runs = [run for run in list_runs(alive_only=True) if pid is None or run.pid == pid]
             if runs:
                 path = RECORDINGS_DIR / runs[-1].run_id / "memory.db"
                 if path.exists():
@@ -123,31 +124,30 @@ class Sim:
             time.sleep(1.0)
 
     def settle(self, budget_s: float) -> None:
-        """Wait until the robot is at rest — a navigation skill returns once
-        the goal is set, while the robot keeps driving."""
-        if self._recording is None:
+        """Wait until the robot is at rest after skills that start asynchronous motion."""
+        if self._recording is None or "odom" not in self._recording.streams:
             return
+        odom = self._recording.streams.odom
         anchor = None
         anchor_t = 0.0
         deadline = time.monotonic() + budget_s
         while time.monotonic() < deadline:
             try:
-                p = self._recording.streams.odom.last().data.position
-            except (AttributeError, LookupError):
+                observation = odom.last()
+            except LookupError:
                 return
-            if anchor is None or math.hypot(p.x - anchor.x, p.y - anchor.y) > self.at_rest_m:
-                anchor, anchor_t = p, time.monotonic()
-            elif time.monotonic() - anchor_t >= self.at_rest_s:
+            position = observation.data.position
+            if (
+                anchor is None
+                or math.hypot(position.x - anchor.x, position.y - anchor.y) > self.config.at_rest_m
+            ):
+                anchor, anchor_t = position, time.monotonic()
+            elif time.monotonic() - anchor_t >= self.config.at_rest_s:
                 return
-            time.sleep(self.settle_poll_s)
+            time.sleep(self.config.settle_poll_s)
 
     def stop(self) -> None:
-        if self._recording is not None:
-            self._recording.stop()
+        try:
+            super().stop()
+        finally:
             self._recording = None
-        if self._sim is not None:
-            self._sim.stop()
-            self._sim = None
-        if self._proc is not None:
-            self._proc.stop()
-            self._proc = None

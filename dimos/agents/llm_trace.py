@@ -86,6 +86,7 @@ def tracing_http_client(trace_dir: Path, **kwargs: Any) -> httpx.Client:
                 _write(
                     request_path(trace_dir, seq),
                     {
+                        "started_at": time.time(),
                         "method": request.method,
                         "url": str(request.url),
                         "headers": _headers(request.headers),
@@ -98,13 +99,13 @@ def tracing_http_client(trace_dir: Path, **kwargs: Any) -> httpx.Client:
     def on_response(response: httpx.Response) -> None:
         try:
             response.read()  # buffers the body; fine for the non-streaming calls this serves
-            seq, t0 = response.request.extensions.get("llm_trace", (_next_seq(trace_dir) - 1, 0.0))
+            seq, t0 = response.request.extensions["llm_trace"]
             with lock:
                 _write(
                     response_path(trace_dir, seq),
                     {
                         "status": response.status_code,
-                        "latency_s": time.monotonic() - t0 if t0 else None,
+                        "latency_s": time.monotonic() - t0,
                         "headers": _headers(response.headers),
                         "body": _body(response.content),
                     },
@@ -130,17 +131,19 @@ def write_normalized(trace_dir: Path, messages: list[Any], result: Any) -> tuple
     return seq, req, resp
 
 
+def list_llm_trace_pairs(trace_dir: Path) -> list[tuple[int, Path, Path]]:
+    """Completed request/response files, ordered by their numeric sequence."""
+    pairs: list[tuple[int, Path, Path]] = []
+    for request in trace_dir.glob(f"*{REQUEST_SUFFIX}"):
+        seq = request.name.removesuffix(REQUEST_SUFFIX)
+        response = request.with_name(f"{seq}{RESPONSE_SUFFIX}")
+        if seq.isdigit() and response.is_file():
+            pairs.append((int(seq), request, response))
+    return sorted(pairs)
+
+
 def latest_pair(trace_dir: Path, after: int) -> tuple[int, Path, Path] | None:
     """The newest complete request/response pair with seq >= *after*, if any.
     A retried call leaves several pairs; the newest is the one that answered."""
-    if not trace_dir.is_dir():
-        return None
-    seqs = sorted(
-        int(p.name[: -len(REQUEST_SUFFIX)])
-        for p in trace_dir.glob(f"*{REQUEST_SUFFIX}")
-        if p.name[: -len(REQUEST_SUFFIX)].isdigit()
-    )
-    seqs = [s for s in seqs if s >= after and response_path(trace_dir, s).exists()]
-    if not seqs:
-        return None
-    return seqs[-1], request_path(trace_dir, seqs[-1]), response_path(trace_dir, seqs[-1])
+    pairs = [pair for pair in list_llm_trace_pairs(trace_dir) if pair[0] >= after]
+    return pairs[-1] if pairs else None
