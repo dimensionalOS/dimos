@@ -19,21 +19,33 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 from pathlib import Path
 import subprocess
 import sys
+import threading
 from typing import Any
 
 from dimos.agents.llm_trace import tracing_http_client
 
 
-def _serve(raw_dir: Path, upstream: str) -> None:
+def _serve(raw_dir: Path, upstream: str, max_requests: int | None, limit_reached: Path) -> None:
     """Own forwarding threads and sockets in a process that can be stopped."""
+    requests = 0
+    budget_lock = threading.Lock()
     with tracing_http_client(raw_dir, timeout=600.0) as client:
 
         class Forward(BaseHTTPRequestHandler):
             def do_POST(self) -> None:
+                nonlocal requests
                 body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                with budget_lock:
+                    if max_requests is not None and requests >= max_requests:
+                        limit_reached.touch()
+                        self.send_error(400, "Pi model request budget exhausted")
+                        return
+                    # Reserve before forwarding, including failures and retries.
+                    requests += 1
                 # hop-by-hop headers belong to this connection, not the upstream one
                 skip = {
                     "host",
@@ -63,14 +75,26 @@ def _serve(raw_dir: Path, upstream: str) -> None:
 
 
 @contextmanager
-def model_trace_proxy(raw_dir: Path, upstream: str) -> Iterator[str]:
+def model_trace_proxy(
+    raw_dir: Path, upstream: str, *, max_requests: int | None, limit_reached: Path
+) -> Iterator[str]:
     """Yield a local provider URL; record each complete HTTP exchange in raw_dir.
 
+    Forward at most max_requests attempts (None is unlimited). An excess request
+    is rejected locally and creates limit_reached so the adapter can report why.
     Exiting stops the server process, including any requests blocked upstream.
     A subprocess also works inside the eval module's daemon worker.
     """
     with subprocess.Popen(
-        [sys.executable, "-m", __name__, str(raw_dir), upstream.rstrip("/")],
+        [
+            sys.executable,
+            "-m",
+            __name__,
+            str(raw_dir),
+            upstream.rstrip("/"),
+            json.dumps(max_requests),
+            str(limit_reached),
+        ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         text=True,
@@ -96,4 +120,4 @@ def model_trace_proxy(raw_dir: Path, upstream: str) -> Iterator[str]:
 
 
 if __name__ == "__main__":
-    _serve(Path(sys.argv[1]), sys.argv[2])
+    _serve(Path(sys.argv[1]), sys.argv[2], json.loads(sys.argv[3]), Path(sys.argv[4]))
