@@ -37,18 +37,18 @@ _EVIDENCE_CONTRACT = (
     "on each one. The returned dictionaries are the sole evidence. Do not inspect raw pose "
     "attributes or database payloads, skip observations, inspect evaluation files or labels, "
     "construct a Path, or use repository pose, mapping, navigation, or evaluation utilities. "
-    "You may use generic Python, NumPy, and SciPy calculations on encoded values. "
+    "Pass the complete list of returned dictionaries to "
+    "dimos.evals.suites.sf_office_pose_preprocessing.preprocess_encoded_poses and use its "
+    "time_s, position_m, yaw_rad, velocity_xy_m_s, and speed_m_s arrays for analysis. This "
+    "frozen helper is the only repository analysis utility you may use. You may use generic "
+    "Python, NumPy, and SciPy calculations on its output. "
 )
 
 _PREPROCESSING = (
-    "Unless the question says otherwise, analyze world-frame XY motion. Sort by timestamp, "
-    "retain the last observation at a duplicate timestamp, and express times as seconds from "
-    "the first pose. Normalize quaternions and unwrap quaternion-derived yaw. Linearly resample "
-    "position and yaw at 10 Hz through floor(duration*10)/10. Apply a centered 11-sample Hampel "
-    "filter with truncated edge windows, replacing values beyond 3*1.4826*MAD with the window "
-    "median; use minimum thresholds 0.005 m for positions and 1 degree for yaw. Then apply an "
-    "11-sample order-2 Savitzky-Golay filter with mode='interp'. Compute velocity by centered "
-    "finite differences. "
+    "Unless the question says otherwise, analyze world-frame XY motion and express times as "
+    "seconds from the first pose. The frozen helper already performs timestamp sorting, duplicate "
+    "retention, quaternion normalization, yaw unwrapping, 10 Hz interpolation, Hampel and "
+    "Savitzky-Golay filtering, and centered velocity calculation; do not repeat preprocessing. "
 )
 
 
@@ -152,11 +152,16 @@ SUITE: Suite = [
     ),
     _case(
         "sf_office_pose_repeated_patrol_cycle",
-        "Determine whether there are two consecutive traversals around one anchor using whole-second "
-        "boundaries. Each traversal must last at least 30 s and cover at least 10 m; all three "
-        "boundaries must be within 0.50 m. Durations and lengths must agree within 20%, and the two "
-        "world-frame trajectories resampled to 100 normalized-phase points must have RMS separation "
-        "at most 0.75 m. Return null metrics when no cycle exists. Return only JSON: "
+        "Determine whether timestamps t0 < t1 < t2 at whole-second boundaries define two "
+        "consecutive, non-overlapping traversals [t0, t1] and [t1, t2] around one anchor. The "
+        "traversals share only boundary t1; arbitrary overlapping intervals do not qualify. Each "
+        "traversal must last at least 30 s and cover at least 10 m. Positions at t0, t1, and t2 "
+        "must be pairwise within 0.50 m. Traversal durations and lengths must agree within 20%, "
+        "using the larger value as denominator. Resample each world-frame trajectory independently "
+        "to 100 normalized-phase points; their pointwise XY Euclidean distances must have root-mean-"
+        "square at most 0.75 m. Return null metrics when no cycle exists. For a cycle, start_time_s "
+        "is t0, duration_s is the mean of the two traversal durations, and length_m is the mean of "
+        "their processed polyline lengths. Return only JSON: "
         '{"repeated_cycle": boolean, "start_time_s": number | null, '
         '"duration_s": number | null, "length_m": number | null}.',
         "patterns",

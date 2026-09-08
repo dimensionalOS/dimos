@@ -33,5 +33,14 @@ def test_pose_research_cases_enforce_encoded_odom_evidence() -> None:
         assert "odom PoseStamped" in case.inputs
         assert "obs.data.agent_encode()" in case.inputs
         assert "sole evidence" in case.inputs
+        assert "preprocess_encoded_poses" in case.inputs
         assert case.timeout_s == 180.0
         assert "autoresearch" in case.tags
+
+
+def test_repeated_cycle_case_defines_non_overlapping_boundaries() -> None:
+    case = next(case for case in SUITE if case.id == "sf_office_pose_repeated_patrol_cycle")
+
+    assert "t0 < t1 < t2" in case.inputs
+    assert "[t0, t1] and [t1, t2]" in case.inputs
+    assert "arbitrary overlapping intervals do not qualify" in case.inputs

@@ -21,8 +21,10 @@ from dimos.evals.suites.sf_office_pose_autoresearch import (
     EXPECTED_BENCHMARK_DIGEST,
     MAX_STEPS,
     MODEL,
+    N_REPLICATES,
     THINKING,
     _expected_pose_timestamps,
+    aggregate_objectives,
     benchmark_agent,
     benchmark_digest,
     objective,
@@ -40,6 +42,7 @@ def test_benchmark_profile_is_fixed() -> None:
     assert (agent.model, agent.thinking, agent.max_steps) == (MODEL, THINKING, MAX_STEPS)
     assert agent.max_steps == 40
     assert tuple(agent.tools) == ("read", "bash")
+    assert N_REPLICATES == 3
 
 
 def test_frozen_benchmark_digest_matches_files() -> None:
@@ -176,20 +179,26 @@ def test_publish_result_writes_evo_contract(
     monkeypatch.setenv("EVO_RESULT_PATH", str(tmp_path / "result.json"))
     monkeypatch.setenv("EVO_TRACES_DIR", str(tmp_path / "traces"))
     monkeypatch.setenv("EVO_EXPERIMENT_ID", "exp_test")
-    result = EvalResult(
-        case_id=SUITE[0].id,
-        score=0.85,
-        final_answer='{"remaining_distance_m": 0.22}',
-        ended_by="answer",
-    )
+    results = [
+        EvalResult(case_id=case.id, score=0.85, final_answer="{}", ended_by="answer")
+        for case in SUITE
+    ]
+    result = results[0]
+    replicate = {
+        "score": 0.85,
+        "tasks": {case.id: 0.85 for case in SUITE},
+        "benchmark_digest": EXPECTED_BENCHMARK_DIGEST,
+        "activity_counts": {case.id: 8568 for case in SUITE},
+    }
     payload = {
         "score": 0.85,
-        "tasks": {result.case_id: 0.85},
+        "tasks": {case.id: 0.85 for case in SUITE},
         "benchmark_digest": EXPECTED_BENCHMARK_DIGEST,
-        "activity_counts": {result.case_id: 8568},
+        "activity_counts": {case.id: [8568, 8568, 8568] for case in SUITE},
+        "replicates": [replicate, replicate, replicate],
     }
 
-    publish_result([result], payload)
+    publish_result([results, results, results], payload)
 
     assert json.loads((tmp_path / "result.json").read_text()) == payload
     trace = json.loads((tmp_path / "traces" / f"task_{result.case_id}.json").read_text())
@@ -198,6 +207,34 @@ def test_publish_result_writes_evo_contract(
         result.case_id,
         0.85,
     )
+    assert trace["replicate_scores"] == [0.85, 0.85, 0.85]
+
+
+def test_aggregate_objectives_reports_mean_and_variance() -> None:
+    payloads = []
+    for replicate, score in enumerate((0.6, 0.8, 1.0), start=1):
+        payloads.append(
+            {
+                "score": score,
+                "tasks": {case.id: score for case in SUITE},
+                "category_scores": {},
+                "completion_rate": 1.0,
+                "evidence_completion_rate": 1.0,
+                "error_count": 0,
+                "activity_counts": {case.id: 8568 for case in SUITE},
+                "benchmark_digest": EXPECTED_BENCHMARK_DIGEST,
+                "run_dir": f"run-{replicate}",
+                "replicate": replicate,
+            }
+        )
+
+    result = aggregate_objectives(payloads)
+
+    assert result["score"] == pytest.approx(0.8)
+    assert result["score_stddev"] == pytest.approx(0.1632993162)
+    assert result["replicate_scores"] == [0.6, 0.8, 1.0]
+    assert result["evidence_completion_rate"] == 1.0
+    assert all(score == pytest.approx(0.8) for score in result["tasks"].values())
 
 
 def test_publish_result_refuses_an_existing_result_path(

@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import statistics
 from typing import Any
 
 from dimos.evals.agents.pi import Pi
@@ -37,6 +38,7 @@ from dimos.memory.store.sqlite import SqliteStore
 MODEL = "gpt-5.6-luna"
 THINKING = "medium"
 MAX_STEPS = 40
+N_REPLICATES = 3
 INSTRUCTIONS = (
     "This is a timed trajectory-analysis benchmark. Use as many small or large tool calls as "
     "the task genuinely needs, but manage the wall-clock deadline. Stop investigating early "
@@ -49,10 +51,11 @@ FROZEN_FILES = (
     _HERE / "sf_office_pose_autoresearch.py",
     _HERE / "sf_office_pose_research.py",
     _HERE / "sf_office_pose_grading.py",
+    _HERE / "sf_office_pose_preprocessing.py",
     _HERE / "sf_office_pose_answers.json",
     _HERE.parents[1] / "msgs/geometry_msgs/PoseStamped.py",
 )
-EXPECTED_BENCHMARK_DIGEST = "c1b972c174ae23ce3a4979e273c98653ac79078c7f4b5f800bd3bbc77e2ce747"
+EXPECTED_BENCHMARK_DIGEST = "d3a53a2f6db69eac20ca0a4b21fde90058300a1bf4138539e15701573b2471e6"
 
 CATEGORIES = {
     "kinematics": frozenset(
@@ -236,27 +239,83 @@ def objective(results: Sequence[EvalResult], run_dir: Path, digest: str) -> dict
     }
 
 
-def publish_result(results: Sequence[EvalResult], payload: dict[str, Any]) -> None:
+def aggregate_objectives(payloads: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate independent full-suite replicates into one comparable Evo score."""
+    if len(payloads) != N_REPLICATES:
+        raise RuntimeError(f"expected {N_REPLICATES} benchmark replicates, got {len(payloads)}")
+    expected_ids = {case.id for case in SUITE}
+    for payload in payloads:
+        if set(payload["tasks"]) != expected_ids:
+            raise RuntimeError("replicate task IDs do not match the frozen suite")
+        if payload["benchmark_digest"] != payloads[0]["benchmark_digest"]:
+            raise RuntimeError("replicate benchmark digests do not match")
+
+    replicate_scores = [float(payload["score"]) for payload in payloads]
+    task_scores = {
+        case_id: statistics.fmean(float(payload["tasks"][case_id]) for payload in payloads)
+        for case_id in expected_ids
+    }
+    category_scores = {
+        name: statistics.fmean(task_scores[case_id] for case_id in case_ids)
+        for name, case_ids in CATEGORIES.items()
+    }
+    return {
+        "schema_version": 2,
+        "score": statistics.fmean(replicate_scores),
+        "score_stddev": statistics.pstdev(replicate_scores),
+        "replicate_scores": replicate_scores,
+        "tasks": task_scores,
+        "category_scores": category_scores,
+        "completion_rate": statistics.fmean(
+            float(payload["completion_rate"]) for payload in payloads
+        ),
+        "evidence_completion_rate": statistics.fmean(
+            float(payload["evidence_completion_rate"]) for payload in payloads
+        ),
+        "error_count": sum(int(payload["error_count"]) for payload in payloads),
+        "activity_counts": {
+            case_id: [int(payload["activity_counts"][case_id]) for payload in payloads]
+            for case_id in expected_ids
+        },
+        "benchmark_digest": payloads[0]["benchmark_digest"],
+        "replicates": list(payloads),
+    }
+
+
+def publish_result(
+    replicate_results: Sequence[Sequence[EvalResult]], payload: dict[str, Any]
+) -> None:
     """Publish Evo's result file and one diagnostic trace per case."""
     if traces_dir_value := os.environ.get("EVO_TRACES_DIR"):
         traces_dir = Path(traces_dir_value)
         traces_dir.mkdir(parents=True, exist_ok=True)
         experiment_id = os.environ.get("EVO_EXPERIMENT_ID", "unknown")
-        for result in results:
-            score = payload["tasks"][result.case_id]
+        results_by_replicate = [
+            {result.case_id: result for result in results} for results in replicate_results
+        ]
+        for case in SUITE:
+            results = [by_id[case.id] for by_id in results_by_replicate]
+            score = payload["tasks"][case.id]
+            failures = [
+                f"replicate {index}: {result.error or result.ended_by}"
+                for index, result in enumerate(results, start=1)
+                if result.error or result.ended_by != "answer"
+            ]
             trace = {
                 "experiment_id": experiment_id,
-                "task_id": result.case_id,
+                "task_id": case.id,
                 "score": score,
-                "status": "passed" if score >= 1.0 and not result.error else "failed",
-                "summary": result.final_answer[:1000],
-                "failure_reason": result.error
-                or (result.ended_by if result.ended_by != "answer" else ""),
-                "steps": result.steps,
+                "status": "passed" if score >= 1.0 and not failures else "failed",
+                "summary": json.dumps([result.final_answer for result in results])[:3000],
+                "failure_reason": "; ".join(failures),
+                "replicate_scores": [
+                    replicate["tasks"][case.id] for replicate in payload["replicates"]
+                ],
+                "replicate_steps": [result.steps for result in results],
                 "benchmark_digest": payload["benchmark_digest"],
-                "pose_encode_count": payload["activity_counts"][result.case_id],
+                "pose_encode_counts": payload["activity_counts"][case.id],
             }
-            (traces_dir / f"task_{result.case_id}.json").write_text(
+            (traces_dir / f"task_{case.id}.json").write_text(
                 json.dumps(trace, indent=2, allow_nan=False)
             )
 
@@ -275,7 +334,6 @@ def publish_result(results: Sequence[EvalResult], payload: dict[str, Any]) -> No
 def main() -> None:
     digest = verify_benchmark()
     verify_recording()
-    runner = EvalRunner()
     profile = {
         "model": MODEL,
         "thinking": THINKING,
@@ -283,15 +341,27 @@ def main() -> None:
         "tools": ["read", "bash"],
         "instructions": INSTRUCTIONS,
     }
-    results = runner.run(
-        SUITE,
-        benchmark_agent(),
-        provenance={
-            "source": {"kind": "frozen_pose_autoresearch", "digest": digest},
-            "agent": {"module": "dimos.evals.agents.pi", "kwargs": profile},
-        },
-    )
-    publish_result(results, objective(results, runner.run_dir, digest))
+    replicate_results: list[list[EvalResult]] = []
+    replicate_payloads: list[dict[str, Any]] = []
+    for replicate in range(1, N_REPLICATES + 1):
+        runner = EvalRunner()
+        results = runner.run(
+            SUITE,
+            benchmark_agent(),
+            provenance={
+                "source": {
+                    "kind": "frozen_pose_autoresearch",
+                    "digest": digest,
+                    "replicate": replicate,
+                },
+                "agent": {"module": "dimos.evals.agents.pi", "kwargs": profile},
+            },
+        )
+        payload = objective(results, runner.run_dir, digest)
+        payload["replicate"] = replicate
+        replicate_results.append(results)
+        replicate_payloads.append(payload)
+    publish_result(replicate_results, aggregate_objectives(replicate_payloads))
 
 
 if __name__ == "__main__":
