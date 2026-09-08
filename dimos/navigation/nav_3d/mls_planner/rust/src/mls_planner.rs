@@ -392,19 +392,6 @@ impl Planner {
         self.finish_partition(part, center, config)
     }
 
-    /// Load a whole-map cloud through the region pipeline, tile by tile.
-    pub fn load_full_map(
-        &mut self,
-        points: &[(f32, f32, f32)],
-        center: (f32, f32),
-        tile_size_m: f32,
-        config: &Config,
-    ) {
-        for tile in self.partition_full_map(points, center, tile_size_m, config) {
-            self.update_region(&tile.points, &tile.bounds, config);
-        }
-    }
-
     /// Patch changed cells, then repair nodes and edges around the change.
     /// A no-op when no surface cell changed.
     fn rebuild_region_graph(
@@ -860,6 +847,17 @@ impl ChangeBounds {
 mod region_tests {
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
+
+    fn load_full_map(
+        p: &mut Planner,
+        points: &[(f32, f32, f32)],
+        center: (f32, f32),
+        cfg: &Config,
+    ) {
+        for tile in p.partition_full_map(points, center, 2.0, cfg) {
+            p.update_region(&tile.points, &tile.bounds, cfg);
+        }
+    }
 
     /// Slack for comparing regional and full-rebuild path lengths. Node
     /// placement differs between the two, so paths are equivalent, not equal.
@@ -1633,7 +1631,7 @@ mod region_tests {
         full.update_global_map(&all, &cfg);
 
         let mut loaded = Planner::new(cfg.worker_threads);
-        loaded.load_full_map(&all, (0.5, 0.5), 2.0, &cfg);
+        load_full_map(&mut loaded, &all, (0.5, 0.5), &cfg);
 
         assert_eq!(voxel_set(&loaded), voxel_set(&full), "voxel mismatch");
         assert_eq!(surface_set(&loaded), surface_set(&full), "surface mismatch");
@@ -1658,7 +1656,7 @@ mod region_tests {
         let mut p = Planner::new(cfg.worker_threads);
         p.update_global_map(&junk, &cfg);
 
-        p.load_full_map(&all, (0.5, 0.5), 2.0, &cfg);
+        load_full_map(&mut p, &all, (0.5, 0.5), &cfg);
 
         let mut clean = Planner::new(cfg.worker_threads);
         clean.update_global_map(&all, &cfg);
@@ -1682,7 +1680,7 @@ mod region_tests {
         let before_nodes = node_coords(&p);
         let before_edges = node_edge_pairs(&p);
 
-        p.load_full_map(&all, (4.0, 4.0), 2.0, &cfg);
+        load_full_map(&mut p, &all, (4.0, 4.0), &cfg);
 
         assert_eq!(cell_edges(&p), before_cells, "cells changed on reload");
         assert_eq!(node_coords(&p), before_nodes, "nodes moved on reload");
@@ -1701,7 +1699,7 @@ mod region_tests {
 
         let mut changed = all.clone();
         changed.push((1.05, 1.05, 0.45));
-        p.load_full_map(&changed, (1.0, 1.0), 2.0, &cfg);
+        load_full_map(&mut p, &changed, (1.0, 1.0), &cfg);
 
         let after = node_coords(&p);
         let far = |c: &VoxelKey| {
@@ -1732,7 +1730,7 @@ mod region_tests {
             }
         }
         let mut p = Planner::new(cfg.worker_threads);
-        p.load_full_map(&all, (0.5, 0.5), 2.0, &cfg);
+        load_full_map(&mut p, &all, (0.5, 0.5), &cfg);
         assert!(
             p.voxel_map.contains(&(15, 15, 30)),
             "high platform truncated"

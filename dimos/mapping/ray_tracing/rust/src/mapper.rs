@@ -93,13 +93,6 @@ impl Mapper {
             .len()
     }
 
-    /// Register a cloud into the world by `pose` and bulk-seed it. Returns
-    /// how many voxels were created.
-    pub fn seed_frame(&mut self, mut points: Vec<Point>, pose: Pose) -> usize {
-        register(&mut points, pose);
-        self.seed_points(&points)
-    }
-
     /// Make room for `additional` voxels ahead of a tiled seed load.
     pub fn reserve_voxels(&mut self, additional: usize) {
         self.map.reserve(additional);
@@ -457,19 +450,6 @@ mod tests {
         assert_eq!(c.radius, 0.0, "a seed must not feed the region batch");
 
         assert_eq!(mapper.seed_points(&[(5.5, 0.5, 0.5)]), 0);
-    }
-
-    #[test]
-    fn seed_frame_registers_by_pose() {
-        let mut mapper = Mapper::new(config());
-        // Yaw 90 deg: sensor +x becomes world +y. Sensor at (10, 0, 0).
-        let half = 2.0_f32.sqrt() / 2.0;
-        let pose = Pose {
-            position: (10.0, 0.0, 0.0),
-            orientation: (0.0, 0.0, half, half),
-        };
-        assert_eq!(mapper.seed_frame(vec![(3.5, 0.0, 0.5)], pose), 1);
-        assert_eq!(mapper.global_points(), vec![10.5, 3.5, 0.5]);
     }
 
     /// full_points applies the support gate. global_points stays unfiltered.

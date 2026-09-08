@@ -13,10 +13,11 @@
 // limitations under the License.
 
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use crate::mls_planner::{partition_cloud, CloudPartition, Config, MapTile, Planner, RegionBounds};
 use crate::voxel::{surface_point_xyz, VoxelKey};
+use dimos_module::time::now;
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf};
 use lcm_msgs::geometry_msgs::{Point, PointStamped, Pose, PoseStamped, Quaternion};
 use lcm_msgs::nav_msgs::Path;
@@ -546,16 +547,6 @@ async fn publish_path(out: &Output<Path>, msg: &Path) {
     }
 }
 
-fn now() -> Time {
-    let dur = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    Time {
-        sec: dur.as_secs().min(i32::MAX as u64) as i32,
-        nsec: dur.subsec_nanos() as i32,
-    }
-}
-
 fn header(frame_id: &str, stamp: Time) -> Header {
     Header {
         seq: 0,
@@ -844,24 +835,6 @@ mod tests {
 
     /// The full-map slot is separate from the live-update slot, so a region
     /// frame arriving before the worker wakes cannot clobber a pending load.
-    #[test]
-    fn full_map_slot_survives_a_region_hand_off() {
-        let pending: Shared<MapUpdate> = Arc::new(Mutex::new(None));
-        let pending_full_map: Shared<CloudPartition> = Arc::new(Mutex::new(None));
-
-        *pending_full_map.lock().unwrap() = Some(partition_cloud(&[(0.5, 0.5, 0.5)], 4.0, 0.1));
-        *pending.lock().unwrap() = Some(MapUpdate::Region {
-            cloud: PointCloud2::default(),
-            bounds: PoseStamped::default(),
-        });
-
-        assert!(pending.lock().unwrap().take().is_some());
-        assert!(
-            pending_full_map.lock().unwrap().take().is_some(),
-            "pending load must survive the region hand-off"
-        );
-    }
-
     #[test]
     fn goal_position_passes_finite_and_cancels_on_non_finite() {
         assert_eq!(goal_position(&point(1.0, 2.0, 3.0)), Some((1.0, 2.0, 3.0)));

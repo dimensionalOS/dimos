@@ -548,7 +548,7 @@ def main(
     loaded_map_stream: str = typer.Option(
         "loaded_map",
         "--loaded-map-stream",
-        help="Stream holding a whole-map cloud to seed at its timestamp, when present",
+        help="Stream holding a map cloud to seed at its timestamp, placed by tf, when present",
     ),
     tile_m: float = typer.Option(
         4.0, "--tile-m", help="Tile grid spacing (m) for loading the seeded map into the planner"
@@ -621,11 +621,9 @@ def main(
         ray_pipeline = pose_tagged.transform(ray)
         tf_sync = _TfSync(tf)
 
-        loaded_map: Observation[PointCloud2] | None
-        try:
+        loaded_map: Observation[PointCloud2] | None = None
+        if loaded_map_stream in store.list_streams():
             loaded_map = store.stream(loaded_map_stream, PointCloud2).order_by("ts").first()
-        except LookupError:
-            loaded_map = None
         seeded_run = loaded_map is not None
         tiles_left = 0
         if loaded_map is not None:
@@ -707,7 +705,15 @@ def main(
                     crop,
                 )
                 if loaded_map is not None and ray_obs.ts >= loaded_map.ts:
-                    seed_pts = loaded_map.data.points_f32()
+                    placement = tf_lookup.get(
+                        world_frame, loaded_map.data.frame_id, time_point=ray_obs.ts
+                    )
+                    if placement is None:
+                        raise RuntimeError(
+                            f"no {world_frame}->{loaded_map.data.frame_id} transform at "
+                            f"ts={ray_obs.ts:.3f} to place the loaded map"
+                        )
+                    seed_pts = loaded_map.data.transform(placement).points_f32()
                     created = ray.mapper.seed_points(seed_pts)
                     full = ray.mapper.full_map()
                     for _, _, planner in planners:

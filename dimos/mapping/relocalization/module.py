@@ -115,8 +115,6 @@ class RelocalizationModule(Module):
         logger.info(f"Relocalization module started: map_file={self.config.map_file!r}")
 
     def _load_premap(self, map_file: str) -> None:
-        # A path, a stem in the working directory or project root, or an LFS
-        # name, which is pulled and decompressed rather than reported missing.
         path = resolve_named_path(map_file, MAP_SUFFIX)
         premap = PointCloud2.lcm_decode(path.read_bytes())
 

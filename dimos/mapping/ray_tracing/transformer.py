@@ -33,8 +33,7 @@ class RayTraceMap(Transformer[PointCloud2, PointCloud2]):
     """Accumulate lidar into a voxel map with raycast clearing.
 
     Each cloud is sensor-frame and registered into the world by its odometry
-    pose. The instance owns its mapper, so callers can act on it between
-    pulls, and a reused instance continues the same map.
+    pose. The instance owns its mapper and a reused instance continues the same map.
     """
 
     def __init__(

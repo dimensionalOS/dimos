@@ -152,7 +152,7 @@ def main(
     loaded_map_stream: str = typer.Option(
         "loaded_map",
         "--loaded-map-stream",
-        help="Stream holding a world-frame map cloud to seed at its timestamp, when present",
+        help="Stream holding a map cloud to seed at its timestamp, placed by tf, when present",
     ),
     viewer_memory: str = typer.Option(
         "25%",
@@ -204,12 +204,9 @@ def main(
         if tf is None:
             raise typer.BadParameter(f"{db_path} has no tf stream to register clouds from")
 
-        loaded_map: Observation[PointCloud2] | None
-        try:
+        loaded_map: Observation[PointCloud2] | None = None
+        if loaded_map_stream in store.list_streams():
             loaded_map = store.stream(loaded_map_stream, PointCloud2).order_by("ts").first()
-        except LookupError:
-            loaded_map = None
-        if loaded_map is not None:
             print(f"loaded_map at ts={loaded_map.ts:.3f}; seeding when reached")
 
         trajectory: list[tuple[float, float, float]] = []
@@ -234,7 +231,13 @@ def main(
             count += 1
 
             if loaded_map is not None and obs.ts >= loaded_map.ts:
-                seed_pts = loaded_map.data.points_f32()
+                placement = tf.get(world_frame, loaded_map.data.frame_id, time_point=obs.ts)
+                if placement is None:
+                    raise RuntimeError(
+                        f"no {world_frame}->{loaded_map.data.frame_id} transform at "
+                        f"ts={obs.ts:.3f} to place the loaded map"
+                    )
+                seed_pts = loaded_map.data.transform(placement).points_f32()
                 created = {name: m.seed_points(seed_pts) for name, m in mappers.items()}
                 rr.set_time(TIMELINE, timestamp=obs.ts)
                 rr.log(

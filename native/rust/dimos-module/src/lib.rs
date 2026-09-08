@@ -22,6 +22,7 @@ pub mod lcm;
 pub mod log;
 pub mod module;
 pub mod tf;
+pub mod time;
 pub mod transport;
 pub mod workers;
 pub mod zenoh;

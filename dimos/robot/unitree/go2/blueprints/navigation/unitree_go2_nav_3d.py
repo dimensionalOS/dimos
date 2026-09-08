@@ -209,9 +209,7 @@ if _RECORD_PCAP:
         Mid360PcapRecorder.blueprint(pcap_path=_RECORDING_DIR / "mid360.pcap"),
     )
 
-# The same stack placed in a premap named by --map-file. An accepted fix seeds
-# the ray tracer with the premap and the planner gets the seeded extent as
-# full_map. The republish covers a ray tracer that missed the one-shot publish.
+# The republish covers a ray tracer that missed the one-shot loaded_map publish.
 unitree_go2_nav_3d_relocalization = autoconnect(
     unitree_go2_nav_3d,
     LocalMapRelocalization.blueprint(world_frame="odom", republish_loaded_map=30.0),

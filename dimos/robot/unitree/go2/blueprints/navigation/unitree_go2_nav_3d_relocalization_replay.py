@@ -14,16 +14,7 @@
 
 """The relocalized nav_3d stack driven by a recording instead of a robot.
 
-    dimos run unitree-go2-nav-3d-relocalization-replay --map-file=<premap stem>
-
-A mid360 walk's lidar and tf replace the robot connection and PointLio, so the
-ray tracer, relocalizer and planner run with the hardware blueprint's config.
-The planner's surface, nodes and edges are drawn. Click a goal in the web
-dashboard to see a path into the seeded map.
-
-The seeded surface is hundreds of thousands of points per message, and the
-viewer bridge renders each one in Python, so the viz rate stays low. Pushing
-it up starves the bridge and the viewer stops updating.
+dimos run unitree-go2-nav-3d-relocalization-replay --map-file=<premap stem>
 """
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -41,6 +32,7 @@ from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
 from dimos.visualization.vis_module import vis_module
 
+# The viewer bridge renders the seeded surface in Python, so a higher rate starves it.
 planner_viz_hz = 0.2
 
 # The recording carries the mount tf chain, so the static publisher would

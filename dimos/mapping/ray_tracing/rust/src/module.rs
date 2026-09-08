@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use crate::mapper::{register, Mapper, Pose};
 use crate::voxel_ray_tracer::{partition_seed, Config, SeedPartition, SeedTile};
+use dimos_module::time::now;
 use dimos_module::{error_throttled, warn_throttled, Input, Module, Output, Tf, Transform};
 use lcm_msgs::geometry_msgs::{Point, Pose as PoseMsg, PoseStamped, Quaternion};
 use lcm_msgs::sensor_msgs::{PointCloud2, PointField};
@@ -91,7 +92,7 @@ impl RayTracingVoxelMap {
         let (tx, rx) = mpsc::channel(JOB_QUEUE_CAPACITY);
         let worker = Worker {
             jobs: rx,
-            job_sender: tx.clone(),
+            job_sender: tx.downgrade(),
             tf: self.tf.clone(),
             config: self.config.clone(),
             global_map: self.global_map.clone(),
@@ -153,16 +154,22 @@ impl SeedLoad {
     }
 }
 
+/// Where the one loaded map is in its journey into the voxel map. Only Idle
+/// accepts a cloud.
+enum SeedState {
+    Idle,
+    Placing,
+    Loading(SeedLoad),
+    Done,
+}
+
 /// Everything the worker mutates across jobs.
 struct State {
     mapper: Mapper,
     // Stamp of the last applied clear mask, so a late one cannot erase voxels
     // a newer mask already accounted for.
     last_clear_mask_stamp: f64,
-    seeded: bool,
-    // A loaded map is being placed or loaded. Repeats are ignored meanwhile.
-    seed_pending: bool,
-    load: Option<SeedLoad>,
+    seed: SeedState,
 }
 
 /// Owns the mapper and does every map mutation and publish off the handle
@@ -171,7 +178,8 @@ struct State {
 struct Worker {
     jobs: mpsc::Receiver<Job>,
     // Handed to the seed placement task so its result re-enters the queue.
-    job_sender: mpsc::Sender<Job>,
+    // Weak, so the channel closes once the module drops its sender.
+    job_sender: mpsc::WeakSender<Job>,
     tf: Tf,
     config: Config,
     global_map: Output<PointCloud2>,
@@ -186,12 +194,10 @@ impl Worker {
         let mut state = State {
             mapper: Mapper::new(self.config.clone()),
             last_clear_mask_stamp: 0.0,
-            seeded: false,
-            seed_pending: false,
-            load: None,
+            seed: SeedState::Idle,
         };
         loop {
-            let job = if state.load.is_some() {
+            let job = if matches!(state.seed, SeedState::Loading(_)) {
                 match self.jobs.try_recv() {
                     Ok(job) => Some(job),
                     Err(TryRecvError::Empty) => None,
@@ -218,7 +224,7 @@ impl Worker {
             Job::Lidar(msg) => self.ingest_frame(state, msg).await,
             Job::ClearMask(msg) => self.apply_clear_mask(state, msg),
             Job::LoadedMap(msg) => self.place_loaded_map(state, msg),
-            Job::SeedPrepared(None) => state.seed_pending = false,
+            Job::SeedPrepared(None) => state.seed = SeedState::Idle,
             Job::SeedPrepared(Some(part)) => {
                 info!(
                     tiles = part.tiles.len(),
@@ -227,7 +233,7 @@ impl Worker {
                 );
                 let mapper = &mut state.mapper;
                 tokio::task::block_in_place(|| mapper.reserve_voxels(part.voxels));
-                state.load = Some(SeedLoad {
+                state.seed = SeedState::Loading(SeedLoad {
                     tiles: part.tiles,
                     next: 0,
                     created: 0,
@@ -394,10 +400,10 @@ impl Worker {
     /// lookup takes the latest transform, since the cloud keeps its original
     /// stamp.
     fn place_loaded_map(&self, state: &mut State, msg: PointCloud2) {
-        if state.seeded || state.seed_pending {
+        if !matches!(state.seed, SeedState::Idle) {
             return;
         }
-        state.seed_pending = true;
+        state.seed = SeedState::Placing;
         let tf = self.tf.clone();
         let sender = self.job_sender.clone();
         let world_frame = self.config.world_frame.clone();
@@ -426,13 +432,15 @@ impl Worker {
                     None
                 }
             };
-            let _ = sender.send(Job::SeedPrepared(tiles)).await;
+            if let Some(sender) = sender.upgrade() {
+                let _ = sender.send(Job::SeedPrepared(tiles)).await;
+            }
         });
     }
 
     /// Apply the next seed tile, then emit the full map once the load ends.
     async fn seed_step(&self, state: &mut State) {
-        let Some(load) = state.load.as_mut() else {
+        let SeedState::Loading(load) = &mut state.seed else {
             return;
         };
         if let Some(tile) = load.tiles.get(load.next) {
@@ -462,8 +470,7 @@ impl Worker {
         let load_s = load.started.elapsed().as_secs_f64();
         let max_tile_ms = load.max_tile_ms;
         let mean_tile_ms = load.mean_tile_ms();
-        state.load = None;
-        state.seeded = true;
+        state.seed = SeedState::Done;
         let mapper = &state.mapper;
         let full = tokio::task::block_in_place(|| mapper.full_points());
         info!(
@@ -509,16 +516,6 @@ const LOADED_MAP_TF_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn time_secs(t: &Time) -> f64 {
     t.sec as f64 + t.nsec as f64 * 1e-9
-}
-
-fn now() -> Time {
-    let dur = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    Time {
-        sec: dur.as_secs().min(i32::MAX as u64) as i32,
-        nsec: dur.subsec_nanos() as i32,
-    }
 }
 
 /// The f32 pose of a transform, for registering clouds.
@@ -738,8 +735,10 @@ mod tests {
         let cloud = points_to_cloud(&[3.5, 0.0, 0.5], "map", Time::default());
         let points = extract_xyz(&cloud).unwrap_or_else(|e| panic!("loaded map must decode: {e}"));
 
+        let mut points = points;
+        register(&mut points, tf_to_pose(&t));
         let mut mapper = Mapper::new(test_config());
-        assert_eq!(mapper.seed_frame(points, tf_to_pose(&t)), 1);
+        assert_eq!(mapper.seed_points(&points), 1);
 
         let full = points_to_cloud(&mapper.full_points(), "odom", now());
         assert!(cloud_points(&full).contains(&voxel_center(10, 3, 0)));
