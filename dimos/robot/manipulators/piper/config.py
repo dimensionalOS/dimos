@@ -44,12 +44,7 @@ _PIPER_REPO = RobotDescriptionSource(
     ref=PIPER_DESCRIPTION_REF,
 )
 
-PIPER_MODEL_PATH = (
-    _PIPER_REPO
-    / "piper"
-    / "urdf"
-    / "piper_with_gripper_description.xacro"
-)
+PIPER_MODEL_PATH = _PIPER_REPO / "piper" / "urdf" / "piper_with_gripper_description.xacro"
 
 PIPER_PACKAGE_PATHS: dict[str, Path] = {
     # Upstream URIs are package://agx_arm_description/agx_arm_urdf/...
@@ -57,12 +52,7 @@ PIPER_PACKAGE_PATHS: dict[str, Path] = {
     "agx_arm_description": _PIPER_REPO.parent,
 }
 
-PIPER_FK_MODEL = (
-    _PIPER_REPO
-    / "piper"
-    / "urdf"
-    / "piper_description.urdf"
-)
+PIPER_FK_MODEL = _PIPER_REPO / "piper" / "urdf" / "piper_description.urdf"
 
 PIPER_SIM_PATH = LfsPath("piper/scene.xml")
 PIPER_HOME_JOINTS = [
@@ -73,6 +63,7 @@ PIPER_HOME_JOINTS = [
     0.9771515619106422,
     -0.13286819850920156,
 ]
+
 
 def _adapter_kwargs(home_joints: list[float] | None = None) -> dict[str, object]:
     if home_joints is None:
