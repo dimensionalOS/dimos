@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -29,12 +28,12 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.agents.llm_trace import latest_pair
-from dimos.evals.agents.lib.chat import DEFAULT_MODEL
+from dimos.evals.agents.base import Agent, ModelAgentConfig
 from dimos.evals.agents.lib.proxy import RecordingProxy
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
+from dimos.evals.environments.base import Environment
 from dimos.evals.types import (
     EndedBy,
-    Environment,
     Metrics,
     RunningEnvironment,
     ToolCall,
@@ -173,67 +172,66 @@ class _Events:
         self.wants_tool = bool(tool_calls)
 
 
-@dataclass
-class Pi:
+class PiAdapterConfig(ModelAgentConfig):
+    """Settings for the headless Pi adapter."""
+
+    # The first section of Pi's system prompt.
+    system_prompt: str = (
+        "Answer the question from the files and tools listed below and nothing else."
+    )
+
+    # Extra guidance appended after system_prompt.
+    instructions: str = ""
+
+    # Explain recording access and robot tools. Disable if a skill teaches these.
+    builtin_guidance: bool = True
+
+    # Pi's native tools to enable. bash is required for a robot.
+    tools: tuple[str, ...] = ("read", "bash", "edit", "write")
+
+    # Reasoning level passed to Pi's --thinking flag.
+    thinking: str = "medium"
+
+    # Stop after this many completed model calls if Pi still requests tools,
+    # preserving recorded steps. None disables this limit; the timeout still applies.
+    max_steps: int | None = 40
+
+    # Pi executable name or path.
+    cli: str = "pi"
+
+    # Skill files or directories loaded with --skill. Relative paths resolve
+    # against the caller's working directory before Pi starts in the case directory.
+    skills: tuple[str, ...] = ()
+
+    # Environment variables Pi inherits in addition to every DIMOS_* variable.
+    passthrough_env: tuple[str, ...] = ("PATH", "HOME", "XDG_STATE_HOME", "OPENAI_API_KEY")
+
+
+class PiAdapter(Agent):
     """The Pi coding agent, headless (``pi --mode json``), with the run dir as
     its working directory. The case's artifacts and the recording are files
     named in the system prompt; a live robot is reached through ``dimos mcp
     call`` from Pi's ``bash`` tool. Model traffic goes through a local
     :class:`RecordingProxy`, so every call is captured whole under ``run_dir/raw``.
-
-    Settings:
-
-    - ``system_prompt``: the first thing Pi reads. Its default just tells Pi
-      to answer from the files and tools it is given.
-    - ``instructions``: any extra text you want in the prompt for this run,
-      added right after ``system_prompt``. Empty by default.
-    - ``builtin_guidance``: when True, the prompt also explains how to open
-      the recording in Python and how to call the robot's tools from bash.
-      Set it to False if a skill file teaches that instead.
-    - ``skills``: paths to skill files or directories that Pi loads with its
-      ``--skill`` flag. Give absolute paths, or they are made absolute here,
-      since Pi runs inside the case directory.
-    - ``tools``: which of Pi's own tools it may use (read, bash, edit, write).
-      ``bash`` is required whenever there is a robot.
-    - ``max_steps``: how many model calls Pi may make. When it hits the limit
-      and still wants to act, it is killed and the steps so far are kept. The
-      case's time budget is enforced the same way.
-    - ``passthrough_env``: environment variables Pi's process inherits, on
-      top of every ``DIMOS_*`` variable.
     """
 
-    model: str = DEFAULT_MODEL
-    system_prompt: str = (
-        "Answer the question from the files and tools listed below and nothing else."
-    )
-    instructions: str = ""
-    builtin_guidance: bool = True
-    tools: Sequence[str] = ("read", "bash", "edit", "write")
-    thinking: str = "medium"
-    max_steps: int | None = 40
-    cli: str = "pi"
-    modules: str = ""
-    skills: Sequence[str] = ()
-    passthrough_env: Sequence[str] = ("PATH", "HOME", "XDG_STATE_HOME", "OPENAI_API_KEY")
+    config: PiAdapterConfig
 
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
         """Pi's native tools plus robot tools exposed through its bash tool."""
-        return (*self.tools, *environment_tools)
+        return (*self.config.tools, *environment_tools)
 
     def preflight(self, environment: Environment) -> None:
-        for name in ("skills", "tools", "passthrough_env"):
-            if isinstance(getattr(self, name), str):
-                raise RuntimeError(f"Pi.{name} is a string; pass a list (--set {name}='[...]')")
-        missing = [p for p in self.skills if not Path(p).expanduser().resolve().exists()]
+        missing = [p for p in self.config.skills if not Path(p).expanduser().resolve().exists()]
         if missing:
             raise RuntimeError(f"Pi skill paths do not exist: {missing}")
-        if shutil.which(self.cli) is None:
+        if shutil.which(self.config.cli) is None:
             raise RuntimeError(
-                f"{self.cli!r} is not on PATH (npm install -g @earendil-works/pi-coding-agent)"
+                f"{self.config.cli!r} is not on PATH (npm install -g @earendil-works/pi-coding-agent)"
             )
         if "OPENAI_API_KEY" not in os.environ:
             raise RuntimeError("Pi needs OPENAI_API_KEY")
-        if environment.has_robot and "bash" not in self.tools:
+        if environment.has_robot and "bash" not in self.config.tools:
             raise RuntimeError("Pi reaches the robot through its bash tool, which is not enabled")
         if environment.has_robot and shutil.which("dimos") is None:
             raise RuntimeError("Pi reaches the robot through the dimos CLI, which is not on PATH")
@@ -243,7 +241,7 @@ class Pi:
     ) -> Trajectory:
         raw_dir = run_dir / "raw"
         events = _Events(
-            raw_dir, TrajectoryBuilder(inputs, name=type(self).__name__, model=self.model)
+            raw_dir, TrajectoryBuilder(inputs, name=type(self).__name__, model=self.config.model)
         )
         upstream = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
         with RecordingProxy(raw_dir, upstream) as proxy_url:
@@ -257,9 +255,9 @@ class Pi:
         files = dict(env.artifacts)
         if env.streams:  # the selection, not the whole source the artifact names
             files["recording"] = recording_file(env.streams, run_dir / "recording.db")
-        parts = [self.system_prompt, self.instructions]
+        parts = [self.config.system_prompt, self.config.instructions]
         parts.append("Files:\n" + "\n".join(f"- {name}: {path}" for name, path in files.items()))
-        if self.builtin_guidance and "recording" in files:
+        if self.config.builtin_guidance and "recording" in files:
             parts.append(
                 "The recording is a dimos memory store (sqlite). In Python:\n"
                 "  from dimos.memory.store.sqlite import SqliteStore\n"
@@ -268,7 +266,7 @@ class Pi:
                 "a stream yields observations with .ts and .data. Inspect with dir() and help()."
             )
         if env.mcp_url:
-            if self.builtin_guidance:
+            if self.config.builtin_guidance:
                 parts.append(
                     "The robot is live. Call one of its tools from bash as\n"
                     "  dimos mcp call <tool> --json-args '{\"arg\": value}'"
@@ -278,11 +276,13 @@ class Pi:
         (run_dir / "system-prompt.txt").write_text(prompt)
         # Absolute before Pi changes to the run dir; --no-skills disables only
         # ambient discovery, explicit --skill paths still load.
-        skills = [f for p in self.skills for f in ("--skill", str(Path(p).expanduser().resolve()))]
+        skills = [
+            f for p in self.config.skills for f in ("--skill", str(Path(p).expanduser().resolve()))
+        ]
         return [
-            self.cli, "--mode", "json", "--model", f"dimos/{self.model}",
-            "--thinking", self.thinking, "--session-dir", str(run_dir / "pi-session"),
-            "--tools", ",".join(self.tools),
+            self.config.cli, "--mode", "json", "--model", f"dimos/{self.config.model}",
+            "--thinking", self.config.thinking, "--session-dir", str(run_dir / "pi-session"),
+            "--tools", ",".join(self.config.tools),
             "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
             "--no-context-files", "--no-approve", *skills,
             "--system-prompt", prompt, inputs,
@@ -293,8 +293,8 @@ class Pi:
         proxy; ``_command`` names models as ``dimos/<model>``."""
         agent_dir = run_dir / ".pi-agent"
         agent_dir.mkdir(parents=True, exist_ok=True)
-        model: dict[str, Any] = {"id": self.model, "reasoning": True}
-        if cost := _registry_cost(self.cli, self.model):
+        model: dict[str, Any] = {"id": self.config.model, "reasoning": True}
+        if cost := _registry_cost(self.config.cli, self.config.model):
             model["cost"] = cost
         provider = {
             "baseUrl": proxy_url,
@@ -307,7 +307,7 @@ class Pi:
         )
 
     def _env(self, run_dir: Path) -> dict[str, str]:
-        keep = self.passthrough_env
+        keep = self.config.passthrough_env
         passed = {k: v for k, v in os.environ.items() if k in keep or k.startswith("DIMOS_")}
         return {
             **passed,
@@ -361,4 +361,8 @@ class Pi:
 
     def _over_budget(self, events: _Events) -> bool:
         """``max_steps`` calls made and the last one still asks for a tool."""
-        return self.max_steps is not None and events.calls >= self.max_steps and events.wants_tool
+        return (
+            self.config.max_steps is not None
+            and events.calls >= self.config.max_steps
+            and events.wants_tool
+        )

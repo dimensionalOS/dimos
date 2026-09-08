@@ -32,10 +32,15 @@ from dimos.evals.types import EvalCase, Outcome, Suite, recording
 # autonomous WavefrontFrontierExplorer and PatrollingModule: deliberate
 # move_to navigation keeps working, the exploration shortcut is removed at
 # the source.
-STACK = (
-    "unitree-go2-basic voxel-grid-mapper cost-mapper replanning-a-star-planner "
-    "movement-manager mcp-server unitree-skill-container"
-)
+STACK = [
+    "unitree-go2-basic",
+    "voxel-grid-mapper",
+    "cost-mapper",
+    "replanning-a-star-planner",
+    "movement-manager",
+    "mcp-server",
+    "unitree-skill-container",
+]
 
 ROOMS: dict[str, tuple[float, float]] = {
     "living_dining": (2.0, 2.5),  # sectional, TV, dining table
