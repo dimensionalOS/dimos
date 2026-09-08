@@ -14,6 +14,8 @@
 
 """Tests for direct canonical trajectory execution."""
 
+from concurrent.futures import ThreadPoolExecutor
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -127,3 +129,90 @@ def test_cancel_forwards_to_coordinator() -> None:
     result = _manager(coordinator).cancel()
     assert result.status is ExecutionStatus.NO_EXECUTION
     coordinator.cancel_trajectory.assert_called_once_with()
+
+
+@pytest.mark.parametrize("operation", ["wait", "cancel"])
+def test_status_query_is_serialized_with_other_operations(operation):
+    coordinator = _coordinator()
+    manager = _manager(coordinator)
+    assert manager.execute(_plan(), blocking=False).status is ExecutionStatus.ACCEPTED
+    entered = threading.Event()
+    release = threading.Event()
+    attempted = threading.Event()
+    terminal = TrajectoryState.COMPLETED if operation == "wait" else TrajectoryState.ABORTED
+
+    def status(*_args):
+        if not entered.is_set():
+            entered.set()
+            assert release.wait(2.0)
+            return TrajectoryStatus(state=TrajectoryState.EXECUTING)
+        return TrajectoryStatus(state=terminal)
+
+    coordinator.task_invoke.side_effect = status
+
+    def second_operation():
+        attempted.set()
+        return manager.wait(0.0) if operation == "wait" else manager.cancel()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(manager.wait, 0.0)
+        try:
+            assert entered.wait(2.0)
+            second = executor.submit(second_operation)
+            assert attempted.wait(2.0)
+            with pytest.raises(TimeoutError):
+                second.result(0.05)
+        finally:
+            release.set()
+        assert first.result(2.0).status is ExecutionStatus.TIMED_OUT
+        assert second.result(2.0).status.name == terminal.name
+
+    assert manager.status.name == terminal.name
+
+
+def test_blocking_wait_keeps_cancelled_result_after_new_dispatch(mocker):
+    coordinator = _coordinator()
+    manager = _manager(coordinator)
+    assert manager.execute(_plan(), blocking=False).status is ExecutionStatus.ACCEPTED
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.EXECUTING)
+    between_polls = threading.Event()
+    resume = threading.Event()
+    # Gate the wait between polls, without replacing threading globally or sleeping.
+    timer = mocker.Mock()
+
+    def pause(_timeout):
+        between_polls.set()
+        assert resume.wait(2.0)
+
+    timer.wait.side_effect = pause
+    threading_proxy = mocker.patch(
+        "dimos.manipulation.execution_manager.threading", wraps=threading
+    )
+    threading_proxy.Event.return_value = timer
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(manager.wait, 1.0)
+        try:
+            assert between_polls.wait(2.0)
+            coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.ABORTED)
+            assert manager.cancel().status is ExecutionStatus.ABORTED
+            assert manager.execute(_plan(), blocking=False).status is ExecutionStatus.ACCEPTED
+            coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.EXECUTING)
+        finally:
+            resume.set()
+        assert future.result(2.0).status is ExecutionStatus.ABORTED
+
+    assert manager.status is ExecutionStatus.ACCEPTED
+
+
+def test_zero_timeout_preserves_execution_for_later_completion():
+    coordinator = _coordinator()
+    manager = _manager(coordinator)
+    assert manager.execute(_plan(), blocking=False).status is ExecutionStatus.ACCEPTED
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.EXECUTING)
+
+    assert manager.wait(0.0).status is ExecutionStatus.TIMED_OUT
+    assert manager.status is ExecutionStatus.EXECUTING
+
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    assert manager.wait(0.0).status is ExecutionStatus.COMPLETED

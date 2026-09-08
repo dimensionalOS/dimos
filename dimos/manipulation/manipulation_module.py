@@ -399,11 +399,7 @@ class ManipulationModule(Module):
             operation_status = OperationStatus[self._state.name]
             error = self._error_message or None
             has_pending_plan = self._last_plan is not None
-        execution_status = (
-            self._execution_manager.status
-            if hasattr(self, "_execution_manager")
-            else ExecutionStatus.IDLE
-        )
+        execution_status = self._execution_manager.status
         return ManipulationSnapshot(
             timestamp=time.time(),
             operation_status=operation_status,
@@ -420,9 +416,8 @@ class ManipulationModule(Module):
             return OperationStatus[self._state.name]
 
     def _refresh_execution_status(self) -> None:
-        """Poll active nonblocking execution once, without waiting for motion."""
-        manager = getattr(self, "_execution_manager", None)
-        if manager is not None and manager.status in {
+        """Make one synchronous status RPC, without waiting for motion to finish."""
+        if self._execution_manager.status in {
             ExecutionStatus.ACCEPTED,
             ExecutionStatus.EXECUTING,
         }:
@@ -452,7 +447,6 @@ class ManipulationModule(Module):
             self._dismiss_preview(plan.group_ids)
         if is_planning and result.status is ExecutionStatus.NO_EXECUTION:
             result = ExecutionResult(ExecutionStatus.ABORTED, "Planning cancelled")
-        self._apply_execution_result(result)
         return result
 
     @rpc
@@ -1215,6 +1209,7 @@ class ManipulationModule(Module):
             joint_names=self.config.model.joint_names,
             coordinator=self._control_coordinator,
             default_timeout=self.config.execution_timeout,
+            on_result=self._apply_execution_result,
         )
 
     @rpc
@@ -1235,19 +1230,22 @@ class ManipulationModule(Module):
         except Exception as exc:
             logger.exception("Failed to dispatch generated plan")
             result = ExecutionResult(ExecutionStatus.UNCERTAIN, str(exc))
-        self._apply_execution_result(result)
+            self._apply_execution_result(result)
         return result
 
     @rpc
     def wait_for_execution(self, timeout: float | None = None) -> ExecutionResult:
         """Wait for the active trajectory or return its cached terminal result."""
-        result = self._execution_manager.wait(timeout)
-        self._apply_execution_result(result)
-        return result
+        return self._execution_manager.wait(timeout)
 
     def _apply_execution_result(self, result: ExecutionResult) -> None:
         """Mirror execution ownership into the broader manipulation snapshot."""
         with self._lock:
+            if (
+                self._state is ManipulationState.PLANNING
+                and result.status is ExecutionStatus.NO_EXECUTION
+            ):
+                result = ExecutionResult(ExecutionStatus.ABORTED, "Planning cancelled")
             if result.status in {ExecutionStatus.ACCEPTED, ExecutionStatus.EXECUTING}:
                 self._state = ManipulationState.EXECUTING
                 self._error_message = ""

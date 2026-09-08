@@ -14,6 +14,8 @@
 
 """Tests for ManipulationModule plan-execution result projection."""
 
+from concurrent.futures import ThreadPoolExecutor
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -180,3 +182,61 @@ def test_status_refresh_reports_coordinator_failure(module_factory):
     assert status.state == "FAULT"
     assert "status unavailable" in status.error
     assert module.get_state().execution_status is ExecutionStatus.UNCERTAIN
+
+
+def test_delayed_acceptance_does_not_overwrite_completion(module_factory, mocker):
+    coordinator = _coordinator()
+    module = module_factory(coordinator)
+    module._last_plan = _plan()
+    accepted = threading.Event()
+    release = threading.Event()
+    execute = module._execution_manager.execute
+
+    def delayed_execute(*args, **kwargs):
+        result = execute(*args, **kwargs)
+        accepted.set()
+        assert release.wait(2.0)
+        return result
+
+    mocker.patch.object(module._execution_manager, "execute", side_effect=delayed_execute)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(module.execute, blocking=False)
+        try:
+            assert accepted.wait(2.0)
+            coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+            assert module.get_operation_status().name == "COMPLETED"
+        finally:
+            release.set()
+        assert future.result(2.0).status is ExecutionStatus.ACCEPTED
+
+    assert module.get_operation_status().name == "COMPLETED"
+
+
+def test_delayed_wait_result_does_not_finish_new_execution(module_factory, mocker):
+    coordinator = _coordinator()
+    module = module_factory(coordinator)
+    module._last_plan = _plan()
+    assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
+    coordinator.task_invoke.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    completed = threading.Event()
+    release = threading.Event()
+    wait = module._execution_manager.wait
+
+    def delayed_wait(timeout=None):
+        result = wait(timeout)
+        completed.set()
+        assert release.wait(2.0)
+        return result
+
+    mocker.patch.object(module._execution_manager, "wait", side_effect=delayed_wait)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(module.wait_for_execution)
+        try:
+            assert completed.wait(2.0)
+            module._last_plan = _plan()
+            assert module.execute(blocking=False).status is ExecutionStatus.ACCEPTED
+        finally:
+            release.set()
+        assert future.result(2.0).status is ExecutionStatus.COMPLETED
+
+    assert module._state is ManipulationState.EXECUTING
