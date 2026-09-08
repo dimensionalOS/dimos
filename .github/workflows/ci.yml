@@ -569,14 +569,6 @@ jobs:
       # future macOS leg) skips provisioning; binary-needing tests skip there.
       # On a marker miss (fork PR, eviction) the binaries are simply absent —
       # hosted runners never fall back to building the heavy C++ closures.
-      - name: Install Nix (with Cachix substituter)
-        if: runner.os == 'Linux' && runner.arch == 'X64'
-        env:
-          INPUT_EXTRA_NIX_CONFIG: |
-            extra-substituters = https://dimensionalos.cachix.org
-            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
-          INPUT_SET_AS_TRUSTED_USER: "true"
-        run: bash docker/ros/install-nix.sh
       - name: Restore publish marker
         if: runner.os == 'Linux' && runner.arch == 'X64'
         id: native-marker
@@ -584,6 +576,15 @@ jobs:
         with:
           path: .cachix-marker
           key: cachix-published-${{ runner.os }}-${{ runner.arch }}-${{ needs.cachix-build-check.outputs.inputs-hash }}
+      - name: Install Nix (with Cachix substituter)
+        # cache-hit implies the restore ran, which is already Linux/X64-gated.
+        if: steps.native-marker.outputs.cache-hit == 'true'
+        env:
+          INPUT_EXTRA_NIX_CONFIG: |
+            extra-substituters = https://dimensionalos.cachix.org
+            extra-trusted-public-keys = dimensionalos.cachix.org-1:20ynj6TjpoD3qTxkdNoeHtgs2G2pNvgAq1EQYLTHJXI=
+          INPUT_SET_AS_TRUSTED_USER: "true"
+        run: bash docker/ros/install-nix.sh
       - name: Provision native modules from Cachix
         if: steps.native-marker.outputs.cache-hit == 'true'
         run: python3 bin/build-native-modules --link-results .cachix-marker/links.txt
