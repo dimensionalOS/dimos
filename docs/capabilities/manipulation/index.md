@@ -98,7 +98,7 @@ arm.pose()
 ```
 
 The [Python guide](/docs/capabilities/manipulation/python_api.md) walks through
-joint, pose, linear, and gripper commands, plus manual scan, pick, and place.
+joint, pose, linear, and gripper commands.
 
 ### Planning backend selection
 

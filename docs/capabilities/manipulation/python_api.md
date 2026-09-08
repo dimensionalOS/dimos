@@ -2,7 +2,7 @@
 
 Use the client-only `Arm` SDK for ordinary sequential motion. It wraps the
 existing typed RPCs without changing robot behavior or owning the connection.
-The client uses the same provisioned DimOS environment as the runtime.
+The client uses the same provisioned dimOS environment as the runtime.
 
 ## Start the runtime and shell
 
@@ -11,8 +11,12 @@ planning, the simulated xArm, camera, perception, grasp generation, and pick/pla
 without requiring LLM credentials:
 
 ```bash skip
-dimos --simulation run xarm-perception-sim
+env -u MUJOCO_GL dimos --simulation run xarm-perception-sim --headless false
 ```
+
+`--headless false` opens the native MuJoCo window; clearing `MUJOCO_GL` removes
+any earlier `egl` override. The global `--viewer` option controls Rerun, not
+MuJoCo. Viser controls are available at the URL printed during startup.
 
 On a headless Linux host:
 
@@ -21,7 +25,7 @@ MUJOCO_GL=egl dimos --simulation --viewer none run xarm-perception-sim --headles
 ```
 
 Wait for the Modules and sensor streams to start. In terminal two, using the same
-project environment, open the generic [DimOS shell](/docs/usage/cli.md#dimos-shell):
+project environment, open the generic [dimOS shell](/docs/usage/cli.md#dimos-shell):
 
 ```bash skip
 dimos shell
@@ -52,7 +56,7 @@ arm = Arm.from_app(app, group="left_arm", instance_name="robot0/manipulation")
 Module resolution checks advertised RPCs and signatures using the same rules
 as blueprint Spec injection. Deployed module classes must be importable in the
 client. Import `Arm` directly from `dimos.sdk.manipulation`; this is a convenience
-module in DimOS, not a separate SDK installation.
+module in dimOS, not a separate SDK installation.
 
 ### Explore without moving
 
@@ -195,66 +199,6 @@ accepted. Use `wait_for_execution()` and check `ExecutionStatus.COMPLETED` for
 physical completion. A wait timeout leaves execution active; call `cancel()` and
 inspect its result to establish whether it stopped. A transport `TimeoutError`
 also does not cancel remote work. Do not automatically retry motion after it.
-
-## Objects
-
-Pick/place stays on its typed RPC contract rather than the `Arm` wrapper:
-
-```python skip
-from dimos.manipulation.pick_and_place_spec import PickAndPlaceSpec
-
-pick_place = app.get_module(PickAndPlaceSpec)
-```
-
-Scan results expose typed objects directly. Choose an exact object ID from the
-latest scan; names are not necessarily unique.
-
-```python skip
-scan = pick_place.scan_objects(["cup"])
-if not scan.succeeded:
-    raise RuntimeError(scan)
-for detected in scan.objects:
-    print(detected.object_id, detected.name)
-```
-
-Enter an exact ID from that scan, then inspect the pick result before deciding
-whether to place. Explicitly pass the selected arm's group:
-
-```python skip
-object_id = input("Object ID from the latest scan: ").strip()
-if object_id not in {detected.object_id for detected in scan.objects}:
-    raise ValueError("Choose an object ID from the latest scan")
-picked = pick_place.pick_object(object_id, planning_group=arm.info.id)
-print(picked)
-print("Holding object:", picked.holding_object)
-```
-
-Only after a successful pick, enter a release position verified in your scene.
-This block refuses to place after a failed pick, even if the object is still held:
-
-```python skip
-if not picked.succeeded:
-    raise RuntimeError(picked)
-x, y, z = map(float, input("Verified release position X Y Z (metres): ").split())
-placed = pick_place.place_at(x, y, z, planning_group=arm.info.id)
-print(placed)
-print("Holding object:", placed.holding_object)
-```
-
-`pick_object(object_id)` returns `PickResult`. `place_at(x, y, z)` returns
-`PlaceResult`; coordinates specify the end-effector release position in the
-Module's planning frame, preserving the selected grasp orientation. Both remain
-blocking operations. Their statuses preserve perception, planning, execution,
-and gripper failure distinctions.
-
-Always inspect `.holding_object` after a failed pick or place. A failed pick
-retract can leave the object held; a failed place retract can occur after release.
-This is the workflow's tracked state, not continuous object tracking. Stopping
-an individual motion is not a whole-pick/place cancellation API.
-
-Agent tools call the same implementations. They receive a formatted version of
-these domain results through `agent_encode()`; Python clients receive dataclasses,
-not agent text or a metadata dictionary.
 
 ## Use the same SDK in scripts
 

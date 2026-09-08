@@ -22,7 +22,6 @@ import pytest
 from dimos.manipulation.grasp_verification import GripperSettle
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.manipulation.pick_and_place_spec import DetectedObject, PickPlaceStatus
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -56,7 +55,7 @@ def module() -> Iterator[PickAndPlaceModule]:
     instance._manipulation.set_gripper_position.return_value = SimpleNamespace(
         succeeded=True, message=""
     )
-    instance._objects = {"cup-1": DetectedObject("cup-1", "cup")}
+    instance._objects = {"cup-1": {"object_id": "cup-1", "name": "cup"}}
     instance._scene.get_object_pointcloud_by_object_id.return_value = MagicMock()
     instance._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
         Header(1.0, "world"), [_candidate(0.1)]
@@ -94,8 +93,8 @@ def test_scan_objects_uses_latest_scan_ids(module: PickAndPlaceModule) -> None:
 
     result = module.scan_objects([" cup "])
 
-    assert result.succeeded
-    assert module.get_object("cup-1") == DetectedObject("cup-1", "cup")
+    assert result.is_success()
+    assert module.get_object("cup-1") == {"object_id": "cup-1", "name": "cup"}
     scene.scan_scene.assert_called_once_with(text=["cup"])
 
 
@@ -110,11 +109,11 @@ def test_pick_object_uses_first_provider_candidate(
 
     result = module.pick_object("cup-1")
 
-    assert result.succeeded
+    assert result.is_success()
     assert module.get_grasp_candidates().candidates == [first, second]
     assert module._selected_grasp is not None
     assert module._selected_grasp.position.x == pytest.approx(0.1)
-    assert result.rank == 0
+    assert result.metadata["rank"] == 0
 
 
 def test_pick_object_rejects_non_planning_frame(module: PickAndPlaceModule) -> None:
@@ -125,8 +124,8 @@ def test_pick_object_rejects_non_planning_frame(module: PickAndPlaceModule) -> N
 
     result = module.pick_object("cup-1")
 
-    assert not result.succeeded
-    assert result.status is PickPlaceStatus.GRASP_FRAME_MISMATCH
+    assert not result.is_success()
+    assert result.error_code == "GRASP_FRAME_MISMATCH"
 
 
 def test_pick_object_rejects_empty_candidates(module: PickAndPlaceModule) -> None:
@@ -136,7 +135,7 @@ def test_pick_object_rejects_empty_candidates(module: PickAndPlaceModule) -> Non
 
     result = module.pick_object("cup-1")
 
-    assert result.status is PickPlaceStatus.GRASP_GENERATION_FAILED
+    assert result.error_code == "GRASP_GENERATION_FAILED"
     module._manipulation.set_gripper_position.assert_not_called()
 
 
@@ -157,7 +156,7 @@ def test_pick_preserves_current_yaw_when_configured(module: PickAndPlaceModule) 
 
     result = module.pick_object("cup-1")
 
-    assert result.succeeded
+    assert result.is_success()
     assert module._selected_grasp is not None
     assert module._selected_grasp.orientation.to_euler().z == pytest.approx(0.7)
     assert module._holding_object
@@ -173,7 +172,7 @@ def test_place_uses_local_axis_and_clears_held_state(module: PickAndPlaceModule)
 
     result = module.place_at(0.4, 0.0, 0.2)
 
-    assert result.succeeded
+    assert result.is_success()
     preplace = manipulation.plan_to_poses.call_args_list[0].args[0]["arm/tool"]
     assert preplace.position.z == pytest.approx(0.3)
     assert not module._holding_object
@@ -187,8 +186,8 @@ def test_scan_failure_clears_stale_selection(module: PickAndPlaceModule) -> None
 
     result = module.scan_objects(["cup"])
 
-    assert not result.succeeded
-    assert result.status is PickPlaceStatus.PERCEPTION_FAILED
+    assert not result.is_success()
+    assert result.error_code == "PERCEPTION_FAILED"
     assert module._selected_grasp is None
     assert module.get_object("cup-1") is None
 
@@ -200,7 +199,7 @@ def test_pick_rejects_when_already_holding(module: PickAndPlaceModule) -> None:
 
     pick = module.pick_object("cup-1")
 
-    assert pick.status is PickPlaceStatus.INVALID_STATE
+    assert pick.error_code == "INVALID_STATE"
     manipulation.set_gripper_position.assert_not_called()
 
 
@@ -209,7 +208,7 @@ def test_failed_pick_clears_previous_selection(module: PickAndPlaceModule) -> No
 
     result = module.pick_object("missing")
 
-    assert result.status is PickPlaceStatus.OBJECT_NOT_DETECTED
+    assert result.error_code == "OBJECT_NOT_DETECTED"
     assert module._selected_grasp is None
 
 
@@ -223,8 +222,7 @@ def test_pick_retains_held_state_when_retract_fails(module: PickAndPlaceModule) 
 
     result = module.pick_object("cup-1")
 
-    assert result.status is PickPlaceStatus.EXECUTION_FAILED
-    assert result.holding_object
+    assert result.error_code == "EXECUTION_FAILED"
     assert module._holding_object
 
 
@@ -241,12 +239,9 @@ def test_empty_grasp_reopens_before_failing(
 
     result = module.pick_object("cup-1")
 
-    assert result.status is PickPlaceStatus.GRASP_VERIFICATION_FAILED
+    assert result.error_code == "GRASP_VERIFICATION_FAILED"
     assert not module._holding_object
     assert manipulation.set_gripper_position.call_args_list[-1].args[0] == 1.0
-    assert result.rank == 0
-    assert result.candidates == 1
-    assert result.score == 1.0
 
 
 def test_pick_rejects_jaws_that_never_closed(
@@ -260,7 +255,7 @@ def test_pick_rejects_jaws_that_never_closed(
 
     result = module.pick_object("cup-1")
 
-    assert result.status is PickPlaceStatus.GRASP_VERIFICATION_FAILED
+    assert result.error_code == "GRASP_VERIFICATION_FAILED"
     assert not module._holding_object
 
 
@@ -282,7 +277,7 @@ def test_empty_grasp_reports_failed_recovery(
 
     result = module.pick_object("cup-1")
 
-    assert result.status is PickPlaceStatus.GRIPPER_FAILED
+    assert result.error_code == "GRIPPER_FAILED"
     assert "recovery open failed" in result.message
 
 
@@ -294,7 +289,7 @@ def test_pick_fails_when_gripper_command_is_rejected(module: PickAndPlaceModule)
 
     result = module.pick_object("cup-1")
 
-    assert result.status is PickPlaceStatus.GRIPPER_FAILED
+    assert result.error_code == "GRIPPER_FAILED"
 
 
 def test_pick_fails_when_gripper_feedback_is_unavailable(
@@ -309,7 +304,7 @@ def test_pick_fails_when_gripper_feedback_is_unavailable(
 
     result = module.pick_object("cup-1")
 
-    assert result.status is PickPlaceStatus.GRASP_VERIFICATION_FAILED
+    assert result.error_code == "GRASP_VERIFICATION_FAILED"
     assert not module._holding_object
 
 
@@ -326,27 +321,9 @@ def test_place_retains_held_state_when_release_fails(
 
     result = module.place_at(0.4, 0.0, 0.2)
 
-    assert result.status is PickPlaceStatus.GRIPPER_FAILED
-    assert result.holding_object
+    assert result.error_code == "GRIPPER_FAILED"
     assert module._holding_object
     assert module._selected_grasp is not None
-
-
-def test_place_retract_failure_reports_object_released(module: PickAndPlaceModule) -> None:
-    manipulation: Any = module._manipulation
-    module._selected_grasp = PoseStamped(frame_id="world")
-    module._holding_object = True
-    manipulation.execute.side_effect = [
-        SimpleNamespace(succeeded=True, message=""),
-        SimpleNamespace(succeeded=True, message=""),
-        SimpleNamespace(succeeded=False, message="retract failed"),
-    ]
-
-    result = module.place_at(0.4, 0.0, 0.2)
-
-    assert result.status is PickPlaceStatus.EXECUTION_FAILED
-    assert not result.holding_object
-    assert module._selected_grasp is None
 
 
 def test_motion_skills_declare_movement_capability() -> None:
