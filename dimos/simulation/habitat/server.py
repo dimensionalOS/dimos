@@ -276,8 +276,10 @@ class HabitatHost:
         self._sim.pathfinder.seed(int(self.cfg.get("seed", 0)))
         state = self._agent.get_state()
         state.position = self._sim.pathfinder.get_random_navigable_point()
-        self.yaw = 0.0
-        state.rotation = self.hs.utils.common.quat_from_angle_axis(0.0, np.array([0.0, 1.0, 0.0]))
+        self.yaw = math.radians(float(self.cfg.get("start_yaw_deg", 0.0)))
+        state.rotation = self.hs.utils.common.quat_from_angle_axis(
+            self.yaw, np.array([0.0, 1.0, 0.0])
+        )
         self._agent.set_state(state)
 
     def intrinsics(self) -> dict[str, float]:

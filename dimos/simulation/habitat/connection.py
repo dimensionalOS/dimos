@@ -53,6 +53,8 @@ class HabitatConnectionConfig(NativeModuleConfig):
         / "hm3d_annotated_example_basis.scene_dataset_config.json"
     )
     scene_id: str = "00861-GLAQ4DNUx5U"
+    # ROS yaw, +left. 90 faces into the room in the default scene.
+    start_yaw_deg: float = 90.0
 
     # Defaults are Go2-ish, not GOAT-Bench's 1.41 m Stretch.
     width: int = 640
