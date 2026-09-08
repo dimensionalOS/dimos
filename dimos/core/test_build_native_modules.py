@@ -27,7 +27,6 @@ import ast
 import importlib
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
-import inspect
 import json
 import os
 from pathlib import Path
@@ -38,6 +37,7 @@ from typing import NamedTuple
 import pytest
 
 from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.core.native_package import native_packages
 
 _SCRIPT_PATH = DIMOS_PROJECT_ROOT / "bin" / "build-native-modules"
 if not _SCRIPT_PATH.is_file():
@@ -70,6 +70,7 @@ class _ClassDef(NamedTuple):
     bases: tuple[str, ...]
     command: str | None  # build_command literal defined in this class body
     command_kind: str  # "absent" | "literal" | "opaque"
+    package_id: str | None
 
 
 def _base_names(node: ast.ClassDef) -> tuple[str, ...]:
@@ -118,7 +119,20 @@ def _scan_all_config_classes() -> list[_ClassDef]:
             for node in ast.walk(ast.parse(path.read_text(), filename=rel)):
                 if isinstance(node, ast.ClassDef):
                     kind, command = _own_build_command(node)
-                    classes.append(_ClassDef(rel, node.name, _base_names(node), command, kind))
+                    package_id = next(
+                        (
+                            stmt.value.value
+                            for stmt in node.body
+                            if isinstance(stmt, ast.AnnAssign)
+                            and isinstance(stmt.target, ast.Name)
+                            and stmt.target.id == "native_package"
+                            and isinstance(stmt.value, ast.Constant)
+                        ),
+                        None,
+                    )
+                    classes.append(
+                        _ClassDef(rel, node.name, _base_names(node), command, kind, package_id)
+                    )
     return classes
 
 
@@ -169,7 +183,7 @@ def _closure_nix_configs(classes: list[_ClassDef]) -> set[tuple[str, str]]:
             f"{cls.file}: {cls.name}.build_command must default to a plain string literal "
             "so bin/build-native-modules can read it without importing dimos"
         )
-        if _SCRIPT.is_nix_build(command):
+        if _SCRIPT.is_nix_build(command) or cls.package_id:
             nix_configs.add((cls.file, cls.name))
     return nix_configs
 
@@ -198,11 +212,10 @@ def test_ast_extraction_matches_runtime() -> None:
         dotted, class_name = module.qualname.rsplit(".", 1)
         config_class = getattr(importlib.import_module(dotted), class_name)
         fields = config_class.model_fields
-        assert fields["build_command"].default == module.build_command
-        cwd = fields["cwd"].default
-        base_dir = Path(inspect.getfile(config_class)).resolve().parent
-        runtime_dir = Path(os.path.normpath(base_dir if cwd is None else base_dir / cwd))
-        assert runtime_dir == (DIMOS_PROJECT_ROOT / module.build_dir).resolve()
+        package = native_packages()[fields["native_package"].default]
+        assert module.build_command == f"nix build -L .#{package.attribute}"
+        assert module.build_dir == package.flake_dir
+        assert fields["cwd"].default is None
 
 
 @pytest.mark.skipif(not _IN_GIT_CHECKOUT, reason="needs git HEAD for object hashes")

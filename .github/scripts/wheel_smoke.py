@@ -23,8 +23,11 @@ pinned DENO_VERSION there, exactly as it does on a customer machine.
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 import urllib.request
 
+from dimos.core.native_package import native_packages, package_reference, source_revision
 from dimos.navigation.replanning_a_star.min_cost_astar_ext import min_cost_astar_cpp  # noqa: F401
 from dimos.web.relay_bridge import locate
 from dimos.web.relay_bridge.relay_process import RelayProcess
@@ -44,6 +47,13 @@ RELAY_READY_TIMEOUT_S = 120.0
 
 
 def main() -> None:
+    for command in ("native", "mem"):
+        subprocess.run([sys.executable, "-m", "dimos.cli.dimos", command, "--help"], check=True)
+    revision = source_revision()
+    for package in native_packages().values():
+        reference = package_reference(package)
+        if not reference.startswith(f"github:dimensionalOS/dimos/{revision}?"):
+            raise SystemExit(f"installed native package resolved a checkout: {reference}")
     dist = Path(locate.__file__).resolve().parent / "_relay_dist"
     for rel in REQUIRED:
         if not (dist / rel).is_file():

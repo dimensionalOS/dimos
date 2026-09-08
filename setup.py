@@ -13,14 +13,47 @@
 # limitations under the License.
 
 import fnmatch
+import json
 import os
 from pathlib import Path
+import re
 import struct
+import subprocess
 import sys
 
 from pybind11.setup_helpers import Pybind11Extension, build_ext
 from setuptools import find_packages, setup
 from setuptools.command.build_py import build_py as _build_py
+from setuptools.command.sdist import sdist as _sdist
+
+
+def native_revision() -> str:
+    """Preserve provenance through sdist -> wheel, including builds without Git."""
+    root = Path(__file__).resolve().parent
+    metadata = root / "dimos" / "_native_revision.json"
+    if metadata.is_file():
+        revision = json.loads(metadata.read_text())["revision"]
+    elif os.environ.get("DIMOS_BUILD_REVISION"):
+        revision = os.environ["DIMOS_BUILD_REVISION"]
+    else:
+        revision = subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+        ).strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise RuntimeError("A full Git source revision is required to package native executables")
+    return revision
+
+
+def write_native_revision(directory: str | Path) -> None:
+    path = Path(directory) / "dimos" / "_native_revision.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"revision": native_revision()}) + "\n")
+
+
+class sdist(_sdist):
+    def make_release_tree(self, base_dir: str, files: list[str]) -> None:
+        super().make_release_tree(base_dir, files)
+        write_native_revision(base_dir)
 
 
 def python_is_macos_universal_binary(executable: str | None = None) -> bool:
@@ -93,6 +126,7 @@ class build_py(_build_py):
     def run(self):
         super().run()
         if not getattr(self, "editable_mode", False):
+            write_native_revision(self.build_lib)
             self._copy_relay_dist()
 
     def _copy_relay_dist(self):
@@ -166,5 +200,5 @@ setup(
     packages=find_packages(),
     package_dir={"": "."},
     ext_modules=ext_modules,
-    cmdclass={"build_ext": build_ext, "build_py": build_py},
+    cmdclass={"build_ext": build_ext, "build_py": build_py, "sdist": sdist},
 )

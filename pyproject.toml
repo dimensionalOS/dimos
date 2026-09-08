@@ -99,6 +99,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "mcap>=1.2.0", # Core memory CLI reads native MCAP recordings.
     # Transport Protocols
     "dimos-lcm>=0.1.3",
     "eclipse-zenoh>=1.10.1,<2.0",
@@ -276,7 +277,6 @@ unitree-dds = [
     "dimos[unitree]",
     "unitree-sdk2py-dimos>=1.0.2",
     "cyclonedds>=0.10.5",
-    "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2 dds store)
 ]
 
 manipulation = [
@@ -502,10 +502,6 @@ lint = [
 tests-self-hosted = [
     {include-group = "tests"},
     "dimos[agents,perception,manipulation,sim,unitree,misc]",
-    # go2 dds store tests decode mcap (pure-Python). The full `unitree-dds` extra
-    # pulls `cyclonedds`, whose wheel needs a CycloneDDS C lib the ros-dev image
-    # doesn't expose to the build — and these tests never open a live DDS link.
-    "mcap>=1.2.0",
     # Needed to compile the in-tree extensions.
     "pybind11>=2.12",
     "dim-odom>=0.4.1",

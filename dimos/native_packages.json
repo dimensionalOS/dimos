@@ -1,0 +1,22 @@
+{
+  "dimos-memory-recorder": {
+    "flake_dir": "dimos/experimental/memory/rust",
+    "attribute": "dimos-memory-recorder",
+    "executable": "dimos-memory-recorder"
+  },
+  "mid360": {
+    "flake_dir": "dimos/hardware/sensors/lidar/livox/cpp",
+    "attribute": "mid360_native",
+    "executable": "mid360_native"
+  },
+  "pointlio": {
+    "flake_dir": "dimos/hardware/sensors/lidar/pointlio/cpp",
+    "attribute": "pointlio_native",
+    "executable": "pointlio_native"
+  },
+  "fastlio2": {
+    "flake_dir": "dimos/hardware/sensors/lidar/fastlio2/cpp",
+    "attribute": "fastlio2_native",
+    "executable": "fastlio2_native"
+  }
+}

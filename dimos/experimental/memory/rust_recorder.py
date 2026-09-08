@@ -27,8 +27,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In
-from dimos.memory.module import OnExisting
+from dimos.experimental.memory.rust_types import RustStreamSpec
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.type.recording import OnExisting
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import backup_file
@@ -37,15 +38,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 _SUPPORTED_NATIVE_CODECS = {"lcm", "jpeg", "lz4+lcm"}
-
-
-class RustStreamSpec(BaseModel):
-    """Fully resolved stream settings sent to the native process."""
-
-    port: str
-    name: str
-    payload_type: str
-    codec: str
 
 
 class RustStoreConfig(BaseModel):
@@ -86,16 +78,14 @@ RustRecordingStoreConfig: TypeAlias = Annotated[
 
 
 class RustRecorderConfig(NativeModuleConfig):
-    """Compatibility-first configuration for :class:`RustRecorder`.
+    """Configuration for :class:`RustRecorder`.
 
     Python owns artifact lifecycle and stream registration. The native process
     receives only ``store``, ``encoding_threads``, and the internally resolved
     ``streams`` list over stdin.
     """
 
-    executable: str = "result/bin/dimos-memory-recorder"
-    build_command: str = "nix build -L .#dimos-memory-recorder"
-    cwd: str = "rust"
+    native_package: str | None = "dimos-memory-recorder"
     stdin_config: bool = True
 
     store: RustRecordingStoreConfig = Field(
@@ -288,4 +278,4 @@ class RustRecorder(NativeModule):
 
     def _argv(self, _topics: dict[str, str]) -> list[str]:
         """Launch the stdin-only recorder without topic or configuration arguments."""
-        return [self.config.executable]
+        return [self._executable]
