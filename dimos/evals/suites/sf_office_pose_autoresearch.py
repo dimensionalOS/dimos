@@ -47,9 +47,8 @@ INSTRUCTIONS = (
     "fixed shared /tmp paths; use a uniquely named file beside the case recording or a Python "
     "heredoc so concurrent evaluations cannot overwrite your work. Import and call "
     "preprocess_encoded_poses(encoded_poses) without inspecting its source; it returns a mapping "
-    "with time_s, position_m, yaw_rad, velocity_xy_m_s, and speed_m_s NumPy arrays. Every tool "
-    "command must succeed without a traceback or timeout, otherwise the replicate is invalid. Do "
-    "not add Markdown or commentary."
+    "with time_s, position_m, yaw_rad, velocity_xy_m_s, and speed_m_s NumPy arrays. Do not add "
+    "Markdown or commentary."
 )
 
 _HERE = Path(__file__).parent
@@ -61,7 +60,7 @@ FROZEN_FILES = (
     _HERE / "sf_office_pose_answers.json",
     _HERE.parents[1] / "msgs/geometry_msgs/PoseStamped.py",
 )
-EXPECTED_BENCHMARK_DIGEST = "91201930be9b2ca3820bff76d9f4a8c8a61756d140860a3e49e29a6437a3b124"
+EXPECTED_BENCHMARK_DIGEST = "24fb111eb9d7c67401a8ff08e6cd06c093c9606e46383f19fc8a40bf31b00609"
 
 CATEGORIES = {
     "kinematics": frozenset(
@@ -204,7 +203,10 @@ def _trajectory_violations(run_dir: Path, case_id: str) -> set[str]:
             if function_name == "bash" and any(
                 marker in command
                 for marker in (
-                    "inspect",
+                    "import inspect",
+                    "from inspect",
+                    "-m inspect",
+                    "inspect.",
                     "getsource",
                     "__file__",
                     "__code__",
@@ -219,22 +221,6 @@ def _trajectory_violations(run_dir: Path, case_id: str) -> set[str]:
                 for marker in ("dimos/evals/suites", "sf_office_pose_preprocessing.py")
             ):
                 violations.add("frozen helper source inspection")
-        for tool_result in (step.get("observation") or {}).get("results", []):
-            content = str(tool_result.get("content", "")).lower()
-            if any(
-                marker in content
-                for marker in (
-                    "traceback (most recent call last):",
-                    "command timed out after ",
-                    "command not found",
-                    "no such file or directory",
-                    "syntaxerror:",
-                    "syntax error near unexpected token",
-                    "jq: error",
-                    "jq: parse error",
-                )
-            ):
-                violations.add("tool execution failure")
     return violations
 
 

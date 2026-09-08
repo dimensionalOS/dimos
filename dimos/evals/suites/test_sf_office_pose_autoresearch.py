@@ -165,9 +165,10 @@ def test_objective_rejects_shared_tmp_scripts(
             {
                 "tool_calls": [
                     {
-                        "function_name": "read",
+                        "function_name": "bash",
                         "arguments": {
-                            "filePath": "dimos/evals/suites/sf_office_pose_preprocessing.py"
+                            "command": "python -m inspect "
+                            "dimos.evals.suites.sf_office_pose_preprocessing"
                         },
                     }
                 ]
@@ -176,27 +177,16 @@ def test_objective_rejects_shared_tmp_scripts(
         ),
         (
             {
-                "observation": {
-                    "results": [{"content": "Traceback (most recent call last):\nValueError"}]
-                }
+                "tool_calls": [
+                    {
+                        "function_name": "read",
+                        "arguments": {
+                            "filePath": "dimos/evals/suites/sf_office_pose_preprocessing.py"
+                        },
+                    }
+                ]
             },
-            "tool execution failure",
-        ),
-        (
-            {
-                "observation": {
-                    "results": [{"content": "bash: syntax error near unexpected token `)'"}]
-                }
-            },
-            "tool execution failure",
-        ),
-        (
-            {"observation": {"results": [{"content": "jq: parse error: Invalid literal"}]}},
-            "tool execution failure",
-        ),
-        (
-            {"observation": {"results": [{"content": "Command timed out after 30 seconds"}]}},
-            "tool execution failure",
+            "frozen helper source inspection",
         ),
     ],
 )
@@ -232,6 +222,36 @@ def test_objective_rejects_case_errors(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="cases failed"):
         objective(results, tmp_path, EXPECTED_BENCHMARK_DIGEST)
+
+
+def test_objective_allows_recovered_tool_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    results = [
+        EvalResult(case_id=case.id, score=1.0, final_answer="{}", duration_s=1.0) for case in SUITE
+    ]
+    case_dir = tmp_path / SUITE[0].id
+    case_dir.mkdir()
+    (case_dir / "trajectory.json").write_text(
+        json.dumps(
+            {
+                "steps": [
+                    {
+                        "observation": {
+                            "results": [
+                                {"content": "Traceback (most recent call last):\nValueError"}
+                            ]
+                        }
+                    }
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(sf_office_pose_autoresearch, "_expected_pose_timestamps", lambda: [12.5])
+
+    result = objective(results, tmp_path, EXPECTED_BENCHMARK_DIGEST)
+
+    assert result["score"] == 0.0
 
 
 def test_objective_rejects_repeated_pose_instead_of_ordered_coverage(
