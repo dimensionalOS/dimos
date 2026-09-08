@@ -20,7 +20,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from dimos.agents.llm_trace import latest_pair
+from dimos.agents.llm_trace import list_llm_trace_pairs
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.types import Metrics, ToolCall
 
@@ -30,6 +30,24 @@ def _result_text(result: Any) -> str:
     if isinstance(content, list):
         return "\n".join(str(c.get("text", "")) for c in content if c.get("type") == "text")
     return str(result)
+
+
+def _response_id(body: Any) -> str | None:
+    """Read the provider response ID from an OpenAI Responses JSON or SSE body."""
+    if isinstance(body, dict):
+        response_id = body.get("id")
+        return str(response_id) if response_id else None
+    if isinstance(body, str):
+        for line in body.splitlines():
+            if not line.startswith("data:"):
+                continue
+            data = line.removeprefix("data:").strip()
+            if data == "[DONE]":
+                continue
+            event = json.loads(data)
+            if response_id := (event.get("response") or {}).get("id"):
+                return str(response_id)
+    return None
 
 
 class PiToAtif:
@@ -49,18 +67,41 @@ class PiToAtif:
         elif event.get("type") == "message_end" and event["message"].get("role") == "assistant":
             self._step(event["message"])
 
+    def _trace_for_response(self, response_id: str) -> tuple[Path, Path, float]:
+        """Match by provider ID: newer traces may already exist when stdout is buffered."""
+        for seq, request, response in list_llm_trace_pairs(self.raw_dir):
+            if seq < self._next_seq:
+                continue
+            try:
+                record = json.loads(response.read_text())
+                recorded_id = _response_id(record["body"])
+            except json.JSONDecodeError:
+                # An abandoned attempt may still be writing. The matching
+                # response is complete before the proxy delivers it to Pi.
+                continue
+            if recorded_id == response_id:
+                self._next_seq = seq + 1
+                return request, response, float(record.get("latency_s") or 0.0)
+        raise RuntimeError(f"No recorded HTTP response for Pi response {response_id!r}")
+
     def _step(self, message: dict[str, Any]) -> None:
-        pair = latest_pair(self.raw_dir, self._next_seq)
-        if pair is None:
-            raise RuntimeError(
-                f"Pi made a model call that left no trace under {self.raw_dir}; "
-                "every call must go through the recording proxy"
-            )
-        self._next_seq = pair[0] + 1
+        self.calls += 1
+        self.wants_tool = False
+        self.error = (
+            str(message.get("errorMessage") or message["stopReason"])
+            if message.get("stopReason") in ("error", "aborted")
+            else ""
+        )
+        response_id = message.get("responseId")
+        if not response_id:
+            if self.error:
+                # Pi reported no response ID. Keep the raw failure logs;
+                # a successful retry will clear this error and record its own step.
+                return
+            raise RuntimeError("Pi assistant message has no provider response ID")
+        request, response, latency_s = self._trace_for_response(response_id)
         usage = message.get("usage") or {}
         content = message.get("content") or []
-        if message.get("stopReason") in ("error", "aborted"):
-            self.error = str(message.get("errorMessage") or message["stopReason"])
         tool_calls = tuple(
             ToolCall(
                 tool_call_id=str(c["id"]),
@@ -85,10 +126,9 @@ class PiToAtif:
                 cost_usd=float((usage.get("cost") or {}).get("total") or 0.0),
             ),
             model_name=str(message.get("responseModel") or message.get("model") or ""),
-            latency_s=float(json.loads(pair[2].read_text()).get("latency_s") or 0.0),
+            latency_s=latency_s,
             reasoning_tokens=int(usage.get("reasoning", 0)),
-            request=pair[1],
-            response=pair[2],
+            request=request,
+            response=response,
         )
-        self.calls += 1
         self.wants_tool = bool(tool_calls)
