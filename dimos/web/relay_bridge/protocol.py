@@ -50,6 +50,7 @@ from pydantic import (
     ValidationError,
     ValidationInfo,
     field_validator,
+    model_serializer,
 )
 
 from dimos.utils.logging_config import setup_logger
@@ -64,6 +65,7 @@ from dimos.web.relay_bridge.manifest import (
     Delivery as Delivery,
     Dir as Dir,
     PanelSpec as PanelSpec,
+    Publish as Publish,
 )
 
 logger = setup_logger()
@@ -71,7 +73,10 @@ logger = setup_logger()
 # v5: the robot hello leaves datagrams (and their ~1100 B budget) and rides
 # an @control data frame on a robot-opened one-shot bidi stream; channel ids
 # beginning with "@" are reserved for protocol control; a robot datagram
-# hello is rejected. v4: the twist datagram gains vy (strafe) and the teleop
+# hello is rejected. Generic publish (amended into v5 pre-release):
+# pub/pub_ack/pub_nack and the error requestId correlation; an older v5 peer
+# drops the unknown messages, so a publish times out instead of misparsing.
+# v4: the twist datagram gains vy (strafe) and the teleop
 # lease messages (teleop_start/teleop_started/teleop_stop) enter the control
 # plane; robot-bound twist/stop/teleop_start/teleop_stop carry the
 # relay-stamped lease generation `gen` (amended into v4 pre-release: an
@@ -93,6 +98,15 @@ CONTROL_CHANNEL = "@control"
 # must not allocate unbounded state) and the robot client refuses to send
 # beyond it.
 MAX_CONTROL_PAYLOAD_BYTES = 64 * 1024
+
+# Cap for a pub message's serialized `data` JSON. The SDK checks it before
+# sending; the relay enforces it independently (callers can bypass the SDK).
+MAX_PUB_DATA_BYTES = 32 * 1024
+
+# Bound for pub request ids (and the error requestId correlating a failure
+# to its publish). Ids are opaque: the SDK sends random-prefix + counter,
+# the relay forwards its own per-robot token robot-ward.
+MAX_REQUEST_ID_LEN = 64
 
 # Reject absurd header lengths before allocating (mirrors protocol.ts).
 MAX_HEADER_LEN = 65536
@@ -144,6 +158,23 @@ RobotManifest = dict[str, Any]
 _WIRE_CTX: dict[str, Any] = {}
 
 
+def _optional_reject_wire_null(value: Any, info: ValidationInfo) -> Any:
+    if value is None and info.context is _WIRE_CTX:
+        raise ValueError("explicit null (absent optional fields are omitted)")
+    return value
+
+
+# Optional wire scalars (teleop gen, pub clientTs, error requestId): absent is
+# fine, never null on the wire (mirrors the absent-or-typed validators in
+# protocol.ts).
+_WireOptNumber = Annotated[int | float | None, BeforeValidator(_optional_reject_wire_null)]
+_WireOptRequestId = Annotated[
+    str | None,
+    BeforeValidator(_optional_reject_wire_null),
+    Field(min_length=1, max_length=MAX_REQUEST_ID_LEN),
+]
+
+
 class Hello(_WireModel):
     t: Literal["hello"] = "hello"
     v: int | float
@@ -181,6 +212,9 @@ class Error(_WireModel):
     t: Literal["error"] = "error"
     code: str
     message: str
+    # Correlates a publish failure to its request (the viewer's own pub id);
+    # absent on session-level errors.
+    requestId: _WireOptRequestId = None
 
 
 # Session messages (T2): robot registration, viewer watch + per-channel
@@ -246,17 +280,8 @@ class Subs(_WireModel):
 # robot after a stop. Viewer-authored messages never carry gen.
 
 
-def _gen_reject_wire_null(value: Any, info: ValidationInfo) -> Any:
-    if value is None and info.context is _WIRE_CTX:
-        raise ValueError("explicit null (absent optional fields are omitted)")
-    return value
-
-
-# The relay-stamped lease generation: optional (viewer-authored messages omit
-# it), never null on the wire (mirrors genAbsentOrNumber in protocol.ts).
-_WireGen = Annotated[int | float | None, BeforeValidator(_gen_reject_wire_null)]
-
-
+# `gen` is the relay-stamped lease generation: optional because
+# viewer-authored messages omit it.
 class Twist(_WireModel):
     t: Literal["twist"] = "twist"
     vx: int | float
@@ -264,19 +289,19 @@ class Twist(_WireModel):
     wz: int | float
     seq: int | float
     ts: int | float
-    gen: _WireGen = None
+    gen: _WireOptNumber = None
 
 
 class Stop(_WireModel):
     t: Literal["stop"] = "stop"
     seq: int | float
     ts: int | float
-    gen: _WireGen = None
+    gen: _WireOptNumber = None
 
 
 class TeleopStart(_WireModel):
     t: Literal["teleop_start"] = "teleop_start"
-    gen: _WireGen = None
+    gen: _WireOptNumber = None
 
 
 class TeleopStarted(_WireModel):
@@ -285,7 +310,51 @@ class TeleopStarted(_WireModel):
 
 class TeleopStop(_WireModel):
     t: Literal["teleop_stop"] = "teleop_stop"
-    gen: _WireGen = None
+    gen: _WireOptNumber = None
+
+
+# Generic publish (W7), for tx channels declared publish="shared". A viewer's
+# pub rides its control stream; the relay validates it, then forwards the
+# JSON `data` as a tx-channel data frame on the robot control carrier with
+# provenance in the frame meta (id there is a relay-authored token, never the
+# viewer's request id). The bridge acknowledges on a robot-opened one-shot
+# @control stream -- pub_ack after Out.publish() returned, pub_nack for a
+# decode/publish failure -- and the relay routes pub_ack (or a correlated
+# error carrying requestId) to the originating viewer.
+class Pub(_WireModel):
+    t: Literal["pub"] = "pub"
+    id: str = Field(min_length=1, max_length=MAX_REQUEST_ID_LEN)
+    ch: str
+    # Required, spanning all of JSON -- null included (mirrors JsonValue).
+    data: Any
+    clientTs: _WireOptNumber = None
+
+    @model_serializer(mode="plain")
+    def _serialize(self) -> dict[str, Any]:
+        # Hand-rolled so the encoders' exclude_none cannot eat a null data
+        # value; clientTs keeps the absent-optional convention.
+        out: dict[str, Any] = {"t": self.t, "id": self.id, "ch": self.ch, "data": self.data}
+        if self.clientTs is not None:
+            out["clientTs"] = self.clientTs
+        return out
+
+
+class PubAck(_WireModel):
+    t: Literal["pub_ack"] = "pub_ack"
+    # Robot leg: the relay token; viewer leg: the viewer's pub id.
+    id: str = Field(min_length=1, max_length=MAX_REQUEST_ID_LEN)
+    ch: str
+    relayTs: int | float
+    bridgeTs: int | float
+
+
+class PubNack(_WireModel):
+    """Robot->relay only; the relay maps it to a correlated viewer error."""
+
+    t: Literal["pub_nack"] = "pub_nack"
+    id: str = Field(min_length=1, max_length=MAX_REQUEST_ID_LEN)
+    code: str
+    message: str
 
 
 Msg = (
@@ -305,6 +374,9 @@ Msg = (
     | TeleopStart
     | TeleopStarted
     | TeleopStop
+    | Pub
+    | PubAck
+    | PubNack
 )
 
 # One pydantic-core pass takes raw peer bytes to a validated message: UTF-8

@@ -22,7 +22,9 @@
               "maxHz": 15.5,
               "params": {
                 "quality": 75.5
-              }
+              },
+              "publish": "none",
+              "requiredScope": null
             },
             {
               "ch": "odom",
@@ -30,7 +32,9 @@
               "encoding": "pose.json.v1",
               "delivery": "reliable",
               "maxHz": 20.5,
-              "params": {}
+              "params": {},
+              "publish": "none",
+              "requiredScope": null
             }
           ],
           "panels": [
@@ -52,7 +56,7 @@
           "pages": []
         }
       },
-      "b64": "5wEAAHsidCI6ImhlbGxvIiwidiI6NSwicm9sZSI6InJvYm90Iiwicm9ib3QiOnsiaWQiOiJnbzItbGFiIiwibmFtZSI6IkdvMiBMYWJvcmF0b3IgzrIiLCJtb2RlbCI6InVuaXRyZWUtZ28yIn0sIm1hbmlmZXN0Ijp7InZlcnNpb24iOjEsImNoYW5uZWxzIjpbeyJjaCI6ImNvbG9yX2ltYWdlIiwiZGlyIjoicngiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41LCJwYXJhbXMiOnsicXVhbGl0eSI6NzUuNX19LHsiY2giOiJvZG9tIiwiZGlyIjoicngiLCJlbmNvZGluZyI6InBvc2UuanNvbi52MSIsImRlbGl2ZXJ5IjoicmVsaWFibGUiLCJtYXhIeiI6MjAuNSwicGFyYW1zIjp7fX1dLCJwYW5lbHMiOlt7ImlkIjoicDAiLCJraW5kIjoidmlkZW8iLCJ0aXRsZSI6IkNhbWVyYSDOsiIsImNoYW5uZWxzIjpbImNvbG9yX2ltYWdlIl0sInBhcmFtcyI6e319XSwibGF5b3V0Ijp7InJvdyI6WyJwMCJdfSwicGFnZXMiOltdfX0="
+      "b64": "MwIAAHsidCI6ImhlbGxvIiwidiI6NSwicm9sZSI6InJvYm90Iiwicm9ib3QiOnsiaWQiOiJnbzItbGFiIiwibmFtZSI6IkdvMiBMYWJvcmF0b3IgzrIiLCJtb2RlbCI6InVuaXRyZWUtZ28yIn0sIm1hbmlmZXN0Ijp7InZlcnNpb24iOjEsImNoYW5uZWxzIjpbeyJjaCI6ImNvbG9yX2ltYWdlIiwiZGlyIjoicngiLCJlbmNvZGluZyI6ImpwZWcudjEiLCJkZWxpdmVyeSI6ImxhdGVzdCIsIm1heEh6IjoxNS41LCJwYXJhbXMiOnsicXVhbGl0eSI6NzUuNX0sInB1Ymxpc2giOiJub25lIiwicmVxdWlyZWRTY29wZSI6bnVsbH0seyJjaCI6Im9kb20iLCJkaXIiOiJyeCIsImVuY29kaW5nIjoicG9zZS5qc29uLnYxIiwiZGVsaXZlcnkiOiJyZWxpYWJsZSIsIm1heEh6IjoyMC41LCJwYXJhbXMiOnt9LCJwdWJsaXNoIjoibm9uZSIsInJlcXVpcmVkU2NvcGUiOm51bGx9XSwicGFuZWxzIjpbeyJpZCI6InAwIiwia2luZCI6InZpZGVvIiwidGl0bGUiOiJDYW1lcmEgzrIiLCJjaGFubmVscyI6WyJjb2xvcl9pbWFnZSJdLCJwYXJhbXMiOnt9fV0sImxheW91dCI6eyJyb3ciOlsicDAiXX0sInBhZ2VzIjpbXX19"
     },
     {
       "name": "hello_viewer",
@@ -228,6 +232,75 @@
         "t": "teleop_stop"
       },
       "b64": "EwAAAHsidCI6InRlbGVvcF9zdG9wIn0="
+    },
+    {
+      "name": "pub",
+      "message": {
+        "t": "pub",
+        "id": "s7k2β-1",
+        "ch": "human_input",
+        "data": {
+          "text": "Salut, robotule! β",
+          "urgency": 0.75
+        },
+        "clientTs": 1752576000.25
+      },
+      "b64": "fAAAAHsidCI6InB1YiIsImlkIjoiczdrMs6yLTEiLCJjaCI6Imh1bWFuX2lucHV0IiwiZGF0YSI6eyJ0ZXh0IjoiU2FsdXQsIHJvYm90dWxlISDOsiIsInVyZ2VuY3kiOjAuNzV9LCJjbGllbnRUcyI6MTc1MjU3NjAwMC4yNX0="
+    },
+    {
+      "name": "pub_no_client_ts",
+      "message": {
+        "t": "pub",
+        "id": "s7k2β-2",
+        "ch": "human_input",
+        "data": [
+          1.5,
+          "β",
+          true
+        ]
+      },
+      "b64": "RQAAAHsidCI6InB1YiIsImlkIjoiczdrMs6yLTIiLCJjaCI6Imh1bWFuX2lucHV0IiwiZGF0YSI6WzEuNSwizrIiLHRydWVdfQ=="
+    },
+    {
+      "name": "pub_null_data",
+      "message": {
+        "t": "pub",
+        "id": "s7k2β-3",
+        "ch": "human_input",
+        "data": null
+      },
+      "b64": "OgAAAHsidCI6InB1YiIsImlkIjoiczdrMs6yLTMiLCJjaCI6Imh1bWFuX2lucHV0IiwiZGF0YSI6bnVsbH0="
+    },
+    {
+      "name": "pub_ack",
+      "message": {
+        "t": "pub_ack",
+        "id": "s7k2β-1",
+        "ch": "human_input",
+        "relayTs": 1752576000.5,
+        "bridgeTs": 1752576000.75
+      },
+      "b64": "YgAAAHsidCI6InB1Yl9hY2siLCJpZCI6InM3azLOsi0xIiwiY2giOiJodW1hbl9pbnB1dCIsInJlbGF5VHMiOjE3NTI1NzYwMDAuNSwiYnJpZGdlVHMiOjE3NTI1NzYwMDAuNzV9"
+    },
+    {
+      "name": "pub_nack",
+      "message": {
+        "t": "pub_nack",
+        "id": "p3",
+        "code": "decode_failed",
+        "message": "text prea lung β"
+      },
+      "b64": "TwAAAHsidCI6InB1Yl9uYWNrIiwiaWQiOiJwMyIsImNvZGUiOiJkZWNvZGVfZmFpbGVkIiwibWVzc2FnZSI6InRleHQgcHJlYSBsdW5nIM6yIn0="
+    },
+    {
+      "name": "error_with_request_id",
+      "message": {
+        "t": "error",
+        "code": "rate_limited",
+        "message": "publish peste limită β",
+        "requestId": "s7k2β-1"
+      },
+      "b64": "XwAAAHsidCI6ImVycm9yIiwiY29kZSI6InJhdGVfbGltaXRlZCIsIm1lc3NhZ2UiOiJwdWJsaXNoIHBlc3RlIGxpbWl0xIMgzrIiLCJyZXF1ZXN0SWQiOiJzN2syzrItMSJ9"
     }
   ]
 }

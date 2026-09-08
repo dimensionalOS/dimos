@@ -88,13 +88,27 @@ presets, failure handling, and simulation examples.
 
 Discovery works in both local and remote mode:
 
-For a typed capability, use `app.get_module(MySpec)`. DimOS resolves the single
-deployed Module whose advertised RPCs match the Spec's signatures. Several
-matches require an explicit `instance_name`, for example
-`app.get_module(MySpec, instance_name="robot0/manipulation")`. Matching requires
-the module classes to be importable locally. See the
-[manipulation Python guide](/docs/capabilities/manipulation/python_api.md) for
-the shell walkthrough and script setup.
+For a typed capability, pass a Spec Protocol to `app.find_module_by_spec()`. dimOS matches
+advertised RPC names and method signatures, using the same compliance checks as
+blueprint Spec injection:
+
+```python skip
+from typing import Protocol
+
+from dimos.spec.utils import Spec
+
+class PingSpec(Spec, Protocol):
+    def ping(self) -> str: ...
+
+ping = app.find_module_by_spec(PingSpec)
+print(ping.ping())
+```
+
+Exactly one deployed module must match. If several match, select one with
+`app.find_module_by_spec(PingSpec, instance_name="robot0/ping")`. No match raises
+`LookupError`; ambiguity raises `ValueError`. The deployed module class must be
+importable in the client to inspect its signatures. Spec lookup returns the same
+proxy as name lookup and does not change connection ownership.
 
 ```python skip
 # Live structured records for exact deployed instances.

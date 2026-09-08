@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Built-in web encoders (jpeg.v1, pose.json.v1, costmap.zlib.v1).
+"""Built-in web codecs (jpeg.v1, pose.json.v1, costmap.zlib.v1, text.json.v1).
 
 Registered into dimos.web.codecs at import time; relay_bridge_module imports
 this module so every bridge process (parent and worker) has the built-ins.
@@ -30,7 +30,7 @@ import numpy as np
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid, block_max_reduce
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.web.codecs import EncodedPayload, web_encoder
+from dimos.web.codecs import EncodedPayload, web_decoder, web_encoder
 
 # Custom jpeg channels authored without a quality param; the built-in
 # color_image channel never reaches this (main() merges config.jpeg_quality
@@ -53,6 +53,15 @@ def encode_jpeg(msg: Image, params: Mapping[str, Any]) -> EncodedPayload:
         msg.to_jpeg_bytes(quality=params.get("quality", _DEFAULT_JPEG_QUALITY)),
         {"w": msg.width, "h": msg.height},
     )
+
+
+@web_decoder("text.json.v1")
+def decode_text(msg: str) -> str:
+    # The browser value arrives as parsed JSON, so the annotation cannot be
+    # trusted at runtime; the explicit check gives a clear nack message.
+    if not isinstance(msg, str):
+        raise ValueError(f"text.json.v1 wants a string, got {type(msg).__name__}")
+    return msg
 
 
 @web_encoder("pose.json.v1")

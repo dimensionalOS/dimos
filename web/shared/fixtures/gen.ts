@@ -30,6 +30,10 @@ function b64(bytes: Uint8Array): string {
   return btoa(s);
 }
 
+// Shared by the pub vector and pub_tx_frame: the frame payload must be
+// exactly the JSON.stringify of the pub's data (the relay's forwarding rule).
+const pubData = { text: "Salut, robotule! β", urgency: 0.75 };
+
 const controlMsgs: Record<string, Msg> = {
   hello_robot: {
     t: "hello",
@@ -47,6 +51,8 @@ const controlMsgs: Record<string, Msg> = {
           delivery: "latest",
           maxHz: 15.5,
           params: { quality: 75.5 },
+          publish: "none",
+          requiredScope: null,
         },
         {
           ch: "odom",
@@ -55,6 +61,8 @@ const controlMsgs: Record<string, Msg> = {
           delivery: "reliable",
           maxHz: 20.5,
           params: {},
+          publish: "none",
+          requiredScope: null,
         },
       ],
       panels: [
@@ -105,6 +113,35 @@ const controlMsgs: Record<string, Msg> = {
   teleop_start: { t: "teleop_start" },
   teleop_started: { t: "teleop_started" },
   teleop_stop: { t: "teleop_stop" },
+  // Generic publish (W7): pub and pub_ack ride the viewer control stream
+  // (pub_ack.id is the viewer's request id there). pub_nack is robot->relay
+  // on a one-shot @control stream (id = the relay token); the relay maps it
+  // to a correlated error like error_with_request_id.
+  pub: {
+    t: "pub",
+    id: "s7k2β-1",
+    ch: "human_input",
+    data: pubData,
+    clientTs: 1752576000.25,
+  },
+  pub_no_client_ts: { t: "pub", id: "s7k2β-2", ch: "human_input", data: [1.5, "β", true] },
+  // data spans all of JSON: a top-level null must survive both mirrors'
+  // encode paths (pins Python against exclude_none eating it).
+  pub_null_data: { t: "pub", id: "s7k2β-3", ch: "human_input", data: null },
+  pub_ack: {
+    t: "pub_ack",
+    id: "s7k2β-1",
+    ch: "human_input",
+    relayTs: 1752576000.5,
+    bridgeTs: 1752576000.75,
+  },
+  pub_nack: { t: "pub_nack", id: "p3", code: "decode_failed", message: "text prea lung β" },
+  error_with_request_id: {
+    t: "error",
+    code: "rate_limited",
+    message: "publish peste limită β",
+    requestId: "s7k2β-1",
+  },
 };
 
 const teleopMsgs: Record<string, Msg> = {
@@ -149,6 +186,19 @@ const dataFrames: Record<string, { header: FrameHeader; payload: Uint8Array }> =
     header: { ch: CONTROL_CHANNEL, seq: 2, ts: 1752576000.75, delivery: "reliable" },
     payload: encodeDatagram(controlMsgs.subs_snapshot),
   },
+  // Generic publish forwarded relay->robot (W7): the pub's JSON data as a
+  // tx-channel data frame on the robot control carrier, provenance in meta
+  // (meta.id is the relay-authored token, never the viewer's request id).
+  pub_tx_frame: {
+    header: {
+      ch: "human_input",
+      seq: 3,
+      ts: 1752576000.5,
+      delivery: "reliable",
+      meta: { id: "p1", principal: "local", relayTs: 1752576000.5, clientTs: 1752576000.25 },
+    },
+    payload: new TextEncoder().encode(JSON.stringify(pubData)),
+  },
 };
 
 // Manifest vectors: valid cases pin normalization, invalid cases pin the
@@ -179,6 +229,15 @@ const chTwist = {
   delivery: "latest",
   maxHz: 15.5,
   params: { maxLinear: 0.85, maxAngular: 1.5, boost: 2.5, watchdogMs: 300.5 },
+};
+const chChat = {
+  ch: "human_input",
+  dir: "tx",
+  encoding: "text.json.v1",
+  delivery: "reliable",
+  maxHz: 2.5,
+  publish: "shared",
+  requiredScope: "chat:send",
 };
 const pCamera = { id: "camera", kind: "video", channels: ["color_image"] };
 const pPose = { id: "pose", kind: "readout", channels: ["odom"] };
@@ -230,6 +289,26 @@ const manifestCases: Record<string, unknown> = {
   dir_tx_channel: { version: 1, channels: [{ ...chOdom, dir: "tx" }] },
   dir_invalid: { version: 1, channels: [{ ...chOdom, dir: "both" }] },
   dir_null: { version: 1, channels: [{ ...chOdom, dir: null }] },
+  // Generic-publish rules (W7). The manifest layer accepts "exclusive"
+  // (authoring and the bridge reject it until W8).
+  publish_shared_tx: { version: 1, channels: [chChat] },
+  publish_exclusive_tx: { version: 1, channels: [{ ...chChat, publish: "exclusive" }] },
+  publish_none_roundtrip: { version: 1, channels: [{ ...chOdom, publish: "none" }] },
+  required_scope_null_roundtrip: { version: 1, channels: [{ ...chChat, requiredScope: null }] },
+  publish_on_rx: { version: 1, channels: [{ ...chOdom, publish: "shared" }] },
+  publish_bad_value: { version: 1, channels: [{ ...chOdom, publish: "always" }] },
+  publish_null: { version: 1, channels: [{ ...chOdom, publish: null }] },
+  publish_shared_latest: { version: 1, channels: [{ ...chChat, delivery: "latest" }] },
+  publish_shared_binary_encoding: { version: 1, channels: [{ ...chChat, encoding: "jpeg.v1" }] },
+  scope_without_publish: { version: 1, channels: [{ ...chOdom, requiredScope: "chat:send" }] },
+  scope_empty: { version: 1, channels: [{ ...chChat, requiredScope: "" }] },
+  scope_too_long: { version: 1, channels: [{ ...chChat, requiredScope: longId }] },
+  scope_not_string: { version: 1, channels: [{ ...chChat, requiredScope: 1.5 }] },
+  // The rx-publish rule fires before the scope rules (document order).
+  publish_rx_before_scope: {
+    version: 1,
+    channels: [{ ...chOdom, publish: "shared", requiredScope: "" }],
+  },
   channel_params_roundtrip: { version: 1, channels: [chImageFull] },
   channel_params_not_object: { version: 1, channels: [{ ...chOdom, params: 1.5 }] },
   panels_not_list: { version: 1, channels: [chOdom], panels: {} },
