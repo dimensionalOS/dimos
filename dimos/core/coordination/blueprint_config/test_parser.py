@@ -152,11 +152,17 @@ def test_global_short_name_is_reserved_when_module_field_collides() -> None:
             "module-value",
             "--replay=false",
             "--no-obstacle-avoidance",
+            "--record",
+            "sqlite",
+            "--record-topics",
+            "lidar,odom",
         ],
         environ={},
     )
 
     assert parsed.global_config_values()["robot_ip"] == "192.0.2.10"
+    assert parsed.global_config_values()["record"] == "sqlite"
+    assert parsed.global_config_values()["record_topics"] == "lidar,odom"
     assert parsed.global_config_values()["replay"] is False
     assert parsed.global_config_values()["obstacle_avoidance"] is False
     assert parsed.module_kwargs("collisionmodule") == {"robot_ip": "module-value"}
@@ -262,6 +268,20 @@ def test_transport_options_support_relative_full_and_environment_forms() -> None
     assert from_environment.transport_overrides() == {"provider": {"retries": 2}}
     assert from_environment.transport_configs["provider"] == {"retries": 2}
     assert from_cli.transport_overrides() == {"provider": {"api_key": "cli-key", "retries": 3}}
+
+
+def test_environment_ignores_unknown_transport_section() -> None:
+    blueprint = PrimaryModule.blueprint()
+    parser = BlueprintConfigParser(blueprint)
+
+    parsed = parser.parse(
+        environ={
+            "TRANSPORTS__BROKER__BROKER_URL": "https://teleop.dimensionalos.com",
+            "TRANSPORTS__BROKER__API_KEY": "",
+        },
+    )
+
+    assert parsed.transport_configs == {}
 
 
 def test_environment_values_coerce_null_and_json_like_cli() -> None:

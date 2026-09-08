@@ -13,7 +13,7 @@ curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix 
 mkdir -p "$HOME/.config/nix"; echo "experimental-features = nix-command flakes" >> "$HOME/.config/nix/nix.conf"
 ```
 
-## Using DimOS as a library
+## Using dimOS as a library
 
 ```sh skip
 mkdir myproject && cd myproject
@@ -33,7 +33,7 @@ source .venv/bin/activate
 pip install "dimos[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu]"
 ```
 
-## Developing on DimOS
+## Developing on dimOS
 
 ```sh skip
 # this allows getting large files on-demand (and not pulling all immediately)

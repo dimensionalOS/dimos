@@ -15,11 +15,11 @@
 """Characterization tests for coordinator input-stream routing.
 
 These pin the observable routing behavior of the coordinator's input
-streams (joint_command, coordinator_cartesian_command,
-coordinator_ee_twist_command, twist_command, teleop_buttons) so the
-card-routing refactor can prove it preserves them. They intentionally
-avoid coordinator internals: messages enter through the ports'
-``subscribe`` seam and effects are observed on the tasks.
+streams (joint_command, twist_command, plus the per-instance command
+ports subclasses declare) so routing refactors can
+prove they preserve them. They intentionally avoid coordinator
+internals: messages enter through the ports' ``subscribe`` seam and
+effects are observed on the tasks.
 """
 
 from __future__ import annotations
@@ -39,7 +39,12 @@ from dimos.control.components import (
 import dimos.control.coordinator as coord_mod
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.registry import control_task_registry
-from dimos.control.tasks.servo_task.servo_task import JointServoTask, JointServoTaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
+    JointTrajectoryTask,
+    JointTrajectoryTaskConfig,
+)
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.stream import In
 from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -52,10 +57,8 @@ ARM_JOINTS = ["arm/joint1", "arm/joint2"]
 
 STREAMS = (
     "joint_command",
-    "coordinator_cartesian_command",
-    "coordinator_ee_twist_command",
     "twist_command",
-    "teleop_buttons",
+    "gripper_command",
 )
 
 
@@ -147,7 +150,11 @@ def make_coordinator(
 def _streaming_coordinator(make_coordinator):
     coordinator, taps = make_coordinator(
         tasks=[
-            TaskConfig(name="servo1", type="servo", joint_names=ARM_JOINTS),
+            TaskConfig(
+                name=JOINT_TRAJECTORY_TASK_NAME,
+                type="trajectory",
+                joint_names=ARM_JOINTS,
+            ),
             TaskConfig(name="vel1", type="velocity", joint_names=ARM_JOINTS),
         ]
     )
@@ -156,12 +163,18 @@ def _streaming_coordinator(make_coordinator):
 
 
 class TestJointCommandRouting:
-    def test_position_only_updates_servo_task(self, make_coordinator):
+    def test_position_only_updates_trajectory_task_once(self, make_coordinator, mocker):
         coordinator, taps = _streaming_coordinator(make_coordinator)
+        trajectory = coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)
+        execute = mocker.spy(trajectory, "execute")
 
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
 
-        assert coordinator.get_task("servo1")._target == [0.1, 0.2]
+        assert execute.call_count == 1
+        assert trajectory._trajectory.points[-1].positions == [
+            0.1,
+            0.2,
+        ]
         assert coordinator.get_task("vel1")._velocities is None
 
     def test_velocity_only_updates_velocity_task(self, make_coordinator):
@@ -170,7 +183,7 @@ class TestJointCommandRouting:
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, velocity=[0.5, 0.6]))
 
         assert coordinator.get_task("vel1")._velocities == [0.5, 0.6]
-        assert coordinator.get_task("servo1")._target is None
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory is None
 
     def test_position_wins_when_both_present(self, make_coordinator):
         coordinator, taps = _streaming_coordinator(make_coordinator)
@@ -179,7 +192,12 @@ class TestJointCommandRouting:
             JointState(name=ARM_JOINTS, position=[0.1, 0.2], velocity=[0.5, 0.6])
         )
 
-        assert coordinator.get_task("servo1")._target == [0.1, 0.2]
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory.points[
+            -1
+        ].positions == [
+            0.1,
+            0.2,
+        ]
         assert coordinator.get_task("vel1")._velocities is None
 
     def test_unclaimed_joints_route_to_nobody(self, make_coordinator):
@@ -187,7 +205,7 @@ class TestJointCommandRouting:
 
         taps["joint_command"].emit(JointState(name=["other/joint9"], position=[1.0]))
 
-        assert coordinator.get_task("servo1")._target is None
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory is None
         assert coordinator.get_task("vel1")._velocities is None
 
     def test_empty_message_routes_to_nobody(self, make_coordinator):
@@ -195,82 +213,99 @@ class TestJointCommandRouting:
 
         taps["joint_command"].emit(JointState(name=[], position=[]))
 
-        assert coordinator.get_task("servo1")._target is None
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory is None
         assert coordinator.get_task("vel1")._velocities is None
 
 
-class TestByTaskNameRouting:
-    @staticmethod
-    def _cartesian_coordinator(make_coordinator):
+class SingleArmControlCoordinator(ControlCoordinator):
+    """Single-instance deployment: ports named like the cards' logical inputs."""
+
+    cartesian_command: In[PoseStamped]
+    ee_twist_command: In[TwistStamped]
+
+
+class DualArmControlCoordinator(ControlCoordinator):
+    """One cartesian port per arm, as in the dual-arm quest teleop."""
+
+    left_cartesian: In[PoseStamped]
+    right_cartesian: In[PoseStamped]
+
+
+class TestPerInstanceCommandRouting:
+    """Cartesian/EEF-twist commands address tasks by port, not payload."""
+
+    def test_dual_arm_ports_isolate_left_from_right(self, make_coordinator):
         coordinator, taps = make_coordinator(
+            coordinator_cls=DualArmControlCoordinator,
             stub_task_types=True,
             tasks=[
-                TaskConfig(name="cart_a", type="cartesian_ik", joint_names=ARM_JOINTS),
-                TaskConfig(name="cart_b", type="cartesian_ik", joint_names=ARM_JOINTS),
+                TaskConfig(
+                    name="cartesian_left",
+                    type="cartesian_ik",
+                    joint_names=ARM_JOINTS,
+                    stream_bind={"cartesian_command": "left_cartesian"},
+                ),
+                TaskConfig(
+                    name="cartesian_right",
+                    type="cartesian_ik",
+                    joint_names=ARM_JOINTS,
+                    stream_bind={"cartesian_command": "right_cartesian"},
+                ),
             ],
         )
         coordinator.start()
-        return coordinator, taps
 
-    def test_cartesian_delivered_only_to_named_task(self, make_coordinator):
-        coordinator, taps = self._cartesian_coordinator(make_coordinator)
+        taps["left_cartesian"].emit(PoseStamped())
 
-        taps["coordinator_cartesian_command"].emit(PoseStamped(frame_id="cart_a"))
+        left = coordinator.get_task("cartesian_left")
+        right = coordinator.get_task("cartesian_right")
+        assert len(left.cartesian_calls) == 1
+        assert right.cartesian_calls == []
 
-        cart_a = coordinator.get_task("cart_a")
-        cart_b = coordinator.get_task("cart_b")
-        assert len(cart_a.cartesian_calls) == 1
-        msg, t_now = cart_a.cartesian_calls[0]
-        assert msg.frame_id == "cart_a"
-        assert isinstance(t_now, float)
-        assert cart_b.cartesian_calls == []
+        taps["right_cartesian"].emit(PoseStamped())
 
-    @pytest.mark.parametrize("frame_id", ["unknown_task", ""])
-    def test_cartesian_unmatched_frame_id_delivers_nothing(self, make_coordinator, frame_id):
-        coordinator, taps = self._cartesian_coordinator(make_coordinator)
+        assert len(left.cartesian_calls) == 1
+        assert len(right.cartesian_calls) == 1
 
-        taps["coordinator_cartesian_command"].emit(PoseStamped(frame_id=frame_id))
-
-        assert coordinator.get_task("cart_a").cartesian_calls == []
-        assert coordinator.get_task("cart_b").cartesian_calls == []
-
-    @staticmethod
-    def _ee_twist_coordinator(make_coordinator):
+    def test_cartesian_name_match_needs_no_stream_bind(self, make_coordinator):
         coordinator, taps = make_coordinator(
+            coordinator_cls=SingleArmControlCoordinator,
             stub_task_types=True,
-            tasks=[
-                TaskConfig(name="eef_a", type="eef_twist", joint_names=ARM_JOINTS),
-                TaskConfig(name="eef_b", type="eef_twist", joint_names=ARM_JOINTS),
-            ],
+            tasks=[TaskConfig(name="cart", type="cartesian_ik", joint_names=ARM_JOINTS)],
         )
         coordinator.start()
-        return coordinator, taps
 
-    def test_ee_twist_delivered_only_to_named_task(self, make_coordinator):
-        coordinator, taps = self._ee_twist_coordinator(make_coordinator)
+        taps["cartesian_command"].emit(PoseStamped())
 
-        taps["coordinator_ee_twist_command"].emit(
-            TwistStamped(frame_id="eef_a", linear=[0.1, 0.0, 0.0], angular=[0.0, 0.0, 0.0])
+        calls = coordinator.get_task("cart").cartesian_calls
+        assert len(calls) == 1
+        assert isinstance(calls[0][1], float)
+
+    def test_frame_id_is_not_consulted(self, make_coordinator, mocker):
+        # Intentional delta from frame_id addressing: frame_id means a
+        # coordinate frame again — a stale task-name stamp neither routes,
+        # blocks, nor warns, and the payload reaches the handler untouched.
+        coordinator, taps = make_coordinator(
+            coordinator_cls=SingleArmControlCoordinator,
+            stub_task_types=True,
+            tasks=[TaskConfig(name="cart", type="cartesian_ik", joint_names=ARM_JOINTS)],
         )
+        coordinator.start()
+        warn = mocker.patch.object(coord_mod.logger, "warning")
 
-        assert len(coordinator.get_task("eef_a").ee_twist_calls) == 1
-        assert coordinator.get_task("eef_b").ee_twist_calls == []
+        taps["cartesian_command"].emit(PoseStamped(frame_id="some_other_task"))
+        taps["cartesian_command"].emit(PoseStamped(frame_id=""))
 
-    @pytest.mark.parametrize("frame_id", ["unknown_task", ""])
-    def test_ee_twist_unmatched_frame_id_delivers_nothing(self, make_coordinator, frame_id):
-        coordinator, taps = self._ee_twist_coordinator(make_coordinator)
-
-        taps["coordinator_ee_twist_command"].emit(
-            TwistStamped(frame_id=frame_id, linear=[0.1, 0.0, 0.0], angular=[0.0, 0.0, 0.0])
-        )
-
-        assert coordinator.get_task("eef_a").ee_twist_calls == []
-        assert coordinator.get_task("eef_b").ee_twist_calls == []
+        calls = coordinator.get_task("cart").cartesian_calls
+        assert len(calls) == 2
+        assert calls[0][0].frame_id == "some_other_task"
+        assert not warn.called
 
 
 class TestButtonsRouting:
     def test_buttons_reach_teleop_task(self, make_coordinator):
         coordinator, taps = make_coordinator(
+            coordinator_cls=TeleopControlCoordinator,
             stub_task_types=True,
             tasks=[TaskConfig(name="teleop1", type="teleop_ik", joint_names=ARM_JOINTS)],
         )
@@ -338,7 +373,13 @@ class TestTwistRouting:
 
     def test_twist_not_subscribed_without_base_or_velocity_capable_task(self, make_coordinator):
         coordinator, taps = make_coordinator(
-            tasks=[TaskConfig(name="traj", type="trajectory", joint_names=ARM_JOINTS)]
+            tasks=[
+                TaskConfig(
+                    name=JOINT_TRAJECTORY_TASK_NAME,
+                    type="trajectory",
+                    joint_names=ARM_JOINTS,
+                )
+            ]
         )
         coordinator.start()
 
@@ -498,31 +539,48 @@ class TestTwistCardContract:
 
 
 class TestSubscriptionLifecycle:
-    def test_streams_without_consumers_are_not_subscribed(self, make_coordinator):
+    def test_trajectory_task_subscribes_only_joint_command(self, make_coordinator):
         coordinator, taps = make_coordinator(
-            tasks=[TaskConfig(name="traj", type="trajectory", joint_names=ARM_JOINTS)]
+            tasks=[
+                TaskConfig(
+                    name=JOINT_TRAJECTORY_TASK_NAME,
+                    type="trajectory",
+                    joint_names=ARM_JOINTS,
+                )
+            ]
         )
         coordinator.start()
 
-        for stream in STREAMS:
+        assert taps["joint_command"].subscribed
+        for stream in set(STREAMS) - {"joint_command"}:
             assert not taps[stream].subscribed, stream
 
     def test_missing_transport_warns_and_start_completes(self, make_coordinator):
         coordinator, taps = make_coordinator(
             fail_streams=("joint_command",),
-            tasks=[TaskConfig(name="servo1", type="servo", joint_names=ARM_JOINTS)],
+            tasks=[
+                TaskConfig(
+                    name=JOINT_TRAJECTORY_TASK_NAME,
+                    type="trajectory",
+                    joint_names=ARM_JOINTS,
+                )
+            ],
         )
 
         coordinator.start()
 
-        assert coordinator.get_task("servo1") is not None
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME) is not None
         assert not taps["joint_command"].subscribed
 
     def test_stop_unsubscribes_all_streams(self, make_coordinator):
         coordinator, taps = make_coordinator(
             hardware=[_base_component()],
             tasks=[
-                TaskConfig(name="servo1", type="servo", joint_names=ARM_JOINTS),
+                TaskConfig(
+                    name=JOINT_TRAJECTORY_TASK_NAME,
+                    type="trajectory",
+                    joint_names=ARM_JOINTS,
+                ),
                 TaskConfig(name="vel1", type="velocity", joint_names=ARM_JOINTS),
             ],
         )
@@ -587,6 +645,7 @@ class TestCardRoutingContract:
 
     def test_buttons_skip_card_less_tasks(self, make_coordinator):
         coordinator, taps = make_coordinator(
+            coordinator_cls=TeleopControlCoordinator,
             stub_task_types=True,
             tasks=[TaskConfig(name="teleop1", type="teleop_ik", joint_names=ARM_JOINTS)],
         )
@@ -606,18 +665,18 @@ class TestCardRoutingContract:
 
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
 
-        assert coordinator.get_task("servo1")._target == [0.1, 0.2]
+        assert coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)._trajectory is not None
         assert bare.position_targets == []
 
     def test_remove_task_prunes_its_routes(self, make_coordinator):
         coordinator, taps = _streaming_coordinator(make_coordinator)
-        servo = coordinator.get_task("servo1")
-        assert coordinator.remove_task("servo1")
+        trajectory = coordinator.get_task(JOINT_TRAJECTORY_TASK_NAME)
+        assert coordinator.remove_task(JOINT_TRAJECTORY_TASK_NAME)
 
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.1, 0.2]))
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, velocity=[0.5, 0.6]))
 
-        assert servo._target is None
+        assert trajectory._trajectory is None
         assert coordinator.get_task("vel1")._velocities == [0.5, 0.6]
 
     def test_runtime_add_task_with_type_activates_routing(self, make_coordinator):
@@ -625,12 +684,13 @@ class TestCardRoutingContract:
         coordinator.start()
         assert not taps["joint_command"].subscribed
 
-        task = JointServoTask("servo_rt", JointServoTaskConfig(joint_names=ARM_JOINTS))
-        assert coordinator.add_task(task, task_type="servo")
+        task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=ARM_JOINTS))
+        assert coordinator.add_task(task, task_type="trajectory")
 
         assert taps["joint_command"].subscribed
         taps["joint_command"].emit(JointState(name=ARM_JOINTS, position=[0.3, 0.4]))
-        assert task._target == [0.3, 0.4]
+        assert task._trajectory is not None
+        assert task._trajectory.points[-1].positions == [0.3, 0.4]
 
     def test_runtime_registered_card_routes_with_zero_coordinator_edits(
         self, make_coordinator, probe_card_type
@@ -683,14 +743,18 @@ class TestCardRoutingContract:
     def test_removing_last_consumer_unsubscribes_stream(self, make_coordinator):
         coordinator, taps = make_coordinator(
             tasks=[
-                TaskConfig(name="servo1", type="servo", joint_names=ARM_JOINTS),
+                TaskConfig(
+                    name=JOINT_TRAJECTORY_TASK_NAME,
+                    type="trajectory",
+                    joint_names=ARM_JOINTS,
+                ),
                 TaskConfig(name="vel1", type="velocity", joint_names=ARM_JOINTS),
             ]
         )
         coordinator.start()
         assert taps["joint_command"].subscribed
 
-        assert coordinator.remove_task("servo1")
+        assert coordinator.remove_task(JOINT_TRAJECTORY_TASK_NAME)
         taps["joint_command"].unsub.assert_not_called()  # vel1 still consumes
 
         assert coordinator.remove_task("vel1")
@@ -713,17 +777,17 @@ class TestCardRoutingContract:
         # The default path: routes are keyed by the card's own stream name.
         coordinator, _ = _streaming_coordinator(make_coordinator)
 
-        assert coordinator.describe_task("servo1")["streams"] == [
+        assert coordinator.describe_task(JOINT_TRAJECTORY_TASK_NAME)["streams"] == [
             ("joint_command", "claim_overlap")
         ]
 
-    def test_cardless_known_type_does_not_warn(self, make_coordinator, mocker):
+    def test_known_type_with_card_does_not_warn(self, make_coordinator, mocker):
         warn = mocker.patch.object(coord_mod.logger, "warning")
         coordinator, _ = make_coordinator()
         coordinator.start()
         warn.reset_mock()
 
-        # trajectory is a real type with an intentionally empty card.
+        # trajectory is a known type with a valid declared stream handler.
         coordinator.add_task(RecordingTask("traj", frozenset(ARM_JOINTS)), task_type="trajectory")
 
         assert not any("unknown task_type" in str(c.args[0]) for c in warn.call_args_list)

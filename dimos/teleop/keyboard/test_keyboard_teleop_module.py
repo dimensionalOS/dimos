@@ -19,11 +19,8 @@ from collections.abc import Iterator
 import pytest
 
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
-from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 import dimos.teleop.keyboard.keyboard_teleop_module as keyboard_mod
 from dimos.teleop.keyboard.keyboard_teleop_module import (
-    GRIPPER_CLOSED_POSITION,
-    GRIPPER_OPEN_POSITION,
     KeyboardTeleopModule,
     _twist_from_keys,
 )
@@ -46,25 +43,26 @@ def module() -> Iterator[KeyboardTeleopModule]:
         module.stop()
 
 
-def test_publish_twist_emits_routed_twist_stamped(module: KeyboardTeleopModule, mocker) -> None:
-    publish = mocker.patch.object(module.coordinator_ee_twist_command, "publish")
+def test_publish_twist_emits_unaddressed_twist_stamped(
+    module: KeyboardTeleopModule, mocker
+) -> None:
+    publish = mocker.patch.object(module.ee_twist_command, "publish")
 
-    module._publish_twist("custom_eef", linear=(0.1, 0.2, 0.3), angular=(0.4, 0.5, 0.6))
+    module._publish_twist(linear=(0.1, 0.2, 0.3), angular=(0.4, 0.5, 0.6))
 
     msg = publish.call_args.args[0]
     assert isinstance(msg, TwistStamped)
-    assert msg.frame_id == "custom_eef"
+    assert msg.frame_id == ""  # no task-name address in the payload
     assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.1, 0.2, 0.3]
     assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.4, 0.5, 0.6]
 
 
 def test_publish_twist_defaults_to_zero_twist(module: KeyboardTeleopModule, mocker) -> None:
-    publish = mocker.patch.object(module.coordinator_ee_twist_command, "publish")
+    publish = mocker.patch.object(module.ee_twist_command, "publish")
 
-    module._publish_twist(EEF_TWIST_TASK_NAME)
+    module._publish_twist()
 
     msg = publish.call_args.args[0]
-    assert msg.frame_id == EEF_TWIST_TASK_NAME
     assert [msg.linear.x, msg.linear.y, msg.linear.z] == [0.0, 0.0, 0.0]
     assert [msg.angular.x, msg.angular.y, msg.angular.z] == [0.0, 0.0, 0.0]
 
@@ -92,11 +90,11 @@ def test_twist_from_keys_maps_rotation_keys_to_eef_angular_twist() -> None:
 
 
 def test_final_key_release_publishes_zero_velocity(module: KeyboardTeleopModule, mocker) -> None:
-    publish = mocker.patch.object(module.coordinator_ee_twist_command, "publish")
+    publish = mocker.patch.object(module.ee_twist_command, "publish")
     held = {keyboard_mod.pygame.K_w}
     event = keyboard_mod.pygame.event.Event(keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w)
 
-    assert not module._handle_pygame_event(event, held, EEF_TWIST_TASK_NAME)
+    assert not module._handle_pygame_event(event, held)
 
     assert held == set()
     assert publish.call_count == 1
@@ -106,11 +104,11 @@ def test_final_key_release_publishes_zero_velocity(module: KeyboardTeleopModule,
 
 
 def test_keyup_preserves_remaining_motion_key(module: KeyboardTeleopModule, mocker) -> None:
-    publish = mocker.patch.object(module.coordinator_ee_twist_command, "publish")
+    publish = mocker.patch.object(module.ee_twist_command, "publish")
     held = {keyboard_mod.pygame.K_w, keyboard_mod.pygame.K_a}
     event = keyboard_mod.pygame.event.Event(keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w)
 
-    module._handle_pygame_event(event, held, EEF_TWIST_TASK_NAME)
+    module._handle_pygame_event(event, held)
 
     assert held == {keyboard_mod.pygame.K_a}
     assert publish.call_count == 1
@@ -121,28 +119,35 @@ def test_keyup_preserves_remaining_motion_key(module: KeyboardTeleopModule, mock
 def test_keyup_publishes_directly_without_timeout_wait(
     module: KeyboardTeleopModule, mocker
 ) -> None:
-    publish = mocker.patch.object(module.coordinator_ee_twist_command, "publish")
+    publish = mocker.patch.object(module.ee_twist_command, "publish")
     held = {keyboard_mod.pygame.K_w}
     event = keyboard_mod.pygame.event.Event(keyboard_mod.pygame.KEYUP, key=keyboard_mod.pygame.K_w)
 
-    module._handle_pygame_event(event, held, EEF_TWIST_TASK_NAME)
+    module._handle_pygame_event(event, held)
 
     publish.assert_called_once()
 
 
-def test_set_gripper_position_emits_only_when_position_changes(
+def test_gripper_keys_publish_normalized_opening_only_when_it_changes(
     module: KeyboardTeleopModule, mocker
 ) -> None:
-    publish = mocker.patch.object(module.joint_command, "publish")
+    publish = mocker.patch.object(module.gripper_command, "publish")
+    held: set[int] = set()
+    open_event = keyboard_mod.pygame.event.Event(
+        keyboard_mod.pygame.KEYDOWN, key=keyboard_mod.pygame.K_LEFTBRACKET
+    )
+    close_event = keyboard_mod.pygame.event.Event(
+        keyboard_mod.pygame.KEYDOWN, key=keyboard_mod.pygame.K_RIGHTBRACKET
+    )
 
-    module._set_gripper_position(GRIPPER_OPEN_POSITION)
+    module._handle_pygame_event(open_event, held)
     publish.assert_called_once()
-    assert publish.call_args.args[0].position == [GRIPPER_OPEN_POSITION]
+    assert publish.call_args.args[0].data == pytest.approx(1.0)
 
     publish.reset_mock()
-    module._set_gripper_position(GRIPPER_OPEN_POSITION)
+    module._handle_pygame_event(open_event, held)
     publish.assert_not_called()
 
-    module._set_gripper_position(GRIPPER_CLOSED_POSITION)
+    module._handle_pygame_event(close_event, held)
     publish.assert_called_once()
-    assert publish.call_args.args[0].position == [GRIPPER_CLOSED_POSITION]
+    assert publish.call_args.args[0].data == pytest.approx(0.0)

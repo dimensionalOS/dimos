@@ -3,7 +3,7 @@
 # Converts any Dockerfile into a DimOS module container
 #
 # Usage in Dockerfile:
-#   RUN --mount=from=ghcr.io/dimensionalos/ros-python:dev,source=/app,target=/tmp/d \
+#   RUN --mount=from=dimensional/ros-python:latest,source=/app,target=/tmp/d \
 #       bash /tmp/d/docker/python/module-install.sh /tmp/d
 #   ENTRYPOINT ["/dimos/entrypoint.sh"]
 

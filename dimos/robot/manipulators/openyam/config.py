@@ -12,90 +12,93 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenYAM hardware and planning model configuration helpers."""
+"""OpenYAM hardware and planning model configuration."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.components import HardwareComponent, HardwareType
+from dimos.core.global_config import global_config
+from dimos.hardware.spec import JointLimits
+from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
+from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import (
-    base_pose,
-    coordinator_joint_mapping,
     joint_names,
 )
 from dimos.utils.data import LfsPath
 
 OPENYAM_DOF = 6
+OPENYAM_HARDWARE_ID = "openyam"
+OPENYAM_ARM_JOINTS = joint_names(OPENYAM_DOF, prefix="yam_joint")
+OPENYAM_GRIPPER_JOINT = "arm/gripper"
+OPENYAM_JOINTS = [*OPENYAM_ARM_JOINTS, OPENYAM_GRIPPER_JOINT]
 OPENYAM_PACKAGE = LfsPath("yam_description")
-OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "urdf/yam_gripper.urdf.xacro"
+OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
 
 
-def make_openyam_hardware(
-    hw_id: str = "arm",
-    *,
-    auto_enable: bool = True,
-    home_joints: list[float] | None = None,
-) -> HardwareComponent:
-    """Create OpenYAM hardware, defaulting to the generic mock adapter."""
+def openyam_hardware() -> HardwareComponent:
+    """Select the physical or in-memory whole-body adapter for OpenYAM."""
+    adapter_type = "mock_whole_body" if global_config.simulation else "openyam_damiao"
     adapter_kwargs: dict[str, object] = {}
-    if home_joints is not None:
-        adapter_kwargs["initial_positions"] = home_joints
+    limits: JointLimits | None = None
+    if global_config.simulation:
+        limits = JointLimits(
+            position_lower=[*([None] * OPENYAM_DOF), 0.0],
+            position_upper=[*([None] * OPENYAM_DOF), 1.0],
+            velocity_max=[None] * len(OPENYAM_JOINTS),
+        )
+    else:
+        bus_devices = (
+            {"openyam": global_config.can_port} if global_config.can_port is not None else {}
+        )
+        adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
+            bus_devices=bus_devices,
+            gravity_comp=True,
+        )
     return HardwareComponent(
-        hardware_id=hw_id,
-        hardware_type=HardwareType.MANIPULATOR,
-        joints=make_joints(hw_id, OPENYAM_DOF),
-        adapter_type="mock",
-        address=None,
-        auto_enable=auto_enable,
-        gripper_joints=[f"{hw_id}/gripper"],
+        hardware_id=OPENYAM_HARDWARE_ID,
+        hardware_type=HardwareType.WHOLE_BODY,
+        joints=list(OPENYAM_JOINTS),
+        adapter_type=adapter_type,
+        auto_enable=True,
+        limits=limits,
         adapter_kwargs=adapter_kwargs,
+        wb_config=WholeBodyConfig(
+            kp=(80.0, 80.0, 80.0, 10.0, 10.0, 10.0, 0.0),
+            kd=(5.0, 5.0, 5.0, 1.5, 1.5, 1.5, 0.0),
+        ),
     )
 
 
-def openyam_hardware(
-    hw_id: str = "arm",
-    *,
-    home_joints: list[float] | None = None,
-) -> HardwareComponent:
-    """Create mock OpenYAM hardware for simulation and configuration checks."""
-    return make_openyam_hardware(hw_id, home_joints=home_joints)
-
-
 def make_openyam_model_config(
-    name: str = "arm",
     *,
-    joint_prefix: str | None = None,
     home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
-    """Build a planning config for the gripper-equipped OpenYAM."""
-    local_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
+    """Build the canonical visualization and planning config for OpenYAM."""
+    model_joint_names = joint_names(OPENYAM_DOF, prefix="yam_joint")
+    model = RobotModel.from_file(
+        OPENYAM_MODEL_PATH,
+        package_paths=OPENYAM_PACKAGE_PATHS,
+    ).with_renamed_joints(dict(zip(joint_names(OPENYAM_DOF), model_joint_names, strict=True)))
     return RobotModelConfig(
-        name=name,
-        model_path=OPENYAM_MODEL_PATH,
-        base_pose=base_pose(),
-        joint_names=local_joint_names,
-        base_link="yam_base_link",
+        model=model,
+        joint_names=model_joint_names,
+        base_link="base",
         planning_groups=[
             PlanningGroupDefinition(
                 name="manipulator",
-                joint_names=tuple(local_joint_names),
-                base_link="yam_base_link",
-                tip_link="yam_hand_tcp",
+                joint_names=tuple(model_joint_names),
+                base_link="base",
+                tip_link="gripper_tip",
             )
         ],
-        package_paths=OPENYAM_PACKAGE_PATHS,
         auto_convert_meshes=True,
         collision_exclusion_pairs=[],
-        joint_name_mapping=coordinator_joint_mapping(
-            name,
-            OPENYAM_DOF,
-            joint_prefix=joint_prefix,
-            urdf_joint_prefix="yam_",
-        ),
-        gripper_hardware_id=name,
+        gripper_hardware_id="arm",
         home_joints=home_joints or [0.0] * OPENYAM_DOF,
     )

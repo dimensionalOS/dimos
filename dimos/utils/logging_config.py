@@ -158,8 +158,13 @@ _CONSOLE_VAL = "\033[0;35m"  # magenta
 _CONSOLE_EQ = "\033[0;37m"  # white
 
 
+def _module_first(kv: tuple[str, Any]) -> tuple[bool, str]:
+    """Sort key pinning module first: interleaved lines are scanned by process."""
+    return (kv[0] != "module", kv[0])
+
+
 def _compact_console_processor(logger: Any, method_name: str, event_dict: Mapping[str, Any]) -> str:
-    """Format log lines as: HH:MM:SS.mmm[lvl][file.py              ] Event key=value ..."""
+    """Format log lines as: HH:MM:SS.mmm [lvl][file.py              ] Event key=value ..."""
     event_dict = dict(event_dict)
 
     # Time — HH:MM:SS.mmm
@@ -206,7 +211,7 @@ def _compact_console_processor(logger: Any, method_name: str, event_dict: Mappin
         R = _CONSOLE_RESET
         color = _CONSOLE_LEVEL_COLORS.get(level_short, "")
         line = (
-            f"{_CONSOLE_FIXED}{time_str}{R}"
+            f"{_CONSOLE_FIXED}{time_str}{R} "
             f"{color}[{level_short}]{R}"
             f"{_CONSOLE_FIXED}[{file_path}]{R} "
             f"{_CONSOLE_TEXT}{event}{R}"
@@ -214,11 +219,11 @@ def _compact_console_processor(logger: Any, method_name: str, event_dict: Mappin
         if event_dict:
             kv_parts = " ".join(
                 f"{_CONSOLE_KEY}{k}{_CONSOLE_EQ}={_CONSOLE_VAL}{v}{R}"
-                for k, v in sorted(event_dict.items())
+                for k, v in sorted(event_dict.items(), key=_module_first)
             )
             line += " " + kv_parts
     else:
-        kv_str = " ".join(f"{k}={v}" for k, v in sorted(event_dict.items()))
+        kv_str = " ".join(f"{k}={v}" for k, v in sorted(event_dict.items(), key=_module_first))
         line = f"{time_str} [{level_short}][{file_path}] {event}"
         if kv_str:
             line += " " + kv_str

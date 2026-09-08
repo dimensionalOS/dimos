@@ -1,6 +1,4 @@
----
-title: "Quality-Based Stream Filtering"
----
+# Quality-Based Stream Filtering
 
 When processing sensor streams, you often want to reduce frequency while keeping the best quality data. For discrete data like images that can't be averaged or merged, instead of blindly dropping frames, `quality_barrier` selects the highest quality item within each time window.
 
@@ -166,7 +164,7 @@ Visualizing which frames were selected (green border = selected as sharpest in w
 plot_mosaic(input_frames, sharp_frames, '{output}')
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/sensor_streams/assets/frame_mosaic.jpg)
+![output](assets/frame_mosaic.jpg)
 
 ```python skip session=qb output=assets/sharpness_graph.svg
 plot_sharpness(input_frames, sharp_frames, '{output}')
@@ -200,7 +198,7 @@ Output: 6 frame(s) (selected sharpest per window)
 plot_mosaic(input_frames, sharp_frames, '{output}')
 ```
 
-![output](https://raw.githubusercontent.com/dimensionalOS/dimos-docs-assets/main/usage/sensor_streams/assets/frame_mosaic2.jpg)
+![output](assets/frame_mosaic2.jpg)
 
 ```python skip session=qb output=assets/sharpness_graph2.svg
 plot_sharpness(input_frames, sharp_frames, '{output}')

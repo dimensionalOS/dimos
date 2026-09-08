@@ -21,7 +21,7 @@ from typing import Any, Protocol
 from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.stream import In
-from dimos.memory2.module import Recorder, RecorderConfig, pose_setter_for
+from dimos.memory.module import Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image

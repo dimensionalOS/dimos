@@ -23,7 +23,8 @@ from __future__ import annotations
 import os
 
 from dimos.control.components import HardwareComponent, HardwareType, make_humanoid_joints
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
@@ -59,11 +60,9 @@ unitree_g1_coordinator = (
                 ),
             ],
             tasks=[
-                TaskConfig(
-                    name="servo_g1",
-                    type="servo",
-                    joint_names=_g1_joints,
-                    priority=10,
+                joint_trajectory_task(
+                    _g1_joints,
+                    velocity_limits={name: 1.0 for name in _g1_joints},
                 ),
             ],
         ),

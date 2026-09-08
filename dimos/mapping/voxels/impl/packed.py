@@ -16,11 +16,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from dimos.mapping.voxels.keys import FIELD_BITS as _BITS, FIELD_MASK as _MASK, KEY_OFFSET as _BIAS
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-_BITS = 21
-_BIAS = 1 << (_BITS - 1)  # voxel coords in [-2^20, 2^20): +-52 km at 5 cm voxels
-_MASK = (1 << _BITS) - 1
 
 
 class PackedVoxels:

@@ -26,10 +26,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Annotated, Any
 
-import attrs
-from pydantic import Field
+from pydantic import BeforeValidator, ConfigDict, Field
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from dimos.control.task import (
     BaseControlTask,
@@ -38,12 +38,44 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
-from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.protocol.service.spec import BaseConfig
 from dimos.utils.logging_config import setup_logger
 
+if TYPE_CHECKING:
+    from dimos.control.coordinator import TaskConfig
+
 logger = setup_logger()
+
+JOINT_TRAJECTORY_TASK_NAME = "joint_trajectory"
+
+
+def joint_trajectory_task(
+    joint_names: Sequence[str],
+    priority: int = 10,
+    start_position_tolerance: float = 0.05,
+    velocity_limits: Mapping[str, float] | None = None,
+    hold_position_when_idle: bool = False,
+) -> TaskConfig:
+    """Build the coordinator's single canonical joint-trajectory task."""
+    # The coordinator imports this module to recognize the canonical JTT.
+    from dimos.control.coordinator import TaskConfig
+
+    params: dict[str, Any] = {"start_position_tolerance": start_position_tolerance}
+    if velocity_limits is not None:
+        params["velocity_limits"] = dict(velocity_limits)
+    if hold_position_when_idle:
+        params["hold_position_when_idle"] = True
+    return TaskConfig(
+        name=JOINT_TRAJECTORY_TASK_NAME,
+        type="trajectory",
+        joint_names=list(joint_names),
+        priority=priority,
+        params=params,
+    )
 
 
 class TrajectoryExecutionStatus(Enum):
@@ -54,6 +86,7 @@ class TrajectoryExecutionStatus(Enum):
     INVALID_TRAJECTORY = auto()
     START_STATE_UNAVAILABLE = auto()
     START_STATE_MISMATCH = auto()
+    ALREADY_EXECUTING = auto()
 
 
 @dataclass(frozen=True)
@@ -95,7 +128,10 @@ def _to_joint_names(value: Sequence[str]) -> tuple[str, ...]:
     return tuple(value)
 
 
-@attrs.frozen(slots=False)
+@pydantic_dataclass(
+    frozen=True,
+    config=ConfigDict(extra="forbid", validate_default=True),
+)
 class JointTrajectoryTaskConfig:
     """Configuration for trajectory task.
 
@@ -104,30 +140,30 @@ class JointTrajectoryTaskConfig:
         priority: Priority for arbitration (higher wins)
         start_position_tolerance: Maximum difference between current joint
             position and the first trajectory point.
+        velocity_limits: Optional positive velocity limit for every configured
+            joint. Defaults to 1 rad/s per joint.
+        hold_position_when_idle: Keep emitting the last commanded position,
+            latching measured positions before the first trajectory.
     """
 
-    joint_names: tuple[str, ...] = attrs.field(
-        converter=_to_joint_names,
-        validator=attrs.validators.deep_iterable(
-            member_validator=attrs.validators.and_(
-                attrs.validators.instance_of(str),
-                attrs.validators.min_len(1),
-            ),
-            iterable_validator=attrs.validators.min_len(1),
-        ),
-    )
-    priority: int = attrs.field(
-        default=10,
-        validator=attrs.validators.instance_of(int),
-    )
-    start_position_tolerance: float = attrs.field(
+    joint_names: Annotated[
+        tuple[Annotated[str, Field(min_length=1)], ...],
+        BeforeValidator(_to_joint_names),
+    ] = Field(min_length=1)
+    priority: int = Field(default=10, strict=True)
+    start_position_tolerance: float = Field(
         default=0.05,
-        converter=float,
-        validator=attrs.validators.and_(
-            attrs.validators.ge(0.0),
-            attrs.validators.lt(math.inf),
-        ),
+        ge=0.0,
+        allow_inf_nan=False,
     )
+    velocity_limits: dict[str, float] | None = None
+    hold_position_when_idle: bool = False
+
+
+@dataclass
+class _TrajectoryRun:
+    trajectory: JointTrajectory
+    start_time: float | None = None
 
 
 class JointTrajectoryTask(BaseControlTask):
@@ -145,7 +181,6 @@ class JointTrajectoryTask(BaseControlTask):
 
     Example:
         >>> task = JointTrajectoryTask(
-        ...     name="traj_left",
         ...     config=JointTrajectoryTaskConfig(
         ...         joint_names=["left/joint1", "left/joint2"],
         ...         priority=10,
@@ -155,14 +190,13 @@ class JointTrajectoryTask(BaseControlTask):
         >>> task.execute(my_trajectory, current_positions)
     """
 
-    def __init__(self, name: str, config: JointTrajectoryTaskConfig) -> None:
+    def __init__(self, config: JointTrajectoryTaskConfig) -> None:
         """Initialize trajectory task.
 
         Args:
-            name: Unique task name
             config: Task configuration
         """
-        self._name = name
+        self._name = JOINT_TRAJECTORY_TASK_NAME
         self._config = config
         self._joint_names = frozenset(config.joint_names)
         self._joint_names_list = list(config.joint_names)
@@ -170,10 +204,28 @@ class JointTrajectoryTask(BaseControlTask):
         # State machine
         self._state = TrajectoryState.IDLE
         self._trajectory: JointTrajectory | None = None
+        self._motions: dict[str, tuple[_TrajectoryRun, int]] = {}
+        self._commanded_positions: dict[str, float] = {}
         self._start_time: float = 0.0
         self._pending_start: bool = False  # Defer start time to first compute()
+        self._last_duration: float = 0.0
+        self._last_elapsed: float = 0.0
 
-        logger.info(f"JointTrajectoryTask {name} initialized for joints: {config.joint_names}")
+        configured_limits = config.velocity_limits
+        if configured_limits is None:
+            self._velocity_limits = {name: 1.0 for name in config.joint_names}
+        else:
+            if set(configured_limits) != self._joint_names:
+                raise ValueError("velocity_limits must name every configured trajectory joint")
+            if any(
+                not math.isfinite(value) or value <= 0.0 for value in configured_limits.values()
+            ):
+                raise ValueError("velocity_limits must be finite and positive")
+            self._velocity_limits = dict(configured_limits)
+
+        logger.info(
+            f"JointTrajectoryTask {self._name} initialized for joints: {config.joint_names}"
+        )
 
     def claim(self) -> ResourceClaim:
         """Declare resource requirements."""
@@ -183,9 +235,26 @@ class JointTrajectoryTask(BaseControlTask):
             mode=ControlMode.SERVO_POSITION,
         )
 
+    def on_joint_command(self, msg: JointState, t_now: float) -> bool:
+        """Convert streamed joint positions into a velocity-bounded trajectory target."""
+        if not msg.position or len(msg.name) != len(msg.position):
+            return False
+        selected = [
+            (name, position)
+            for name, position in zip(msg.name, msg.position, strict=True)
+            if name in self._joint_names
+        ]
+        if not selected:
+            return False
+        trajectory = JointTrajectory(
+            joint_names=[name for name, _ in selected],
+            points=[TrajectoryPoint(positions=[position for _, position in selected])],
+        )
+        return self.execute(trajectory, {}).status is TrajectoryExecutionStatus.ACCEPTED
+
     def is_active(self) -> bool:
         """Check if task should run this tick."""
-        return self._state == TrajectoryState.EXECUTING
+        return self._config.hold_position_when_idle or self._state == TrajectoryState.EXECUTING
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         """Compute trajectory output for this tick.
@@ -198,36 +267,74 @@ class JointTrajectoryTask(BaseControlTask):
         Returns:
             JointCommandOutput with positions, or None if not executing
         """
-        if self._trajectory is None or not self._trajectory.joint_names:
-            return None
+        if self._config.hold_position_when_idle:
+            for joint_name in self._joint_names_list:
+                if joint_name in self._commanded_positions:
+                    continue
+                measured = state.joints.get_position(joint_name)
+                if measured is not None and math.isfinite(measured):
+                    self._commanded_positions[joint_name] = measured
 
-        # Set start time on first compute() for consistent timing
-        if self._pending_start:
-            self._start_time = state.t_now
-            self._pending_start = False
-
-        t_elapsed = state.t_now - self._start_time
-
-        # Check completion - clamp to final position to ensure we reach goal
-        if t_elapsed >= self._trajectory.duration:
-            self._state = TrajectoryState.COMPLETED
-            logger.info(f"Trajectory {self._name} completed after {t_elapsed:.3f}s")
-            # Return final position to hold at goal
-            q_ref, _ = self._trajectory.sample(self._trajectory.duration)
-            final_names = list(self._trajectory.joint_names)
-            self._clear_active_trajectory()
+        if not self._motions:
+            if not self._config.hold_position_when_idle:
+                return None
+            held_names = [
+                name for name in self._joint_names_list if name in self._commanded_positions
+            ]
+            if not held_names:
+                return None
             return JointCommandOutput(
-                joint_names=final_names,
-                positions=list(q_ref),
+                joint_names=held_names,
+                positions=[self._commanded_positions[name] for name in held_names],
                 mode=ControlMode.SERVO_POSITION,
             )
 
-        # Sample trajectory
-        q_ref, _ = self._trajectory.sample(t_elapsed)
+        output_names = (
+            self._joint_names_list
+            if self._config.hold_position_when_idle
+            else [name for name in self._joint_names_list if name in self._motions]
+        )
+        all_complete = bool(self._motions)
+        for joint_name, (run, index) in list(self._motions.items()):
+            if run.start_time is None:
+                run.start_time = state.t_now
+                if run.trajectory is self._trajectory:
+                    self._start_time = state.t_now
+                    self._pending_start = False
+            elapsed = max(0.0, state.t_now - run.start_time)
+            self._last_elapsed = max(self._last_elapsed, elapsed)
+            desired = run.trajectory.sample(elapsed)[0][index]
+            current = self._commanded_positions.get(joint_name)
+            if current is None:
+                current = state.joints.get_position(joint_name)
+                if current is None or not math.isfinite(current):
+                    all_complete = False
+                    continue
+            max_delta = self._velocity_limits[joint_name] * max(0.0, state.dt)
+            delta = max(-max_delta, min(max_delta, desired - current))
+            commanded = current + delta
+            self._commanded_positions[joint_name] = commanded
 
+            final_position = run.trajectory.points[-1].positions[index]
+            nominal_complete = elapsed >= run.trajectory.duration
+            reached = math.isclose(commanded, final_position, abs_tol=1e-9)
+            if nominal_complete and reached:
+                del self._motions[joint_name]
+            else:
+                all_complete = False
+
+        if all_complete and not self._motions and self._state == TrajectoryState.EXECUTING:
+            self._state = TrajectoryState.COMPLETED
+            self._trajectory = None
+            self._pending_start = False
+            logger.info("Trajectory completed", task_name=self._name)
+
+        emitted_names = [name for name in output_names if name in self._commanded_positions]
+        if not emitted_names:
+            return None
         return JointCommandOutput(
-            joint_names=list(self._trajectory.joint_names),
-            positions=list(q_ref),
+            joint_names=emitted_names,
+            positions=[self._commanded_positions[name] for name in emitted_names],
             mode=ControlMode.SERVO_POSITION,
         )
 
@@ -247,6 +354,8 @@ class JointTrajectoryTask(BaseControlTask):
     def _clear_active_trajectory(self) -> None:
         """Clear stored trajectory-specific execution state."""
         self._trajectory = None
+        self._motions.clear()
+        self._commanded_positions.clear()
         self._pending_start = False
         self._start_time = 0.0
 
@@ -292,7 +401,7 @@ class JointTrajectoryTask(BaseControlTask):
                 logger.warning("Trajectory for %s has non-increasing timestamps", self._name)
                 return False
             previous_time = point.time_from_start
-        if trajectory.duration <= 0.0:
+        if len(trajectory.points) > 1 and trajectory.duration <= 0.0:
             logger.warning("Trajectory for %s has nonpositive duration", self._name)
             return False
         return True
@@ -331,30 +440,53 @@ class JointTrajectoryTask(BaseControlTask):
                 "Trajectory structure or joints are invalid",
             )
 
-        first_positions = trajectory.points[0].positions
-        for joint_name, planned_position in zip(
-            trajectory.joint_names, first_positions, strict=True
-        ):
-            current_position = current_positions.get(joint_name)
-            if current_position is None or not math.isfinite(current_position):
-                return TrajectoryExecutionResult(
-                    TrajectoryExecutionStatus.START_STATE_UNAVAILABLE,
-                    f"Current position for joint '{joint_name}' is unavailable",
-                )
-            error = abs(current_position - planned_position)
-            if error > self._config.start_position_tolerance:
-                return TrajectoryExecutionResult(
-                    TrajectoryExecutionStatus.START_STATE_MISMATCH,
-                    f"Trajectory start for joint '{joint_name}' differs from current "
-                    f"position by {error:.6f}",
-                )
+        first_positions = list(trajectory.points[0].positions)
+        anchored = False
+        if len(trajectory.points) > 1:
+            for index, (joint_name, planned_position) in enumerate(
+                zip(trajectory.joint_names, first_positions, strict=True)
+            ):
+                commanded_position = self._commanded_positions.get(joint_name)
+                if commanded_position is not None:
+                    first_positions[index] = commanded_position
+                    anchored = True
+                    continue
+                current_position = current_positions.get(joint_name)
+                if current_position is None or not math.isfinite(current_position):
+                    return TrajectoryExecutionResult(
+                        TrajectoryExecutionStatus.START_STATE_UNAVAILABLE,
+                        f"Current position for joint '{joint_name}' is unavailable",
+                    )
+                error = abs(current_position - planned_position)
+                if error > self._config.start_position_tolerance:
+                    return TrajectoryExecutionResult(
+                        TrajectoryExecutionStatus.START_STATE_MISMATCH,
+                        f"Trajectory start for joint '{joint_name}' differs from current "
+                        f"position by {error:.6f}",
+                    )
 
-        # Preempt any active trajectory
-        if self._state == TrajectoryState.EXECUTING:
-            logger.info(f"Preempting active trajectory on {self._name}")
-            self._clear_active_trajectory()
+        if anchored:
+            trajectory = JointTrajectory(
+                joint_names=list(trajectory.joint_names),
+                points=[
+                    TrajectoryPoint(
+                        time_from_start=trajectory.points[0].time_from_start,
+                        positions=first_positions,
+                        velocities=list(trajectory.points[0].velocities),
+                    ),
+                    *trajectory.points[1:],
+                ],
+                timestamp=trajectory.timestamp,
+            )
 
+        run = _TrajectoryRun(trajectory)
+        for index, joint_name in enumerate(trajectory.joint_names):
+            self._motions[joint_name] = (run, index)
+            if len(trajectory.points) > 1 and joint_name not in self._commanded_positions:
+                self._commanded_positions[joint_name] = current_positions[joint_name]
         self._trajectory = trajectory
+        self._last_duration = trajectory.duration
+        self._last_elapsed = 0.0
         self._pending_start = True  # Start time set on first compute()
         self._state = TrajectoryState.EXECUTING
 
@@ -404,10 +536,46 @@ class JointTrajectoryTask(BaseControlTask):
         Returns:
             Progress as fraction, or 0.0 if not executing
         """
-        if self._state != TrajectoryState.EXECUTING or self._trajectory is None:
+        if self._state != TrajectoryState.EXECUTING:
             return 0.0
-        t_elapsed = t_now - self._start_time
-        return min(1.0, t_elapsed / self._trajectory.duration)
+        progress, _elapsed, _remaining = self._active_run_status(t_now)
+        return progress
+
+    def _active_run_status(self, t_now: float) -> tuple[float, float, float]:
+        """Aggregate timing conservatively across every active trajectory run."""
+        runs = {id(run): run for run, _index in self._motions.values()}.values()
+        progresses: list[float] = []
+        elapsed_times: list[float] = []
+        remaining_times: list[float] = []
+        for run in runs:
+            elapsed = 0.0 if run.start_time is None else max(0.0, t_now - run.start_time)
+            duration = run.trajectory.duration
+            progress = 0.0 if duration <= 0.0 else min(1.0, elapsed / duration)
+            progresses.append(progress)
+            elapsed_times.append(elapsed)
+            remaining_times.append(max(0.0, duration - elapsed))
+        if not progresses:
+            return 0.0, 0.0, 0.0
+        return min(progresses), max(elapsed_times), max(remaining_times)
+
+    def get_status(self, t_now: float) -> TrajectoryStatus:
+        """Return a non-destructive snapshot of the current execution state."""
+
+        if self._state == TrajectoryState.EXECUTING:
+            progress, elapsed, remaining = self._active_run_status(t_now)
+            return TrajectoryStatus(
+                state=self._state,
+                progress=progress,
+                time_elapsed=elapsed,
+                time_remaining=remaining,
+            )
+        completed = self._state == TrajectoryState.COMPLETED
+        return TrajectoryStatus(
+            state=self._state,
+            progress=1.0 if completed else 0.0,
+            time_elapsed=self._last_duration if completed else self._last_elapsed,
+            time_remaining=0.0,
+        )
 
 
 class JointTrajectoryTaskParams(BaseConfig):
@@ -418,15 +586,22 @@ class JointTrajectoryTaskParams(BaseConfig):
         ge=0.0,
         allow_inf_nan=False,
     )
+    velocity_limits: dict[str, float] | None = None
+    hold_position_when_idle: bool = False
 
 
 def create_task(cfg: Any, hardware: Any) -> JointTrajectoryTask:
+    if cfg.name != JOINT_TRAJECTORY_TASK_NAME:
+        raise ValueError(
+            f"trajectory task must be named {JOINT_TRAJECTORY_TASK_NAME!r}, got {cfg.name!r}"
+        )
     params = JointTrajectoryTaskParams.model_validate(cfg.params)
     return JointTrajectoryTask(
-        cfg.name,
         JointTrajectoryTaskConfig(
             joint_names=cfg.joint_names,
             priority=cfg.priority,
             start_position_tolerance=params.start_position_tolerance,
+            velocity_limits=params.velocity_limits,
+            hold_position_when_idle=params.hold_position_when_idle,
         ),
     )

@@ -28,28 +28,27 @@ from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
 from dimos.hardware.sensors.lidar.virtual_mid360.recorder import Mid360PcapRecorder
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
-from dimos.memory2.module import pose_setter_for
+from dimos.memory.module import pose_setter_for
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.movement_manager.movement_manager import MovementManager
-from dimos.navigation.nav_3d.mls_planner.goal_relay import GoalRelay
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import rerun_config
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.robot.unitree.go2.constants import ROBOT_HEIGHT, ROBOT_LENGTH, ROBOT_WIDTH
+from dimos.robot.unitree.go2.constants import (
+    BASE_LINK_HEIGHT,
+    ROBOT_HEIGHT,
+    ROBOT_LENGTH,
+    ROBOT_WIDTH,
+)
 from dimos.robot.unitree.go2.go2_mid360_static_transforms import Go2Mid360StaticTf
 from dimos.visualization.vis_module import vis_module
 
 voxel_size = 0.08
 # Raise above 0 to draw what the planner searched over (surface, nodes, weighted edges).
 planner_viz_hz = 0.0
-
-# Body-frame axis-triad length (m).
-_axis_len = 0.5
-# Arrow radius as a fraction of the triad length.
-_AXIS_RADIUS_RATIO = 25
 
 
 class Go2Mid360Recorder(PointlioRecorder):
@@ -104,30 +103,6 @@ def _static_robot_body(rr: Any) -> list[Any]:
     ]
 
 
-def _axis_triad(rr: Any) -> Any:
-    """XYZ axis triad, red/green/blue for x/y/z."""
-    return rr.Arrows3D(
-        origins=[[0.0, 0.0, 0.0]] * 3,
-        vectors=[
-            [_axis_len, 0.0, 0.0],
-            [0.0, _axis_len, 0.0],
-            [0.0, 0.0, _axis_len],
-        ],
-        colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
-        radii=_axis_len / _AXIS_RADIUS_RATIO,
-    )
-
-
-def _static_body_axes(rr: Any) -> Any:
-    """XYZ triad on the robot body (child of the box)."""
-    return _axis_triad(rr)
-
-
-def _static_sensor_axes(rr: Any) -> list[Any]:
-    """XYZ triad on pointlio's raw sensor frame, tilted by the lidar pitch."""
-    return [_axis_triad(rr), rr.Transform3D(parent_frame="tf#/mid360_link")]
-
-
 _nav_rerun_config = {
     **rerun_config,
     "max_hz": {
@@ -138,12 +113,10 @@ _nav_rerun_config = {
     },
     # Ring buffer replayed to a connecting viewer. Small so connect catches up fast.
     "memory_limit": "64MB",
-    # The robot box hangs off base_link. It lives on its own entity: a static
-    # transform on world/tf/base_link would override the live tf.
+    # The robot box hangs off base_link on its own entity: a static transform
+    # under world/tf would override the live one.
     "static": {
         "world/robot_body": _static_robot_body,
-        "world/robot_body/axes": _static_body_axes,
-        "world/sensor_axes": _static_sensor_axes,
     },
     "visual_override": {
         **rerun_config["visual_override"],
@@ -187,6 +160,7 @@ unitree_go2_nav_3d = autoconnect(
         world_frame="odom",
         voxel_size=voxel_size,
         robot_height=ROBOT_HEIGHT,
+        start_z_offset_m=BASE_LINK_HEIGHT,
         surface_closing_radius=0.3,
         wall_clearance_m=0.1,
         wall_buffer_m=0.75,
@@ -195,8 +169,7 @@ unitree_go2_nav_3d = autoconnect(
         step_penalty_weight=4.0,
         viz_publish_hz=planner_viz_hz,
     ).remappings([(MLSPlannerNative, "global_map", "global_map_unused")]),
-    GoalRelay.blueprint(lidar_height=ROBOT_HEIGHT),
-    BasicPathFollower.blueprint(speed=0.5, heading_gain=0.4, max_angular=0.6),
+    BasicPathFollower.blueprint(speed=0.5, heading_gain=1.5, max_angular=1.5),
     MovementManager.blueprint(),
 ).global_config(n_workers=10, robot_model="unitree_go2", obstacle_avoidance=False)
 

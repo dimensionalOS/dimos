@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -21,6 +22,7 @@
 
 #include "sensor_msgs/Imu.hpp"
 #include "sensor_msgs/PointCloud2.hpp"
+#include "sensor_msgs/PointField.hpp"
 #include "std_msgs/Header.hpp"
 
 using dimos::native::Builder;
@@ -38,6 +40,7 @@ struct Mid360Config {
     std::string lidar_ip;
     double frequency;
     bool enable_imu;
+    std::string point_format;
     std::string frame_id;
     std::string imu_frame_id;
     int cmd_data_port;
@@ -59,16 +62,89 @@ struct Mid360Config {
 namespace {
 
 using dimos::make_header;
-using dimos::make_xyzi_cloud;
-using dimos::xyzi_point;
 
 // How often the emit loop checks whether the frame interval has elapsed.
 constexpr std::chrono::milliseconds kEmitPollInterval{10};
 
-double packet_timestamp(const LivoxLidarEthernetPacket* pkt) {
+// Wire layout per point. offset_time is uint32 ns since the header stamp; tag
+// and line are the Livox per-point bytes (line is always 0 on the Mid-360).
+// Scan-undistorting estimators (FAST-LIVO2 etc.) need offset_time, and no LIO
+// in the stack reads intensity, so minimal is the default.
+//   Minimal x,y,z,offset_time                    — 16 B/point
+//   Full    x,y,z,intensity,offset_time,tag,line — 22 B/point
+//   Legacy  x,y,z,intensity                      — 16 B/point
+enum class PointFormat { Full, Minimal, Legacy };
+
+// Full-layout field offsets; minimal packs offset_time at 12 instead.
+constexpr int32_t kOffsetTimeOffset = 16;
+constexpr int32_t kTagOffset = 20;
+constexpr int32_t kLineOffset = 21;
+constexpr int32_t kFullPointStep = 22;
+constexpr int32_t kCompactPointStep = 16;  // minimal and legacy layouts
+
+PointFormat parse_point_format(const std::string& name) {
+    if (name == "full") return PointFormat::Full;
+    if (name == "minimal") return PointFormat::Minimal;
+    if (name == "legacy") return PointFormat::Legacy;
+    throw std::runtime_error("point_format must be full, minimal or legacy, got '" + name + "'");
+}
+
+uint64_t packet_timestamp_ns(const LivoxLidarEthernetPacket* pkt) {
     uint64_t ns = 0;
     std::memcpy(&ns, pkt->timestamp, sizeof(uint64_t));
-    return static_cast<double>(ns) / 1e9;
+    return ns;
+}
+
+double packet_timestamp(const LivoxLidarEthernetPacket* pkt) {
+    return static_cast<double>(packet_timestamp_ns(pkt)) / 1e9;
+}
+
+// Saturate at the uint32 range (~4.29 s) so a stalled emit loop degrades to a
+// clamped offset rather than a wrapped one.
+uint32_t saturated_offset(uint64_t offset_ns) {
+    constexpr uint64_t kMax = std::numeric_limits<uint32_t>::max();
+    return static_cast<uint32_t>(offset_ns < kMax ? offset_ns : kMax);
+}
+
+sensor_msgs::PointCloud2 make_cloud(PointFormat format, const std::string& frame_id, double ts,
+                                    int num_points) {
+    sensor_msgs::PointCloud2 pc;
+    pc.header = make_header(frame_id, ts);
+    pc.height = 1;
+    pc.width = num_points;
+    pc.is_bigendian = 0;
+    pc.is_dense = 1;
+
+    auto make_field = [](const std::string& name, int32_t offset, int8_t datatype) {
+        sensor_msgs::PointField f;
+        f.name = name;
+        f.offset = offset;
+        f.datatype = datatype;
+        f.count = 1;
+        return f;
+    };
+
+    pc.fields.push_back(make_field("x", 0, sensor_msgs::PointField::FLOAT32));
+    pc.fields.push_back(make_field("y", 4, sensor_msgs::PointField::FLOAT32));
+    pc.fields.push_back(make_field("z", 8, sensor_msgs::PointField::FLOAT32));
+    if (format != PointFormat::Minimal) {
+        pc.fields.push_back(make_field("intensity", 12, sensor_msgs::PointField::FLOAT32));
+    }
+    if (format == PointFormat::Full) {
+        pc.fields.push_back(
+            make_field("offset_time", kOffsetTimeOffset, sensor_msgs::PointField::UINT32));
+        pc.fields.push_back(make_field("tag", kTagOffset, sensor_msgs::PointField::UINT8));
+        pc.fields.push_back(make_field("line", kLineOffset, sensor_msgs::PointField::UINT8));
+    } else if (format == PointFormat::Minimal) {
+        pc.fields.push_back(make_field("offset_time", 12, sensor_msgs::PointField::UINT32));
+    }
+    pc.fields_length = static_cast<int32_t>(pc.fields.size());
+
+    pc.point_step = format == PointFormat::Full ? kFullPointStep : kCompactPointStep;
+    pc.row_step = pc.point_step * num_points;
+    pc.data_length = pc.row_step;
+    pc.data.resize(pc.data_length);
+    return pc;
 }
 
 }  // namespace
@@ -77,6 +153,7 @@ class Mid360 : public Module {
 public:
     void build(Builder& builder, Config& config) override {
         cfg_ = config.parse<Mid360Config>();
+        format_ = parse_point_format(cfg_.point_format);
         lidar_ = builder.output<sensor_msgs::PointCloud2>("lidar");
         if (cfg_.enable_imu) {
             imu_ = builder.output<sensor_msgs::Imu>("imu");
@@ -152,14 +229,24 @@ private:
     void on_point_cloud(LivoxLidarEthernetPacket* data) {
         if (shutdown_requested() || data == nullptr) return;
 
-        double ts = packet_timestamp(data);
+        uint64_t ts_ns = packet_timestamp_ns(data);
         uint16_t dot_num = data->dot_num;
+
+        // Per-point intra-packet spacing, matching livox_ros_driver2 and the
+        // pointlio module. time_interval is in units of 0.1 us, so *100 -> ns.
+        const uint64_t point_interval_ns =
+            dot_num > 0 ? static_cast<uint64_t>(data->time_interval) * 100 / dot_num : 0;
 
         std::lock_guard<std::mutex> lock(pc_mutex_);
         if (!frame_has_ts_) {
-            frame_ts_ = ts;
+            frame_start_ns_ = ts_ns;
             frame_has_ts_ = true;
         }
+
+        // Clamp rather than wrap when a UDP packet arrives out of order with a
+        // stamp older than the frame start (offset 0 = "at the header stamp").
+        const uint64_t packet_offset_ns =
+            ts_ns >= frame_start_ns_ ? ts_ns - frame_start_ns_ : 0;
 
         if (data->data_type == DATA_TYPE_CARTESIAN_HIGH) {
             auto* pts = reinterpret_cast<const LivoxLidarCartesianHighRawPoint*>(data->data);
@@ -169,6 +256,8 @@ private:
                 xyz_.push_back(static_cast<float>(pts[i].y) / 1000.0f);
                 xyz_.push_back(static_cast<float>(pts[i].z) / 1000.0f);
                 intensity_.push_back(static_cast<float>(pts[i].reflectivity) / 255.0f);
+                offset_ns_.push_back(saturated_offset(packet_offset_ns + i * point_interval_ns));
+                tag_.push_back(pts[i].tag);
             }
         } else if (data->data_type == DATA_TYPE_CARTESIAN_LOW) {
             auto* pts = reinterpret_cast<const LivoxLidarCartesianLowRawPoint*>(data->data);
@@ -178,6 +267,8 @@ private:
                 xyz_.push_back(static_cast<float>(pts[i].y) / 100.0f);
                 xyz_.push_back(static_cast<float>(pts[i].z) / 100.0f);
                 intensity_.push_back(static_cast<float>(pts[i].reflectivity) / 255.0f);
+                offset_ns_.push_back(saturated_offset(packet_offset_ns + i * point_interval_ns));
+                tag_.push_back(pts[i].tag);
             }
         }
     }
@@ -232,30 +323,55 @@ private:
     void emit_frame() {
         std::vector<float> xyz;
         std::vector<float> intensity;
+        std::vector<uint32_t> offset_ns;
+        std::vector<uint8_t> tag;
         double ts = 0.0;
         {
             std::lock_guard<std::mutex> lock(pc_mutex_);
             if (xyz_.empty()) return;
             xyz.swap(xyz_);
             intensity.swap(intensity_);
-            ts = frame_ts_;
+            offset_ns.swap(offset_ns_);
+            tag.swap(tag_);
+            // Header stamp is the frame start, the timebase offset_time is
+            // relative to, same as the pointlio module.
+            ts = static_cast<double>(frame_start_ns_) / 1e9;
             frame_has_ts_ = false;
         }
-        publish_pointcloud(xyz, intensity, ts);
+        publish_pointcloud(xyz, intensity, offset_ns, tag, ts);
     }
 
-    void publish_pointcloud(const std::vector<float>& xyz,
-                            const std::vector<float>& intensity, double ts) {
+    void publish_pointcloud(const std::vector<float>& xyz, const std::vector<float>& intensity,
+                            const std::vector<uint32_t>& offset_ns,
+                            const std::vector<uint8_t>& tag, double ts) {
         int num_points = static_cast<int>(xyz.size()) / 3;
 
-        sensor_msgs::PointCloud2 pc = make_xyzi_cloud(cfg_.frame_id, ts, num_points);
+        sensor_msgs::PointCloud2 pc = make_cloud(format_, cfg_.frame_id, ts, num_points);
 
         for (int i = 0; i < num_points; ++i) {
-            float* dst = xyzi_point(pc, i);
+            uint8_t* base = pc.data.data() + i * pc.point_step;
+            float* dst = reinterpret_cast<float*>(base);
             dst[0] = xyz[i * 3 + 0];
             dst[1] = xyz[i * 3 + 1];
             dst[2] = xyz[i * 3 + 2];
-            dst[3] = intensity[i];
+            switch (format_) {
+                case PointFormat::Full: {
+                    dst[3] = intensity[i];
+                    uint32_t offset_value = offset_ns[i];
+                    std::memcpy(base + kOffsetTimeOffset, &offset_value, sizeof(uint32_t));
+                    base[kTagOffset] = tag[i];
+                    base[kLineOffset] = 0;  // Mid-360: single line
+                    break;
+                }
+                case PointFormat::Minimal: {
+                    uint32_t offset_value = offset_ns[i];
+                    std::memcpy(base + 12, &offset_value, sizeof(uint32_t));
+                    break;
+                }
+                case PointFormat::Legacy:
+                    dst[3] = intensity[i];
+                    break;
+            }
         }
 
         lidar_.publish(pc);
@@ -266,11 +382,16 @@ private:
     Output<sensor_msgs::Imu> imu_;
     // From config, set in build().
     std::chrono::microseconds frame_interval_{};
+    PointFormat format_ = PointFormat::Minimal;
 
     std::mutex pc_mutex_;
     std::vector<float> xyz_;
     std::vector<float> intensity_;
-    double frame_ts_ = 0.0;
+    // Per-point time offsets (ns since frame start) and Livox tag bytes,
+    // matching what Point-LIO's CustomPoint carries.
+    std::vector<uint32_t> offset_ns_;
+    std::vector<uint8_t> tag_;
+    uint64_t frame_start_ns_ = 0;
     bool frame_has_ts_ = false;
 };
 

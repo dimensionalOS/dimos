@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Record FAST-LIO odometry + lidar into a memory2 SQLite db.
+"""Record FAST-LIO odometry + lidar into a memory SQLite db.
 
 A ``Recorder`` that records its In ports under their own names
 (``fastlio_odometry`` / ``fastlio_lidar``) — wire them to FastLio2's
@@ -25,7 +25,7 @@ map global`` can register it.
 from __future__ import annotations
 
 from dimos.core.stream import In
-from dimos.memory2.module import OnExisting, Recorder, RecorderConfig, pose_setter_for
+from dimos.memory.module import OnExisting, Recorder, RecorderConfig, pose_setter_for
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2

@@ -15,29 +15,22 @@
 """
 Mesh Utilities for Drake
 
-Provides utilities for preparing URDF files for use with Drake:
-- Xacro processing
+Provides utilities for preparing in-memory URDF descriptions for use with Drake:
 - Mesh format conversion (DAE/STL to OBJ)
-- Package path resolution
-
-Example:
-    urdf_path = prepare_urdf_for_drake(
-        urdf_path="/path/to/robot.xacro",
-        package_paths={"robot_description": "/path/to/robot_description"},
-        xacro_args={"use_sim": "true"},
-        convert_meshes=True,
-    )
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 from pathlib import Path
 import re
 import shutil
 from typing import TYPE_CHECKING
+import uuid
 
-from dimos.constants import CACHE_DIR
+from dimos.robot.assets.git_cache import DEFAULT_ROBOT_ASSET_CACHE_ROOT
+from dimos.robot.assets.model import LoadedRobotModel
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -46,106 +39,41 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# Cache directory for processed URDFs
-_CACHE_DIR = CACHE_DIR / "urdf"
+# Only converted mesh artifacts are cached. Prepared URDF XML remains in memory.
+_CACHE_DIR = DEFAULT_ROBOT_ASSET_CACHE_ROOT / "derived" / "drake_meshes"
 
 
 def prepare_urdf_for_drake(
-    urdf_path: Path | str,
-    package_paths: dict[str, Path] | None = None,
-    xacro_args: dict[str, str] | None = None,
+    description: LoadedRobotModel,
     convert_meshes: bool = False,
-) -> str:
-    """Prepare a URDF/xacro file for use with Drake.
+) -> LoadedRobotModel:
+    """Apply Drake-specific cleanup to an in-memory URDF.
 
     This function:
-    1. Processes xacro files if needed
-    2. Resolves package:// URIs in mesh paths
-    3. Optionally converts DAE/STL meshes to OBJ format
+    1. Strips transmission blocks
+    2. Optionally converts DAE/STL meshes to cached OBJ artifacts
 
     Args:
-        urdf_path: Path to URDF or xacro file
-        package_paths: Dict mapping package names to filesystem paths
-        xacro_args: Arguments to pass to xacro processor
+        description: Loaded in-memory URDF
         convert_meshes: Convert DAE/STL meshes to OBJ for Drake compatibility
 
     Returns:
-        Path to the prepared URDF file (may be cached)
+        Prepared in-memory URDF and its original filesystem context
     """
-    urdf_path = Path(urdf_path)
-    package_paths = package_paths or {}
-    xacro_args = xacro_args or {}
-
-    # Generate cache key
-    cache_key = _generate_cache_key(urdf_path, package_paths, xacro_args, convert_meshes)
-    cache_path = _CACHE_DIR / cache_key / urdf_path.stem
-    cache_path.mkdir(parents=True, exist_ok=True)
-    cached_urdf = cache_path / f"{urdf_path.stem}.urdf"
-
-    # Check cache
-    if cached_urdf.exists():
-        logger.debug(f"Using cached URDF: {cached_urdf}")
-        return str(cached_urdf)
-
-    # Process xacro if needed
-    if urdf_path.suffix in (".xacro", ".urdf.xacro"):
-        urdf_content = _process_xacro(urdf_path, package_paths, xacro_args)
-    else:
-        urdf_content = urdf_path.read_text()
+    urdf_content = description.xml
 
     # Strip transmission blocks (Drake doesn't need them, and they can cause issues)
     urdf_content = _strip_transmission_blocks(urdf_content)
 
-    # Resolve package:// URIs
-    urdf_content = _resolve_package_uris(urdf_content, package_paths, cache_path)
-
     # Convert meshes if requested
     if convert_meshes:
-        urdf_content = _convert_meshes(urdf_content, cache_path)
+        urdf_content = _convert_meshes(urdf_content, _CACHE_DIR)
 
-    # Write processed URDF
-    cached_urdf.write_text(urdf_content)
-    logger.info(f"Prepared URDF cached at: {cached_urdf}")
-
-    return str(cached_urdf)
-
-
-def _generate_cache_key(
-    urdf_path: Path,
-    package_paths: dict[str, Path],
-    xacro_args: dict[str, str],
-    convert_meshes: bool,
-) -> str:
-    """Generate a cache key for the URDF configuration.
-
-    Includes a version number to invalidate cache when processing logic changes.
-    """
-    # Include file modification time
-    mtime = urdf_path.stat().st_mtime if urdf_path.exists() else 0
-
-    # Version number to invalidate cache when processing logic changes
-    # Increment this when adding new processing steps (e.g., stripping transmission blocks)
-    processing_version = "v2"
-
-    key_data = f"{processing_version}:{urdf_path}:{mtime}:{sorted(package_paths.items())}:{sorted(xacro_args.items())}:{convert_meshes}"
-    return hashlib.md5(key_data.encode()).hexdigest()[:16]
-
-
-def _process_xacro(
-    xacro_path: Path,
-    package_paths: dict[str, Path],
-    xacro_args: dict[str, str],
-) -> str:
-    """Process xacro file to URDF."""
-    try:
-        from dimos.utils.ament_prefix import process_xacro
-    except ImportError:
-        raise ImportError(
-            "xacro is required for processing .xacro files. "
-            "Install the manipulation extra: pip install dimos[manipulation]"
-        )
-
-    return process_xacro(xacro_path, package_paths, xacro_args)
+    return LoadedRobotModel(
+        xml=urdf_content,
+        source_path=description.source_path,
+        package_paths=description.package_paths,
+    )
 
 
 def _strip_transmission_blocks(urdf_content: str) -> str:
@@ -175,36 +103,6 @@ def _strip_transmission_blocks(urdf_content: str) -> str:
     return result
 
 
-def _resolve_package_uris(
-    urdf_content: str,
-    package_paths: dict[str, Path],
-    output_dir: Path,
-) -> str:
-    """Resolve package:// URIs to filesystem paths."""
-    # Pattern for package:// URIs (handles both single and double quotes)
-    # Note: Use triple quotes so \s is correctly interpreted as whitespace, not literal 's'
-    pattern = r"""package://([^/]+)/(.+?)(["'<>\s])"""
-
-    def replace_uri(match: re.Match[str]) -> str:
-        pkg_name = match.group(1)
-        rel_path = match.group(2)
-        suffix = match.group(3)
-
-        if pkg_name in package_paths:
-            # Ensure absolute path for proper resolution
-            pkg_path = Path(package_paths[pkg_name]).resolve()
-            full_path = pkg_path / rel_path
-            if full_path.exists():
-                return f"{full_path}{suffix}"
-            else:
-                logger.warning(f"File not found: {full_path}")
-
-        # Return original if not found
-        return match.group(0)
-
-    return re.sub(pattern, replace_uri, urdf_content)
-
-
 def _convert_meshes(urdf_content: str, output_dir: Path) -> str:
     """Convert DAE/STL meshes to OBJ format for Drake compatibility."""
     try:
@@ -214,7 +112,7 @@ def _convert_meshes(urdf_content: str, output_dir: Path) -> str:
         return urdf_content
 
     mesh_dir = output_dir / "meshes"
-    mesh_dir.mkdir(exist_ok=True)
+    mesh_dir.mkdir(parents=True, exist_ok=True)
 
     # Find mesh file references
     pattern = r'filename="([^"]+\.(dae|stl|DAE|STL))"'
@@ -228,19 +126,19 @@ def _convert_meshes(urdf_content: str, output_dir: Path) -> str:
             return f'filename="{converted[original_path]}"'
 
         try:
-            # Load mesh
-            mesh = trimesh.load(original_path, force="mesh")
+            source_path = Path(original_path)
+            content_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()[:16]
+            obj_path = mesh_dir / f"{source_path.stem}-{content_hash}.obj"
 
-            # Generate output path
-            mesh_name = Path(original_path).stem
-            obj_path = mesh_dir / f"{mesh_name}.obj"
+            if not obj_path.exists():
+                mesh = trimesh.load(source_path, force="mesh")
+                # trimesh.export returns None, so there is no result to inspect.
+                mesh.export(str(obj_path), file_type="obj")  # type: ignore[no-untyped-call]
+                logger.debug(f"Converted mesh: {original_path} -> {obj_path}")
 
-            # Export as OBJ (trimesh.export returns None, ignore)
-            mesh.export(str(obj_path), file_type="obj")  # type: ignore[no-untyped-call]
-            logger.debug(f"Converted mesh: {original_path} -> {obj_path}")
-
-            converted[original_path] = str(obj_path)
-            return f'filename="{obj_path}"'
+            obj_uri = obj_path.resolve().as_uri()
+            converted[original_path] = obj_uri
+            return f'filename="{obj_uri}"'
 
         except Exception as e:
             logger.warning(f"Failed to convert mesh {original_path}: {e}")
@@ -249,26 +147,45 @@ def _convert_meshes(urdf_content: str, output_dir: Path) -> str:
     return re.sub(pattern, convert_mesh, urdf_content)
 
 
+@dataclass(frozen=True)
+class ConvexHullMesh:
+    """A convex hull written to disk, with the point it was centered on.
+
+    Attributes:
+        path: Path to the OBJ file
+        centroid: World-frame mean of the input cloud, the mesh's local origin
+    """
+
+    path: str
+    centroid: NDArray[np.float64]
+
+
 def pointcloud_to_convex_hull_obj(
     points: NDArray[np.float64],
     output_path: Path | str | None = None,
     *,
+    cache_key: str | None = None,
     voxel_size: float = 0.005,
     min_points: int = 4,
-) -> str | None:
+) -> ConvexHullMesh | None:
     """Compute convex hull from point cloud and save as OBJ file.
 
-    Points are centered at origin so the mesh is in local frame.
-    The caller sets the obstacle pose to place it in the world.
+    The mesh is centered on the returned centroid and stays axis-aligned with
+    the world frame: place it at that centroid with identity orientation. Any
+    other pose (a bounding-box center, an oriented-box rotation) moves the hull
+    off the points it was built from.
 
     Args:
         points: Nx3 numpy array of 3D points (world frame)
-        output_path: Where to save OBJ. If None, uses a temp file.
+        output_path: Where to save OBJ. If None, saves into the hull cache.
+        cache_key: Stable identity used when output_path is None. The same key
+            reuses one file, so a caller rescanning an object overwrites in
+            place; without a key each call gets its own unique file.
         voxel_size: Downsample voxel size in meters (0 to skip)
         min_points: Minimum points required for convex hull
 
     Returns:
-        Path to OBJ file, or None if hull computation fails
+        The written hull and its centroid, or None if hull computation fails
     """
     import numpy as np
 
@@ -282,8 +199,10 @@ def pointcloud_to_convex_hull_obj(
         logger.warning("open3d not installed, cannot compute convex hull")
         return None
 
-    # Center at origin so mesh is in local frame
-    centered = points - points.mean(axis=0)
+    # Mean of the raw cloud, before any downsampling: this is the point the
+    # caller must place the mesh at.
+    centroid = points.mean(axis=0)
+    centered = points - centroid
 
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(centered.astype(np.float64))
@@ -302,9 +221,15 @@ def pointcloud_to_convex_hull_obj(
         return None
 
     if output_path is None:
-        hull_dir = _CACHE_DIR / "convex_hulls"
-        hull_dir.mkdir(parents=True, exist_ok=True)
-        output_path = hull_dir / f"hull_{id(points):x}.obj"
+        if cache_key is None:
+            # Not id(points): CPython recycles a freed address, so sequential
+            # callers silently overwrote each other's hulls.
+            stem = uuid.uuid4().hex
+        else:
+            # Digest so two keys that sanitize alike still get their own file.
+            safe = re.sub(r"[^A-Za-z0-9_.-]", "_", cache_key)[:64]
+            stem = f"{safe}_{hashlib.sha256(cache_key.encode()).hexdigest()[:12]}"
+        output_path = _CACHE_DIR / "convex_hulls" / f"hull_{stem}.obj"
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -314,14 +239,14 @@ def pointcloud_to_convex_hull_obj(
         logger.debug(
             f"Convex hull: {len(hull.vertices)} verts, {len(hull.triangles)} faces -> {output_path}"
         )
-        return str(output_path)
+        return ConvexHullMesh(path=str(output_path), centroid=centroid)
     except Exception as e:
         logger.warning(f"Failed to write convex hull OBJ: {e}")
         return None
 
 
 def clear_cache() -> None:
-    """Clear the URDF cache directory."""
+    """Clear converted mesh and convex-hull artifacts."""
     if _CACHE_DIR.exists():
         shutil.rmtree(_CACHE_DIR)
         logger.info(f"Cleared URDF cache: {_CACHE_DIR}")

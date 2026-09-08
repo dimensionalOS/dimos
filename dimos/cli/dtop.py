@@ -64,7 +64,7 @@ _BRAILLE_BASE = 0x2800
 _LDOTS = (0x00, 0x40, 0x44, 0x46, 0x47)  # left col: 0‥4 filled rows
 _RDOTS = (0x00, 0x80, 0xA0, 0xB0, 0xB8)  # right col: 0‥4 filled rows
 _SPARK_WIDTH = 12  # characters (×2 = 24 samples of history)
-_LABEL_COLOR = "#cccccc"  # metric label color (CPU, PSS, Thr, etc.)
+_LABEL_COLOR = "#cccccc"  # metric label color (CPU, memory, Thr, etc.)
 
 
 def _spark(history: deque[float], width: int = _SPARK_WIDTH) -> Text:
@@ -151,10 +151,11 @@ _LINE2: list[tuple[str, str, Callable[[float], str]]] = [
 # IO r/w is a compound field handled specially in _make_lines
 _IO_KEYS = ("io_read_bytes", "io_write_bytes")
 
-_ALL_KEYS = {key for _, key, _ in _LINE1 + _LINE2} | set(_IO_KEYS)
+_ALL_KEYS = {key for _, key, _ in _LINE1 + _LINE2} | set(_IO_KEYS) | {"rss"}
 
 LOGGED_METRICS = (
     "cpu_percent",
+    "rss",
     "pss",
     "num_threads",
     "num_children",
@@ -165,6 +166,12 @@ LOGGED_METRICS = (
     "io_read_bytes",
     "io_write_bytes",
 )
+
+
+def select_memory_metric(ranges: dict[str, tuple[float, float]]) -> tuple[str, str]:
+    if ranges["pss"][1] > 0:
+        return "PSS", "pss"
+    return "RSS", "rss"
 
 
 def _compute_ranges(data_dicts: list[dict[str, Any]]) -> dict[str, tuple[float, float]]:
@@ -213,7 +220,7 @@ class ResourceSpyApp(App[None]):
         autoconf(check_only=True)
 
         if db_path is not None:
-            from dimos.memory2.store.sqlite import SqliteStore
+            from dimos.memory.store.sqlite import SqliteStore
 
             self._store: SqliteStore | None = SqliteStore(path=db_path)
             self._store.start()
@@ -397,6 +404,8 @@ class ResourceSpyApp(App[None]):
         # Line 1
         line1 = Text()
         for idx, (label, key, fmt) in enumerate(_LINE1):
+            if key == "pss":
+                label, key = select_memory_metric(ranges)
             val = d.get(key, 0)
             lo, hi = ranges[key]
             if idx > 0:
@@ -435,7 +444,8 @@ class ResourceSpyApp(App[None]):
 _PREVIEW_DATA: dict[str, Any] = {
     "coordinator": {
         "cpu_percent": 12.3,
-        "pss": 47_400_000,
+        "rss": 47_400_000,
+        "pss": 0,
         "num_threads": 4,
         "num_children": 0,
         "num_fds": 32,
@@ -452,7 +462,8 @@ _PREVIEW_DATA: dict[str, Any] = {
             "alive": True,
             "modules": ["nav", "lidar"],
             "cpu_percent": 34.0,
-            "pss": 125_829_120,
+            "rss": 125_829_120,
+            "pss": 0,
             "num_threads": 8,
             "num_children": 2,
             "num_fds": 64,
@@ -469,7 +480,8 @@ _PREVIEW_DATA: dict[str, Any] = {
             "dedicated": True,
             "modules": ["vision"],
             "cpu_percent": 87.0,
-            "pss": 536_870_912,
+            "rss": 536_870_912,
+            "pss": 0,
             "num_threads": 16,
             "num_children": 1,
             "num_fds": 128,
@@ -565,7 +577,7 @@ def main() -> None:
     parser.add_argument(
         "--log",
         action="store_true",
-        help="Log stats to a memory2 SQLite database (dtop_{timestamp}.ignore.db).",
+        help="Log stats to a memory SQLite database (dtop_{timestamp}.ignore.db).",
     )
     args = parser.parse_args()
 

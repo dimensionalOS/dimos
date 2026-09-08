@@ -1,6 +1,6 @@
 services:
   dev-environment:
-    image: ghcr.io/dimensionalos/dev:${DEV_IMAGE_TAG:-latest}
+    image: dimensional/dev:${DEV_IMAGE_TAG:-latest}
     container_name: dimos-dev-${DEV_IMAGE_TAG:-latest}
     network_mode: "host"
     volumes:

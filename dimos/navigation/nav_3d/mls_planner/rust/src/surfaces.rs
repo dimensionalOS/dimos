@@ -17,15 +17,11 @@
 //! across walls.
 
 use ahash::{AHashMap, AHashSet};
-use image::{GrayImage, Luma};
-use imageproc::distance_transform::Norm;
-use imageproc::morphology::{dilate, erode};
 use rayon::prelude::*;
 
 use crate::voxel::VoxelKey;
 
-const ON: Luma<u8> = Luma([255]);
-const OFF: Luma<u8> = Luma([0]);
+const INF: u16 = u16::MAX - 1;
 
 pub type ColumnIz = AHashMap<(i32, i32), Vec<i32>>;
 
@@ -183,11 +179,61 @@ fn close_surface_holes(
     }
 
     let slices: Vec<(i32, Vec<(i32, i32)>)> = by_z.into_iter().collect();
+    let tasks: Vec<(i32, Vec<(i32, i32)>)> = slices
+        .into_par_iter()
+        .flat_map_iter(|(iz, xys)| {
+            interaction_clusters(&xys, closing_passes)
+                .into_iter()
+                .map(move |cluster| (iz, cluster))
+        })
+        .collect();
     out.par_extend(
-        slices.par_iter().flat_map_iter(|(iz, xys)| {
+        tasks.par_iter().flat_map_iter(|(iz, xys)| {
             close_at_z(xys, *iz, by_col, closing_passes, clearance_cells)
         }),
     );
+}
+
+/// Split a slice into clusters that closing cannot connect.
+fn interaction_clusters(xys: &[(i32, i32)], closing_passes: u32) -> Vec<Vec<(i32, i32)>> {
+    const MIN_TILE_SIDE: i32 = 16;
+    // Separate clusters end up more than 2 closing passes apart, so each closes
+    // to the same cells it would as part of the whole slice.
+    let side = (4 * closing_passes as i32).max(MIN_TILE_SIDE);
+    let mut tiles: AHashMap<(i32, i32), Vec<(i32, i32)>> = AHashMap::new();
+    for &(x, y) in xys {
+        tiles
+            .entry((x.div_euclid(side), y.div_euclid(side)))
+            .or_default()
+            .push((x, y));
+    }
+
+    let mut clusters = Vec::new();
+    let mut stack = Vec::new();
+    let keys: Vec<(i32, i32)> = tiles.keys().copied().collect();
+    for key in keys {
+        if !tiles.contains_key(&key) {
+            continue;
+        }
+        let mut cluster = Vec::new();
+        stack.push(key);
+        while let Some((tx, ty)) = stack.pop() {
+            let Some(cells) = tiles.remove(&(tx, ty)) else {
+                continue;
+            };
+            cluster.extend(cells);
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    let neighbor = (tx + dx, ty + dy);
+                    if tiles.contains_key(&neighbor) {
+                        stack.push(neighbor);
+                    }
+                }
+            }
+        }
+        clusters.push(cluster);
+    }
+    clusters
 }
 
 /// Whether an occupied voxel lies near this cell at a compatible height.
@@ -206,7 +252,7 @@ fn has_support(by_col: &ColumnIz, ix: i32, iy: i32, iz: i32) -> bool {
     false
 }
 
-/// Close holes on an xy slice of the surfaces.
+/// Close holes in one cluster of an xy slice.
 fn close_at_z(
     xys: &[(i32, i32)],
     iz: i32,
@@ -214,41 +260,47 @@ fn close_at_z(
     closing_passes: u32,
     clearance_cells: i32,
 ) -> Vec<VoxelKey> {
-    let pad = closing_passes as i32;
-    let mut min_x = i32::MAX;
-    let mut max_x = i32::MIN;
-    let mut min_y = i32::MAX;
-    let mut max_y = i32::MIN;
+    let pad = closing_passes as i64;
+    let mut min_x = i64::MAX;
+    let mut max_x = i64::MIN;
+    let mut min_y = i64::MAX;
+    let mut max_y = i64::MIN;
     for &(ix, iy) in xys {
-        min_x = min_x.min(ix);
-        max_x = max_x.max(ix);
-        min_y = min_y.min(iy);
-        max_y = max_y.max(iy);
+        min_x = min_x.min(ix as i64);
+        max_x = max_x.max(ix as i64);
+        min_y = min_y.min(iy as i64);
+        max_y = max_y.max(iy as i64);
     }
 
-    let w = (max_x - min_x + 1 + 2 * pad) as u32;
-    let h = (max_y - min_y + 1 + 2 * pad) as u32;
+    let w = (max_x - min_x + 1 + 2 * pad) as usize;
+    let h = (max_y - min_y + 1 + 2 * pad) as usize;
     let x0 = min_x - pad;
     let y0 = min_y - pad;
 
-    let mut img = GrayImage::from_pixel(w, h, OFF);
+    let r = closing_passes.min(INF as u32 - 1) as u16;
+    let mut dist = vec![INF; w * h];
     for &(ix, iy) in xys {
-        img.put_pixel((ix - x0) as u32, (iy - y0) as u32, ON);
+        dist[(iy as i64 - y0) as usize * w + (ix as i64 - x0) as usize] = 0;
     }
-
-    let k = closing_passes.min(u8::MAX as u32) as u8;
-    img = dilate(&img, Norm::L1, k);
-    img = erode(&img, Norm::L1, k);
+    chamfer(&mut dist, w, h, Border::Empty);
+    // Reseeding from the dilation's complement turns the second pass into the
+    // erosion.
+    for v in dist.iter_mut() {
+        *v = if *v <= r { INF } else { 0 };
+    }
+    chamfer(&mut dist, w, h, Border::Source);
 
     let original: AHashSet<(i32, i32)> = xys.iter().copied().collect();
     let mut out = Vec::new();
     for py in 0..h {
         for px in 0..w {
-            if img.get_pixel(px, py).0[0] == 0 {
+            if dist[py * w + px] <= r {
                 continue;
             }
-            let ix = x0 + px as i32;
-            let iy = y0 + py as i32;
+            let (Ok(ix), Ok(iy)) = (i32::try_from(x0 + px as i64), i32::try_from(y0 + py as i64))
+            else {
+                continue;
+            };
 
             if !is_standable(ix, iy, iz, by_col, clearance_cells) {
                 continue;
@@ -261,6 +313,47 @@ fn close_at_z(
         }
     }
     out
+}
+
+/// What lies beyond the grid edge for the distance transform.
+#[derive(Clone, Copy)]
+enum Border {
+    Empty,
+    Source,
+}
+
+/// Two-pass L1 distance transform to the zero cells.
+fn chamfer(dist: &mut [u16], w: usize, h: usize, border: Border) {
+    let edge = match border {
+        Border::Empty => INF,
+        Border::Source => 0,
+    };
+    for y in 0..h {
+        for x in 0..w {
+            let left = if x > 0 { dist[y * w + x - 1] } else { edge };
+            let up = if y > 0 { dist[(y - 1) * w + x] } else { edge };
+            let best = left.min(up).saturating_add(1);
+            let i = y * w + x;
+            if best < dist[i] {
+                dist[i] = best;
+            }
+        }
+    }
+    for y in (0..h).rev() {
+        for x in (0..w).rev() {
+            let right = if x + 1 < w { dist[y * w + x + 1] } else { edge };
+            let down = if y + 1 < h {
+                dist[(y + 1) * w + x]
+            } else {
+                edge
+            };
+            let best = right.min(down).saturating_add(1);
+            let i = y * w + x;
+            if best < dist[i] {
+                dist[i] = best;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -337,6 +430,61 @@ mod tests {
             "unsupported void center must not be filled"
         );
         assert!(s.contains(&(0, -5, 0)), "the real ring stays");
+    }
+
+    #[test]
+    fn closing_keeps_solid_block_exact() {
+        let cells: Vec<VoxelKey> = (0..8)
+            .flat_map(|x| (0..8).map(move |y| (x, y, 0)))
+            .collect();
+        let mut s = run(&cells, 5, 3);
+        s.sort();
+        let mut expected = cells;
+        expected.sort();
+        assert_eq!(s, expected, "closing must not grow the block outward");
+    }
+
+    #[test]
+    fn boundary_coordinates_do_not_overflow() {
+        let cells = [(i32::MIN, i32::MIN, 0), (i32::MAX, i32::MAX, 0)];
+        let s = run(&cells, 5, 3);
+        assert!(s.contains(&cells[0]), "min-corner cell survives");
+        assert!(s.contains(&cells[1]), "max-corner cell survives");
+    }
+
+    #[test]
+    fn closing_keeps_a_thin_row_exact() {
+        for axis_is_x in [true, false] {
+            let cells: Vec<VoxelKey> = (0..8)
+                .map(|t| if axis_is_x { (t, 0, 0) } else { (0, t, 0) })
+                .collect();
+            let mut s = run(&cells, 5, 3);
+            s.sort();
+            let mut expected = cells;
+            expected.sort();
+            assert_eq!(s, expected, "closing must not grow a one-cell-wide row");
+        }
+    }
+
+    #[test]
+    fn stray_cell_does_not_affect_distant_cluster() {
+        let mut cells: Vec<VoxelKey> = [
+            (-1, -1),
+            (-1, 0),
+            (-1, 1),
+            (0, -1),
+            (0, 1),
+            (1, -1),
+            (1, 0),
+            (1, 1),
+        ]
+        .into_iter()
+        .map(|(dx, dy)| (dx, dy, 0))
+        .collect();
+        cells.push((10000, 5000, 0));
+        let s = run(&cells, 5, 3);
+        assert!(s.contains(&(0, 0, 0)), "hole still closes");
+        assert!(s.contains(&(10000, 5000, 0)), "stray cell survives");
     }
 
     #[test]

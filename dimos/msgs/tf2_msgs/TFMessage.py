@@ -12,19 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2025-2026 Dimensional Inc.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, BinaryIO
@@ -36,9 +23,84 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
 
     from dimos.visualization.rerun.bridge import RerunMulti
+
+DEFAULT_LINKS_ROOT = "tf_links"
+DEFAULT_TF_ROOT = "world/tf"
+DEFAULT_AXIS_LENGTH = 0.5
+DEPTH_SCALE = 0.8
+AXIS_WIDTH_UI_POINTS = 2.0
+AXIS_COLORS = [[255, 0, 0], [0, 255, 0], [0, 0, 255]]
+
+
+def _triad(length: float):  # type: ignore[no-untyped-def]
+    """XYZ arrows, red green blue."""
+    import rerun as rr
+
+    return rr.Arrows3D(
+        origins=[[0.0, 0.0, 0.0]] * 3,
+        vectors=[[length, 0.0, 0.0], [0.0, length, 0.0], [0.0, 0.0, length]],
+        colors=AXIS_COLORS,
+        radii=rr.components.Radius.ui_points(AXIS_WIDTH_UI_POINTS),
+    )
+
+
+class TfFrameTree:
+    """Store each frame under its parents. This lets us view the tree in the left panel."""
+
+    def __init__(
+        self, axis_length: float = DEFAULT_AXIS_LENGTH, root: str = DEFAULT_TF_ROOT
+    ) -> None:
+        self.axis_length = axis_length
+        self.root = root
+        self._parents: dict[str, str] = {}
+        self._placed: dict[str, tuple[str, int]] = {}  # frame -> (path, depth)
+
+    def placements(self) -> dict[str, str]:
+        return {frame: path for frame, (path, _depth) in self._placed.items()}
+
+    def update(self, transforms: Iterable[Transform]) -> None:
+        learned = False
+        for transform in transforms:
+            if self._parents.get(transform.child_frame_id) != transform.frame_id:
+                self._parents[transform.child_frame_id] = transform.frame_id
+                learned = True
+        if learned:
+            self._redraw()
+
+    def _place(self, frame: str, walked: frozenset[str]) -> tuple[str, int]:
+        import rerun as rr
+
+        part = rr.escape_entity_path_part(frame)
+        parent = self._parents.get(frame)
+        if parent is None or parent in walked:
+            return f"{self.root}/{part}", 0
+        parent_path, parent_depth = self._place(parent, walked | {frame})
+        return f"{parent_path}/{part}", parent_depth + 1
+
+    def _redraw(self) -> None:
+        import rerun as rr
+
+        frames = {*self._parents, *self._parents.values()}
+        placed = {frame: self._place(frame, frozenset()) for frame in frames}
+
+        for frame, (old_path, _depth) in self._placed.items():
+            new = placed.get(frame)
+            if new is None or new[0] != old_path:
+                rr.log(old_path, rr.Arrows3D(origins=[], vectors=[]), static=True)
+
+        for frame, (path, depth) in placed.items():
+            if self._placed.get(frame) != (path, depth):
+                rr.log(
+                    path,
+                    rr.CoordinateFrame(f"tf#/{frame}"),
+                    _triad(self.axis_length * DEPTH_SCALE**depth),
+                    static=True,
+                )
+
+        self._placed = placed
 
 
 class TFMessage:
@@ -56,14 +118,8 @@ class TFMessage:
         self.transforms_length = len(self.transforms)
 
     def lcm_encode(self) -> bytes:
-        """Encode as LCM TFMessage.
-
-        Args:
-            child_frame_ids: Optional list of child frame IDs for each transform.
-                           If not provided, defaults to "base_link" for all.
-        """
-
-        res = list(map(lambda t: t.lcm_transform(), self.transforms))
+        """Encode as LCM TFMessage."""
+        res = [t.lcm_transform() for t in self.transforms]
 
         lcm_msg = LCMTFMessage(
             transforms_length=len(self.transforms),
@@ -77,15 +133,12 @@ class TFMessage:
         """Decode from LCM TFMessage bytes."""
         lcm_msg = LCMTFMessage.lcm_decode(data)
 
-        # Convert LCM TransformStamped objects to Transform objects
         transforms = []
         for lcm_transform_stamped in lcm_msg.transforms:
-            # Extract timestamp
             ts = lcm_transform_stamped.header.stamp.sec + (
                 lcm_transform_stamped.header.stamp.nsec / 1_000_000_000
             )
 
-            # Create Transform with our custom types
             lcm_trans = lcm_transform_stamped.transform.translation
             lcm_rot = lcm_transform_stamped.transform.rotation
 
@@ -123,24 +176,19 @@ class TFMessage:
             )
         return "\n".join(lines)
 
-    def to_rerun(self) -> RerunMulti:
-        """Convert to a list of rerun Transform3D archetypes.
+    def to_rerun(self, tree: TfFrameTree | None = None) -> RerunMulti:
+        """Convert to (entity_path, archetype) pairs to log to rerun.
 
-        Returns a list of tuples (entity_path, Transform3D) for each transform
-        in the message. The entity_path is derived from the child_frame_id and
-        logged under `world/tf/...` so it is visible under the default `world`
-        origin while keeping TF visualization isolated from semantic entities
-        like `world/robot/...`.
-
-        Returns:
-            List of (entity_path, rr.Transform3D) tuples
-
-        Example:
-            for path, transform in tf_msg.to_rerun():
-                rr.log(path, transform)
+        Pass a TfFrameTree to also nest a triad per frame under its ancestors,
+        matching the tf tree's shape in the entity panel.
         """
+        import rerun as rr
+
         results: RerunMulti = []
         for transform in self.transforms:
-            entity_path = f"world/tf/{transform.child_frame_id}"
-            results.append((entity_path, transform.to_rerun()))
+            path = f"{DEFAULT_LINKS_ROOT}/{rr.escape_entity_path_part(transform.child_frame_id)}"
+            results.append((path, transform.to_rerun()))
+
+        if tree is not None:
+            tree.update(self.transforms)
         return results
