@@ -297,8 +297,8 @@ public:
     }
 
     // An unsent topic leaves the port on a fallback name nothing else publishes
-    // to. Rust also rejects the reverse, a topic no port claimed; C++ cannot,
-    // because it has no tf port type and python publishes those topics itself.
+    // to. Rust also rejects the reverse, a topic no port claimed.
+    // TODO: add tf port type to C++ to match rust (so we can better check input)
     void enforce_topics_match_ports() const {
         std::vector<std::string> missing;
         for (const std::string& port : requested_) {

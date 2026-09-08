@@ -218,8 +218,8 @@ TEST_CASE("enforce_topics_match_ports names every port the coordinator never wir
     }
 }
 
-// Rust rejects this; C++ cannot, because python owns the tf port of the pointlio
-// and fastlio2 modules and still sends its topic on the launch line.
+// Rust rejects this.
+// TODO: add tf port type to C++ to match rust (so we can better check input)
 TEST_CASE("enforce_topics_match_ports allows a topic no port asked for") {
     Notifier notifier;
     Builder builder({{"data", "/d"}, {"tf", "/tf"}}, &notifier);
