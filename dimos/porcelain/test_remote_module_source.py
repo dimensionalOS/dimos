@@ -17,6 +17,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 import importlib
 import inspect
+from typing import Protocol
 
 import pytest
 
@@ -28,12 +29,25 @@ from dimos.core.module import Module
 from dimos.porcelain.dimos import Dimos
 from dimos.porcelain.module_handle import RemoteModuleProxy
 from dimos.porcelain.remote_module_source import RemoteModuleSource
+from dimos.spec.utils import Spec
+
+
+class PingSpec(Spec, Protocol):
+    def ping(self) -> str: ...
 
 
 class NamedRemoteModule(Module):
     @rpc
     def ping_name(self) -> str:
         return self.config.instance_name or "default"
+
+
+class NamedSpec(Spec, Protocol):
+    def ping_name(self) -> str: ...
+
+
+class WrongReturnSpec(Spec, Protocol):
+    def ping_name(self) -> int: ...
 
 
 @contextmanager
@@ -79,6 +93,69 @@ def test_connect_skill_call(running_app, client):
 def test_connect_rpc_method_call(client):
     module = client.StressTestModule
     assert module.ping() == "pong"
+
+
+def test_typed_lookup_calls_the_same_remote_module(client, running_app):
+    for app in (client, running_app):
+        module = app.get_module(PingSpec)
+        assert module is app.get_module("StressTestModule")
+        assert module.ping() == "pong"
+    client.stop()
+    assert running_app.skills.ping() == "pong"
+
+
+def test_typed_lookup_preserves_missing_module_error(client):
+    with pytest.raises(LookupError, match="missing-module"):
+        client.get_module(PingSpec, instance_name="missing-module")
+
+
+def test_spec_lookup_requires_rpc_advertisement(client, mocker):
+    descriptors = client._source.list_module_descriptors()
+    mocker.patch.object(
+        client._source,
+        "list_module_descriptors",
+        return_value=[descriptor._replace(rpc_names=[]) for descriptor in descriptors],
+    )
+
+    with pytest.raises(LookupError, match="PingSpec RPC signatures"):
+        client.get_module(PingSpec)
+
+
+def test_spec_lookup_does_not_assume_unavailable_signatures_match(client, mocker):
+    descriptors = client._source.list_module_descriptors()
+    mocker.patch.object(
+        client._source,
+        "list_module_descriptors",
+        return_value=[
+            descriptor._replace(qualified_path="dimos.missing_module.MissingModule")
+            for descriptor in descriptors
+        ],
+    )
+
+    with pytest.raises(LookupError, match="cannot inspect module classes"):
+        client.get_module(PingSpec)
+
+
+def test_spec_lookup_rejects_signature_mismatch():
+    with _remote_source_with_instances("robot0/named"):
+        app = Dimos.connect()
+        try:
+            with pytest.raises(LookupError, match="WrongReturnSpec RPC signatures"):
+                app.get_module(WrongReturnSpec)
+        finally:
+            app.stop()
+
+
+def test_spec_lookup_requires_explicit_instance_when_ambiguous():
+    with _remote_source_with_instances("robot0/named", "robot1/named"):
+        app = Dimos.connect()
+        try:
+            with pytest.raises(ValueError, match="robot0/named.*robot1/named"):
+                app.get_module(NamedSpec)
+            selected = app.get_module(NamedSpec, instance_name="robot1/named")
+            assert selected.ping_name() == "robot1/named"
+        finally:
+            app.stop()
 
 
 def test_rpc_proxy_preserves_signature_and_documentation(client):

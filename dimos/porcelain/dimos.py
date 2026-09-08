@@ -15,10 +15,11 @@
 from __future__ import annotations
 
 import atexit
+from collections.abc import Callable
 import importlib
 import inspect
 import threading
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, TypeVar, cast, overload
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.coordination.module_coordinator import ModuleCoordinator, ModuleDescriptor
@@ -33,8 +34,10 @@ from dimos.porcelain.remote_module_source import RemoteModuleSource
 from dimos.porcelain.skills_proxy import SkillsProxy
 from dimos.robot.all_blueprints import all_modules
 from dimos.robot.get_all_blueprints import class_name_to_registry_key, get_by_name
+from dimos.spec.utils import get_protocol_method_signatures, is_spec, spec_annotation_compliance
 
 DescribeTarget: TypeAlias = str | ModuleHandle | RpcCall | ModuleInfo | RpcInfo
+S = TypeVar("S")
 
 
 class Dimos:
@@ -132,10 +135,62 @@ class Dimos:
 
         return [_describe_module(descriptor) for descriptor in descriptors]
 
-    def get_module(self, name: str) -> ModuleHandle:
-        """Return a module proxy by exact instance name or unique class name."""
+    @overload
+    def get_module(self, name: Callable[..., S], *, instance_name: str | None = None) -> S: ...
+
+    @overload
+    def get_module(self, name: str) -> ModuleHandle: ...
+
+    def get_module(
+        self, name: str | Callable[..., S], *, instance_name: str | None = None
+    ) -> S | ModuleHandle:
+        """Resolve a typed Spec, exact instance name, or unique module class name.
+
+        A Spec matches deployed modules whose advertised RPCs implement its
+        method signatures. Exactly one match is required. Use ``instance_name``
+        with a Spec to select one instance when several implement it. Matching
+        requires the deployed module class to be importable in the client.
+        """
         with self._lock:
-            return self._require_source().get_module(name)
+            source = self._require_source()
+            if isinstance(name, str):
+                if instance_name is not None:
+                    raise TypeError("instance_name is only supported with a Spec")
+                return source.get_module(name)
+            if not is_spec(name):
+                raise TypeError("get_module() expects a module name or a Spec Protocol")
+            # Callable admits abstract Protocol classes to type checkers; the
+            # Spec is inspected here, never constructed or called.
+            spec = cast("type[S]", name)
+            required = set(get_protocol_method_signatures(spec))
+            if not required:
+                raise TypeError("A client Spec must declare at least one RPC method")
+            matches: list[str] = []
+            unavailable: list[str] = []
+            for descriptor in source.list_module_descriptors():
+                deployed_name = descriptor.rpc_name or descriptor.class_name
+                if instance_name is not None and deployed_name != instance_name:
+                    continue
+                if not required.issubset(descriptor.rpc_names):
+                    continue
+                module_class = _load_module_class(descriptor)
+                if module_class is None:
+                    unavailable.append(deployed_name)
+                elif spec_annotation_compliance(module_class, spec):
+                    matches.append(deployed_name)
+            if not matches:
+                detail = f" for instance {instance_name!r}" if instance_name is not None else ""
+                if unavailable:
+                    detail += f"; cannot inspect module classes for {sorted(unavailable)}"
+                raise LookupError(
+                    f"No deployed module matches {spec.__name__} RPC signatures{detail}"
+                )
+            if len(matches) != 1:
+                raise ValueError(
+                    f"Multiple modules match {spec.__name__}: {sorted(matches)}; "
+                    "select one with instance_name="
+                )
+            return cast("S", source.get_module(matches[0]))
 
     def list_rpcs(self, module: str | ModuleHandle | None = None) -> list[RpcInfo]:
         """Return structured metadata for all advertised RPCs.
@@ -339,16 +394,20 @@ def _run_remote(target: str | Blueprint | type[ModuleBase], source: RemoteModule
     )
 
 
-def _describe_module(descriptor: ModuleDescriptor) -> ModuleInfo:
-    instance_name = descriptor.rpc_name or descriptor.class_name
-    module_class: type[ModuleBase] | None = None
+def _load_module_class(descriptor: ModuleDescriptor) -> type[ModuleBase] | None:
     try:
         module_path, class_name = descriptor.qualified_path.rsplit(".", 1)
         candidate = getattr(importlib.import_module(module_path), class_name)
         if inspect.isclass(candidate) and issubclass(candidate, ModuleBase):
-            module_class = candidate
+            return candidate
     except (ImportError, AttributeError, ValueError):
         pass
+    return None
+
+
+def _describe_module(descriptor: ModuleDescriptor) -> ModuleInfo:
+    instance_name = descriptor.rpc_name or descriptor.class_name
+    module_class = _load_module_class(descriptor)
 
     rpc_infos: list[RpcInfo] = []
     for rpc_name in descriptor.rpc_names:

@@ -53,6 +53,28 @@ app.GO2Connection.move(Twist(linear=(1, 0, 0), angular=(0, 0, 0)), duration=0.05
 
 Discovery works in both local and remote mode:
 
+For a typed capability, pass a Spec Protocol to `app.get_module()`. dimOS matches
+advertised RPC names and method signatures, using the same compliance checks as
+blueprint Spec injection:
+
+```python skip
+from typing import Protocol
+
+from dimos.spec.utils import Spec
+
+class PingSpec(Spec, Protocol):
+    def ping(self) -> str: ...
+
+ping = app.get_module(PingSpec)
+print(ping.ping())
+```
+
+Exactly one deployed module must match. If several match, select one with
+`app.get_module(PingSpec, instance_name="robot0/ping")`. No match raises
+`LookupError`; ambiguity raises `ValueError`. The deployed module class must be
+importable in the client to inspect its signatures. Spec lookup returns the same
+proxy as name lookup and does not change connection ownership.
+
 ```python skip
 # Live structured records for exact deployed instances.
 app.list_modules()
