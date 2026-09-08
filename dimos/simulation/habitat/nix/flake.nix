@@ -5,7 +5,8 @@
 
   outputs = { self, nixpkgs }:
     let
-      systems = [ "x86_64-linux" "aarch64-linux" ];
+      # linux-64 only: the aihabitat conda channel has no aarch64 habitat-sim.
+      systems = [ "x86_64-linux" ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in {
       # habitat-sim is published only as python 3.9 conda packages on the
