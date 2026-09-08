@@ -35,7 +35,6 @@ class AlfredConfig:
     height_clearance: float
     width_clearance: float
     mid360_ip: str
-    d455_serial: str
     internal_odom_offsets: dict[str, Any] = field(default_factory=dict)
 
 
@@ -48,8 +47,6 @@ ALFRED = AlfredConfig(
     width_clearance=1.0,
     # The Mid-360 is on the Jetson's wired 192.168.1.100/24 link.
     mid360_ip="192.168.1.189",
-    # The mast D455. The rear D435i stays plugged in, so the device is pinned by serial.
-    d455_serial="260922302422",
     internal_odom_offsets={
         # Mid-360 lidar: a bit forward, and a bit to the right of base center, above ground.
         "mid360_link": Pose(0.20, -0.20, 0.30, *Quaternion.from_euler(Vector3(0, 0, 0))),
