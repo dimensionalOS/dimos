@@ -29,12 +29,21 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.protocol.tf.static_tf_publisher import StaticTfPublisher
 from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
 
 XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
     translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
     rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
+    frame_id="link7",
+    child_frame_id="camera_link",
 )
+
+
+class _XArmCameraMountTfPublisher(StaticTfPublisher):
+    def transforms(self) -> list[Transform]:
+        return [XARM_PERCEPTION_CAMERA_TRANSFORM]
+
 
 xarm_perception = autoconnect(
     ManipulationModule.blueprint(
@@ -54,18 +63,10 @@ xarm_perception = autoconnect(
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
     HeuristicGraspModule.blueprint(),
-    # TODO: tf tree is broken here; RealSenseCamera no longer publishes its mount
-    # edge, so camera_link needs a parent (e.g. from the arm) to resolve into world.
+    _XArmCameraMountTfPublisher.blueprint(),
     RealSenseCamera.blueprint(),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
-        detector_backend="moondream",
-        segmentation_backend="edgetam",
-        detect_on_request=True,
-        distance_threshold=0.08,
-        min_detections_for_permanent=3,
-        max_distance=1.0,
-        use_aabb=True,
-        max_obstacle_width=0.06,
+        optical_frame="camera_color_optical_frame",
     ),
 ).global_config(n_workers=4)

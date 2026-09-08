@@ -1,8 +1,8 @@
 # xArm Room Simulation
 
 `xarm-room-sim` launches the complete headless room demo: xArm7 MuJoCo
-simulation, wrist-camera OWL-ViT scene registration, perception-backed planner
-obstacles, composed pick-and-place, and the control coordinator.
+simulation, wrist-camera Dan localization, composed pick-and-place, and the
+control coordinator.
 
 ```bash
 MUJOCO_GL=egl LIBGL_ALWAYS_SOFTWARE=true MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
@@ -11,9 +11,9 @@ MUJOCO_GL=egl LIBGL_ALWAYS_SOFTWARE=true MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
 
 The blueprint disables the MuJoCo and manipulation viewers itself. On a host
 where `/dev/dri` must be hidden from Mesa, run the same command in the team's
-existing `/dev/dri`-masked mount namespace. CPU OWL-ViT inference takes about
-11 seconds per prompt/frame on the validation host, so allow the scan to
-finish rather than issuing another scan concurrently.
+existing `/dev/dri`-masked mount namespace. Dan's EdgeTAM segmenter requires a
+CUDA or MPS device. Allow each scan to finish rather than issuing another scan
+concurrently.
 
 The scene is an enclosed 2.6 m by 3.0 m room. The xArm stands on a 12 cm base
 pedestal at the room origin; its planning model uses that base pose directly.
@@ -42,7 +42,7 @@ In a second terminal, connect to the running blueprint:
 dimos shell
 ```
 
-Then run this complete scan and obstacle-inspection sequence:
+Then run a complete scan:
 
 ```python skip
 from dimos.robot.manipulators.xarm.blueprints.simulation import XARM_ROOM_PROMPTS
@@ -50,12 +50,9 @@ from dimos.robot.manipulators.xarm.blueprints.simulation import XARM_ROOM_PROMPT
 app.ManipulationSkills.go_init()
 scan = app.PickAndPlaceModule.scan_objects(XARM_ROOM_PROMPTS)
 print(scan)
-
-print(app.ObjectSceneRegistrationModule.get_detected_objects())
-print(app.ManipulationModule.refresh_obstacles())
-print(app.ManipulationModule.get_obstacles())
 ```
 
 Wait for `scan_objects` to finish before issuing another scan. The prompt set
 includes a `green ring` fallback because the tape loses its category silhouette
-in the wrist camera's top-down view.
+in the wrist camera's top-down view. Pass an integer `selection` from the scan
+result to `pick_object`.

@@ -281,21 +281,15 @@ class TestVoxelMap:
 
 
 class TestObstacleUpdates:
-    async def test_perception_objects_are_refreshable_and_queryable(self, module_factory) -> None:
+    def test_obstacles_are_queryable(self, module_factory) -> None:
         module = module_factory()
         module._world_monitor = MagicMock(spec=WorldMonitor)
-        detected = MagicMock()
         pose = PoseStamped(position=Vector3(0.4, 0.1, 0.2))
         obstacle = Obstacle(name="object-1", pose=pose, obstacle_type=ObstacleType.BOX)
-        module._world_monitor.refresh_obstacles.return_value = [{"object_id": "object-1"}]
         module._world_monitor.world.get_obstacles.return_value = [obstacle]
 
-        await module.handle_objects([detected])
-        count = module.refresh_obstacles()
         obstacles = module.get_obstacles()
 
-        module._world_monitor.on_objects.assert_called_once_with([detected])
-        assert count == 1
         assert obstacles == {"object-1": pose}
 
     def test_complete_update_forwards_new_obstacle_value(self, module_factory) -> None:
@@ -482,7 +476,6 @@ class TestPlanningInitialization:
         module = ManipulationModule(model=robot_config)
         module.coordinator_joint_state = None
         module.voxel_map = None
-        module.objects = None
         initialize_planning = mocker.patch.object(module, "_initialize_planning")
         initialize_execution = mocker.patch.object(module, "_initialize_execution")
 
@@ -494,7 +487,6 @@ class TestPlanningInitialization:
         module = ManipulationModule(model=robot_config)
         module.coordinator_joint_state = None
         module.voxel_map = None
-        module.objects = None
         initialize_planning = mocker.patch.object(module, "_initialize_planning")
         initialize_execution = mocker.patch.object(module, "_initialize_execution")
 
@@ -516,7 +508,6 @@ class TestPlanningInitialization:
         module._control_coordinator = _control_coordinator()
         module.coordinator_joint_state = None
         module.voxel_map = None
-        module.objects = None
         observed_status: list[ExecutionStatus] = []
 
         def observe_state() -> None:
