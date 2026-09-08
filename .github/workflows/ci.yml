@@ -519,6 +519,8 @@ jobs:
       # redirects it to a per-process file under $RUNNER_TEMP/pytest-crash,
       # which is what makes a crash legible under xdist (one file per worker).
       PYTHONFAULTHANDLER: "1"
+      # Zenoh's own scouting decisions, for diagnosing workers that never link.
+      RUST_LOG: "zenoh::net::runtime::orchestrator=debug"
     permissions:
       contents: read  # For checkout
       id-token: write  # For codecov-action's OIDC upload
@@ -640,11 +642,10 @@ jobs:
                 - /var/cache/dimos-root-cache:/root/.cache
             markers: "self_hosted or skipif_no_ros"
             experimental: false
-          # macOS runner disabled for now — we don't want Mac tests.
-          # - os: macOS
-          #   container: null  # run on host — `container:` is Linux-only
-          #   markers: "self_hosted"
-          #   experimental: true
+          - os: macOS
+            container: null  # run on host — `container:` is Linux-only
+            markers: "self_hosted"
+            experimental: true
     runs-on:
       - self-hosted
       - ${{ matrix.os }}

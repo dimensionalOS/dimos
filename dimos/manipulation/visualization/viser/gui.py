@@ -307,7 +307,10 @@ class ViserPanelGui:
 
     def execute(self) -> bool:
         plan = self.state.plan_state.plan
-        return plan is not None and self.operator.execute(plan)
+        if plan is None:
+            return False
+        self.state.plan_state = PanelPlanState()
+        return self.operator.execute(plan)
 
     def refresh(self) -> None:
         if self._closed:
@@ -1255,15 +1258,12 @@ class ViserPanelGui:
                 )
                 return
             self.state.action_status = ActionStatus.EXECUTING
-            self.state.plan_state.status = PlanStatus.EXECUTING
             ok = self.execute()
             if not self._operation_is_current(operation_id, selection_epoch, target_sequence_id):
                 self._finish_operation(
                     "execute=False", operation_id=operation_id, selection_epoch=selection_epoch
                 )
                 return
-            if not ok:
-                self.state.plan_state.status = PlanStatus.FAILED
             self._finish_operation(
                 f"execute={ok}", operation_id=operation_id, selection_epoch=selection_epoch
             )
@@ -1275,12 +1275,11 @@ class ViserPanelGui:
     def _submit_cancel(self) -> None:
         if self._closed:
             return
-        cancelled_action = self.state.action_status
         operation_id = self._next_operation_id()
         if not self._operation_is_current(operation_id):
             return
         self.state.action_status = ActionStatus.CANCELLING
-        self._mark_cancelled_plan_state(cancelled_action)
+        self._mark_cancelled_plan_state()
         self._restart_operation_worker()
         try:
             ok = self.cancel()
@@ -1289,14 +1288,9 @@ class ViserPanelGui:
             return
         self._finish_operation(f"cancel={ok}", operation_id=operation_id)
 
-    def _mark_cancelled_plan_state(self, cancelled_action: ActionStatus) -> None:
+    def _mark_cancelled_plan_state(self) -> None:
         if self.state.plan_state.status == PlanStatus.PLANNING:
             self.state.plan_state.status = PlanStatus.FAILED
-        elif (
-            cancelled_action == ActionStatus.EXECUTING
-            or self.state.plan_state.status == PlanStatus.EXECUTING
-        ):
-            self.state.plan_state.status = PlanStatus.STALE
 
     def _restart_operation_worker(self) -> None:
         self._operation_worker.stop(timeout=0.0)

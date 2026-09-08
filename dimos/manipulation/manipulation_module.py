@@ -374,6 +374,7 @@ class ManipulationModule(Module):
     @rpc
     def get_state(self) -> ManipulationSnapshot:
         """Return one snapshot containing every planning group."""
+        self._refresh_execution_status()
         groups: dict[PlanningGroupID, PlanningGroupState] = {}
         if self._world_monitor is not None:
             for group in self._world_monitor.planning_groups.list():
@@ -414,8 +415,17 @@ class ManipulationModule(Module):
 
     def get_operation_status(self) -> OperationStatus:
         """Return the current operation status without collecting telemetry."""
+        self._refresh_execution_status()
         with self._lock:
             return OperationStatus[self._state.name]
+
+    def _refresh_execution_status(self) -> None:
+        """Poll active nonblocking execution once, without waiting for motion."""
+        if self._execution_manager.status in {
+            ExecutionStatus.ACCEPTED,
+            ExecutionStatus.EXECUTING,
+        }:
+            self.wait_for_execution(timeout=0.0)
 
     @rpc
     def get_error(self) -> str:
