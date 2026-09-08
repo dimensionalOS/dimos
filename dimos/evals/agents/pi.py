@@ -130,9 +130,9 @@ class PiAdapterConfig(ModelAgentConfig):
     # Reasoning level passed to Pi's --thinking flag.
     thinking: str = "medium"
 
-    # Stop after this many completed model calls if Pi still requests tools,
-    # preserving recorded steps. None disables this limit; the timeout still applies.
-    max_steps: int | None = 40
+    # Maximum model HTTP requests, including retries. Zero skips Pi entirely;
+    # None disables this limit. Completed steps are preserved when stopping.
+    max_steps: int | None = Field(default=40, ge=0)
 
     # Grace period for Pi, then remaining tools, before forceful termination.
     shutdown_timeout_s: float = Field(default=2.0, ge=0.0, allow_inf_nan=False)
@@ -179,8 +179,13 @@ class PiAdapter(Agent):
         events = PiToAtif(
             raw_dir, TrajectoryBuilder(inputs, name=type(self).__name__, model=self.config.model)
         )
+        if self.config.max_steps == 0:
+            return events.trajectory.build("max_steps")
         upstream = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-        with model_trace_proxy(raw_dir, upstream) as proxy_url:
+        limit_reached = run_dir / "pi-request-limit-reached"
+        with model_trace_proxy(
+            raw_dir, upstream, max_requests=self.config.max_steps, limit_reached=limit_reached
+        ) as proxy_url:
             self._write_model_config(run_dir, proxy_url)
             files = dict(env.artifacts)
             if env.streams:
@@ -188,6 +193,8 @@ class PiAdapter(Agent):
             system_prompt = self._write_system_prompt(files, env.mcp_url, run_dir)
             command = self._build_pi_command(inputs, system_prompt, run_dir)
             ended_by = self._run_pi_process(command, run_dir, events, timeout_s)
+        if limit_reached.exists():
+            return events.trajectory.build("max_steps")
         if events.error:
             raise RuntimeError(f"Pi stopped: {events.error}")
         return events.trajectory.build(ended_by)
