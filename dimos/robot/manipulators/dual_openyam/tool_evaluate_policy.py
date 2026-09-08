@@ -94,6 +94,7 @@ def main() -> int:
                     deadline = time.monotonic() + args.timeout
                     peak_lift = 0.0
                     contained_since = None
+                    stable_containment = False
                     while time.monotonic() < deadline:
                         current = sim.get_body_poses(["bottle_1"])["bottle_1"]
                         peak_lift = max(peak_lift, current[2] - initial_z)
@@ -104,6 +105,7 @@ def main() -> int:
                         if contained and gripper_is_open():
                             contained_since = contained_since or time.monotonic()
                             if time.monotonic() - contained_since >= 1.0:
+                                stable_containment = True
                                 break
                         else:
                             contained_since = None
@@ -114,11 +116,13 @@ def main() -> int:
                             )
                         time.sleep(0.2)
                     row["peak_lift_m"] = peak_lift
+                    row["stable_containment"] = stable_containment
                     row["policy"] = json.loads(policy.stop_policy())
                     time.sleep(1.0)
                     row["right_gripper_open"] = gripper_is_open()
                     row["success"] = (
                         peak_lift >= 0.05
+                        and stable_containment
                         and row["right_gripper_open"]
                         and inside_bin(
                             sim.sample_body_surface("bottle_1", 8192),

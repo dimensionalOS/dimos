@@ -35,7 +35,7 @@ blueprints select the physics adapter explicitly and reject CAN ports. No
 ## Classical segment
 
 ```bash
-MUJOCO_GL=egl dimos --viewer rerun-web run dual-openyam-sim-agent --daemon
+MUJOCO_GL=egl dimos --viewer rerun --rerun-open web run dual-openyam-sim-agent --daemon
 dimos mcp list-tools
 dimos mcp call reset_scene
 dimos agent-send "Put bottle_1 and bottle_4 in the bin using the appropriate arm for each. Return both arms home and verify both are inside."

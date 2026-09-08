@@ -577,7 +577,7 @@ def prepare(
     recording: Path = typer.Argument(..., metavar="RECORDING"),
     output: Path | None = typer.Option(None, "--output", help="New LeRobot dataset directory"),
 ) -> None:
-    """Convert one recording into a strict LeRobot dataset."""
+    """Convert a recording using the workflow's dataset quality settings."""
     workflow = _collection_workflow(workflow_name)
     source = recording.expanduser().resolve()
     target = _require_new_path(output or _default_dataset(source), "dataset")
