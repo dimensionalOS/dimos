@@ -48,5 +48,5 @@ dimos run r1pro-coordinator     # connection + coordinator + viewer
 dimos run r1pro-teleop          # + chassis teleop from the viewer
 dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
-dimos run r1pro-planner-coordinator  # planar-base planning with fake hardware
+dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
 ```

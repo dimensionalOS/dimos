@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""R1 Pro planar-base planner with fake joint-state hardware."""
+"""R1 Pro planar-base planning preview with fake joint-state hardware."""
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.coordination.blueprints import autoconnect
@@ -29,7 +29,7 @@ _r1pro_hardware = HardwareComponent(
     adapter_type="mock_whole_body",
 )
 
-r1pro_planner_coordinator = autoconnect(
+r1pro_planar_preview = autoconnect(
     planner(
         model=make_r1pro_planar_model_config(),
         visualization={"backend": "viser"},

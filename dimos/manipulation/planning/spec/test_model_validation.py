@@ -201,6 +201,8 @@ def test_planar_base_requires_synthetic_root_and_all_base_joints(tmp_path: Path)
     valid = RobotModelConfig.model_validate(values)
 
     validate_robot_model_config(valid)
+    with pytest.raises(ValueError, match="require explicit planning groups"):
+        validate_robot_model_config(valid.model_copy(update={"planning_groups": []}))
     with pytest.raises(ValueError, match="Planar robot base_link"):
         validate_robot_model_config(valid.model_copy(update={"base_link": "world"}))
     with pytest.raises(ValueError, match="Planar robot controllable joints are missing"):

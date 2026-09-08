@@ -93,6 +93,8 @@ def validate_robot_model_config(config: RobotModelConfig) -> LoadedRobotModel:
         raise ValueError(f"RobotModelConfig base link '{config.base_link}' is missing")
     planar_base = config.model.planar_base
     if planar_base is not None:
+        if not config.planning_groups:
+            raise ValueError("Planar robot models require explicit planning groups")
         if config.base_link != planar_base.root_link:
             raise ValueError(
                 f"Planar robot base_link must be '{planar_base.root_link}', "
