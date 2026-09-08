@@ -31,7 +31,9 @@ import pytest
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.global_config import global_config
 from dimos.core.stream import In
-from dimos.core.transport import ZenohTransport
+from dimos.core.transport import LCMTransport, ZenohTransport
+from dimos.experimental.memory import rust_cli_recorder
+from dimos.experimental.memory.rust_cli_recorder import RustRecordingSession
 from dimos.experimental.memory.rust_recorder import (
     RustMcapStoreConfig,
     RustRecorder,
@@ -256,6 +258,59 @@ def test_rust_artifact_is_readable_by_python_memory2(
             np.mean(np.abs(decoded_image.data.astype(float) - expected_image.data.astype(float)))
             < 5
         )
+
+
+@pytest.mark.parametrize(
+    "store_kind",
+    ["sqlite", "mcap"],
+)
+def test_cli_recording_uses_existing_binary_for_both_formats(
+    tmp_path: Path,
+    rust_recorder_executable: Path,
+    store_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    suffix = "db" if store_kind == "sqlite" else "mcap"
+    artifact = tmp_path / f"memory.{suffix}"
+    lcm_url = f"udpm://239.255.76.67:{_free_port()}?ttl=0"
+    monkeypatch.setenv("LCM_DEFAULT_URL", lcm_url)
+    monkeypatch.setattr(global_config, "record_engine", "rust")
+    monkeypatch.setattr(global_config, "record", store_kind)
+    monkeypatch.setattr(global_config, "record_topics", "*")
+    monkeypatch.setattr(global_config, "record_encoding_threads", 2)
+    monkeypatch.setattr(global_config, "transport", "lcm")
+    monkeypatch.setattr(global_config, "build_native", False)
+    monkeypatch.setattr(rust_cli_recorder, "_EXECUTABLE", rust_recorder_executable)
+    monkeypatch.setattr(rust_cli_recorder, "_RUST_DIR", _RUST_PACKAGE)
+    monkeypatch.setattr(rust_cli_recorder, "recording_dir", lambda: tmp_path)
+    channel = f"/rust-recorder-{uuid.uuid4().hex[:8]}"
+    publisher: LCMTransport[Imu] = LCMTransport(channel, Imu, url=lcm_url)
+    session = RustRecordingSession(rust_cli_recorder.make_plan({("imu", Imu): publisher}))
+    expected = Imu(ts=22.5, frame_id="imu_link", angular_velocity=Vector3(1.0, 2.0, 3.0))
+    try:
+        publisher.start()
+        session.start()
+        for _ in range(3):
+            publisher.broadcast(None, expected)
+            time.sleep(0.05)
+    finally:
+        session.stop()
+        publisher.stop()
+
+    memory: SqliteStore | McapStore
+    if store_kind == "mcap" and not _MCAP_AVAILABLE:
+        data = artifact.read_bytes()
+        assert data.startswith(b"\x89MCAP0\r\n")
+        assert data.endswith(b"\x89MCAP0\r\n")
+        return
+    if store_kind == "sqlite":
+        memory = SqliteStore(path=str(artifact))
+    else:
+        memory = McapStore(path=str(artifact), codecs={"imu": LcmCodec(Imu)})
+    with memory:
+        observation = cast("Observation[Imu]", memory.stream("imu").first())
+        assert observation.ts == 22.5
+        assert observation.data.lcm_encode() == expected.lcm_encode()
 
 
 def test_tf_records_over_zenoh_and_replays_through_python(

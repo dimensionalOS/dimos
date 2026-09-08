@@ -19,6 +19,8 @@ const ODOM: ChannelSpec = {
   delivery: "reliable",
   maxHz: 20,
   params: {},
+  publish: "none",
+  requiredScope: null,
 };
 const IMAGE: ChannelSpec = {
   ch: "color_image",
@@ -27,6 +29,8 @@ const IMAGE: ChannelSpec = {
   delivery: "latest",
   maxHz: 15,
   params: {},
+  publish: "none",
+  requiredScope: null,
 };
 
 function mf(channels: ChannelSpec[], panels: PanelSpec[] = []): Manifest {
@@ -51,6 +55,7 @@ describe("App session states", () => {
       store: channels,
       watch: () => new Promise(() => {}),
       subscribe: () => () => {},
+      publish: () => new Promise(() => {}),
       close: () => {},
     };
     registerTeleopHooks(session, {
