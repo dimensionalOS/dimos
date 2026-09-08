@@ -18,12 +18,12 @@ Drive with the viewer's keyboard controls. Click the planner's surface in the 3D
 
 Layered so a failure can be bisected by dropping a level:
 
-| Blueprint | Adds |
-|---|---|
-| `habitat-teleop` | The sim and its streams. Drive it, nothing else. |
-| `habitat-raycaster` | `RayTracingVoxelMap` on a sensor-frame scan. |
-| `habitat-nav` | `MLSPlannerNative` and `BasicPathFollower`. Goal by clicking. |
-| `habitat-voxel` | `VoxelGridMapper` on a pre-registered scan. An alternative to the raycaster, not a layer: the two mappers want the scan in different frames. |
+| Blueprint           | Adds                                                                                                                                         |
+|---------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| `habitat-teleop`    | The sim and its streams. Drive it, nothing else.                                                                                             |
+| `habitat-raycaster` | `RayTracingVoxelMap` on a sensor-frame scan.                                                                                                 |
+| `habitat-nav`       | `MLSPlannerNative` and `BasicPathFollower`. Goal by clicking.                                                                                |
+| `habitat-voxel`     | `VoxelGridMapper` on a pre-registered scan. An alternative to the raycaster, not a layer: the two mappers want the scan in different frames. |
 
 ## Requirements
 
