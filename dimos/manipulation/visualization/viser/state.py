@@ -66,7 +66,6 @@ class PlanStatus(str, Enum):
     PLANNING = "planning"
     FRESH = "fresh"
     STALE = "stale"
-    EXECUTING = "executing"
     FAILED = "failed"
 
 
