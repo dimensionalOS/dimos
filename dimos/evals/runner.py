@@ -31,7 +31,7 @@ import time
 from typing import Any
 
 from dimos.constants import DIMOS_PROJECT_ROOT, STATE_DIR
-from dimos.evals.agent import Agent
+from dimos.evals.agents.base import Agent
 from dimos.evals.types import (
     EvalCase,
     EvalResult,

@@ -24,9 +24,9 @@ from typer.testing import CliRunner
 
 from dimos.cli.dimos import main as app
 from dimos.evals import runner as runner_module, suites
-from dimos.evals.agent import Agent
+from dimos.evals.agents.base import Agent
 from dimos.evals.cli import run_provenance
-from dimos.evals.environment import Environment
+from dimos.evals.environments.base import Environment
 from dimos.evals.runner import EvalRunner
 from dimos.evals.suites import examples
 from dimos.evals.types import EvalCase, RunningEnvironment

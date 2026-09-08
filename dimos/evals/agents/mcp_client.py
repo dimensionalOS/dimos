@@ -24,10 +24,10 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from dimos.agents.llm_trace import list_llm_trace_pairs
-from dimos.evals.agent import Agent
+from dimos.evals.agents.base import Agent
 from dimos.evals.agents.lib.langchain_to_atif import append_ai_message_to_atif
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
-from dimos.evals.environment import Environment
+from dimos.evals.environments.base import Environment
 from dimos.evals.types import RunningEnvironment, Trajectory
 
 

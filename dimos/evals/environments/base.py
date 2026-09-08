@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.protocol.service.spec import Configurable
 
 if TYPE_CHECKING:
-    from dimos.evals.agent import Agent
+    from dimos.evals.agents.base import Agent
     from dimos.evals.types import RunningEnvironment
 
 

@@ -31,7 +31,7 @@ import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
-from dimos.evals.agent import Agent
+from dimos.evals.agents.base import Agent
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.environments.dataset import Dataset

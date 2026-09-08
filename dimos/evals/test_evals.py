@@ -36,13 +36,13 @@ import pytest
 from pytest_mock import MockerFixture
 
 from dimos.core.transport_factory import make_transport
-from dimos.evals.agent import Agent
+from dimos.evals.agents.base import Agent
 from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client import McpClientAgent
 from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.cli import load_agent
-from dimos.evals.environment import Environment
+from dimos.evals.environments.base import Environment
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.image_file import ImageFile
 from dimos.evals.environments.lib.launch import default_mcp_url

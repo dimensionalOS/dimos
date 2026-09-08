@@ -20,12 +20,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from dimos.evals.environment import Environment
+from dimos.evals.environments.base import Environment
 from dimos.evals.types import RunningEnvironment
 from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
-    from dimos.evals.agent import Agent
+    from dimos.evals.agents.base import Agent
 
 
 class ImageFileConfig(BaseConfig):

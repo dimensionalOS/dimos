@@ -24,7 +24,7 @@ from dimos.evals.types import RunningEnvironment, Trajectory
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 if TYPE_CHECKING:
-    from dimos.evals.environment import Environment
+    from dimos.evals.environments.base import Environment
 
 
 class AgentConfig(BaseConfig):

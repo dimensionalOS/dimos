@@ -47,7 +47,7 @@ def list_agents() -> list[str]:
     return [
         name
         for _, name, ispkg in pkgutil.iter_modules(agents.__path__, prefix=f"{agents.__name__}.")
-        if not ispkg  # agents/lib is shared plumbing
+        if not ispkg and not name.endswith(".base")
     ]
 
 

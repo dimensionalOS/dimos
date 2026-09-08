@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-    from dimos.evals.environment import Environment
+    from dimos.evals.environments.base import Environment
     from dimos.memory.store.base import Store
     from dimos.memory.stream import Stream
 

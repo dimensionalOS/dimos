@@ -26,14 +26,14 @@ from typing import TYPE_CHECKING, Any
 import typer
 
 if TYPE_CHECKING:
-    from dimos.evals.agent import Agent
+    from dimos.evals.agents.base import Agent
 
 app = typer.Typer(help="Run agent evals on recordings, sim, or a live robot.")
 
 
 def agent_class(module: str) -> type[Agent]:
     """The one agent class defined in *module* — an agent is a module."""
-    from dimos.evals.agent import Agent
+    from dimos.evals.agents.base import Agent
 
     mod = importlib.import_module(module)
     found = [
