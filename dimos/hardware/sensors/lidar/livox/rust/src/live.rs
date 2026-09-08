@@ -23,6 +23,7 @@ use crate::pipeline::PacketSource;
 use crate::wire::{
     self, build_param_set_body, host_ip_config_value, AsyncControlAck, ControlFrame, KeyValue,
 };
+use socket2::{Domain, Protocol, Socket, Type};
 use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,14 +31,16 @@ use std::sync::mpsc;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-/// The ports the live source speaks on: command plane plus the two data
-/// streams, each as a device/host pair.
+/// The ports the live source speaks on: command plane, status push and the
+/// two data streams, each as a device/host pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ports {
     pub cmd_data: u16,
+    pub push_msg: u16,
     pub point_data: u16,
     pub imu_data: u16,
     pub host_cmd_data: u16,
+    pub host_push_msg: u16,
     pub host_point_data: u16,
     pub host_imu_data: u16,
 }
@@ -61,6 +64,9 @@ const RECV_POLL: Duration = Duration::from_millis(200);
 /// About two seconds of Mid-360 data. A stalled consumer drops packets at
 /// this bound instead of growing memory without limit.
 const QUEUE_DEPTH: usize = 4096;
+/// Kernel receive buffer requested per data socket, the same figure SDK2
+/// asks for. Linux clamps it to rmem_max, macOS refuses it outright.
+const RECV_BUFFER_BYTES: usize = 200 * 1024 * 1024;
 
 /// A fatal source error: the reason recorded for the module to act on, and
 /// the stop flag tripped so every loop unwinds.
@@ -168,7 +174,12 @@ impl Drop for LiveSource {
 /// Bind a data-plane receive socket, joining the multicast group when the
 /// device streams to one.
 fn data_socket(config: &LiveConfig, port: u16) -> io::Result<UdpSocket> {
-    let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port))?;
+    let raw = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    if let Err(err) = raw.set_recv_buffer_size(RECV_BUFFER_BYTES) {
+        tracing::warn!(port, "kernel refused the receive buffer request: {err}");
+    }
+    raw.bind(&std::net::SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port)).into())?;
+    let socket: UdpSocket = raw.into();
     if let Some(group) = config.multicast_ip {
         socket.join_multicast_v4(&group, &config.host_ip)?;
     }
@@ -231,12 +242,26 @@ struct Step {
 }
 
 fn handshake_steps(config: &LiveConfig) -> Vec<Step> {
+    // SDK2 programs the multicast group as the destination of every stream
+    // the device sends, status pushes included.
+    let data_ip = config.multicast_ip.unwrap_or(config.host_ip);
     let mut steps = vec![
+        Step {
+            label: "point format",
+            key: wire::param_key::PCL_DATA_TYPE,
+            value: vec![wire::PCL_DATA_TYPE_CARTESIAN_HIGH],
+        },
+        Step {
+            label: "status host cfg",
+            key: wire::param_key::STATE_INFO_HOST_IP_CFG,
+            value: host_ip_config_value(data_ip, config.ports.host_push_msg, config.ports.push_msg)
+                .to_vec(),
+        },
         Step {
             label: "point host cfg",
             key: wire::param_key::POINT_DATA_HOST_IP_CFG,
             value: host_ip_config_value(
-                config.host_ip,
+                data_ip,
                 config.ports.host_point_data,
                 config.ports.point_data,
             )
@@ -245,12 +270,8 @@ fn handshake_steps(config: &LiveConfig) -> Vec<Step> {
         Step {
             label: "imu host cfg",
             key: wire::param_key::IMU_HOST_IP_CFG,
-            value: host_ip_config_value(
-                config.host_ip,
-                config.ports.host_imu_data,
-                config.ports.imu_data,
-            )
-            .to_vec(),
+            value: host_ip_config_value(data_ip, config.ports.host_imu_data, config.ports.imu_data)
+                .to_vec(),
         },
     ];
     if config.enable_imu {
@@ -268,9 +289,9 @@ fn handshake_steps(config: &LiveConfig) -> Vec<Step> {
     steps
 }
 
-/// Send each config step until the device ACKs it, matching the SDK's
-/// one-key-per-request behavior. The work-mode step last starts streaming.
-/// A step the device never ACKs, or explicitly rejects, fails the source.
+/// Send each config step as its own request until the device ACKs it. The
+/// work-mode step last starts streaming. A step the device never ACKs, or
+/// explicitly rejects, fails the source.
 fn run_handshake(config: &LiveConfig, cmd: &UdpSocket, failure: &Failure) {
     let device = SocketAddrV4::new(config.lidar_ip, config.ports.cmd_data);
     let mut seq: u32 = 0;
@@ -302,10 +323,10 @@ fn run_handshake(config: &LiveConfig, cmd: &UdpSocket, failure: &Failure) {
                     acked = true;
                     break;
                 }
-                Ack::Rejected(ret_code) => {
+                Ack::Rejected(ack) => {
                     failure.set(format!(
-                        "device {} rejected {} with ret_code {ret_code}",
-                        config.lidar_ip, step.label
+                        "device {} rejected {} with ret_code {} error_key 0x{:04x}",
+                        config.lidar_ip, step.label, ack.ret_code, ack.error_key
                     ));
                     return;
                 }
@@ -325,7 +346,7 @@ fn run_handshake(config: &LiveConfig, cmd: &UdpSocket, failure: &Failure) {
 
 enum Ack {
     Ok,
-    Rejected(u8),
+    Rejected(AsyncControlAck),
     Timeout,
 }
 
@@ -360,8 +381,8 @@ fn wait_for_ack(cmd: &UdpSocket, device: SocketAddrV4, seq: u32, stop: &AtomicBo
             continue;
         }
         match AsyncControlAck::parse(frame.data) {
-            Ok(ack) if ack.ret_code == 0 => return Ack::Ok,
-            Ok(ack) => return Ack::Rejected(ack.ret_code),
+            Ok(ack) if ack.ret_code == 0 && ack.error_key == 0 => return Ack::Ok,
+            Ok(ack) => return Ack::Rejected(ack),
             Err(_) => continue,
         }
     }
@@ -384,6 +405,8 @@ mod tests {
             host_cmd_data: base + 3,
             host_point_data: base + 4,
             host_imu_data: base + 5,
+            push_msg: base + 6,
+            host_push_msg: base + 7,
         }
     }
 
@@ -508,6 +531,8 @@ mod tests {
         assert_eq!(
             keys,
             vec![
+                wire::param_key::PCL_DATA_TYPE,
+                wire::param_key::STATE_INFO_HOST_IP_CFG,
                 wire::param_key::POINT_DATA_HOST_IP_CFG,
                 wire::param_key::IMU_HOST_IP_CFG,
                 wire::param_key::IMU_DATA_EN,

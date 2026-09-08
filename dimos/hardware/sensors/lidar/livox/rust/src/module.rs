@@ -67,9 +67,11 @@ pub struct Config {
     /// only, the loopback/virtual arrangement.
     multicast_ip: Nullable<String>,
     cmd_data_port: u16,
+    push_msg_port: u16,
     point_data_port: u16,
     imu_data_port: u16,
     host_cmd_data_port: u16,
+    host_push_msg_port: u16,
     host_point_data_port: u16,
     host_imu_data_port: u16,
 }
@@ -105,9 +107,11 @@ impl Config {
     fn ports(&self) -> Ports {
         Ports {
             cmd_data: self.cmd_data_port,
+            push_msg: self.push_msg_port,
             point_data: self.point_data_port,
             imu_data: self.imu_data_port,
             host_cmd_data: self.host_cmd_data_port,
+            host_push_msg: self.host_push_msg_port,
             host_point_data: self.host_point_data_port,
             host_imu_data: self.host_imu_data_port,
         }
@@ -227,8 +231,16 @@ fn run_pipeline(
         let Some(len) = source.recv(&mut buf) else {
             break;
         };
-        let Ok(packet) = DataPacket::parse(&buf[..len]) else {
-            continue;
+        let packet = match DataPacket::parse(&buf[..len]) {
+            Ok(packet) => packet,
+            Err(err) => {
+                dimos_module::warn_throttled!(
+                    std::time::Duration::from_secs(5),
+                    %err,
+                    "dropping undecodable data packet"
+                );
+                continue;
+            }
         };
         match packet.data_type {
             DataType::Imu => {
@@ -475,9 +487,11 @@ mod tests {
             "replay_rate": null,
             "multicast_ip": null,
             "cmd_data_port": 56100,
+            "push_msg_port": 56200,
             "point_data_port": 56300,
             "imu_data_port": 56400,
             "host_cmd_data_port": 56101,
+            "host_push_msg_port": 56201,
             "host_point_data_port": 56301,
             "host_imu_data_port": 56401
         })

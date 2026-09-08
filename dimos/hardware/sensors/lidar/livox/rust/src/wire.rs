@@ -56,6 +56,8 @@ pub mod cmd_id {
 
 /// Parameter keys (SDK2 `ParamKeyName`).
 pub mod param_key {
+    pub const PCL_DATA_TYPE: u16 = 0x0000;
+    pub const STATE_INFO_HOST_IP_CFG: u16 = 0x0005;
     pub const POINT_DATA_HOST_IP_CFG: u16 = 0x0006;
     pub const IMU_HOST_IP_CFG: u16 = 0x0007;
     pub const WORK_MODE: u16 = 0x001A;
@@ -65,6 +67,8 @@ pub mod param_key {
 
 /// `LivoxLidarWorkMode::kLivoxLidarNormal`.
 pub const WORK_MODE_NORMAL: u8 = 0x01;
+/// `pcl_data_type` value selecting 32-bit cartesian points.
+pub const PCL_DATA_TYPE_CARTESIAN_HIGH: u8 = 0x01;
 /// `LivoxLidarDeviceType::kLivoxLidarTypeMid360`.
 pub const DEVICE_TYPE_MID360: u8 = 9;
 /// Firmware type reported by app firmware (vs loader/upgrade mode).
@@ -425,9 +429,9 @@ pub struct DataPacket<'a> {
 }
 
 impl<'a> DataPacket<'a> {
-    /// Parse a data packet. The header crc32 field is not verified: real
-    /// devices stream at rates where the SDK itself skips it, and captures
-    /// from hardware do not reliably fill it.
+    /// Parse a data packet. The crc32 field (over timestamp + data) is not
+    /// verified: Mid-360 firmware leaves it zero on every point packet and
+    /// only fills it on IMU packets, and the SDK skips it too.
     pub fn parse(packet: &'a [u8]) -> Result<Self, WireError> {
         if packet.len() < DATA_HEADER_LEN {
             return Err(WireError::TooShort);
@@ -533,10 +537,11 @@ impl<'a> DataPacket<'a> {
             DataType::CartesianHigh => 0x01,
             DataType::CartesianLow => 0x02,
         };
-        packet[24..28].copy_from_slice(&crc32(self.payload).to_le_bytes());
         packet[DATA_TIMESTAMP_OFFSET..DATA_TIMESTAMP_OFFSET + 8]
             .copy_from_slice(&self.timestamp_ns.to_le_bytes());
         packet[DATA_HEADER_LEN..].copy_from_slice(self.payload);
+        let checked = crc32(&packet[DATA_TIMESTAMP_OFFSET..]);
+        packet[24..28].copy_from_slice(&checked.to_le_bytes());
         packet
     }
 }
@@ -610,6 +615,9 @@ mod tests {
             payload: &payload,
         };
         let mut bytes = packet.build();
+        // The crc32 spans timestamp + data, as hardware IMU packets carry it.
+        let stated = u32::from_le_bytes(bytes[24..28].try_into().unwrap());
+        assert_eq!(stated, crc32(&bytes[DATA_TIMESTAMP_OFFSET..]));
         let parsed = DataPacket::parse(&bytes).unwrap();
         assert_eq!(parsed.timestamp_ns, packet.timestamp_ns);
         assert_eq!(parsed.points_high().collect::<Vec<_>>(), points);

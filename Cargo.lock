@@ -668,6 +668,7 @@ dependencies = [
  "pcap-parser",
  "serde",
  "serde_json",
+ "socket2 0.6.5",
  "tempfile",
  "tokio",
  "tracing",
