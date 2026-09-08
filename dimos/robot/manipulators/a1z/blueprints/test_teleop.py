@@ -18,7 +18,6 @@ import pytest
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.global_config import global_config
 from dimos.robot.manipulators.a1z.blueprints.basic import a1z_planner_coordinator
 from dimos.robot.manipulators.a1z.blueprints.teleop import (
     coordinator_teleop_a1z,
@@ -77,11 +76,8 @@ def test_quest_left_controller_routes_to_a1z_teleop() -> None:
     }
 
 
-def test_a1z_hardware_uses_mock_adapter_in_simulation(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(global_config, "can_port", "a1zcan")
-    monkeypatch.setattr(global_config, "simulation", "mujoco")
-
-    hardware = a1z_hardware("arm")
+def test_a1z_hardware_uses_mock_adapter_in_simulation() -> None:
+    hardware = a1z_hardware("arm", address="a1zcan", simulation="mujoco")
 
     assert hardware.adapter_type == "mock"
     assert hardware.address is None
@@ -90,13 +86,8 @@ def test_a1z_hardware_uses_mock_adapter_in_simulation(monkeypatch: pytest.Monkey
     assert hardware.joints[-1] == "arm/gripper"
 
 
-def test_a1z_hardware_uses_real_adapter_when_can_port_is_selected(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(global_config, "can_port", "a1zcan")
-    monkeypatch.setattr(global_config, "simulation", "")
-
-    hardware = a1z_hardware("arm")
+def test_a1z_hardware_uses_real_adapter_when_address_is_selected() -> None:
+    hardware = a1z_hardware("arm", address="a1zcan")
 
     assert hardware.adapter_type == "galaxea_a1z"
     assert hardware.address == "a1zcan"

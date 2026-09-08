@@ -621,7 +621,7 @@ def test_socketcan_connect_fails_closed_before_sdk_construction(
             "mttcan",
             "0x1\n",
             "SocketCAN interface 'can7' belongs to kernel driver 'mttcan', not the HHS "
-            "adapter driver 'gs_usb'. Pass the HHS SocketCAN interface with --can-port.",
+            "adapter driver 'gs_usb'. Pass the HHS SocketCAN interface with --address.",
         ),
         (
             "gs_usb",

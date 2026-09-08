@@ -97,7 +97,7 @@ def _socketcan_channel_error(channel: str) -> str | None:
     except FileNotFoundError:
         return (
             f"SocketCAN interface {channel!r} does not exist. The HHS adapter must be "
-            "bound to the Linux gs_usb driver; pass its interface with --can-port."
+            "bound to the Linux gs_usb driver; pass its interface with --address."
         )
     except (OSError, ValueError) as exc:
         return f"cannot read SocketCAN interface {channel!r}: {exc}"
@@ -111,7 +111,7 @@ def _socketcan_channel_error(channel: str) -> str | None:
         return (
             f"SocketCAN interface {channel!r} belongs to kernel driver {driver!r}, not "
             f"the HHS adapter driver {_A1Z_SOCKETCAN_DRIVER!r}. Pass the HHS SocketCAN "
-            "interface with --can-port."
+            "interface with --address."
         )
     if not flags & 0x1:
         return (

@@ -24,7 +24,6 @@ from dimos.control.components import (
     HardwareComponent,
     HardwareType,
 )
-from dimos.core.global_config import global_config
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -205,11 +204,12 @@ def xarm7_hardware(
     hw_id: str = "arm",
     *,
     gripper: bool = False,
-    mock_without_address: bool = False,
+    address: str | None = None,
+    simulation: str = "",
     home_joints: list[float] | None = None,
     canonical_joint_names: list[str] | None = None,
 ) -> HardwareComponent:
-    if global_config.simulation:
+    if simulation:
         return make_xarm_hardware(
             hw_id,
             7,
@@ -219,8 +219,7 @@ def xarm7_hardware(
             home_joints=home_joints,
             canonical_joint_names=canonical_joint_names,
         )
-    address = global_config.xarm7_ip
-    if mock_without_address and not address:
+    if address is None:
         return make_xarm_hardware(
             hw_id,
             7,
@@ -243,11 +242,12 @@ def xarm6_hardware(
     hw_id: str = "arm",
     *,
     gripper: bool = False,
-    mock_without_address: bool = False,
+    address: str | None = None,
+    simulation: str = "",
     home_joints: list[float] | None = None,
     canonical_joint_names: list[str] | None = None,
 ) -> HardwareComponent:
-    if global_config.simulation:
+    if simulation:
         return make_xarm_hardware(
             hw_id,
             6,
@@ -257,8 +257,7 @@ def xarm6_hardware(
             home_joints=home_joints,
             canonical_joint_names=canonical_joint_names,
         )
-    address = global_config.xarm6_ip
-    if mock_without_address and not address:
+    if address is None:
         return make_xarm_hardware(
             hw_id,
             6,

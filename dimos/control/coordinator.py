@@ -240,10 +240,16 @@ class ControlCoordinator(Module):
         else:
             adapter = self._create_adapter(component)
 
-        if not adapter.connect():
-            raise RuntimeError(f"Failed to connect to {component.adapter_type} adapter")
-
         try:
+            logger.info(
+                "Connecting hardware",
+                hardware_id=component.hardware_id,
+                adapter_type=component.adapter_type,
+                address=component.address,
+            )
+            if not adapter.connect():
+                raise RuntimeError(f"Failed to connect to {component.adapter_type} adapter")
+
             if component.auto_enable:
                 activate = getattr(adapter, "activate", None)
                 if callable(activate):
@@ -254,7 +260,10 @@ class ControlCoordinator(Module):
 
             self.add_hardware(adapter, component)
         except Exception:
-            adapter.disconnect()
+            try:
+                adapter.disconnect()
+            except Exception:
+                logger.exception("Hardware cleanup failed", hardware_id=component.hardware_id)
             raise
 
     def _create_adapter(self, component: HardwareComponent) -> ManipulatorAdapter:

@@ -31,7 +31,7 @@ dimos run teleop-quest-openarm # OpenArm, bimanual IK + planner/Viser + mock har
 Select a CAN interface explicitly to control real A1Z hardware:
 
 ```bash
-dimos --can-port a1zcan run teleop-quest-a1z
+dimos run teleop-quest-a1z --address a1zcan
 ```
 
 Open `https://<host-ip>:8443/teleop` on Quest browser. Accept cert, tap Connect.

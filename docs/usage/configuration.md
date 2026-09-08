@@ -42,6 +42,30 @@ something
 https://errors.pydantic.dev/2.12/v/extra_forbidden
 ```
 
+## Manipulator connections
+
+Manipulator assemblies own their connection settings. For a single arm, pass
+`--address` after the blueprint name; qualify it as `--controlcoordinator.address`
+when another module also exposes an address. The value can be an IP/hostname,
+CAN interface or USB selector, or serial device path, depending on the robot.
+
+```bash
+dimos run coordinator-xarm7 --address 192.168.1.185
+dimos run coordinator-piper --address can0
+```
+
+With no address, these assemblies use mock hardware. Dual xArm uses
+`--left-address` and `--right-address`; mixed xArm/Piper uses `--xarm-address` and
+`--piper-address`. OpenArm and dual OpenYAM use `--left-can-port` and
+`--right-can-port`. Supply every endpoint for an assembly or none: partial sets,
+empty values, and surrounding whitespace are errors. Connection failure stops
+startup and cleans up acquired connections; it never selects mock hardware.
+
+These are ordinary module config fields, so the existing configuration sources
+and precedence apply. For an instance named `ControlCoordinator`, the environment
+variable is `CONTROLCOORDINATOR__ADDRESS`. The existing `--simulation` behavior
+and supported simulation stacks are unchanged.
+
 ## Configurable Modules
 
 [Modules](/docs/usage/modules.md) inherit from `Configurable`, so all of the above applies. Module configs should inherit from `ModuleConfig` ([`core/module.py`](/dimos/core/module.py#L40)), which includes shared configuration for all modules like transport protocols, frame IDs, etc.
@@ -85,10 +109,6 @@ Config(
         robot_ip=None,
         robot_ips=None,
         unitree_aes_128_key=None,
-        xarm7_ip=None,
-        xarm6_ip=None,
-        can_port=None,
-        device_path=None,
         simulation='',
         replay=False,
         replay_db='go2_short',

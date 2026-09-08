@@ -9,18 +9,17 @@ arm and its gripper; motor topology is independent of the host operating system.
 The generic Damiao layer selects the native transport provided by
 `can-motor-control>=0.0.8`:
 
-| Host | Default | `--can-port` override |
-|------|---------|-----------------------|
-| Linux | `SocketCanBus("can0")` | SocketCAN interface, such as `can1` |
-| macOS | first `1d50:606f` gs_usb adapter | USB serial number |
+| Host | `--address` value |
+|------|-------------------|
+| Linux | SocketCAN interface, such as `can1` |
+| macOS | USB serial number of a `1d50:606f` gs_usb adapter |
 
 The macOS transport is implemented in Rust with native IOKit access. It does
 not require PyUSB, libusb, `python-can`, or the Python `gs_usb` package.
 
-Logical buses are ordered. Without explicit selectors, a future two-bus Damiao
-robot maps to `can0`/`can1` on Linux and gs_usb indices 0/1 on macOS. Production
-multi-arm deployments should configure USB serial numbers because enumeration
-order is not a stable device identity.
+Multi-arm deployments require both bus selectors or neither. With neither,
+the assembly uses mock hardware. Configure USB serial numbers on macOS because
+enumeration order is not a stable device identity.
 
 List the selectors accepted on the current host:
 
@@ -45,22 +44,22 @@ Adapters used together must expose unique serial numbers.
 
 ## Run
 
-Use the default CAN device:
+Start with mock hardware:
 
 ```bash
 dimos run coordinator-openyam
 ```
 
-Select another Linux SocketCAN interface:
+Connect physical hardware through a Linux SocketCAN interface:
 
 ```bash
-dimos --can-port can1 run coordinator-openyam
+dimos run coordinator-openyam --address can1
 ```
 
 Select a macOS adapter by USB serial number:
 
 ```bash
-dimos --can-port <USB-SERIAL> run coordinator-openyam
+dimos run coordinator-openyam --address <USB-SERIAL>
 ```
 
 The dual-arm Quest blueprint is identical on both operating systems; only the

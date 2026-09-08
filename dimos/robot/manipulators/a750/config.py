@@ -20,7 +20,6 @@ import math
 from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType
-from dimos.core.global_config import global_config
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -92,8 +91,8 @@ def make_a750_hardware(
     )
 
 
-def a750_hardware(hw_id: str = "arm", *, mock_without_address: bool = False) -> HardwareComponent:
-    if mock_without_address and not global_config.device_path:
+def a750_hardware(hw_id: str = "arm", *, address: str | None = None) -> HardwareComponent:
+    if address is None:
         return make_a750_hardware(
             hw_id,
             adapter_type="mock",
@@ -101,7 +100,7 @@ def a750_hardware(hw_id: str = "arm", *, mock_without_address: bool = False) -> 
         )
     return make_a750_hardware(
         hw_id,
-        address=global_config.device_path or "/dev/ttyACM0",
+        address=address,
     )
 
 

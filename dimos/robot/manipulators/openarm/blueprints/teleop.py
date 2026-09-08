@@ -18,12 +18,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from dimos.control.coordinator import ControlCoordinatorConfig, TaskConfig
+from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
+from dimos.robot.manipulators.common.connection import PairedCanCoordinatorConfig
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
     OPENARM_GRIPPER_JOINTS,
@@ -57,11 +58,8 @@ def _trajectory_task(*, priority: int = 10) -> TaskConfig:
     )
 
 
-class OpenArmTeleopCoordinatorConfig(ControlCoordinatorConfig):
+class OpenArmTeleopCoordinatorConfig(PairedCanCoordinatorConfig):
     """OpenArm teleop deployment configuration requiring a complete bus pair."""
-
-    left_can_port: str | None = None
-    right_can_port: str | None = None
 
 
 class OpenArmTeleopCoordinator(TeleopControlCoordinator):

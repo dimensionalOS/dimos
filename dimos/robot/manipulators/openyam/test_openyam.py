@@ -19,7 +19,6 @@ import pytest
 from dimos.control.components import HardwareType
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
-from dimos.core.global_config import global_config
 from dimos.manipulation.planning.spec.validation import validate_robot_model_config
 from dimos.robot.manipulators.openyam.blueprints.basic import (
     coordinator_openyam,
@@ -74,13 +73,8 @@ def test_openyam_model_contains_canonical_arm_joints() -> None:
     )
 
 
-def test_openyam_hardware_physical_mode_returns_one_whole_body(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(global_config, "simulation", "")
-    monkeypatch.setattr(global_config, "can_port", "can1")
-
-    hardware = openyam_hardware()
+def test_openyam_hardware_physical_mode_returns_one_whole_body() -> None:
+    hardware = openyam_hardware(address="can1")
 
     assert (hardware.hardware_id, hardware.hardware_type, hardware.adapter_type) == (
         OPENYAM_HARDWARE_ID,
@@ -90,23 +84,15 @@ def test_openyam_hardware_physical_mode_returns_one_whole_body(
     assert hardware.adapter_kwargs["runtime_config"].bus_devices == {"openyam": "can1"}
 
 
-def test_openyam_hardware_without_can_port_uses_platform_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(global_config, "simulation", "")
-    monkeypatch.setattr(global_config, "can_port", None)
-
+def test_openyam_hardware_without_address_uses_mock() -> None:
     hardware = openyam_hardware()
 
-    assert hardware.adapter_kwargs["runtime_config"].bus_devices == {}
+    assert hardware.adapter_type == "mock_whole_body"
+    assert hardware.adapter_kwargs == {}
 
 
-def test_openyam_hardware_simulation_mode_returns_generic_whole_body_mock(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(global_config, "simulation", "mujoco")
-
-    hardware = openyam_hardware()
+def test_openyam_hardware_simulation_mode_returns_generic_whole_body_mock() -> None:
+    hardware = openyam_hardware(address="can1", simulation="mujoco")
 
     assert hardware.adapter_type == "mock_whole_body"
     limits = hardware.limits

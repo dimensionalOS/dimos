@@ -19,7 +19,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType
-from dimos.core.global_config import global_config
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
@@ -41,21 +40,19 @@ OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
 OPENYAM_PACKAGE_PATHS: dict[str, Path] = {"yam_description": OPENYAM_PACKAGE}
 
 
-def openyam_hardware() -> HardwareComponent:
+def openyam_hardware(*, address: str | None = None, simulation: str = "") -> HardwareComponent:
     """Select the physical or in-memory whole-body adapter for OpenYAM."""
-    adapter_type = "mock_whole_body" if global_config.simulation else "openyam_damiao"
+    adapter_type = "mock_whole_body" if simulation or address is None else "openyam_damiao"
     adapter_kwargs: dict[str, object] = {}
     limits: JointLimits | None = None
-    if global_config.simulation:
+    if adapter_type == "mock_whole_body":
         limits = JointLimits(
             position_lower=[*([None] * OPENYAM_DOF), 0.0],
             position_upper=[*([None] * OPENYAM_DOF), 1.0],
             velocity_max=[None] * len(OPENYAM_JOINTS),
         )
     else:
-        bus_devices = (
-            {"openyam": global_config.can_port} if global_config.can_port is not None else {}
-        )
+        bus_devices = {"openyam": address} if address is not None else {}
         adapter_kwargs["runtime_config"] = DamiaoRuntimeConfig(
             bus_devices=bus_devices,
             gravity_comp=True,

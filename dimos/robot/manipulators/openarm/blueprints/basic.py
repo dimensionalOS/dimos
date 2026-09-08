@@ -16,10 +16,11 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig, TaskConfig
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.common.blueprints import planner
+from dimos.robot.manipulators.common.connection import PairedCanCoordinatorConfig
 from dimos.robot.manipulators.openarm.config import (
     OPENARM_ARM_JOINTS,
     openarm_bimanual_model_config,
@@ -37,11 +38,8 @@ def _trajectory_task() -> TaskConfig:
     )
 
 
-class _OpenArmCoordinatorConfig(ControlCoordinatorConfig):
+class _OpenArmCoordinatorConfig(PairedCanCoordinatorConfig):
     """OpenArm deployment configuration requiring an explicit bus pair."""
-
-    left_can_port: str | None = None
-    right_can_port: str | None = None
 
 
 class _OpenArmCoordinator(ControlCoordinator):

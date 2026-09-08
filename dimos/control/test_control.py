@@ -333,6 +333,53 @@ class _EEFTwistCoordinator(ControlCoordinator):
 
 
 class TestControlCoordinatorLifecycle:
+    @pytest.mark.parametrize("failure", ["false", "raise", "activation"])
+    def test_failed_connection_attempt_disconnects_and_preserves_error(
+        self, make_coordinator, mocker, failure
+    ):
+        coordinator = make_coordinator()
+        adapter = mocker.MagicMock(spec=ManipulatorAdapter)
+        adapter.connect.return_value = failure != "false"
+        if failure == "raise":
+            adapter.connect.side_effect = RuntimeError("connection failed")
+        if failure == "activation":
+            adapter.activate.return_value = False
+        adapter.disconnect.side_effect = RuntimeError("cleanup failed")
+        mocker.patch.object(coordinator, "_create_adapter", return_value=adapter)
+        add = mocker.patch.object(coordinator, "add_hardware")
+        component = HardwareComponent(
+            hardware_id="arm", hardware_type=HardwareType.MANIPULATOR, adapter_type="xarm"
+        )
+
+        with pytest.raises(RuntimeError, match="connect|activate"):
+            coordinator._setup_hardware(component)
+
+        adapter.disconnect.assert_called_once_with()
+        add.assert_not_called()
+
+    def test_later_connection_failure_rolls_back_earlier_hardware(self, make_coordinator, mocker):
+        components = [
+            HardwareComponent(
+                hardware_id=name,
+                hardware_type=HardwareType.MANIPULATOR,
+                joints=make_joints(name, 6),
+            )
+            for name in ("left", "right")
+        ]
+        coordinator = make_coordinator(hardware=components)
+        left = mocker.MagicMock(spec=ManipulatorAdapter)
+        right = mocker.MagicMock(spec=ManipulatorAdapter)
+        left.connect.return_value = True
+        right.connect.return_value = False
+        mocker.patch.object(coordinator, "_create_adapter", side_effect=[left, right])
+
+        with pytest.raises(RuntimeError, match="Failed to connect"):
+            coordinator._setup_from_config()
+
+        left.disconnect.assert_called_once_with()
+        right.disconnect.assert_called_once_with()
+        assert coordinator._hardware == {}
+
     def test_start_subscribes_ee_twist_only_for_eef_twist_tasks(self, make_coordinator, mocker):
         mocker.patch("dimos.core.module.Module.start")
         mocker.patch("dimos.control.coordinator.TickLoop")

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
@@ -26,9 +25,6 @@ from dimos.robot.manipulators.common.blueprints import (
     coordinator,
     planner,
     teleop_ik_task,
-)
-from dimos.robot.manipulators.common.coordinators import (
-    ArmTwistCoordinator,
 )
 from dimos.robot.manipulators.common.topics import EEF_TWIST_TASK_NAME
 from dimos.robot.manipulators.openyam.config import (
@@ -38,6 +34,10 @@ from dimos.robot.manipulators.openyam.config import (
     OPENYAM_JOINTS,
     make_openyam_model_config,
     openyam_hardware,
+)
+from dimos.robot.manipulators.openyam.coordinator import (
+    OpenYamTeleopCoordinator,
+    OpenYamTwistCoordinator,
 )
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
@@ -71,7 +71,7 @@ def _gripper_task() -> TaskConfig:
 
 keyboard_teleop_openyam = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    ArmTwistCoordinator.blueprint(
+    OpenYamTwistCoordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=[_openyam_keyboard_hw],
         tasks=[
@@ -122,7 +122,7 @@ _openyam_quest_task = teleop_ik_task(
 # Single-arm Quest teleop: right controller -> OpenYAM arm
 teleop_quest_openyam = autoconnect(
     ArmTeleopModule.blueprint(),
-    TeleopControlCoordinator.blueprint(
+    OpenYamTeleopCoordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=[_openyam_quest_hw],
         tasks=[

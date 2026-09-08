@@ -16,18 +16,13 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.control.teleop_coordinator import TeleopControlCoordinator
+from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.robot.manipulators.common.blueprints import (
     eef_twist_task,
     teleop_ik_task,
     trajectory_task,
-)
-from dimos.robot.manipulators.common.coordinators import (
-    ArmTwistCoordinator,
 )
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
@@ -39,16 +34,23 @@ from dimos.robot.manipulators.xarm.config import (
     xarm6_hardware,
     xarm7_hardware,
 )
+from dimos.robot.manipulators.xarm.coordinator import (
+    XArm6HardwareCoordinator,
+    XArm6TeleopCoordinator,
+    XArm6TwistCoordinator,
+    XArm7TeleopCoordinator,
+    XArm7TwistCoordinator,
+)
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
-_xarm6_hw = xarm6_hardware("arm", gripper=True, mock_without_address=True)
-_xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)
+_xarm6_hw = xarm6_hardware("arm", gripper=True)
+_xarm7_hw = xarm7_hardware("arm", gripper=True)
 _xarm6_control_model = make_xarm6_model_config(add_gripper=False)
 _xarm7_control_model = make_xarm7_model_config(add_gripper=False)
 
 keyboard_teleop_xarm6 = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    ArmTwistCoordinator.blueprint(
+    XArm6TwistCoordinator.blueprint(
         instance_name="ControlCoordinator",
         tick_rate=100.0,
         publish_joint_state=True,
@@ -80,7 +82,7 @@ keyboard_teleop_xarm6 = autoconnect(
 
 keyboard_teleop_xarm7 = autoconnect(
     KeyboardTeleopModule.blueprint(),
-    ArmTwistCoordinator.blueprint(
+    XArm7TwistCoordinator.blueprint(
         instance_name="ControlCoordinator",
         tick_rate=100.0,
         publish_joint_state=True,
@@ -113,19 +115,19 @@ keyboard_teleop_xarm7 = autoconnect(
 _xarm6_control_hw = make_xarm_hardware(
     "arm",
     6,
-    adapter_type="xarm",
-    address=global_config.xarm6_ip,
     gripper=True,
 )
 
-coordinator_trajectory_xarm6 = ControlCoordinator.blueprint(
+coordinator_trajectory_xarm6 = XArm6HardwareCoordinator.blueprint(
+    instance_name="ControlCoordinator",
     hardware=[_xarm6_control_hw],
     tasks=[
         trajectory_task(_xarm6_control_hw),
     ],
 )
 
-coordinator_velocity_xarm6 = ControlCoordinator.blueprint(
+coordinator_velocity_xarm6 = XArm6HardwareCoordinator.blueprint(
+    instance_name="ControlCoordinator",
     hardware=[_xarm6_control_hw],
     tasks=[
         TaskConfig(
@@ -137,7 +139,8 @@ coordinator_velocity_xarm6 = ControlCoordinator.blueprint(
     ],
 )
 
-coordinator_combined_xarm6 = ControlCoordinator.blueprint(
+coordinator_combined_xarm6 = XArm6HardwareCoordinator.blueprint(
+    instance_name="ControlCoordinator",
     hardware=[_xarm6_control_hw],
     tasks=[
         trajectory_task(_xarm6_control_hw),
@@ -153,12 +156,10 @@ coordinator_combined_xarm6 = ControlCoordinator.blueprint(
 _xarm7_teleop_hw = xarm7_hardware(
     "arm",
     gripper=True,
-    mock_without_address=True,
 )
 _xarm6_teleop_hw = xarm6_hardware(
     "arm",
     gripper=True,
-    mock_without_address=True,
 )
 _xarm6_teleop_model = make_xarm6_model_config(
     add_gripper=True,
@@ -175,7 +176,7 @@ _xarm7_teleop_model = make_xarm7_model_config(
 
 
 coordinator_teleop_xarm7 = autoconnect(
-    TeleopControlCoordinator.blueprint(
+    XArm7TeleopCoordinator.blueprint(
         instance_name="ControlCoordinator",
         hardware=[_xarm7_teleop_hw],
         tasks=[
@@ -216,7 +217,8 @@ coordinator_teleop_xarm7 = autoconnect(
 )
 
 coordinator_teleop_xarm6 = autoconnect(
-    TeleopControlCoordinator.blueprint(
+    XArm6TeleopCoordinator.blueprint(
+        instance_name="TeleopControlCoordinator",
         hardware=[_xarm6_teleop_hw],
         tasks=[
             teleop_ik_task(

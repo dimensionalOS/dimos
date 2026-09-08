@@ -397,7 +397,7 @@ telemetry snapshots.
 
 ```bash
 # Coordinator + perception + manipulation + LLM agent (single command)
-XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
+dimos run coordinator-xarm7 xarm-perception-agent --address <ip>
 ```
 
 For a simulation walkthrough, see [Agentic xArm simulation](/docs/capabilities/manipulation/agentic.md).

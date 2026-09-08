@@ -39,19 +39,19 @@ dimos hardware can status can0
 Use the coordinator for the basic manipulation composition:
 
 ```bash
-dimos --can-port can0 run coordinator-piper
+dimos run coordinator-piper --address can0
 ```
 
 For keyboard Cartesian teleoperation, use:
 
 ```bash
-dimos --can-port can0 run keyboard-teleop-piper
+dimos run keyboard-teleop-piper --address can0
 ```
 
 The Quest teleoperation composition is available as:
 
 ```bash
-dimos --can-port can0 run teleop-quest-piper
+dimos run teleop-quest-piper --address can0
 ```
 
-Note that ommitting the `--can-port` argument will fallback the control coordinator to use fake hardware adapter. This is good for testing.
+Omitting `--address` selects mock hardware. A supplied address requests physical hardware; a connection failure stops startup without switching to mock.

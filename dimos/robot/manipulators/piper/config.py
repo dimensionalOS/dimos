@@ -20,7 +20,6 @@ import math
 from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType
-from dimos.core.global_config import global_config
 from dimos.hardware.spec import JointLimits
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
@@ -101,11 +100,12 @@ def piper_hardware(
     hw_id: str = "arm",
     *,
     gripper: bool = True,
-    mock_without_address: bool = True,
+    address: str | None = None,
+    simulation: str = "",
     home_joints: list[float] | None = None,
     canonical_joint_names: list[str] | None = None,
 ) -> HardwareComponent:
-    if global_config.simulation:
+    if simulation:
         return make_piper_hardware(
             hw_id,
             adapter_type="sim_mujoco",
@@ -114,8 +114,7 @@ def piper_hardware(
             home_joints=home_joints,
             canonical_joint_names=canonical_joint_names,
         )
-    address = global_config.can_port or "can0"
-    if mock_without_address and not global_config.can_port:
+    if address is None:
         return make_piper_hardware(
             hw_id,
             gripper=gripper,

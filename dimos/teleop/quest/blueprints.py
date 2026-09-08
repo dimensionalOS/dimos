@@ -15,8 +15,8 @@
 
 """Teleop blueprints for testing and deployment.
 
-Single sim/real blueprints — pass `--simulation` to run inside MuJoCo, omit for real
-hardware. The underlying coordinator blueprints branch on `global_config.simulation`.
+Pass `--simulation` to run inside MuJoCo. Without simulation, supply the arm's
+local `--address` for physical hardware; no address selects a mock arm.
 """
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE

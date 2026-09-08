@@ -99,17 +99,17 @@ motors, validates the measured state, holds the measured pose, and then ramps
 gravity compensation:
 
 ```bash
-dimos --can-port a1zcan run keyboard-teleop-a1z
+dimos run keyboard-teleop-a1z --address a1zcan
 ```
 
 On Linux, pass another verified SocketCAN interface instead if needed:
 
 ```bash
-dimos --can-port can0 run keyboard-teleop-a1z
+dimos run keyboard-teleop-a1z --address can0
 ```
 
 On macOS, the adapter selects the userspace USB transport automatically; omit
-`--can-port`.
+`--address`.
 
 ## Troubleshooting
 

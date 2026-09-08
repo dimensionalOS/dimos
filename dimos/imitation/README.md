@@ -11,15 +11,16 @@ teleop (Quest) ─▶ CollectionRecorder ─▶ session_<robot>_<ts>.db ─▶ d
 
 ## 1. Record a session
 
-Run a collection blueprint. Add `--simulation` to drive MuJoCo; omit it for real
-hardware (a RealSense + the arm).
+Run a collection blueprint. Add `--simulation` to drive MuJoCo. For real
+hardware (a RealSense + the arm), omit simulation and supply the arm's `--address`.
+Without an address, the arm is mocked; this does not mock the camera.
 
 ```bash
 # XArm7 in sim
 dimos --simulation run learning-collect-quest-xarm7
 
 # Piper on real hardware
-dimos run learning-collect-quest-piper
+dimos run learning-collect-quest-piper --address can0
 ```
 
 This brings up teleop, a RealSense (real only), the episode monitor, and the
