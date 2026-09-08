@@ -332,11 +332,20 @@ class JointTrajectoryTask(BaseControlTask):
         emitted_names = [name for name in output_names if name in self._commanded_positions]
         if not emitted_names:
             return None
-        return JointCommandOutput(
+        output = JointCommandOutput(
             joint_names=emitted_names,
             positions=[self._commanded_positions[name] for name in emitted_names],
             mode=ControlMode.SERVO_POSITION,
         )
+        if not self._config.hold_position_when_idle:
+            # Emit the final command, then forget joints we no longer control.
+            # Another task may move them before the next execution.
+            self._commanded_positions = {
+                name: position
+                for name, position in self._commanded_positions.items()
+                if name in self._motions
+            }
+        return output
 
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         """Handle preemption by higher-priority task.
