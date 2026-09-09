@@ -84,8 +84,12 @@ def make_progress_notification(
     return {"jsonrpc": "2.0", "method": NOTIFICATIONS_PROGRESS_METHOD, "params": params}
 
 
-def make_stopped_notification(tool_name: str, token: str | None = None) -> dict[str, Any]:
+def make_stopped_notification(
+    tool_name: str, token: str | None = None, progress_token: str | int | None = None
+) -> dict[str, Any]:
     params: dict[str, Any] = {"tool_name": tool_name}
+    if progress_token is not None:
+        params["progressToken"] = progress_token
     if token is not None:
         params["token"] = token
     return {
@@ -208,7 +212,9 @@ class ToolStream:
             transport = make_transport(TOOL_STREAM_TOPIC)
             transport.start()
         try:
-            transport.publish(make_stopped_notification(self.tool_name, self._acquire_token))
+            transport.publish(
+                make_stopped_notification(self.tool_name, self._acquire_token, self._progress_token)
+            )
         except Exception:
             logger.exception("tool-stream stopped publish failed", stream_id=self.id)
         try:

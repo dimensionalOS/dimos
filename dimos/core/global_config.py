@@ -121,6 +121,7 @@ class GlobalConfig(BaseSettings):
     dtop: bool = False
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"
+    vl_model: VlModelName = "qwen"
     listen_host: str = "127.0.0.1"
     dimsim_scene: str = "apartment"
     dimsim_port: int = 8090

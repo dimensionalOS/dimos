@@ -269,7 +269,9 @@ class VlModel(Captioner, Resource, Configurable):
         # Here to prevent unwanted imports in the file.
         from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
-        full_query = f"""show me bounding boxes in pixels for this query: `{query}`
+        scaled_image, scale = self._prepare_image(image)
+        full_query = f"""show me bounding boxes in absolute pixels for this query: `{query}`
+        Image dimensions: {scaled_image.width} by {scaled_image.height} pixels. Do not normalize coordinates.
 
         format should be:
         ```json
@@ -286,9 +288,6 @@ class VlModel(Captioner, Resource, Configurable):
         """
 
         image_detections = ImageDetections2D(image)
-
-        # Get scaled image and scale factor for coordinate rescaling
-        scaled_image, scale = self._prepare_image(image)
 
         try:
             detection_tuples = self.query_json(scaled_image, full_query)

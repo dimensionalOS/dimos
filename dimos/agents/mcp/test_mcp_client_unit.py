@@ -185,7 +185,7 @@ def test_tool_stream_progress_frame_becomes_human_message(mcp_client: McpClient)
         "jsonrpc": "2.0",
         "method": "notifications/progress",
         "params": {
-            "progressToken": "pt-abc",
+            "progressToken": mcp_client._progress_prefix + "pt-abc",
             "progress": 1,
             "message": "Found a person",
             "_meta": {"tool_name": "follow_person"},
@@ -196,6 +196,16 @@ def test_tool_stream_progress_frame_becomes_human_message(mcp_client: McpClient)
     msg: BaseMessage = mcp_client._message_queue.get_nowait()
     assert isinstance(msg, HumanMessage)
     assert str(msg.content) == "[tool:follow_person] Found a person"
+
+
+def test_other_clients_progress_does_not_trigger_agent(mcp_client: McpClient) -> None:
+    mcp_client._on_tool_stream_message(
+        {
+            "method": "notifications/progress",
+            "params": {"progressToken": "another-client:token", "message": "Navigation failed"},
+        }
+    )
+    assert mcp_client._message_queue.empty()
 
 
 def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:

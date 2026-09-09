@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 
 from dimos.agents.capabilities import CapabilityRegistry
 from dimos.agents.mcp.mcp_server import app, handle_request
+from dimos.agents.skill_result import SkillResult
 from dimos.core.module import SkillInfo
 
 
@@ -334,3 +335,39 @@ def test_instant_holder_conflict_waits_then_runs() -> None:
         app.state.skills_by_name = saved_skills
         app.state.cap_registry = saved_registry
         app.state.cap_acquire_timeout = saved_timeout
+
+
+def test_structured_skill_failure_is_mcp_error(mocker):
+    rpc = mocker.Mock(return_value=SkillResult.fail("EXECUTION_FAILED", "Blocked"))
+    response = asyncio.run(
+        handle_request(
+            {"method": "tools/call", "id": 1, "params": {"name": "regression_move"}},
+            [],
+            {"regression_move": rpc},
+        )
+    )
+    assert response["result"]["isError"] is True
+    assert json.loads(response["result"]["content"][0]["text"])["success"] is False
+
+
+def test_skill_exception_is_mcp_error(mocker):
+    rpc = mocker.Mock(side_effect=RuntimeError("Lost connection"))
+    response = asyncio.run(
+        handle_request(
+            {"method": "tools/call", "id": 1, "params": {"name": "regression_move"}},
+            [],
+            {"regression_move": rpc},
+        )
+    )
+    assert response["result"]["isError"] is True
+
+
+def test_unknown_skill_is_mcp_error():
+    response = asyncio.run(
+        handle_request(
+            {"method": "tools/call", "id": 1, "params": {"name": "invented_turn"}},
+            [],
+            {},
+        )
+    )
+    assert response["result"]["isError"] is True

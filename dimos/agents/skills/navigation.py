@@ -19,16 +19,19 @@ from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.agents.capabilities import CAP_MOVEMENT
+from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.models.qwen.bbox import BBox
+from dimos.models.vl.create import create
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.navigation_spec import NavigationInterfaceSpec
+from dimos.navigation.skill_navigation import wait_for_navigation
 from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.perception.experimental.object_tracking_spec import ObjectTrackingSpec
 from dimos.perception.experimental.spatial_memory_spec import SpatialMemorySpec
@@ -55,10 +58,7 @@ class NavigationSkillContainer(Module):
         super().__init__(**kwargs)
         self._skill_started = False
 
-        # Here to prevent unwanted imports in the file.
-        from dimos.models.vl.qwen import QwenVlModel
-
-        self._vl_model = QwenVlModel()
+        self._vl_model = create(self.config.g.vl_model)
 
     @rpc
     def start(self) -> None:
@@ -111,15 +111,9 @@ class NavigationSkillContainer(Module):
         logger.info(f"Tagged {location}")
         return f"Tagged '{location_name}': ({position.x},{position.y})."
 
-    # TODO(capabilities): this skill is `instant`, so the `movement` hold is
-    # released the moment the call returns even though the tagged-location and
-    # semantic-map paths only fire set_goal() and keep navigating. Make it
-    # `background` and close the hold when the robot actually stops -- the
-    # planner already emits a goal-reached signal (see PatrollingModule) -- so
-    # patrol/follow/explore can't start over an active navigation goal.
     @skill(uses=[CAP_MOVEMENT])
-    def navigate_with_text(self, query: str) -> str:
-        """Navigate to a location by querying the existing semantic map using natural language.
+    def navigate_with_text(self, query: str) -> SkillResult:
+        """Navigate to a described location and wait for arrival or failure. Success means the navigator reached its goal; inspect the camera for precise visual placement.
 
         First attempts to locate an object in the robot's camera view using vision.
         If the object is found, navigates to it. If not, falls back to querying the
@@ -148,9 +142,11 @@ class NavigationSkillContainer(Module):
         if success_msg:
             return success_msg
 
-        return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
+        return SkillResult.fail(
+            "NOT_FOUND", f"No visible, tagged, or mapped location matching {query!r}"
+        )
 
-    def _navigate_by_tagged_location(self, query: str) -> str | None:
+    def _navigate_by_tagged_location(self, query: str) -> SkillResult | None:
         robot_location = self._spatial_memory.query_tagged_location(query)
 
         if not robot_location:
@@ -165,18 +161,17 @@ class NavigationSkillContainer(Module):
 
         return self._navigate_to(goal_pose, f"Found a tagged location called '{query}'.")
 
-    def _navigate_to(self, pose: PoseStamped, message: str) -> str:
+    def _navigate_to(self, pose: PoseStamped, message: str) -> SkillResult:
         logger.info(
             f"Navigating to pose: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
         )
-        self._navigation.set_goal(pose)
+        if not self._navigation.set_goal(pose):
+            return SkillResult.fail("EXECUTION_FAILED", "Navigator rejected the goal")
+        result = wait_for_navigation(self._navigation)
+        result.message = f"{message} {result.message}"
+        return result
 
-        return (
-            f"{message}. Started navigating to that position. "
-            f"To cancel movement call the 'stop_navigation' tool."
-        )
-
-    def _navigate_to_object(self, query: str) -> str | None:
+    def _navigate_to_object(self, query: str) -> SkillResult | None:
         if self._object_tracking is None:
             return None
 
@@ -206,14 +201,18 @@ class NavigationSkillContainer(Module):
                 if not self._navigation.is_goal_reached():
                     logger.info(f"Goal cancelled, tracking '{query}' failed")
                     self._object_tracking.stop_track()
-                    return None
+                    self._navigation.cancel_goal()
+                    return SkillResult.fail(
+                        "NAVIGATION_STOPPED", "Visual navigation was cancelled or failed"
+                    )
                 else:
                     logger.info(f"Reached '{query}'")
                     self._object_tracking.stop_track()
-                    return f"Successfully arrived at '{query}'"
+                    return SkillResult.ok(f"Successfully arrived at {query!r}", status="succeeded")
 
             # If goal set and tracking lost, just continue (tracker will resume or timeout)
             if goal_set and not self._object_tracking.is_tracking():
+                time.sleep(0.25)
                 continue
 
             # BBoxNavigationModule automatically sends goals when tracker publishes
@@ -225,7 +224,8 @@ class NavigationSkillContainer(Module):
 
         logger.warning(f"Navigation to '{query}' timed out after {timeout}s")
         self._object_tracking.stop_track()
-        return None
+        self._navigation.cancel_goal()
+        return SkillResult.fail("EXECUTION_TIMEOUT", "Visual navigation timed out; goal cancelled")
 
     def _get_bbox_for_current_frame(self, query: str) -> BBox | None:
         if self._latest_image is None:
@@ -233,11 +233,11 @@ class NavigationSkillContainer(Module):
 
         return get_object_bbox_from_image(self._vl_model, self._latest_image, query)
 
-    def _navigate_using_semantic_map(self, query: str) -> str:
+    def _navigate_using_semantic_map(self, query: str) -> SkillResult | None:
         results = self._spatial_memory.query_by_text(query)
 
         if not results:
-            return f"No matching location found in semantic map for '{query}'"
+            return None
 
         best_match = results[0]
 
@@ -245,7 +245,7 @@ class NavigationSkillContainer(Module):
 
         logger.info("Goal pose for semantic nav", pose=goal_pose)
         if not goal_pose:
-            return f"Found a result for '{query}' but it didn't have a valid position."
+            return SkillResult.fail("NOT_FOUND", f"No valid position for {query!r}")
 
         message = f"Found a location in the semantic map matching '{query}'."
         return self._navigate_to(goal_pose, message)
@@ -262,6 +262,8 @@ class NavigationSkillContainer(Module):
         return "Stopped"
 
     def _cancel_goal_and_stop(self) -> None:
+        if self._object_tracking is not None:
+            self._object_tracking.stop_track()
         self._navigation.cancel_goal()
 
     def _get_goal_pose_from_result(self, result: dict[str, Any]) -> PoseStamped | None:

@@ -22,6 +22,8 @@ import time
 from unitree_webrtc_connect.constants import RTC_TOPIC
 
 from dimos.agents.annotation import skill
+from dimos.agents.capabilities import CAP_MOVEMENT
+from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
@@ -29,8 +31,8 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.base import NavigationState
 from dimos.navigation.navigation_spec import NavigationInterfaceSpec
+from dimos.navigation.skill_navigation import wait_for_navigation
 from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -225,10 +227,10 @@ class UnitreeSkillContainer(Module):
     def stop(self) -> None:
         super().stop()
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT])
     def move_to(
         self, x: float = 0.0, y: float = 0.0, degrees: float | None = None, relative: bool = False
-    ) -> str:
+    ) -> SkillResult:
         """Move to a position and wait until the robot arrives or gives up.
 
         By default x, y are world coordinates in meters: the frame odometry and the
@@ -254,40 +256,17 @@ class UnitreeSkillContainer(Module):
 
         tf = self.tfbuffer.get("world", "base_link")
         if tf is None:
-            return "Failed to get the position of the robot."
+            return SkillResult.fail("INVALID_STATE", "Failed to get the position of the robot.")
 
         goal = _goal_pose(tf.to_pose(), x, y, degrees, relative)
-        self._navigation.set_goal(goal)
-        outcome = self._wait_for_goal()
+        if not self._navigation.set_goal(goal):
+            return SkillResult.fail("EXECUTION_FAILED", "Navigator rejected the goal")
+        outcome = wait_for_navigation(self._navigation)
 
         tf = self.tfbuffer.get("world", "base_link")
         now = "unknown" if tf is None else _pose_text(tf.to_pose())
-        return f"{outcome}. Robot is at {now}; goal was {_pose_text(goal)}."
-
-    def _wait_for_goal(self, timeout: float = 100.0, settle: float = 2.0) -> str:
-        """Block until the planner arrives, gives up, or `timeout` passes.
-
-        The planner drops out of FOLLOWING_PATH for a moment every time it
-        replans, so a pause only counts as the end once it has lasted `settle`
-        seconds without the goal being reached.
-        """
-        # TODO: Improve this. This is not a nice way to do it. I should
-        # subscribe to arrival/cancellation events instead.
-        time.sleep(1.0)
-
-        deadline = time.monotonic() + timeout
-        idle_since: float | None = None
-        while time.monotonic() < deadline:
-            if self._navigation.is_goal_reached():
-                return "Navigation goal reached"
-            if self._navigation.get_state() == NavigationState.FOLLOWING_PATH:
-                idle_since = None
-            elif idle_since is None:
-                idle_since = time.monotonic()
-            elif time.monotonic() - idle_since > settle:
-                return "Navigation was cancelled or failed"
-            time.sleep(0.1)
-        return "Navigation timed out"
+        outcome.message += f". Robot is at {now}; goal was {_pose_text(goal)}."
+        return outcome
 
     @skill
     def wait(self, seconds: float) -> str:
@@ -305,21 +284,26 @@ class UnitreeSkillContainer(Module):
         return str(datetime.datetime.now())
 
     @skill
-    def execute_sport_command(self, command_name: str) -> str:
+    def execute_sport_command(self, command_name: str) -> SkillResult:
         if command_name not in _UNITREE_COMMANDS:
             suggestions = difflib.get_close_matches(
                 command_name, _UNITREE_COMMANDS.keys(), n=3, cutoff=0.6
             )
-            return f"There's no '{command_name}' command. Did you mean: {suggestions}"
+            return SkillResult.fail(
+                "INVALID_INPUT",
+                f"Unknown sport command {command_name!r}. Suggestions: {suggestions}",
+            )
 
         id_, _ = _UNITREE_COMMANDS[command_name]
 
         try:
             self._connection.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": id_})
-            return f"'{command_name}' command executed successfully."
+            return SkillResult.ok(
+                f"{command_name} request sent; physical completion is unverified", status="accepted"
+            )
         except Exception as e:
             logger.error(f"Failed to execute {command_name}: {e}")
-            return "Failed to execute the command."
+            return SkillResult.fail("EXECUTION_FAILED", "Failed to execute the command.")
 
 
 _commands = "\n".join(

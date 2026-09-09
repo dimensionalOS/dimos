@@ -24,6 +24,8 @@ def get_object_bbox_from_image(
     prompt = (
         f"Look at this image and find the '{object_description}'. "
         "Return ONLY a JSON object with format: {'name': 'object_name', 'bbox': [x1, y1, x2, y2]} "
+        f"Use absolute pixel coordinates for this {image.width} by {image.height} pixel image, "
+        "not normalized coordinates. "
         "where x1,y1 is the top-left and x2,y2 is the bottom-right corner of the bounding box. If not found, return None."
     )
 

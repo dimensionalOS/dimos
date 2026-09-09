@@ -53,7 +53,7 @@ class PersonFollowSkillContainer(Module):
     """Skill container for following a person.
 
     This skill uses:
-    - A VL model (QwenVlModel) to initially detect a person from a text description.
+    - The configured VL model to initially detect a person from a text description.
     - EdgeTAM for continuous tracking across frames.
     - Visual servoing OR 3D navigation to control robot movement towards the person.
     - Does not do obstacle avoidance; assumes a clear path.
@@ -73,7 +73,7 @@ class PersonFollowSkillContainer(Module):
         super().__init__(**kwargs)
         self._latest_image: Image | None = None
         self._latest_pointcloud: PointCloud2 | None = None
-        self._vl_model: VlModel = create("qwen")
+        self._vl_model: VlModel = create(self.config.g.vl_model)
         self._tracker: EdgeTAMProcessor | None = None
         self._thread: Thread | None = None
         self._should_stop: Event = Event()

@@ -118,6 +118,7 @@ class McpClient(Module):
         self._http_client = requests.Session()
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
+        self._progress_prefix = str(uuid.uuid4()) + ":"
 
     def __reduce__(self) -> Any:
         return (self.__class__, (), {})
@@ -142,7 +143,7 @@ class McpClient(Module):
         return result
 
     def _mcp_tool_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        progress_token = str(uuid.uuid4())
+        progress_token = self._progress_prefix + str(uuid.uuid4())
         return self._mcp_request(
             "tools/call",
             {
@@ -156,6 +157,8 @@ class McpClient(Module):
         method = msg.get("method")
         params = msg.get("params") or {}
         if method == tool_stream.NOTIFICATIONS_PROGRESS_METHOD:
+            if not str(params.get("progressToken", "")).startswith(self._progress_prefix):
+                return
             text = params.get("message") or ""
             tool_name = (params.get("_meta") or {}).get("tool_name") or "tool"
         elif method == tool_stream.NOTIFICATIONS_MESSAGE_METHOD:

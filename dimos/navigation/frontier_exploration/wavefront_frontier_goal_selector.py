@@ -738,6 +738,7 @@ class WavefrontFrontierExplorer(Module):
         self.exploration_active = False
         self.no_gain_counter = 0  # Reset counter when exploration stops
         self.stop_event.set()
+        self.goal_reached_event.set()  # Wake a thread waiting on a navigation goal.
 
         # Only join if we're NOT being called from the exploration thread itself
         if (
@@ -774,7 +775,11 @@ class WavefrontFrontierExplorer(Module):
         """
         try:
             self._run_exploration_loop()
+        except Exception as exc:
+            self.tool_update("begin_exploration", f"Exploration failed: {exc}")
+            logger.exception("Exploration failed")
         finally:
+            self.exploration_active = False
             self.stop_tool("begin_exploration")
 
     def _run_exploration_loop(self) -> None:
@@ -825,14 +830,23 @@ class WavefrontFrontierExplorer(Module):
                 if goal_reached:
                     logger.info("Goal reached, finding next frontier")
                 else:
-                    logger.warning("Goal timeout after 30 seconds, finding next frontier anyway")
+                    logger.warning("Exploration goal timed out; finding next frontier")
+                    self.tool_update(
+                        "begin_exploration",
+                        f"Navigation to frontier ({goal.x:.2f}, {goal.y:.2f}) timed out after "
+                        f"{self.config.goal_timeout}s; trying another frontier.",
+                    )
             else:
                 consecutive_failures += 1
 
                 # Only give up if we've published at least 2 goals AND had many consecutive failures
-                if goals_published >= 2 and consecutive_failures >= max_consecutive_failures:
+                if consecutive_failures >= max_consecutive_failures:
                     logger.info(
                         f"Exploration complete after {goals_published} goals and {consecutive_failures} consecutive failures finding new frontiers"
+                    )
+                    self.tool_update(
+                        "begin_exploration",
+                        "Exploration stopped: no reachable frontier found after repeated attempts.",
                     )
                     self.exploration_active = False
                     break
