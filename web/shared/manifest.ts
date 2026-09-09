@@ -392,6 +392,50 @@ export function parseManifest(value: unknown): Manifest {
         );
       }
     }
+    if (panel.kind === "chat") {
+      // channels: the text input (publish tx), the messages, the idle flag,
+      // the push-to-talk audio (publish tx).
+      if (panel.channels.length !== 4) {
+        throw new ManifestError(
+          "invalid_chat_panel",
+          `chat panel ${panel.id} must bind four channels`,
+        );
+      }
+      const [text, messages, idle, audio] = panel.channels.map((ch) => chIds.get(ch)!);
+      if (
+        text.encoding !== "text.json.v1" || text.delivery !== "reliable" ||
+        dirOf(text) !== "tx" || publishOf(text) !== "shared"
+      ) {
+        throw new ManifestError(
+          "invalid_chat_panel",
+          `chat panel ${panel.id} needs a text.json.v1 reliable shared tx channel first`,
+        );
+      }
+      if (
+        messages.encoding !== "chat.json.v1" || messages.delivery !== "reliable" ||
+        dirOf(messages) !== "rx"
+      ) {
+        throw new ManifestError(
+          "invalid_chat_panel",
+          `chat panel ${panel.id} needs a chat.json.v1 reliable rx channel second`,
+        );
+      }
+      if (idle.encoding !== "json.v1" || idle.delivery !== "latest" || dirOf(idle) !== "rx") {
+        throw new ManifestError(
+          "invalid_chat_panel",
+          `chat panel ${panel.id} needs a json.v1 latest rx channel third`,
+        );
+      }
+      if (
+        audio.encoding !== "audio.json.v1" || audio.delivery !== "reliable" ||
+        dirOf(audio) !== "tx" || publishOf(audio) !== "shared"
+      ) {
+        throw new ManifestError(
+          "invalid_chat_panel",
+          `chat panel ${panel.id} needs an audio.json.v1 reliable shared tx channel fourth`,
+        );
+      }
+    }
   }
 
   const seen = new Set<string>();
