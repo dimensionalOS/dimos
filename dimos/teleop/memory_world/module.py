@@ -121,9 +121,10 @@ class _ClientConn:
             self.queue.put_nowait(msg)
 
 
-# Height ramp endpoints (RGB). One blue band, so highlight colours stand out.
-HEIGHT_COLOR_FLOOR = np.array([28.0, 16.0, 110.0])
-HEIGHT_COLOR_CEILING = np.array([170.0, 240.0, 255.0])
+# Height ramp stops (RGB), floor to ceiling: deep indigo, blue, cyan. One cool
+# band so highlight colours stand out, with a hue shift as well as a
+# brightness one because the lit voxel material flattens brightness alone.
+HEIGHT_COLOR_STOPS = np.array([[14.0, 6.0, 60.0], [24.0, 80.0, 230.0], [110.0, 240.0, 255.0]])
 
 
 class MemoryWorldConfig(ModuleConfig):
@@ -506,7 +507,7 @@ class MemoryWorldModule(Module):
             return None
 
     def _height_colors(self, positions: np.ndarray) -> np.ndarray:
-        """Map Z (robot up) onto an indigo-to-pale-cyan ramp.
+        """Map Z (robot up) onto an indigo-blue-cyan ramp.
 
         The map deliberately stays inside one cool hue band: floor is deep
         indigo, ceiling is pale cyan, and everything between is a blue. That
@@ -524,8 +525,9 @@ class MemoryWorldModule(Module):
         zc = positions[:, 2]
         lo = float(np.percentile(zc, 7)) if zc.size else 0.0
         hi = lo + max(float(self.config.height_ramp_span_m), 1e-3)
-        t = np.clip((zc - lo) / (hi - lo), 0.0, 1.0).reshape(-1, 1)
-        rgb = HEIGHT_COLOR_FLOOR * (1.0 - t) + HEIGHT_COLOR_CEILING * t
+        t = np.clip((zc - lo) / (hi - lo), 0.0, 1.0)
+        stops = np.linspace(0.0, 1.0, len(HEIGHT_COLOR_STOPS))
+        rgb = np.stack([np.interp(t, stops, HEIGHT_COLOR_STOPS[:, c]) for c in range(3)], axis=1)
         return np.ascontiguousarray(np.rint(rgb).astype(np.uint8))
 
     def _cloud_header(self, positions: np.ndarray) -> dict[str, Any]:
