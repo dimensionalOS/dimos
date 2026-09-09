@@ -1,0 +1,807 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Memory World module — spawns the user inside a recorded point cloud.
+
+On WebSocket connect we:
+
+1. Accumulate the recording's lidar stream into a voxel map and push it as one
+   binary frame (positions + per-point RGB).
+2. Sample the ``color_image`` stream and push each capture pose as a
+   Street-View-style marker. The headset can later pinch one to surface the
+   image at that location.
+3. Push the odom trail as a polyline.
+
+All locomotion (smooth walk, snap turn, teleport, scale) is client-side —
+the server is a one-shot data push plus diagnostics.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+import json
+from pathlib import Path
+import subprocess
+import sys
+import threading
+import time
+from typing import Annotated, Any, Literal
+import uuid
+
+import cv2
+from fastapi import WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+import numpy as np
+from pydantic import Field as PydanticField
+
+from dimos.agents.annotation import skill
+from dimos.agents.skill_result import SkillResult
+from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.transform import throttle
+from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
+from dimos.teleop.memory_world.messages import (
+    MSG_IMAGE_POSES,
+    MSG_IMAGE_THUMBNAIL,
+    MSG_ODOM_TRAIL,
+    MSG_POINT_CLOUD,
+    MSG_TOP_DOWN_MAP,
+    decode_text,
+    encode_binary,
+    encode_text,
+)
+from dimos.teleop.memory_world.query import (
+    MEMORY_ANALYSIS_BOOTSTRAP,
+    RESULT_SENTINEL,
+    HighlightPath,
+    MemoryQueryResult,
+)
+from dimos.utils.data import get_data
+from dimos.utils.logging_config import setup_logger
+from dimos.web.robot_web_interface import RobotWebInterface
+
+logger = setup_logger()
+
+STATIC_DIR = Path(__file__).parent / "web" / "static"
+
+
+@dataclass(eq=False)
+class _ClientConn:
+    """One connected memory-world client."""
+
+    ws: WebSocket
+    loop: asyncio.AbstractEventLoop
+    queue: asyncio.Queue[bytes | str] = field(default_factory=lambda: asyncio.Queue(maxsize=512))
+
+    def send_threadsafe(self, msg: bytes | str) -> None:
+        try:
+            self.loop.call_soon_threadsafe(self._enqueue, msg)
+        except RuntimeError:
+            pass
+
+    def _enqueue(self, msg: bytes | str) -> None:
+        try:
+            self.queue.put_nowait(msg)
+        except asyncio.QueueFull:
+            try:
+                self.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            self.queue.put_nowait(msg)
+
+
+class MemoryWorldConfig(ModuleConfig):
+    """Config for the Memory World."""
+
+    store_path: str = "data/go2_bigoffice.db"
+    server_port: int = 8443
+    # Voxel size for downsampling before shipping to the headset (metres).
+    # 0.05m on a typical office map gives ~150k points; raise if your map is
+    # bigger, lower for finer detail at the cost of bandwidth. This same value
+    # is sent to the client so rendered point size matches voxel spacing.
+    voxel_size: float = 0.05
+    # Hard cap so an unexpectedly dense map doesn't try to ship 5M points.
+    max_points: int = 250_000
+    # Which lidar stream to accumulate and how many scans to sample. <= 0 means
+    # use every lidar frame (densest map, slowest build).
+    # The output cloud is deduped by voxel_size, so more scans improves the
+    # map without growing the wire payload — only build time goes up.
+    lidar_stream_name: str = "lidar"
+    n_voxel_scans: int = 150
+    # Set True if the stored lidar scans are ALREADY in the map/world frame
+    # (e.g. SLAM-registered). Then we must NOT re-apply each scan's pose —
+    # doing so double-transforms them into scattered noise. Leave False if
+    # scans are in the sensor frame and need their pose applied. None detects
+    # this from the point cloud frame_id.
+    lidar_world_frame: bool | None = None
+    # Z slab applied at load time to drop the floor/ceiling from the cloud.
+    # The user stands on the floor in VR; rendering it as points is just noise.
+    map_z_min: float = -0.2
+    map_z_max: float = 2.4
+    # color_image stream is sampled for "Street View" capture-pose markers.
+    image_stream_name: str = "color_image"
+    n_image_markers: int = 200
+    # Thumbnail params for the per-pose images that get textured onto quads in
+    # 3D world space. Smaller = less bandwidth, lower res in headset.
+    thumbnail_max_size: int = 192
+    thumbnail_jpeg_quality: int = 70
+    # odom stream is used to draw the robot's path as a polyline.
+    odom_stream_name: str = "odom"
+    n_odom_samples: int = 400
+    # Top-down density map (GTA-style minimap + ground projection). Computed
+    # from the same point cloud — Z-slab histogram into a square image.
+    map_image_size: int = 512
+    map_z_min_floor: float = 0.05  # avoid floor speckle
+    map_z_max_floor: float = 1.8
+    client_route: str = "/memory_world"
+    ws_route: str = "/ws_memory_world"
+    # Bind on all interfaces by default — the headset connects over Wi-Fi.
+    listen_host: str = "0.0.0.0"
+    background_mode: Literal["black", "passthrough"] = "black"
+    memory_analysis_max_output_chars: int = PydanticField(default=64_000, gt=0)
+
+
+class MemoryWorldModule(Module):
+    """VR memory-world module.
+
+    See :mod:`dimos.teleop.memory_world` for the architectural overview.
+    """
+
+    config: MemoryWorldConfig
+
+    def __init__(self, **kwargs: Any) -> None:
+        self._world_clients: set[_ClientConn] = set()
+        self._clients_lock = threading.Lock()
+
+        self._store: SqliteStore | None = None
+        # Cached payloads so reconnects are cheap.
+        self._cached_cloud: tuple[dict[str, Any], bytes] | None = None
+        self._cached_image_poses: tuple[dict[str, Any], bytes] | None = None
+        # Per-pose JPEG thumbnails parallel to image_poses indices.
+        self._cached_thumbnails: list[bytes] | None = None
+        self._cached_odom: tuple[dict[str, Any], bytes] | None = None
+        self._cached_top_down: tuple[dict[str, Any], bytes] | None = None
+        self._viewer_position: tuple[float, float, float] | None = None
+        self._active_query_result: dict[str, Any] | None = None
+        self._query_revision = 0
+        self._web_server: RobotWebInterface | None = None
+        self._web_server_thread: threading.Thread | None = None
+
+        super().__init__(**kwargs)
+        self.config.store_path = str(self._resolve_store_path(self.config.store_path))
+
+    @staticmethod
+    def _resolve_store_path(name_or_path: str) -> Path:
+        """Resolve explicit paths directly and bare names through the data registry."""
+        path = Path(name_or_path).expanduser()
+        if not path.is_absolute() and path.parts[:1] != ("data",):
+            return get_data(name_or_path).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"memory store not found at {path}")
+        return path.resolve()
+
+    # ---- routes ------------------------------------------------------------
+
+    def _setup_routes(self) -> None:
+        assert self._web_server is not None
+        app = self._web_server.app
+
+        @app.get(self.config.client_route, response_class=HTMLResponse)  # type: ignore[misc]
+        async def memory_world_index() -> HTMLResponse:
+            index_path = STATIC_DIR / "index.html"
+            content = index_path.read_text().replace(
+                "__BACKGROUND_MODE__", self.config.background_mode
+            )
+            return HTMLResponse(content=content)
+
+        if STATIC_DIR.is_dir():
+            app.mount(
+                "/static_mw",
+                StaticFiles(directory=str(STATIC_DIR)),
+                name="memory_world_static",
+            )
+
+        @app.websocket(self.config.ws_route)  # type: ignore[misc]
+        async def ws_world(ws: WebSocket) -> None:
+            await self._handle_ws(ws)
+
+    # ---- websocket handling ------------------------------------------------
+
+    async def _handle_ws(self, ws: WebSocket) -> None:
+        await ws.accept()
+        loop = asyncio.get_running_loop()
+        conn = _ClientConn(ws=ws, loop=loop)
+        with self._clients_lock:
+            self._world_clients.add(conn)
+        logger.info("memory-world client connected (now %d)", len(self._world_clients))
+
+        sender = asyncio.create_task(self._sender_loop(conn))
+        threading.Thread(
+            target=self._send_initial_payload,
+            args=(conn,),
+            daemon=True,
+            name="MemoryWorldInitialLoad",
+        ).start()
+
+        try:
+            while True:
+                raw = await ws.receive_text()
+                msg = decode_text(raw)
+                if msg:
+                    self._on_client_message(conn, msg)
+        except WebSocketDisconnect:
+            logger.info("memory-world client disconnected")
+        except Exception:
+            logger.exception("memory-world ws error")
+        finally:
+            sender.cancel()
+            with self._clients_lock:
+                self._world_clients.discard(conn)
+
+    async def _sender_loop(self, conn: _ClientConn) -> None:
+        try:
+            while True:
+                msg = await conn.queue.get()
+                if isinstance(msg, bytes):
+                    await conn.ws.send_bytes(msg)
+                else:
+                    await conn.ws.send_text(msg)
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            return
+
+    # ---- initial payload ---------------------------------------------------
+
+    def _ensure_store(self) -> SqliteStore:
+        if self._store is None:
+            self._store = SqliteStore(path=self.config.store_path, must_exist=True)
+            logger.info("opened memory store at %s", self.config.store_path)
+        return self._store
+
+    def _send_initial_payload(self, conn: _ClientConn) -> None:
+        try:
+            if self._cached_cloud is None:
+                self._cached_cloud = self._build_cloud()
+            if self._cached_image_poses is None:
+                self._cached_image_poses, self._cached_thumbnails = self._build_image_poses()
+            if self._cached_odom is None:
+                self._cached_odom = self._build_odom_trail()
+            if self._cached_top_down is None:
+                self._cached_top_down = self._build_top_down_map()
+
+            cloud_header, cloud_payload = self._cached_cloud
+            conn.send_threadsafe(encode_text("world_summary", **cloud_header))
+            conn.send_threadsafe(encode_binary(MSG_POINT_CLOUD, cloud_header, cloud_payload))
+
+            # Send top-down map next — both the ground plane and the HUD
+            # minimap need it, so render asap on the client.
+            if self._cached_top_down is not None:
+                map_header, map_payload = self._cached_top_down
+                conn.send_threadsafe(encode_binary(MSG_TOP_DOWN_MAP, map_header, map_payload))
+
+            poses_header, poses_payload = self._cached_image_poses
+            conn.send_threadsafe(encode_binary(MSG_IMAGE_POSES, poses_header, poses_payload))
+
+            # One MSG_IMAGE_THUMBNAIL frame per pose. Indices match poses_header.
+            if self._cached_thumbnails:
+                for i, jpeg in enumerate(self._cached_thumbnails):
+                    if not jpeg:
+                        continue
+                    conn.send_threadsafe(encode_binary(MSG_IMAGE_THUMBNAIL, {"index": i}, jpeg))
+
+            odom_header, odom_payload = self._cached_odom
+            conn.send_threadsafe(encode_binary(MSG_ODOM_TRAIL, odom_header, odom_payload))
+
+            conn.send_threadsafe(encode_text("ready"))
+            with self._clients_lock:
+                active_query_result = self._active_query_result
+            if active_query_result is not None:
+                conn.send_threadsafe(encode_text("query_result", **active_query_result))
+        except Exception:
+            logger.exception("failed to build/send world payload")
+            conn.send_threadsafe(encode_text("error", message="world load failed"))
+
+    def _build_cloud(self) -> tuple[dict[str, Any], bytes]:
+        """Build a voxel cloud from the recording's lidar stream."""
+        built = self._build_voxel_cloud_from_lidar()
+        if built is None:
+            raise RuntimeError("voxel-from-lidar produced no cloud")
+        return built
+
+    def _build_voxel_cloud_from_lidar(self) -> tuple[dict[str, Any], bytes] | None:
+        """Accumulate a voxel map from the lidar stream and pack it for the wire.
+
+        Each lidar scan is transformed into the world frame via its ``pose``,
+        then fed to :class:`VoxelMapTransformer`. The final accumulated cloud
+        is height-coloured (cyan low → amber high) so the user gets depth cues
+        without true RGB.
+        """
+        from dimos.mapping.voxels.module import VoxelMapTransformer
+        from dimos.memory.transform import FnTransformer
+        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+        from dimos.msgs.geometry_msgs.Transform import Transform
+        from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+        try:
+            store = self._ensure_store()
+            stream = store.streams[self.config.lidar_stream_name]
+            first, last = stream.first(), stream.last()
+            span = max(float(last.ts) - float(first.ts), 1e-3)
+            n_scans = int(self.config.n_voxel_scans)
+            use_all = n_scans <= 0
+            lidar_world_frame = self.config.lidar_world_frame
+            if lidar_world_frame is None:
+                frame_id = str(getattr(first.data, "frame_id", "")).lower().lstrip("/")
+                lidar_world_frame = frame_id in {"map", "odom", "world"}
+                logger.info(
+                    "lidar frame %r detected as %s",
+                    frame_id,
+                    "world-aligned" if lidar_world_frame else "sensor-relative",
+                )
+
+            def to_world_frame(obs: Any) -> Any:
+                # If scans are already registered to the map frame, applying
+                # the pose again double-transforms them into scattered noise.
+                if lidar_world_frame:
+                    return obs
+                pose = getattr(obs, "pose_tuple", None)
+                if pose is None:
+                    return None
+                p = pose
+                tf = Transform(
+                    translation=Vector3(float(p[0]), float(p[1]), float(p[2])),
+                    rotation=Quaternion(float(p[3]), float(p[4]), float(p[5]), float(p[6])),
+                )
+                return obs.derive(data=obs.data.transform(tf))
+
+            # emit_every=0 → only yield the final accumulated map on exhaustion.
+            # Throttle to n_scans unless use_all (then feed every frame).
+            pipeline = stream if use_all else stream.transform(throttle(span / n_scans))
+            result = (
+                pipeline.transform(FnTransformer(to_world_frame))
+                .transform(VoxelMapTransformer(emit_every=0, voxel_size=self.config.voxel_size))
+                .last()
+            )
+            if result is None or result.data is None:
+                return None
+            xyz, _ = result.data.as_numpy()
+            if xyz is None or xyz.size == 0:
+                return None
+
+            z = xyz[:, 2]
+            m = (z >= self.config.map_z_min) & (z <= self.config.map_z_max)
+            xyz = xyz[m]
+            if xyz.size == 0:
+                return None
+            if xyz.shape[0] > self.config.max_points:
+                stride = xyz.shape[0] // self.config.max_points + 1
+                xyz = xyz[::stride]
+
+            positions = np.ascontiguousarray(xyz.astype(np.float32))
+            # Lidar has no RGB, so always height-colour.
+            rgb = self._height_colors(positions)
+            header = self._cloud_header(positions)
+            payload = positions.tobytes() + rgb.tobytes()
+            logger.info(
+                "built voxel cloud (%s scans): n=%d",
+                "all" if use_all else str(n_scans),
+                positions.shape[0],
+            )
+            return header, payload
+        except Exception:
+            logger.exception("voxel-from-lidar build failed")
+            return None
+
+    def _height_colors(self, positions: np.ndarray) -> np.ndarray:
+        """Map Z (robot up) to a bright, fully-saturated rainbow.
+
+        Floor → ceiling sweeps hue violet → blue → cyan → green → yellow → red,
+        all at full saturation and value, so every height band is vivid and
+        clearly distinct (TURBO/jet have muddy dark ends that read poorly in
+        VR against the dark background). Uses the fixed height SLAB bounds so a
+        given height is always the same colour. Returns N x 3 uint8 RGB.
+        """
+        zc = positions[:, 2]
+        lo = float(self.config.map_z_min)
+        hi = float(self.config.map_z_max)
+        if hi - lo < 1e-3:
+            lo, hi = float(zc.min()), float(zc.max()) + 1e-3
+        t = np.clip((zc - lo) / (hi - lo), 0.0, 1.0)
+        # OpenCV hue is 0-179: 0=red, 60=green, 120=blue, ~140=violet.
+        # Floor (t=0) → violet(140), ceiling (t=1) → red(0). Clean sweep, no
+        # hue wraparound.
+        h = ((1.0 - t) * 140.0).astype(np.uint8).reshape(-1, 1)
+        full = np.full_like(h, 255)
+        hsv = np.concatenate([h, full, full], axis=1).reshape(-1, 1, 3)
+        bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR).reshape(-1, 3)
+        return np.ascontiguousarray(bgr[:, ::-1])
+
+    def _cloud_header(self, positions: np.ndarray) -> dict[str, Any]:
+        """Common header: count, colour flag, voxel size, and bounds."""
+        return {
+            "n": int(positions.shape[0]),
+            "has_colors": True,
+            "voxel_size": float(self.config.voxel_size),
+            "bounds": {
+                "x_min": float(positions[:, 0].min()),
+                "x_max": float(positions[:, 0].max()),
+                "y_min": float(positions[:, 1].min()),
+                "y_max": float(positions[:, 1].max()),
+                "z_min": float(positions[:, 2].min()),
+                "z_max": float(positions[:, 2].max()),
+            },
+        }
+
+    def _build_image_poses(self) -> tuple[tuple[dict[str, Any], bytes], list[bytes]]:
+        """Sample N capture poses and JPEG thumbnails from the color_image stream.
+
+        Returns ((header, packed_pose_payload), list_of_jpegs).
+        Pose payload: ``N*12 bytes float32`` xyz, then ``N*16 bytes float32`` quat.
+        Thumbnails are sent as separate MSG_IMAGE_THUMBNAIL frames so each
+        decode happens lazily on the client.
+        """
+        try:
+            store = self._ensure_store()
+            stream = store.streams[self.config.image_stream_name]
+            first, last = stream.first(), stream.last()
+            span = max(float(last.ts) - float(first.ts), 1e-3)
+            n = max(2, int(self.config.n_image_markers))
+            interval = span / n
+            max_size = int(self.config.thumbnail_max_size)
+            quality = int(self.config.thumbnail_jpeg_quality)
+
+            positions: list[tuple[float, float, float]] = []
+            quats: list[tuple[float, float, float, float]] = []
+            timestamps: list[float] = []
+            ids: list[int] = []
+            thumbnails: list[bytes] = []
+            for obs in stream.transform(throttle(interval)):  # type: ignore[var-annotated]
+                pose = getattr(obs, "pose_tuple", None)
+                if pose is None:
+                    continue
+                p = pose
+                positions.append((float(p[0]), float(p[1]), float(p[2])))
+                if len(p) >= 7:
+                    quats.append((float(p[3]), float(p[4]), float(p[5]), float(p[6])))
+                else:
+                    quats.append((0.0, 0.0, 0.0, 1.0))
+                timestamps.append(float(obs.ts))
+                ids.append(int(getattr(obs, "id", 0)))
+
+                # JPEG-encode the matching color image.
+                try:
+                    img = obs.data
+                    if hasattr(img, "resize_to_fit"):
+                        img, _ = img.resize_to_fit(max_size, max_size)
+                    bgr = img.to_bgr().to_opencv() if hasattr(img, "to_bgr") else img
+                    ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+                    thumbnails.append(buf.tobytes() if ok else b"")
+                except Exception:
+                    logger.exception("thumbnail encode failed at ts=%s", obs.ts)
+                    thumbnails.append(b"")
+
+                if len(positions) >= n:
+                    break
+
+            pos_arr = np.asarray(positions, dtype=np.float32)
+            quat_arr = np.asarray(quats, dtype=np.float32)
+            header = {
+                "n": int(pos_arr.shape[0]),
+                "timestamps": timestamps,
+                "ids": ids,
+            }
+            payload = pos_arr.tobytes() + quat_arr.tobytes()
+            logger.info("built %d image-pose markers + thumbnails", header["n"])
+            return (header, payload), thumbnails
+        except Exception:
+            logger.exception("failed to build image poses")
+            return ({"n": 0, "timestamps": [], "ids": []}, b""), []
+
+    def _build_top_down_map(self) -> tuple[dict[str, Any], bytes] | None:
+        """Render a top-down density map from the same point cloud shown in VR.
+
+        Used for two things on the client: a GTA-style HUD minimap and a
+        ground-pasted texture (so the user sees walls "drawn" on the floor).
+        """
+        if self._cached_cloud is None:
+            logger.info("no point cloud available; skipping top-down render")
+            return None
+        cloud_header, cloud_payload = self._cached_cloud
+        n = int(cloud_header.get("n", 0))
+        xyz = np.frombuffer(cloud_payload, dtype=np.float32, count=n * 3).reshape(n, 3)
+        if xyz is None or xyz.size == 0:
+            return None
+
+        z = xyz[:, 2]
+        m = (z >= self.config.map_z_min_floor) & (z <= self.config.map_z_max_floor)
+        xy = xyz[m, :2]
+        if xy.size == 0:
+            xy = xyz[:, :2]
+
+        x_min, x_max = float(xy[:, 0].min()), float(xy[:, 0].max())
+        y_min, y_max = float(xy[:, 1].min()), float(xy[:, 1].max())
+        cx, cy = (x_min + x_max) / 2, (y_min + y_max) / 2
+        half = max(x_max - x_min, y_max - y_min) / 2 * 1.05
+        x_min, x_max, y_min, y_max = cx - half, cx + half, cy - half, cy + half
+
+        size = int(self.config.map_image_size)
+        hist, _, _ = np.histogram2d(
+            xy[:, 0], xy[:, 1], bins=size, range=[[x_min, x_max], [y_min, y_max]]
+        )
+        density_scale = max(float(np.percentile(hist, 99)), 1.0)
+        norm = np.clip(hist / density_scale, 0.0, 1.0)
+        gray = (norm.T * 255).astype(np.uint8)
+        gray = np.flipud(gray)
+        # Light cyan walls on dark navy background — matches the world theme.
+        rgb = np.zeros((size, size, 3), dtype=np.uint8)
+        rgb[..., 0] = (gray.astype(np.uint16) * 76 // 255).astype(np.uint8)
+        rgb[..., 1] = (gray.astype(np.uint16) * 217 // 255).astype(np.uint8)
+        rgb[..., 2] = (gray.astype(np.uint16) * 255 // 255).astype(np.uint8)
+        ok, buf = cv2.imencode(
+            ".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), [int(cv2.IMWRITE_JPEG_QUALITY), 85]
+        )
+        if not ok:
+            return None
+        header = {
+            "x_min": x_min,
+            "x_max": x_max,
+            "y_min": y_min,
+            "y_max": y_max,
+            "width_px": size,
+            "height_px": size,
+        }
+        logger.info("built top-down map: %dx%d bounds=%s", size, size, header)
+        return header, buf.tobytes()
+
+    def _build_odom_trail(self) -> tuple[dict[str, Any], bytes]:
+        """Subsample odom to a small polyline payload."""
+        try:
+            store = self._ensure_store()
+            stream = store.streams[self.config.odom_stream_name]
+            first, last = stream.first(), stream.last()
+            span = max(float(last.ts) - float(first.ts), 1e-3)
+            n = max(2, int(self.config.n_odom_samples))
+            interval = span / n
+
+            positions: list[tuple[float, float, float]] = []
+            for obs in stream.transform(throttle(interval)):  # type: ignore[var-annotated]
+                pose = getattr(obs, "pose_tuple", None)
+                if pose is None:
+                    continue
+                p = pose
+                positions.append((float(p[0]), float(p[1]), float(p[2])))
+                if len(positions) >= n:
+                    break
+
+            pos_arr = np.asarray(positions, dtype=np.float32)
+            header = {"n": int(pos_arr.shape[0])}
+            payload = pos_arr.tobytes()
+            logger.info("built odom trail with %d points", header["n"])
+            return header, payload
+        except Exception:
+            logger.exception("failed to build odom trail")
+            return {"n": 0}, b""
+
+    # ---- client messages (mostly diagnostics) ------------------------------
+
+    @skill
+    def analyze_memory(
+        self,
+        code: str,
+        timeout: Annotated[float, PydanticField(gt=0.0, le=100.0)] = 100.0,
+    ) -> SkillResult:
+        """Analyze the recorded memory and display validated spatial results in VR.
+
+        Run complete Python code in a fresh process with ``store`` (the mem2
+        SqliteStore), ``np`` (NumPy), and ``viewer_position`` available. Inspect
+        streams with ``store.list_streams()``, ``store.summary()``, and
+        ``store.streams[name]``. Observations expose ``pose_tuple``, ``data``,
+        and ``id``. ``store.read_stream`` does not exist. For a bounded xyz
+        trajectory use ``sample_pose_path("odom", max_points=200)``. Assign a
+        dictionary to ``result`` with a required ``answer`` and optional fields:
+        ``focus_point`` [x,y,z], ``regions`` (polygon point lists),
+        ``evidence_paths`` (path point lists), ``points``, and
+        ``observation_ids``. Every point must be [x,y,z] in the world frame.
+        A route from the current VR position is added automatically when
+        ``focus_point`` and ``global_costmap`` are available.
+
+        Args:
+            code: Complete Python source that assigns the result dictionary.
+            timeout: Maximum execution time in seconds, up to 100 seconds.
+        """
+        started = time.monotonic()
+        with self._clients_lock:
+            viewer_position = self._viewer_position
+        try:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    MEMORY_ANALYSIS_BOOTSTRAP,
+                    self.config.store_path,
+                    json.dumps(viewer_position),
+                ],
+                input=code,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return SkillResult.fail(
+                "EXECUTION_TIMEOUT", f"Memory analysis timed out after {timeout:g} seconds"
+            )
+
+        marker = completed.stdout.rfind(RESULT_SENTINEL)
+        if marker < 0:
+            detail = (completed.stderr or completed.stdout or "analysis returned no result").strip()
+            return SkillResult.fail("EXECUTION_FAILED", self._cap_analysis_output(detail))
+
+        encoded = completed.stdout[marker + len(RESULT_SENTINEL) :].splitlines()[0]
+        if len(encoded) > self.config.memory_analysis_max_output_chars:
+            return SkillResult.fail(
+                "RESULT_TOO_LARGE",
+                "Memory result exceeds the configured output limit of "
+                f"{self.config.memory_analysis_max_output_chars} characters",
+            )
+        try:
+            result = MemoryQueryResult.model_validate_json(encoded)
+            self._add_route_to_result(result)
+        except Exception as exc:
+            return SkillResult.fail("EXECUTION_FAILED", f"Invalid memory result: {exc}")
+
+        with self._clients_lock:
+            query_id = uuid.uuid4().hex
+            self._query_revision += 1
+            payload = result.model_dump(mode="json")
+            payload.update(query_id=query_id, revision=self._query_revision)
+            self._active_query_result = payload
+            clients = tuple(self._world_clients)
+        message = encode_text("query_result", **payload)
+        for client in clients:
+            client.send_threadsafe(message)
+
+        return SkillResult(
+            success=True,
+            message=result.answer,
+            duration_ms=(time.monotonic() - started) * 1000,
+            metadata={
+                "query_id": query_id,
+                "regions": len(result.regions),
+                "evidence_paths": len(result.evidence_paths),
+                "observation_ids": len(result.observation_ids),
+                "route": result.route is not None,
+            },
+        )
+
+    def _cap_analysis_output(self, output: str) -> str:
+        limit = self.config.memory_analysis_max_output_chars
+        if len(output) <= limit:
+            return output
+        return output[:limit] + f"\n... [truncated, {len(output)} chars total]"
+
+    def _add_route_to_result(self, result: MemoryQueryResult) -> None:
+        # Routes are server-owned: only the planner may label one collision-aware.
+        result.route = None
+        with self._clients_lock:
+            viewer_position = self._viewer_position
+        if result.focus_point is None or viewer_position is None:
+            return
+        try:
+            store = self._ensure_store()
+            if "global_costmap" not in store.list_streams():
+                return
+            costmap = store.streams.global_costmap.last().data
+            route = min_cost_astar(
+                costmap,
+                goal=result.focus_point[:2],
+                start=viewer_position[:2],
+            )
+            if route is None:
+                return
+            points = [(pose.x, pose.y, pose.z + 0.08) for pose in route.poses]
+            if len(points) >= 2:
+                result.route = HighlightPath(
+                    points=points,
+                    label="Route to answer",
+                    color="#64ff8f",
+                )
+        except Exception:
+            logger.exception("failed to build route to memory query result")
+
+    def _on_client_message(self, conn: _ClientConn, msg: dict[str, Any]) -> None:
+        kind = msg.get("type")
+        if kind == "ping":
+            conn.send_threadsafe(encode_text("pong"))
+        elif kind == "diag":
+            logger.info(
+                "[client/diag] %s %s",
+                msg.get("event", "?"),
+                {k: v for k, v in msg.items() if k not in ("type", "event")},
+            )
+        elif kind == "viewer_pose":
+            position = msg.get("position")
+            if (
+                isinstance(position, list)
+                and len(position) == 3
+                and all(isinstance(value, int | float) and np.isfinite(value) for value in position)
+            ):
+                with self._clients_lock:
+                    self._viewer_position = (
+                        float(position[0]),
+                        float(position[1]),
+                        float(position[2]),
+                    )
+        elif kind in (
+            "locomote",
+            "yaw",
+            "teleport_aim",
+            "teleport_commit",
+            "teleport_cancel",
+            "scale_delta",
+            "reset_view",
+            "toggle_images",
+            "toggle_cloud",
+        ):
+            # Client-side view gestures, echoed only as telemetry. Debug-level
+            # so they don't spam the console (scale_delta fires every frame).
+            logger.debug("[client] %s", kind)
+        else:
+            logger.warning("[client] unknown msg kind=%r full=%r", kind, msg)
+
+    # ---- lifecycle ---------------------------------------------------------
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self._web_server = RobotWebInterface(
+            host=self.config.listen_host,
+            port=self.config.server_port,
+        )
+        self._setup_routes()
+        self._web_server_thread = threading.Thread(
+            target=self._web_server.run,
+            kwargs={"ssl": True, "ssl_certs_dir": DIMOS_PROJECT_ROOT / "assets" / "teleop_certs"},
+            daemon=True,
+            name="MemoryWorldWebServer",
+        )
+        self._web_server_thread.start()
+        logger.info(
+            "memory-world server started on https://%s:%d",
+            self.config.listen_host,
+            self.config.server_port,
+        )
+
+    @rpc
+    def stop(self) -> None:
+        try:
+            if self._web_server is not None:
+                self._web_server.shutdown()
+            if self._web_server_thread is not None:
+                self._web_server_thread.join(timeout=3)
+                self._web_server_thread = None
+        finally:
+            store = self._store
+            self._store = None
+            if store is not None:
+                try:
+                    store.stop()
+                except Exception:
+                    logger.exception("error closing memory store")
+            super().stop()
