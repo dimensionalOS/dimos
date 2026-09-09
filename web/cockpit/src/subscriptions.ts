@@ -5,7 +5,7 @@
 // manifest.
 
 import type { ChannelSpec, DecoderRegistry, Session } from "@dimos/sdk";
-import { createDecoderRegistry } from "@dimos/sdk";
+import { createDecoderRegistry, isLcmSchema } from "@dimos/sdk";
 import type { PanelSpec } from "@dimos/shared";
 import { getPanel } from "./panels/registry.tsx";
 
@@ -17,8 +17,22 @@ export const cockpitDecoders = createDecoderRegistry();
 // subscribed only when a panel this build can render binds them.
 const PANEL_ONLY_ENCODINGS = new Set(["jpeg.v1", "costmap.zlib.v1"]);
 
+/** Channels only a panel may subscribe: the encodings above, and a *.lcm.v1
+ * channel whose schema has a variable-length array (a point cloud, a scan, a
+ * path): every frame costs the message's full size, far more than the channel
+ * table's preview is worth. A bounded message (a pose, an odometry)
+ * subscribes like json.v1 so the table can show it. */
+function panelOnly(spec: ChannelSpec): boolean {
+  if (PANEL_ONLY_ENCODINGS.has(spec.encoding)) return true;
+  const lcm = spec.params.lcm;
+  return isLcmSchema(lcm) &&
+    Object.values(lcm.structs).some((rows) =>
+      rows.some(([, , dims]) => dims !== null && dims.some((d) => typeof d === "string"))
+    );
+}
+
 /** True when this build can put the channel to use: rx only, it has a
- * decoder, and a panel-only encoding is additionally bound by a renderable
+ * decoder, and a panel-only channel is additionally bound by a renderable
  * panel. getPanel must keep returning undefined for unknown kinds here: an
  * UnknownPanel fallback in this gate would make it vacuously true and
  * subscribe every video/costmap channel of a newer bridge (the render-only
@@ -30,14 +44,14 @@ export function channelSubscribable(
   registry: DecoderRegistry = cockpitDecoders,
 ): boolean {
   if (spec.dir !== "rx") return false;
-  if (registry.get(spec.encoding) === undefined) return false;
-  if (!PANEL_ONLY_ENCODINGS.has(spec.encoding)) return true;
+  if (registry.resolve(spec) === undefined) return false;
+  if (!panelOnly(spec)) return true;
   return panels.some((p) => getPanel(p.kind) !== undefined && p.channels.includes(spec.ch));
 }
 
 /**
  * Channels worth subscribing: only rx channels with a decoder, and
- * panel-only encodings only when a renderable panel binds them. Subscribing
+ * panel-only channels only when a renderable panel binds them. Subscribing
  * to channels nobody can render wastes encode CPU and bandwidth, and a
  * high-rate JPEG stream nobody renders overflows the relay's reliable FIFO
  * under Firefox's tighter QUIC credit (the relay kicks the viewer every

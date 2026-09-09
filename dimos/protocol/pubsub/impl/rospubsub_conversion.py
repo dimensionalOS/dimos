@@ -28,6 +28,8 @@ import importlib
 import re
 from typing import TYPE_CHECKING, Any, cast
 
+from dimos.msgs.helpers import lcm_msg_type
+
 if TYPE_CHECKING:
     from dimos.msgs.protocol import DimosMsg
     from dimos.protocol.pubsub.impl.rospubsub import ROSMessage
@@ -101,9 +103,7 @@ def derive_lcm_type(dimos_type: type[DimosMsg]) -> type[Any]:
     if len(parts) != 2:
         raise ValueError(f"Invalid msg_name format: {msg_name}, expected 'package.MessageName'")
 
-    package, message_name = parts
-    lcm_module = importlib.import_module(f"dimos_lcm.{package}.{message_name}")
-    lcm_type: type[Any] = getattr(lcm_module, message_name)
+    lcm_type = lcm_msg_type(msg_name)
     _lcm_type_cache[msg_name] = lcm_type
     return lcm_type
 
@@ -264,11 +264,9 @@ def _create_lcm_instance_for_ros_msg(ros_msg: Any) -> Any:
     module_name = ros_type.__module__  # e.g., "std_msgs.msg"
     class_name = ros_type.__name__  # e.g., "Header"
 
-    # Convert to LCM module path (std_msgs.msg.Header -> dimos_lcm.std_msgs.Header)
+    # std_msgs.msg.Header -> dimos_lcm.std_msgs.Header
     package = module_name.split(".")[0]  # e.g., "std_msgs"
-    lcm_module = importlib.import_module(f"dimos_lcm.{package}.{class_name}")
-    lcm_type = getattr(lcm_module, class_name)
-    return lcm_type()
+    return lcm_msg_type(f"{package}.{class_name}")()
 
 
 def _create_ros_instance_for_lcm_msg(lcm_msg: Any, ros_type_hint: str) -> Any:

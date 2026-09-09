@@ -13,7 +13,9 @@ import {
 } from "@dimos/shared";
 
 // Reliable channels: a viewer this far behind is dead weight; kick it so it
-// reconnects with a clean slate.
+// reconnects with a clean slate. A lone frame over the byte cap (up to
+// MAX_DATA_FRAME_BYTES) still queues, as on the Python leg: kicking would
+// repeat on every frame of that size and never deliver one.
 const RELIABLE_MAX_QUEUE = 64;
 const RELIABLE_MAX_BYTES = 16 * 1024 * 1024;
 
@@ -387,7 +389,10 @@ export class ReliableChannel implements ChannelPolicy {
     if (this.#disposed) return;
     this.#fifo.push(bytes);
     this.#bytes += bytes.byteLength;
-    if (this.#fifo.length > RELIABLE_MAX_QUEUE || this.#bytes > RELIABLE_MAX_BYTES) {
+    if (
+      this.#fifo.length > RELIABLE_MAX_QUEUE ||
+      (this.#bytes > RELIABLE_MAX_BYTES && this.#fifo.length > 1)
+    ) {
       this.sink.kick("reliable channel overflow");
       // wt.closed teardown is async; until it runs, later offers must be
       // no-ops, not re-queue + re-kick.
