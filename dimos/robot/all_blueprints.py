@@ -100,6 +100,7 @@ all_blueprints = {
     "relocalize-mid360": "dimos.mapping.relocalization.blueprints:relocalize_mid360",
     "spot": "dimos.experimental.robot.bosdyn.spot.blueprints.spot:spot",
     "spot-record": "dimos.experimental.robot.bosdyn.spot.blueprints.spot_record:spot_record",
+    "spot-replay": "dimos.experimental.robot.bosdyn.spot.blueprints.spot_replay:spot_replay",
     "teleop-hosted-go2-multicam": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_multicam",
     "teleop-hosted-go2-transport": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_transport",
     "teleop-hosted-xarm6": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_xarm6",
