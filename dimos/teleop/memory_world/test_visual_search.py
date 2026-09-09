@@ -32,6 +32,7 @@ from dimos.teleop.memory_world.visual_search import (
     VisualMemoryIndex,
     cluster_places,
     score_frames,
+    search_phrase,
 )
 
 if TYPE_CHECKING:
@@ -100,6 +101,20 @@ def test_no_candidates_yields_no_places() -> None:
 def test_invalid_parameters_are_rejected(radius: float, max_places: int) -> None:
     with pytest.raises(ValueError):
         cluster_places([place(0.0, 0.0, 0.5)], radius=radius, max_places=max_places)
+
+
+@pytest.mark.parametrize(
+    ("spoken", "expected"),
+    [
+        ("Where did I see a traffic cone?", "a traffic cone"),
+        ("  where is   the whiteboard ", "the whiteboard"),
+        ("a chair", "a chair"),
+        ("Whereabouts", "Whereabouts"),  # a prefix must be a whole word
+        ("", ""),
+    ],
+)
+def test_spoken_questions_reduce_to_the_thing_asked_about(spoken: str, expected: str) -> None:
+    assert search_phrase(spoken) == expected
 
 
 # ---- scoring ----------------------------------------------------------------

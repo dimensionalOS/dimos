@@ -78,6 +78,7 @@ from dimos.teleop.memory_world.visual_search import (
     VisualMemoryIndex,
     cluster_places,
     posed_frames,
+    search_phrase,
 )
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -796,7 +797,7 @@ class MemoryWorldModule(Module):
             query: What to look for, e.g. "a car" or "a whiteboard".
         """
         started = time.monotonic()
-        phrase = query.strip()
+        phrase = search_phrase(query)
         if not phrase:
             return SkillResult.fail("INVALID_QUERY", "The query text is empty")
 

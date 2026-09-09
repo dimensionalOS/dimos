@@ -102,6 +102,37 @@ class Place:
     image_uv: tuple[float, float] = (0.5, 0.5)
 
 
+_QUESTION_PREFIXES = (
+    "where did i see",
+    "where did you see",
+    "where have i seen",
+    "where have you seen",
+    "where is",
+    "where are",
+    "where was",
+    "where were",
+    "have you seen",
+    "did you see",
+    "did i see",
+    "show me",
+    "find",
+)
+
+
+def search_phrase(spoken: str) -> str:
+    """Reduce a spoken question to the thing being asked about.
+
+    "Where did I see a traffic cone?" scores fine as-is, but the answer text
+    and the markers should read "a traffic cone", not the whole question.
+    """
+    phrase = " ".join(spoken.split()).strip(" ?.!,")
+    lowered = phrase.lower()
+    for prefix in _QUESTION_PREFIXES:
+        if lowered.startswith(prefix + " "):
+            return phrase[len(prefix) + 1 :]
+    return phrase
+
+
 def cluster_places(
     candidates: Iterable[Place],
     radius: float,
