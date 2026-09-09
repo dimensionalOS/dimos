@@ -426,4 +426,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # Under ``python -m`` this file runs as ``__main__``, and the store records
+    # payload classes by module path, so an index built here would be typed
+    # ``__main__.PatchGrid`` and unreadable everywhere else. Run the properly
+    # imported module instead.
+    from dimos.teleop.memory_world.visual_search import main as installed_main
+
+    installed_main()
