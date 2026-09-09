@@ -25,21 +25,19 @@ import torch
 
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.teleop.memory_world.tf_tree import pose_matrix
 from dimos.teleop.memory_world.visual_search import (
+    POSE_FRAME_TAG,
     PatchGrid,
     PatchHit,
     Place,
     VisualMemoryIndex,
-    camera_frame_pose,
-    chain_matrix,
+    body_style_quaternion,
     cluster_hits,
     cluster_places,
     hot_patches,
     patch_world_position,
-    pose_matrix,
-    quaternion_from_matrix,
     score_frames,
     search_phrase,
 )
@@ -185,7 +183,7 @@ def _seed_index(
         PatchGrid(source_id=source_id, rows=2, cols=2, patches=grid),
         ts=ts,
         pose=PoseStamped(position=Vector3(*position)),
-        tags={"model": model_name},
+        tags={"model": model_name, "pose_frame": POSE_FRAME_TAG},
     )
 
 
@@ -195,12 +193,12 @@ GIANT = "google/siglip2-giant-opt-patch16-384"
 def test_index_built_by_another_model_is_refused(sqlite_store: SqliteStore) -> None:
     _seed_index(sqlite_store, "google/siglip2-so400m-patch16-384")
     with pytest.raises(ValueError, match="so400m"):
-        _ = VisualMemoryIndex(sqlite_store, model_name=GIANT).index_stream
+        _ = VisualMemoryIndex(sqlite_store, pose_of=lambda obs: None, model_name=GIANT).index_stream
 
 
 def test_index_built_by_the_same_model_opens(sqlite_store: SqliteStore) -> None:
     _seed_index(sqlite_store, GIANT)
-    assert VisualMemoryIndex(sqlite_store, model_name=GIANT).count() == 1
+    assert VisualMemoryIndex(sqlite_store, pose_of=lambda obs: None, model_name=GIANT).count() == 1
 
 
 def test_search_returns_the_frame_and_patch_that_matched(sqlite_store: SqliteStore) -> None:
@@ -209,7 +207,7 @@ def test_search_returns_the_frame_and_patch_that_matched(sqlite_store: SqliteSto
     cold = np.array([[0, 1]] * 4, dtype=np.float16)
     _seed_index(sqlite_store, GIANT, patches=cold, ts=1.0, position=(0.0, 0.0, 0.0), source_id=1)
     _seed_index(sqlite_store, GIANT, patches=hot, ts=2.0, position=(5.0, 0.0, 0.0), source_id=2)
-    index = VisualMemoryIndex(sqlite_store, model_name=GIANT)
+    index = VisualMemoryIndex(sqlite_store, pose_of=lambda obs: None, model_name=GIANT)
     index._embed = lambda text: unit(1.0, 0.0)  # type: ignore[method-assign]
     index._background = torch.zeros(0, 2)
 
@@ -221,21 +219,31 @@ def test_search_returns_the_frame_and_patch_that_matched(sqlite_store: SqliteSto
     assert places[0].image_uv == (0.25, 0.75)
 
 
-def test_poseless_images_borrow_the_nearest_odom_pose(sqlite_store: SqliteStore) -> None:
+def test_index_built_with_body_poses_is_refused(sqlite_store: SqliteStore) -> None:
+    sqlite_store.stream("image_siglip2_patches", PatchGrid).append(
+        PatchGrid(source_id=7, rows=2, cols=2, patches=np.zeros((4, 2), dtype=np.float16)),
+        ts=1.0,
+        pose=PoseStamped(position=Vector3(0.0, 0.0, 0.0)),
+        tags={"model": GIANT, "pose_frame": "body"},
+    )
+    with pytest.raises(ValueError, match="rebuild"):
+        _ = VisualMemoryIndex(sqlite_store, pose_of=lambda obs: None, model_name=GIANT).index_stream
+
+
+def test_frames_the_tf_tree_cannot_place_are_skipped(sqlite_store: SqliteStore) -> None:
     images = sqlite_store.stream("realsense_color_image", int)
-    odom = sqlite_store.stream("odom", int)
-    images.append(1, ts=10.00, pose=None)
-    images.append(2, ts=10.50, pose=None)
-    images.append(3, ts=20.00, pose=None)  # nothing within tolerance: dropped
-    odom.append(0, ts=10.02, pose=PoseStamped(position=Vector3(1.0, 0.0, 0.0)))
-    odom.append(0, ts=10.48, pose=PoseStamped(position=Vector3(2.0, 0.0, 0.0)))
+    images.append(1, ts=10.0, pose=None)
+    images.append(2, ts=20.0, pose=None)
+    placed = {10.0: pose_matrix((1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))}
     index = VisualMemoryIndex(
-        sqlite_store, image_stream_name="realsense_color_image", pose_stream_name="odom"
+        sqlite_store,
+        pose_of=lambda obs: placed.get(float(obs.ts)),
+        image_stream_name="realsense_color_image",
     )
 
-    posed = [(obs.data, pose.position.x) for obs, pose in index._posed_frames()]
+    posed = [(obs.data, tuple(matrix[:3, 3])) for obs, matrix in index._posed_frames()]
 
-    assert posed == [(1, 1.0), (2, 2.0)]
+    assert posed == [(1, (1.0, 0.0, 0.0))]
 
 
 # ---- putting the answer on the object ---------------------------------------
@@ -257,29 +265,6 @@ def test_patch_centre_back_projects_through_the_median_depth() -> None:
 def test_patch_over_a_depth_hole_has_no_position() -> None:
     depth = np.zeros((100, 200), dtype=np.uint16)
     assert patch_world_position((0.5, 0.5), depth, (1.0, 1.0, 0.0, 0.0), np.eye(4)) is None
-
-
-def test_pose_matrix_rotates_then_translates() -> None:
-    # 90 degrees about z: camera x becomes world y.
-    matrix = pose_matrix((1.0, 2.0, 3.0), (0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5)))
-    assert matrix @ np.array([1.0, 0.0, 0.0, 1.0]) == pytest.approx((1.0, 3.0, 3.0, 1.0))
-
-
-def test_tf_chain_composes_body_to_camera() -> None:
-    body_to_link = Transform(frame_id="body", child_frame_id="link")
-    body_to_link.translation = Vector3(1.0, 0.0, 0.0)
-    link_to_camera = Transform(frame_id="link", child_frame_id="camera")
-    link_to_camera.translation = Vector3(0.0, 2.0, 0.0)
-    unrelated = Transform(frame_id="body", child_frame_id="imu")
-
-    matrix = chain_matrix([unrelated, link_to_camera, body_to_link], "body", "camera")
-
-    assert matrix is not None
-    assert matrix[:3, 3] == pytest.approx((1.0, 2.0, 0.0))
-    assert chain_matrix([body_to_link], "body", "camera") is None
-
-
-# ---- multi-view localisation --------------------------------------------------
 
 
 def test_hot_patches_keep_the_object_blob_not_only_the_stray_peak() -> None:
@@ -329,35 +314,12 @@ def test_consecutive_frames_from_one_spot_count_as_one_view() -> None:
     assert cluster_hits(hits, radius=0.75, max_places=6)[0].views == 1
 
 
-def test_quaternion_round_trips_through_the_matrix() -> None:
-    for quat in [
-        (0.0, 0.0, 0.0, 1.0),
-        (0.0, 0.218, 0.0, 0.976),
-        (0.5, 0.5, 0.5, 0.5),
-        (0.0, 0.0, 0.7071, 0.7071),
-    ]:
-        unit = np.array(quat) / np.linalg.norm(quat)
-        back = np.array(quaternion_from_matrix(pose_matrix((0, 0, 0), tuple(unit))[:3, :3]))
-        assert np.allclose(back, unit, atol=1e-6) or np.allclose(back, -unit, atol=1e-6)
-
-
-def test_camera_frame_pose_points_x_along_the_optical_axis() -> None:
-    # Body pitched 90 degrees nose-down; camera optical frame = body axes
-    # rotated so optical z is body x (looking where the body's nose points).
-    nose_down = (0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5))
-    optical_from_body = pose_matrix((0.2, 0.0, 0.0), (-0.5, 0.5, -0.5, 0.5))
-    position, quat = camera_frame_pose((1.0, 2.0, 3.0), nose_down, optical_from_body)
-    frame = pose_matrix(position, quat)
-    # The camera sits 0.2 m along the (downward) nose, looks down, and its
-    # image "up" is the body's forward, which now points along +x... the
-    # frame's x axis (forward) is world -z, its z axis (up) is world +x.
-    assert position == pytest.approx((1.0, 2.0, 2.8))
+def test_body_style_quaternion_puts_x_on_the_optical_axis() -> None:
+    # An optical frame looking along world -z (straight down) with image-up = world +x.
+    optical = np.eye(4)
+    optical[:3, 0] = (0.0, -1.0, 0.0)  # x right
+    optical[:3, 1] = (-1.0, 0.0, 0.0)  # y down  -> up is +x
+    optical[:3, 2] = (0.0, 0.0, -1.0)  # z forward
+    frame = pose_matrix((0, 0, 0), body_style_quaternion(optical))
     assert frame[:3, 0] == pytest.approx((0.0, 0.0, -1.0), abs=1e-6)
     assert frame[:3, 2] == pytest.approx((1.0, 0.0, 0.0), abs=1e-6)
-
-
-def test_camera_frame_pose_without_extrinsics_is_the_body_pose() -> None:
-    assert camera_frame_pose((1.0, 2.0, 3.0), (0.0, 0.0, 0.0, 1.0), None) == (
-        (1.0, 2.0, 3.0),
-        (0.0, 0.0, 0.0, 1.0),
-    )

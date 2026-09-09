@@ -279,7 +279,7 @@ def test_concurrent_clients_build_the_world_once(
 
     monkeypatch.setattr(memory_world, "_build_cloud", slow_cloud)
     monkeypatch.setattr(memory_world, "_build_image_poses", lambda: (({"n": 0}, b""), []))
-    monkeypatch.setattr(memory_world, "_build_odom_trail", lambda: ({"n": 0}, b""))
+    monkeypatch.setattr(memory_world, "_build_trail", lambda: ({"n": 0}, b""))
 
     threads = [threading.Thread(target=memory_world._ensure_world_cache) for _ in range(4)]
     for thread in threads:

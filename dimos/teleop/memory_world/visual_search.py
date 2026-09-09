@@ -37,7 +37,10 @@ is dropped for that query, otherwise "furniture" would erase "a desk".
 The index stream stores the source observation id as part of its payload
 rather than a copy of the image, and the model name in its tags: the grid
 shape and vector width are fixed by the checkpoint, so an index built with one
-model cannot be searched with another.
+model cannot be searched with another. Each row's pose is the camera's
+*optical* frame in the world (z forward, x right, y down), supplied by the
+caller's ``pose_of`` (the recording's tf tree); rows are tagged with that
+convention and an index built any other way is refused.
 """
 
 from __future__ import annotations
@@ -49,12 +52,16 @@ import numpy as np
 import torch
 
 from dimos.models.embedding.siglip import SigLIPModel
+from dimos.teleop.memory_world.tf_tree import quaternion_from_matrix
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
     from dimos.memory.store.sqlite import SqliteStore
+
+# How index rows say which frame their pose describes.
+POSE_FRAME_TAG = "camera_optical"
 
 logger = setup_logger()
 
@@ -302,124 +309,16 @@ def cluster_hits(hits: Iterable[PatchHit], radius: float, max_places: int) -> li
     ]
 
 
-def pose_matrix(
-    position: tuple[float, float, float], orientation: tuple[float, float, float, float]
-) -> np.ndarray:
-    """4x4 homogeneous matrix from a position and an (x, y, z, w) quaternion."""
-    x, y, z, w = orientation
-    matrix = np.eye(4)
-    matrix[:3, :3] = [
-        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-    ]
-    matrix[:3, 3] = position
-    return matrix
+def body_style_quaternion(optical: np.ndarray) -> tuple[float, float, float, float]:
+    """Quaternion of a frame with x along the optical axis and z the image's up.
 
-
-def quaternion_from_matrix(rotation: np.ndarray) -> tuple[float, float, float, float]:
-    """(x, y, z, w) quaternion of a 3x3 rotation matrix (Shepperd's method)."""
-    m = rotation
-    trace = float(m[0, 0] + m[1, 1] + m[2, 2])
-    if trace > 0:
-        s = np.sqrt(trace + 1.0) * 2
-        return (
-            float((m[2, 1] - m[1, 2]) / s),
-            float((m[0, 2] - m[2, 0]) / s),
-            float((m[1, 0] - m[0, 1]) / s),
-            float(0.25 * s),
-        )
-    if m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
-        s = np.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2]) * 2
-        return (
-            float(0.25 * s),
-            float((m[0, 1] + m[1, 0]) / s),
-            float((m[0, 2] + m[2, 0]) / s),
-            float((m[2, 1] - m[1, 2]) / s),
-        )
-    if m[1, 1] > m[2, 2]:
-        s = np.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2]) * 2
-        return (
-            float((m[0, 1] + m[1, 0]) / s),
-            float(0.25 * s),
-            float((m[1, 2] + m[2, 1]) / s),
-            float((m[0, 2] - m[2, 0]) / s),
-        )
-    s = np.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1]) * 2
-    return (
-        float((m[0, 2] + m[2, 0]) / s),
-        float((m[1, 2] + m[2, 1]) / s),
-        float(0.25 * s),
-        float((m[1, 0] - m[0, 1]) / s),
-    )
-
-
-def camera_frame_pose(
-    position: tuple[float, float, float],
-    orientation: tuple[float, float, float, float],
-    camera_from_body: np.ndarray | None,
-) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
-    """Where the camera was and which way it looked, as a body-style frame.
-
-    The viewer orients markers assuming x forward and z up (a robot body).
-    The camera's optical frame is z forward and y down, and on a rig whose
-    odometry body is pitched (the lidar on the handheld rig points at the
-    floor) the two differ by tens of degrees. Returns the camera position and
-    a quaternion whose x is the optical axis and whose z is the image's up.
-    Without *camera_from_body* the body pose is returned unchanged.
+    The viewer orients capture markers assuming a robot body (x forward, z
+    up); a camera's optical frame is z forward and y down.
     """
-    if camera_from_body is None:
-        return position, orientation
-    camera = pose_matrix(position, orientation) @ camera_from_body
-    forward = camera[:3, 2] / np.linalg.norm(camera[:3, 2])
-    up = -camera[:3, 1] / np.linalg.norm(camera[:3, 1])
+    forward = optical[:3, 2] / np.linalg.norm(optical[:3, 2])
+    up = -optical[:3, 1] / np.linalg.norm(optical[:3, 1])
     left = np.cross(up, forward)
-    rotation = np.stack([forward, left, up], axis=1)
-    return (
-        (float(camera[0, 3]), float(camera[1, 3]), float(camera[2, 3])),
-        quaternion_from_matrix(rotation),
-    )
-
-
-def chain_matrix(transforms: Iterable[Any], from_frame: str, to_frame: str) -> np.ndarray | None:
-    """Compose static tf transforms into the 4x4 matrix taking *to_frame* points into *from_frame*.
-
-    Follows parent->child links only (the tf tree's natural direction), so
-    *to_frame* must be a descendant of *from_frame*. Returns None if no path.
-    """
-    children: dict[str, list[Any]] = {}
-    for transform in transforms:
-        children.setdefault(transform.frame_id, []).append(transform)
-    matrix = np.eye(4)
-    frame = from_frame
-    visited = {frame}
-    while frame != to_frame:
-        step = next(
-            (
-                child
-                for child in children.get(frame, [])
-                if child.child_frame_id not in visited
-                and _leads_to(children, child.child_frame_id, to_frame, set(visited))
-            ),
-            None,
-        )
-        if step is None:
-            return None
-        matrix = matrix @ step.to_matrix()
-        frame = step.child_frame_id
-        visited.add(frame)
-    return matrix
-
-
-def _leads_to(children: dict[str, list[Any]], frame: str, target: str, visited: set[str]) -> bool:
-    if frame == target:
-        return True
-    visited.add(frame)
-    return any(
-        child.child_frame_id not in visited
-        and _leads_to(children, child.child_frame_id, target, visited)
-        for child in children.get(frame, [])
-    )
+    return quaternion_from_matrix(np.stack([forward, left, up], axis=1))
 
 
 def patch_world_position(
@@ -451,25 +350,6 @@ def patch_world_position(
     return (float(world[0]), float(world[1]), float(world[2]))
 
 
-def posed_frames(images: Any, poses: Any | None, tolerance_s: float) -> Iterator[tuple[Any, Any]]:
-    """Yield (image observation, pose) in time order, skipping frames with no pose.
-
-    Some recordings stamp a pose on every image; others (the RealSense ones)
-    carry poses only on odometry. With *poses* given, an image that has no pose
-    of its own takes the nearest odometry pose within *tolerance_s*.
-    """
-    if poses is None:
-        for obs in images.order_by("ts"):
-            if obs.pose_tuple is not None:
-                yield obs, obs.pose
-        return
-    for pair in images.order_by("ts").align(poses.order_by("ts"), tolerance=tolerance_s):
-        image_obs, pose_obs = pair.data[0], pair.data[1]
-        pose = image_obs.pose if image_obs.pose_tuple is not None else pose_obs.pose
-        if pose is not None:
-            yield image_obs, pose
-
-
 def per_patch_embeddings(model: SigLIPModel, pixel_values: torch.Tensor) -> torch.Tensor:
     """Run each patch token through the attention-pooling head on its own.
 
@@ -491,22 +371,19 @@ class VisualMemoryIndex:
     def __init__(
         self,
         store: SqliteStore,
+        pose_of: Callable[[Any], np.ndarray | None],
         image_stream_name: str = "color_image",
         index_stream_name: str = "image_siglip2_patches",
-        pose_stream_name: str | None = None,
-        pose_tolerance_s: float = 0.1,
         model_name: str = SIGLIP2_MODEL_NAME,
         device: str | None = None,
         dtype: torch.dtype = torch.float16,
     ) -> None:
-        """*pose_stream_name* supplies poses for image streams that carry none
-        (nearest observation within *pose_tolerance_s*); an image's own pose
-        wins when it has one."""
+        """*pose_of* maps an image observation to its camera's optical pose in
+        the world as a 4x4 matrix, or None to skip the frame."""
         self.store = store
+        self.pose_of = pose_of
         self.image_stream_name = image_stream_name
         self.index_stream_name = index_stream_name
-        self.pose_stream_name = pose_stream_name
-        self.pose_tolerance_s = pose_tolerance_s
         self.model_name = model_name
         self._device = device
         self._dtype = dtype
@@ -531,11 +408,17 @@ class VisualMemoryIndex:
         if self._index_stream is None:
             stream = self.store.stream(self.index_stream_name, PatchGrid)
             if stream.count() > 0:
-                built_with = stream.first().tags.get("model")
+                tags = stream.first().tags
+                built_with = tags.get("model")
                 if built_with != self.model_name:
                     raise ValueError(
                         f"index stream {self.index_stream_name!r} was built with {built_with}, "
                         f"not {self.model_name}; rebuild it or pass model_name={built_with!r}"
+                    )
+                if tags.get("pose_frame") != POSE_FRAME_TAG:
+                    raise ValueError(
+                        f"index stream {self.index_stream_name!r} stores "
+                        f"{tags.get('pose_frame')!r} poses, not {POSE_FRAME_TAG!r}; rebuild it"
                     )
             self._index_stream = stream
         return self._index_stream
@@ -544,11 +427,12 @@ class VisualMemoryIndex:
         """How many frames are already indexed."""
         return int(self.index_stream.count())
 
-    def _posed_frames(self) -> Iterator[tuple[Any, Any]]:
-        poses = None if self.pose_stream_name is None else self.store.streams[self.pose_stream_name]
-        return posed_frames(
-            self.store.streams[self.image_stream_name], poses, self.pose_tolerance_s
-        )
+    def _posed_frames(self) -> Iterator[tuple[Any, np.ndarray]]:
+        """(image observation, world_T_optical) in time order, skipping frames tf cannot place."""
+        for obs in self.store.streams[self.image_stream_name].order_by("ts"):
+            matrix = self.pose_of(obs)
+            if matrix is not None:
+                yield obs, matrix
 
     def build(self, stride: int = 1, batch_size: int = 8) -> int:
         """Embed every *stride*-th posed frame of the image stream into the index.
@@ -560,6 +444,10 @@ class VisualMemoryIndex:
             raise ValueError(f"stride must be at least 1, got {stride}")
 
         from PIL import Image as PILImage
+
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+        from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
         target = self.index_stream
         already_indexed = {obs.data.source_id for obs in target}
@@ -579,7 +467,7 @@ class VisualMemoryIndex:
                     dict(self.model._processor(images=pil_images, return_tensors="pt"))
                 )
                 embeddings = per_patch_embeddings(self.model, inputs["pixel_values"])
-            for (obs, pose), patches in zip(batch, embeddings, strict=True):
+            for (obs, matrix), patches in zip(batch, embeddings, strict=True):
                 target.append(
                     PatchGrid(
                         source_id=int(obs.id),
@@ -588,8 +476,11 @@ class VisualMemoryIndex:
                         patches=patches.to(torch.float16).cpu().numpy(),
                     ),
                     ts=obs.ts,
-                    pose=pose,
-                    tags={"model": self.model_name},
+                    pose=PoseStamped(
+                        position=Vector3(*matrix[:3, 3]),
+                        orientation=Quaternion(*quaternion_from_matrix(matrix[:3, :3])),
+                    ),
+                    tags={"model": self.model_name, "pose_frame": POSE_FRAME_TAG},
                 )
                 added += 1
             logger.info("indexed %d frames of %s", added, self.image_stream_name)
@@ -711,8 +602,12 @@ def main() -> None:
     parser.add_argument("store_path")
     parser.add_argument("--image-stream", default="color_image")
     parser.add_argument("--index-stream", default="image_siglip2_patches")
+    parser.add_argument("--tf-stream", default="tf")
+    parser.add_argument("--world-frame", default="world")
     parser.add_argument(
-        "--pose-stream", default=None, help="odometry stream for images that carry no pose"
+        "--camera-frame",
+        default=None,
+        help="optical frame of the images (default: the image stream's own frame_id)",
     )
     parser.add_argument("--model", default=SIGLIP2_MODEL_NAME)
     parser.add_argument("--stride", type=int, default=1)
@@ -721,13 +616,19 @@ def main() -> None:
     parser.add_argument("--search", default=None, help="run this query after building")
     args = parser.parse_args()
 
+    from dimos.teleop.memory_world.tf_tree import TfTree
+
     store = SqliteStore(path=args.store_path, must_exist=True)
     store.start()
+    tree = TfTree.from_stream(store.streams[args.tf_stream])
+    camera_frame = args.camera_frame or str(
+        getattr(store.streams[args.image_stream].first().data, "frame_id", "")
+    )
     index = VisualMemoryIndex(
         store,
+        pose_of=lambda obs: tree.lookup(args.world_frame, camera_frame, float(obs.ts)),
         image_stream_name=args.image_stream,
         index_stream_name=args.index_stream,
-        pose_stream_name=args.pose_stream,
         model_name=args.model,
         device=args.device,
     )

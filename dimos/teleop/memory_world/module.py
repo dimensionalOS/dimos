@@ -74,19 +74,17 @@ from dimos.teleop.memory_world.query import (
     HighlightPoint,
     MemoryQueryResult,
 )
+from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix
 from dimos.teleop.memory_world.visual_search import (
     SIGLIP2_MODEL_NAME,
     PatchHit,
     Place,
     VisualMemoryIndex,
-    camera_frame_pose,
-    chain_matrix,
+    body_style_quaternion,
     cluster_hits,
     cluster_places,
     hot_patches,
     patch_world_position,
-    pose_matrix,
-    posed_frames,
     search_phrase,
 )
 from dimos.utils.data import get_data
@@ -122,6 +120,11 @@ class _ClientConn:
                 pass
             self.queue.put_nowait(msg)
 
+
+# A body frame (x forward, z up) seen as a camera optical frame (z forward,
+# y down): the standard ROS optical rotation. Used only for recordings that
+# carry no tf tree and stamp body poses on their images.
+OPTICAL_FROM_BODY = pose_matrix((0.0, 0.0, 0.0), (-0.5, 0.5, -0.5, 0.5))
 
 # Height ramp stops (RGB), floor to ceiling: purple, blue, cyan. The cool half
 # of the wheel only, so yellow, orange, red and green stay free for
@@ -172,11 +175,21 @@ class MemoryWorldConfig(ModuleConfig):
     # get more pixels than the capture-pose thumbnails.
     query_image_max_size: int = 640
     query_image_distance_m: float = PydanticField(default=1.0, gt=0.0)
-    # odom stream is used to draw the robot's path as a polyline.
-    odom_stream_name: str = "odom"
-    # Images without a pose of their own take the nearest odom within this.
-    image_pose_tolerance_s: float = PydanticField(default=0.1, gt=0.0)
-    n_odom_samples: int = 400
+    # ---- poses: the tf tree, and nothing else --------------------------------
+    # Every pose the world needs (camera frames, lidar scans, the path) is a
+    # tf lookup at the observation's timestamp. Recordings without a tf stream
+    # fall back to the pose stamped on each image, read as a body pose.
+    tf_stream_name: str = "tf"
+    world_frame: str = "world"
+    # The image stream's own frame_id by default.
+    camera_optical_frame: str | None = None
+    # A lookup fails when the nearest tf sample is further away than this.
+    tf_tolerance_s: float = PydanticField(default=0.1, gt=0.0)
+    # Added to image timestamps before the tf lookup, for recorders whose
+    # camera and tf clocks disagree. 0 trusts the stamps.
+    camera_time_offset_s: float = 0.0
+    # The camera's path is drawn as a polyline sampled from tf.
+    n_trail_samples: int = 400
     # Top-down density map (GTA-style minimap + ground projection). Computed
     # from the same point cloud — Z-slab histogram into a square image.
     map_image_size: int = 512
@@ -206,14 +219,10 @@ class MemoryWorldConfig(ModuleConfig):
     # faster-whisper model size for the spoken query.
     whisper_model: str = "base.en"
     # ---- putting the answer on the object, not on the robot -----------------
-    # With a depth stream, intrinsics and a static tf chain from the odometry
-    # body frame to the camera's optical frame, each place is moved from the
-    # capture pose to the point the winning patch actually looked at.
+    # With a depth stream and intrinsics, each place is moved from the capture
+    # pose to the point the winning patch actually looked at.
     depth_stream_name: str | None = None
     camera_info_stream_name: str | None = None
-    tf_stream_name: str = "tf"
-    odom_body_frame: str = "mid360_link"
-    camera_optical_frame: str = "d455_color_optical_frame"
     depth_tolerance_s: float = PydanticField(default=0.02, gt=0.0)
     # Best frames whose hot patches are raycast, and how close two raycast
     # hits must land to be the same object.
@@ -250,7 +259,8 @@ class MemoryWorldModule(Module):
         self._world_cache_lock = threading.Lock()
         self._index_progress = "not started"
         self._whisper: Any = None
-        self._camera_from_body: np.ndarray | None = None
+        self._tf_tree_cache: TfTree | None = None
+        self._tf_missing = False
         self._active_query_result: dict[str, Any] | None = None
         self._active_query_images: list[tuple[dict[str, Any], bytes]] = []
         self._query_revision = 0
@@ -383,7 +393,7 @@ class MemoryWorldModule(Module):
             if self._cached_image_poses is None:
                 self._cached_image_poses, self._cached_thumbnails = self._build_image_poses()
             if self._cached_odom is None:
-                self._cached_odom = self._build_odom_trail()
+                self._cached_odom = self._build_trail()
 
     def _send_initial_payload(self, conn: _ClientConn) -> None:
         try:
@@ -435,16 +445,14 @@ class MemoryWorldModule(Module):
     def _build_voxel_cloud_from_lidar(self) -> tuple[dict[str, Any], bytes] | None:
         """Accumulate a voxel map from the lidar stream and pack it for the wire.
 
-        Each lidar scan is transformed into the world frame via its ``pose``,
-        then fed to :class:`VoxelMapTransformer`. The final accumulated cloud
+        Each lidar scan is transformed into the world frame by a tf lookup at
+        its stamp, then fed to :class:`VoxelMapTransformer`. The final accumulated cloud
         is height-coloured (violet low → red high) so the user gets depth cues
         without true RGB.
         """
         from dimos.mapping.voxels.module import VoxelMapTransformer
         from dimos.memory.transform import FnTransformer
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
         from dimos.msgs.geometry_msgs.Transform import Transform
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
         try:
             store = self._ensure_store()
@@ -465,17 +473,17 @@ class MemoryWorldModule(Module):
 
             def to_world_frame(obs: Any) -> Any:
                 # If scans are already registered to the map frame, applying
-                # the pose again double-transforms them into scattered noise.
+                # a pose again double-transforms them into scattered noise.
                 if lidar_world_frame:
                     return obs
-                pose = getattr(obs, "pose_tuple", None)
-                if pose is None:
-                    return None
-                p = pose
-                tf = Transform(
-                    translation=Vector3(float(p[0]), float(p[1]), float(p[2])),
-                    rotation=Quaternion(float(p[3]), float(p[4]), float(p[5]), float(p[6])),
-                )
+                scan_frame = str(getattr(obs.data, "frame_id", "") or "").lstrip("/")
+                matrix = self._frame_pose_at(scan_frame, float(obs.ts))
+                if matrix is None:
+                    pose = getattr(obs, "pose_tuple", None)  # no tf tree: the stamped pose
+                    if pose is None or self._tf_tree() is not None:
+                        return None
+                    matrix = pose_matrix(tuple(pose[:3]), tuple(pose[3:7]))
+                tf = Transform.from_matrix(matrix)
                 return obs.derive(data=obs.data.transform(tf))
 
             # emit_every=0 → only yield the final accumulated map on exhaustion.
@@ -579,21 +587,13 @@ class MemoryWorldModule(Module):
             timestamps: list[float] = []
             ids: list[int] = []
             thumbnails: list[bytes] = []
-            odom = store.streams[self.config.odom_stream_name]
-            camera_from_body = self._camera_extrinsics()
-            for obs, pose in posed_frames(
-                stream.transform(throttle(interval)), odom, self.config.image_pose_tolerance_s
-            ):
-                p, q = pose.position, pose.orientation
-                # Markers stand where the camera was and face the way it looked,
-                # which on a pitched rig is not where the odometry body points.
-                position, quat = camera_frame_pose(
-                    (float(p.x), float(p.y), float(p.z)),
-                    (float(q.x), float(q.y), float(q.z), float(q.w)),
-                    camera_from_body,
-                )
-                positions.append(position)
-                quats.append(quat)
+            for obs in stream.transform(throttle(interval)):  # type: ignore[var-annotated]
+                optical = self._camera_pose_of(obs)
+                if optical is None:
+                    continue
+                # Markers stand where the camera was and face the way it looked.
+                positions.append(tuple(float(v) for v in optical[:3, 3]))  # type: ignore[arg-type]
+                quats.append(body_style_quaternion(optical))
                 timestamps.append(float(obs.ts))
                 ids.append(int(getattr(obs, "id", 0)))
 
@@ -683,36 +683,37 @@ class MemoryWorldModule(Module):
         logger.info("built top-down map: %dx%d bounds=%s", size, size, header)
         return header, buf.tobytes()
 
-    def _build_odom_trail(self) -> tuple[dict[str, Any], bytes]:
-        """Subsample odom to a small polyline payload."""
+    def _build_trail(self) -> tuple[dict[str, Any], bytes]:
+        """The camera's path as a small polyline, sampled from tf."""
         try:
-            store = self._ensure_store()
-            stream = store.streams[self.config.odom_stream_name]
-            first, last = stream.first(), stream.last()
-            span = max(float(last.ts) - float(first.ts), 1e-3)
-            n = max(2, int(self.config.n_odom_samples))
-            interval = span / n
-
+            n = max(2, int(self.config.n_trail_samples))
             positions: list[tuple[float, float, float]] = []
-            for obs in stream.transform(throttle(interval)):  # type: ignore[var-annotated]
-                pose = getattr(obs, "pose_tuple", None)
-                if pose is None:
-                    continue
-                p = pose
-                positions.append((float(p[0]), float(p[1]), float(p[2])))
-                if len(positions) >= n:
-                    break
+            tree = self._tf_tree()
+            if tree is not None:
+                span = tree.span(self.config.world_frame, self._camera_frame())
+                if span is not None:
+                    for ts in np.linspace(span[0], span[1], n):
+                        matrix = self._frame_pose_at(self._camera_frame(), float(ts))
+                        if matrix is not None:
+                            positions.append(tuple(float(v) for v in matrix[:3, 3]))  # type: ignore[arg-type]
+            else:
+                store = self._ensure_store()
+                stream = store.streams[self.config.image_stream_name]
+                span_s = max(float(stream.last().ts) - float(stream.first().ts), 1e-3)
+                for obs in stream.transform(throttle(span_s / n)):  # type: ignore[var-annotated]
+                    matrix = self._camera_pose_of(obs)
+                    if matrix is not None:
+                        positions.append(tuple(float(v) for v in matrix[:3, 3]))  # type: ignore[arg-type]
+                    if len(positions) >= n:
+                        break
 
             pos_arr = np.asarray(positions, dtype=np.float32)
             header = {"n": int(pos_arr.shape[0])}
-            payload = pos_arr.tobytes()
-            logger.info("built odom trail with %d points", header["n"])
-            return header, payload
+            logger.info("built camera trail with %d points", header["n"])
+            return header, pos_arr.tobytes()
         except Exception:
-            logger.exception("failed to build odom trail")
+            logger.exception("failed to build the camera trail")
             return {"n": 0}, b""
-
-    # ---- client messages (mostly diagnostics) ------------------------------
 
     @skill
     def analyze_memory(
@@ -819,11 +820,9 @@ class MemoryWorldModule(Module):
         if self._visual_index is None:
             self._visual_index = VisualMemoryIndex(
                 self._ensure_store(),
+                pose_of=self._camera_pose_of,
                 image_stream_name=self.config.image_stream_name,
                 index_stream_name=self.config.image_index_stream_name,
-                # Images that carry no pose of their own borrow the nearest odom.
-                pose_stream_name=self.config.odom_stream_name,
-                pose_tolerance_s=self.config.image_pose_tolerance_s,
                 model_name=self.config.siglip_model_name,
             )
         return self._visual_index
@@ -927,12 +926,10 @@ class MemoryWorldModule(Module):
 
         The header carries the camera position, its forward and up directions
         and its field of view, so the viewer can hang the picture on the
-        camera's image plane. With no tf chain the body axes stand in for the
-        optical ones.
+        camera's image plane.
         """
         store = self._ensure_store()
         images = store.streams[self.config.image_stream_name]
-        camera_from_body = self._camera_extrinsics()
         hfov_deg = 70.0
         if self.config.camera_info_stream_name is not None:
             info = store.streams[self.config.camera_info_stream_name].first().data
@@ -948,13 +945,8 @@ class MemoryWorldModule(Module):
             except Exception:
                 logger.exception("could not fetch the frame behind place %d", index)
                 continue
-            body = pose_matrix(place.camera_position or place.position, place.orientation)
-            if camera_from_body is not None:
-                camera = body @ camera_from_body
-                forward, up = camera[:3, 2], -camera[:3, 1]  # optical: z forward, y down
-            else:
-                camera = body
-                forward, up = camera[:3, 0], camera[:3, 2]  # body: x forward, z up
+            camera = pose_matrix(place.camera_position or place.position, place.orientation)
+            forward, up = camera[:3, 2], -camera[:3, 1]  # optical: z forward, y down
             height, width = frame.data.shape[:2]
             header = {
                 "query_id": query_id,
@@ -973,37 +965,64 @@ class MemoryWorldModule(Module):
         for header, jpeg in sent:
             self._broadcast(encode_binary(MSG_QUERY_IMAGE, header, jpeg))
 
-    def _camera_extrinsics(self) -> np.ndarray | None:
-        """Static body->camera-optical matrix from the recording's tf stream, once."""
-        if self._camera_from_body is None:
+    # ---- poses -------------------------------------------------------------
+
+    def _tf_tree(self) -> TfTree | None:
+        """The recording's tf tree, loaded once; None when the recording has none."""
+        if self._tf_tree_cache is None and not self._tf_missing:
             store = self._ensure_store()
             if self.config.tf_stream_name not in store.list_streams():
-                return None
-            seen: dict[tuple[str, str], Any] = {}
-            for obs in store.streams[self.config.tf_stream_name].limit(500):
-                for transform in obs.data.transforms:
-                    seen.setdefault((transform.frame_id, transform.child_frame_id), transform)
-            self._camera_from_body = chain_matrix(
-                seen.values(), self.config.odom_body_frame, self.config.camera_optical_frame
-            )
-            if self._camera_from_body is None:
+                self._tf_missing = True
                 logger.warning(
-                    "no tf chain %s -> %s; places stay at the capture pose",
-                    self.config.odom_body_frame,
-                    self.config.camera_optical_frame,
+                    "no %r stream; falling back to the poses stamped on images",
+                    self.config.tf_stream_name,
                 )
-        return self._camera_from_body
+                return None
+            tree = TfTree.from_stream(store.streams[self.config.tf_stream_name])
+            logger.info("tf tree: %d transforms over %d frames", len(tree), len(tree.frames))
+            self._tf_tree_cache = tree
+        return self._tf_tree_cache
+
+    def _camera_frame(self) -> str:
+        if self.config.camera_optical_frame:
+            return self.config.camera_optical_frame
+        first = self._ensure_store().streams[self.config.image_stream_name].first()
+        return str(getattr(first.data, "frame_id", "") or "").lstrip("/")
+
+    def _frame_pose_at(self, frame: str, ts: float) -> np.ndarray | None:
+        """world_T_frame at *ts* from tf, or None."""
+        tree = self._tf_tree()
+        if tree is None:
+            return None
+        matrix: np.ndarray | None = tree.lookup(
+            self.config.world_frame, frame, ts, self.config.tf_tolerance_s
+        )
+        return matrix
+
+    def _camera_pose_of(self, obs: Any) -> np.ndarray | None:
+        """world_T_optical for an image observation.
+
+        From tf at the image's stamp (plus ``camera_time_offset_s``); without a
+        tf stream, from the body pose stamped on the image, turned into the
+        optical convention.
+        """
+        if self._tf_tree() is not None:
+            return self._frame_pose_at(
+                self._camera_frame(), float(obs.ts) + self.config.camera_time_offset_s
+            )
+        pose = getattr(obs, "pose_tuple", None)
+        if pose is None:
+            return None
+        body = pose_matrix(tuple(pose[:3]), tuple(pose[3:7]) if len(pose) >= 7 else (0, 0, 0, 1))
+        return np.asarray(body @ OPTICAL_FROM_BODY)
 
     def _locate_objects(self, phrase: str) -> list[Place]:
         """Raycast the hot patches of the best frames through depth and group the hits.
 
-        Empty when the recording has no depth stream, intrinsics or tf chain,
-        or when no hot patch lands on valid depth.
+        Empty when the recording has no depth stream or intrinsics, or when
+        no hot patch lands on valid depth.
         """
         if self.config.depth_stream_name is None or self.config.camera_info_stream_name is None:
-            return []
-        camera_from_body = self._camera_extrinsics()
-        if camera_from_body is None:
             return []
         store = self._ensure_store()
         depth_stream = store.streams[self.config.depth_stream_name]
@@ -1017,7 +1036,7 @@ class MemoryWorldModule(Module):
             except LookupError:
                 continue
             depth_mm = np.asarray(depth.data.data)
-            camera_to_world = pose_matrix(frame.position, frame.orientation) @ camera_from_body
+            camera_to_world = pose_matrix(frame.position, frame.orientation)
             for image_uv, score in hot_patches(frame.similarity, frame.rows, frame.cols):
                 position = patch_world_position(image_uv, depth_mm, intrinsics, camera_to_world)
                 if position is not None:
