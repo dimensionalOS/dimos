@@ -41,6 +41,11 @@ _MAX_JOG_STEP_S = 0.2
 class MobileArmCommandConfig(ArmCommandConfig):
     base_linear_speed: float = 0.3
     base_angular_speed: float = 0.4
+    # Holding B (right secondary) scales both base speeds by this while
+    # driving. It sits under the thumb that is not on the translation stick.
+    # The sticks keep their full resolution at the normal speed, so the fast
+    # gear is an explicit choice instead of a wider deadzone.
+    boost_multiplier: float = 2.0
     base_deadzone: float = 0.15
     torso_deadzone: float = 0.25
     # Require the right stick to be clicked in before its Y axis jogs the
@@ -73,10 +78,11 @@ class MobileArmCommandConfig(ArmCommandConfig):
 class MobileArmCommandModule(ArmCommandModule):
     """Arm command plane plus holonomic base drive and torso height.
 
-    Left stick translates the base and right stick X yaws it. Clicking the
-    right stick in arms its Y axis as a straight vertical axis for the torso,
-    commanded in joint space on its own stream so the arm solver cannot move
-    it. Driving and the torso are both gated
+    Left stick translates the base and right stick X yaws it; holding B
+    (right secondary) multiplies both base speeds by ``boost_multiplier``.
+    Clicking the right stick in arms its Y axis as a straight vertical axis
+    for the torso, commanded in joint space on its own stream so the arm
+    solver cannot move it. Driving and the torso are both gated
     on the same grips that engage the arms, so releasing them stops the
     whole robot rather than leaving a live chassis behind.
     """
@@ -94,6 +100,7 @@ class MobileArmCommandModule(ArmCommandModule):
         self._deadman_held = False
         self._recovering = False
         self._last_recover_t = 0.0
+        self._boosting = False
 
     def _publish_safe_command(self) -> None:
         self.twist_command.publish(Twist.zero())
@@ -237,22 +244,28 @@ class MobileArmCommandModule(ArmCommandModule):
         twist.linear = Vector3(0.0, 0.0, 0.0)
         twist.angular = Vector3(0.0, 0.0, 0.0)
         deadzone = self.config.base_deadzone
+        boost = self._boost_scale(right)
+        linear_speed = self.config.base_linear_speed * boost
+        angular_speed = self.config.base_angular_speed * boost
         # Left stick translates, right stick turns: the layout every shooter
         # has trained into the operator's thumbs.
         if left is not None:
-            twist.linear.x = (
-                -self._deadzone(left.thumbstick.y, deadzone) * self.config.base_linear_speed
-            )
-            twist.linear.y = (
-                -self._deadzone(left.thumbstick.x, deadzone) * self.config.base_linear_speed
-            )
+            twist.linear.x = -self._deadzone(left.thumbstick.y, deadzone) * linear_speed
+            twist.linear.y = -self._deadzone(left.thumbstick.x, deadzone) * linear_speed
         # Clicking the right stick claims it for torso height; yawing at the
         # same time makes the height impossible to place.
         if right is not None and not self._torso_armed(right):
-            twist.angular.z = (
-                -self._deadzone(right.thumbstick.x, deadzone) * self.config.base_angular_speed
-            )
+            twist.angular.z = -self._deadzone(right.thumbstick.x, deadzone) * angular_speed
         self.twist_command.publish(twist)
+
+    def _boost_scale(self, right: QuestControllerState | None) -> float:
+        """Speed multiplier for the base: the boost while B is held, else 1."""
+        multiplier = self.config.boost_multiplier
+        boosting = right is not None and right.secondary and multiplier > 0.0
+        if boosting != self._boosting:
+            logger.info("base boost %s", "on" if boosting else "off")
+            self._boosting = boosting
+        return multiplier if boosting else 1.0
 
     def _torso_armed(self, controller: QuestControllerState) -> bool:
         """Is the operator asking for torso height on this stick?"""

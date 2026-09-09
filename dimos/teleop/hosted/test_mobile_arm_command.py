@@ -57,6 +57,7 @@ def module(monkeypatch: pytest.MonkeyPatch) -> Iterator[MobileArmCommandModule]:
             input_timeout_s=1.0,
             base_linear_speed=0.3,
             base_angular_speed=0.4,
+            boost_multiplier=2.0,
             base_deadzone=0.15,
             torso_deadzone=0.25,
             torso_speed=0.25,
@@ -87,13 +88,14 @@ def _joy(
     primary: bool = False,
     grip: float = 0.0,
     click: bool = False,
+    secondary: bool = False,
 ) -> bytes:
     # axes: thumbstick x, thumbstick y, trigger, grip.
     # buttons: trigger, squeeze, touchpad, thumbstick, primary, secondary, menu.
     return Joy(
         frame_id=frame_id,
         axes=[x, y, 0.0, grip],
-        buttons=[0, 0, 0, int(click), int(primary), int(grip > 0.5), 0],
+        buttons=[0, int(grip > 0.5), 0, int(click), int(primary), int(secondary), 0],
     ).lcm_encode()
 
 
@@ -137,6 +139,30 @@ def test_thumbsticks_drive_the_base(module: MobileArmCommandModule) -> None:
     assert twist.linear.x == pytest.approx(0.3)  # stick forward is negative y
     assert twist.linear.y == pytest.approx(-0.15)
     assert twist.angular.z == pytest.approx(0.4)
+
+
+def test_holding_b_boosts_the_base(module: MobileArmCommandModule) -> None:
+    """B on the right controller scales both base speeds while held, then lets go."""
+    _tick(module, _joy("left", y=-1.0, grip=1.0), _joy("right", x=-1.0, secondary=True, grip=1.0))
+
+    twist = _last_twist(module)
+    assert twist.linear.x == pytest.approx(0.6)
+    assert twist.angular.z == pytest.approx(0.8)
+
+    _tick(module, _joy("left", y=-1.0, grip=1.0), _joy("right", x=-1.0, grip=1.0))
+
+    twist = _last_twist(module)
+    assert twist.linear.x == pytest.approx(0.3)
+    assert twist.angular.z == pytest.approx(0.4)
+
+
+def test_boost_is_still_behind_the_deadman(module: MobileArmCommandModule) -> None:
+    """B without the grips is not a way to drive."""
+    _tick(module, _joy("left", y=-1.0), _joy("right", secondary=True))
+
+    twist = _last_twist(module)
+    assert twist.linear.x == 0.0
+    assert twist.angular.z == 0.0
 
 
 def test_stick_drift_inside_the_deadzone_does_not_move_the_base(
