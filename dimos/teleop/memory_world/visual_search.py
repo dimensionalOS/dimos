@@ -256,7 +256,9 @@ class PatchHit:
     source_id: int
     ts: float
     camera_position: tuple[float, float, float]
-    camera_orientation: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
+    # No default: a hit that forgets its camera's orientation would hang the
+    # answer frame facing straight up.
+    camera_orientation: tuple[float, float, float, float]
 
 
 def cluster_hits(hits: Iterable[PatchHit], radius: float, max_places: int) -> list[Place]:

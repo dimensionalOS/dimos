@@ -470,6 +470,7 @@ window.app = {
     simulateLoad: (ms = 0) => { simulatedLoadMs = Math.max(0, ms); return simulatedLoadMs; },
     // View state for automated checks: where the desktop camera looks and the world scale.
     viewState: () => scene && { yaw: scene._desktopYaw, pitch: scene._desktopPitch, scale: scene._worldGroup.scale.x },
+    queryImages: () => scene && scene._queryImages.map((h) => h && { index: h.index, position: h.position.map((v) => +v.toFixed(2)), forward: h.forward.map((v) => +v.toFixed(3)), up: h.up.map((v) => +v.toFixed(3)) }),
     // Marker orientations for automated checks: the quad normal of the first few capture poses, robot frame.
     markerNormals: (count = 6) => scene && scene._imagePoseMeta.slice(0, count).map((m) => {
         const { x, y, z, w } = m.quadQuat;

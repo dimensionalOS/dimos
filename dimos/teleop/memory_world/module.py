@@ -1047,6 +1047,7 @@ class MemoryWorldModule(Module):
                             source_id=frame.source_id,
                             ts=frame.ts,
                             camera_position=frame.position,
+                            camera_orientation=frame.orientation,
                         )
                     )
         return cluster_hits(

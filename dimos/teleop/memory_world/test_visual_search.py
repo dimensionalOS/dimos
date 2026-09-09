@@ -290,6 +290,7 @@ def hit(
         source_id=frame,
         ts=float(frame),
         camera_position=camera,
+        camera_orientation=(0.0, 0.0, 0.7071, 0.7071),
     )
 
 
@@ -306,6 +307,7 @@ def test_an_object_seen_from_several_directions_outranks_a_single_view_stray() -
     assert places[0].similarity == 0.15
     # The best hit's camera pose rides along, so its frame can be shown where it was taken.
     assert places[0].camera_position == (0.0, 5.0, 0.0)
+    assert places[0].orientation == (0.0, 0.0, 0.7071, 0.7071)
     assert places[0].source_id == 1
 
 
