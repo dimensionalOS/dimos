@@ -69,8 +69,9 @@ The room, basic perception simulation, and real perception blueprints share
 dimos run xarm-room-sim
 ```
 
-To select GraspGenX, install its optional dependencies and supply your gripper
-configuration. The `all` extra does not include GraspGenX.
+To select GraspGenX, run from the repository root using the checked-in
+`xarm-grasp.json` simulation configuration. The `all` extra does not include
+GraspGenX.
 
 ```bash
 uv sync --extra all --extra graspgenx
@@ -83,38 +84,26 @@ needed. The same options work with `xarm-perception-sim` and
 `xarm-perception`; the real blueprint still requires its camera mount TF and
 hardware coordinator to be completed.
 
-The JSON file has this structure. Replace each placeholder with measured
-values before use; this template is not a calibrated xArm configuration:
+The checked-in [simulation config](/xarm-grasp.json) is derived from
+`data/xarm_grasp_sim/xarm7.xml`, not calibrated against physical hardware:
 
-```text
-{
-  "graspproposalmodule": {
-    "generator": {
-      "backend": "graspgenx",
-      "gripper": {
-        "extents_open": [OPEN_X, OPEN_Y, OPEN_Z],
-        "offset_open": [OPEN_OFFSET_X, OPEN_OFFSET_Y, OPEN_OFFSET_Z],
-        "extents_half_open": [HALF_X, HALF_Y, HALF_Z],
-        "offset_half_open": [HALF_OFFSET_X, HALF_OFFSET_Y, HALF_OFFSET_Z],
-        "fingertip_depth": DEPTH_METRES,
-        "family": "parallel_2f"
-      },
-      "grasp_frame_to_tcp": [
-        [R00, R01, R02, TX],
-        [R10, R11, R12, TY],
-        [R20, R21, R22, TZ],
-        [0, 0, 0, 1]
-      ],
-      "max_candidates": 100
-    }
-  }
-}
-```
+- Open and half-open joint angles are 0 and 0.425 radians (the joint range is
+  0–0.85). All six gripper linkage joints take the same angle, keeping the
+  finger pads parallel.
+- Each volume bounds the inward-facing surfaces of the four collision pad
+  boxes after MuJoCo forward kinematics. Open width is 0.088924 m; half-open
+  width is 0.047946871 m. Pad thickness across the other horizontal axis is
+  0.03 m and contact height is 0.037 m.
+- The model frame is at the gripper base, with +X along physical gripper +Y
+  (jaw closure), +Y along physical −X, and +Z along the fingers. This follows
+  [GraspGenX's canonical frame convention](https://github.com/NVlabs/GraspGenX#integrating-a-new-gripper).
+- The TCP transform rotates back to the robot axes and translates 0.172 m
+  along +Z, matching the simulator's `link_tcp` site. Fingertip depth is the
+  open pad's top plane, 0.160637 m.
 
-Lengths and translations are in metres. Choose the family matching your
-gripper: `parallel_2f`, `revolute_2f`, or `revolute_3f`. The TCP transform
-maps the model grasp frame to the robot TCP. Its default is identity, which is
-valid only if those frames coincide.
+The config is a model-derived starting point for simulation, not evidence of
+successful picking. For a different gripper, supply its own geometry, family,
+and TCP transform. Identity is valid only if model and robot TCP frames coincide.
 
 CLI overrides take precedence over JSON values. For example, add
 `--graspproposalmodule.generator.max-candidates 20` to limit returned proposals.
