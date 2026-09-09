@@ -20,27 +20,22 @@ from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.manipulators.dual_openyam.joints import (
+    DUAL_OPENYAM_ARM_JOINTS as DUAL_OPENYAM_ARM_JOINTS,
+    DUAL_OPENYAM_DOF_PER_ARM as DUAL_OPENYAM_DOF_PER_ARM,
+    DUAL_OPENYAM_GRIPPER_JOINTS as DUAL_OPENYAM_GRIPPER_JOINTS,
+    DUAL_OPENYAM_JOINTS as DUAL_OPENYAM_JOINTS,
+    DUAL_OPENYAM_LEFT_ARM_JOINTS as DUAL_OPENYAM_LEFT_ARM_JOINTS,
+    DUAL_OPENYAM_RIGHT_ARM_JOINTS as DUAL_OPENYAM_RIGHT_ARM_JOINTS,
+)
 from dimos.robot.manipulators.dual_openyam.model import (
     DUAL_OPENYAM_MODEL,
 )
 from dimos.robot.manipulators.openyam.config import OPENYAM_HOME_JOINTS
 
-DUAL_OPENYAM_DOF_PER_ARM = 6
 DUAL_OPENYAM_HARDWARE_ID = "dual_openyam"
 DUAL_OPENYAM_ADAPTER_TYPE = "dual_openyam_damiao"
 DUAL_OPENYAM_SIDES = ("left", "right")
-DUAL_OPENYAM_LEFT_ARM_JOINTS = [
-    f"left_joint{index}" for index in range(1, DUAL_OPENYAM_DOF_PER_ARM + 1)
-]
-DUAL_OPENYAM_RIGHT_ARM_JOINTS = [
-    f"right_joint{index}" for index in range(1, DUAL_OPENYAM_DOF_PER_ARM + 1)
-]
-DUAL_OPENYAM_ARM_JOINTS = [
-    *DUAL_OPENYAM_LEFT_ARM_JOINTS,
-    *DUAL_OPENYAM_RIGHT_ARM_JOINTS,
-]
-DUAL_OPENYAM_GRIPPER_JOINTS = ["left_arm/gripper", "right_arm/gripper"]
-DUAL_OPENYAM_JOINTS = [*DUAL_OPENYAM_ARM_JOINTS, *DUAL_OPENYAM_GRIPPER_JOINTS]
 DUAL_OPENYAM_HOME_PER_ARM = list(OPENYAM_HOME_JOINTS)
 DUAL_OPENYAM_HOME_JOINTS = [*DUAL_OPENYAM_HOME_PER_ARM, *DUAL_OPENYAM_HOME_PER_ARM]
 _ARM_KP = (80.0, 80.0, 80.0, 10.0, 10.0, 10.0)

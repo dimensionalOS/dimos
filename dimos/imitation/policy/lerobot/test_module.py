@@ -18,16 +18,15 @@ from pydantic import ValidationError
 import pytest
 
 from dimos.experimental.isolated_python.module import contract_rpc_names
-from dimos.imitation.policy.lerobot.module import LeRobotPolicyConfig, OpenYamLeRobotPolicy
+from dimos.imitation.policy.lerobot.module import (
+    LeRobotPolicyModule,
+    LeRobotPolicyModuleConfig,
+)
 
 
-def test_generated_contract_has_profile_ports_and_rpc_surface() -> None:
-    blueprint = OpenYamLeRobotPolicy.blueprint(artifact="unused", task="test")
-    streams = {stream.name for stream in blueprint.blueprints[0].streams}
-
-    assert OpenYamLeRobotPolicy.implementation == ("dimos_lerobot.runtime:LeRobotPolicyRuntime")
-    assert streams == {"button_pressed", "wrist_image", "coordinator_joint_state"}
-    assert contract_rpc_names(OpenYamLeRobotPolicy) == {
+def test_contract_imports_without_runtime_dependencies() -> None:
+    assert LeRobotPolicyModule.implementation == "dimos_lerobot.runtime:LeRobotPolicyRuntime"
+    assert contract_rpc_names(LeRobotPolicyModule) == {
         "preflight_rollout",
         "rollout_status",
         "start_rollout",
@@ -36,27 +35,63 @@ def test_generated_contract_has_profile_ports_and_rpc_surface() -> None:
 
 
 def test_contract_resolves_sibling_runtime_project() -> None:
-    module = OpenYamLeRobotPolicy(artifact="unused", task="test task")
+    module = LeRobotPolicyModule(
+        policy_path="unused",
+        task="test task",
+        joint_names=["joint"],
+    )
     try:
         assert module.runtime_project == Path(__file__).parent / "python"
     finally:
         module.stop()
 
 
-def test_config_rejects_blank_artifact_and_unknown_button() -> None:
-    with pytest.raises(ValidationError, match="artifact must not be blank"):
-        LeRobotPolicyConfig(artifact=" ", task="test")
-    with pytest.raises(ValidationError, match="unknown Quest button"):
-        LeRobotPolicyConfig(artifact="checkpoint", task="test", rollout_button="NOPE")
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        (
+            {
+                "policy_path": "checkpoint",
+                "task": "test task",
+                "joint_names": ["joint1", "joint1"],
+            },
+            "joint_names must not contain duplicates",
+        ),
+        (
+            {
+                "policy_path": " ",
+                "task": "test task",
+                "joint_names": ["joint1"],
+            },
+            "policy_path must not be blank",
+        ),
+        (
+            {
+                "policy_path": "checkpoint",
+                "task": "test task",
+                "joint_names": ["joint1"],
+                "rollout_button": "NOPE",
+            },
+            "unknown Quest button",
+        ),
+    ],
+)
+def test_config_rejects_ambiguous_names(config: dict[str, object], message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        LeRobotPolicyModuleConfig.model_validate(config)
 
 
-def test_existing_relative_artifact_is_resolved(
+def test_existing_relative_checkpoint_is_resolved_before_isolation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     checkpoint = tmp_path / "checkpoint"
     checkpoint.mkdir()
     monkeypatch.chdir(tmp_path)
 
-    config = LeRobotPolicyConfig(artifact="checkpoint", task="test task")
+    config = LeRobotPolicyModuleConfig(
+        policy_path="checkpoint",
+        task="test task",
+        joint_names=["joint1"],
+    )
 
-    assert config.artifact == str(checkpoint)
+    assert config.policy_path == str(checkpoint)

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Camera blueprints generated from policy image-source declarations."""
+"""Camera blueprints generated from collection image features."""
 
 from __future__ import annotations
 
@@ -21,21 +21,17 @@ from collections.abc import Mapping
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
-from dimos.imitation.profile import ImageSource, PolicyIOProfile
+from dimos.imitation.collection.profile import CollectionProfile
 
 CameraDevice = int | str
 
 
 def profile_cameras(
-    profile: PolicyIOProfile,
+    profile: CollectionProfile,
     devices: Mapping[str, CameraDevice],
 ) -> tuple[list[Blueprint], list[tuple[str, str, str]]]:
-    """Build cameras and explicit output remappings for a policy profile."""
-    image_sources = {
-        source.stream: source
-        for source in profile.observations.values()
-        if isinstance(source, ImageSource)
-    }
+    """Build cameras and explicit output remappings for a collection profile."""
+    image_sources = profile.camera_features()
     missing = sorted(set(image_sources) - set(devices))
     unknown = sorted(set(devices) - set(image_sources))
     if missing or unknown:
@@ -49,8 +45,10 @@ def profile_cameras(
     blueprints: list[Blueprint] = []
     remappings: list[tuple[str, str, str]] = []
     for stream_name, source in image_sources.items():
+        if len(source.shape) != 3 or source.shape[2] != 3:
+            raise ValueError(f"Camera {stream_name!r} requires an HWC RGB shape")
         height, width, _channels = source.shape
-        instance_name = f"PolicyCamera_{stream_name}"
+        instance_name = f"CollectionCamera_{stream_name}"
         blueprints.append(
             CameraModule.blueprint(
                 instance_name=instance_name,
