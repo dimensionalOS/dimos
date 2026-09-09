@@ -79,6 +79,7 @@ from dimos.teleop.memory_world.visual_search import (
     PatchHit,
     Place,
     VisualMemoryIndex,
+    camera_frame_pose,
     chain_matrix,
     cluster_hits,
     cluster_places,
@@ -579,13 +580,20 @@ class MemoryWorldModule(Module):
             ids: list[int] = []
             thumbnails: list[bytes] = []
             odom = store.streams[self.config.odom_stream_name]
+            camera_from_body = self._camera_extrinsics()
             for obs, pose in posed_frames(
                 stream.transform(throttle(interval)), odom, self.config.image_pose_tolerance_s
             ):
-                p = pose.position
-                positions.append((float(p.x), float(p.y), float(p.z)))
-                q = pose.orientation
-                quats.append((float(q.x), float(q.y), float(q.z), float(q.w)))
+                p, q = pose.position, pose.orientation
+                # Markers stand where the camera was and face the way it looked,
+                # which on a pitched rig is not where the odometry body points.
+                position, quat = camera_frame_pose(
+                    (float(p.x), float(p.y), float(p.z)),
+                    (float(q.x), float(q.y), float(q.z), float(q.w)),
+                    camera_from_body,
+                )
+                positions.append(position)
+                quats.append(quat)
                 timestamps.append(float(obs.ts))
                 ids.append(int(getattr(obs, "id", 0)))
 

@@ -470,6 +470,12 @@ window.app = {
     simulateLoad: (ms = 0) => { simulatedLoadMs = Math.max(0, ms); return simulatedLoadMs; },
     // View state for automated checks: where the desktop camera looks and the world scale.
     viewState: () => scene && { yaw: scene._desktopYaw, pitch: scene._desktopPitch, scale: scene._worldGroup.scale.x },
+    // Marker orientations for automated checks: the quad normal of the first few capture poses, robot frame.
+    markerNormals: (count = 6) => scene && scene._imagePoseMeta.slice(0, count).map((m) => {
+        const { x, y, z, w } = m.quadQuat;
+        // rotate (0, 0, 1) by q
+        return [2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)].map((v) => +v.toFixed(3));
+    }),
 };
 
 // H pins the desktop menu and perf readout, which otherwise fade out once

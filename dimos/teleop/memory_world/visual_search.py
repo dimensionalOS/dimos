@@ -317,6 +317,70 @@ def pose_matrix(
     return matrix
 
 
+def quaternion_from_matrix(rotation: np.ndarray) -> tuple[float, float, float, float]:
+    """(x, y, z, w) quaternion of a 3x3 rotation matrix (Shepperd's method)."""
+    m = rotation
+    trace = float(m[0, 0] + m[1, 1] + m[2, 2])
+    if trace > 0:
+        s = np.sqrt(trace + 1.0) * 2
+        return (
+            float((m[2, 1] - m[1, 2]) / s),
+            float((m[0, 2] - m[2, 0]) / s),
+            float((m[1, 0] - m[0, 1]) / s),
+            float(0.25 * s),
+        )
+    if m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
+        s = np.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2]) * 2
+        return (
+            float(0.25 * s),
+            float((m[0, 1] + m[1, 0]) / s),
+            float((m[0, 2] + m[2, 0]) / s),
+            float((m[2, 1] - m[1, 2]) / s),
+        )
+    if m[1, 1] > m[2, 2]:
+        s = np.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2]) * 2
+        return (
+            float((m[0, 1] + m[1, 0]) / s),
+            float(0.25 * s),
+            float((m[1, 2] + m[2, 1]) / s),
+            float((m[0, 2] - m[2, 0]) / s),
+        )
+    s = np.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1]) * 2
+    return (
+        float((m[0, 2] + m[2, 0]) / s),
+        float((m[1, 2] + m[2, 1]) / s),
+        float(0.25 * s),
+        float((m[1, 0] - m[0, 1]) / s),
+    )
+
+
+def camera_frame_pose(
+    position: tuple[float, float, float],
+    orientation: tuple[float, float, float, float],
+    camera_from_body: np.ndarray | None,
+) -> tuple[tuple[float, float, float], tuple[float, float, float, float]]:
+    """Where the camera was and which way it looked, as a body-style frame.
+
+    The viewer orients markers assuming x forward and z up (a robot body).
+    The camera's optical frame is z forward and y down, and on a rig whose
+    odometry body is pitched (the lidar on the handheld rig points at the
+    floor) the two differ by tens of degrees. Returns the camera position and
+    a quaternion whose x is the optical axis and whose z is the image's up.
+    Without *camera_from_body* the body pose is returned unchanged.
+    """
+    if camera_from_body is None:
+        return position, orientation
+    camera = pose_matrix(position, orientation) @ camera_from_body
+    forward = camera[:3, 2] / np.linalg.norm(camera[:3, 2])
+    up = -camera[:3, 1] / np.linalg.norm(camera[:3, 1])
+    left = np.cross(up, forward)
+    rotation = np.stack([forward, left, up], axis=1)
+    return (
+        (float(camera[0, 3]), float(camera[1, 3]), float(camera[2, 3])),
+        quaternion_from_matrix(rotation),
+    )
+
+
 def chain_matrix(transforms: Iterable[Any], from_frame: str, to_frame: str) -> np.ndarray | None:
     """Compose static tf transforms into the 4x4 matrix taking *to_frame* points into *from_frame*.
 

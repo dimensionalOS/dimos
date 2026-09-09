@@ -32,12 +32,14 @@ from dimos.teleop.memory_world.visual_search import (
     PatchHit,
     Place,
     VisualMemoryIndex,
+    camera_frame_pose,
     chain_matrix,
     cluster_hits,
     cluster_places,
     hot_patches,
     patch_world_position,
     pose_matrix,
+    quaternion_from_matrix,
     score_frames,
     search_phrase,
 )
@@ -325,3 +327,37 @@ def test_an_object_seen_from_several_directions_outranks_a_single_view_stray() -
 def test_consecutive_frames_from_one_spot_count_as_one_view() -> None:
     hits = [hit(5.0, 5.0, 0.15, camera=(0.0, 5.0, 0.0), frame=f) for f in range(5)]
     assert cluster_hits(hits, radius=0.75, max_places=6)[0].views == 1
+
+
+def test_quaternion_round_trips_through_the_matrix() -> None:
+    for quat in [
+        (0.0, 0.0, 0.0, 1.0),
+        (0.0, 0.218, 0.0, 0.976),
+        (0.5, 0.5, 0.5, 0.5),
+        (0.0, 0.0, 0.7071, 0.7071),
+    ]:
+        unit = np.array(quat) / np.linalg.norm(quat)
+        back = np.array(quaternion_from_matrix(pose_matrix((0, 0, 0), tuple(unit))[:3, :3]))
+        assert np.allclose(back, unit, atol=1e-6) or np.allclose(back, -unit, atol=1e-6)
+
+
+def test_camera_frame_pose_points_x_along_the_optical_axis() -> None:
+    # Body pitched 90 degrees nose-down; camera optical frame = body axes
+    # rotated so optical z is body x (looking where the body's nose points).
+    nose_down = (0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5))
+    optical_from_body = pose_matrix((0.2, 0.0, 0.0), (-0.5, 0.5, -0.5, 0.5))
+    position, quat = camera_frame_pose((1.0, 2.0, 3.0), nose_down, optical_from_body)
+    frame = pose_matrix(position, quat)
+    # The camera sits 0.2 m along the (downward) nose, looks down, and its
+    # image "up" is the body's forward, which now points along +x... the
+    # frame's x axis (forward) is world -z, its z axis (up) is world +x.
+    assert position == pytest.approx((1.0, 2.0, 2.8))
+    assert frame[:3, 0] == pytest.approx((0.0, 0.0, -1.0), abs=1e-6)
+    assert frame[:3, 2] == pytest.approx((1.0, 0.0, 0.0), abs=1e-6)
+
+
+def test_camera_frame_pose_without_extrinsics_is_the_body_pose() -> None:
+    assert camera_frame_pose((1.0, 2.0, 3.0), (0.0, 0.0, 0.0, 1.0), None) == (
+        (1.0, 2.0, 3.0),
+        (0.0, 0.0, 0.0, 1.0),
+    )
