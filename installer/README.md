@@ -1,12 +1,14 @@
-# DIOS installation core
+# DimOS workspace creator
 
-Selective import of DIOS installation code, with an independent Cargo workspace.
-App, desktop, service, and publishing tooling is excluded; see [UPSTREAM.md](UPSTREAM.md).
+Create an editable SDK project, or prepare a contributor checkout.
 
 ```bash
 cargo build --locked --manifest-path installer/Cargo.toml
-installer/target/debug/create-dimos --mode dev --profile navigation --project-dir "$PWD"
+installer/target/debug/create-dimos my-robot --profile navigation
+cd my-robot
+source .dimos/activate.sh
+dimos run my-robot.hello
 ```
 
-This foundation prepares and verifies explicit dependency profiles. SDK project
-scaffolding and the final public workflow are added in the next stack layers.
+Use --restore to restore the environment while preserving source and manifests.
+Optional direnv uses the same activation script. See [UPSTREAM.md](UPSTREAM.md).

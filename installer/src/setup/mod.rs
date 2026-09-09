@@ -12,39 +12,89 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::cli::{InstallMode, Profile, SetupArgs};
 use anyhow::{bail, Context, Result};
+use environment::{checked, checked_timeout};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::io::IsTerminal;
-use std::path::Path;
-use std::process::Command;
-
+use std::{
+    fs,
+    io::IsTerminal,
+    path::{Path, PathBuf},
+    process::Command,
+    time::Duration,
+};
 pub mod environment;
 mod platform;
 mod tools;
-
-use crate::cli::{InstallMode, Profile, SetupArgs};
-use environment::{checked, checked_timeout};
-use std::time::Duration;
+mod workspace;
 
 const PIXI_MANIFEST: &str = include_str!("../../resources/pixi.toml");
 const PIXI_LOCK: &str = include_str!("../../resources/pixi.lock");
 const UV_POLICY: &str = include_str!("../../resources/uv-policy.toml");
-const DIMOS_VERSION: &str = "0.0.14b1";
+const SDK_VERSION: &str = match option_env!("DIMOS_SDK_VERSION") {
+    Some(v) => v,
+    None => "0.0.14b1",
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Project {
     mode: InstallMode,
     profile: Profile,
+    sdk_version: String,
+    package: String,
 }
 
-fn choices(args: &SetupArgs, unattended: bool) -> Result<Project> {
+fn destination(args: &SetupArgs, unattended: bool) -> Result<PathBuf> {
+    let path = match &args.project_dir {
+        Some(path) => path.clone(),
+        None if unattended => bail!("Provide a workspace directory"),
+        None => PathBuf::from(cliclack::input("Project directory").interact::<String>()?),
+    };
+    let absolute = std::path::absolute(path)?;
+    if absolute.exists() {
+        Ok(absolute.canonicalize()?)
+    } else {
+        Ok(absolute)
+    }
+}
+
+fn project(args: &SetupArgs, dir: &Path, unattended: bool) -> Result<Project> {
+    if args.restore {
+        let project: Project = toml::from_str(
+            &fs::read_to_string(dir.join(".dimos/project.toml"))
+                .context("Restore requires an existing DimOS workspace")?,
+        )?;
+        if project.sdk_version != SDK_VERSION {
+            bail!(
+                "Restore this workspace with creator version {}",
+                project.sdk_version
+            );
+        }
+        if args.profile.is_some_and(|p| p != project.profile) || args.wheel.is_some() {
+            bail!(
+                "Restore uses the workspace profile and dependency manifest; do not override them"
+            );
+        }
+        for file in [
+            "pyproject.toml",
+            "uv.lock",
+            ".dimos/pixi.toml",
+            ".dimos/pixi.lock",
+            ".dimos/activate.sh",
+            ".dimos/environment.py",
+        ] {
+            if !dir.join(file).is_file() {
+                bail!("Restore requires {file}");
+            }
+        }
+        return Ok(project);
+    }
     let profile = match args.profile {
         Some(profile) => profile,
         None if unattended => {
-            bail!("Unattended setup requires --profile navigation or manipulation")
+            bail!("Unattended creation requires --profile navigation or manipulation")
         }
-        None => cliclack::select("Which use case are you installing?")
+        None => cliclack::select("Which profile?")
             .item(Profile::Navigation, "Navigation", "unitree-go2")
             .item(
                 Profile::Manipulation,
@@ -53,117 +103,51 @@ fn choices(args: &SetupArgs, unattended: bool) -> Result<Project> {
             )
             .interact()?,
     };
-    let mode = match args.mode {
-        Some(mode) => mode,
-        None if unattended => bail!("Unattended setup requires --mode library or dev"),
-        None => cliclack::select("How will you use DimOS?")
-            .item(InstallMode::Library, "Library", "dedicated managed project")
-            .item(InstallMode::Dev, "Contributor", "editable DimOS checkout")
-            .interact()?,
+    let mode = if args.contributor {
+        InstallMode::Contributor
+    } else {
+        InstallMode::Sdk
     };
-    if mode == InstallMode::Dev && args.wheel.is_some() {
-        bail!("--wheel is only valid in library mode");
-    }
-    Ok(Project { mode, profile })
-}
-
-fn library_manifest(profile: Profile, wheel: Option<&Path>) -> Result<String> {
-    let mut manifest: toml::Value = toml::from_str(UV_POLICY)?;
-    let requirement = format!("dimos[{}]=={DIMOS_VERSION}", profile.extras().join(","));
-    manifest
-        .as_table_mut()
-        .context("uv policy must be a table")?
-        .insert(
-            "project".into(),
-            toml::Value::try_from(serde_json::json!({
-                "name": "dimos-project", "version": "0.1.0", "requires-python": ">=3.12,<3.13",
-                "dependencies": [requirement],
-            }))?,
-        );
-    if let Some(wheel) = wheel {
-        manifest["tool"]["uv"]["sources"]
-            .as_table_mut()
-            .context("uv sources must be a table")?
-            .insert(
-                "dimos".into(),
-                toml::Value::try_from(serde_json::json!({"path": wheel.to_string_lossy()}))?,
-            );
-    }
-    Ok(toml::to_string_pretty(&manifest)?)
-}
-
-fn validate_destination(dir: &Path, project: &Project) -> Result<()> {
-    let marker = dir.join(".dimos/project.toml");
-    if marker.exists() {
-        let old: Project = toml::from_str(&fs::read_to_string(marker)?)?;
-        if old.mode != project.mode || old.profile != project.profile {
-            bail!("This project has a different mode or profile; choose a new directory");
+    if dir.exists() && fs::read_dir(dir)?.next().is_some() {
+        if mode == InstallMode::Sdk {
+            bail!("Creation requires an empty directory; use --restore for an existing workspace");
         }
-        return Ok(());
-    }
-    if project.mode == InstallMode::Library {
-        if dir.exists() && fs::read_dir(dir)?.next().is_some() {
-            bail!("Library mode requires an empty directory; existing projects are not modified");
-        }
-    } else if dir.exists() && fs::read_dir(dir)?.next().is_some() {
         let manifest: toml::Value = toml::from_str(
             &fs::read_to_string(dir.join("pyproject.toml"))
                 .context("Contributor mode requires a DimOS checkout")?,
         )?;
-        if manifest
-            .get("project")
-            .and_then(|p| p.get("name"))
-            .and_then(|n| n.as_str())
-            != Some("dimos")
-            || !dir.join("dimos/core").is_dir()
+        if manifest["project"]["name"].as_str() != Some("dimos") || !dir.join("dimos/core").is_dir()
         {
             bail!("Contributor mode requires a DimOS checkout");
         }
+        if dir.join(".dimos/project.toml").exists() {
+            bail!("Workspace already configured; use --restore");
+        }
     }
-    Ok(())
+    Ok(Project {
+        mode,
+        profile,
+        sdk_version: SDK_VERSION.into(),
+        package: if args.contributor {
+            "dimos".into()
+        } else {
+            workspace::package_name(dir)?
+        },
+    })
 }
 
-fn tool_activation(uv: &Path, nix: &Path) -> String {
-    format!("export PATH=\"$VIRTUAL_ENV/bin\":{}:{}:\"$PATH\"\nexport NIX_CONFIG=\"${{NIX_CONFIG:-}}\nextra-experimental-features = nix-command flakes\"", environment::esc(&uv.parent().unwrap().to_string_lossy()), environment::esc(&nix.parent().unwrap().to_string_lossy()))
-}
-
-// @flow subgraph setup_pipeline["Profile installation"]
-// @flow cmd_setup --> choose_profile
-// @flow choose_profile["Require profile and mode"] :stage
-// @flow choose_profile --> project_boundary
-// @flow project_boundary["Validate project ownership"] :process
-// @flow project_boundary --> preview
-// @flow preview{"Dry run?"} :decision
-// @flow preview -->|"yes"| preview_done
-// @flow preview_done["Print plan without changes"] :success
-// @flow preview -->|"no"| target_platform
-// @flow target_platform["Identify Ubuntu or JetPack baseline"] :process
-// @flow target_platform --> bootstrap_tools
-// @flow bootstrap_tools["Bootstrap uv, Pixi, Nix; check Nix store"] :stage
-// @flow bootstrap_tools --> prepare_project
-// @flow prepare_project["Create managed project or use contributor checkout"] :process
-// @flow prepare_project --> pixi_install
-// @flow pixi_install["Install locked non-Python dependencies"] :stage
-// @flow pixi_install --> uv_install
-// @flow uv_install["uv Python 3.12 and selected profile"] :stage
-// @flow uv_install --> dependency_checks
-// @flow dependency_checks["Native libraries, reference imports, CLI"] :stage
-// @flow dependency_checks --> verified_setup
-// @flow verified_setup["Record dependency success; show activation"] :success
-// @flow bootstrap_tools -->|"failure"| setup_failed
-// @flow pixi_install -->|"failure"| setup_failed
-// @flow uv_install -->|"failure"| setup_failed
-// @flow dependency_checks -->|"failure or timeout"| setup_failed
-// @flow setup_failed["Exit nonzero; no fallback"] :error
-pub fn run_setup(
-    args: &SetupArgs,
-    dry_run: bool,
-    _verbose: bool,
-    non_interactive: bool,
-) -> Result<()> {
-    let project = choices(args, non_interactive || !std::io::stdin().is_terminal())?;
-    let dir = std::path::absolute(&args.project_dir)?;
-    validate_destination(&dir, &project)?;
+// @flow subgraph setup_pipeline["Workspace creation or restoration"]
+// @flow create["Create or restore workspace"] :stage
+// @flow create --> validate["Validate destination and profile"]
+// @flow validate --> bootstrap["Prepare uv, Pixi and Nix"]
+// @flow bootstrap --> scaffold["Create editable SDK package, or preserve existing project"]
+// @flow scaffold --> install["Install locked native dependencies and Python project"]
+// @flow install --> verify["Verify dependencies and project registration"]
+// @flow verify --> ready["Print activation and development commands"]
+pub fn run_setup(args: &SetupArgs) -> Result<()> {
+    let unattended = args.non_interactive || args.dry_run || !std::io::stdin().is_terminal();
+    let dir = destination(args, unattended)?;
+    let project = project(args, &dir, unattended)?;
     let wheel = args.wheel.as_ref().map(fs::canonicalize).transpose()?;
     println!(
         "{} / {:?}: {}",
@@ -171,8 +155,8 @@ pub fn run_setup(
         project.mode,
         dir.display()
     );
-    if dry_run {
-        println!("Install locked Pixi dependencies; uv sync selected extras; verify {} dependencies.\nActivate: source {}/.dimos/activate.sh", project.profile.blueprint(), dir.display());
+    if args.dry_run {
+        println!("Prepare uv/Pixi/Nix, install dependencies, verify, print activation.");
         return Ok(());
     }
     let verified = dir.join(".dimos/verified.json");
@@ -181,11 +165,11 @@ pub fn run_setup(
     }
     let platform = platform::detect()?;
     if platform.starts_with("unverified") {
-        eprintln!("This Linux distribution is outside the verified platform matrix.");
+        eprintln!("This distribution is outside the verified platform matrix.");
     }
     let bootstrap = tempfile::tempdir()?;
-    let tools::Tools { pixi, uv, nix } = tools::prepare(bootstrap.path(), non_interactive)?;
-    if project.mode == InstallMode::Dev && !dir.join("pyproject.toml").exists() {
+    let tools::Tools { pixi, uv, nix } = tools::prepare(bootstrap.path(), unattended)?;
+    if project.mode == InstallMode::Contributor && !dir.join("pyproject.toml").exists() {
         fs::write(bootstrap.path().join("pixi.toml"), PIXI_MANIFEST)?;
         fs::write(bootstrap.path().join("pixi.lock"), PIXI_LOCK)?;
         checked(
@@ -204,18 +188,13 @@ pub fn run_setup(
                 .env("GIT_LFS_SKIP_SMUDGE", "1"),
         )?;
     }
-    fs::create_dir_all(dir.join(".dimos"))?;
-    fs::write(dir.join(".dimos/project.toml"), toml::to_string(&project)?)?;
-    if project.mode == InstallMode::Library {
-        let path = dir.join("pyproject.toml");
-        let manifest = library_manifest(project.profile, wheel.as_deref())?;
-        if path.exists() && fs::read_to_string(&path)? != manifest {
-            bail!("Managed project manifest changed; refusing to overwrite it");
-        }
-        fs::write(path, manifest)?;
+    if !args.restore && project.mode == InstallMode::Sdk {
+        workspace::create(&dir, project.profile, wheel.as_deref())?;
     }
-    fs::write(dir.join(".dimos/pixi.toml"), PIXI_MANIFEST)?;
-    fs::write(dir.join(".dimos/pixi.lock"), PIXI_LOCK)?;
+    workspace::write_environment(&dir, !args.restore)?;
+    if !args.restore {
+        fs::write(dir.join(".dimos/project.toml"), toml::to_string(&project)?)?;
+    }
     checked(
         Command::new(&pixi)
             .args(["install", "--locked", "--manifest-path"])
@@ -233,30 +212,26 @@ pub fn run_setup(
             ])
             .arg(dir.join(".venv")),
     )?;
-    let dir = dir.canonicalize()?;
     fs::write(
-        dir.join(".dimos/activate.sh"),
-        format!(
-            "{}\n{}",
-            environment::activation(&dir, &pixi),
-            tool_activation(&uv, &nix)
-        ),
+        dir.join(".dimos/tools.json"),
+        serde_json::to_string(&serde_json::json!({"pixi":pixi,"uv":uv,"nix":nix}))?,
     )?;
+    let dir = dir.canonicalize()?;
     let mut sync = vec![
         uv.to_string_lossy().into_owned(),
         "sync".into(),
         "--python".into(),
         "3.12".into(),
         "--managed-python".into(),
-        "--no-default-groups".into(),
     ];
-    if project.mode == InstallMode::Dev {
+    if args.restore || project.mode == InstallMode::Contributor {
         sync.push("--locked".into());
+    }
+    if project.mode == InstallMode::Contributor {
+        sync.push("--no-default-groups".into());
         for extra in project.profile.extras() {
             sync.extend(["--extra".into(), (*extra).into()]);
         }
-    } else if dir.join("uv.lock").exists() {
-        sync.push("--locked".into());
     }
     checked(&mut environment::command(&dir, &sync))?;
     fs::write(
@@ -283,13 +258,17 @@ pub fn run_setup(
     fs::write(
         verified,
         serde_json::to_string_pretty(
-            &serde_json::json!({"profile": project.profile.name(), "reference": project.profile.blueprint(), "platform": platform, "dependency_checks": "passed", "workflow_verification": "not-run"}),
+            &serde_json::json!({"profile":project.profile.name(),"reference":project.profile.blueprint(),"platform":platform,"dependency_checks":"passed","workflow_verification":"not-run"}),
         )?,
     )?;
     println!(
-        "Dependency checks passed. Activate with: source {}",
-        dir.join(".dimos/activate.sh").display()
+        "Ready.\n  cd {}\n  source .dimos/activate.sh\n  dimos list",
+        environment::esc(&dir.to_string_lossy())
     );
+    if project.mode == InstallMode::Sdk {
+        println!("  dimos run {}.hello\n  pytest", project.package);
+    }
+    println!("Optional direnv: review .envrc, install direnv and its Bash/Zsh hook if needed, then run direnv allow.\nHook instructions: https://direnv.net/docs/hook.html");
     Ok(())
 }
 // @flow end
@@ -300,105 +279,104 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn unattended_requires_profile() {
-        let args =
-            SetupArgs::parse_from(["setup", "--project-dir", "/tmp/new", "--mode", "library"]);
-        assert!(choices(&args, true)
+    fn creation_requires_profile_without_mutating_destination() {
+        let parent = tempfile::tempdir().unwrap();
+        let target = parent.path().join("my-robot");
+        let args = SetupArgs::parse_from([
+            "create-dimos",
+            target.to_str().unwrap(),
+            "--non-interactive",
+        ]);
+        assert!(run_setup(&args)
             .unwrap_err()
             .to_string()
             .contains("--profile"));
+        assert!(!target.exists());
     }
 
     #[test]
-    fn library_keeps_uv_overrides_and_selected_extras() {
-        let manifest: toml::Value =
-            toml::from_str(&library_manifest(Profile::Manipulation, None).unwrap()).unwrap();
-        assert!(manifest["project"]["dependencies"][0]
-            .as_str()
-            .unwrap()
-            .contains("manipulation,cpu"));
-        assert!(manifest["tool"]["uv"]["override-dependencies"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|v| v.as_str().unwrap().contains("opencv-python")));
-        assert!(manifest["tool"]["uv"].get("default-groups").is_none());
-    }
-
-    #[test]
-    fn shell_quotes_project_paths() {
-        let script =
-            environment::activation(Path::new("/tmp/it's a project"), Path::new("/bin/pixi"));
-        assert!(script.contains("'/tmp/it'\\''s a project'"));
-        assert!(script.find("shell-hook").unwrap() < script.find(".venv/bin/activate").unwrap());
-    }
-
-    #[test]
-    fn refuses_an_unrelated_library_project_without_modifying_it() {
+    fn creation_refuses_existing_files() {
         let dir = tempfile::tempdir().unwrap();
-        let manifest = dir.path().join("pyproject.toml");
-        fs::write(&manifest, "user project").unwrap();
-        let project = Project {
-            mode: InstallMode::Library,
-            profile: Profile::Navigation,
-        };
-        assert!(validate_destination(dir.path(), &project).is_err());
-        assert_eq!(fs::read_to_string(manifest).unwrap(), "user project");
-        assert!(!dir.path().join(".dimos").exists());
-    }
-
-    #[test]
-    fn dry_run_creates_nothing() {
-        let parent = tempfile::tempdir().unwrap();
-        let dir = parent.path().join("new project");
-        let args = SetupArgs {
-            mode: Some(InstallMode::Library),
-            profile: Some(Profile::Navigation),
-            project_dir: dir.clone(),
-            branch: "main".into(),
-            wheel: None,
-        };
-        run_setup(&args, true, false, true).unwrap();
-        assert!(!dir.exists());
-    }
-
-    #[test]
-    fn command_preserves_arguments_and_failure() {
-        let parent = tempfile::tempdir().unwrap();
-        let dir = parent.path().join("project with ' quotes");
-        fs::create_dir_all(dir.join(".dimos")).unwrap();
-        fs::write(
-            dir.join(".dimos/activate.sh"),
-            "export DIM_TEST=activated\n",
-        )
-        .unwrap();
-        let output = environment::command(
-            &dir,
-            &[
-                "bash".into(),
-                "-c".into(),
-                "printf '%s|%s' \"$DIM_TEST\" \"$1\"".into(),
-                "test".into(),
-                "$(touch unwanted)".into(),
-            ],
-        )
-        .output()
-        .unwrap();
-        assert!(output.status.success());
+        fs::write(dir.path().join("pyproject.toml"), "user content").unwrap();
+        let args = SetupArgs::parse_from([
+            "create-dimos",
+            dir.path().to_str().unwrap(),
+            "--profile",
+            "navigation",
+        ]);
+        assert!(run_setup(&args)
+            .unwrap_err()
+            .to_string()
+            .contains("empty directory"));
         assert_eq!(
-            String::from_utf8(output.stdout).unwrap(),
-            "activated|$(touch unwanted)"
+            fs::read_to_string(dir.path().join("pyproject.toml")).unwrap(),
+            "user content"
         );
-        assert!(!dir.join("unwanted").exists());
-        assert!(checked(&mut environment::command(&dir, &["false".into()])).is_err());
-        fs::write(dir.join(".dimos/activate.sh"), "return 7\n").unwrap();
-        assert!(checked(&mut environment::command(&dir, &["true".into()])).is_err());
     }
 
     #[test]
-    fn wheel_path_is_toml_data() {
+    fn scaffold_is_an_editable_package_and_restore_preserves_edits() {
+        let parent = tempfile::tempdir().unwrap();
+        let dir = parent.path().join("my-robot");
+        workspace::create(&dir, Profile::Navigation, None).unwrap();
+        workspace::write_environment(&dir, true).unwrap();
+        fs::write(dir.join("uv.lock"), "version = 1").unwrap();
+        fs::write(
+            dir.join(".dimos/project.toml"),
+            toml::to_string(&Project {
+                mode: InstallMode::Sdk,
+                profile: Profile::Navigation,
+                sdk_version: SDK_VERSION.into(),
+                package: "my-robot".into(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let manifest = dir.join("pyproject.toml");
+        let original = fs::read_to_string(&manifest).unwrap();
+        let value: toml::Value = toml::from_str(&original).unwrap();
+        assert_eq!(
+            value["project"]["entry-points"]["dimos.blueprints"]["hello"].as_str(),
+            Some("my_robot.hello:Hello")
+        );
+        assert!(value.get("build-system").is_some());
+        let edited = format!("{original}\n# A developer's change\n");
+        fs::write(&manifest, &edited).unwrap();
+        fs::write(dir.join("src/my_robot/hello.py"), "user source").unwrap();
+        let args = SetupArgs::parse_from([
+            "create-dimos",
+            "--restore",
+            dir.to_str().unwrap(),
+            "--dry-run",
+        ]);
+        run_setup(&args).unwrap();
+        assert_eq!(fs::read_to_string(manifest).unwrap(), edited);
+        assert_eq!(
+            fs::read_to_string(dir.join("src/my_robot/hello.py")).unwrap(),
+            "user source"
+        );
+    }
+
+    #[test]
+    fn dry_run_creates_nothing_and_wheel_path_is_data() {
+        let parent = tempfile::tempdir().unwrap();
+        let dir = parent.path().join("my project");
+        let args = SetupArgs::parse_from([
+            "create-dimos",
+            dir.to_str().unwrap(),
+            "--profile",
+            "manipulation",
+            "--dry-run",
+        ]);
+        run_setup(&args).unwrap();
+        assert!(!dir.exists());
         let manifest: toml::Value = toml::from_str(
-            &library_manifest(Profile::Navigation, Some(Path::new("/tmp/a ' wheel.whl"))).unwrap(),
+            &workspace::manifest(
+                "my-project",
+                Profile::Manipulation,
+                Some(Path::new("/tmp/a ' wheel.whl")),
+            )
+            .unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -417,11 +395,8 @@ mod tests {
         let bundled: toml::Value = toml::from_str(UV_POLICY).unwrap();
         let mut expected = root["tool"]["uv"].clone();
         expected.as_table_mut().unwrap().remove("default-groups");
-        assert_eq!(
-            bundled["tool"]["uv"], expected,
-            "Refresh resources/uv-policy.toml when dependency policy changes"
-        );
-        assert_eq!(root["project"]["version"].as_str(), Some(DIMOS_VERSION));
+        assert_eq!(bundled["tool"]["uv"], expected);
+        assert_eq!(root["project"]["version"].as_str(), Some(SDK_VERSION));
         assert!(!PIXI_LOCK.lines().any(|line| matches!(
             line.trim(),
             "name: python" | "name: pypy" | "name: python-freethreading"
@@ -429,10 +404,43 @@ mod tests {
     }
 
     #[test]
-    fn dependency_check_timeout_is_fatal() {
-        let mut command = Command::new("sleep");
-        command.arg("30");
-        let error = checked_timeout(&mut command, Duration::from_millis(50)).unwrap_err();
-        assert!(error.to_string().contains("timed out"));
+    fn command_preserves_arguments_and_exit_status() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join(".dimos")).unwrap();
+        fs::write(
+            dir.path().join(".dimos/activate.sh"),
+            "export DIM_TEST=activated\n",
+        )
+        .unwrap();
+        let output = environment::command(
+            dir.path(),
+            &[
+                "bash".into(),
+                "-c".into(),
+                "printf '%s|%s' \"$DIM_TEST\" \"$1\"".into(),
+                "test".into(),
+                "$(touch unwanted)".into(),
+            ],
+        )
+        .output()
+        .unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            "activated|$(touch unwanted)"
+        );
+        assert!(!dir.path().join("unwanted").exists());
+        fs::write(dir.path().join(".dimos/activate.sh"), "return 7\n").unwrap();
+        assert!(checked(&mut environment::command(dir.path(), &["true".into()])).is_err());
+    }
+
+    #[test]
+    fn dependency_timeout_is_fatal() {
+        assert!(
+            checked_timeout(Command::new("sleep").arg("30"), Duration::from_millis(30))
+                .unwrap_err()
+                .to_string()
+                .contains("timed out")
+        );
     }
 }

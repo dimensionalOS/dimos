@@ -15,10 +15,6 @@
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 
-fn default_branch() -> String {
-    "main".into()
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Profile {
@@ -47,28 +43,37 @@ impl Profile {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InstallMode {
-    Library,
-    Dev,
+    Sdk,
+    Contributor,
 }
 
-#[derive(Parser, Clone)]
+#[derive(Parser, Debug)]
+#[command(
+    name = "create-dimos",
+    about = "Create or restore a DimOS development workspace"
+)]
 pub struct SetupArgs {
-    /// Required for unattended setup; interactive setup asks
+    /// Workspace directory (prompted when omitted interactively)
+    pub project_dir: Option<PathBuf>,
     #[arg(long, value_enum)]
     pub profile: Option<Profile>,
-    /// Dedicated library project or contributor checkout
-    #[arg(long, value_enum)]
-    pub mode: Option<InstallMode>,
-    /// Project directory (must be empty for a new library project)
+    /// Prepare a DimOS source checkout instead of an SDK project
+    #[arg(long, conflicts_with = "restore")]
+    pub contributor: bool,
+    /// Restore an existing workspace from its configuration and lockfiles
     #[arg(long)]
-    pub project_dir: PathBuf,
-    /// Branch used only when cloning a new contributor checkout
-    #[arg(long, default_value_t = default_branch())]
+    pub restore: bool,
+    /// Branch for a new contributor clone
+    #[arg(long, default_value = "main")]
     pub branch: String,
-    /// Install a local wheel instead of the bundled PyPI version (library mode)
-    #[arg(long)]
+    /// Test an SDK wheel instead of the matching published version
+    #[arg(long, conflicts_with = "contributor")]
     pub wheel: Option<PathBuf>,
+    #[arg(long)]
+    pub non_interactive: bool,
+    #[arg(long)]
+    pub dry_run: bool,
 }

@@ -13,13 +13,13 @@
 // limitations under the License.
 
 use clap::Parser;
-use std::io::IsTerminal;
 mod cli;
 mod setup;
+
 fn main() {
     let args = cli::SetupArgs::parse();
-    if let Err(error) = setup::run_setup(&args, false, false, !std::io::stdin().is_terminal()) {
-        eprintln!("{error:#}");
+    if let Err(error) = setup::run_setup(&args) {
+        eprintln!("Error: {error:#}");
         std::process::exit(1);
     }
 }

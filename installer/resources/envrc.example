@@ -1,0 +1,2 @@
+watch_file .dimos/activate.sh .dimos/environment.py .dimos/tools.json
+source .dimos/activate.sh || return
