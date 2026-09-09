@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FRANK ops</title>
+<link rel="stylesheet" href="/ops/static/ops.css?v=5">
+</head>
+<body>
+
+<header id="topbar">
+  <strong>FRANK ops</strong>
+  <span id="clock" class="muted"></span>
+  <span id="loopinfo" class="muted"></span>
+  <label class="muted"><input type="checkbox" id="auto" checked> auto-refresh 2s</label>
+  <button id="refresh" type="button">refresh now</button>
+</header>
+
+<section id="loopstrip" class="strip">
+  <span id="loopstate" class="muted">loop: …</span>
+  <span id="haltnote" class="muted">Halt cancels the move in flight, then blocks new moves</span>
+  <span class="spacer"></span>
+  <span id="loopconfirm" hidden>
+    <span class="muted">Stop all operations and start fresh? Chats and inbox will be cleared. Enrolled people stay. Motion stays OFF.</span>
+    <button id="restart-yes" type="button">yes, restart</button>
+    <button id="restart-no" type="button">cancel</button>
+  </span>
+  <button id="restart" type="button">Restart Frank (new session)</button>
+  <button id="stop" type="button">Turn Frank off</button>
+  <button id="motion" type="button">Motion …</button>
+  <button id="halt" type="button" class="halt" title="Stops movement and blocks new moves until Motion is switched back on">Emergency stop</button>
+</section>
+
+<main>
+<section class="panel wide"><h2>Runtime: operations and listeners</h2><p id="runtime-note" role="status"></p><div class="scroll"><div id="runtime">Loading...</div></div></section>
+  <section class="panel">
+    <h2>People</h2>
+    <div class="scroll"><div id="people"></div></div>
+  </section>
+
+  <section class="panel">
+    <h2>World state</h2>
+    <div class="scroll"><div id="world"></div></div>
+  </section>
+
+  <section class="panel wide">
+    <h2>Agent context <span class="muted">what the agent is actually sent</span></h2>
+    <div class="scroll"><div id="context"></div></div>
+  </section>
+
+  <section class="panel">
+    <h2>Events</h2>
+    <div class="scroll"><div>
+      <div id="events"></div>
+      <h3>Wake tasks</h3>
+      <div id="tasks"></div>
+    </div></div>
+  </section>
+
+  <section class="panel">
+    <h2>Server chat log <span class="muted">database; not in the agent's context</span></h2>
+    <div class="scroll"><div id="messages"></div></div>
+  </section>
+
+  <section class="panel wide">
+    <h2>Turn log <span class="muted">cache/loop.log, last 50 lines</span></h2>
+    <div class="scroll"><pre id="log"></pre></div>
+  </section>
+</main>
+
+<script src="/ops/static/ops.js?v=5"></script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f5f5f0">
+<title>FRANK</title>
+<link rel="stylesheet" href="/static/style.css?v=3">
+</head>
+<body>
+
+<!-- Onboarding -->
+<section id="onboarding" class="screen">
+  <div class="intro">
+    <h1>frank</h1>
+    <p class="section-label">Introduce yourself</p>
+    <p class="sub">Tell Frank your name to start chatting.</p>
+  </div>
+
+  <form id="enroll" autocomplete="off">
+    <label class="field">
+      <span>Your name</span>
+      <input id="name" name="name" type="text" required maxlength="60" placeholder="Alice" autocapitalize="words">
+    </label>
+
+    <div class="field">
+      <span>Selfie (optional)</span>
+      <p class="sub">Add a photo so Frank can recognize you in person.</p>
+      <div id="camera" class="camera" hidden>
+        <video id="video" playsinline autoplay muted></video>
+        <div class="oval" aria-hidden="true"></div>
+        <p class="framing">Fill the oval with your face</p>
+      </div>
+      <img id="preview" alt="Your selfie" hidden>
+      <button id="shutter" type="button" class="shutter">Add a selfie</button>
+      <button id="retake" type="button" class="secondary" hidden>Retake</button>
+      <button id="remove-selfie" type="button" class="secondary" hidden>Skip photo</button>
+      <!-- fallback when getUserMedia is unavailable or denied (old Android, denied permission) -->
+      <input id="selfie" type="file" accept="image/*" capture="user" hidden>
+    </div>
+
+    <p class="consent">Frank remembers your name, chats, and any photo you add. Tap &ldquo;forget me&rdquo; any time.</p>
+    <button id="submit" type="submit">Say hello</button>
+    <p id="enroll-status" class="status" hidden></p>
+    <p id="enroll-error" class="error" hidden></p>
+  </form>
+</section>
+
+<!-- Chat -->
+<section id="chat" class="screen" hidden>
+  <header class="bar">
+    <div class="who"><strong>frank</strong><span id="whoami"></span></div>
+    <button id="menu-button" type="button" aria-label="Menu" aria-expanded="false" aria-controls="menu">Menu</button>
+    <div id="menu" hidden>
+      <button id="forget" type="button">Forget me</button>
+    </div>
+  </header>
+
+  <div id="messages" role="log" aria-live="polite"></div>
+
+  <button id="startover" class="startover" type="button" hidden></button>
+
+  <form id="composer" autocomplete="off">
+    <input id="text" type="text" aria-label="Message to Frank" placeholder="Message Frank..." maxlength="2000" required>
+    <button type="submit" aria-label="Send">Send</button>
+  </form>
+
+  <div class="voice">
+    <button id="mic" type="button" aria-label="Hold to talk">Hold to talk</button>
+    <p id="voice-hint" class="hint">Hold to talk</p>
+  </div>
+</section>
+
+<script src="/static/app.js?v=4"></script>
+</body>
+</html>

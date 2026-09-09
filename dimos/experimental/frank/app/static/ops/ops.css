@@ -1,0 +1,92 @@
+:root {
+  --bg: #12141a;
+  --panel: #1b1e27;
+  --line: #2a3040;
+  --text: #e7eaf2;
+  --muted: #8a93a8;
+  --accent: #6f9bff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+#topbar {
+  position: sticky; top: 0; z-index: 5; display: flex; gap: 14px; align-items: center;
+  padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line);
+}
+button {
+  font: inherit; color: var(--text); background: #262c3a;
+  border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; cursor: pointer;
+}
+.strip {
+  display: flex; gap: 10px; align-items: center;
+  padding: 7px 14px; background: #171b24; border-bottom: 1px solid var(--line);
+}
+.strip .spacer { flex: 1; }
+.strip .run { color: #7fd48a; }
+#motion.on { background: #1f5c35; border-color: #63c68a; color: #d9f7e3; }
+#motion.off { background: #5c2222; border-color: #ff8f8f; color: #ffdede; }
+button.halt { background: #b0281f; border-color: #ff8f8f; color: #fff; font-weight: 600; }
+#haltnote { color: var(--muted); }
+.strip .stopped { color: #ff8f8f; }
+
+main { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; align-items: start; }
+.panel {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+  max-height: 70vh; display: flex; flex-direction: column;
+}
+/* Bottom-pinned scroller: column-reverse puts the scroll origin at the bottom, so the newest
+   content (which every panel lists last) stays in view as it grows. Scrolling up sticks to that
+   offset from the bottom until you scroll back down. One child, so nothing is visually reversed. */
+.scroll { display: flex; flex-direction: column-reverse; overflow: auto; min-height: 0; }
+.scroll > * { flex-shrink: 0; }
+.panel.wide { grid-column: 1 / -1; }
+h2 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .06em; }
+h3 { font-size: 12px; margin: 14px 0 6px; color: var(--muted); text-transform: uppercase; }
+.muted { color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 3px 8px 3px 0; border-bottom: 1px solid #232936; vertical-align: top; }
+th { color: var(--muted); font-weight: 400; position: sticky; top: 0; background: var(--panel); }
+td.text { white-space: pre-wrap; word-break: break-word; }
+img.selfie { width: 40px; height: 40px; object-fit: cover; border-radius: 5px; display: block; }
+.yes { color: #7fd48a; }
+.no { color: var(--muted); }
+.err { color: #ff8f8f; }
+pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+
+/* agent context */
+.turn { border-left: 3px solid var(--line); padding: 4px 0 4px 8px; margin-bottom: 6px; }
+.turn .role { color: var(--accent); }
+.turn.user { border-color: #3a6df0; }
+.turn.assistant { border-color: #7fd48a; }
+.turn.toolCall { border-color: #e0b567; }
+.turn.toolResult { border-color: #5d6c8a; }
+.turn.thinking { border-color: #3a3f52; color: var(--muted); }
+.turn.meta, .turn.session { border-color: #3a3f52; color: var(--muted); }
+.ephemeral { border: 1px dashed var(--accent); border-radius: 6px; padding: 8px; margin-top: 10px; }
+.ephemeral .tag { color: var(--accent); }
+.more { font-size: 12px; margin-top: 3px; }
+
+.empty { border: 1px dashed #4a5470; border-radius: 6px; padding: 8px; margin: 8px 0; color: var(--muted); }
+.empty code { color: var(--text); }
+
+.turn.image { border-color: #b48ce0; }
+.turn.image img.frame {
+  max-width: 360px; width: 100%; height: auto; display: block;
+  margin: 4px 0; border-radius: 6px; border: 1px solid var(--line); cursor: zoom-in;
+}
+
+.runtime-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.runtime-row p { margin: 4px 0 0; color: var(--muted); }
+.runtime-row button { min-height: 36px; border-radius: 0; min-width: 110px; }
+.runtime-row button:disabled { opacity: .4; cursor: default; }
+.runtime-status { white-space: nowrap; }
+#runtime-note { margin: 0; color: var(--muted); }
+#runtime h3:first-child { margin-top: 4px; }
+@media (max-width: 700px) {
+  .runtime-row { grid-template-columns: 1fr auto; gap: 8px; }
+  .runtime-row > div { grid-column: 1 / -1; }
+  main { grid-template-columns: 1fr; }
+  .strip { flex-wrap: wrap; }
+}

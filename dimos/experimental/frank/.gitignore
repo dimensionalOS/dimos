@@ -1,0 +1,5 @@
+cache/
+.env
+app/data/
+__pycache__/
+qr.png

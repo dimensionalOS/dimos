@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/dimos.iml" filepath="$PROJECT_DIR$/.idea/dimos.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/dimos-mls-planner.iml" filepath="$PROJECT_DIR$/.idea/dimos-mls-planner.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/dimos-voxel-ray-tracing.iml" filepath="$PROJECT_DIR$/.idea/dimos-voxel-ray-tracing.iml" />
+    </modules>
+  </component>
+</project>

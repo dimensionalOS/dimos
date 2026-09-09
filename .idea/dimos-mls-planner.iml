@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module external.system.id="pyproject.toml" type="PYTHON_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$/dimos/navigation/nav_3d/mls_planner/rust/py">
+      <sourceFolder url="file://$MODULE_DIR$/dimos/navigation/nav_3d/mls_planner/rust/py/src" />
+    </content>
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>

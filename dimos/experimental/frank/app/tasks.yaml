@@ -1,0 +1,16 @@
+# Idle scheduler config. Reloaded whenever this file changes; no restart needed.
+idle_after_s: 300          # no chat or agent activity for this long -> consider a wake
+cooldown_after_wake_s: 180
+seen_event_gap_s: 600     # a person back in view after this long away is worth a `seen` event
+
+tasks:
+  follow_up:
+    chat_age_min_s: 1200    # talked 20 min .. 3 h ago
+    chat_age_max_s: 10800
+    max_per_person_per_day: 2
+    min_gap_per_person_s: 2700
+  greet_known:
+    seen_within_s: 120
+    no_chat_for_s: 1800
+    max_per_person_per_day: 2
+  explore: {}               # fallback when nothing else qualifies
