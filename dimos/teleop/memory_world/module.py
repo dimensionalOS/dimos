@@ -339,8 +339,10 @@ class MemoryWorldModule(Module):
                     await conn.ws.send_text(msg)
         except asyncio.CancelledError:
             return
-        except Exception:
-            return
+        except Exception as error:
+            # The socket is usually already gone; the ws handler's finally
+            # cleans up. Say so rather than vanishing without a trace.
+            logger.debug("memory-world sender stopped: %s", error)
 
     # ---- initial payload ---------------------------------------------------
 
@@ -405,7 +407,7 @@ class MemoryWorldModule(Module):
 
         Each lidar scan is transformed into the world frame via its ``pose``,
         then fed to :class:`VoxelMapTransformer`. The final accumulated cloud
-        is height-coloured (cyan low → amber high) so the user gets depth cues
+        is height-coloured (violet low → red high) so the user gets depth cues
         without true RGB.
         """
         from dimos.mapping.voxels.module import VoxelMapTransformer
