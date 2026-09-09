@@ -295,7 +295,7 @@ class _PolicyRuntimeMixin:
                 if self._stop_event.is_set():
                     break
                 result = self._control.execute_trajectory(
-                    self._trajectory(state, actions),
+                    self._trajectory(state, actions, info),
                     task_name=self.config.trajectory_task_name,
                 )
                 if result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH:
@@ -403,7 +403,12 @@ class _PolicyRuntimeMixin:
         self,
         state: NDArray[np.float32],
         actions: NDArray[np.float32],
+        info: PolicyBackendInfo,
     ) -> JointTrajectory:
+        # Measured joints can overshoot a stop; the anchor is still a command target.
+        if info.action_lower is not None:
+            assert info.action_upper is not None
+            state = np.clip(state, info.action_lower, info.action_upper)
         joints = list(self.profile.action.demonstration.joints)
         zeros = [0.0] * len(joints)
         points = [

@@ -235,20 +235,27 @@ def test_preflight_requires_configured_coordinator_task_without_loading_backend(
     control.execute_trajectory.assert_not_called()
 
 
-def test_policy_actions_are_clipped_to_backend_bounds(
+def test_all_command_points_are_bounded_without_altering_measured_observations(
     runtime: tuple[RuntimeModule, Any],
+    mocker: pytest_mock.MockerFixture,
 ) -> None:
     module, control = runtime
-    module._backend.actions[:, 1] = 2.0
+    module._backend.actions[:, 1] = 3.0
     module._backend.info = PolicyBackendInfo(
         name="fake",
         chunk_length=30,
         preferred_execution_steps=1,
         action_lower=np.asarray([-100.0, 0.0], dtype=np.float32),
-        action_upper=np.asarray([100.0, 1.0], dtype=np.float32),
+        action_upper=np.asarray([100.0, 2.0], dtype=np.float32),
     )
     now = time.time()
-    _provide(module, top_ts=now, other_ts=now)
+    module._on_observation("top_image", _image(now))
+    module._on_observation("left_image", _image(now))
+    measured = np.asarray([1.0, 2.0005], dtype=np.float32)
+    module._on_observation(
+        "joint_state", JointState(ts=now, name=list(JOINTS), position=measured.tolist())
+    )
+    predict = mocker.spy(module._backend, "predict")
 
     assert module.preflight_rollout()["policy_ready"] is True
     module.start_rollout()
@@ -256,7 +263,8 @@ def test_policy_actions_are_clipped_to_backend_bounds(
     module.stop_rollout()
 
     trajectory = control.execute_trajectory.call_args.args[0]
-    assert trajectory.points[1].positions[1] == 1.0
+    assert [point.positions for point in trajectory.points] == [[1.0, 2.0], [0.0, 2.0]]
+    np.testing.assert_array_equal(predict.call_args.args[0]["state"], measured)
 
 
 @pytest.mark.parametrize(

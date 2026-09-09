@@ -119,15 +119,20 @@ def main() -> int:
                     row["stable_containment"] = stable_containment
                     row["policy"] = json.loads(policy.stop_policy())
                     time.sleep(1.0)
+                    row["final_pose"] = sim.get_body_poses(["bottle_1"])["bottle_1"]
+                    row["right_gripper_position"] = (
+                        manipulation.get_state().groups["right_manipulator"].gripper_position
+                    )
                     row["right_gripper_open"] = gripper_is_open()
+                    row["final_inside_bin"] = inside_bin(
+                        sim.sample_body_surface("bottle_1", 8192),
+                        sim.sample_body_surface("bin_container", 8192),
+                    )
                     row["success"] = (
                         peak_lift >= 0.05
                         and stable_containment
                         and row["right_gripper_open"]
-                        and inside_bin(
-                            sim.sample_body_surface("bottle_1", 8192),
-                            sim.sample_body_surface("bin_container", 8192),
-                        )
+                        and row["final_inside_bin"]
                     )
                     if not row["success"]:
                         row["error"] = (
