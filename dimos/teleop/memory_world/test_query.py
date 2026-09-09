@@ -247,3 +247,14 @@ def test_route_is_generated_by_server(
 
     assert result.route is not None
     assert result.route.points == [(1.0, 2.0, 0.08), (3.0, 4.0, 0.08)]
+
+
+def test_height_colours_stay_in_the_blue_band(memory_world: MemoryWorldModule) -> None:
+    """Warm colours are reserved for highlights, so no height may turn red or yellow."""
+    lo, hi = memory_world.config.map_z_min, memory_world.config.map_z_max
+    positions = np.array([[0.0, 0.0, z] for z in np.linspace(lo, hi, 25)])
+    colours = memory_world._height_colors(positions).astype(int)
+    assert colours.shape == (25, 3)
+    assert (colours[:, 2] >= colours[:, 0]).all()  # blue never below red
+    assert (colours[:, 2] >= colours[:, 1]).all()  # blue never below green
+    assert (np.diff(colours.sum(axis=1)) >= 0).all()  # brighter going up

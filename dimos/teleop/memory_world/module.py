@@ -121,6 +121,11 @@ class _ClientConn:
             self.queue.put_nowait(msg)
 
 
+# Height ramp endpoints (RGB). One blue band, so highlight colours stand out.
+HEIGHT_COLOR_FLOOR = np.array([12.0, 28.0, 90.0])
+HEIGHT_COLOR_CEILING = np.array([70.0, 190.0, 255.0])
+
+
 class MemoryWorldConfig(ModuleConfig):
     """Config for the Memory World."""
 
@@ -487,28 +492,23 @@ class MemoryWorldModule(Module):
             return None
 
     def _height_colors(self, positions: np.ndarray) -> np.ndarray:
-        """Map Z (robot up) to a bright, fully-saturated rainbow.
+        """Map Z (robot up) onto a navy-to-cyan ramp.
 
-        Floor → ceiling sweeps hue violet → blue → cyan → green → yellow → red,
-        all at full saturation and value, so every height band is vivid and
-        clearly distinct (TURBO/jet have muddy dark ends that read poorly in
-        VR against the dark background). Uses the fixed height SLAB bounds so a
-        given height is always the same colour. Returns N x 3 uint8 RGB.
+        The map deliberately stays inside one hue band: floor is deep navy,
+        ceiling is pale cyan, and everything in between is a blue. That keeps
+        the warm colours (yellow, orange, red, magenta) and green free for
+        highlights, so a voxel painted by a query reads as "the answer" rather
+        than "a slightly different height". Uses the fixed height SLAB bounds so
+        a given height is always the same colour. Returns N x 3 uint8 RGB.
         """
         zc = positions[:, 2]
         lo = float(self.config.map_z_min)
         hi = float(self.config.map_z_max)
         if hi - lo < 1e-3:
             lo, hi = float(zc.min()), float(zc.max()) + 1e-3
-        t = np.clip((zc - lo) / (hi - lo), 0.0, 1.0)
-        # OpenCV hue is 0-179: 0=red, 60=green, 120=blue, ~140=violet.
-        # Floor (t=0) → violet(140), ceiling (t=1) → red(0). Clean sweep, no
-        # hue wraparound.
-        h = ((1.0 - t) * 140.0).astype(np.uint8).reshape(-1, 1)
-        full = np.full_like(h, 255)
-        hsv = np.concatenate([h, full, full], axis=1).reshape(-1, 1, 3)
-        bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR).reshape(-1, 3)
-        return np.ascontiguousarray(bgr[:, ::-1])
+        t = np.clip((zc - lo) / (hi - lo), 0.0, 1.0).reshape(-1, 1)
+        rgb = HEIGHT_COLOR_FLOOR * (1.0 - t) + HEIGHT_COLOR_CEILING * t
+        return np.ascontiguousarray(np.rint(rgb).astype(np.uint8))
 
     def _cloud_header(self, positions: np.ndarray) -> dict[str, Any]:
         """Common header: count, colour flag, voxel size, and bounds."""
