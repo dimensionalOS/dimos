@@ -12,21 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dual OpenYAM Quest collection with two independently declared cameras."""
+"""Dual OpenYAM Quest collection with profile-defined camera inputs."""
 
 from pathlib import Path
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.experimental.memory.rust_recorder import RustMcapStoreConfig
 from dimos.imitation.cameras import CameraDevice, profile_cameras
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
-from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
-    build_dual_openyam_quest_teleop,
-)
-from dimos.robot.manipulators.dual_openyam.learning import (
-    DUAL_OPENYAM_TWO_WRIST_IO,
-    DualOpenYamQuestRecorder,
-)
+from dimos.imitation.collection.native_recorder import collection_recorder
+from dimos.imitation.collection.profile import CollectionProfile
+from dimos.robot.manipulators.dual_openyam.learning import DUAL_OPENYAM_COLLECTION
 
 
 def build_dual_openyam_quest_collection(
@@ -34,23 +29,23 @@ def build_dual_openyam_quest_collection(
     recording: Path,
     task: str,
     cameras: dict[str, CameraDevice],
+    profile: CollectionProfile = DUAL_OPENYAM_COLLECTION,
     left_can_port: str | None = None,
     right_can_port: str | None = None,
 ) -> Blueprint:
-    """Build a bimanual Quest collection session and two wrist cameras."""
-    camera_blueprints, camera_remappings = profile_cameras(
-        DUAL_OPENYAM_TWO_WRIST_IO,
-        cameras,
+    """Build bimanual collection; camera count and feature names come from the profile."""
+    camera_blueprints, remappings = profile_cameras(profile, cameras)
+    # Pink and the dual robot model are optional until this stack is selected.
+    from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
+        build_dual_openyam_quest_teleop,
     )
+
     return autoconnect(
-        DualOpenYamQuestRecorder.blueprint(
-            store=RustMcapStoreConfig(path=str(recording)),
-            record_tf=False,
-        ),
+        collection_recorder(profile=profile, recording=recording),
         EpisodeMonitorModule.blueprint(task=task),
         build_dual_openyam_quest_teleop(
             left_can_port=left_can_port,
             right_can_port=right_can_port,
         ),
         *camera_blueprints,
-    ).remappings(camera_remappings)
+    ).remappings(remappings)
