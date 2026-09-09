@@ -115,7 +115,7 @@ source .dimos/activate.sh
 dimos run {name}.hello
 pytest
 uv add <dependency>
-dimos list
+dimos doctor
 ```
 
 Edit `src/{module}/hello.py` and rerun the blueprint. Stop it with Ctrl-C.

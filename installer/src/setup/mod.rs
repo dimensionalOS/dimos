@@ -234,21 +234,17 @@ pub fn run_setup(args: &SetupArgs) -> Result<()> {
         }
     }
     checked(&mut environment::command(&dir, &sync))?;
-    fs::write(
-        dir.join(".dimos/verify.py"),
-        include_str!("../../resources/verify.py"),
-    )?;
     checked_timeout(
         &mut environment::command(
             &dir,
             &[
-                "python".into(),
-                dir.join(".dimos/verify.py").to_string_lossy().into_owned(),
-                project.profile.name().into(),
+                "dimos".into(),
+                "doctor".into(),
+                "--project-dir".into(),
                 dir.to_string_lossy().into_owned(),
             ],
         ),
-        Duration::from_secs(120),
+        Duration::from_secs(600),
     )?;
     checked_timeout(
         environment::command(&dir, &["dimos".into(), "--help".into()])
@@ -262,7 +258,7 @@ pub fn run_setup(args: &SetupArgs) -> Result<()> {
         )?,
     )?;
     println!(
-        "Ready.\n  cd {}\n  source .dimos/activate.sh\n  dimos list",
+        "Ready.\n  cd {}\n  source .dimos/activate.sh\n  dimos doctor",
         environment::esc(&dir.to_string_lossy())
     );
     if project.mode == InstallMode::Sdk {

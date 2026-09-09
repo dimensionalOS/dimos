@@ -21,6 +21,7 @@ up, in the order that defines `dimos --help`.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import sys
 
 # Native thread-pool hygiene. Every OpenMP/BLAS runtime sizes its pool to all
@@ -64,6 +65,7 @@ from dimos.cli.commands.mcp import agent_send_cmd, mcp_app
 from dimos.cli.commands.rerun_bridge import rerun_bridge_cmd
 from dimos.cli.commands.topic import topic_app
 from dimos.cli.commands.tuis import agentspy, humancli, lcmspy, spy, top
+from dimos.cli.doctor import main as doctor_main
 from dimos.cli.hardware_cli import app as hardware_app
 from dimos.cli.shell import shell
 from dimos.cli.vqa import app as vqa_app
@@ -106,6 +108,14 @@ hardware_app.add_typer(can_app, name="can")
 main.add_typer(hardware_app, name="hardware")
 main.add_typer(data_app, name="data")
 main.add_typer(go2tool_app, name="go2tool")
+
+
+@main.command("doctor")
+def doctor(project_dir: Path = Path.cwd()) -> None:
+    """Check workspace dependencies, activation, and optional direnv."""
+    raise typer.Exit(doctor_main(["--project-dir", str(project_dir)]))
+
+
 main.command()(shell)
 main.add_typer(cache_app, name="cache")
 main.command("login")(cloud_login)
