@@ -20,8 +20,10 @@ import pytest
 
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.demos.stress_test_module import StressTestModule
+from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.stream import Out
+from dimos.porcelain import dimos as porcelain_dimos
 from dimos.porcelain.dimos import Dimos, _resolve_target
 
 
@@ -93,6 +95,52 @@ def test_construction_with_overrides():
         assert instance._config_overrides == {"n_workers": 4}
     finally:
         instance.stop()
+
+
+def test_overrides_apply_before_the_blueprint_is_resolved_and_unwind_on_failure(
+    monkeypatch,
+):
+    """Overrides must be live during the resolve, and gone again if it raises."""
+    seen: list[str] = []
+    before = global_config.simulation
+
+    def resolve(target):
+        seen.append(global_config.simulation)
+        if target == "unknown-blueprint":
+            raise KeyError(target)
+        raise RuntimeError("stop before building a coordinator")
+
+    monkeypatch.setattr(porcelain_dimos, "_resolve_target", resolve)
+    instance = Dimos(simulation="mujoco")
+    try:
+        with pytest.raises(RuntimeError, match="stop before building"):
+            instance.run("any-blueprint")
+        with pytest.raises(KeyError):
+            instance.run("unknown-blueprint")
+        after_failures = global_config.simulation
+    finally:
+        instance.stop()
+        global_config.update(simulation=before)
+
+    assert seen == ["mujoco", "mujoco"]
+    assert after_failures == before
+
+
+def test_overrides_refuse_to_pretend_on_an_already_imported_blueprint():
+    """A cached import cannot see the override, so refuse rather than mislead."""
+    import dimos.robot.manipulators.xarm.blueprints.basic  # noqa: F401
+
+    before = global_config.simulation
+    instance = Dimos(simulation="mujoco")
+    try:
+        with pytest.raises(RuntimeError, match="already imported"):
+            instance.run("xarm7-planner-coordinator")
+        leaked = global_config.simulation
+    finally:
+        instance.stop()
+        global_config.update(simulation=before)
+
+    assert leaked == before
 
 
 def test_repr_when_stopped(app):

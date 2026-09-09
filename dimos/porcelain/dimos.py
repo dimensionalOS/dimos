@@ -17,6 +17,7 @@ from __future__ import annotations
 import atexit
 import importlib
 import inspect
+import sys
 import threading
 from typing import Any, TypeAlias
 
@@ -31,7 +32,7 @@ from dimos.porcelain.module_handle import ModuleHandle
 from dimos.porcelain.module_source import ModuleSource
 from dimos.porcelain.remote_module_source import RemoteModuleSource
 from dimos.porcelain.skills_proxy import SkillsProxy
-from dimos.robot.all_blueprints import all_modules
+from dimos.robot.all_blueprints import all_blueprints, all_modules
 from dimos.robot.get_all_blueprints import class_name_to_registry_key, get_by_name
 
 DescribeTarget: TypeAlias = str | ModuleHandle | RpcCall | ModuleInfo | RpcInfo
@@ -72,10 +73,33 @@ class Dimos:
                 _run_remote(target, self._source)
                 return
 
-            blueprint = _resolve_target(target)
+            # Resolving a name imports the blueprint, which reads global_config.
+            applying = self._coordinator is None and bool(self._config_overrides)
+            previous = (
+                {key: getattr(global_config, key) for key in self._config_overrides}
+                if applying
+                else {}
+            )
+            if applying:
+                stale = {
+                    key: value
+                    for key, value in self._config_overrides.items()
+                    if getattr(global_config, key, None) != value
+                }
+                imported = _already_imported_module(target) if stale else None
+                if imported is not None:
+                    raise RuntimeError(
+                        f"{imported} is already imported, so {sorted(stale)} cannot "
+                        f"take effect. Configure before the import, or use the CLI."
+                    )
+                global_config.update(**self._config_overrides)
+            try:
+                blueprint = _resolve_target(target)
+            except BaseException:
+                if applying:
+                    global_config.update(**previous)
+                raise
             if self._coordinator is None:
-                if self._config_overrides:
-                    global_config.update(**self._config_overrides)
                 self._coordinator = ModuleCoordinator.build(blueprint)
                 self._source = LocalModuleSource(self._coordinator)
             else:
@@ -383,6 +407,17 @@ def _resolve_target(target: str | Blueprint | type[ModuleBase]) -> Blueprint:
         f"run() expects a blueprint name (str), Blueprint, or Module class, "
         f"got {type(target).__name__}"
     )
+
+
+def _already_imported_module(target: str | Blueprint | type[ModuleBase]) -> str | None:
+    """The registry module behind a blueprint name, if it is already imported."""
+    if not isinstance(target, str):
+        return None
+    entry = all_blueprints.get(target) or all_modules.get(target)
+    if entry is None:
+        return None
+    path = entry.split(":")[0] if ":" in entry else entry.rsplit(".", 1)[0]
+    return path if path in sys.modules else None
 
 
 def _all_module_class_names() -> set[str]:
