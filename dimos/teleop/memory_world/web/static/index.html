@@ -168,11 +168,56 @@
         body.desktop-view.hud-visible #perf { opacity: 1; }
         body.desktop-view #desktopHints { display: block; margin-top: 10px; }
         #desktopHints { display: none; }
+        /* Touch controls: a thumb stick to walk and a row of one-tap actions.
+           Only shown where there is no keyboard to speak of. */
+        #stick {
+            position: absolute;
+            left: 24px;
+            bottom: 28px;
+            width: 128px;
+            height: 128px;
+            border-radius: 50%;
+            border: 2px solid var(--accent-soft);
+            background: rgba(6, 9, 15, 0.55);
+            display: none;
+            z-index: 120;
+            touch-action: none;
+        }
+        #stickKnob {
+            position: absolute;
+            left: 40px;
+            top: 40px;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: var(--accent);
+            opacity: 0.85;
+        }
+        #touchBar {
+            position: absolute;
+            right: 16px;
+            bottom: 28px;
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 120;
+        }
+        #touchBar button {
+            padding: 12px 18px;
+            font-size: 12px;
+            letter-spacing: 0.12em;
+            background: rgba(6, 9, 15, 0.7);
+            color: var(--accent);
+            border: 1px solid var(--accent-soft);
+            clip-path: none;
+        }
         /* No hover on a phone, so the buttons (mic, disconnect) must stay reachable. */
         @media (hover: none), (max-width: 640px) {
             body.desktop-view #ui { opacity: 1; }
             body.desktop-view #hints, body.desktop-view #desktopHints { display: none; }
             body.desktop-view h1 { display: none; }
+            body.desktop-view #stick { display: block; }
+            body.desktop-view #touchBar { display: flex; }
         }
     </style>
 </head>
@@ -202,11 +247,18 @@
             <b>W A S D</b>  walk / strafe &nbsp; <b>SHIFT</b> sprint<br>
             <b>WHEEL</b>  scale world<br>
             <b>I</b>  toggle image thumbnails &nbsp; <b>V</b>  toggle voxel cubes<br>
-            <b>R</b>  reset view &nbsp; <b>J</b>  jump to the answer &nbsp; <b>P</b>  see it from the camera &nbsp; <b>H</b>  keep this menu<br>
+            <b>R</b>  reset view &nbsp; <b>J</b>  jump to the answer &nbsp; <b>P</b>  see it from the camera<br>
+            <b>M</b>  hide / show the minimap &nbsp; <b>H</b>  keep this menu<br>
             <b>HOLD TO ASK</b>  speak a question, e.g. "where did I see a chair"
         </div>
     </div>
     <div id="perf"></div>
+    <div id="stick"><div id="stickKnob"></div></div>
+    <div id="touchBar">
+        <button id="mapBtn">Map</button>
+        <button id="answerBtn">Answer</button>
+        <button id="cameraBtn">Camera</button>
+    </div>
     <canvas id="canvas"></canvas>
     <pre id="log"></pre>
     <script type="module" src="/static_mw/main.js"></script>

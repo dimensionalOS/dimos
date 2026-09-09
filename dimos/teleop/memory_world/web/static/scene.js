@@ -416,6 +416,7 @@ export class WorldScene {
         if (event.code === 'KeyJ' && this._lastResultPoints.length && !this.viewFrom(0)) {
             this.focusOn(this._lastResultPoints[0].position);
         }
+        if (event.code === 'KeyM') this.toggleMinimap();
         if (event.code === 'KeyP' && this._queryImages.length) {
             this.viewFrom((this._queryImageCursor + 1) % this._queryImages.length);
         }
@@ -432,6 +433,21 @@ export class WorldScene {
             stickX: ((keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0)) * gain + touch.x,
             stickY: ((keys.has('KeyS') ? 1 : 0) - (keys.has('KeyW') ? 1 : 0)) * gain + touch.y,
         });
+    }
+
+    /** Walk input from an on-screen stick: x right, y backward, each in [-1, 1]. */
+    setTouchStick(x, y) {
+        this._touchStick = {
+            x: Math.max(-1, Math.min(1, x || 0)),
+            y: Math.max(-1, Math.min(1, y || 0)),
+        };
+    }
+
+    /** Hide or show the top-down minimap; the answer panel stays. */
+    toggleMinimap() {
+        this._hudPanel.visible = !this._hudPanel.visible;
+        this.diag('minimap_toggle', { visible: this._hudPanel.visible });
+        return this._hudPanel.visible;
     }
 
     /** Phone controls: one finger looks, two fingers walk (drag) and scale (pinch). */

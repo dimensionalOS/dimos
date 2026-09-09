@@ -406,6 +406,47 @@ async function sendRecording(blob) {
     }
 }
 
+// ---- touch controls ---------------------------------------------------------
+
+const stickEl = document.getElementById('stick');
+const stickKnob = document.getElementById('stickKnob');
+const STICK_RADIUS_PX = 40;
+
+function stickFrom(touch) {
+    const rect = stickEl.getBoundingClientRect();
+    const dx = touch.clientX - (rect.left + rect.width / 2);
+    const dy = touch.clientY - (rect.top + rect.height / 2);
+    const len = Math.hypot(dx, dy);
+    const clamp = len > STICK_RADIUS_PX ? STICK_RADIUS_PX / len : 1;
+    return { x: dx * clamp / STICK_RADIUS_PX, y: dy * clamp / STICK_RADIUS_PX };
+}
+
+function moveStick(event) {
+    event.preventDefault();
+    const touch = event.touches[0];
+    if (!touch || !scene) return;
+    const { x, y } = stickFrom(touch);
+    stickKnob.style.transform = `translate(${x * STICK_RADIUS_PX}px, ${y * STICK_RADIUS_PX}px)`;
+    scene.setTouchStick(x, y); // knob up (negative y) walks forward
+}
+
+function releaseStick() {
+    stickKnob.style.transform = '';
+    if (scene) scene.setTouchStick(0, 0);
+}
+
+stickEl.addEventListener('touchstart', moveStick, { passive: false });
+stickEl.addEventListener('touchmove', moveStick, { passive: false });
+stickEl.addEventListener('touchend', releaseStick);
+stickEl.addEventListener('touchcancel', releaseStick);
+
+document.getElementById('mapBtn').addEventListener('click', () => scene && scene.toggleMinimap());
+document.getElementById('answerBtn').addEventListener('click', () => window.app.jumpTo(0));
+document.getElementById('cameraBtn').addEventListener('click', () => {
+    if (!scene || !scene._queryImages.length) return;
+    scene.viewFrom((scene._queryImageCursor + 1) % scene._queryImages.length);
+});
+
 micBtn.addEventListener('pointerdown', startRecording);
 micBtn.addEventListener('pointerup', stopRecording);
 micBtn.addEventListener('pointerleave', stopRecording);
@@ -462,14 +503,19 @@ window.app = {
     resetPerf: () => scene && scene.resetPerf(),
     benchmark: (frames) => (scene ? scene.benchmarkRender(frames) : null),
     // Bring the i-th answer of the last result in front of the viewer (also key J).
-    jumpTo: (index = 0) => scene && !scene.viewFrom(index) && scene.focusOn(scene._lastResultPoints[index].position),
+    jumpTo: (index = 0) => scene && scene._lastResultPoints.length > index
+        && !scene.viewFrom(index) && scene.focusOn(scene._lastResultPoints[index].position),
+    minimap: () => scene && scene.toggleMinimap(),
     // Stand where the camera behind the i-th answer stood (also key P, cycling).
     viewFrom: (index = 0) => scene && scene.viewFrom(index),
     // Pin a quality level (0 = everything, 4 = least) or null for automatic.
     quality: (level = null) => scene && scene.setQuality(level),
     simulateLoad: (ms = 0) => { simulatedLoadMs = Math.max(0, ms); return simulatedLoadMs; },
     // View state for automated checks: where the desktop camera looks and the world scale.
-    viewState: () => scene && { yaw: scene._desktopYaw, pitch: scene._desktopPitch, scale: scene._worldGroup.scale.x },
+    viewState: () => scene && {
+        yaw: scene._desktopYaw, pitch: scene._desktopPitch, scale: scene._worldGroup.scale.x,
+        world: [scene._worldGroup.position.x, scene._worldGroup.position.y, scene._worldGroup.position.z].map((v) => +v.toFixed(3)),
+    },
     queryImages: () => scene && scene._queryImages.map((h) => h && { index: h.index, position: h.position.map((v) => +v.toFixed(2)), forward: h.forward.map((v) => +v.toFixed(3)), up: h.up.map((v) => +v.toFixed(3)) }),
     // Marker orientations for automated checks: the quad normal of the first few capture poses, robot frame.
     markerNormals: (count = 6) => scene && scene._imagePoseMeta.slice(0, count).map((m) => {
