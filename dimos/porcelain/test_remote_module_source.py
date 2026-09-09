@@ -97,7 +97,7 @@ def test_connect_rpc_method_call(client):
 
 def test_typed_lookup_calls_the_same_remote_module(client, running_app):
     for app in (client, running_app):
-        module = app.get_module(PingSpec)
+        module = app.find_module_by_spec(PingSpec)
         assert module is app.get_module("StressTestModule")
         assert module.ping() == "pong"
     client.stop()
@@ -106,7 +106,7 @@ def test_typed_lookup_calls_the_same_remote_module(client, running_app):
 
 def test_typed_lookup_preserves_missing_module_error(client):
     with pytest.raises(LookupError, match="missing-module"):
-        client.get_module(PingSpec, instance_name="missing-module")
+        client.find_module_by_spec(PingSpec, instance_name="missing-module")
 
 
 def test_spec_lookup_requires_rpc_advertisement(client, mocker):
@@ -118,7 +118,7 @@ def test_spec_lookup_requires_rpc_advertisement(client, mocker):
     )
 
     with pytest.raises(LookupError, match="PingSpec RPC signatures"):
-        client.get_module(PingSpec)
+        client.find_module_by_spec(PingSpec)
 
 
 def test_spec_lookup_does_not_assume_unavailable_signatures_match(client, mocker):
@@ -133,7 +133,7 @@ def test_spec_lookup_does_not_assume_unavailable_signatures_match(client, mocker
     )
 
     with pytest.raises(LookupError, match="cannot inspect module classes"):
-        client.get_module(PingSpec)
+        client.find_module_by_spec(PingSpec)
 
 
 def test_spec_lookup_rejects_signature_mismatch():
@@ -141,7 +141,7 @@ def test_spec_lookup_rejects_signature_mismatch():
         app = Dimos.connect()
         try:
             with pytest.raises(LookupError, match="WrongReturnSpec RPC signatures"):
-                app.get_module(WrongReturnSpec)
+                app.find_module_by_spec(WrongReturnSpec)
         finally:
             app.stop()
 
@@ -151,8 +151,8 @@ def test_spec_lookup_requires_explicit_instance_when_ambiguous():
         app = Dimos.connect()
         try:
             with pytest.raises(ValueError, match="robot0/named.*robot1/named"):
-                app.get_module(NamedSpec)
-            selected = app.get_module(NamedSpec, instance_name="robot1/named")
+                app.find_module_by_spec(NamedSpec)
+            selected = app.find_module_by_spec(NamedSpec, instance_name="robot1/named")
             assert selected.ping_name() == "robot1/named"
         finally:
             app.stop()
