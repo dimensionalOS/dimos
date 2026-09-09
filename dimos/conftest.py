@@ -89,7 +89,6 @@ import tqdm
 
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.coordination.process_lifecycle import spawn_watchdog
-from dimos.utils import threadpool
 from dimos.utils.testing.waiting import retry_until as _retry_until, wait_until as _wait_until
 
 # The first tqdm bar constructed in the process spawns a TMonitor daemon thread that lives until
@@ -343,10 +342,6 @@ def monitor_threads(request):
         # HuggingFace safetensors conversion thread - no user cleanup API
         # https://github.com/huggingface/transformers/issues/29513
         "Thread-auto_conversion",
-        # The shared reactivex scheduler in dimos.utils.threadpool. It is a
-        # process-wide singleton whose workers spawn on first use, so whichever
-        # test runs a reactive pipeline first appears to have created them.
-        threadpool.SCHEDULER_THREAD_PREFIX,
     ]
     # Zenoh callback threads belong to a session in the process-wide pool, which
     # outlives the test that first opened it on purpose -- sharing one session is

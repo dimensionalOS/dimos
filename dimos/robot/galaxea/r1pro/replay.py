@@ -22,6 +22,11 @@ Record from ``r1pro-coordinator``, not from a running ``r1pro-kronknav``: under
 kronknav ``lidar`` is a fan-in bus that already carries the head camera's cloud,
 so replaying it would feed those points in twice, once recorded and once
 rebuilt from ``head_depth``.
+
+Every frame comes from the recording's own ``tf`` stream, including the head
+camera edge the connection derives from joint angles. A recording made before
+the connection published that edge replays without it, and the head cloud then
+has no transform to resolve.
 """
 
 from __future__ import annotations
@@ -41,7 +46,6 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.galaxea.r1pro.constants import HEAD_CAMERA_LINK
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -75,7 +79,7 @@ class R1ProReplayConfig(ModuleConfig):
     # camera_info stream; point this at the ROS camera_info YAML for the robot
     # that made the recording to supply them.
     head_camera_info_path: str = ""
-    head_camera_frame_id: str = HEAD_CAMERA_LINK
+    head_camera_frame_id: str = "camera_head_left_link"
 
 
 class R1ProReplay(Module):

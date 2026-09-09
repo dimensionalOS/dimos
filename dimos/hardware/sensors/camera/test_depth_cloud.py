@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import threading
 import time
 
 import numpy as np
@@ -20,6 +21,7 @@ import pytest
 from dimos.hardware.sensors.camera.depth_cloud import DepthCloud
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.utils.threadpool import get_scheduler, max_workers
 
 WIDTH = 8
 HEIGHT = 6
@@ -27,6 +29,21 @@ FX = 100.0
 FY = 120.0
 CX = 3.5
 CY = 2.5
+
+
+@pytest.fixture(scope="module", autouse=True)
+def shared_scheduler_workers():
+    """Start the shared reactivex pool's workers before any test is watched.
+
+    `In.observable()` runs on a process-wide pool whose workers spawn lazily, so
+    the first test to move a message through one looks like it leaked them and
+    the thread monitor in dimos/conftest.py fails it. Occupying every worker at
+    once is what forces them all to exist; submitting serially reuses one.
+    """
+    gate = threading.Barrier(max_workers + 1)
+    for _ in range(max_workers):
+        get_scheduler().executor.submit(gate.wait)
+    gate.wait(timeout=10.0)
 
 
 class Bus:
@@ -168,9 +185,24 @@ def test_rescales_intrinsics_to_the_depth_resolution(module):
     np.testing.assert_allclose(clouds[0].points_f32(), expected, atol=1e-6)
 
 
-def test_frame_id_falls_back_to_the_depth_image(module):
+def test_frame_id_comes_from_the_intrinsics(module):
+    """The cloud is built from the CameraInfo, so it lives in that frame.
+
+    A vendor driver often stamps depth with an optical frame nobody publishes a
+    transform for, while the intrinsics can carry the link the robot puts on tf.
+    """
     depth = depth_image(np.full((HEIGHT, WIDTH), 2.0, dtype=np.float32))
     clouds = run(module(decimation=1), depth)
+
+    assert clouds[0].frame_id == "calibration_frame"
+
+
+def test_frame_id_falls_back_to_the_depth_image(module):
+    depth = depth_image(np.full((HEIGHT, WIDTH), 2.0, dtype=np.float32))
+    unframed = CameraInfo.from_intrinsics(
+        fx=FX, fy=FY, cx=CX, cy=CY, width=WIDTH, height=HEIGHT, frame_id=""
+    )
+    clouds = run(module(decimation=1), depth, unframed)
 
     assert clouds[0].frame_id == "head_optical"
 

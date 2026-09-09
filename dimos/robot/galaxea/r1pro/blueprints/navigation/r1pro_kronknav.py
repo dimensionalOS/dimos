@@ -27,8 +27,9 @@ each cloud is placed by its own frame. They are deliberately *not* merged:
 silently cast the head camera's rays from the lidar's origin.
 
 The head camera sits beyond the four revolute torso joints, so its pose is only
-correct if it is recomputed from live joint angles — hence FK on ``motor_states``
-rather than a static mount.
+correct if it is recomputed from live joint angles. ``R1ProConnection`` publishes
+that edge itself, off the same joint feedback it turns into ``motor_states``, so
+nothing here has to know the robot's kinematics.
 
 ``r1pro-kronknav-replay`` swaps the robot for a recording and leaves every
 planning module identical, so a plan that looks wrong on the replay is the same
@@ -52,20 +53,20 @@ from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
-from dimos.protocol.tf.joint_state_tf_publisher import JointStateTfPublisher
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
-from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 from dimos.robot.galaxea.r1pro.constants import (
-    BASE_LINK,
     CHASSIS_WIDTH_M,
-    HEAD_CAMERA_LINK,
     MAX_STEP_HEIGHT_M,
-    ODOM_FRAME,
     OVERHEAD_CLEARANCE_M,
     ROTATION_DIAMETER_M,
 )
 from dimos.robot.galaxea.r1pro.replay import R1ProReplay
 from dimos.visualization.vis_module import vis_module
+
+# Frames this blueprint plans in. They match R1ProConnectionConfig's defaults;
+# override both sides together to run against a differently-framed robot.
+ODOM_FRAME = "odom"
+BASE_FRAME = "base_link"
 
 VOXEL_SIZE_M = 0.05
 PLANNER_VIZ_HZ = 0.0
@@ -104,15 +105,7 @@ def _nav_stack() -> Blueprint:
     """
     return autoconnect(
         vis_module(viewer_backend=global_config.viewer, rerun_config=_rerun_config),
-        JointStateTfPublisher.blueprint(
-            model=R1PRO_MODEL,
-            links=(HEAD_CAMERA_LINK,),
-            root_link=BASE_LINK,
-        ).remappings([(JointStateTfPublisher, "joint_states", "motor_states")]),
         DepthCloud.blueprint(
-            # The vendor driver's optical frame is not what tf publishes, so
-            # pin the cloud to the URDF link the FK publisher emits.
-            frame_id=HEAD_CAMERA_LINK,
             # 6 m is roughly where stereo range error exceeds a voxel.
             max_range_m=6.0,
         ).remappings(
@@ -135,7 +128,7 @@ def _nav_stack() -> Blueprint:
         ),
         MLSPlannerNative.blueprint(
             world_frame=ODOM_FRAME,
-            base_frame=BASE_LINK,
+            base_frame=BASE_FRAME,
             voxel_size=VOXEL_SIZE_M,
             robot_height=OVERHEAD_CLEARANCE_M,
             start_z_offset_m=0.0,

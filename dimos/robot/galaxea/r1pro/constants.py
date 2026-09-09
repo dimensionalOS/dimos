@@ -12,20 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Values shared by every R1 Pro, independent of the individual unit.
+"""Physical dimensions of the R1 Pro, as the chassis fixes them.
 
-Anything that differs between two R1 Pros — factory camera calibration, host
-addresses, dataset paths — is a config field so it can come from the CLI. This
-file is only for what the model itself fixes.
+Frame names are not here: they are configurable, so they live on the module
+configs that publish and consume them.
 """
-
-# Vendor URDF link names. The head camera joint's rpy is (-1.9199, 0, -1.5708):
-# the ROS optical rotation plus a 20 degree down-tilt, so this link already *is*
-# the optical frame. Nothing downstream may stack a second optical rotation.
-HEAD_CAMERA_LINK = "camera_head_left_link"
-LIDAR_LINK = "lidar_chassis_left_link"
-BASE_LINK = "base_link"
-ODOM_FRAME = "odom"
 
 # First-pass clearances — tune on the robot.
 CHASSIS_WIDTH_M = 0.65

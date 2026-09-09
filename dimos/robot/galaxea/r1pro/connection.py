@@ -29,6 +29,7 @@ gatekeeper. ROS env (``ROS_DOMAIN_ID`` etc.) comes from the environment.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 import math
 import queue
@@ -49,8 +50,10 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.hardware.whole_body.spec import VEL_STOP
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
@@ -60,7 +63,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.robot.galaxea.r1pro.constants import HEAD_CAMERA_LINK, LIDAR_LINK
+from dimos.robot.assets.model import RobotModel
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
 
@@ -134,6 +137,65 @@ def _ros_stamp_now() -> Any:
     return RosTime(sec=sec, nanosec=int((t - sec) * 1e9))
 
 
+class ArticulatedTf:
+    """Forward kinematics for sensor links mounted past a moving joint.
+
+    FK runs through pinocchio rather than yourdfpy: pinocchio is a core
+    dependency, whereas yourdfpy is visualization-only and is excluded on
+    linux/aarch64 — exactly the board this connection runs on.
+    """
+
+    def __init__(self, model: RobotModel, links: Sequence[str], root_link: str = "") -> None:
+        import pinocchio
+
+        loaded = model.load()
+        self._model = pinocchio.buildModelFromXML(loaded.xml)
+        self._data = self._model.createData()
+        self._neutral_q = pinocchio.neutral(self._model)
+        self.root_link = root_link or loaded.root_link
+        self._unknown_joints: set[str] = set()
+
+        self._joint_q_index = {
+            self._model.names[joint_id]: self._model.joints[joint_id].idx_q
+            for joint_id in range(1, self._model.njoints)
+            if self._model.joints[joint_id].nq == 1
+        }
+        missing = [link for link in links if not self._model.existFrame(link)]
+        if missing:
+            raise ValueError(f"{', '.join(missing)} not in {model.source_path}")
+        self._frame_ids = {link: self._model.getFrameId(link) for link in links}
+
+    def transforms(self, joint_state: JointState) -> list[Transform]:
+        import pinocchio
+        from scipy.spatial.transform import Rotation
+
+        q = self._neutral_q.copy()
+        for name, position in zip(joint_state.name, joint_state.position, strict=False):
+            index = self._joint_q_index.get(name)
+            if index is None:
+                if name not in self._unknown_joints:
+                    self._unknown_joints.add(name)
+                    logger.warning("R1Pro FK: no model joint named %r", name)
+                continue
+            q[index] = position
+
+        pinocchio.framesForwardKinematics(self._model, self._data, q)
+        transforms = []
+        for link, frame_id in self._frame_ids.items():
+            placement = self._data.oMf[frame_id]
+            x, y, z, w = Rotation.from_matrix(placement.rotation).as_quat()
+            transforms.append(
+                Transform(
+                    translation=Vector3(*placement.translation),
+                    rotation=Quaternion(x, y, z, w),
+                    frame_id=self.root_link,
+                    child_frame_id=link,
+                    ts=joint_state.ts,
+                )
+            )
+        return transforms
+
+
 class R1ProConnectionConfig(ModuleConfig):
     publish_rate_hz: float = Field(default=100.0)
     # rad/s used when MotorCommand.dq is the VEL_STOP sentinel or 0.
@@ -141,7 +203,7 @@ class R1ProConnectionConfig(ModuleConfig):
     publish_odom: bool = Field(default=True)
     frame_id: str = Field(default="base_link")
     odom_frame_id: str = Field(default="odom")
-    lidar_frame_id: str = Field(default=LIDAR_LINK)
+    lidar_frame_id: str = Field(default="lidar_chassis_left_link")
     # Seconds between per-stream sensor-stats log lines (0 disables).
     sensor_stats_interval_s: float = Field(default=10.0)
     # Wrist depth is raw 16-bit at up to 30 Hz per wrist — too heavy for the
@@ -153,7 +215,26 @@ class R1ProConnectionConfig(ModuleConfig):
     # per-unit factory calibration, so they cannot be committed. Point this at a
     # ROS camera_info YAML (what `cameracalibrate` writes) for the robot in hand.
     head_camera_info_path: str = Field(default="")
-    head_camera_frame_id: str = Field(default=HEAD_CAMERA_LINK)
+    # The head camera joint's URDF rpy is (-1.9199, 0, -1.5708): the ROS optical
+    # rotation plus a 20 degree down-tilt, so this link already *is* the optical
+    # frame. Nothing downstream may stack a second optical rotation onto it.
+    head_camera_frame_id: str = Field(default="camera_head_left_link")
+    # Sensor links that sit beyond a moving joint, so their transform is only
+    # right when recomputed from live joint angles. The head cameras hang off
+    # the four revolute torso joints and the wrist cameras off the arms; a
+    # static mount for either is wrong the moment the robot moves. Empty
+    # disables forward kinematics.
+    articulated_frame_ids: tuple[str, ...] = Field(
+        default=(
+            "camera_head_left_link",
+            "camera_head_right_link",
+            "left_d405_link",
+            "right_d405_link",
+        )
+    )
+    # Joint feedback runs at publish_rate_hz (100), far more tf than any
+    # consumer needs; the voxel map matches stamps within a tolerance anyway.
+    articulated_tf_hz: float = Field(default=30.0, gt=0.0)
 
 
 class R1ProConnection(Module):
@@ -222,6 +303,7 @@ class R1ProConnection(Module):
         self._latest_imu_chassis: Imu | None = None
         self._latest_imu_torso: Imu | None = None
         self._head_camera_info: CameraInfo | None = None
+        self._articulated_tf: ArticulatedTf | None = None
 
         # Odom dead-reckoning, integrated from /motion_control/chassis_speed.
         self._odom_x = 0.0
@@ -251,6 +333,14 @@ class R1ProConnection(Module):
         from dimos.protocol.pubsub.impl.rospubsub import RawROS
 
         self._head_camera_info = self._load_head_camera_info()
+        if self.config.articulated_frame_ids:
+            from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
+
+            self._articulated_tf = ArticulatedTf(
+                R1PRO_MODEL,
+                self.config.articulated_frame_ids,
+                root_link=self.config.frame_id,
+            )
 
         self._ros = RawROS(node_name="r1pro_control")
         self._ros.start()
@@ -626,8 +716,6 @@ class R1ProConnection(Module):
         self._odom_yaw += wz * dt
 
         from dimos.msgs.geometry_msgs.Pose import Pose
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
         half = self._odom_yaw * 0.5
         position = Vector3(self._odom_x, self._odom_y, 0.0)
@@ -667,6 +755,8 @@ class R1ProConnection(Module):
         frame_id = self.config.frame_id
         bootstrapped = False
         next_camera_info = 0.0
+        next_articulated_tf = 0.0
+        articulated_tf_period = 1.0 / self.config.articulated_tf_hz
 
         while not self._stop_event.is_set():
             # Intrinsics are static, but Out streams don't latch, so a consumer
@@ -705,16 +795,18 @@ class R1ProConnection(Module):
                     ts = min(self._ts_torso, self._ts_left, self._ts_right)
 
             if bootstrapped:
-                self.motor_states.publish(
-                    JointState(
-                        ts=ts,
-                        frame_id=frame_id,
-                        name=R1PRO_UPPER_BODY_JOINTS,
-                        position=positions,  # type: ignore[arg-type]
-                        velocity=velocities,
-                        effort=efforts,
-                    )
+                joint_state = JointState(
+                    ts=ts,
+                    frame_id=frame_id,
+                    name=R1PRO_UPPER_BODY_JOINTS,
+                    position=positions,  # type: ignore[arg-type]
+                    velocity=velocities,
+                    effort=efforts,
                 )
+                self.motor_states.publish(joint_state)
+                if self._articulated_tf is not None and time.monotonic() >= next_articulated_tf:
+                    next_articulated_tf = time.monotonic() + articulated_tf_period
+                    self.tf.publish(TFMessage(*self._articulated_tf.transforms(joint_state)))
                 if imu_chassis is not None:
                     self.imu_chassis.publish(imu_chassis)
                 if imu_torso is not None:

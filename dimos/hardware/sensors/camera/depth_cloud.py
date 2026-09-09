@@ -18,9 +18,12 @@ Geometry only — :meth:`PointCloud2.from_rgbd` covers the coloured case but nee
 size-matched colour frame alongside the depth one. Mapping consumers only want the
 points, so this skips the colour stream entirely.
 
-Points come out in the depth image's own optical frame (x right, y down,
-z forward), tagged with the depth image's ``frame_id``, so a downstream consumer
-that resolves ``frame_id`` through tf places them correctly.
+Points come out in the optical frame the intrinsics describe (x right, y down,
+z forward), tagged with the ``CameraInfo``'s ``frame_id`` so a downstream
+consumer resolving it through tf places them correctly. The depth image's own
+``frame_id`` is the fallback: a vendor driver often stamps depth with a frame
+nobody publishes a transform for, while the intrinsics can be given the link
+name the robot actually puts on tf.
 """
 
 from __future__ import annotations
@@ -120,6 +123,6 @@ class DepthCloud(Module):
 
         return PointCloud2.from_numpy(
             points,
-            frame_id=self.config.frame_id or depth.frame_id,
+            frame_id=self.config.frame_id or info.frame_id or depth.frame_id,
             timestamp=depth.ts,
         )

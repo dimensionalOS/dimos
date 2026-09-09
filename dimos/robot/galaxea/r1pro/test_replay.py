@@ -13,17 +13,29 @@
 # limitations under the License.
 
 from pathlib import Path
+import threading
 import time
 
 import numpy as np
 import pytest
 
+from dimos.hardware.sensors.camera.depth_cloud import DepthCloud
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.tf.tf import MultiTBuffer
+from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
+from dimos.robot.galaxea.r1pro.connection import (
+    R1PRO_UPPER_BODY_JOINTS,
+    ArticulatedTf,
+    R1ProConnectionConfig,
+)
 from dimos.robot.galaxea.r1pro.replay import CAMERA_INFO_REPUBLISH_S, R1ProReplay
+from dimos.utils.threadpool import get_scheduler, max_workers
 
 CAMERA_INFO_YAML = """
 image_width: 640
@@ -55,6 +67,21 @@ def cloud(ts: float) -> PointCloud2:
         frame_id="lidar_chassis_left_link",
         timestamp=ts,
     )
+
+
+@pytest.fixture(scope="module", autouse=True)
+def shared_scheduler_workers():
+    """Start the shared reactivex pool's workers before any test is watched.
+
+    `In.observable()` runs on a process-wide pool whose workers spawn lazily, so
+    the first test to move a message through one looks like it leaked them and
+    the thread monitor in dimos/conftest.py fails it. Occupying every worker at
+    once is what forces them all to exist; submitting serially reuses one.
+    """
+    gate = threading.Barrier(max_workers + 1)
+    for _ in range(max_workers):
+        get_scheduler().executor.submit(gate.wait)
+    gate.wait(timeout=10.0)
 
 
 @pytest.fixture
@@ -186,6 +213,107 @@ def test_a_recorded_camera_info_wins_over_the_yaml(recording, module, tmp_path):
     time.sleep(CAMERA_INFO_REPUBLISH_S * 1.5)
     assert infos
     assert [info.K[0] for info in infos] == [pytest.approx(999.0)] * len(infos)
+
+
+class _Bus:
+    """In-process stand-in for a Transport, so DepthCloud's `In` ports can be fed."""
+
+    def __init__(self) -> None:
+        self.subscribers: list = []
+
+    def subscribe(self, callback, stream=None):
+        self.subscribers.append(callback)
+        return lambda: self.subscribers.remove(callback)
+
+    def publish(self, msg) -> None:
+        for callback in list(self.subscribers):
+            callback(msg)
+
+    def stop(self) -> None:
+        pass
+
+
+def test_a_head_only_obstacle_lands_where_it_was_authored(recording, module):
+    """The head camera's whole reason to exist: seeing what the lidar cannot.
+
+    A slab is authored in base_link above the chassis lidar, back-projected into
+    a depth image through the very transform the connection derives from joint
+    angles, and then rebuilt by the same path the robot uses — replay, DepthCloud,
+    tf. Drop that transform, stack a second optical rotation onto it, or let the
+    cloud inherit the vendor's optical frame instead of the calibration frame,
+    and the points come back somewhere else.
+    """
+    config = R1ProConnectionConfig()
+    fk = ArticulatedTf(R1PRO_MODEL, config.articulated_frame_ids, root_link=config.frame_id)
+    neutral = JointState(
+        ts=1000.0,
+        frame_id=config.frame_id,
+        name=R1PRO_UPPER_BODY_JOINTS,
+        position=[0.0] * len(R1PRO_UPPER_BODY_JOINTS),
+    )
+    head = next(
+        t for t in fk.transforms(neutral) if t.child_frame_id == config.head_camera_frame_id
+    )
+
+    fx = fy = 400.0
+    width, height = 640, 480
+    slab_y, slab_z = np.meshgrid(np.arange(-0.4, 0.4, 0.02), np.arange(1.0, 1.4, 0.02))
+    slab_x = 2.5
+    slab = np.stack([np.full(slab_y.size, slab_x), slab_y.ravel(), slab_z.ravel()], axis=1)
+
+    homogeneous = np.hstack([slab, np.ones((len(slab), 1))])
+    in_camera = (homogeneous @ np.linalg.inv(head.to_matrix()).T)[:, :3]
+    columns = np.round(fx * in_camera[:, 0] / in_camera[:, 2] + width / 2).astype(int)
+    rows = np.round(fy * in_camera[:, 1] / in_camera[:, 2] + height / 2).astype(int)
+    depth_frame = np.zeros((height, width), dtype=np.float32)
+    depth_frame[rows, columns] = in_camera[:, 2]
+
+    info = CameraInfo.from_intrinsics(
+        fx=fx,
+        fy=fy,
+        cx=width / 2,
+        cy=height / 2,
+        width=width,
+        height=height,
+        frame_id=config.head_camera_frame_id,
+    )
+    depth = Image(data=depth_frame, format=ImageFormat.DEPTH, frame_id="vendor_optical", ts=1000.0)
+    # Several frames because DepthCloud drops depth that arrives before the
+    # intrinsics, exactly as it drops the first frames off a real camera.
+    frames = 5
+    path = recording(
+        head_depth=(Image, [depth] * frames),
+        head_camera_info=(CameraInfo, [info] * frames),
+        tf=(TFMessage, [TFMessage(head)] * frames),
+    )
+
+    tf = MultiTBuffer()
+    clouds: list = []
+    depth_cloud = DepthCloud(decimation=1, max_range_m=6.0)
+    depth_cloud.depth.transport = _Bus()
+    depth_cloud.camera_info.transport = _Bus()
+    depth_cloud.cloud.subscribe(clouds.append)
+
+    instance = module(dataset=str(path))
+    instance.tf.subscribe(tf.receive_tfmessage)
+    instance.head_camera_info.subscribe(depth_cloud.camera_info.transport.publish)
+    instance.head_depth.subscribe(depth_cloud.depth.transport.publish)
+    try:
+        depth_cloud.start()
+        instance.start()
+        assert settle(clouds, frames)
+
+        assert clouds[0].frame_id == config.head_camera_frame_id
+        edge = tf.get(config.frame_id, clouds[0].frame_id, clouds[0].ts)
+        assert edge is not None, "the recording carries no transform for the head camera"
+
+        points = clouds[0].points_f32()
+        rebuilt = (np.hstack([points, np.ones((len(points), 1))]) @ edge.to_matrix().T)[:, :3]
+        np.testing.assert_allclose(rebuilt[:, 0], slab_x, atol=0.01)
+        assert rebuilt[:, 2].min() > 0.99
+        assert rebuilt[:, 2].max() < 1.39
+    finally:
+        depth_cloud.dispose()
 
 
 def test_a_dataset_is_required(module):
