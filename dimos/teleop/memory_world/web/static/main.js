@@ -480,10 +480,12 @@ window.addEventListener('keydown', (event) => {
     }
 });
 
+// The flat viewer runs anywhere, so a missing headset only changes the
+// status line; Connect stays enabled.
 window.addEventListener('load', async () => {
-    if (!navigator.xr) {
-        setStatus('WebXR not available in this browser');
-        connectBtn.disabled = true;
+    const wantFlat = new URLSearchParams(window.location.search).has('flat');
+    if (!navigator.xr || wantFlat) {
+        setStatus(wantFlat ? 'Flat view — Connect to load the world' : 'No WebXR here — flat view on Connect');
         return;
     }
     try {
@@ -492,8 +494,7 @@ window.addEventListener('load', async () => {
         const supported = backgroundMode === 'passthrough' ? ar : (vr || ar);
         if (!supported) {
             const requested = backgroundMode === 'passthrough' ? 'Passthrough AR' : 'VR/AR';
-            setStatus(`${requested} not supported on this device`);
-            connectBtn.disabled = true;
+            setStatus(`${requested} not on this device — flat view on Connect`);
         }
     } catch (e) {
         log(`xr check failed: ${e.message || e}`);
