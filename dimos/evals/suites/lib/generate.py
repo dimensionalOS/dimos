@@ -39,11 +39,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.scorers import first_number, grade_choice, within
-from dimos.evals.types import EvalCase, Outcome, Select
+from dimos.evals.types import EvalCase, Outcome
 from dimos.memory.cli.dataset import open_dataset
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
+    from dimos.memory.stream import Stream
 
 Row = dict[str, object]
 
@@ -115,7 +116,7 @@ def path_length_rows(dataset: str, windows: Sequence[tuple[float, float]]) -> li
         return rows
 
 
-def select_of(entry: Sequence[Any]) -> Select:
+def select_of(entry: Sequence[Any]) -> Callable[[Store], Stream[Any, Any]]:
     """One context entry, ``[stream, [t0, t1]]`` -> the stream the case contains."""
     if len(entry) != 2:
         raise ValueError(f"context entry has fields this reader does not know: {entry!r}")
@@ -147,7 +148,7 @@ def cases(
     *,
     tags: frozenset[str] = frozenset(),
     grade_of: Callable[[Row], Callable[[Outcome], float]] = grade_of,
-    select_of: Callable[[Sequence[Any]], Select] = select_of,
+    select_of: Callable[[Sequence[Any]], Callable[[Store], Stream[Any, Any]]] = select_of,
 ) -> list[EvalCase]:
     """Rows -> cases, the mirror of the schema above. A row's family, type
     and split (when it has one) become tags."""

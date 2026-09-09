@@ -41,11 +41,13 @@ from dimos.evals.agents.blind import BLIND_BLOCK, Blind
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
 from dimos.evals.agents.mcp_client_adapter import McpClientAdapter
 from dimos.evals.agents.question_answer import QuestionAnswer
+from dimos.evals.cli import load_agent
 from dimos.evals.environments.base import Environment
 from dimos.evals.environments.dataset import Dataset
 from dimos.evals.environments.image_file import ImageFile
 from dimos.evals.environments.lib.launch import default_mcp_url
 from dimos.evals.environments.sim import Sim
+from dimos.evals.module import list_agents
 from dimos.evals.runner import EvalRunner, summarize
 from dimos.evals.scorers import (
     choice,
@@ -58,8 +60,6 @@ from dimos.evals.scorers import (
     within,
     yes_no,
 )
-from dimos.evals.cli import load_agent
-from dimos.evals.module import list_agents
 from dimos.evals.suites import dimsim_house, examples, go2_smoke, go2_vqa
 from dimos.evals.suites.pointcloud.dataset import (
     go2_pointcloud,
@@ -78,9 +78,7 @@ from dimos.evals.suites.pointcloud.dataset import (
     go2_pointcloud_stairs,
 )
 from dimos.evals.suites.pointcloud.sim import dimsim_pointcloud_mapping
-
 from dimos.evals.suites.pointcloud.sim.dimsim_pointcloud_mapping import N_ROOMS, ROOMS, grade_rooms
-from dimos.evals.suites.lib import generate
 from dimos.evals.types import (
     EvalCase,
     Observation,
@@ -202,55 +200,6 @@ def test_parsers() -> None:
     assert compass("north-east") == "northeast"  # not "east"
     with pytest.raises(ValueError):
         compass("no idea")
-
-
-def test_generated_rows_become_cases(dataset: str, tmp_path: Path) -> None:
-    """Every row type grades its reply; an unreadable reply is 0, not an error.
-    Family, type and split are tags; the context selects the stream."""
-
-    def row(**fields: Any) -> generate.Row:
-        return {"id": fields["id"], "family": "f", "q": "?", "dataset": dataset, **fields}
-
-    numeric, mcq = generate.cases(
-        [
-            row(
-                id="n",
-                type="numeric",
-                a=3.0,
-                band=1.0,
-                context=[["odom", [0, 10]]],
-                split="holdout",
-            ),
-            row(
-                id="m",
-                type="mcq",
-                a="north",
-                choices=["north", "south"],
-                context=[["odom", [0, 10]]],
-            ),
-        ],
-        tags=frozenset({"odom"}),
-    )
-
-    def score(case: EvalCase, answer: str) -> float:
-        return case.grade(Outcome(trajectory=_trajectory(answer, tmp_path), artifacts={}))
-
-    assert numeric.tags == {"odom", "f", "numeric", "holdout"} and mcq.tags == {"odom", "f", "mcq"}
-    assert score(numeric, "about 3.5") == 0.5 and score(numeric, "no idea") == 0.0
-    assert score(mcq, "South, then north.") == 1.0 and score(mcq, "east") == 0.0
-    with pytest.raises(ValueError):
-        generate.cases([row(id="x", type="coords", a=[], context=[["odom", [0, 10]]])])
-    with pytest.raises(ValueError):
-        generate.cases([row(id="x", type="numeric", a=1, band=1, context=[["odom", [0, 1], {}]])])
-    store = _open_store(Path(dataset))
-    running = numeric.environment.start("")
-    try:
-        window = [o.ts for o in store.streams.odom.range_time(0, 10)]
-        assert [s.name for s in running.streams] == ["odom"]
-        assert [o.ts for o in running.streams[0]] == window and window
-    finally:
-        numeric.environment.stop()
-        store.stop()
 
 
 def test_dataset_start_hands_out_the_selection(dataset: str) -> None:

@@ -14,15 +14,23 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
+from langchain_core.language_models.fake_chat_models import FakeListChatModel
+import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
+from dimos.evals.agents.pi import recording_file
+from dimos.evals.agents.question_answer import QuestionAnswer
 from dimos.evals.suites.pointcloud.lib import generate
 from dimos.evals.suites.pointcloud.lib.scorers import coord_list, matched_set
 from dimos.evals.types import EvalCase, Outcome
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 def test_coord_list_reads_points_or_the_word_for_none() -> None:
@@ -75,4 +83,66 @@ def test_rows_become_cases_with_coords_and_fused_context(tmp_path: Path) -> None
     assert score(coords, "1.1, 2.0") == 1.0 and score(coords, "none") == 0.0
     assert score(coords, "no idea") == 0.0  # unreadable: wrong, not broken
     assert score(numeric, "about 3.5") == 0.5
-    assert len(fused.environment.select) == 1  # the fuse entry was accepted, lazily
+    assert len(fused.environment.config.select) == 1  # the fuse entry was accepted, lazily
+
+
+def test_fused_selection_reaches_question_answer_and_pi_export(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    dataset_path = tmp_path / "source.db"
+    with SqliteStore(path=str(dataset_path)) as store:
+        lidar = store.stream("lidar", PointCloud2)
+        for i in range(5):
+            cloud = PointCloud2.from_numpy(
+                np.array([[i + 0.02, 0.02, 0.52]], dtype=np.float32),
+                frame_id="world",
+                timestamp=1000.0 + i,
+            )
+            lidar.append(cloud, ts=1000.0 + i)
+        store.stream("excluded", str).append("not selected", ts=1000.0)
+
+    (case,) = generate.cases(
+        [
+            {
+                "id": "fused",
+                "family": "extent",
+                "type": "numeric",
+                "q": "What is the horizontal extent? Answer with one number.",
+                "a": 2.0,
+                "band": 0.1,
+                "dataset": str(dataset_path),
+                "context": [["lidar", [0.5, 3.5], {"downsample": 2, "voxel_size": 0.1}]],
+            }
+        ]
+    )
+    model = FakeListChatModel(responses=["2"])
+    calls = mocker.spy(FakeListChatModel, "generate")
+    agent = QuestionAnswer(chat_model=model)
+    exported_path = tmp_path / "selected.db"
+    try:
+        running = case.environment.start(())
+        trajectory = agent.run(case.inputs, running, tmp_path / "case", timeout_s=10.0)
+        recording_file(running.streams, exported_path)
+    finally:
+        case.environment.stop()
+
+    calls.assert_called_once()
+    _, (messages,) = calls.call_args.args
+    blocks = messages[-1].content
+    assert isinstance(blocks, list)
+    texts = [block["text"] for block in blocks if isinstance(block, dict)]
+    assert texts.count(f"format: {PointCloud2.AGENT_ENCODE_LEGEND}") == 1
+    (encoded_text,) = [text for text in texts if text.startswith("[t=")]
+    encoded = json.loads(encoded_text.partition("] ")[2])
+    assert encoded["num_points"] == 2
+    assert encoded["window_m"]["x"] == [1.05, 3.05]
+    assert case.grade(Outcome(trajectory=trajectory, artifacts={})) == 1.0
+
+    with SqliteStore(path=str(exported_path), must_exist=True) as exported:
+        assert exported.list_streams() == ["lidar"]
+        (observation,) = list(exported.streams.lidar)
+        assert observation.ts == 1003.0
+        assert observation.tags["frame_count"] == 2
+        np.testing.assert_allclose(
+            observation.data.points_f32(), [[1.05, 0.05, 0.55], [3.05, 0.05, 0.55]]
+        )

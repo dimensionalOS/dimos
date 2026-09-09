@@ -34,14 +34,13 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from dimos.evals.suites.lib import generate as shared
-from dimos.evals.suites.lib.generate import Row, _dataset
+from dimos.evals.suites.lib.generate import Row as Row, _dataset as _dataset
 from dimos.evals.suites.pointcloud.lib.scorers import coord_list, matched_set
-from dimos.evals.types import EvalCase, Outcome, Select
+from dimos.evals.types import EvalCase, Outcome
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
-
-__all__ = ["Row", "_dataset"]
+    from dimos.memory.stream import Stream
 
 COMPASS = ("east", "northeast", "north", "northwest", "west", "southwest", "south", "southeast")
 BODY_Z = (0.15, 1.0)  # world-frame band: above floor returns, below robot cap
@@ -348,7 +347,7 @@ def coverage_direction_rows(
         return rows
 
 
-def select_of(entry: Sequence[Any]) -> Select:
+def select_of(entry: Sequence[Any]) -> Callable[[Store], Stream[Any, Any]]:
     """One context entry -> the stream the case contains.
 
     A two-element entry is the plain window the shared reader gives. With a
