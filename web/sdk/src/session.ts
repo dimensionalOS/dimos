@@ -768,7 +768,7 @@ class SessionImpl implements Session {
     // stale drain from a dead robot session and must not re-dirty the store.
     if (this.#manifest === null) return;
     const spec = this.#manifest.channels.find((c) => c.ch === frame.header.ch);
-    const decoder = this.#registry.get(spec?.encoding);
+    const decoder = spec === undefined ? undefined : this.#registry.resolve(spec);
     let value: unknown;
     let preview: string | undefined;
     let decodeOk = true;

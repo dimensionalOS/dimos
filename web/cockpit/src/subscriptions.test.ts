@@ -38,6 +38,14 @@ const odom = spec();
 const jpeg = spec({ ch: "color_image", encoding: "jpeg.v1", delivery: "latest" });
 const costmap = spec({ ch: "global_costmap", encoding: "costmap.zlib.v1", delivery: "latest" });
 const future = spec({ ch: "voxels", encoding: "voxels.bin.v9", delivery: "latest" });
+const lcm = spec({
+  ch: "lcm_pose",
+  encoding: "geometry_msgs.PoseStamped.lcm.v1",
+  params: {
+    lcm: { type: "t.P", fp: "0011223344556677", structs: { "t.P": [["x", "double", null]] } },
+  },
+});
+const lcmBroken = spec({ ch: "lcm_bad", encoding: "t.Q.lcm.v1", params: {} });
 const videoPanel = panel({ id: "cam", kind: "video", channels: ["color_image"] });
 const mapPanel = panel({ id: "map", kind: "map2d", channels: ["global_costmap", "odom"] });
 
@@ -45,6 +53,14 @@ describe("subscribableChannels", () => {
   it("keeps only channels with a decoder (undecodable ones waste bandwidth)", () => {
     expect(subscribableChannels([odom, jpeg, future], [videoPanel])).toEqual([odom, jpeg]);
     expect(subscribableChannels([future], [])).toEqual([]);
+  });
+
+  it("subscribes *.lcm.v1 channels with a usable schema, panel or not", () => {
+    expect(channelSubscribable(lcm, [])).toBe(true);
+    expect(channelSubscribable(lcm, [videoPanel])).toBe(true);
+    // No schema in params: nothing can decode it, so nothing subscribes.
+    expect(channelSubscribable(lcmBroken, [])).toBe(false);
+    expect(subscribableChannels([lcm, lcmBroken], [])).toEqual([lcm]);
   });
 
   it("never subscribes tx channels", () => {

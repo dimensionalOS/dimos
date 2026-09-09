@@ -14,7 +14,9 @@ import { getPanel } from "./panels/registry.tsx";
 export const cockpitDecoders = createDecoderRegistry();
 
 // Encodings whose subscription costs real encode CPU and bandwidth;
-// subscribed only when a panel this build can render binds them.
+// subscribed only when a panel this build can render binds them. *.lcm.v1
+// channels are not listed: like json.v1 ones they subscribe so the channel
+// table can show them, and the author's max_hz bounds what that costs.
 const PANEL_ONLY_ENCODINGS = new Set(["jpeg.v1", "costmap.zlib.v1"]);
 
 /** True when this build can put the channel to use: rx only, it has a
@@ -30,7 +32,7 @@ export function channelSubscribable(
   registry: DecoderRegistry = cockpitDecoders,
 ): boolean {
   if (spec.dir !== "rx") return false;
-  if (registry.get(spec.encoding) === undefined) return false;
+  if (registry.resolve(spec) === undefined) return false;
   if (!PANEL_ONLY_ENCODINGS.has(spec.encoding)) return true;
   return panels.some((p) => getPanel(p.kind) !== undefined && p.channels.includes(spec.ch));
 }

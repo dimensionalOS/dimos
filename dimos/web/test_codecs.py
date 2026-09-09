@@ -26,6 +26,7 @@ import pytest
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.web.codecs import (
     MAX_ENCODED_META_BYTES,
     DecoderDef,
@@ -36,11 +37,13 @@ from dimos.web.codecs import (
     decoder_definition,
     encode_json_v1,
     encoder_definition,
+    is_generic_lcm_encoding,
     resolve_decoder,
     resolve_encoder,
     web_decoder,
     web_encoder,
 )
+from dimos.web.lcm_codec import check_lcm_params, encode_lcm_v1
 
 
 @dataclass(frozen=True)
@@ -312,6 +315,23 @@ def test_resolve_json_v1_whitelist_accepts() -> None:
 def test_resolve_json_v1_whitelist_rejects(message_type: type) -> None:
     with pytest.raises(ValueError, match=r"not supported by json\.v1.*@web_encoder"):
         resolve_encoder("json.v1", message_type)
+
+
+def test_resolve_lcm_v1_family() -> None:
+    definition = resolve_encoder("geometry_msgs.PoseStamped.lcm.v1", PoseStamped)
+    assert definition.encode is encode_lcm_v1 and definition.takes_params is True
+    assert definition.check_params is check_lcm_params
+    with pytest.raises(ValueError, match="encodes nav_msgs.Odometry, not PoseStamped"):
+        resolve_encoder("nav_msgs.Odometry.lcm.v1", PoseStamped)
+    with pytest.raises(ValueError, match="encodes x, not dict"):
+        resolve_encoder("x.lcm.v1", dict)
+    with pytest.raises(ValueError, match="declares its own LCM fingerprint"):
+        resolve_encoder("trajectory_msgs.JointTrajectory.lcm.v1", JointTrajectory)
+    # A registered *.lcm.v1 id is its own codec, not the generic one.
+    web_encoder("t.enc.lcm.v1")(_enc_ok)
+    assert resolve_encoder("t.enc.lcm.v1", _Point).encode is _enc_ok
+    assert is_generic_lcm_encoding("t.enc.lcm.v1") is False
+    assert is_generic_lcm_encoding("geometry_msgs.PoseStamped.lcm.v1") is True
 
 
 def test_resolve_registered_type_mismatch() -> None:

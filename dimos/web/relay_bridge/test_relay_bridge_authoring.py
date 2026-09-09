@@ -35,6 +35,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.resource_monitor.stats import ProcessStats, WorkerStats
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
@@ -271,6 +272,35 @@ def test_resend_flag_replays_cache_on_generated_port(monkeypatch) -> None:
         assert wait_until(lambda: clients[0].frames)
         assert clients[0].frames[0][1] == _NAV_PATH_PAYLOAD
         assert module.encoded["nav_path"] == 0  # replays do not count
+    finally:
+        stop_module(module)
+
+
+def test_lcm_channel_ships_lcm_encode_bytes(monkeypatch) -> None:
+    blueprint = cockpit(channels=[Channel("pose", PoseStamped, max_hz=1000.0)])
+    module, clients = start_authored(monkeypatch, blueprint, wire=("pose",))
+    try:
+        exceptions: list[str] = []
+        monkeypatch.setattr(
+            relay_bridge_module.logger,
+            "exception",
+            lambda msg, *args, **kwargs: exceptions.append(msg),
+        )
+        push(module, clients[0], Subs(chs=["pose"], n=1))
+        pose = transport_of(module, "pose")
+        assert wait_until(lambda: pose.subscribers)
+        module._min_interval = {"pose": 0.0}
+        msg = PoseStamped(ts=2.0, position=[1.0, 2.0, 0.0], orientation=[0, 0, 0, 1])
+        pose.publish(msg)
+        assert wait_until(lambda: clients[0].frames)
+        assert clients[0].frames[0] == ("pose", msg.lcm_encode(), "reliable", None)
+        # A sample of another type carries another fingerprint: dropped and
+        # logged, never sent to a browser that compiled the PoseStamped schema.
+        pose.publish(Pose(1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 1.0))
+        assert wait_until(lambda: bool(exceptions))
+        assert "pose" in exceptions[0]
+        flush_loop(module)
+        assert len(clients[0].frames) == 1 and module.encoded == {"pose": 1}
     finally:
         stop_module(module)
 

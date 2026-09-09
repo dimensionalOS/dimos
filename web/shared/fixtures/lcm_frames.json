@@ -1,0 +1,1114 @@
+{
+  "vectors": [
+    {
+      "name": "pose_stamped",
+      "encoding": "geometry_msgs.PoseStamped.lcm.v1",
+      "schema": {
+        "type": "geometry_msgs.PoseStamped",
+        "fp": "6a82696458c279a0",
+        "structs": {
+          "geometry_msgs.PoseStamped": [
+            [
+              "header",
+              "std_msgs.Header",
+              null
+            ],
+            [
+              "pose",
+              "geometry_msgs.Pose",
+              null
+            ]
+          ],
+          "std_msgs.Header": [
+            [
+              "seq",
+              "int32_t",
+              null
+            ],
+            [
+              "stamp",
+              "std_msgs.Time",
+              null
+            ],
+            [
+              "frame_id",
+              "string",
+              null
+            ]
+          ],
+          "std_msgs.Time": [
+            [
+              "sec",
+              "int32_t",
+              null
+            ],
+            [
+              "nsec",
+              "int32_t",
+              null
+            ]
+          ],
+          "geometry_msgs.Pose": [
+            [
+              "position",
+              "geometry_msgs.Point",
+              null
+            ],
+            [
+              "orientation",
+              "geometry_msgs.Quaternion",
+              null
+            ]
+          ],
+          "geometry_msgs.Point": [
+            [
+              "x",
+              "double",
+              null
+            ],
+            [
+              "y",
+              "double",
+              null
+            ],
+            [
+              "z",
+              "double",
+              null
+            ]
+          ],
+          "geometry_msgs.Quaternion": [
+            [
+              "x",
+              "double",
+              null
+            ],
+            [
+              "y",
+              "double",
+              null
+            ],
+            [
+              "z",
+              "double",
+              null
+            ],
+            [
+              "w",
+              "double",
+              null
+            ]
+          ]
+        }
+      },
+      "payload_b64": "aoJpZFjCeaAAAAAAaL/LwB3NZQAAAAAEbWFwAD/4AAAAAAAAwAQAAAAAAAA/0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/4zMzMzMzMz/pmZmZmZma",
+      "value": {
+        "header": {
+          "seq": 0,
+          "stamp": {
+            "sec": 1757400000,
+            "nsec": 500000000
+          },
+          "frame_id": "map"
+        },
+        "pose": {
+          "position": {
+            "x": 1.5,
+            "y": -2.5,
+            "z": 0.25
+          },
+          "orientation": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.6,
+            "w": 0.8
+          }
+        }
+      }
+    },
+    {
+      "name": "laser_scan",
+      "encoding": "sensor_msgs.LaserScan.lcm.v1",
+      "schema": {
+        "type": "sensor_msgs.LaserScan",
+        "fp": "8de5754e00f25f00",
+        "structs": {
+          "sensor_msgs.LaserScan": [
+            [
+              "ranges_length",
+              "int32_t",
+              null
+            ],
+            [
+              "intensities_length",
+              "int32_t",
+              null
+            ],
+            [
+              "header",
+              "std_msgs.Header",
+              null
+            ],
+            [
+              "angle_min",
+              "float",
+              null
+            ],
+            [
+              "angle_max",
+              "float",
+              null
+            ],
+            [
+              "angle_increment",
+              "float",
+              null
+            ],
+            [
+              "time_increment",
+              "float",
+              null
+            ],
+            [
+              "scan_time",
+              "float",
+              null
+            ],
+            [
+              "range_min",
+              "float",
+              null
+            ],
+            [
+              "range_max",
+              "float",
+              null
+            ],
+            [
+              "ranges",
+              "float",
+              [
+                "ranges_length"
+              ]
+            ],
+            [
+              "intensities",
+              "float",
+              [
+                "intensities_length"
+              ]
+            ]
+          ],
+          "std_msgs.Header": [
+            [
+              "seq",
+              "int32_t",
+              null
+            ],
+            [
+              "stamp",
+              "std_msgs.Time",
+              null
+            ],
+            [
+              "frame_id",
+              "string",
+              null
+            ]
+          ],
+          "std_msgs.Time": [
+            [
+              "sec",
+              "int32_t",
+              null
+            ],
+            [
+              "nsec",
+              "int32_t",
+              null
+            ]
+          ]
+        }
+      },
+      "payload_b64": "jeV1TgDyXwAAAAAFAAAAAAAAAAdov8vAHc1lAAAAAAZsYXNlcgC/wAAAP8AAAD9AAAAAAAAAPczMzT6AAABB8AAAPwAAAD+gAABAMAAAQfAAAEFIAAA=",
+      "value": {
+        "ranges_length": 5,
+        "intensities_length": 0,
+        "header": {
+          "seq": 7,
+          "stamp": {
+            "sec": 1757400000,
+            "nsec": 500000000
+          },
+          "frame_id": "laser"
+        },
+        "angle_min": -1.5,
+        "angle_max": 1.5,
+        "angle_increment": 0.75,
+        "time_increment": 0.0,
+        "scan_time": 0.10000000149011612,
+        "range_min": 0.25,
+        "range_max": 30.0,
+        "ranges": [
+          0.5,
+          1.25,
+          2.75,
+          30.0,
+          12.5
+        ],
+        "intensities": []
+      }
+    },
+    {
+      "name": "imu",
+      "encoding": "sensor_msgs.Imu.lcm.v1",
+      "schema": {
+        "type": "sensor_msgs.Imu",
+        "fp": "31ab205c8dd57aa8",
+        "structs": {
+          "sensor_msgs.Imu": [
+            [
+              "header",
+              "std_msgs.Header",
+              null
+            ],
+            [
+              "orientation",
+              "geometry_msgs.Quaternion",
+              null
+            ],
+            [
+              "orientation_covariance",
+              "double",
+              [
+                9
+              ]
+            ],
+            [
+              "angular_velocity",
+              "geometry_msgs.Vector3",
+              null
+            ],
+            [
+              "angular_velocity_covariance",
+              "double",
+              [
+                9
+              ]
+            ],
+            [
+              "linear_acceleration",
+              "geometry_msgs.Vector3",
+              null
+            ],
+            [
+              "linear_acceleration_covariance",
+              "double",
+              [
+                9
+              ]
+            ]
+          ],
+          "std_msgs.Header": [
+            [
+              "seq",
+              "int32_t",
+              null
+            ],
+            [
+              "stamp",
+              "std_msgs.Time",
+              null
+            ],
+            [
+              "frame_id",
+              "string",
+              null
+            ]
+          ],
+          "std_msgs.Time": [
+            [
+              "sec",
+              "int32_t",
+              null
+            ],
+            [
+              "nsec",
+              "int32_t",
+              null
+            ]
+          ],
+          "geometry_msgs.Quaternion": [
+            [
+              "x",
+              "double",
+              null
+            ],
+            [
+              "y",
+              "double",
+              null
+            ],
+            [
+              "z",
+              "double",
+              null
+            ],
+            [
+              "w",
+              "double",
+              null
+            ]
+          ],
+          "geometry_msgs.Vector3": [
+            [
+              "x",
+              "double",
+              null
+            ],
+            [
+              "y",
+              "double",
+              null
+            ],
+            [
+              "z",
+              "double",
+              null
+            ]
+          ]
+        }
+      },
+      "payload_b64": "MasgXI3VeqgAAAAAaL/LwB3NZQAAAAAEaW11AAAAAAAAAAAAAAAAAAAAAAA/4zMzMzMzMz/pmZmZmZmaP4R64UeuFHs/hHrhR64Uez+EeuFHrhR7P4R64UeuFHs/hHrhR64Uez+EeuFHrhR7P4R64UeuFHs/hHrhR64Uez+EeuFHrhR7P7mZmZmZmZq/yZmZmZmZmj/TMzMzMzMzAAAAAAAAAAA/8AAAAAAAAEAAAAAAAAAAQAgAAAAAAABAEAAAAAAAAEAUAAAAAAAAQBgAAAAAAABAHAAAAAAAAEAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAjAAAAAAAAP564UeuFHrg/nrhR64UeuD+euFHrhR64P564UeuFHrg/nrhR64UeuD+euFHrhR64P564UeuFHrg/nrhR64UeuD+euFHrhR64",
+      "value": {
+        "header": {
+          "seq": 0,
+          "stamp": {
+            "sec": 1757400000,
+            "nsec": 500000000
+          },
+          "frame_id": "imu"
+        },
+        "orientation": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.6,
+          "w": 0.8
+        },
+        "orientation_covariance": [
+          0.01,
+          0.01,
+          0.01,
+          0.01,
+          0.01,
+          0.01,
+          0.01,
+          0.01,
+          0.01
+        ],
+        "angular_velocity": {
+          "x": 0.1,
+          "y": -0.2,
+          "z": 0.3
+        },
+        "angular_velocity_covariance": [
+          0.0,
+          1.0,
+          2.0,
+          3.0,
+          4.0,
+          5.0,
+          6.0,
+          7.0,
+          8.0
+        ],
+        "linear_acceleration": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 9.5
+        },
+        "linear_acceleration_covariance": [
+          0.03,
+          0.03,
+          0.03,
+          0.03,
+          0.03,
+          0.03,
+          0.03,
+          0.03,
+          0.03
+        ]
+      }
+    },
+    {
+      "name": "occupancy_grid",
+      "encoding": "nav_msgs.OccupancyGrid.lcm.v1",
+      "schema": {
+        "type": "nav_msgs.OccupancyGrid",
+        "fp": "e7dfd179cdfc3b65",
+        "structs": {
+          "nav_msgs.OccupancyGrid": [
+            [
+              "data_length",
+              "int32_t",
+              null
+            ],
+            [
+              "header",
+              "std_msgs.Header",
+              null
+            ],
+            [
+              "info",
+              "nav_msgs.MapMetaData",
+              null
+            ],
+            [
+              "data",
+              "int8_t",
+              [
+                "data_length"
+              ]
+            ]
+          ],
+          "std_msgs.Header": [
+            [
+              "seq",
+              "int32_t",
+              null
+            ],
+            [
+              "stamp",
+              "std_msgs.Time",
+              null
+            ],
+            [
+              "frame_id",
+              "string",
+              null
+            ]
+          ],
+          "std_msgs.Time": [
+            [
+              "sec",
+              "int32_t",
+              null
+            ],
+            [
+              "nsec",
+              "int32_t",
+              null
+            ]
+          ],
+          "nav_msgs.MapMetaData": [
+            [
+              "map_load_time",
+              "std_msgs.Time",
+              null
+            ],
+            [
+              "resolution",
+              "float",
+              null
+            ],
+            [
+              "width",
+              "int32_t",
+              null
+            ],
+            [
+              "height",
+              "int32_t",
+              null
+            ],
+            [
+              "origin",
+              "geometry_msgs.Pose",
+              null
+            ]
+          ],
+          "geometry_msgs.Pose": [
+            [
+              "position",
+              "geometry_msgs.Point",
+              null
+            ],
+            [
+              "orientation",
+              "geometry_msgs.Quaternion",
+              null
+            ]
+          ],
+          "geometry_msgs.Point": [
+            [
+              "x",
+              "double",
+              null
+            ],
+            [
+              "y",
+              "double",
+              null
+            ],
+            [
+              "z",
+              "double",
+              null
+            ]
+          ],
+          "geometry_msgs.Quaternion": [
+            [
+              "x",
+              "double",
+              null
+            ],
+            [
+              "y",
+              "double",
+              null
+            ],
+            [
+              "z",
+              "double",
+              null
+            ],
+            [
+              "w",
+              "double",
+              null
+            ]
+          ]
+        }
+      },
+      "payload_b64": "59/Rec38O2UAAAAGAAAAAGi/y8AdzWUAAAAABG1hcABov8vAHc1lAD1MzM0AAAADAAAAAsAUAAAAAAAAwBQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/wAAAAAAAAAGT/MgAH",
+      "value": {
+        "data_length": 6,
+        "header": {
+          "seq": 0,
+          "stamp": {
+            "sec": 1757400000,
+            "nsec": 500000000
+          },
+          "frame_id": "map"
+        },
+        "info": {
+          "map_load_time": {
+            "sec": 1757400000,
+            "nsec": 500000000
+          },
+          "resolution": 0.05000000074505806,
+          "width": 3,
+          "height": 2,
+          "origin": {
+            "position": {
+              "x": -5.0,
+              "y": -5.0,
+              "z": 0.0
+            },
+            "orientation": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0,
+              "w": 1.0
+            }
+          }
+        },
+        "data": [
+          0,
+          100,
+          -1,
+          50,
+          0,
+          7
+        ]
+      }
+    },
+    {
+      "name": "joint_state",
+      "encoding": "sensor_msgs.JointState.lcm.v1",
+      "schema": {
+        "type": "sensor_msgs.JointState",
+        "fp": "ccefa8a492b967e3",
+        "structs": {
+          "sensor_msgs.JointState": [
+            [
+              "name_length",
+              "int32_t",
+              null
+            ],
+            [
+              "position_length",
+              "int32_t",
+              null
+            ],
+            [
+              "velocity_length",
+              "int32_t",
+              null
+            ],
+            [
+              "effort_length",
+              "int32_t",
+              null
+            ],
+            [
+              "header",
+              "std_msgs.Header",
+              null
+            ],
+            [
+              "name",
+              "string",
+              [
+                "name_length"
+              ]
+            ],
+            [
+              "position",
+              "double",
+              [
+                "position_length"
+              ]
+            ],
+            [
+              "velocity",
+              "double",
+              [
+                "velocity_length"
+              ]
+            ],
+            [
+              "effort",
+              "double",
+              [
+                "effort_length"
+              ]
+            ]
+          ],
+          "std_msgs.Header": [
+            [
+              "seq",
+              "int32_t",
+              null
+            ],
+            [
+              "stamp",
+              "std_msgs.Time",
+              null
+            ],
+            [
+              "frame_id",
+              "string",
+              null
+            ]
+          ],
+          "std_msgs.Time": [
+            [
+              "sec",
+              "int32_t",
+              null
+            ],
+            [
+              "nsec",
+              "int32_t",
+              null
+            ]
+          ]
+        }
+      },
+      "payload_b64": "zO+opJK5Z+MAAAADAAAAAwAAAAMAAAADAAAAAGi/y8AdzWUAAAAABGFybQAAAAAJc2hvdWxkZXIAAAAABmVsYm93AAAAAAl3cmlzdF/DqQA/uZmZmZmZmr/JmZmZmZmaP9MzMzMzMzM/hHrhR64Uez+UeuFHrhR7P564UeuFHrg/8AAAAAAAAEAAAAAAAAAAQAgAAAAAAAA=",
+      "value": {
+        "name_length": 3,
+        "position_length": 3,
+        "velocity_length": 3,
+        "effort_length": 3,
+        "header": {
+          "seq": 0,
+          "stamp": {
+            "sec": 1757400000,
+            "nsec": 500000000
+          },
+          "frame_id": "arm"
+        },
+        "name": [
+          "shoulder",
+          "elbow",
+          "wrist_\u00e9"
+        ],
+        "position": [
+          0.1,
+          -0.2,
+          0.3
+        ],
+        "velocity": [
+          0.01,
+          0.02,
+          0.03
+        ],
+        "effort": [
+          1.0,
+          2.0,
+          3.0
+        ]
+      }
+    },
+    {
+      "name": "point_cloud",
+      "encoding": "sensor_msgs.PointCloud2.lcm.v1",
+      "schema": {
+        "type": "sensor_msgs.PointCloud2",
+        "fp": "f5eb3da1c2853175",
+        "structs": {
+          "sensor_msgs.PointCloud2": [
+            [
+              "fields_length",
+              "int32_t",
+              null
+            ],
+            [
+              "data_length",
+              "int32_t",
+              null
+            ],
+            [
+              "header",
+              "std_msgs.Header",
+              null
+            ],
+            [
+              "height",
+              "int32_t",
+              null
+            ],
+            [
+              "width",
+              "int32_t",
+              null
+            ],
+            [
+              "fields",
+              "sensor_msgs.PointField",
+              [
+                "fields_length"
+              ]
+            ],
+            [
+              "is_bigendian",
+              "boolean",
+              null
+            ],
+            [
+              "point_step",
+              "int32_t",
+              null
+            ],
+            [
+              "row_step",
+              "int32_t",
+              null
+            ],
+            [
+              "data",
+              "byte",
+              [
+                "data_length"
+              ]
+            ],
+            [
+              "is_dense",
+              "boolean",
+              null
+            ]
+          ],
+          "std_msgs.Header": [
+            [
+              "seq",
+              "int32_t",
+              null
+            ],
+            [
+              "stamp",
+              "std_msgs.Time",
+              null
+            ],
+            [
+              "frame_id",
+              "string",
+              null
+            ]
+          ],
+          "std_msgs.Time": [
+            [
+              "sec",
+              "int32_t",
+              null
+            ],
+            [
+              "nsec",
+              "int32_t",
+              null
+            ]
+          ],
+          "sensor_msgs.PointField": [
+            [
+              "name",
+              "string",
+              null
+            ],
+            [
+              "offset",
+              "int32_t",
+              null
+            ],
+            [
+              "datatype",
+              "byte",
+              null
+            ],
+            [
+              "count",
+              "int32_t",
+              null
+            ]
+          ]
+        }
+      },
+      "payload_b64": "9es9ocKFMXUAAAADAAAAGAAAAABov8vAHc1lAAAAAAZsaWRhcgAAAAABAAAAAgAAAAJ4AAAAAAAHAAAAAQAAAAJ5AAAAAAQHAAAAAQAAAAJ6AAAAAAgHAAAAAQAAAAAMAAAAGAAAgD8AAABAAABAQAAAgMAAALBAAADIQAE=",
+      "value": {
+        "fields_length": 3,
+        "data_length": 24,
+        "header": {
+          "seq": 0,
+          "stamp": {
+            "sec": 1757400000,
+            "nsec": 500000000
+          },
+          "frame_id": "lidar"
+        },
+        "height": 1,
+        "width": 2,
+        "fields": [
+          {
+            "name": "x",
+            "offset": 0,
+            "datatype": 7,
+            "count": 1
+          },
+          {
+            "name": "y",
+            "offset": 4,
+            "datatype": 7,
+            "count": 1
+          },
+          {
+            "name": "z",
+            "offset": 8,
+            "datatype": 7,
+            "count": 1
+          }
+        ],
+        "is_bigendian": false,
+        "point_step": 12,
+        "row_step": 24,
+        "data": "AACAPwAAAEAAAEBAAACAwAAAsEAAAMhA",
+        "is_dense": true
+      }
+    },
+    {
+      "name": "tf_message",
+      "encoding": "tf2_msgs.TFMessage.lcm.v1",
+      "schema": {
+        "type": "tf2_msgs.TFMessage",
+        "fp": "c2b8a1c33a8923ec",
+        "structs": {
+          "tf2_msgs.TFMessage": [
+            [
+              "transforms_length",
+              "int32_t",
+              null
+            ],
+            [
+              "transforms",
+              "geometry_msgs.TransformStamped",
+              [
+                "transforms_length"
+              ]
+            ]
+          ],
+          "geometry_msgs.TransformStamped": [
+            [
+              "header",
+              "std_msgs.Header",
+              null
+            ],
+            [
+              "child_frame_id",
+              "string",
+              null
+            ],
+            [
+              "transform",
+              "geometry_msgs.Transform",
+              null
+            ]
+          ],
+          "std_msgs.Header": [
+            [
+              "seq",
+              "int32_t",
+              null
+            ],
+            [
+              "stamp",
+              "std_msgs.Time",
+              null
+            ],
+            [
+              "frame_id",
+              "string",
+              null
+            ]
+          ],
+          "std_msgs.Time": [
+            [
+              "sec",
+              "int32_t",
+              null
+            ],
+            [
+              "nsec",
+              "int32_t",
+              null
+            ]
+          ],
+          "geometry_msgs.Transform": [
+            [
+              "translation",
+              "geometry_msgs.Vector3",
+              null
+            ],
+            [
+              "rotation",
+              "geometry_msgs.Quaternion",
+              null
+            ]
+          ],
+          "geometry_msgs.Vector3": [
+            [
+              "x",
+              "double",
+              null
+            ],
+            [
+              "y",
+              "double",
+              null
+            ],
+            [
+              "z",
+              "double",
+              null
+            ]
+          ],
+          "geometry_msgs.Quaternion": [
+            [
+              "x",
+              "double",
+              null
+            ],
+            [
+              "y",
+              "double",
+              null
+            ],
+            [
+              "z",
+              "double",
+              null
+            ],
+            [
+              "w",
+              "double",
+              null
+            ]
+          ]
+        }
+      },
+      "payload_b64": "wrihwzqJI+wAAAACAAAAAWi/y8AdzWUAAAAABG1hcAAAAAAKYmFzZV9saW5rAD+5mZmZmZmaAAAAAAAAAAA/4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/4zMzMzMzMz/pmZmZmZmaAAAAAWi/y8AdzWUAAAAACmJhc2VfbGluawAAAAAHY2FtZXJhAL/wAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/wAAAAAAAA",
+      "value": {
+        "transforms_length": 2,
+        "transforms": [
+          {
+            "header": {
+              "seq": 1,
+              "stamp": {
+                "sec": 1757400000,
+                "nsec": 500000000
+              },
+              "frame_id": "map"
+            },
+            "child_frame_id": "base_link",
+            "transform": {
+              "translation": {
+                "x": 0.1,
+                "y": 0.0,
+                "z": 0.5
+              },
+              "rotation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.6,
+                "w": 0.8
+              }
+            }
+          },
+          {
+            "header": {
+              "seq": 1,
+              "stamp": {
+                "sec": 1757400000,
+                "nsec": 500000000
+              },
+              "frame_id": "base_link"
+            },
+            "child_frame_id": "camera",
+            "transform": {
+              "translation": {
+                "x": -1.0,
+                "y": 2.0,
+                "z": 0.0
+              },
+              "rotation": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "w": 1.0
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "int64",
+      "encoding": "std_msgs.Int64.lcm.v1",
+      "schema": {
+        "type": "std_msgs.Int64",
+        "fp": "2cbcf9fdee91023e",
+        "structs": {
+          "std_msgs.Int64": [
+            [
+              "data",
+              "int64_t",
+              null
+            ]
+          ]
+        }
+      },
+      "payload_b64": "LLz5/e6RAj7/3////////w==",
+      "value": {
+        "data": "-9007199254740993"
+      }
+    }
+  ]
+}
