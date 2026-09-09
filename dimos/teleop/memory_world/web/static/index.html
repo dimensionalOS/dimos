@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>DimOS Memory World (VR)</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -166,6 +166,12 @@
         body.desktop-view #ui, body.desktop-view #perf { opacity: 0; transition: opacity 0.25s; }
         body.desktop-view #ui:hover, body.desktop-view.hud-visible #ui,
         body.desktop-view.hud-visible #perf { opacity: 1; }
+        /* No hover on a phone, so the buttons (mic, disconnect) must stay reachable. */
+        @media (hover: none) {
+            body.desktop-view #ui { opacity: 1; }
+            body.desktop-view #hints, body.desktop-view #desktopHints { display: none; }
+            body.desktop-view h1 { display: none; }
+        }
         body.desktop-view #desktopHints { display: block; margin-top: 10px; }
         #desktopHints { display: none; }
     </style>
@@ -191,7 +197,7 @@
             <b>RIGHT A</b>  hold to ask "where did I see …"
         </div>
         <div id="desktopHints" class="hints">
-            <b>DRAG</b>  look around<br>
+            <b>DRAG</b>  look around &nbsp; (phone: one finger looks, two fingers walk / pinch to scale)<br>
             <b>DOUBLE-CLICK</b>  free-look / capture mouse (ESC releases)<br>
             <b>W A S D</b>  walk / strafe &nbsp; <b>SHIFT</b> sprint<br>
             <b>WHEEL</b>  scale world<br>

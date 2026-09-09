@@ -454,6 +454,8 @@ window.app = {
     jumpTo: (index = 0) => scene && !scene.viewFrom(index) && scene.focusOn(scene._lastResultPoints[index].position),
     // Stand where the camera behind the i-th answer stood (also key P, cycling).
     viewFrom: (index = 0) => scene && scene.viewFrom(index),
+    // View state for automated checks: where the desktop camera looks and the world scale.
+    viewState: () => scene && { yaw: scene._desktopYaw, pitch: scene._desktopPitch, scale: scene._worldGroup.scale.x },
 };
 
 // H pins the desktop menu and perf readout, which otherwise fade out once
