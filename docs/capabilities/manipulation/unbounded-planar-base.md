@@ -45,7 +45,7 @@ Run the fake-hardware blueprint and open the Viser URL printed in the log:
 
 ```bash
 uv sync --extra all
-dimos run r1pro-planner-coordinator
+dimos run r1pro-planar-preview
 ```
 
 | Check | Action | Expected result |
