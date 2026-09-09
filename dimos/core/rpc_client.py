@@ -168,6 +168,9 @@ class RPCClient:
             (self.actor_instance, self.actor_class, self.remote_name),
         )
 
+    def __dir__(self) -> list[str]:
+        return sorted(set(super().__dir__()) | set(self.rpcs))
+
     # passthrough
     def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
         # Check if accessing a known safe attribute to avoid recursion
