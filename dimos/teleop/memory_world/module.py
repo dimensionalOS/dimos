@@ -850,7 +850,8 @@ class MemoryWorldModule(Module):
             points=[
                 HighlightPoint(
                     position=place.position,
-                    label=f"{phrase} ({place.similarity:+.3f})",
+                    label=f"{phrase} ({place.similarity:+.3f}, {place.views} view"
+                    f"{'s' if place.views != 1 else ''})",
                 )
                 for place in places
             ],
