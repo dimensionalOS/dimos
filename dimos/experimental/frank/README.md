@@ -14,14 +14,33 @@ npm i -g @earendil-works/pi-coding-agent
 cp -n dimos/experimental/frank/.env.example dimos/experimental/frank/.env
 ```
 
+Frank uses ElevenLabs for speech. Create an ElevenLabs account and get an API key.
+
 Configure the two environment files:
 
-- **`dimos/experimental/frank/.env`:** fill in `ELEVENLABS_API_KEY`,
-  `ELEVENLABS_VOICE_ID`, and `CEREBRAS_API_KEY`. Set `FRANK_ROBOT_IP` to your
+- **`dimos/experimental/frank/.env`:** fill in `ELEVENLABS_API_KEY`. Set `FRANK_ROBOT_IP` to your
   Go2's address (default: `10.0.0.79`).
 - **Repository-root `.env`:** set `DIMOS_UNITREE_AES_128_KEY` for your Go2.
 
-Select your speaker as the system's default audio output, then test it:
+### Choose a model
+
+Open `pi`, authenticate with your chosen provider (for example, OpenAI), and use
+`/model` to choose a model. Press Ctrl+S in the model picker to save it as the
+startup default. Frank uses that default.
+
+To override it for Frank, set `FRANK_MODEL` in Frank's `.env` or pass
+`up.py --model <provider/model-id>` (the command-line option takes precedence).
+A Cerebras key is only needed if you choose Cerebras.
+
+### Develop Frank's voice
+
+Develop Frank's voice with Codex or Claude Code: describe the voice you want and
+ask the agent to use `tools/design_voice.py` to generate and play previews.
+Listen, give feedback, and iterate until you're happy. Then have the agent save
+the chosen voice and set `ELEVENLABS_VOICE_ID` in `dimos/experimental/frank/.env`
+so future runs use that voice.
+
+Select your speaker as the system's default audio output, then test the saved voice:
 
 ```bash
 uv run python dimos/experimental/frank/tools/speak.py "Hello, I'm Frank."
@@ -89,6 +108,5 @@ recordings manually. Recording is enabled for Frank's memory and uses roughly 6 
 - `up.py`: service orchestration; `loop.py`: agent loop; `tools/`: operator CLIs;
   `pi/`: agent extensions.
 
-Frank uses `cerebras/gemma-4-31b` by default; override it with `up.py --model` or
-`FRANK_MODEL`. Optional robot vision settings are in `.env.example` and require
+Optional robot vision settings are in `.env.example` and require
 restarting the robot stack.

@@ -292,7 +292,7 @@ def main() -> int:
     args = p.parse_args()
 
     if args.model is None and args.harness == "pi":
-        args.model = os.environ.get("FRANK_MODEL", "cerebras/gemma-4-31b")
+        args.model = os.environ.get("FRANK_MODEL")
     headers = {}
     if os.environ.get("FRANK_AGENT_TOKEN"):
         headers["Authorization"] = "Bearer " + os.environ["FRANK_AGENT_TOKEN"]
