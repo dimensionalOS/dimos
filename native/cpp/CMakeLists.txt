@@ -75,6 +75,13 @@ transport needs, rebuild it with -DZENOHC_BUILD_WITH_UNSTABLE_API=ON")
 endif()
 target_link_libraries(dimos_native INTERFACE zenohcxx::zenohc)
 
+# LCM transport. transport_factory.hpp includes lcm_transport.hpp
+# unconditionally, so liblcm is a compile dependency of the SDK headers, not
+# something a consumer opts into.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LCM REQUIRED IMPORTED_TARGET lcm)
+target_link_libraries(dimos_native INTERFACE PkgConfig::LCM)
+
 option(DIMOS_NATIVE_BUILD_TESTS "Build the dimos native SDK tests" OFF)
 if(DIMOS_NATIVE_BUILD_TESTS)
   enable_testing()

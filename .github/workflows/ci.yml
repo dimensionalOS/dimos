@@ -257,8 +257,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      # liblcm is needed to test that transport; zenoh is needed to build at
-      # all, and has no apt package, so it comes from its release
+      # The SDK headers include both transports, so liblcm and zenoh are both
+      # needed to build at all. Zenoh has no apt package, so it comes from its
+      # release
       - name: Install system dependencies
         env:
           ZENOH_VERSION: 1.9.0
