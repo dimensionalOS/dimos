@@ -127,7 +127,21 @@ class VisualMemoryIndex:
     @property
     def index_stream(self) -> Any:
         if self._index_stream is None:
-            self._index_stream = self.store.stream(self.index_stream_name, int)
+            stream = self.store.stream(self.index_stream_name, int)
+            if stream.count() > 0:
+                built_with = stream.first().tags.get("model")
+                if built_with is None:
+                    logger.warning(
+                        "index stream %r predates model tagging; assuming it was built with %s",
+                        self.index_stream_name,
+                        self.model_name,
+                    )
+                elif built_with != self.model_name:
+                    raise ValueError(
+                        f"index stream {self.index_stream_name!r} was built with {built_with}, "
+                        f"not {self.model_name}; rebuild it or pass model_name={built_with!r}"
+                    )
+            self._index_stream = stream
         return self._index_stream
 
     def count(self) -> int:
@@ -162,7 +176,13 @@ class VisualMemoryIndex:
             if not isinstance(embeddings, list):
                 embeddings = [embeddings]
             for obs, embedding in zip(batch, embeddings, strict=True):
-                target.append(int(obs.id), ts=obs.ts, pose=obs.pose, embedding=embedding)
+                target.append(
+                    int(obs.id),
+                    ts=obs.ts,
+                    pose=obs.pose,
+                    embedding=embedding,
+                    tags={"model": self.model_name},
+                )
                 added += 1
             logger.info("indexed %d frames of %s", added, self.image_stream_name)
         return added

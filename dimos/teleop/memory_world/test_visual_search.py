@@ -14,9 +14,20 @@
 
 from __future__ import annotations
 
-import pytest
+import sqlite3
+import tempfile
+from typing import TYPE_CHECKING
 
-from dimos.teleop.memory_world.visual_search import Place, cluster_places
+import numpy as np
+import pytest
+import sqlite_vec
+
+from dimos.memory.store.sqlite import SqliteStore
+from dimos.models.embedding.base import Embedding
+from dimos.teleop.memory_world.visual_search import Place, VisualMemoryIndex, cluster_places
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def place(x: float, y: float, similarity: float, source_id: int = 0) -> Place:
@@ -81,3 +92,54 @@ def test_no_candidates_yields_no_places() -> None:
 def test_invalid_parameters_are_rejected(radius: float, max_places: int) -> None:
     with pytest.raises(ValueError):
         cluster_places([place(0.0, 0.0, 0.5)], radius=radius, max_places=max_places)
+
+
+# ---- index/model compatibility --------------------------------------------
+
+
+@pytest.fixture
+def sqlite_store() -> Iterator[SqliteStore]:
+    """A throwaway store; skipped only where sqlite-vec really cannot load."""
+    probe = sqlite3.connect(":memory:")
+    try:
+        probe.enable_load_extension(True)
+        sqlite_vec.load(probe)
+    except (AttributeError, sqlite3.OperationalError) as error:
+        pytest.skip(f"sqlite-vec extension not loadable here: {error}")
+    finally:
+        probe.close()
+    with tempfile.NamedTemporaryFile(suffix=".db") as f:
+        store = SqliteStore(path=f.name)
+        with store:
+            yield store
+
+
+def _seed_index(store: SqliteStore, stream_name: str, model_name: str, dims: int = 4) -> None:
+    store.stream(stream_name, int).append(
+        7,
+        ts=1.0,
+        pose=None,
+        embedding=Embedding(np.zeros(dims, dtype=np.float32)),
+        tags={"model": model_name},
+    )
+
+
+def test_index_built_by_another_model_is_refused(sqlite_store: SqliteStore) -> None:
+    _seed_index(sqlite_store, "image_siglip2", "google/siglip2-so400m-patch16-384")
+    index = VisualMemoryIndex(sqlite_store, model_name="google/siglip2-giant-opt-patch16-384")
+    with pytest.raises(ValueError, match="so400m"):
+        _ = index.index_stream
+
+
+def test_index_built_by_the_same_model_opens(sqlite_store: SqliteStore) -> None:
+    _seed_index(sqlite_store, "image_siglip2", "google/siglip2-giant-opt-patch16-384")
+    index = VisualMemoryIndex(sqlite_store, model_name="google/siglip2-giant-opt-patch16-384")
+    assert index.count() == 1
+
+
+def test_untagged_index_is_accepted_as_legacy(sqlite_store: SqliteStore) -> None:
+    sqlite_store.stream("image_siglip2", int).append(
+        7, ts=1.0, pose=None, embedding=Embedding(np.zeros(4, dtype=np.float32))
+    )
+    index = VisualMemoryIndex(sqlite_store)
+    assert index.count() == 1
