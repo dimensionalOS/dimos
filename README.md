@@ -137,49 +137,9 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 # Installation
 
-The interactive installer is being consolidated in [`installer/`](installer/).
-Until installation checks pass on the supported platforms, use the manual guides below.
+Create an editable SDK workspace with the [DimOS workspace creator](docs/installation/installer.md), derived from DIOS installation logic. Choose a navigation or manipulation profile, activate the generated environment, then develop with `dimos`, Python, pytest, and uv. Optional direnv handles automatic activation.
 
-## Manual System Install
-
-To set up your system dependencies, follow one of these guides:
-
-- 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
-- 🟩 [NixOS / General Linux](docs/installation/nix.md)
-- 🟧 [macOS](docs/installation/osx.md)
-
-> Full system requirements, tested configs, and dependency tiers: [docs/requirements.md](docs/requirements.md)
-
-## Python Install
-
-### Quickstart
-
-```bash
-uv venv --python "3.12"
-source .venv/bin/activate
-uv pip install 'dimos[base,unitree]'
-
-# Replay a recorded quadruped session (no hardware needed)
-# NOTE: First run will show a black rerun window while ~75 MB downloads from LFS
-dimos --replay run unitree-go2
-```
-
-```bash
-# Install with simulation support
-uv pip install 'dimos[base,unitree,sim]'
-
-# Run quadruped in MuJoCo simulation
-dimos --simulation run unitree-go2
-
-# Run humanoid in simulation
-dimos --simulation run unitree-g1-sim
-```
-
-```bash
-# Control a real robot (Unitree quadruped over WebRTC)
-export ROBOT_IP=<YOUR_ROBOT_IP>
-dimos run unitree-go2
-```
+The public curl entry point remains withdrawn until the revised platform checks and team verification are accepted. The [installation guide](docs/installation/installer.md) covers source builds, SDK workspaces, contributor checkouts, and restoration.
 
 # Featured Runfiles
 

@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""Print the setup annotations as a Mermaid diagram."""
+
+from pathlib import Path
+
+root = Path(__file__).resolve().parents[1]
+print("flowchart TD")
+for line in (root / "src/setup/mod.rs").read_text().splitlines():
+    if "// @flow " in line:
+        annotation = line.split("// @flow ", 1)[1]
+        print("    " + annotation.split(" :", 1)[0])

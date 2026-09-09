@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo=$(cd "$(dirname "$0")/../.." && pwd)
+version=${DIMOS_SDK_VERSION:?Set DIMOS_SDK_VERSION to the matching Python package version}
+out=${1:?usage: DIMOS_SDK_VERSION=... installer/run/package OUTPUT_DIR}
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
+case "$(uname -s)/$(uname -m)" in
+    Linux/x86_64) arch=x86_64 ;;
+    Linux/aarch64|Linux/arm64) arch=aarch64 ;;
+    *) echo 'Creator release builds require native Linux x86_64 or aarch64' >&2; exit 1 ;;
+esac
+cargo build --release --locked --manifest-path "$repo/installer/Cargo.toml"
+cp "$repo/installer/target/release/create-dimos" "$out/create-dimos-linux-$arch"
+sed "s/@DIMOS_RELEASE@/v$version/g" "$repo/installer/bootstrap.sh" > "$out/create-dimos.sh"
+(cd "$out" && sha256sum "create-dimos-linux-$arch" > "SHA256SUMS-$arch")

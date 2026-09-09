@@ -1,0 +1,33 @@
+name: Build workspace creator
+on:
+  workflow_call:
+    inputs:
+      sdk-version:
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - {os: ubuntu-22.04, arch: x86_64}
+          - {os: ubuntu-22.04-arm, arch: aarch64}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v10.0.1
+      - name: Build versioned creator assets
+        env:
+          REQUESTED_VERSION: ${{ inputs.sdk-version }}
+        run: |
+          export DIMOS_SDK_VERSION="${REQUESTED_VERSION:-$(uv version --short --frozen)}"
+          installer/run/package .dimos/creator-assets
+          installer/target/release/create-dimos --help
+      - uses: actions/upload-artifact@v7
+        with:
+          name: creator-${{ matrix.arch }}
+          path: .dimos/creator-assets/
+          include-hidden-files: true

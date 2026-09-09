@@ -1,0 +1,86 @@
+name: Workspace creator
+on:
+  pull_request:
+    paths:
+      - 'installer/**'
+      - 'dimos/cli/doctor.py'
+      - 'dimos/cli/entrypoint.py'
+      - 'dimos/cli/test_doctor.py'
+      - '.github/workflows/_creator-build.yml'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'setup.py'
+      - 'dimos/robot/unitree/go2/**'
+      - 'dimos/robot/manipulators/**'
+      - '.github/workflows/installer.yml'
+  workflow_dispatch:
+    inputs:
+      orin:
+        description: 'Run on the dedicated AGX Orin / JetPack 6.2 runner (must be provisioned)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  creator-artifacts:
+    uses: ./.github/workflows/_creator-build.yml
+  rust:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked --manifest-path installer/Cargo.toml
+      - run: cargo build --locked --manifest-path installer/Cargo.toml
+      - run: cargo clippy --locked --manifest-path installer/Cargo.toml --all-targets -- -D warnings
+      - run: installer/target/debug/create-dimos --help
+      - uses: astral-sh/setup-uv@v10.0.1
+      # Shell integration test tools, not DimOS runtime dependencies.
+      - run: sudo apt-get update && sudo apt-get install -y zsh direnv
+      - run: uv run --no-project --with pytest -- pytest -c /dev/null -p no:cacheprovider installer/tests dimos/cli/test_doctor.py -q
+  ubuntu:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+        profile: [navigation, manipulation]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked --manifest-path installer/Cargo.toml
+      # No apt installs of robot dependencies: setup owns Pixi/uv/Nix bootstrap.
+      - name: Contributor and SDK workspace acceptance
+        env:
+          INSTALL_PROFILE: ${{ matrix.profile }}
+        run: installer/run/acceptance "$INSTALL_PROFILE"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installer-${{ matrix.os }}-${{ matrix.profile }}
+          path: .dimos/acceptance-results/
+          include-hidden-files: true
+  orin:
+    if: github.event_name == 'workflow_dispatch' && inputs.orin
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        profile: [navigation, manipulation]
+    # Manual trusted runs only. A generic ARM runner cannot verify JetPack.
+    runs-on: [self-hosted, Linux, ARM64, jetson-agx-orin-jetpack-6.2]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked --manifest-path installer/Cargo.toml
+      - name: Contributor and SDK workspace acceptance
+        env:
+          INSTALL_PROFILE: ${{ matrix.profile }}
+        run: installer/run/acceptance "$INSTALL_PROFILE"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installer-orin-${{ matrix.profile }}
+          path: .dimos/acceptance-results/
+          include-hidden-files: true

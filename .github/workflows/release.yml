@@ -141,9 +141,17 @@ jobs:
           name: wheels-${{ matrix.os }}-${{ matrix.arch }}
           path: wheelhouse/*.whl
 
+  build-creator:
+    needs: validate
+    uses: ./.github/workflows/_creator-build.yml
+    permissions:
+      contents: read
+    with:
+      sdk-version: ${{ needs.validate.outputs.version }}
+
   publish-testpypi:
     if: ${{ inputs.dry-run }}
-    needs: [validate, build-sdist, build-wheels]
+    needs: [validate, build-sdist, build-wheels, build-creator]
     runs-on: ubuntu-latest
     environment:
       name: testpypi
@@ -152,11 +160,17 @@ jobs:
       id-token: write      # For pypi-publish's OIDC trusted-publisher exchange (TestPyPI)
       attestations: write  # For PEP 740 attestations attached to each uploaded file
     steps:
-      - name: Download wheels/sdist
+      - name: Download wheels
         uses: actions/download-artifact@v8
         with:
+          pattern: wheels-*
           path: dist
           merge-multiple: true
+      - name: Download sdist
+        uses: actions/download-artifact@v8
+        with:
+          name: sdist
+          path: dist
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
       - name: Install twine
@@ -172,7 +186,7 @@ jobs:
 
   publish-pypi:
     if: ${{ ! inputs.dry-run }}
-    needs: [validate, build-sdist, build-wheels]
+    needs: [validate, build-sdist, build-wheels, build-creator]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -181,11 +195,17 @@ jobs:
       id-token: write      # For pypi-publish's OIDC trusted-publisher exchange (PyPI)
       attestations: write  # For PEP 740 attestations attached to each uploaded file
     steps:
-      - name: Download wheels/sdist
+      - name: Download wheels
         uses: actions/download-artifact@v8
         with:
+          pattern: wheels-*
           path: dist
           merge-multiple: true
+      - name: Download sdist
+        uses: actions/download-artifact@v8
+        with:
+          name: sdist
+          path: dist
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
       - name: Install twine
@@ -199,7 +219,7 @@ jobs:
 
   tag-and-release:
     if: ${{ ! inputs.dry-run }}
-    needs: [validate, publish-pypi]
+    needs: [validate, publish-pypi, build-creator]
     runs-on: ubuntu-latest
     environment: release-tag
     permissions:
@@ -251,6 +271,10 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Combine creator checksums
+        run: |
+          cat dist/SHA256SUMS-* > dist/SHA256SUMS
+          rm dist/SHA256SUMS-*
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo=$(cd "$(dirname "$0")/../.." && pwd)
+profile=${1:?usage: installer/run/acceptance navigation|manipulation}
+case "$profile" in navigation|manipulation) ;; *) echo "Unknown profile: $profile" >&2; exit 2 ;; esac
+creator="$repo/installer/target/debug/create-dimos"
+results="$repo/.dimos/acceptance-results"
+mkdir -p "$results"
+if [[ -f "$repo/.dimos/project.toml" ]]; then
+    "$creator" --restore "$repo" --profile "$profile" --non-interactive
+else
+    "$creator" "$repo" --contributor --profile "$profile" --non-interactive
+fi
+cp "$repo/.dimos/verified.json" "$results/contributor.json"
+(
+    cd "$repo"
+    source .dimos/activate.sh
+    deno task --cwd web/sdk build
+    deno task --cwd web/cockpit build
+    uv build --wheel --out-dir .dimos/acceptance-wheel
+)
+wheels=("$repo"/.dimos/acceptance-wheel/*.whl)
+if [[ ${#wheels[@]} != 1 || ! -f "${wheels[0]}" ]]; then
+    echo "Expected exactly one DimOS wheel" >&2
+    exit 1
+fi
+sandbox=$(mktemp -d "${TMPDIR:-/tmp}/dimos-workspace.XXXXXXXX")
+trap 'rm -rf -- "$sandbox"' EXIT
+project="$sandbox/my-robot"
+"$creator" "$project" --profile "$profile" --wheel "${wheels[0]}" --non-interactive
+cp "$project/.dimos/verified.json" "$results/sdk.json"
+(
+    cd "$project"
+    source .dimos/activate.sh
+    dimos list > "$results/blueprints.txt"
+    grep -q my-robot.hello "$results/blueprints.txt"
+    pytest -q
+    # The tiny starter runs real module deployment, not a hardware workflow.
+    scout=$(python -c 'import socket; s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(("127.0.0.1", 0)); print("239.255.0.1:" + str(s.getsockname()[1]))')
+    set +e
+    TMPDIR=/tmp XDG_STATE_HOME="$sandbox/state" XDG_CONFIG_HOME="$sandbox/config" \
+        timeout --signal=INT --kill-after=10 12 dimos --viewer none --transport zenoh \
+        --zenoh-scout-addr "$scout" --zenoh-connect '' --robot-ip '' run my-robot.hello > "$results/hello.log" 2>&1
+    status=$?
+    set -e
+    [[ "$status" == 124 ]]
+    grep -q 'Hello, world!' "$results/hello.log"
+    uv add humanize
+    sed -i 's/Hello,/Welcome,/' src/my_robot/hello.py tests/test_hello.py
+    pytest -q
+    dimos doctor
+)
+"$creator" --restore "$project" --non-interactive
+cp "$project/.dimos/verified.json" "$results/restored.json"
+# Copy only the files a developer commits, to a different path with no env.
+clone="$sandbox/cloned-project"
+mkdir "$clone"
+tar -C "$project" --exclude=.venv --exclude=.pixi --exclude=tools.json --exclude=verified.json \
+    --exclude=__pycache__ --exclude=.pytest_cache --exclude='*.egg-info' -cf - . | tar -C "$clone" -xf -
+"$creator" --restore "$clone" --non-interactive
+(
+    cd "$clone"
+    source .dimos/activate.sh
+    pytest -q
+    python -c 'import humanize; from my_robot.hello import greeting; assert greeting() == "Welcome, world!"'
+    dimos doctor
+)
+cp "$clone/.dimos/verified.json" "$results/clone.json"
