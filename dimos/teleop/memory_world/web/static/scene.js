@@ -69,6 +69,27 @@ const IMAGE_QUAD_BUDGET = 24;
 const IMAGE_LOD_INTERVAL_S = 0.2;     // how often the visible set is recomputed
 // Rolling window for the frame-time readout, ~4s at 60fps.
 const PERF_WINDOW = 240;
+// Quality governor. The loop time is measured on whatever device is running
+// (a Quest's 72 Hz loop, a laptop's 60 Hz one); when the recent median frame
+// is slower than QUALITY_STEP_DOWN_MS the next level down is applied, and a
+// level is regained after QUALITY_SETTLE_S of frames faster than
+// QUALITY_STEP_UP_MS. Level 0 is everything.
+const QUALITY_LEVELS = [
+    { voxel_fraction: 1.0, voxel_range_m: Infinity, quad_budget: 24, foveation: 0.0, resolution: 1.0 },
+    { voxel_fraction: 0.75, voxel_range_m: 20, quad_budget: 16, foveation: 0.4, resolution: 0.9 },
+    { voxel_fraction: 0.5, voxel_range_m: 14, quad_budget: 8, foveation: 0.7, resolution: 0.8 },
+    { voxel_fraction: 0.35, voxel_range_m: 10, quad_budget: 4, foveation: 1.0, resolution: 0.7 },
+    { voxel_fraction: 0.2, voxel_range_m: 7, quad_budget: 0, foveation: 1.0, resolution: 0.6 },
+];
+const QUALITY_STEP_DOWN_MS = 1000 / 30;
+const QUALITY_STEP_UP_MS = 1000 / 45;
+const QUALITY_INTERVAL_S = 1.0;
+const QUALITY_SETTLE_S = 3.0;
+const QUALITY_SAMPLE_FRAMES = 90;
+// How often the drawn voxel set is recomputed around the viewer, and how far
+// the viewer must move before it is worth doing.
+const VOXEL_CULL_INTERVAL_S = 0.5;
+const VOXEL_CULL_MOVE_M = 1.0;
 // Voxels within a highlighted point's radius are repainted in these. The map
 // itself stays inside a navy-to-cyan band, so warm colours read as "answer".
 const VOXEL_HIGHLIGHT_COLOR = 0xffb347;
@@ -136,6 +157,12 @@ export class WorldScene {
         this._thumbnailDecoding = new Set();
         this._imageQuadGeom = new THREE.PlaneGeometry(IMAGE_QUAD_W, IMAGE_QUAD_H);
         this._imageLodAccumS = IMAGE_LOD_INTERVAL_S;
+        this._quality = 0;                            // index into QUALITY_LEVELS
+        this._qualityAuto = true;
+        this._qualityAccumS = 0;
+        this._qualitySettleS = 0;
+        this._voxelCullAccumS = 0;
+        this._voxelCullEye = null;                    // robot-frame eye at the last compaction
         this._selectedImageIds = new Set();
         this._odomLine = null;
 
@@ -273,6 +300,10 @@ export class WorldScene {
             live_quads: this._imageQuadsByIndex.size,
             images_visible: this._imageQuadGroup.visible,
             cloud_visible: Boolean(this._pointsObj && this._pointsObj.visible),
+            quality: this._quality,
+            quality_auto: this._qualityAuto,
+            voxels_drawn: this._pointsObj ? this._pointsObj.count : 0,
+            voxels_total: this._cloudData ? this._cloudData.n : 0,
         };
     }
 
@@ -456,6 +487,8 @@ export class WorldScene {
         }
         const dt = this._lastTickMs ? Math.max((timeMs - this._lastTickMs) / 1000, 0) : 0;
         this._lastTickMs = timeMs;
+        this._updateQuality(dt);
+        this._updateVoxelCull(dt);
 
         const loc = this._pendingLocomote;
         if (loc && dt > 0 && (Math.abs(loc.stickX) > 0.1 || Math.abs(loc.stickY) > 0.1)) {
@@ -764,29 +797,150 @@ export class WorldScene {
             this._pointsObj = null;
         }
 
+        // A random visiting order, fixed per cloud: the first k entries are a
+        // uniform sample, so a quality level draws voxels[order[0..k]] and
+        // thins the map evenly instead of dropping one end of it.
+        if (!d.order || d.order.length !== d.n) {
+            d.order = new Uint32Array(d.n);
+            for (let i = 0; i < d.n; i++) d.order[i] = i;
+            for (let i = d.n - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                const swap = d.order[i]; d.order[i] = d.order[j]; d.order[j] = swap;
+            }
+        }
+        // What each voxel currently shows: its height colour, or a highlight.
+        if (!d.paint) {
+            d.paint = new Float32Array(d.n * 3);
+            if (d.colors) d.paint.set(d.colors); else d.paint.fill(1);
+        }
+
         // Lit cube faces preserve depth cues against both opaque and
         // passthrough backgrounds. Unlit cubes appeared like square sprites.
         const box = new THREE.BoxGeometry(d.voxelSize, d.voxelSize, d.voxelSize);
         const mat = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0 });
         const mesh = new THREE.InstancedMesh(box, mat, d.n);
-        mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-        const dummy = new THREE.Object3D();
-        const col = new THREE.Color();
-        for (let i = 0; i < d.n; i++) {
-            dummy.position.set(d.positions[i * 3], d.positions[i * 3 + 1], d.positions[i * 3 + 2]);
-            dummy.updateMatrix();
-            mesh.setMatrixAt(i, dummy.matrix);
-            if (d.colors) {
-                col.setRGB(d.colors[i * 3], d.colors[i * 3 + 1], d.colors[i * 3 + 2]);
-                mesh.setColorAt(i, col);
-            }
-        }
-        mesh.instanceMatrix.needsUpdate = true;
-        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(d.n * 3), 3);
+        mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+        mesh.frustumCulled = false; // the bounding sphere would be recomputed on every compaction
         this._pointsObj = mesh;
         this._frameRotate.add(this._pointsObj);
         this._highlightedVoxels = [];
         this._highlightVoxels(this._lastResultPoints);
+    }
+
+    /** Write the voxels the current quality level draws into the instance
+     *  buffers: a uniform `voxel_fraction` of them, within `voxel_range_m` of
+     *  the viewer. Everything else is simply not drawn. */
+    _compactCloud() {
+        const d = this._cloudData;
+        const mesh = this._pointsObj;
+        if (!d || !mesh) return;
+        const level = QUALITY_LEVELS[this._quality];
+        const budget = Math.max(1, Math.round(d.n * level.voxel_fraction));
+        const eye = this._robotFrameEye();
+        const scale = this._worldGroup.scale.x || 1;
+        const range2 = Number.isFinite(level.voxel_range_m)
+            ? (level.voxel_range_m / scale) * (level.voxel_range_m / scale)
+            : Infinity;
+        const matrices = mesh.instanceMatrix.array;
+        const colours = mesh.instanceColor.array;
+        let written = 0;
+        for (let k = 0; k < budget; k++) {
+            const i = d.order[k];
+            const x = d.positions[i * 3], y = d.positions[i * 3 + 1], z = d.positions[i * 3 + 2];
+            if (range2 !== Infinity) {
+                const dx = x - eye.x, dy = y - eye.y, dz = z - eye.z;
+                if (dx * dx + dy * dy + dz * dz > range2) continue;
+            }
+            const m = written * 16;
+            matrices[m] = 1; matrices[m + 1] = 0; matrices[m + 2] = 0; matrices[m + 3] = 0;
+            matrices[m + 4] = 0; matrices[m + 5] = 1; matrices[m + 6] = 0; matrices[m + 7] = 0;
+            matrices[m + 8] = 0; matrices[m + 9] = 0; matrices[m + 10] = 1; matrices[m + 11] = 0;
+            matrices[m + 12] = x; matrices[m + 13] = y; matrices[m + 14] = z; matrices[m + 15] = 1;
+            const c = written * 3;
+            colours[c] = d.paint[i * 3]; colours[c + 1] = d.paint[i * 3 + 1]; colours[c + 2] = d.paint[i * 3 + 2];
+            written++;
+        }
+        mesh.count = written;
+        mesh.instanceMatrix.needsUpdate = true;
+        mesh.instanceColor.needsUpdate = true;
+        this._voxelCullEye = eye;
+    }
+
+    /** The viewer's eye in the robot frame the cloud is stored in. */
+    _robotFrameEye() {
+        return this._frameRotate.worldToLocal(this.getCameraPositionWorld());
+    }
+
+    _updateVoxelCull(dt) {
+        this._voxelCullAccumS += dt;
+        if (this._voxelCullAccumS < VOXEL_CULL_INTERVAL_S) return;
+        this._voxelCullAccumS = 0;
+        if (!Number.isFinite(QUALITY_LEVELS[this._quality].voxel_range_m) || !this._voxelCullEye) return;
+        const eye = this._robotFrameEye();
+        const moved = eye.distanceTo(this._voxelCullEye) * (this._worldGroup.scale.x || 1);
+        if (moved >= VOXEL_CULL_MOVE_M) this._compactCloud();
+    }
+
+    // ---- quality governor ---------------------------------------------------
+
+    _recentMedianMs(count) {
+        const n = Math.min(count, this._frameSampleCount);
+        if (n === 0) return 0;
+        const recent = new Float32Array(n);
+        for (let k = 0; k < n; k++) {
+            recent[k] = this._frameSamples[(this._frameSampleCursor - 1 - k + PERF_WINDOW) % PERF_WINDOW];
+        }
+        recent.sort();
+        return recent[Math.floor(n / 2)];
+    }
+
+    _updateQuality(dt) {
+        if (!this._qualityAuto) return;
+        this._qualityAccumS += dt;
+        if (this._qualityAccumS < QUALITY_INTERVAL_S) return;
+        this._qualityAccumS = 0;
+        if (this._frameSampleCount < QUALITY_SAMPLE_FRAMES / 2) return;
+        const median = this._recentMedianMs(QUALITY_SAMPLE_FRAMES);
+        if (median > QUALITY_STEP_DOWN_MS && this._quality < QUALITY_LEVELS.length - 1) {
+            this._qualitySettleS = 0;
+            this._applyQuality(this._quality + 1, median);
+        } else if (median < QUALITY_STEP_UP_MS && this._quality > 0) {
+            this._qualitySettleS += QUALITY_INTERVAL_S;
+            if (this._qualitySettleS >= QUALITY_SETTLE_S) {
+                this._qualitySettleS = 0;
+                this._applyQuality(this._quality - 1, median);
+            }
+        } else {
+            this._qualitySettleS = 0;
+        }
+    }
+
+    /** Pin a level (0 = everything) or pass null to hand control back to the governor. */
+    setQuality(level) {
+        if (level === null || level === undefined) {
+            this._qualityAuto = true;
+            return this._quality;
+        }
+        this._qualityAuto = false;
+        this._applyQuality(Math.max(0, Math.min(QUALITY_LEVELS.length - 1, level)), this._recentMedianMs(QUALITY_SAMPLE_FRAMES));
+        return this._quality;
+    }
+
+    _applyQuality(level, medianMs) {
+        this._quality = level;
+        const q = QUALITY_LEVELS[level];
+        if (this.three.xr.isPresenting) {
+            // Fixed foveated rendering is the cheap lever on a headset.
+            if (this.three.xr.setFoveation) this.three.xr.setFoveation(q.foveation);
+        } else {
+            this.three.setPixelRatio((window.devicePixelRatio || 1) * q.resolution);
+            this._resizeDesktopCamera();
+        }
+        this._compactCloud();
+        this._imageLodAccumS = IMAGE_LOD_INTERVAL_S; // re-budget thumbnails now
+        this.diag('quality', { level, median_ms: Number((medianMs || 0).toFixed(1)), auto: this._qualityAuto });
     }
 
     /** Repaint the voxels around each point that carries a radius; the first
@@ -794,16 +948,9 @@ export class WorldScene {
      *  are capture poses, and painting the floor under the robot would mislead. */
     _highlightVoxels(points) {
         const d = this._cloudData;
-        const mesh = this._pointsObj;
-        if (!d || !mesh) return;
-        const original = new THREE.Color();
+        if (!d || !this._pointsObj) return;
         for (const index of this._highlightedVoxels) {
-            if (d.colors) {
-                original.setRGB(d.colors[index * 3], d.colors[index * 3 + 1], d.colors[index * 3 + 2]);
-            } else {
-                original.setRGB(1, 1, 1);
-            }
-            mesh.setColorAt(index, original);
+            for (let c = 0; c < 3; c++) d.paint[index * 3 + c] = d.colors ? d.colors[index * 3 + c] : 1;
         }
         this._highlightedVoxels = [];
         points.forEach((point, order) => {
@@ -816,12 +963,12 @@ export class WorldScene {
                 const dy = d.positions[i * 3 + 1] - py;
                 const dz = d.positions[i * 3 + 2] - pz;
                 if (dx * dx + dy * dy + dz * dz <= r2) {
-                    mesh.setColorAt(i, paint);
+                    d.paint[i * 3] = paint.r; d.paint[i * 3 + 1] = paint.g; d.paint[i * 3 + 2] = paint.b;
                     this._highlightedVoxels.push(i);
                 }
             }
         });
-        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        this._compactCloud();
         this.diag('voxels_highlighted', { n: this._highlightedVoxels.length, points: points.length });
     }
 
@@ -945,7 +1092,11 @@ export class WorldScene {
         // A query answer is a handful of poses anywhere in the recording, so the
         // distance cutoff would hide the very thing the user asked to see. The
         // budget alone is enough to bound the cost there.
-        const maxDist = this._selectedImageIds.size > 0 ? Infinity : IMAGE_RENDER_DISTANCE_M / scale;
+        const level = QUALITY_LEVELS[this._quality];
+        const budget = Math.min(IMAGE_QUAD_BUDGET, level.quad_budget);
+        const maxDist = this._selectedImageIds.size > 0
+            ? Infinity
+            : Math.min(IMAGE_RENDER_DISTANCE_M, Number.isFinite(level.voxel_range_m) ? level.voxel_range_m : Infinity) / scale;
 
         const candidates = [];
         for (let i = 0; i < this._imagePoseMeta.length; i++) {
@@ -960,7 +1111,7 @@ export class WorldScene {
             candidates.push([dist, i]);
         }
         candidates.sort((a, b) => a[0] - b[0]);
-        const wanted = new Set(candidates.slice(0, IMAGE_QUAD_BUDGET).map(([, i]) => i));
+        const wanted = new Set(candidates.slice(0, budget).map(([, i]) => i));
 
         for (const index of Array.from(this._imageQuadsByIndex.keys())) {
             if (!wanted.has(index)) this._releaseThumbnail(index);

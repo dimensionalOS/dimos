@@ -245,6 +245,7 @@ function startPerfReadout() {
             `${s.fps.toFixed(1)} fps  (${s.median_ms.toFixed(1)} ms med, ${s.p95_ms.toFixed(1)} p95)`,
             `${s.draw_calls} draws  ${(s.triangles / 1000).toFixed(0)}k tris`,
             `${s.textures} textures  ${s.live_quads} quads`,
+            `quality ${s.quality}${s.quality_auto ? ' auto' : ' pinned'}  ${(s.voxels_drawn / 1000).toFixed(0)}k/${(s.voxels_total / 1000).toFixed(0)}k voxels`,
             `images ${s.images_visible ? 'on' : 'off'}  cloud ${s.cloud_visible ? 'on' : 'off'}`,
         ].join('\n');
         if (++sinceDiag >= 20) {
@@ -254,7 +255,15 @@ function startPerfReadout() {
     }, 250);
 }
 
+// Per-frame busy-wait for testing the quality governor on a machine too fast
+// to trigger it on its own (window.app.simulateLoad(ms)).
+let simulatedLoadMs = 0;
+
 function sendViewerPose() {
+    if (simulatedLoadMs > 0) {
+        const until = performance.now() + simulatedLoadMs;
+        while (performance.now() < until) { /* burn */ }
+    }
     const now = performance.now();
     if (ws && ws.readyState === WebSocket.OPEN && now - lastViewerPoseSent >= 500) {
         lastViewerPoseSent = now;
@@ -266,7 +275,9 @@ function sendViewerPose() {
 async function startViewer() {
     buildScene();
     startPerfReadout();
-    if (navigator.xr) {
+    // ?flat skips WebXR even where a headset is present: plain WebGL in a window.
+    const wantFlat = new URLSearchParams(window.location.search).has('flat');
+    if (navigator.xr && !wantFlat) {
         try {
             await startVR();
             return;
@@ -454,6 +465,9 @@ window.app = {
     jumpTo: (index = 0) => scene && !scene.viewFrom(index) && scene.focusOn(scene._lastResultPoints[index].position),
     // Stand where the camera behind the i-th answer stood (also key P, cycling).
     viewFrom: (index = 0) => scene && scene.viewFrom(index),
+    // Pin a quality level (0 = everything, 4 = least) or null for automatic.
+    quality: (level = null) => scene && scene.setQuality(level),
+    simulateLoad: (ms = 0) => { simulatedLoadMs = Math.max(0, ms); return simulatedLoadMs; },
     // View state for automated checks: where the desktop camera looks and the world scale.
     viewState: () => scene && { yaw: scene._desktopYaw, pitch: scene._desktopPitch, scale: scene._worldGroup.scale.x },
 };
