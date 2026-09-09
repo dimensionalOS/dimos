@@ -61,6 +61,7 @@ from dimos.teleop.memory_world.messages import (
     MSG_IMAGE_THUMBNAIL,
     MSG_ODOM_TRAIL,
     MSG_POINT_CLOUD,
+    MSG_QUERY_IMAGE,
     MSG_TOP_DOWN_MAP,
     decode_text,
     encode_binary,
@@ -166,6 +167,10 @@ class MemoryWorldConfig(ModuleConfig):
     # 3D world space. Smaller = less bandwidth, lower res in headset.
     thumbnail_max_size: int = 192
     thumbnail_jpeg_quality: int = 70
+    # The frames behind an answer are shown full-size in the world, so they
+    # get more pixels than the capture-pose thumbnails.
+    query_image_max_size: int = 640
+    query_image_distance_m: float = PydanticField(default=1.0, gt=0.0)
     # odom stream is used to draw the robot's path as a polyline.
     odom_stream_name: str = "odom"
     # Images without a pose of their own take the nearest odom within this.
@@ -246,6 +251,7 @@ class MemoryWorldModule(Module):
         self._whisper: Any = None
         self._camera_from_body: np.ndarray | None = None
         self._active_query_result: dict[str, Any] | None = None
+        self._active_query_images: list[tuple[dict[str, Any], bytes]] = []
         self._query_revision = 0
         self._web_server: RobotWebInterface | None = None
         self._web_server_thread: threading.Thread | None = None
@@ -412,6 +418,8 @@ class MemoryWorldModule(Module):
                 active_query_result = self._active_query_result
             if active_query_result is not None:
                 conn.send_threadsafe(encode_text("query_result", **active_query_result))
+                for header, jpeg in self._active_query_images:
+                    conn.send_threadsafe(encode_binary(MSG_QUERY_IMAGE, header, jpeg))
         except Exception:
             logger.exception("failed to build/send world payload")
             conn.send_threadsafe(encode_text("error", message="world load failed"))
@@ -581,14 +589,8 @@ class MemoryWorldModule(Module):
                 timestamps.append(float(obs.ts))
                 ids.append(int(getattr(obs, "id", 0)))
 
-                # JPEG-encode the matching color image.
                 try:
-                    img = obs.data
-                    if hasattr(img, "resize_to_fit"):
-                        img, _ = img.resize_to_fit(max_size, max_size)
-                    bgr = img.to_bgr().to_opencv() if hasattr(img, "to_bgr") else img
-                    ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
-                    thumbnails.append(buf.tobytes() if ok else b"")
+                    thumbnails.append(self._encode_jpeg(obs.data, max_size, quality))
                 except Exception:
                     logger.exception("thumbnail encode failed at ts=%s", obs.ts)
                     thumbnails.append(b"")
@@ -609,6 +611,14 @@ class MemoryWorldModule(Module):
         except Exception:
             logger.exception("failed to build image poses")
             return ({"n": 0, "timestamps": [], "ids": []}, b""), []
+
+    @staticmethod
+    def _encode_jpeg(img: Any, max_size: int, quality: int) -> bytes:
+        if hasattr(img, "resize_to_fit"):
+            img, _ = img.resize_to_fit(max_size, max_size)
+        bgr = img.to_bgr().to_opencv() if hasattr(img, "to_bgr") else img
+        ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+        return buf.tobytes() if ok else b""
 
     def _build_top_down_map(
         self, cloud: tuple[dict[str, Any], bytes]
@@ -791,6 +801,7 @@ class MemoryWorldModule(Module):
             payload = result.model_dump(mode="json")
             payload.update(query_id=query_id, revision=self._query_revision)
             self._active_query_result = payload
+            self._active_query_images = []
         self._broadcast(encode_text("query_result", **payload))
         return query_id
 
@@ -882,6 +893,7 @@ class MemoryWorldModule(Module):
         )
         self._add_route_to_result(result)
         query_id = self._publish_query_result(result)
+        self._publish_query_images(query_id, phrase, places)
 
         return SkillResult(
             success=True,
@@ -901,6 +913,57 @@ class MemoryWorldModule(Module):
                 "located": located,
             },
         )
+
+    def _publish_query_images(self, query_id: str, phrase: str, places: list[Place]) -> None:
+        """Send the frame behind each place, posed where its camera stood.
+
+        The header carries the camera position, its forward and up directions
+        and its field of view, so the viewer can hang the picture on the
+        camera's image plane. With no tf chain the body axes stand in for the
+        optical ones.
+        """
+        store = self._ensure_store()
+        images = store.streams[self.config.image_stream_name]
+        camera_from_body = self._camera_extrinsics()
+        hfov_deg = 70.0
+        if self.config.camera_info_stream_name is not None:
+            info = store.streams[self.config.camera_info_stream_name].first().data
+            hfov_deg = float(np.degrees(2.0 * np.arctan2(info.width / 2.0, info.K[0])))
+
+        sent: list[tuple[dict[str, Any], bytes]] = []
+        for index, place in enumerate(places):
+            try:
+                frame = images.at(place.ts, tolerance=0.005).first()
+                jpeg = self._encode_jpeg(
+                    frame.data, self.config.query_image_max_size, self.config.thumbnail_jpeg_quality
+                )
+            except Exception:
+                logger.exception("could not fetch the frame behind place %d", index)
+                continue
+            body = pose_matrix(place.camera_position or place.position, place.orientation)
+            if camera_from_body is not None:
+                camera = body @ camera_from_body
+                forward, up = camera[:3, 2], -camera[:3, 1]  # optical: z forward, y down
+            else:
+                camera = body
+                forward, up = camera[:3, 0], camera[:3, 2]  # body: x forward, z up
+            height, width = frame.data.shape[:2]
+            header = {
+                "query_id": query_id,
+                "index": index,
+                "label": f"{phrase} ({place.similarity:+.3f})",
+                "position": [float(v) for v in camera[:3, 3]],
+                "forward": [float(v) for v in forward],
+                "up": [float(v) for v in up],
+                "hfov_deg": hfov_deg,
+                "aspect": float(width) / float(height),
+                "distance_m": float(self.config.query_image_distance_m),
+            }
+            sent.append((header, jpeg))
+        with self._clients_lock:
+            self._active_query_images = sent
+        for header, jpeg in sent:
+            self._broadcast(encode_binary(MSG_QUERY_IMAGE, header, jpeg))
 
     def _camera_extrinsics(self) -> np.ndarray | None:
         """Static body->camera-optical matrix from the recording's tf stream, once."""

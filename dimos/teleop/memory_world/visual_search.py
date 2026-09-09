@@ -104,8 +104,10 @@ class Place:
     # Where in the matching frame the best patch sits, as fractions of width
     # and height, so a later step can raycast it into the map.
     image_uv: tuple[float, float] = (0.5, 0.5)
-    # Orientation (qx, qy, qz, qw) of the pose the frame was captured from.
+    # Pose the frame was captured from: (qx, qy, qz, qw), and the position when
+    # it differs from ``position`` (a located object keeps its camera here).
     orientation: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
+    camera_position: tuple[float, float, float] | None = None
     # Distinct viewing directions that saw this place (1 for a single frame).
     views: int = 1
 
@@ -247,6 +249,7 @@ class PatchHit:
     source_id: int
     ts: float
     camera_position: tuple[float, float, float]
+    camera_orientation: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
 
 
 def cluster_hits(hits: Iterable[PatchHit], radius: float, max_places: int) -> list[Place]:
@@ -291,6 +294,8 @@ def cluster_hits(hits: Iterable[PatchHit], radius: float, max_places: int) -> li
             similarity=c["best"].similarity,
             source_id=c["best"].source_id,
             ts=c["best"].ts,
+            orientation=c["best"].camera_orientation,
+            camera_position=c["best"].camera_position,
             views=len(c["bearings"]),
         )
         for c in ranked[:max_places]

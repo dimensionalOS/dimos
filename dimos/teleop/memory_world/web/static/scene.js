@@ -143,6 +143,10 @@ export class WorldScene {
         this._frameRotate.add(this._highlightGroup);
         this._highlightedVoxels = [];                 // instance indices repainted by the last result
         this._lastResultPoints = [];                  // so a rebuilt cloud gets repainted too
+        this._activeQueryId = null;                   // query images for any other id are stale
+        this._queryImages = [];                       // headers of the frames behind the last answer
+        this._queryImageMeshes = [];                  // their quads, so one can be shown alone
+        this._queryImageCursor = -1;
 
         // Top-down map: shared texture, used twice (ground projection + HUD).
         this._topDownTex = null;
@@ -373,7 +377,14 @@ export class WorldScene {
         }
         if (!isDown) return;
         if (event.code === 'KeyR') this.resetView();
-        if (event.code === 'KeyJ' && this._lastResultPoints.length) this.focusOn(this._lastResultPoints[0].position);
+        // J: stand where the best answer's camera stood (a known clear spot),
+        // or, without a frame, bring the answer point in front of the viewer.
+        if (event.code === 'KeyJ' && this._lastResultPoints.length && !this.viewFrom(0)) {
+            this.focusOn(this._lastResultPoints[0].position);
+        }
+        if (event.code === 'KeyP' && this._queryImages.length) {
+            this.viewFrom((this._queryImageCursor + 1) % this._queryImages.length);
+        }
         else if (event.code === 'KeyI') this.toggleImages();
         else if (event.code === 'KeyV') this.toggleCloud();
     }
@@ -780,6 +791,8 @@ export class WorldScene {
         if (!this.three.xr.isPresenting) {
             this._worldGroup.position.y = head.y - 0.4 - local.y;
         }
+        this._queryImageCursor = -1;
+        this._queryImageMeshes.forEach((mesh) => { if (mesh) mesh.visible = true; });
         this.diag('focused', { x, y, z });
     }
 
@@ -1027,6 +1040,10 @@ export class WorldScene {
         this._releaseAllThumbnails();
         this._imageLodAccumS = IMAGE_LOD_INTERVAL_S;
 
+        this._activeQueryId = result.query_id || null;
+        this._queryImages = [];
+        this._queryImageMeshes = [];
+        this._queryImageCursor = -1;
         this._setAnswer(result.answer || 'Memory result');
         this.diag('query_result_loaded', {
             query_id: result.query_id,
@@ -1035,6 +1052,85 @@ export class WorldScene {
             evidence_paths: (result.evidence_paths || []).length,
             route: Boolean(result.route),
         });
+    }
+
+    /** Hang the frame behind an answer on its camera's image plane: a quad
+     *  `distance_m` in front of where the camera stood, sized by its field of
+     *  view, with thin lines back to the camera so the frustum reads. */
+    addQueryImage(header, jpegArrayBuffer) {
+        if (header.query_id !== this._activeQueryId) return;
+        const blob = new Blob([jpegArrayBuffer], { type: 'image/jpeg' });
+        createImageBitmap(blob, { imageOrientation: 'flipY' }).then((bitmap) => {
+            if (header.query_id !== this._activeQueryId) { bitmap.close(); return; }
+            const texture = new THREE.Texture(bitmap);
+            texture.flipY = false;
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.generateMipmaps = false;
+            texture.minFilter = THREE.LinearFilter;
+            texture.needsUpdate = true;
+
+            const eye = new THREE.Vector3(...header.position);
+            const forward = new THREE.Vector3(...header.forward).normalize();
+            const up = new THREE.Vector3(...header.up).normalize();
+            const distance = header.distance_m || 1.0;
+            const width = 2 * distance * Math.tan(THREE.MathUtils.degToRad(header.hfov_deg || 70) / 2);
+            const height = width / (header.aspect || 16 / 9);
+
+            const quad = new THREE.Mesh(
+                new THREE.PlaneGeometry(width, height),
+                new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide }),
+            );
+            quad.position.copy(eye).addScaledVector(forward, distance);
+            // lookAt works in world space; the group is a child of the frame rotation.
+            this._frameRotate.updateWorldMatrix(true, false);
+            quad.up.copy(up).transformDirection(this._frameRotate.matrixWorld);
+            this._highlightGroup.add(quad);
+            quad.lookAt(this._frameRotate.localToWorld(eye.clone()));
+            quad.rotateY(Math.PI); // lookAt aims +z at the eye; the picture faces the other way
+
+            const right = new THREE.Vector3().crossVectors(forward, up).normalize();
+            const centre = quad.position.clone();
+            const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) =>
+                centre.clone().addScaledVector(right, sx * width / 2).addScaledVector(up, sy * height / 2));
+            const segments = [];
+            for (const corner of corners) segments.push(eye.clone(), corner);
+            for (let i = 0; i < 4; i++) segments.push(corners[i], corners[(i + 1) % 4]);
+            this._highlightGroup.add(new THREE.LineSegments(
+                new THREE.BufferGeometry().setFromPoints(segments),
+                new THREE.LineBasicMaterial({ color: header.index === 0 ? 0xff5c3a : 0xffb347 }),
+            ));
+            this._queryImages[header.index] = header;
+            this._queryImageMeshes[header.index] = quad;
+            // Frames from nearby poses overlap; while standing at one camera, only its frame shows.
+            if (this._queryImageCursor >= 0) quad.visible = header.index === this._queryImageCursor;
+            this.diag('query_image_placed', { index: header.index, width: Number(width.toFixed(2)) });
+        }).catch((e) => {
+            this.diag('query_image_failed', { index: header.index, error: String(e.message || e) });
+        });
+    }
+
+    /** Stand where the camera behind answer *index* stood and look the way it
+     *  looked, so the photo lines up with the voxels it was taken from.
+     *  Desktop only: in VR the head is the camera. */
+    viewFrom(index) {
+        const header = this._queryImages[index];
+        if (!header || this.three.xr.isPresenting) return false;
+        const eye = new THREE.Vector3(...header.position);
+        const forward = new THREE.Vector3(...header.forward).normalize();
+        // Robot -> three: (x, y, z) -> (x, z, -y), then the world group's scale.
+        const scale = this._worldGroup.scale.x;
+        const eyeThree = new THREE.Vector3(eye.x, eye.z, -eye.y).multiplyScalar(scale);
+        const fwdThree = new THREE.Vector3(forward.x, forward.z, -forward.y);
+        const head = this.getCameraPositionWorld();
+        this._worldGroup.position.set(head.x - eyeThree.x, head.y - eyeThree.y, head.z - eyeThree.z);
+        // The desktop camera looks down -z at yaw 0; pitch is positive looking up.
+        this._desktopYaw = Math.atan2(-fwdThree.x, -fwdThree.z);
+        this._desktopPitch = Math.asin(Math.max(-1, Math.min(1, fwdThree.y)));
+        this.camera.rotation.set(this._desktopPitch, this._desktopYaw, 0);
+        this._queryImageCursor = index;
+        this._queryImageMeshes.forEach((mesh, i) => { if (mesh) mesh.visible = i === index; });
+        this.diag('view_from', { index });
+        return true;
     }
 
     _addHighlightTube(path, radius, color) {

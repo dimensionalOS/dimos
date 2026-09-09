@@ -317,6 +317,9 @@ def test_an_object_seen_from_several_directions_outranks_a_single_view_stray() -
     assert [place.views for place in places] == [3, 1]
     assert places[0].position == pytest.approx((5.033, 5.033, 0.0), abs=0.01)
     assert places[0].similarity == 0.15
+    # The best hit's camera pose rides along, so its frame can be shown where it was taken.
+    assert places[0].camera_position == (0.0, 5.0, 0.0)
+    assert places[0].source_id == 1
 
 
 def test_consecutive_frames_from_one_spot_count_as_one_view() -> None:

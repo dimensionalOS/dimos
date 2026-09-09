@@ -10,6 +10,7 @@ import {
     MSG_IMAGE_THUMBNAIL,
     MSG_ODOM_TRAIL,
     MSG_POINT_CLOUD,
+    MSG_QUERY_IMAGE,
     MSG_TOP_DOWN_MAP,
     decodeBinary,
     decodeText,
@@ -130,6 +131,7 @@ function applySceneMsg(m) {
     else if (m.kind === 'odom_trail') scene.setOdomTrail(m.header, m.payload);
     else if (m.kind === 'top_down_map') scene.setTopDownMap(m.header, m.payload);
     else if (m.kind === 'image_thumbnail') scene.addImageThumbnail(m.header.index, m.payload);
+    else if (m.kind === 'query_image') scene.addQueryImage(m.header, m.payload);
 }
 
 function flushSceneMsgs() {
@@ -145,6 +147,7 @@ function handleBinary(buffer) {
     else if (msgType === MSG_ODOM_TRAIL) kind = 'odom_trail';
     else if (msgType === MSG_TOP_DOWN_MAP) kind = 'top_down_map';
     else if (msgType === MSG_IMAGE_THUMBNAIL) kind = 'image_thumbnail';
+    else if (msgType === MSG_QUERY_IMAGE) kind = 'query_image';
     else { log(`unknown bin type ${msgType}`); return; }
 
     if (scene) applySceneMsg({ kind, header, payload });
@@ -448,7 +451,9 @@ window.app = {
     resetPerf: () => scene && scene.resetPerf(),
     benchmark: (frames) => (scene ? scene.benchmarkRender(frames) : null),
     // Bring the i-th answer of the last result in front of the viewer (also key J).
-    jumpTo: (index = 0) => scene && scene.focusOn(scene._lastResultPoints[index].position),
+    jumpTo: (index = 0) => scene && !scene.viewFrom(index) && scene.focusOn(scene._lastResultPoints[index].position),
+    // Stand where the camera behind the i-th answer stood (also key P, cycling).
+    viewFrom: (index = 0) => scene && scene.viewFrom(index),
 };
 
 // H pins the desktop menu and perf readout, which otherwise fade out once
