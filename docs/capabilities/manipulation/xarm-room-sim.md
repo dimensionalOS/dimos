@@ -69,14 +69,14 @@ The room, basic perception simulation, and real perception blueprints share
 dimos run xarm-room-sim
 ```
 
-To select GraspGenX, run from the repository root using the checked-in
-`xarm-grasp.json` simulation configuration. The `all` extra does not include
-GraspGenX.
+The xArm blueprints supply gripper settings from `XARM_GRASPGENX_CONFIG` in
+[xArm config](/dimos/robot/manipulators/xarm/config.py). Select GraspGenX with one
+module-config override; no JSON file is required. The `all` extra does not
+include GraspGenX.
 
 ```bash
 uv sync --extra all --extra graspgenx
-dimos run xarm-room-sim --config xarm-grasp.json \
-  --graspproposalmodule.generator.backend graspgenx
+dimos run xarm-room-sim --graspproposalmodule.backend graspgenx
 ```
 
 Use the headless rendering environment from the launch example above when
@@ -84,7 +84,7 @@ needed. The same options work with `xarm-perception-sim` and
 `xarm-perception`; the real blueprint still requires its camera mount TF and
 hardware coordinator to be completed.
 
-The checked-in [simulation config](/xarm-grasp.json) is derived from
+The shared xArm gripper profile is derived from
 `data/xarm_grasp_sim/xarm7.xml`, not calibrated against physical hardware:
 
 - Open and half-open joint angles are 0 and 0.425 radians (the joint range is
@@ -105,8 +105,11 @@ The config is a model-derived starting point for simulation, not evidence of
 successful picking. For a different gripper, supply its own geometry, family,
 and TCP transform. Identity is valid only if model and robot TCP frames coincide.
 
-CLI overrides take precedence over JSON values. For example, add
-`--graspproposalmodule.generator.max-candidates 20` to limit returned proposals.
+Backend selection (`backend`) is separate from learned-backend settings
+(`graspgenx`), so switching backends preserves the blueprint's gripper profile.
+For example, add `--graspproposalmodule.graspgenx.max-candidates 20` to limit
+returned proposals. Custom JSON config files remain optional through the
+standard `--config` mechanism; CLI overrides take precedence.
 Run `dimos run xarm-room-sim --help` to inspect available config fields.
 Backend changes take effect on restart. GraspGenX initializes in a dedicated
 worker, downloads its pinned checkpoint on first use, and reports failures

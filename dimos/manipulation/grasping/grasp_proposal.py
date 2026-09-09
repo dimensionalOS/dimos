@@ -14,9 +14,10 @@
 
 """Configurable grasp proposals with optional learned inference."""
 
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import model_validator
+from typing_extensions import Self
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -25,20 +26,17 @@ from dimos.manipulation.grasping.grasp_gen_x import GraspGenXBackend, GraspGenXC
 from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspBackend
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.protocol.service.spec import BaseConfig
-
-
-class HeuristicGraspConfig(BaseConfig):
-    backend: Literal["heuristic"] = "heuristic"
-
-
-GraspGeneratorConfig = Annotated[
-    HeuristicGraspConfig | GraspGenXConfig, Field(discriminator="backend")
-]
 
 
 class GraspProposalConfig(ModuleConfig):
-    generator: GraspGeneratorConfig = Field(default_factory=HeuristicGraspConfig)
+    backend: Literal["heuristic", "graspgenx"] = "heuristic"
+    graspgenx: GraspGenXConfig | None = None
+
+    @model_validator(mode="after")
+    def _require_backend_settings(self) -> Self:
+        if self.backend == "graspgenx" and self.graspgenx is None:
+            raise ValueError("graspgenx settings are required when backend is graspgenx")
+        return self
 
 
 class GraspProposalModule(Module, GraspGenSpec):
@@ -56,8 +54,9 @@ class GraspProposalModule(Module, GraspGenSpec):
         if self._backend is not None:
             return
         super().start()
-        if isinstance(self.config.generator, GraspGenXConfig):
-            backend = GraspGenXBackend(self.config.generator)
+        if self.config.backend == "graspgenx":
+            assert self.config.graspgenx is not None
+            backend = GraspGenXBackend(self.config.graspgenx)
             backend.start()
             self._backend = backend
         else:

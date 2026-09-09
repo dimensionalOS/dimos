@@ -26,6 +26,7 @@ from dimos.control.components import (
 )
 from dimos.core.global_config import global_config
 from dimos.hardware.spec import JointLimits
+from dimos.manipulation.grasping.grasp_gen_x import GraspGenXConfig, SweepVolumeGripperConfig
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -67,6 +68,27 @@ XARM7_SIM_HOME = [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 # z=0.12. Place the planning model to match, or the planner solves poses 12cm
 # below the arm it is driving and every grasp closes on air.
 XARM7_SIM_BASE_POSE = PoseStamped(frame_id="world", position=Vector3(z=0.12))
+
+
+# Derived from the MuJoCo xArm finger-pad geometry at 0 and 0.425 radians.
+# Model +X closes the jaws (robot +Y); model +Z points along the fingers.
+# This is a simulation-derived profile, not physical gripper calibration.
+XARM_GRASPGENX_CONFIG = GraspGenXConfig(
+    gripper=SweepVolumeGripperConfig(
+        extents_open=(0.088924, 0.03, 0.037),
+        offset_open=(0.0, 0.0, 0.142137),
+        extents_half_open=(0.047946871, 0.03, 0.037),
+        offset_half_open=(0.0, 0.0, 0.153020114),
+        fingertip_depth=0.160637,
+        family="parallel_2f",
+    ),
+    grasp_frame_to_tcp=(
+        (0.0, 1.0, 0.0, 0.0),
+        (-1.0, 0.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0, 0.172),
+        (0.0, 0.0, 0.0, 1.0),
+    ),
+)
 
 
 def make_xarm7_sim_robot_config() -> RobotModelConfig:

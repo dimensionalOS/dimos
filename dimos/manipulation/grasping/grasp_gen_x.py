@@ -68,7 +68,6 @@ class SweepVolumeGripperConfig(BaseConfig):
 class GraspGenXConfig(BaseConfig):
     """GraspGenX deployment settings, serializable by DimOS blueprints."""
 
-    backend: Literal["graspgenx"] = "graspgenx"
     gripper: SweepVolumeGripperConfig
     grasp_frame_to_tcp: RigidTransform = IDENTITY_TRANSFORM
     max_candidates: PositiveCount = 100

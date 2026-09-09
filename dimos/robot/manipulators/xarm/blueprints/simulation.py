@@ -26,6 +26,7 @@ from dimos.perception.experimental.object_scene_registration import ObjectSceneR
 from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_task
 from dimos.robot.manipulators.xarm.config import (
     XARM7_SIM_PATH,
+    XARM_GRASPGENX_CONFIG,
     make_xarm7_sim_hardware,
     make_xarm7_sim_module_kwargs,
     make_xarm7_sim_robot_config,
@@ -63,7 +64,7 @@ xarm_perception_sim = autoconnect(
     ),
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
-    GraspProposalModule.blueprint(),
+    GraspProposalModule.blueprint(graspgenx=XARM_GRASPGENX_CONFIG),
     MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
@@ -94,7 +95,7 @@ xarm_room_sim = autoconnect(
     ),
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
-    GraspProposalModule.blueprint(),
+    GraspProposalModule.blueprint(graspgenx=XARM_GRASPGENX_CONFIG),
     MujocoSimModule.blueprint(
         **{
             **make_xarm7_sim_module_kwargs(XARM_ROOM_SCENE_PATH),

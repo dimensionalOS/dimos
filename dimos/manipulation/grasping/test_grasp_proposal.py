@@ -47,9 +47,8 @@ def module() -> Iterator[GraspProposalModule]:
 
 
 @pytest.fixture
-def generator_config():
+def graspgenx_config():
     return {
-        "backend": "graspgenx",
         "gripper": {
             "extents_open": [0.1, 0.1, 0.1],
             "offset_open": [0.0, 0.0, 0.0],
@@ -85,14 +84,14 @@ def test_default_proposals_and_lifecycle(module):
     assert len(module.propose_grasps(cloud())) == 1
 
 
-def test_learned_backend_lifecycle_and_errors(generator_config, mocker):
+def test_learned_backend_lifecycle_and_errors(graspgenx_config, mocker):
     runtime = mocker.patch.object(grasp_gen_x, "_create_runtime")
     runtime.return_value.infer.return_value = (np.eye(4)[None], np.array([0.75]))
-    instance = GraspProposalModule(generator=generator_config)
+    instance = GraspProposalModule(backend="graspgenx", graspgenx=graspgenx_config)
     try:
         instance.start()
         instance.start()
-        runtime.assert_called_once_with(instance.config.generator)
+        runtime.assert_called_once_with(instance.config.graspgenx)
         result = instance.propose_grasps(cloud())
         assert result.candidates[0].score == 0.75
         assert result.header.timestamp == 1.0
@@ -106,10 +105,10 @@ def test_learned_backend_lifecycle_and_errors(generator_config, mocker):
         instance.stop()
 
 
-def test_failed_model_start_does_not_fall_back(generator_config, mocker):
+def test_failed_model_start_does_not_fall_back(graspgenx_config, mocker):
     runtime = mocker.patch.object(grasp_gen_x, "_create_runtime")
     runtime.side_effect = RuntimeError("CUDA unavailable")
-    instance = GraspProposalModule(generator=generator_config)
+    instance = GraspProposalModule(backend="graspgenx", graspgenx=graspgenx_config)
     try:
         with pytest.raises(GraspGenXError, match="initialize"):
             instance.start()
@@ -119,18 +118,18 @@ def test_failed_model_start_does_not_fall_back(generator_config, mocker):
         instance.stop()
 
 
-def test_json_configuration_and_cli_override(generator_config, tmp_path):
+def test_json_configuration_and_cli_override(graspgenx_config, tmp_path):
     config_path = tmp_path / "grasp.json"
     config_path.write_text(
         json.dumps(
-            {"graspproposalmodule": {"generator": {**generator_config, "max_candidates": 20}}}
+            {"graspproposalmodule": {"graspgenx": {**graspgenx_config, "max_candidates": 20}}}
         )
     )
     parsed = BlueprintConfigParser(GraspProposalModule.blueprint()).parse(
         [
-            "--graspproposalmodule.generator.backend",
+            "--graspproposalmodule.backend",
             "graspgenx",
-            "--graspproposalmodule.generator.max-candidates",
+            "--graspproposalmodule.graspgenx.max-candidates",
             "5",
         ],
         config_path=config_path,
@@ -138,9 +137,9 @@ def test_json_configuration_and_cli_override(generator_config, tmp_path):
     )
     instance = GraspProposalModule(**parsed.module_kwargs("graspproposalmodule"))
     try:
-        assert isinstance(instance.config.generator, GraspGenXConfig)
-        assert instance.config.generator.max_candidates == 5
-        assert instance.config.generator.gripper.fingertip_depth == 0.02
+        assert isinstance(instance.config.graspgenx, GraspGenXConfig)
+        assert instance.config.graspgenx.max_candidates == 5
+        assert instance.config.graspgenx.gripper.fingertip_depth == 0.02
     finally:
         instance.stop()
 
@@ -149,20 +148,24 @@ def test_json_configuration_and_cli_override(generator_config, tmp_path):
 def test_invalid_or_incomplete_backend_config_fails_before_start(backend):
     with pytest.raises(BlueprintConfigError):
         BlueprintConfigParser(GraspProposalModule.blueprint()).parse(
-            ["--graspproposalmodule.generator.backend", backend], environ={}
+            ["--graspproposalmodule.backend", backend], environ={}
         )
 
 
+@pytest.mark.parametrize("backend", ["heuristic", "graspgenx"])
 @pytest.mark.parametrize("blueprint", [xarm_perception, xarm_perception_sim, xarm_room_sim])
-def test_xarm_blueprints_select_one_configurable_provider(blueprint):
+def test_xarm_blueprints_select_one_configurable_provider(blueprint, backend):
     providers = [
         atom.module for atom in blueprint.active_blueprints if issubclass(atom.module, GraspGenSpec)
     ]
     assert providers == [GraspProposalModule]
     parsed = BlueprintConfigParser(blueprint).parse(
-        ["--graspproposalmodule.generator.backend", "heuristic"], environ={}
+        ["--graspproposalmodule.backend", backend], environ={}
     )
-    assert parsed.module_kwargs("graspproposalmodule")["generator"]["backend"] == "heuristic"
+    kwargs = parsed.module_kwargs("graspproposalmodule")
+    assert kwargs["backend"] == backend
+    assert kwargs["graspgenx"]["gripper"]["extents_open"] == (0.088924, 0.03, 0.037)
+    assert kwargs["graspgenx"]["grasp_frame_to_tcp"][2][3] == 0.172
 
 
 def test_heuristic_start_and_cli_help_do_not_load_optional_runtime():
@@ -173,8 +176,9 @@ def test_heuristic_start_and_cli_help_do_not_load_optional_runtime():
             """
 import sys
 from dimos.manipulation.grasping.grasp_proposal import GraspProposalModule
+from dimos.robot.manipulators.xarm.config import XARM_GRASPGENX_CONFIG
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-module = GraspProposalModule()
+module = GraspProposalModule(graspgenx=XARM_GRASPGENX_CONFIG)
 try:
     BlueprintConfigParser(module.blueprint()).format_help()
     module.start()
