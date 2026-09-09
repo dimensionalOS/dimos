@@ -167,7 +167,7 @@ Use `arm.rpc.cancel()` and inspect its result when cancellation is needed.
 ## Advanced motion RPCs
 
 Use `arm.rpc` for explicit planning, preview, nonblocking execution, and
-cancellation. The original `app.get_module(ManipulationSpec)` API remains available.
+cancellation. Use `app.find_module_by_spec(ManipulationSpec)` for direct typed discovery.
 
 ```python skip
 from dimos.msgs.sensor_msgs.JointState import JointState

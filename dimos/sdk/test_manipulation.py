@@ -84,7 +84,7 @@ def rpc(mocker):
 @pytest.fixture
 def app(mocker, rpc):
     app = mocker.Mock(spec=Dimos)
-    app.get_module.return_value = rpc
+    app.find_module_by_spec.return_value = rpc
     return app
 
 
@@ -136,7 +136,7 @@ def test_discovery_binds_unique_pose_group_without_requiring_gripper(app, rpc):
 
     assert arm.info == info
     assert arm.rpc is rpc
-    app.get_module.assert_called_once_with(ManipulationSpec, instance_name=None)
+    app.find_module_by_spec.assert_called_once_with(ManipulationSpec, instance_name=None)
     rpc.execute.assert_not_called()
     app.run.assert_not_called()
     app.stop.assert_not_called()
@@ -162,7 +162,7 @@ def test_explicit_group_and_module_selection(app, rpc):
     arm = Arm.from_app(app, group="right", instance_name="robot/motion")
 
     assert arm.info.id == "right"
-    app.get_module.assert_called_once_with(ManipulationSpec, instance_name="robot/motion")
+    app.find_module_by_spec.assert_called_once_with(ManipulationSpec, instance_name="robot/motion")
 
 
 def test_joints_are_fresh_arrays_in_declared_order(arm, rpc):

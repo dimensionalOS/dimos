@@ -93,7 +93,7 @@ class Arm:
         Discovery does not start a runtime or command motion. Gripperless arms
         are eligible. Missing or ambiguous selections raise ``ValueError``.
         """
-        rpc = app.get_module(ManipulationSpec, instance_name=instance_name)
+        rpc = app.find_module_by_spec(ManipulationSpec, instance_name=instance_name)
         groups = rpc.list_planning_groups()
         matches = [
             info
