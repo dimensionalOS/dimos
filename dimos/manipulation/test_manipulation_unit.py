@@ -604,9 +604,7 @@ class TestPlanningInitialization:
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
         module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
-        module._world_monitor.planning_groups = PlanningGroupRegistry(
-            robot_config.planning_groups
-        )
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         current = JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])
         current_model_state = JointState(
             name=["joint1", "joint2", "joint3"],
@@ -670,9 +668,7 @@ class TestPlanningInitialization:
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
         module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
-        module._world_monitor.planning_groups = PlanningGroupRegistry(
-            robot_config.planning_groups
-        )
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = None
         explicit_seed = JointState(name=robot_config.joint_names, position=[0.2, 0.1, 0.0])
         expected = IKResult(status=IKStatus.SUCCESS, joint_state=explicit_seed)
