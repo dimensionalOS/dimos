@@ -26,6 +26,7 @@
             ../../../../Cargo.lock
             ../../../../Cargo.toml
             ../../../../dimos/experimental/memory/rust
+            ../../../../dimos/hardware/sensors/camera/depth_cloud/rust
             ../../../../dimos/hardware/sensors/lidar/virtual_mid360
             ../../../../dimos/mapping/ray_tracing/rust
             ../../../../dimos/navigation/nav_3d/mls_planner/rust
