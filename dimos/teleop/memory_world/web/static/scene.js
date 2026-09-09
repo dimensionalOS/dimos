@@ -1305,8 +1305,10 @@ export class WorldScene {
             this._frameRotate.updateWorldMatrix(true, false);
             quad.up.copy(up).transformDirection(this._frameRotate.matrixWorld);
             this._highlightGroup.add(quad);
+            // lookAt aims the plane's front (+z, where the texture reads
+            // correctly) at the eye. Turning it away showed the back face,
+            // which is the picture mirrored.
             quad.lookAt(this._frameRotate.localToWorld(eye.clone()));
-            quad.rotateY(Math.PI); // lookAt aims +z at the eye; the picture faces the other way
 
             const right = new THREE.Vector3().crossVectors(forward, up).normalize();
             const centre = quad.position.clone();
