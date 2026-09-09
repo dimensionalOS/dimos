@@ -20,6 +20,7 @@ import struct
 import subprocess
 import sys
 
+from langchain_core.messages import BaseMessage
 import pytest
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -29,6 +30,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.web.cockpit import (
     Channel,
     ChannelRequest,
+    Chat,
     Col,
     Map2D,
     Panel,
@@ -38,7 +40,9 @@ from dimos.web.cockpit import (
     cockpit,
 )
 from dimos.web.codecs import EncodedPayload, decode_json_v1, encode_json_v1, web_encoder
+from dimos.web.relay_bridge.audio_codec import AudioChunk, decode_audio_chunk
 from dimos.web.relay_bridge.builtin_codecs import decode_text
+from dimos.web.relay_bridge.chat_codec import encode_chat
 from dimos.web.relay_bridge.manifest import ManifestError, parse_manifest
 from dimos.web.relay_bridge.protocol import (
     MAX_CONTROL_PAYLOAD_BYTES,
@@ -481,6 +485,57 @@ def test_publish_tx_channel_blueprint() -> None:
     assert ratom.kwargs["channels"][0].decoder is decode_text
 
 
+def test_chat_panel_blueprint() -> None:
+    blueprint = cockpit(layout=Chat())
+    (atom,) = blueprint.blueprints
+    manifest = atom.kwargs["manifest"]
+    assert [
+        (c["ch"], c["dir"], c["encoding"], c["delivery"], c["publish"])
+        for c in manifest["channels"]
+    ] == [
+        ("agent", "rx", "chat.json.v1", "reliable", "none"),
+        ("agent_idle", "rx", "json.v1", "latest", "none"),
+        ("human_input", "tx", "text.json.v1", "reliable", "shared"),
+        ("audio_in", "tx", "audio.json.v1", "reliable", "shared"),
+    ]
+    (panel,) = manifest["panels"]
+    assert panel["kind"] == "chat"
+    assert panel["channels"] == ["human_input", "agent", "agent_idle", "audio_in"]
+    assert parse_manifest(manifest).model_dump() == manifest
+    # The agent and mic streams ride a generated subclass whose ports
+    # autoconnect to McpClient's and VoiceInput's by name + type.
+    ports = {(s.name, s.direction): s.type for s in atom.streams}
+    assert ports[("agent", "in")] is BaseMessage
+    assert ports[("agent_idle", "in")] is bool
+    assert ports[("human_input", "out")] is str
+    assert ports[("audio_in", "out")] is AudioChunk
+    specs = {s.ch: s for s in atom.kwargs["channels"]}
+    assert specs["agent"].encoder is encode_chat and specs["agent"].paced
+    assert specs["agent_idle"].paced
+    assert specs["human_input"].decoder is decode_text
+    assert specs["audio_in"].decoder is decode_audio_chunk
+    assert not specs["audio_in"].decoder_takes_context and specs["audio_in"].encoder is None
+    restored = pickle.loads(pickle.dumps(blueprint))
+    (ratom,) = restored.blueprints
+    assert {s.ch: s.decoder for s in ratom.kwargs["channels"]}["audio_in"] is decode_audio_chunk
+    # Pacing is the chat panel's, not the stream's: the same streams declared
+    # by hand are sampled like any channel.
+    (atom,) = cockpit(channels=[Channel("agent", BaseMessage, encoding="chat.json.v1")]).blueprints
+    assert not atom.kwargs["channels"][0].paced
+
+
+def test_chat_panel_declarations_merge_or_conflict() -> None:
+    with pytest.raises(ValueError, match="conflicting declarations for stream 'agent'"):
+        cockpit(layout=Chat(), channels=[Channel("agent", dict, encoding="chat.json.v1")])
+    (atom,) = cockpit(
+        layout=Chat(),
+        channels=[Channel("agent", BaseMessage, encoding="chat.json.v1", max_hz=50.0)],
+    ).blueprints
+    agent = next(c for c in atom.kwargs["manifest"]["channels"] if c["ch"] == "agent")
+    assert agent["maxHz"] == 50.0
+    assert next(s for s in atom.kwargs["channels"] if s.ch == "agent").paced
+
+
 def test_publish_tx_generic_json_and_dataclass_rejection() -> None:
     (atom,) = cockpit(channels=[Channel("counter", int, dir="tx", publish="shared")]).blueprints
     (spec,) = atom.kwargs["channels"]
@@ -646,11 +701,13 @@ def test_channel_ordering_builtins_then_customs_then_publish() -> None:
 
 
 def test_import_stays_light() -> None:
-    # The authoring surface must be importable without the [web] extra:
-    # neither the bridge module nor aioquic may load until cockpit() runs.
+    # The authoring surface must be importable without the [web] extra
+    # (neither the bridge module nor aioquic may load until cockpit() runs)
+    # and without the [agents] extra (langchain is the Chat panel's, on use).
     code = (
         "import sys; import dimos.web.cockpit; "
         "assert 'dimos.web.relay_bridge.relay_bridge_module' not in sys.modules; "
-        "assert 'aioquic' not in sys.modules"
+        "assert 'aioquic' not in sys.modules; "
+        "assert 'langchain_core' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
