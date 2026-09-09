@@ -12,17 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Iterator
 import math
 
 import numpy as np
 import pytest
 
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
-from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspBackend
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.spec.utils import spec_annotation_compliance
 
 
 def _cloud(
@@ -32,17 +29,11 @@ def _cloud(
 
 
 @pytest.fixture
-def module() -> Iterator[HeuristicGraspModule]:
-    instance = HeuristicGraspModule()
-    yield instance
-    instance.stop()
+def module() -> HeuristicGraspBackend:
+    return HeuristicGraspBackend()
 
 
-def test_heuristic_grasp_implements_grasp_provider_spec(module: HeuristicGraspModule) -> None:
-    assert spec_annotation_compliance(module, GraspGenSpec)
-
-
-def test_heuristic_grasp_proposes_centered_top_down_pose(module: HeuristicGraspModule) -> None:
+def test_heuristic_grasp_proposes_centered_top_down_pose(module: HeuristicGraspBackend) -> None:
     proposals = module.propose_grasps(
         _cloud(
             np.asarray(
@@ -68,7 +59,7 @@ def test_heuristic_grasp_proposes_centered_top_down_pose(module: HeuristicGraspM
     assert proposals.candidates[0].score == pytest.approx(1.0)
 
 
-def test_heuristic_grasp_aligns_jaw_axis_with_narrow_axis(module: HeuristicGraspModule) -> None:
+def test_heuristic_grasp_aligns_jaw_axis_with_narrow_axis(module: HeuristicGraspBackend) -> None:
     proposals = module.propose_grasps(
         _cloud(
             np.asarray(
@@ -89,7 +80,7 @@ def test_heuristic_grasp_aligns_jaw_axis_with_narrow_axis(module: HeuristicGrasp
 
 
 def test_heuristic_grasp_canonicalizes_pca_eigenvector_sign(
-    module: HeuristicGraspModule, monkeypatch: pytest.MonkeyPatch
+    module: HeuristicGraspBackend, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     values = np.asarray([1.0, 4.0])
     same_axis = np.asarray([[1.0, 0.0], [0.0, 1.0]])
@@ -120,7 +111,7 @@ def test_heuristic_grasp_canonicalizes_pca_eigenvector_sign(
     ],
 )
 def test_heuristic_grasp_rejects_invalid_pointclouds(
-    module: HeuristicGraspModule,
+    module: HeuristicGraspBackend,
     points: np.ndarray,
     frame_id: str,
     timestamp: float | None,

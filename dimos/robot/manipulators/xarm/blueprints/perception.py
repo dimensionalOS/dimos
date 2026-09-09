@@ -20,7 +20,7 @@ import math
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.grasping.grasp_proposal import GraspProposalModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
@@ -53,7 +53,7 @@ xarm_perception = autoconnect(
     ),
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
-    HeuristicGraspModule.blueprint(),
+    GraspProposalModule.blueprint(),
     # TODO: tf tree is broken here; RealSenseCamera no longer publishes its mount
     # edge, so camera_link needs a parent (e.g. from the arm) to resolve into world.
     RealSenseCamera.blueprint(),

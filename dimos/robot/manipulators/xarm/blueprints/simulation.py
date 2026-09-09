@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.grasping.grasp_proposal import GraspProposalModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
@@ -63,7 +63,7 @@ xarm_perception_sim = autoconnect(
     ),
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
-    HeuristicGraspModule.blueprint(),
+    GraspProposalModule.blueprint(),
     MujocoSimModule.blueprint(**make_xarm7_sim_module_kwargs(XARM7_SIM_PATH)),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
@@ -94,7 +94,7 @@ xarm_room_sim = autoconnect(
     ),
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
-    HeuristicGraspModule.blueprint(),
+    GraspProposalModule.blueprint(),
     MujocoSimModule.blueprint(
         **{
             **make_xarm7_sim_module_kwargs(XARM_ROOM_SCENE_PATH),

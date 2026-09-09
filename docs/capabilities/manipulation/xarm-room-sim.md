@@ -59,3 +59,85 @@ print(app.ManipulationModule.get_obstacles())
 Wait for `scan_objects` to finish before issuing another scan. The prompt set
 includes a `green ring` fallback because the tape loses its category silhouette
 in the wrist camera's top-down view.
+
+## Selecting the grasp generator
+
+The room, basic perception simulation, and real perception blueprints share
+`GraspProposalModule`. Its default generator is the top-down heuristic:
+
+```bash
+dimos run xarm-room-sim
+```
+
+To select GraspGenX, install its optional dependencies and supply your gripper
+configuration. The `all` extra does not include GraspGenX.
+
+```bash
+uv sync --extra all --extra graspgenx
+dimos run xarm-room-sim --config xarm-grasp.json \
+  --graspproposalmodule.generator.backend graspgenx
+```
+
+Use the headless rendering environment from the launch example above when
+needed. The same options work with `xarm-perception-sim` and
+`xarm-perception`; the real blueprint still requires its camera mount TF and
+hardware coordinator to be completed.
+
+The JSON file has this structure. Replace each placeholder with measured
+values before use; this template is not a calibrated xArm configuration:
+
+```text
+{
+  "graspproposalmodule": {
+    "generator": {
+      "backend": "graspgenx",
+      "gripper": {
+        "extents_open": [OPEN_X, OPEN_Y, OPEN_Z],
+        "offset_open": [OPEN_OFFSET_X, OPEN_OFFSET_Y, OPEN_OFFSET_Z],
+        "extents_half_open": [HALF_X, HALF_Y, HALF_Z],
+        "offset_half_open": [HALF_OFFSET_X, HALF_OFFSET_Y, HALF_OFFSET_Z],
+        "fingertip_depth": DEPTH_METRES,
+        "family": "parallel_2f"
+      },
+      "grasp_frame_to_tcp": [
+        [R00, R01, R02, TX],
+        [R10, R11, R12, TY],
+        [R20, R21, R22, TZ],
+        [0, 0, 0, 1]
+      ],
+      "max_candidates": 100
+    }
+  }
+}
+```
+
+Lengths and translations are in metres. Choose the family matching your
+gripper: `parallel_2f`, `revolute_2f`, or `revolute_3f`. The TCP transform
+maps the model grasp frame to the robot TCP. Its default is identity, which is
+valid only if those frames coincide.
+
+CLI overrides take precedence over JSON values. For example, add
+`--graspproposalmodule.generator.max-candidates 20` to limit returned proposals.
+Run `dimos run xarm-room-sim --help` to inspect available config fields.
+Backend changes take effect on restart. GraspGenX initializes in a dedicated
+worker, downloads its pinned checkpoint on first use, and reports failures
+without falling back to the heuristic. Heuristic startup and CLI help do not
+load the optional model runtime.
+
+After scanning, inspect proposals without moving the arm in `dimos shell`:
+
+```python skip
+print(scan.metadata["objects"])
+object_id = "COPY_AN_ID_FROM_THE_SCAN"
+cloud = app.ObjectSceneRegistrationModule.get_object_pointcloud_by_object_id(object_id)
+assert cloud is not None
+proposals = app.GraspProposalModule.propose_grasps(cloud)
+print(proposals.header.frame_id, len(proposals))
+for candidate in proposals.candidates[:5]:
+    print(candidate.score, candidate.pose)
+```
+
+`app.PickAndPlaceModule.pick_object(object_id)` generates a fresh set of proposals
+and attempts its first candidate. It does not execute a previously inspected
+proposal or retry other candidates. Retrieve that set through
+`app.PickAndPlaceModule.get_grasp_candidates()`.
