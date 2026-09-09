@@ -77,6 +77,7 @@ from dimos.teleop.memory_world.visual_search import (
     SIGLIP2_MODEL_NAME,
     VisualMemoryIndex,
     cluster_places,
+    posed_frames,
 )
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -149,6 +150,8 @@ class MemoryWorldConfig(ModuleConfig):
     thumbnail_jpeg_quality: int = 70
     # odom stream is used to draw the robot's path as a polyline.
     odom_stream_name: str = "odom"
+    # Images without a pose of their own take the nearest odom within this.
+    image_pose_tolerance_s: float = PydanticField(default=0.1, gt=0.0)
     n_odom_samples: int = 400
     # Top-down density map (GTA-style minimap + ground projection). Computed
     # from the same point cloud — Z-slab histogram into a square image.
@@ -162,10 +165,11 @@ class MemoryWorldConfig(ModuleConfig):
     background_mode: Literal["black", "passthrough"] = "black"
     memory_analysis_max_output_chars: int = PydanticField(default=64_000, gt=0)
     # ---- spoken "where did I see X" search --------------------------------
-    # SigLIP 2 index over the image stream. Building it is the slow part and
-    # happens once per recording, in the background, into the recording itself.
+    # SigLIP 2 per-patch index over the image stream. Building it is the slow
+    # part and happens once per recording, in the background, into the
+    # recording itself (~1.7 MB per indexed frame at fp16).
     siglip_model_name: str = SIGLIP2_MODEL_NAME
-    image_index_stream_name: str = "image_siglip2"
+    image_index_stream_name: str = "image_siglip2_patches"
     # Every Nth frame. The recording is ~15fps, so 3 keeps sub-metre coverage
     # at a third of the embedding cost.
     image_index_stride: int = PydanticField(default=3, ge=1)
@@ -173,7 +177,7 @@ class MemoryWorldConfig(ModuleConfig):
     # Two hits closer together than this are one place, not two answers.
     place_radius_m: float = PydanticField(default=2.5, gt=0.0)
     max_places: int = PydanticField(default=6, ge=1)
-    # How many nearest neighbours the vector index returns before clustering.
+    # How many best-scoring frames are kept before clustering into places.
     search_top_k: int = PydanticField(default=200, ge=1)
     # faster-whisper model size for the spoken query.
     whisper_model: str = "base.en"
@@ -520,16 +524,14 @@ class MemoryWorldModule(Module):
             timestamps: list[float] = []
             ids: list[int] = []
             thumbnails: list[bytes] = []
-            for obs in stream.transform(throttle(interval)):  # type: ignore[var-annotated]
-                pose = getattr(obs, "pose_tuple", None)
-                if pose is None:
-                    continue
-                p = pose
-                positions.append((float(p[0]), float(p[1]), float(p[2])))
-                if len(p) >= 7:
-                    quats.append((float(p[3]), float(p[4]), float(p[5]), float(p[6])))
-                else:
-                    quats.append((0.0, 0.0, 0.0, 1.0))
+            odom = store.streams[self.config.odom_stream_name]
+            for obs, pose in posed_frames(
+                stream.transform(throttle(interval)), odom, self.config.image_pose_tolerance_s
+            ):
+                p = pose.position
+                positions.append((float(p.x), float(p.y), float(p.z)))
+                q = pose.orientation
+                quats.append((float(q.x), float(q.y), float(q.z), float(q.w)))
                 timestamps.append(float(obs.ts))
                 ids.append(int(getattr(obs, "id", 0)))
 
@@ -755,6 +757,9 @@ class MemoryWorldModule(Module):
                 self._ensure_store(),
                 image_stream_name=self.config.image_stream_name,
                 index_stream_name=self.config.image_index_stream_name,
+                # Images that carry no pose of their own borrow the nearest odom.
+                pose_stream_name=self.config.odom_stream_name,
+                pose_tolerance_s=self.config.image_pose_tolerance_s,
                 model_name=self.config.siglip_model_name,
             )
         return self._visual_index

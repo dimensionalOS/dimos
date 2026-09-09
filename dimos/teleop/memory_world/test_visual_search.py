@@ -21,10 +21,18 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 import sqlite_vec
+import torch
 
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.models.embedding.base import Embedding
-from dimos.teleop.memory_world.visual_search import Place, VisualMemoryIndex, cluster_places
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.teleop.memory_world.visual_search import (
+    PatchGrid,
+    Place,
+    VisualMemoryIndex,
+    cluster_places,
+    score_frames,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -94,7 +102,33 @@ def test_invalid_parameters_are_rejected(radius: float, max_places: int) -> None
         cluster_places([place(0.0, 0.0, 0.5)], radius=radius, max_places=max_places)
 
 
-# ---- index/model compatibility --------------------------------------------
+# ---- scoring ----------------------------------------------------------------
+
+
+def unit(*values: float) -> torch.Tensor:
+    vector = torch.tensor(values, dtype=torch.float32)
+    return vector / vector.norm()
+
+
+def test_one_hot_patch_beats_a_frame_of_lukewarm_patches() -> None:
+    """The whole point of per-patch scoring: a small object in one patch must win."""
+    query = unit(1.0, 0.0)
+    cone_frame = torch.stack([unit(1.0, 0.0), unit(0.0, 1.0), unit(0.0, 1.0), unit(0.0, 1.0)])
+    lukewarm = torch.stack([unit(1.0, 1.0)] * 4)
+    scores, best = score_frames(torch.stack([lukewarm, cone_frame]), query, torch.zeros(0, 2))
+    assert scores[1] > scores[0]
+    assert int(best[1]) == 0
+
+
+def test_background_contrast_removes_what_every_frame_shares() -> None:
+    query = unit(1.0, 0.0)
+    background = unit(1.0, 0.0).unsqueeze(0)  # the query IS the background
+    frame = torch.stack([unit(1.0, 0.0), unit(0.0, 1.0)])
+    scores, _ = score_frames(frame.unsqueeze(0), query, background)
+    assert float(scores[0]) == pytest.approx(0.0)
+
+
+# ---- the index --------------------------------------------------------------
 
 
 @pytest.fixture
@@ -114,32 +148,67 @@ def sqlite_store() -> Iterator[SqliteStore]:
             yield store
 
 
-def _seed_index(store: SqliteStore, stream_name: str, model_name: str, dims: int = 4) -> None:
-    store.stream(stream_name, int).append(
-        7,
-        ts=1.0,
-        pose=None,
-        embedding=Embedding(np.zeros(dims, dtype=np.float32)),
+def _seed_index(
+    store: SqliteStore,
+    model_name: str,
+    patches: np.ndarray | None = None,
+    ts: float = 1.0,
+    position: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    source_id: int = 7,
+) -> None:
+    grid = patches if patches is not None else np.zeros((4, 2), dtype=np.float16)
+    store.stream("image_siglip2_patches", PatchGrid).append(
+        PatchGrid(source_id=source_id, rows=2, cols=2, patches=grid),
+        ts=ts,
+        pose=PoseStamped(position=Vector3(*position)),
         tags={"model": model_name},
     )
 
 
+GIANT = "google/siglip2-giant-opt-patch16-384"
+
+
 def test_index_built_by_another_model_is_refused(sqlite_store: SqliteStore) -> None:
-    _seed_index(sqlite_store, "image_siglip2", "google/siglip2-so400m-patch16-384")
-    index = VisualMemoryIndex(sqlite_store, model_name="google/siglip2-giant-opt-patch16-384")
+    _seed_index(sqlite_store, "google/siglip2-so400m-patch16-384")
     with pytest.raises(ValueError, match="so400m"):
-        _ = index.index_stream
+        _ = VisualMemoryIndex(sqlite_store, model_name=GIANT).index_stream
 
 
 def test_index_built_by_the_same_model_opens(sqlite_store: SqliteStore) -> None:
-    _seed_index(sqlite_store, "image_siglip2", "google/siglip2-giant-opt-patch16-384")
-    index = VisualMemoryIndex(sqlite_store, model_name="google/siglip2-giant-opt-patch16-384")
-    assert index.count() == 1
+    _seed_index(sqlite_store, GIANT)
+    assert VisualMemoryIndex(sqlite_store, model_name=GIANT).count() == 1
 
 
-def test_untagged_index_is_accepted_as_legacy(sqlite_store: SqliteStore) -> None:
-    sqlite_store.stream("image_siglip2", int).append(
-        7, ts=1.0, pose=None, embedding=Embedding(np.zeros(4, dtype=np.float32))
+def test_search_returns_the_frame_and_patch_that_matched(sqlite_store: SqliteStore) -> None:
+    """No model needed: the index is seeded with 2-d unit vectors and the query is one too."""
+    hot = np.array([[0, 1], [0, 1], [1, 0], [0, 1]], dtype=np.float16)  # patch 2 = row 1, col 0
+    cold = np.array([[0, 1]] * 4, dtype=np.float16)
+    _seed_index(sqlite_store, GIANT, patches=cold, ts=1.0, position=(0.0, 0.0, 0.0), source_id=1)
+    _seed_index(sqlite_store, GIANT, patches=hot, ts=2.0, position=(5.0, 0.0, 0.0), source_id=2)
+    index = VisualMemoryIndex(sqlite_store, model_name=GIANT)
+    index._embed = lambda text: unit(1.0, 0.0)  # type: ignore[method-assign]
+    index._background = torch.zeros(0, 2)
+
+    places = index.search("a cone", k=5)
+
+    assert [place.source_id for place in places] == [2, 1]
+    assert places[0].position == (5.0, 0.0, 0.0)
+    assert places[0].similarity == pytest.approx(1.0)
+    assert places[0].image_uv == (0.25, 0.75)
+
+
+def test_poseless_images_borrow_the_nearest_odom_pose(sqlite_store: SqliteStore) -> None:
+    images = sqlite_store.stream("realsense_color_image", int)
+    odom = sqlite_store.stream("odom", int)
+    images.append(1, ts=10.00, pose=None)
+    images.append(2, ts=10.50, pose=None)
+    images.append(3, ts=20.00, pose=None)  # nothing within tolerance: dropped
+    odom.append(0, ts=10.02, pose=PoseStamped(position=Vector3(1.0, 0.0, 0.0)))
+    odom.append(0, ts=10.48, pose=PoseStamped(position=Vector3(2.0, 0.0, 0.0)))
+    index = VisualMemoryIndex(
+        sqlite_store, image_stream_name="realsense_color_image", pose_stream_name="odom"
     )
-    index = VisualMemoryIndex(sqlite_store)
-    assert index.count() == 1
+
+    posed = [(obs.data, pose.position.x) for obs, pose in index._posed_frames()]
+
+    assert posed == [(1, 1.0), (2, 2.0)]
