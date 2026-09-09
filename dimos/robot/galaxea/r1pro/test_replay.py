@@ -19,7 +19,6 @@ import time
 import numpy as np
 import pytest
 
-from dimos.hardware.sensors.camera.depth_cloud import DepthCloud
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
@@ -34,31 +33,8 @@ from dimos.robot.galaxea.r1pro.connection import (
     ArticulatedTf,
     R1ProConnectionConfig,
 )
-from dimos.robot.galaxea.r1pro.replay import CAMERA_INFO_REPUBLISH_S, R1ProReplay
+from dimos.robot.galaxea.r1pro.replay import R1ProReplay
 from dimos.utils.threadpool import get_scheduler, max_workers
-
-CAMERA_INFO_YAML = """
-image_width: 640
-image_height: 480
-camera_name: head_left
-camera_matrix:
-  rows: 3
-  cols: 3
-  data: [400.0, 0.0, 320.0, 0.0, 400.0, 240.0, 0.0, 0.0, 1.0]
-distortion_model: plumb_bob
-distortion_coefficients:
-  rows: 1
-  cols: 5
-  data: [0.0, 0.0, 0.0, 0.0, 0.0]
-rectification_matrix:
-  rows: 3
-  cols: 3
-  data: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-projection_matrix:
-  rows: 3
-  cols: 4
-  data: [400.0, 0.0, 320.0, 0.0, 0.0, 400.0, 240.0, 0.0, 0.0, 0.0, 1.0, 0.0]
-"""
 
 
 def cloud(ts: float) -> PointCloud2:
@@ -179,11 +155,20 @@ def test_a_missing_stream_leaves_its_port_silent(recording, module):
     assert depth == []
 
 
-def test_camera_info_yaml_stands_in_for_a_recording_without_one(recording, module, tmp_path):
-    yaml_path = tmp_path / "head_left.yaml"
-    yaml_path.write_text(CAMERA_INFO_YAML)
-    path = recording(lidar=(PointCloud2, [cloud(0.0)]))
-    instance = module(dataset=str(path), head_camera_info_path=str(yaml_path))
+def test_intrinsics_come_from_the_recording(recording, module):
+    """The calibration is per-unit, so the only trustworthy copy is the one the
+    recording was made with."""
+    recorded = CameraInfo.from_intrinsics(
+        fx=400.0,
+        fy=400.0,
+        cx=320.0,
+        cy=240.0,
+        width=640,
+        height=480,
+        frame_id="camera_head_left_link",
+    )
+    path = recording(head_camera_info=(CameraInfo, [recorded]))
+    instance = module(dataset=str(path))
 
     infos: list = []
     instance.head_camera_info.subscribe(infos.append)
@@ -194,54 +179,17 @@ def test_camera_info_yaml_stands_in_for_a_recording_without_one(recording, modul
     assert infos[0].K[0] == pytest.approx(400.0)
 
 
-def test_a_recorded_camera_info_wins_over_the_yaml(recording, module, tmp_path):
-    """Otherwise a stale calibration file would silently override the one the
-    recording was actually made with."""
-    yaml_path = tmp_path / "head_left.yaml"
-    yaml_path.write_text(CAMERA_INFO_YAML)
-    recorded = CameraInfo.from_yaml(str(yaml_path), frame_id="camera_head_left_link")
-    recorded.K[0] = 999.0
-    path = recording(head_camera_info=(CameraInfo, [recorded]))
-    instance = module(dataset=str(path), head_camera_info_path=str(yaml_path))
-
-    infos: list = []
-    instance.head_camera_info.subscribe(infos.append)
-    instance.start()
-
-    settle(infos, 1)
-    # Past one republish period, so a yaml fallback would have shown itself.
-    time.sleep(CAMERA_INFO_REPUBLISH_S * 1.5)
-    assert infos
-    assert [info.K[0] for info in infos] == [pytest.approx(999.0)] * len(infos)
-
-
-class _Bus:
-    """In-process stand-in for a Transport, so DepthCloud's `In` ports can be fed."""
-
-    def __init__(self) -> None:
-        self.subscribers: list = []
-
-    def subscribe(self, callback, stream=None):
-        self.subscribers.append(callback)
-        return lambda: self.subscribers.remove(callback)
-
-    def publish(self, msg) -> None:
-        for callback in list(self.subscribers):
-            callback(msg)
-
-    def stop(self) -> None:
-        pass
-
-
 def test_a_head_only_obstacle_lands_where_it_was_authored(recording, module):
     """The head camera's whole reason to exist: seeing what the lidar cannot.
 
     A slab is authored in base_link above the chassis lidar, back-projected into
     a depth image through the very transform the connection derives from joint
-    angles, and then rebuilt by the same path the robot uses — replay, DepthCloud,
-    tf. Drop that transform, stack a second optical rotation onto it, or let the
-    cloud inherit the vendor's optical frame instead of the calibration frame,
-    and the points come back somewhere else.
+    angles, replayed, and then rebuilt through the transform the recording
+    carries. Drop that transform or stack a second optical rotation onto it and
+    the points come back somewhere else.
+
+    The unprojection itself is DepthCloud's, which is a native subprocess and so
+    stands in here as the pinhole model its Rust tests pin down.
     """
     config = R1ProConnectionConfig()
     fk = ArticulatedTf(R1PRO_MODEL, config.articulated_frame_ids, root_link=config.frame_id)
@@ -268,52 +216,32 @@ def test_a_head_only_obstacle_lands_where_it_was_authored(recording, module):
     depth_frame = np.zeros((height, width), dtype=np.float32)
     depth_frame[rows, columns] = in_camera[:, 2]
 
-    info = CameraInfo.from_intrinsics(
-        fx=fx,
-        fy=fy,
-        cx=width / 2,
-        cy=height / 2,
-        width=width,
-        height=height,
-        frame_id=config.head_camera_frame_id,
-    )
     depth = Image(data=depth_frame, format=ImageFormat.DEPTH, frame_id="vendor_optical", ts=1000.0)
-    # Several frames because DepthCloud drops depth that arrives before the
-    # intrinsics, exactly as it drops the first frames off a real camera.
-    frames = 5
     path = recording(
-        head_depth=(Image, [depth] * frames),
-        head_camera_info=(CameraInfo, [info] * frames),
-        tf=(TFMessage, [TFMessage(head)] * frames),
+        head_depth=(Image, [depth]),
+        tf=(TFMessage, [TFMessage(head)]),
     )
 
     tf = MultiTBuffer()
-    clouds: list = []
-    depth_cloud = DepthCloud(decimation=1, max_range_m=6.0)
-    depth_cloud.depth.transport = _Bus()
-    depth_cloud.camera_info.transport = _Bus()
-    depth_cloud.cloud.subscribe(clouds.append)
-
+    replayed: list = []
     instance = module(dataset=str(path))
     instance.tf.subscribe(tf.receive_tfmessage)
-    instance.head_camera_info.subscribe(depth_cloud.camera_info.transport.publish)
-    instance.head_depth.subscribe(depth_cloud.depth.transport.publish)
-    try:
-        depth_cloud.start()
-        instance.start()
-        assert settle(clouds, frames)
+    instance.head_depth.subscribe(replayed.append)
+    instance.start()
+    assert settle(replayed, 1)
 
-        assert clouds[0].frame_id == config.head_camera_frame_id
-        edge = tf.get(config.frame_id, clouds[0].frame_id, clouds[0].ts)
-        assert edge is not None, "the recording carries no transform for the head camera"
+    frame = replayed[0].data
+    rows, columns = np.nonzero(frame)
+    z = frame[rows, columns]
+    in_camera = np.stack([(columns - width / 2) * z / fx, (rows - height / 2) * z / fy, z], axis=1)
+    # DepthCloud publishes in the intrinsics' frame, not the vendor's optical one.
+    edge = tf.get(config.frame_id, config.head_camera_frame_id, replayed[0].ts)
+    assert edge is not None, "the recording carries no transform for the head camera"
 
-        points = clouds[0].points_f32()
-        rebuilt = (np.hstack([points, np.ones((len(points), 1))]) @ edge.to_matrix().T)[:, :3]
-        np.testing.assert_allclose(rebuilt[:, 0], slab_x, atol=0.01)
-        assert rebuilt[:, 2].min() > 0.99
-        assert rebuilt[:, 2].max() < 1.39
-    finally:
-        depth_cloud.dispose()
+    rebuilt = (np.hstack([in_camera, np.ones((len(in_camera), 1))]) @ edge.to_matrix().T)[:, :3]
+    np.testing.assert_allclose(rebuilt[:, 0], slab_x, atol=0.01)
+    assert rebuilt[:, 2].min() > 0.99
+    assert rebuilt[:, 2].max() < 1.39
 
 
 def test_a_dataset_is_required(module):

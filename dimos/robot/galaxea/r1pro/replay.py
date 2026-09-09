@@ -27,13 +27,16 @@ Every frame comes from the recording's own ``tf`` stream, including the head
 camera edge the connection derives from joint angles. A recording made before
 the connection published that edge replays without it, and the head cloud then
 has no transform to resolve.
+
+Intrinsics come from the recording too. Galaxea publishes no camera_info, so
+the connection loads the robot's calibration YAML and puts it on
+``head_camera_info``; a recording that skipped that stream is a recording to
+redo, not something to patch a second YAML onto here.
 """
 
 from __future__ import annotations
 
 from typing import Any
-
-import reactivex as rx
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -46,23 +49,10 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.galaxea.r1pro.topics import recorded_stream_name
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-# Port name -> db stream names to try, in order. The generic recorder slugs the
-# zenoh topic (``/r1pro/motor_states`` -> ``r1pro_motor_states``) while a
-# Recorder subclass names each stream after its port, so both are accepted.
-STREAM_CANDIDATES = {
-    "lidar": ("lidar",),
-    "head_depth": ("head_depth",),
-    "head_camera_info": ("head_camera_info",),
-    "motor_states": ("r1pro_motor_states", "motor_states"),
-    "chassis_odom": ("chassis_odom", "odom"),
-    "tf": ("tf",),
-}
-
-CAMERA_INFO_REPUBLISH_S = 1.0
 
 
 class R1ProReplayConfig(ModuleConfig):
@@ -73,13 +63,8 @@ class R1ProReplayConfig(ModuleConfig):
     duration: float | None = None
     loop: bool = False
     # Port name -> db stream name, for a recording that spells one differently
-    # from every entry in STREAM_CANDIDATES.
+    # from both names `_stream_candidates` derives.
     stream_remapping: dict[str, str] = {}
-    # Recordings made before the connection published intrinsics carry no
-    # camera_info stream; point this at the ROS camera_info YAML for the robot
-    # that made the recording to supply them.
-    head_camera_info_path: str = ""
-    head_camera_frame_id: str = "camera_head_left_link"
 
 
 class R1ProReplay(Module):
@@ -113,7 +98,9 @@ class R1ProReplay(Module):
 
         available = set(replay.list_streams())
         played = [
-            name for name in STREAM_CANDIDATES if self._play(replay, available, name) is not None
+            port_name
+            for port_name, port in self.outputs.items()
+            if self._play(replay, available, port_name, port)
         ]
         logger.info(
             "Replaying %s at %sx: %s (recording holds %s)",
@@ -123,13 +110,21 @@ class R1ProReplay(Module):
             ", ".join(sorted(available)),
         )
 
-        if "head_camera_info" not in played:
-            self._publish_camera_info_from_yaml()
+    def _stream_candidates(self, port_name: str) -> tuple[str, ...]:
+        """Stream names to look for, in order.
 
-    def _play(self, replay: Replay, available: set[str], port_name: str) -> str | None:
-        """Wire the recording's stream for *port_name* to that Out, if present."""
+        The generic recorder names a stream after the zenoh topic it subscribed
+        to, a Recorder subclass after the port, so both spellings are accepted.
+        """
         override = self.config.stream_remapping.get(port_name)
-        candidates = (override,) if override else STREAM_CANDIDATES[port_name]
+        if override:
+            return (override,)
+        slug = recorded_stream_name(port_name)
+        return (slug,) if slug == port_name else (slug, port_name)
+
+    def _play(self, replay: Replay, available: set[str], port_name: str, port: Out[Any]) -> bool:
+        """Wire the recording's stream for *port_name* to that Out, if present."""
+        candidates = self._stream_candidates(port_name)
         name = next((candidate for candidate in candidates if candidate in available), None)
         if name is None:
             logger.warning(
@@ -139,29 +134,7 @@ class R1ProReplay(Module):
                 ", ".join(candidates),
                 port_name,
             )
-            return None
+            return False
 
-        port: Out[Any] = getattr(self, port_name)
         self.register_disposable(replay.stream(name).observable().subscribe(port.publish))
-        return name
-
-    def _publish_camera_info_from_yaml(self) -> None:
-        if not self.config.head_camera_info_path:
-            logger.warning(
-                "%s: the recording has no head_camera_info and no "
-                "--head-camera-info-path was given, so the depth cloud will never build. "
-                "Pass the camera_info YAML for the robot that made the recording.",
-                type(self).__name__,
-            )
-            return
-
-        info = CameraInfo.from_yaml(
-            self.config.head_camera_info_path, frame_id=self.config.head_camera_frame_id
-        )
-        # Intrinsics are static, but Out streams don't latch, so a consumer that
-        # connects late still needs to see one.
-        self.register_disposable(
-            rx.interval(CAMERA_INFO_REPUBLISH_S).subscribe(
-                lambda _tick: self.head_camera_info.publish(info)
-            )
-        )
+        return True

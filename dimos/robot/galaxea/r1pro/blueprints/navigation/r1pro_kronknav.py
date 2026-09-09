@@ -46,7 +46,7 @@ from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import global_config
-from dimos.hardware.sensors.camera.depth_cloud import DepthCloud
+from dimos.hardware.sensors.camera.depth_cloud.module import DepthCloud
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
 from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
@@ -158,7 +158,6 @@ def _nav_stack() -> Blueprint:
 
 
 _shared_global_config = {
-    "obstacle_avoidance": False,
     "robot_width": CHASSIS_WIDTH_M,
     "robot_rotation_diameter": ROTATION_DIAMETER_M,
     "transport": "zenoh",
