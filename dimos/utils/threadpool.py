@@ -18,6 +18,7 @@ This module provides a shared ThreadPoolExecutor exposed through a
 ReactiveX scheduler, ensuring consistent thread management across the application.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 import multiprocessing
 import os
 
@@ -26,6 +27,8 @@ from reactivex.scheduler import ThreadPoolScheduler
 from .logging_config import setup_logger
 
 logger = setup_logger()
+
+SCHEDULER_THREAD_PREFIX = "dimos-scheduler"
 
 
 def get_max_workers() -> int:
@@ -43,7 +46,12 @@ def get_max_workers() -> int:
 try:
     max_workers = get_max_workers()
     scheduler = ThreadPoolScheduler(max_workers=max_workers)
-    # logger.info(f"Using {max_workers} workers")
+    # Workers spawn lazily, so the first test to run any reactive pipeline sees
+    # them appear and a leak detector blames that test. Naming them marks them
+    # as this process-wide pool's rather than some module's own executor.
+    scheduler.executor = ThreadPoolExecutor(
+        max_workers=max_workers, thread_name_prefix=SCHEDULER_THREAD_PREFIX
+    )
 except Exception as e:
     logger.error(f"Failed to initialize ThreadPoolScheduler: {e}")
     raise

@@ -52,6 +52,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -59,6 +60,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.robot.galaxea.r1pro.constants import HEAD_CAMERA_LINK, LIDAR_LINK
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 from dimos.utils.logging_config import setup_logger
 
@@ -139,7 +141,7 @@ class R1ProConnectionConfig(ModuleConfig):
     publish_odom: bool = Field(default=True)
     frame_id: str = Field(default="base_link")
     odom_frame_id: str = Field(default="odom")
-    lidar_frame_id: str = Field(default="lidar_chassis_left_link")
+    lidar_frame_id: str = Field(default=LIDAR_LINK)
     # Seconds between per-stream sensor-stats log lines (0 disables).
     sensor_stats_interval_s: float = Field(default=10.0)
     # Wrist depth is raw 16-bit at up to 30 Hz per wrist — too heavy for the
@@ -147,6 +149,11 @@ class R1ProConnectionConfig(ModuleConfig):
     enable_wrist_depth: bool = Field(default=False)
     # Max Hz per color camera (0 = no cap).
     color_publish_hz: float = Field(default=5.0)
+    # Galaxea publishes no camera_info topic, and head stereo intrinsics are
+    # per-unit factory calibration, so they cannot be committed. Point this at a
+    # ROS camera_info YAML (what `cameracalibrate` writes) for the robot in hand.
+    head_camera_info_path: str = Field(default="")
+    head_camera_frame_id: str = Field(default=HEAD_CAMERA_LINK)
 
 
 class R1ProConnection(Module):
@@ -174,6 +181,7 @@ class R1ProConnection(Module):
     head_left_color: Out[CompressedImage]
     head_right_color: Out[CompressedImage]
     head_depth: Out[Image]
+    head_camera_info: Out[CameraInfo]
     lidar: Out[PointCloud2]
     wrist_left_color: Out[CompressedImage]
     wrist_left_depth: Out[Image]
@@ -213,6 +221,7 @@ class R1ProConnection(Module):
         self._right_seen = False
         self._latest_imu_chassis: Imu | None = None
         self._latest_imu_torso: Imu | None = None
+        self._head_camera_info: CameraInfo | None = None
 
         # Odom dead-reckoning, integrated from /motion_control/chassis_speed.
         self._odom_x = 0.0
@@ -240,6 +249,8 @@ class R1ProConnection(Module):
         # Lazy import — RawROS pulls rclpy which must not load on import in
         # environments without ROS 2.
         from dimos.protocol.pubsub.impl.rospubsub import RawROS
+
+        self._head_camera_info = self._load_head_camera_info()
 
         self._ros = RawROS(node_name="r1pro_control")
         self._ros.start()
@@ -655,8 +666,14 @@ class R1ProConnection(Module):
         next_tick = time.perf_counter()
         frame_id = self.config.frame_id
         bootstrapped = False
+        next_camera_info = 0.0
 
         while not self._stop_event.is_set():
+            # Intrinsics are static, but Out streams don't latch, so a consumer
+            # that connects late still needs to see one.
+            if self._head_camera_info is not None and time.monotonic() >= next_camera_info:
+                next_camera_info = time.monotonic() + 1.0
+                self.head_camera_info.publish(self._head_camera_info)
             with self._lock:
                 if not bootstrapped:
                     if not (self._torso_seen and self._left_seen and self._right_seen):
@@ -709,6 +726,18 @@ class R1ProConnection(Module):
                 time.sleep(sleep_for)
             else:
                 next_tick = time.perf_counter()
+
+    def _load_head_camera_info(self) -> CameraInfo | None:
+        path = self.config.head_camera_info_path
+        if not path:
+            logger.warning(
+                "%s: no head_camera_info_path, so head_camera_info stays silent and any "
+                "depth-to-cloud consumer will wait forever. Calibrate this robot and pass "
+                "the resulting camera_info YAML.",
+                type(self).__name__,
+            )
+            return None
+        return CameraInfo.from_yaml(path, frame_id=self.config.head_camera_frame_id)
 
     # Sensor workers
 
