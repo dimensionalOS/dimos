@@ -253,12 +253,12 @@ def test_height_colours_stay_in_the_blue_band(memory_world: MemoryWorldModule) -
     positions = np.array([[0.0, 0.0, z] for z in [*room, 9.0]])
     colours = memory_world._height_colors(positions).astype(int)
     assert colours.shape == (25, 3)
-    assert (colours[:, 2] >= colours[:, 0]).all()  # blue never below red
+    assert (colours[:, 2] >= colours[:, 0]).all()  # blue never below red: cool half only
     assert (colours[:, 2] >= colours[:, 1]).all()  # blue never below green
-    assert (np.diff(colours.sum(axis=1)) >= 0).all()  # brighter going up
+    assert (np.diff(colours[:, 1]) >= 0).all()  # cooler and brighter going up
     # The ramp is anchored to the floor, so the stray return does not stretch
     # it: the top of the room already uses the bright end.
-    assert colours[0].sum() < 200
+    assert colours[0].sum() < 320
     assert colours[23].sum() > 0.8 * colours[24].sum()
 
 

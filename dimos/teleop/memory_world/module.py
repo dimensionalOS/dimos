@@ -121,10 +121,11 @@ class _ClientConn:
             self.queue.put_nowait(msg)
 
 
-# Height ramp stops (RGB), floor to ceiling: deep indigo, blue, cyan. One cool
-# band so highlight colours stand out, with a hue shift as well as a
-# brightness one because the lit voxel material flattens brightness alone.
-HEIGHT_COLOR_STOPS = np.array([[14.0, 6.0, 60.0], [24.0, 80.0, 230.0], [110.0, 240.0, 255.0]])
+# Height ramp stops (RGB), floor to ceiling: purple, blue, cyan. The cool half
+# of the wheel only, so yellow, orange, red and green stay free for
+# highlights; the hue moves as well as the brightness because the lit voxel
+# material flattens brightness alone.
+HEIGHT_COLOR_STOPS = np.array([[120.0, 20.0, 150.0], [40.0, 80.0, 235.0], [120.0, 245.0, 255.0]])
 
 
 class MemoryWorldConfig(ModuleConfig):
@@ -507,7 +508,7 @@ class MemoryWorldModule(Module):
             return None
 
     def _height_colors(self, positions: np.ndarray) -> np.ndarray:
-        """Map Z (robot up) onto an indigo-blue-cyan ramp.
+        """Map Z (robot up) onto a purple-blue-cyan ramp.
 
         The map deliberately stays inside one cool hue band: floor is deep
         indigo, ceiling is pale cyan, and everything between is a blue. That
