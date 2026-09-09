@@ -552,9 +552,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev libturbojpeg
-      - name: Install dependency for pyaudio (macOS)
+      - name: Install system dependencies (macOS)
         if: startsWith(matrix.os, 'macos')
         run: brew install portaudio
+      - name: Configure LCM networking (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          sudo route delete -net 224.0.0.0/4 || true
+          sudo route add -net 224.0.0.0/4 -interface lo0
+          sudo sysctl -w kern.ipc.maxsockbuf=6291456
+          sudo sysctl -w net.inet.udp.recvspace=2097152
+          sudo sysctl -w net.inet.udp.maxdgram=65535
       - name: Cap accidental LFS downloads at 1 MiB
         if: startsWith(matrix.os, 'ubuntu')
         run: |
