@@ -53,6 +53,8 @@ const HUD_DISTANCE = 0.55;            // metres in front of head
 const HUD_OFFSET_DOWN = 0.25;
 const HUD_OFFSET_LEFT = 0.32;
 const HUD_FOLLOW_LERP = 0.18;         // damping per frame
+const ANSWER_PANEL_W = 0.62;          // metres; the canvas behind it is 4:1
+const ANSWER_PANEL_H = 0.155;
 // Image-thumbnail quads at capture poses.
 const IMAGE_QUAD_W = 0.60;
 const IMAGE_QUAD_H = 0.34;            // 16:9-ish
@@ -185,7 +187,7 @@ export class WorldScene {
         this._answerCanvas = answerCanvas;
         this._answerTexture = new THREE.CanvasTexture(answerCanvas);
         this._answerPanel = new THREE.Mesh(
-            new THREE.PlaneGeometry(0.62, 0.155),
+            new THREE.PlaneGeometry(ANSWER_PANEL_W, ANSWER_PANEL_H),
             new THREE.MeshBasicMaterial({
                 map: this._answerTexture,
                 transparent: true,
@@ -433,11 +435,20 @@ export class WorldScene {
         if (right.lengthSq() < 1e-6 || fwd.lengthSq() < 1e-6) return;
         right.normalize(); fwd.normalize();
 
-        // HUD goes to the user's LEFT, which is -right.
+        // HUD goes to the user's LEFT, which is -right. A headset's field of
+        // view swallows that offset; a desktop window's does not, so there the
+        // offset shrinks until the answer panel's far edge stays on screen.
+        let offsetLeft = HUD_OFFSET_LEFT;
+        if (!this.three.xr.isPresenting) {
+            const halfHeight = HUD_DISTANCE * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2);
+            const halfWidth = halfHeight * this.camera.aspect;
+            // The panel is turned toward the head, so its near edge projects wider than flat: keep a fat margin.
+            offsetLeft = Math.max(0, Math.min(HUD_OFFSET_LEFT, halfWidth - ANSWER_PANEL_W / 2 - 0.12));
+        }
         const target = new THREE.Vector3()
             .copy(headPos)
             .addScaledVector(fwd, HUD_DISTANCE)
-            .addScaledVector(right, -HUD_OFFSET_LEFT);
+            .addScaledVector(right, -offsetLeft);
         target.y -= HUD_OFFSET_DOWN;
         // Tilt the panel slightly toward the user (downward tilt around X).
         this._hudGroup.position.lerp(target, HUD_FOLLOW_LERP);
