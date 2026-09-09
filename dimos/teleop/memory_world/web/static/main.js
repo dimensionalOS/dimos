@@ -451,6 +451,14 @@ window.app = {
     jumpTo: (index = 0) => scene && scene.focusOn(scene._lastResultPoints[index].position),
 };
 
+// H pins the desktop menu and perf readout, which otherwise fade out once
+// the world is up and only return on hover.
+window.addEventListener('keydown', (event) => {
+    if (event.code === 'KeyH' && document.body.classList.contains('desktop-view')) {
+        document.body.classList.toggle('hud-visible');
+    }
+});
+
 window.addEventListener('load', async () => {
     if (!navigator.xr) {
         setStatus('WebXR not available in this browser');

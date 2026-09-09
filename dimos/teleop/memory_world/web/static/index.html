@@ -161,6 +161,11 @@
         body.desktop-view h1 { font-size: 15px; margin: 0 0 6px; }
         body.desktop-view h1 small { display: none; }
         body.desktop-view #hints { display: none; }
+        /* Once the world is up the menu gets out of the way: it fades out and
+           comes back on hover or with H. The answer lives on the 3D panel. */
+        body.desktop-view #ui, body.desktop-view #perf { opacity: 0; transition: opacity 0.25s; }
+        body.desktop-view #ui:hover, body.desktop-view.hud-visible #ui,
+        body.desktop-view.hud-visible #perf { opacity: 1; }
         body.desktop-view #desktopHints { display: block; margin-top: 10px; }
         #desktopHints { display: none; }
     </style>
@@ -191,7 +196,7 @@
             <b>W A S D</b>  walk / strafe &nbsp; <b>SHIFT</b> sprint<br>
             <b>WHEEL</b>  scale world<br>
             <b>I</b>  toggle image thumbnails &nbsp; <b>V</b>  toggle voxel cubes<br>
-            <b>R</b>  reset view &nbsp; <b>J</b>  jump to the answer<br>
+            <b>R</b>  reset view &nbsp; <b>J</b>  jump to the answer &nbsp; <b>H</b>  keep this menu<br>
             <b>HOLD TO ASK</b>  speak a question, e.g. "where did I see a chair"
         </div>
     </div>
