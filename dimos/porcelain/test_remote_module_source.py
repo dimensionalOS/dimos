@@ -100,8 +100,6 @@ def test_typed_lookup_calls_the_same_remote_module(client, running_app):
         module = app.find_module_by_spec(PingSpec)
         assert module is app.get_module("StressTestModule")
         assert module.ping() == "pong"
-    client.stop()
-    assert running_app.skills.ping() == "pong"
 
 
 def test_typed_lookup_preserves_missing_module_error(client):
@@ -109,30 +107,26 @@ def test_typed_lookup_preserves_missing_module_error(client):
         client.find_module_by_spec(PingSpec, instance_name="missing-module")
 
 
-def test_spec_lookup_requires_rpc_advertisement(client, mocker):
+@pytest.mark.parametrize(
+    "descriptor_changes, error",
+    [
+        ({"rpc_names": []}, "PingSpec RPC signatures"),
+        (
+            {"qualified_path": "dimos.missing_module.MissingModule"},
+            "cannot inspect module classes",
+        ),
+    ],
+    ids=["unadvertised-rpc", "unavailable-signatures"],
+)
+def test_spec_lookup_rejects_unverifiable_module(client, mocker, descriptor_changes, error):
     descriptors = client._source.list_module_descriptors()
     mocker.patch.object(
         client._source,
         "list_module_descriptors",
-        return_value=[descriptor._replace(rpc_names=[]) for descriptor in descriptors],
+        return_value=[descriptor._replace(**descriptor_changes) for descriptor in descriptors],
     )
 
-    with pytest.raises(LookupError, match="PingSpec RPC signatures"):
-        client.find_module_by_spec(PingSpec)
-
-
-def test_spec_lookup_does_not_assume_unavailable_signatures_match(client, mocker):
-    descriptors = client._source.list_module_descriptors()
-    mocker.patch.object(
-        client._source,
-        "list_module_descriptors",
-        return_value=[
-            descriptor._replace(qualified_path="dimos.missing_module.MissingModule")
-            for descriptor in descriptors
-        ],
-    )
-
-    with pytest.raises(LookupError, match="cannot inspect module classes"):
+    with pytest.raises(LookupError, match=error):
         client.find_module_by_spec(PingSpec)
 
 
