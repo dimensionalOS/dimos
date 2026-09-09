@@ -154,6 +154,9 @@ class MemoryWorldConfig(ModuleConfig):
     # The user stands on the floor in VR; rendering it as points is just noise.
     map_z_min: float = -0.2
     map_z_max: float = 2.4
+    # Height colour ramp: floor (7th percentile of z) to floor + this. Room
+    # height, roughly; anything taller saturates to the top colour.
+    height_ramp_span_m: float = PydanticField(default=2.2, gt=0.0)
     # color_image stream is sampled for "Street View" capture-pose markers.
     image_stream_name: str = "color_image"
     n_image_markers: int = 200
@@ -511,16 +514,16 @@ class MemoryWorldModule(Module):
         for highlights, so a voxel painted by a query reads as "the answer"
         rather than "a slightly different height".
 
-        The ramp spans the 2nd-98th percentile of the cloud's own heights
-        rather than a fixed slab: recordings whose odometry frame is not
-        floor-aligned (the RealSense rigs sit at z=0.7 with the floor near
-        -1) would otherwise clip nearly every voxel to one end and lose the
-        gradient. Returns N x 3 uint8 RGB.
+        The ramp starts at the floor, taken as the 7th percentile of the
+        cloud's heights (recordings whose odometry frame is not floor-aligned
+        would clip a fixed slab to one end), and spans ``height_ramp_span_m``
+        above it. Anchoring the top to the floor rather than to the highest
+        voxel keeps ceiling fixtures and stray returns from stretching the
+        ramp until the walls all look alike. Returns N x 3 uint8 RGB.
         """
         zc = positions[:, 2]
-        lo, hi = (float(v) for v in np.percentile(zc, [2, 98])) if zc.size else (0.0, 1.0)
-        if hi - lo < 1e-3:
-            hi = lo + 1e-3
+        lo = float(np.percentile(zc, 7)) if zc.size else 0.0
+        hi = lo + max(float(self.config.height_ramp_span_m), 1e-3)
         t = np.clip((zc - lo) / (hi - lo), 0.0, 1.0).reshape(-1, 1)
         rgb = HEIGHT_COLOR_FLOOR * (1.0 - t) + HEIGHT_COLOR_CEILING * t
         return np.ascontiguousarray(np.rint(rgb).astype(np.uint8))
