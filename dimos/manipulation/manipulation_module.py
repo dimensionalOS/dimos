@@ -12,14 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Manipulation Module - Motion planning with ControlCoordinator execution.
-
-Base module providing core manipulation infrastructure:
-- @rpc: Low-level building blocks (plan_to_pose, plan_to_joints, preview_plan, execute)
-- @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home, go_init)
-
-PickAndPlaceModule composes this module's RPCs with perception and grasp generation.
-"""
+"""Group-native motion planning and execution RPC module."""
 
 from __future__ import annotations
 
@@ -173,13 +166,7 @@ class ManipulationModuleConfig(ModuleConfig):
 
 
 class ManipulationModule(Module):
-    """Base motion planning module with ControlCoordinator execution.
-
-    - @rpc: Low-level building blocks (plan, execute, gripper)
-    - @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, go_home)
-
-    Subclass PickAndPlaceModule adds perception integration and long-horizon skills.
-    """
+    """Primitive manipulation RPCs; agent skills live in a separate adapter."""
 
     config: ManipulationModuleConfig
     _control_coordinator: ControlCoordinator
@@ -427,7 +414,6 @@ class ManipulationModule(Module):
         }:
             self.wait_for_execution(timeout=0.0)
 
-    @rpc
     def get_error(self) -> str:
         """Get last error message.
 
@@ -454,7 +440,6 @@ class ManipulationModule(Module):
         self._apply_execution_result(result)
         return result
 
-    @rpc
     def get_current_joints(self) -> list[float] | None:
         """Get the complete canonical model joint positions."""
         if self._world_monitor:
@@ -463,7 +448,6 @@ class ManipulationModule(Module):
                 return list(state.position)
         return None
 
-    @rpc
     def get_ee_pose(self, group_id: PlanningGroupID | None = None) -> Pose | None:
         """Get a planning group's current tip pose."""
         if self._world_monitor:
@@ -475,7 +459,6 @@ class ManipulationModule(Module):
                 return None
         return None
 
-    @rpc
     def is_collision_free(self, joints: list[float]) -> bool:
         """Check if joint configuration is collision-free.
 
@@ -652,7 +635,6 @@ class ManipulationModule(Module):
             check_collision=check_collision,
         )
 
-    @rpc
     def inverse_kinematics(
         self,
         pose_targets: Mapping[PlanningGroupID, PoseStamped],
@@ -698,7 +680,6 @@ class ManipulationModule(Module):
             check_collision=check_collision,
         )
 
-    @rpc
     def inverse_kinematics_single(
         self,
         pose: Pose,
@@ -722,7 +703,6 @@ class ManipulationModule(Module):
             {selected_group_id: target_pose}, seed=seed, check_collision=check_collision
         )
 
-    @rpc
     def solve_ik(
         self,
         pose: Pose,
@@ -763,7 +743,6 @@ class ManipulationModule(Module):
             self._record_error(f"IK failed: {result.status.name}{detail}")
         return result
 
-    @rpc
     def plan_to_pose(self, pose: Pose, group_id: PlanningGroupID | None = None) -> bool:
         """Plan motion to pose. Use preview_plan() then execute().
 
@@ -987,7 +966,6 @@ class ManipulationModule(Module):
         execution = self.execute(blocking=blocking, timeout=timeout)
         return MoveResult(plan_result, execution, delta, check_collision)
 
-    @rpc
     def preview_plan(
         self,
         plan: GeneratedPlan | None = None,
@@ -1003,7 +981,6 @@ class ManipulationModule(Module):
         self._world_monitor.animate_trajectory(plan.trajectory, duration)
         return True
 
-    @rpc
     def has_planned_path(self) -> bool:
         """Check if there's a planned path ready.
 
@@ -1012,7 +989,6 @@ class ManipulationModule(Module):
         """
         return self._last_plan is not None and bool(self._last_plan.path)
 
-    @rpc
     def get_visualization_url(self) -> str | None:
         """Get the visualization URL.
 
@@ -1023,7 +999,6 @@ class ManipulationModule(Module):
             return None
         return self._world_monitor.get_visualization_url()
 
-    @rpc
     def clear_planned_path(self) -> bool:
         """Clear the stored planned path.
 
@@ -1093,7 +1068,6 @@ class ManipulationModule(Module):
             return None
         return self._world_monitor.get_current_joint_state()
 
-    @rpc
     def get_model_info(self) -> ModelInfoPayload:
         """Get information about the configured logical robot model."""
         config = self.config.model
@@ -1115,7 +1089,6 @@ class ManipulationModule(Module):
         """Return the configured model for in-process visualization adapters."""
         return self.config.model
 
-    @rpc
     def get_init_joints(self) -> JointState | None:
         """Get the init joint state captured at startup or set manually."""
         return self._init_joints
@@ -1185,7 +1158,6 @@ class ManipulationModule(Module):
             "collision_free": collision_free,
         }
 
-    @rpc
     def set_init_joints(self, joint_state: JointState) -> bool:
         """Set the init joint state.
 
@@ -1196,7 +1168,6 @@ class ManipulationModule(Module):
         logger.info("Init joints set", positions=joint_state.position)
         return True
 
-    @rpc
     def set_init_joints_to_current(self) -> bool:
         """Set init joints to the current joint positions."""
         if self._world_monitor is None:
