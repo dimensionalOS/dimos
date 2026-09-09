@@ -239,7 +239,10 @@ const chChat = {
   publish: "shared",
   requiredScope: "chat:send",
 };
+const chAgent = { ch: "agent", encoding: "chat.json.v1", delivery: "reliable", maxHz: 20.5 };
+const chIdle = { ch: "agent_idle", encoding: "json.v1", delivery: "latest", maxHz: 20.5 };
 const pCamera = { id: "camera", kind: "video", channels: ["color_image"] };
+const pChat = { id: "chat", kind: "chat", channels: ["human_input", "agent", "agent_idle"] };
 const pPose = { id: "pose", kind: "readout", channels: ["odom"] };
 const longId = "x".repeat(65);
 const manifestCases: Record<string, unknown> = {
@@ -585,6 +588,36 @@ const manifestCases: Record<string, unknown> = {
   pages_not_list: { version: 1, channels: [chOdom], panels: [pPose], pages: {} },
   pages_not_strings: { version: 1, channels: [chOdom], panels: [pPose], pages: [1.5] },
   pages_null: { version: 1, channels: [chOdom], panels: [pPose], pages: null },
+  // Chat panel: text input (publish tx), messages, idle flag, in that order.
+  chat_panel: {
+    version: 1,
+    channels: [chChat, chAgent, chIdle],
+    panels: [pChat],
+  },
+  chat_panel_two_channels: {
+    version: 1,
+    channels: [chChat, chAgent],
+    panels: [{ ...pChat, channels: ["human_input", "agent"] }],
+  },
+  chat_panel_input_not_publishable: {
+    version: 1,
+    channels: [
+      { ch: "human_input", dir: "tx", encoding: "text.json.v1", delivery: "reliable", maxHz: 2.5 },
+      chAgent,
+      chIdle,
+    ],
+    panels: [pChat],
+  },
+  chat_panel_messages_wrong_encoding: {
+    version: 1,
+    channels: [chChat, chOdom, chIdle],
+    panels: [{ ...pChat, channels: ["human_input", "odom", "agent_idle"] }],
+  },
+  chat_panel_idle_wrong_delivery: {
+    version: 1,
+    channels: [chChat, chAgent, { ...chIdle, delivery: "reliable" }],
+    panels: [pChat],
+  },
 };
 
 const control = {

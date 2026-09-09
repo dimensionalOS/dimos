@@ -1,0 +1,128 @@
+.chat {
+  background: #14171a;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.lines {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.6rem;
+}
+
+.hint {
+  color: #8b949e;
+  padding: 0.5rem;
+}
+
+.human,
+.ai,
+.system,
+.other {
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.9rem;
+  gap: 0.15rem;
+  max-width: 85%;
+  padding: 0.35rem 0.6rem;
+}
+
+.human {
+  align-self: flex-end;
+  background: #1f4b8f;
+  color: #fff;
+}
+
+.ai {
+  align-self: flex-start;
+  background: #1b1f24;
+  border: 1px solid #30363d;
+}
+
+.system {
+  align-self: center;
+  color: #8b949e;
+  font-style: italic;
+}
+
+.other {
+  align-self: flex-start;
+  border: 1px dashed #d29922;
+}
+
+.roleTag {
+  color: #d29922;
+  font-size: 0.75rem;
+}
+
+.text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.time {
+  align-self: flex-end;
+  color: #8b949e;
+  font-size: 0.7rem;
+}
+
+.toolLine {
+  align-self: flex-start;
+  color: #8b949e;
+  font-family: monospace;
+  font-size: 0.8rem;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0 0.4rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error {
+  color: #f85149;
+  font-size: 0.8rem;
+  padding: 0 0.6rem 0.3rem;
+}
+
+.composer {
+  border-top: 1px solid #30363d;
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.5rem 0.6rem;
+}
+
+.input {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #d7dde3;
+  flex: 1;
+  font: inherit;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+}
+
+.send {
+  background: #2f81f7;
+  border: 0;
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+  padding: 0.35rem 0.8rem;
+}
+
+.send:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.thinking {
+  color: #2f81f7;
+}

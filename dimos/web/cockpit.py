@@ -34,7 +34,7 @@ extra; only cockpit() touches the relay bridge module.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence, Set as AbstractSet
+from collections.abc import Iterator, Mapping, Sequence, Set as AbstractSet
 from dataclasses import dataclass, field, replace
 import json
 import math
@@ -139,6 +139,10 @@ class ChannelRequest:
     delivery: Delivery = field(default="reliable", kw_only=True)
     publish: Publish = field(default="none", kw_only=True)
     required_scope: str | None = field(default=None, kw_only=True)
+    # Event streams (chat): the bridge meets max_hz by spacing sends, never by
+    # dropping, so a burst of messages crosses complete and in order. Panels
+    # only; a plain Channel is sampled at max_hz.
+    paced: bool = field(default=False, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -242,6 +246,22 @@ class Channel:
         object.__setattr__(self, "params", _freeze_params(params))
 
 
+def _request_of(channel: Channel) -> ChannelRequest:
+    """The manifest request a declaration compiles to."""
+    return ChannelRequest(
+        channel.stream,
+        channel.dir,
+        channel.encoding,
+        channel.max_hz,
+        # Deep plain copy: the manifest and specs must not alias the (frozen)
+        # authoring record's nested values.
+        _thaw_params(channel.params or {}),
+        delivery=channel.delivery,
+        publish=channel.publish,
+        required_scope=channel.required_scope,
+    )
+
+
 class Panel(ABC):
     """Base for cockpit panels. `kind` is the Cockpit component registry
     key; `title` "" means untitled (the panel frame falls back to the panel
@@ -252,6 +272,12 @@ class Panel(ABC):
 
     @abstractmethod
     def _channel_requests(self) -> tuple[ChannelRequest, ...]: ...
+
+    def _channels(self) -> tuple[Channel, ...]:
+        """Declarations for the panel's non-built-in streams (typed like an
+        explicit cockpit(channels=[...]) entry, so cockpit() generates the
+        bridge ports)."""
+        return ()
 
     def _panel_params(self) -> dict[str, Any]:
         return {}
@@ -364,6 +390,48 @@ class Teleop(Panel):
         )
 
 
+@dataclass(frozen=True)
+class Chat(Panel):
+    """Agent conversation: the humancli contract as a panel. Typed text
+    goes out on `input` (McpClient.human_input); the LangChain transcript
+    comes back on `messages` (McpClient.agent, one chat.json.v1 frame per
+    message, none dropped) and `idle` (McpClient.agent_idle) drives the
+    thinking spinner. A grid panel next to video/map; works as a page too.
+    """
+
+    kind: ClassVar[str] = "chat"
+    input: str = "human_input"
+    messages: str = "agent"
+    idle: str = "agent_idle"
+    title: str = field(default="", kw_only=True)
+
+    def __post_init__(self) -> None:
+        _check_stream("input", self.input)
+        _check_stream("messages", self.messages)
+        _check_stream("idle", self.idle)
+
+    def _channels(self) -> tuple[Channel, ...]:
+        # Inline on purpose: langchain-core belongs to the optional [agents]
+        # extra, so only a Chat panel pays for it; the codec module import
+        # registers chat.json.v1 for cockpit()'s encoder resolution.
+        from langchain_core.messages import BaseMessage
+
+        from dimos.web.relay_bridge import chat_codec  # noqa: F401
+
+        return (
+            Channel(
+                self.input, str, dir="tx", encoding="text.json.v1", publish="shared", max_hz=5.0
+            ),
+            Channel(self.messages, BaseMessage, encoding="chat.json.v1", max_hz=20.0),
+            Channel(self.idle, bool, delivery="latest", max_hz=20.0),
+        )
+
+    def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        # Every agent message and idle flip must reach the viewer: paced,
+        # not sampled.
+        return tuple(replace(_request_of(channel), paced=True) for channel in self._channels())
+
+
 class _Split:
     """Base for Row/Col: children plus optional flex shares."""
 
@@ -395,6 +463,19 @@ class Row(_Split):
 
 class Col(_Split):
     """Vertical split; absent shares mean an equal split."""
+
+
+def _panels(node: Any) -> Iterator[Panel]:
+    """Panels of a layout tree or a pages sequence, depth-first. Anything
+    else is skipped here and rejected by build_manifest_data."""
+    if isinstance(node, Panel):
+        yield node
+    elif isinstance(node, _Split):
+        for child in node.children:
+            yield from _panels(child)
+    elif isinstance(node, (list, tuple)):
+        for child in node:
+            yield from _panels(child)
 
 
 def _default_preset() -> Row:
@@ -643,30 +724,31 @@ def cockpit(
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.web.codecs import resolve_decoder, resolve_encoder
 
+    layout = _default_preset() if layout is None and not declared else layout
+    # Panels binding non-built-in streams (Chat) declare them like explicit
+    # channels. An explicit declaration for the same stream stands, provided
+    # it agrees (the rest of the agreement check is build_manifest_data's).
+    paced: set[str] = set()
+    for panel in (*_panels(layout), *_panels(tuple(pages))):
+        paced.update(r.stream for r in panel._channel_requests() if r.paced)
+        for channel in panel._channels():
+            previous = declared.setdefault(channel.stream, channel)
+            if previous.message_type is not channel.message_type:
+                raise ValueError(
+                    f"conflicting declarations for stream {channel.stream!r}: "
+                    f"{previous!r} vs {channel!r}"
+                )
+
     atom = RelayBridgeModule.blueprint().blueprints[0]
     port_types = {s.name: s.type for s in atom.streams}
     builtin_by_ch = {b.ch: b for b in BUILTIN_CHANNELS}
     data = build_manifest_data(
-        _default_preset() if layout is None and not declared else layout,
+        layout,
         tuple(pages),
         registry={b.ch: (b.encoding, b.delivery) for b in BUILTIN_CHANNELS},
         tx_streams={s.name for s in atom.streams if s.direction == "out"},
         tx_registry={ch: (encoding, delivery) for ch, encoding, delivery in TX_CHANNELS},
-        channels=tuple(
-            ChannelRequest(
-                c.stream,
-                c.dir,
-                c.encoding,
-                c.max_hz,
-                # Deep plain copy: the manifest and specs must not alias the
-                # (frozen) authoring record's nested values.
-                _thaw_params(c.params or {}),
-                delivery=c.delivery,
-                publish=c.publish,
-                required_scope=c.required_scope,
-            )
-            for c in declared.values()
-        ),
+        channels=tuple(_request_of(c) for c in declared.values()),
     )
     # The domain parser is the authority; authoring bugs must fail at
     # blueprint definition time, not at robot start.
@@ -732,6 +814,7 @@ def cockpit(
                 encoder=codec.encode,
                 encoder_takes_params=codec.takes_params,
                 resend_on_subscribe=builtin.resend_on_subscribe if builtin is not None else False,
+                paced=ch in paced,
             )
         )
     # Generated classes carry only the custom ports; the built-ins are
