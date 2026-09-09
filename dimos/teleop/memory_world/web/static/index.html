@@ -117,7 +117,7 @@
             border-left: 2px solid var(--accent-soft);
             padding-left: 8px;
         }
-        #hints {
+        #hints, #desktopHints {
             margin-top: 18px;
             font-size: 11px;
             color: var(--muted);
@@ -126,7 +126,22 @@
             max-width: 460px;
             text-align: left;
         }
-        #hints b { color: var(--accent); font-weight: 600; }
+        #hints b, #desktopHints b { color: var(--accent); font-weight: 600; }
+        /* Desktop view: the overlay must stop covering the canvas, both visually
+           and for hit-testing — the canvas needs the click that grabs pointer lock. */
+        body.desktop-view #ui {
+            inset: 12px auto auto 12px;
+            align-items: flex-start;
+            justify-content: flex-start;
+            text-align: left;
+            pointer-events: none;
+        }
+        body.desktop-view #ui > * { pointer-events: auto; }
+        body.desktop-view h1 { font-size: 15px; margin: 0 0 6px; }
+        body.desktop-view h1 small { display: none; }
+        body.desktop-view #hints { display: none; }
+        body.desktop-view #desktopHints { display: block; margin-top: 10px; }
+        #desktopHints { display: none; }
     </style>
 </head>
 <body data-background-mode="__BACKGROUND_MODE__">
@@ -146,6 +161,14 @@
             <b>LEFT X</b>  toggle image thumbnails<br>
             <b>LEFT Y</b>  reset view<br>
             <b>RIGHT B</b>  toggle voxel cubes / points
+        </div>
+        <div id="desktopHints" class="hints">
+            <b>DRAG</b>  look around<br>
+            <b>DOUBLE-CLICK</b>  free-look / capture mouse (ESC releases)<br>
+            <b>W A S D</b>  walk / strafe &nbsp; <b>SHIFT</b> sprint<br>
+            <b>WHEEL</b>  scale world<br>
+            <b>I</b>  toggle image thumbnails &nbsp; <b>V</b>  toggle voxel cubes<br>
+            <b>R</b>  reset view
         </div>
     </div>
     <canvas id="canvas"></canvas>

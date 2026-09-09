@@ -38,6 +38,14 @@ const TELEPORT_ARC_SEGMENTS = 24;
 const TELEPORT_MAX_DISTANCE = 8.0;            // metres along ray
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 10.0;
+// Desktop (non-XR) fallback. WebXR normally supplies the head pose; without a
+// headset we drive `camera` ourselves from mouse-look at a fixed standing height.
+const EYE_HEIGHT_M = 1.6;
+const DESKTOP_LOOK_SENSITIVITY = 0.0022;      // radians per pixel of mouse travel
+const DESKTOP_PITCH_LIMIT = 1.45;             // just under 90deg, avoids gimbal flip
+const DESKTOP_SPRINT_MULTIPLIER = 3.0;
+const DESKTOP_SCALE_STEP = 1.08;              // per wheel notch
+const DESKTOP_MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
 // GTA-style HUD minimap — head-locked, sits at lower-left of view.
 const HUD_PANEL_SIZE = 0.22;          // metres (square)
 const HUD_MARKER_RADIUS = 0.008;
@@ -205,6 +213,103 @@ export class WorldScene {
             if (perFrame) perFrame(frame);
             this._tick(time);
             this.three.render(this.scene, this.camera);
+        });
+    }
+
+    /** Stop rendering and drop the canvas, so a reconnect doesn't stack a second one. */
+    dispose() {
+        this.three.setAnimationLoop(null);
+        this.three.domElement.remove();
+        this.three.dispose();
+    }
+
+    /** Flat mouse-and-keyboard walkthrough for machines with no XR hardware. */
+    startDesktop(perFrame) {
+        this._desktopKeys = new Set();
+        this._desktopYaw = 0;
+        this._desktopPitch = 0;
+        this._desktopSprint = false;
+        this._desktopDragging = false;
+
+        this.camera.rotation.order = 'YXZ';
+        this.camera.position.set(0, EYE_HEIGHT_M, 0);
+        this._resizeDesktopCamera();
+
+        const dom = this.three.domElement;
+        dom.style.pointerEvents = 'auto';
+        dom.style.cursor = 'grab';
+        // Two look modes: drag works everywhere (including headless automation,
+        // where pointer lock is never granted), double-click opts into free-look.
+        dom.addEventListener('mousedown', () => {
+            this._desktopDragging = true;
+            dom.style.cursor = 'grabbing';
+        });
+        window.addEventListener('mouseup', () => {
+            this._desktopDragging = false;
+            if (document.pointerLockElement !== dom) dom.style.cursor = 'grab';
+        });
+        dom.addEventListener('dblclick', () => {
+            if (document.pointerLockElement !== dom) dom.requestPointerLock();
+        });
+        dom.addEventListener('wheel', (event) => {
+            event.preventDefault();
+            this.applyScale({ factor: event.deltaY < 0 ? DESKTOP_SCALE_STEP : 1 / DESKTOP_SCALE_STEP });
+        }, { passive: false });
+
+        document.addEventListener('pointerlockchange', () => {
+            const locked = document.pointerLockElement === dom;
+            dom.style.cursor = locked ? 'none' : 'grab';
+            if (!locked) this._desktopKeys.clear();
+        });
+        document.addEventListener('mousemove', (event) => {
+            if (document.pointerLockElement !== dom && !this._desktopDragging) return;
+            this._desktopYaw -= event.movementX * DESKTOP_LOOK_SENSITIVITY;
+            this._desktopPitch -= event.movementY * DESKTOP_LOOK_SENSITIVITY;
+            this._desktopPitch = Math.max(-DESKTOP_PITCH_LIMIT, Math.min(DESKTOP_PITCH_LIMIT, this._desktopPitch));
+            this.camera.rotation.set(this._desktopPitch, this._desktopYaw, 0);
+        });
+        window.addEventListener('keydown', (event) => this._onDesktopKey(event, true));
+        window.addEventListener('keyup', (event) => this._onDesktopKey(event, false));
+        window.addEventListener('resize', () => this._resizeDesktopCamera());
+
+        this.three.setAnimationLoop((time) => {
+            this._applyDesktopKeys();
+            if (perFrame) perFrame();
+            this._tick(time);
+            this.three.render(this.scene, this.camera);
+        });
+        this.diag('desktop_loop_started');
+    }
+
+    _resizeDesktopCamera() {
+        const width = window.innerWidth || 800;
+        const height = window.innerHeight || 600;
+        this.three.setSize(width, height);
+        this.camera.aspect = width / height;
+        this.camera.updateProjectionMatrix();
+    }
+
+    _onDesktopKey(event, isDown) {
+        this._desktopSprint = event.shiftKey;
+        if (DESKTOP_MOVE_KEYS.has(event.code)) {
+            event.preventDefault();
+            if (isDown) this._desktopKeys.add(event.code);
+            else this._desktopKeys.delete(event.code);
+            return;
+        }
+        if (!isDown) return;
+        if (event.code === 'KeyR') this.resetView();
+        else if (event.code === 'KeyI') this.toggleImages();
+        else if (event.code === 'KeyV') this.toggleCloud();
+    }
+
+    _applyDesktopKeys() {
+        const keys = this._desktopKeys;
+        // _walk() scales by stick magnitude, so sprint is just a bigger deflection.
+        const gain = this._desktopSprint ? DESKTOP_SPRINT_MULTIPLIER : 1;
+        this.applyLocomote({
+            stickX: ((keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0)) * gain,
+            stickY: ((keys.has('KeyS') ? 1 : 0) - (keys.has('KeyW') ? 1 : 0)) * gain,
         });
     }
 

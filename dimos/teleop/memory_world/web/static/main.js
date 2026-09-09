@@ -193,13 +193,14 @@ function dispatchGesture(g) {
     }
 }
 
-// ---- VR --------------------------------------------------------------------
+// ---- viewer ----------------------------------------------------------------
 
-async function startVR() {
+function buildScene() {
     if (!WorldScene) {
         throw new Error('Scene module failed to load — Three.js import did not resolve');
     }
 
+    if (scene) scene.dispose();
     try {
         scene = new WorldScene(diag, backgroundMode);
         diag('scene_constructed');
@@ -213,7 +214,35 @@ async function startVR() {
         diag('scene_construct_failed', { error: String(e.message || e) });
         throw e;
     }
+}
 
+function sendViewerPose() {
+    const now = performance.now();
+    if (ws && ws.readyState === WebSocket.OPEN && now - lastViewerPoseSent >= 500) {
+        lastViewerPoseSent = now;
+        ws.send(encodeText('viewer_pose', { position: scene.getViewerRobotPosition() }));
+    }
+}
+
+/** Enter VR when a headset is present, otherwise fall back to the flat viewer. */
+async function startViewer() {
+    buildScene();
+    if (navigator.xr) {
+        try {
+            await startVR();
+            return;
+        } catch (e) {
+            diag('vr_unavailable_using_desktop', { error: String(e.message || e) });
+        }
+    } else {
+        diag('vr_unavailable_using_desktop', { error: 'navigator.xr missing' });
+    }
+    document.body.classList.add('desktop-view');
+    scene.startDesktop(sendViewerPose);
+    setStatus('Desktop view — click to look, WASD to walk');
+}
+
+async function startVR() {
     let session;
     let mode;
     if (backgroundMode === 'passthrough') {
@@ -257,11 +286,7 @@ async function startVR() {
         frameCount++;
         if (frameCount === 1) diag('first_frame');
         if (input && frame) input.onFrame(frame, xrRefSpace, performance.now(), scene);
-        const now = performance.now();
-        if (ws && ws.readyState === WebSocket.OPEN && now - lastViewerPoseSent >= 500) {
-            lastViewerPoseSent = now;
-            ws.send(encodeText('viewer_pose', { position: scene.getViewerRobotPosition() }));
-        }
+        sendViewerPose();
     });
     diag('animation_loop_set');
 
@@ -273,9 +298,8 @@ async function startVR() {
 async function connect() {
     try {
         connectBtn.disabled = true;
-        if (!navigator.xr) throw new Error('WebXR unavailable. Use the Quest browser.');
         await setupWebSocket();
-        await startVR();
+        await startViewer();
         connectBtn.classList.add('hidden');
         disconnectBtn.classList.remove('hidden');
     } catch (e) {
@@ -295,6 +319,7 @@ async function disconnect() {
         try { ws.close(); } catch (_) { /* ignore */ }
         ws = null;
     }
+    document.body.classList.remove('desktop-view');
     connectBtn.classList.remove('hidden');
     connectBtn.disabled = false;
     disconnectBtn.classList.add('hidden');
