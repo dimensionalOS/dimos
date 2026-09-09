@@ -536,6 +536,11 @@ export class WorldScene {
             const halfWidth = halfHeight * this.camera.aspect;
             // The panel is turned toward the head, so its near edge projects wider than flat: keep a fat margin.
             offsetLeft = Math.max(0, Math.min(HUD_OFFSET_LEFT, halfWidth - ANSWER_PANEL_W / 2 - 0.12));
+            // A portrait phone is narrower than the panel itself: shrink it to fit.
+            const fit = Math.min(1, (2 * halfWidth - 0.08) / ANSWER_PANEL_W);
+            this._answerPanel.scale.setScalar(fit);
+        } else if (this._answerPanel.scale.x !== 1) {
+            this._answerPanel.scale.setScalar(1);
         }
         const target = new THREE.Vector3()
             .copy(headPos)

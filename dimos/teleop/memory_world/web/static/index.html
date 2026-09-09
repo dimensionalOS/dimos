@@ -166,14 +166,14 @@
         body.desktop-view #ui, body.desktop-view #perf { opacity: 0; transition: opacity 0.25s; }
         body.desktop-view #ui:hover, body.desktop-view.hud-visible #ui,
         body.desktop-view.hud-visible #perf { opacity: 1; }
+        body.desktop-view #desktopHints { display: block; margin-top: 10px; }
+        #desktopHints { display: none; }
         /* No hover on a phone, so the buttons (mic, disconnect) must stay reachable. */
-        @media (hover: none) {
+        @media (hover: none), (max-width: 640px) {
             body.desktop-view #ui { opacity: 1; }
             body.desktop-view #hints, body.desktop-view #desktopHints { display: none; }
             body.desktop-view h1 { display: none; }
         }
-        body.desktop-view #desktopHints { display: block; margin-top: 10px; }
-        #desktopHints { display: none; }
     </style>
 </head>
 <body data-background-mode="__BACKGROUND_MODE__">
