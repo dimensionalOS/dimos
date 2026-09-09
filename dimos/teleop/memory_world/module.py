@@ -75,8 +75,15 @@ from dimos.teleop.memory_world.query import (
 )
 from dimos.teleop.memory_world.visual_search import (
     SIGLIP2_MODEL_NAME,
+    PatchHit,
+    Place,
     VisualMemoryIndex,
+    chain_matrix,
+    cluster_hits,
     cluster_places,
+    hot_patches,
+    patch_world_position,
+    pose_matrix,
     posed_frames,
     search_phrase,
 )
@@ -182,6 +189,20 @@ class MemoryWorldConfig(ModuleConfig):
     search_top_k: int = PydanticField(default=200, ge=1)
     # faster-whisper model size for the spoken query.
     whisper_model: str = "base.en"
+    # ---- putting the answer on the object, not on the robot -----------------
+    # With a depth stream, intrinsics and a static tf chain from the odometry
+    # body frame to the camera's optical frame, each place is moved from the
+    # capture pose to the point the winning patch actually looked at.
+    depth_stream_name: str | None = None
+    camera_info_stream_name: str | None = None
+    tf_stream_name: str = "tf"
+    odom_body_frame: str = "mid360_link"
+    camera_optical_frame: str = "d455_color_optical_frame"
+    depth_tolerance_s: float = PydanticField(default=0.02, gt=0.0)
+    # Best frames whose hot patches are raycast, and how close two raycast
+    # hits must land to be the same object.
+    locate_frames: int = PydanticField(default=12, ge=1)
+    object_radius_m: float = PydanticField(default=0.75, gt=0.0)
 
 
 class MemoryWorldModule(Module):
@@ -209,6 +230,7 @@ class MemoryWorldModule(Module):
         self._index_lock = threading.Lock()
         self._index_progress = "not started"
         self._whisper: Any = None
+        self._camera_from_body: np.ndarray | None = None
         self._active_query_result: dict[str, Any] | None = None
         self._query_revision = 0
         self._web_server: RobotWebInterface | None = None
@@ -810,12 +832,15 @@ class MemoryWorldModule(Module):
                 f"`python -m dimos.teleop.memory_world.visual_search {self.config.store_path}`.",
             )
 
-        candidates = index.search(phrase, k=self.config.search_top_k)
-        places = cluster_places(
-            candidates,
-            radius=self.config.place_radius_m,
-            max_places=self.config.max_places,
-        )
+        places = self._locate_objects(phrase)
+        located = bool(places)
+        if not located:
+            # No depth or extrinsics: answer with the poses the frames were taken from.
+            places = cluster_places(
+                index.search(phrase, k=self.config.search_top_k),
+                radius=self.config.place_radius_m,
+                max_places=self.config.max_places,
+            )
         if not places:
             return SkillResult.fail("NOT_FOUND", f"Nothing in the recording matches {phrase!r}")
 
@@ -842,10 +867,76 @@ class MemoryWorldModule(Module):
                 "query_id": query_id,
                 "query": phrase,
                 "places": [
-                    {"position": place.position, "similarity": place.similarity} for place in places
+                    {
+                        "position": place.position,
+                        "similarity": place.similarity,
+                        "views": place.views,
+                    }
+                    for place in places
                 ],
-                "candidates": len(candidates),
+                "located": located,
             },
+        )
+
+    def _camera_extrinsics(self) -> np.ndarray | None:
+        """Static body->camera-optical matrix from the recording's tf stream, once."""
+        if self._camera_from_body is None:
+            store = self._ensure_store()
+            if self.config.tf_stream_name not in store.list_streams():
+                return None
+            seen: dict[tuple[str, str], Any] = {}
+            for obs in store.streams[self.config.tf_stream_name].limit(500):
+                for transform in obs.data.transforms:
+                    seen.setdefault((transform.frame_id, transform.child_frame_id), transform)
+            self._camera_from_body = chain_matrix(
+                seen.values(), self.config.odom_body_frame, self.config.camera_optical_frame
+            )
+            if self._camera_from_body is None:
+                logger.warning(
+                    "no tf chain %s -> %s; places stay at the capture pose",
+                    self.config.odom_body_frame,
+                    self.config.camera_optical_frame,
+                )
+        return self._camera_from_body
+
+    def _locate_objects(self, phrase: str) -> list[Place]:
+        """Raycast the hot patches of the best frames through depth and group the hits.
+
+        Empty when the recording has no depth stream, intrinsics or tf chain,
+        or when no hot patch lands on valid depth.
+        """
+        if self.config.depth_stream_name is None or self.config.camera_info_stream_name is None:
+            return []
+        camera_from_body = self._camera_extrinsics()
+        if camera_from_body is None:
+            return []
+        store = self._ensure_store()
+        depth_stream = store.streams[self.config.depth_stream_name]
+        k = store.streams[self.config.camera_info_stream_name].first().data.K
+        intrinsics = (float(k[0]), float(k[4]), float(k[2]), float(k[5]))
+
+        hits: list[PatchHit] = []
+        for frame in self._ensure_visual_index().frame_patches(phrase, k=self.config.locate_frames):
+            try:
+                depth = depth_stream.at(frame.ts, tolerance=self.config.depth_tolerance_s).first()
+            except LookupError:
+                continue
+            depth_mm = np.asarray(depth.data.data)
+            camera_to_world = pose_matrix(frame.position, frame.orientation) @ camera_from_body
+            for image_uv, score in hot_patches(frame.similarity, frame.rows, frame.cols):
+                position = patch_world_position(image_uv, depth_mm, intrinsics, camera_to_world)
+                if position is not None:
+                    hits.append(
+                        PatchHit(
+                            position=position,
+                            similarity=score,
+                            source_id=frame.source_id,
+                            ts=frame.ts,
+                            camera_position=frame.position,
+                        )
+                    )
+        return cluster_hits(
+            hits, radius=self.config.object_radius_m, max_places=self.config.max_places
         )
 
     def _markers_near(self, positions: list[tuple[float, float, float]]) -> list[int]:

@@ -74,6 +74,10 @@ BACKGROUND_PROMPTS = (
     "furniture",
 )
 BACKGROUND_SYNONYM_CUTOFF = 0.85
+# A patch is "hot" when it scores at least this much and at least this fraction
+# of its frame's best patch (aligned patch-text cosines peak around 0.10-0.17).
+HOT_PATCH_FLOOR = 0.10
+HOT_PATCH_RATIO = 0.75
 # Frames scored per matmul. The index stays fp16 in memory (5 fps of 848x480
 # for four minutes is ~2 GB); each chunk is widened to fp32 for the product.
 SCORE_CHUNK_FRAMES = 64
@@ -100,6 +104,23 @@ class Place:
     # Where in the matching frame the best patch sits, as fractions of width
     # and height, so a later step can raycast it into the map.
     image_uv: tuple[float, float] = (0.5, 0.5)
+    # Orientation (qx, qy, qz, qw) of the pose the frame was captured from.
+    orientation: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
+    # Distinct viewing directions that saw this place (1 for a single frame).
+    views: int = 1
+
+
+@dataclass(frozen=True)
+class FramePatches:
+    """One indexed frame's patch scores for a query, with where it was taken from."""
+
+    source_id: int
+    ts: float
+    position: tuple[float, float, float]
+    orientation: tuple[float, float, float, float]
+    similarity: torch.Tensor  # (patches,)
+    rows: int
+    cols: int
 
 
 _QUESTION_PREFIXES = (
@@ -164,29 +185,201 @@ def cluster_places(
     return places
 
 
-def score_frames(
+def patch_similarity(
     patches: torch.Tensor,
     query: torch.Tensor,
     background: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Score every frame by its best background-contrasted patch.
+) -> torch.Tensor:
+    """Background-contrasted patch-text cosine for every patch of every frame.
 
     ``patches`` is (frames, patches, dims), ``query`` (dims,), ``background``
-    (prompts, dims); all L2-normalised. Returns (frame score, index of the
-    winning patch), each (frames,). With no background prompts the score is
-    the plain max patch-text cosine.
+    (prompts, dims); all L2-normalised. Returns (frames, patches). With no
+    background prompts this is the plain cosine.
     """
-    scores: list[torch.Tensor] = []
-    best: list[torch.Tensor] = []
+    chunks: list[torch.Tensor] = []
     for start in range(0, patches.shape[0], SCORE_CHUNK_FRAMES):
         chunk = patches[start : start + SCORE_CHUNK_FRAMES].to(torch.float32)
         similarity = chunk @ query  # frames, patches
         if background.shape[0] > 0:
             similarity = similarity - (chunk @ background.T).amax(dim=-1)
-        chunk_scores, chunk_best = similarity.max(dim=-1)
-        scores.append(chunk_scores)
-        best.append(chunk_best)
-    return torch.cat(scores), torch.cat(best)
+        chunks.append(similarity)
+    return torch.cat(chunks)
+
+
+def score_frames(
+    patches: torch.Tensor,
+    query: torch.Tensor,
+    background: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Score every frame by its best patch. Returns (score, winning patch), each (frames,)."""
+    return patch_similarity(patches, query, background).max(dim=-1)
+
+
+def hot_patches(
+    similarity: torch.Tensor,
+    rows: int,
+    cols: int,
+    floor: float = HOT_PATCH_FLOOR,
+    ratio: float = HOT_PATCH_RATIO,
+) -> list[tuple[tuple[float, float], float]]:
+    """The patches of one frame worth raycasting: (image_uv, score) pairs.
+
+    A frame's single best patch is often a stray (a picture frame scoring a
+    hair above the cone next to it), so every patch within *ratio* of the
+    frame's maximum and above the absolute *floor* is kept. The object itself
+    spans several patches; the stray does not.
+    """
+    best = float(similarity.max())
+    threshold = max(floor, best * ratio)
+    return [
+        ((((index % cols) + 0.5) / cols, ((index // cols) + 0.5) / rows), float(score))
+        for index, score in enumerate(similarity.tolist())
+        if score >= threshold
+    ]
+
+
+@dataclass(frozen=True)
+class PatchHit:
+    """One hot patch of one frame, raycast into the world."""
+
+    position: tuple[float, float, float]
+    similarity: float
+    source_id: int
+    ts: float
+    camera_position: tuple[float, float, float]
+
+
+def cluster_hits(hits: Iterable[PatchHit], radius: float, max_places: int) -> list[Place]:
+    """Group raycast patch hits into objects, ranked by how many directions saw them.
+
+    Hits within *radius* of a cluster's running centroid join it. A cluster's
+    rank is the number of distinct viewing bearings (45 degree bins) it was
+    seen from, then its best similarity: a real object is hot from several
+    directions, a look-alike patch in one frame is not. Consecutive frames
+    from the same spot share a bearing and count once.
+    """
+    if radius <= 0:
+        raise ValueError(f"radius must be positive, got {radius}")
+    if max_places <= 0:
+        raise ValueError(f"max_places must be positive, got {max_places}")
+
+    clusters: list[dict[str, Any]] = []
+    for hit in sorted(hits, key=lambda h: h.similarity, reverse=True):
+        point = np.asarray(hit.position)
+        nearest = min(
+            (c for c in clusters if np.linalg.norm(c["centroid"] - point) <= radius),
+            key=lambda c: float(np.linalg.norm(c["centroid"] - point)),
+            default=None,
+        )
+        if nearest is None:
+            nearest = {"centroid": point.copy(), "weight": 0.0, "bearings": set(), "best": hit}
+            clusters.append(nearest)
+        weight = max(hit.similarity, 1e-6)
+        nearest["centroid"] = (nearest["centroid"] * nearest["weight"] + point * weight) / (
+            nearest["weight"] + weight
+        )
+        nearest["weight"] += weight
+        dx, dy = point[0] - hit.camera_position[0], point[1] - hit.camera_position[1]
+        nearest["bearings"].add(int(np.degrees(np.arctan2(dy, dx)) // 45))
+
+    ranked = sorted(
+        clusters, key=lambda c: (len(c["bearings"]), c["best"].similarity), reverse=True
+    )
+    return [
+        Place(
+            position=tuple(float(v) for v in c["centroid"]),  # type: ignore[arg-type]
+            similarity=c["best"].similarity,
+            source_id=c["best"].source_id,
+            ts=c["best"].ts,
+            views=len(c["bearings"]),
+        )
+        for c in ranked[:max_places]
+    ]
+
+
+def pose_matrix(
+    position: tuple[float, float, float], orientation: tuple[float, float, float, float]
+) -> np.ndarray:
+    """4x4 homogeneous matrix from a position and an (x, y, z, w) quaternion."""
+    x, y, z, w = orientation
+    matrix = np.eye(4)
+    matrix[:3, :3] = [
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ]
+    matrix[:3, 3] = position
+    return matrix
+
+
+def chain_matrix(transforms: Iterable[Any], from_frame: str, to_frame: str) -> np.ndarray | None:
+    """Compose static tf transforms into the 4x4 matrix taking *to_frame* points into *from_frame*.
+
+    Follows parent->child links only (the tf tree's natural direction), so
+    *to_frame* must be a descendant of *from_frame*. Returns None if no path.
+    """
+    children: dict[str, list[Any]] = {}
+    for transform in transforms:
+        children.setdefault(transform.frame_id, []).append(transform)
+    matrix = np.eye(4)
+    frame = from_frame
+    visited = {frame}
+    while frame != to_frame:
+        step = next(
+            (
+                child
+                for child in children.get(frame, [])
+                if child.child_frame_id not in visited
+                and _leads_to(children, child.child_frame_id, to_frame, set(visited))
+            ),
+            None,
+        )
+        if step is None:
+            return None
+        matrix = matrix @ step.to_matrix()
+        frame = step.child_frame_id
+        visited.add(frame)
+    return matrix
+
+
+def _leads_to(children: dict[str, list[Any]], frame: str, target: str, visited: set[str]) -> bool:
+    if frame == target:
+        return True
+    visited.add(frame)
+    return any(
+        child.child_frame_id not in visited
+        and _leads_to(children, child.child_frame_id, target, visited)
+        for child in children.get(frame, [])
+    )
+
+
+def patch_world_position(
+    image_uv: tuple[float, float],
+    depth_mm: np.ndarray,
+    intrinsics: tuple[float, float, float, float],
+    camera_to_world: np.ndarray,
+    window_px: int = 16,
+) -> tuple[float, float, float] | None:
+    """Back-project the centre of the winning patch through the depth image.
+
+    Takes the median valid depth in a *window_px* square around the patch
+    centre (zeros are holes), lifts it with the pinhole model in the optical
+    frame (x right, y down, z forward), and moves it into the world with
+    *camera_to_world*. None when the window holds no valid depth.
+    """
+    height, width = depth_mm.shape
+    u = round(image_uv[0] * width)
+    v = round(image_uv[1] * height)
+    half = window_px // 2
+    window = depth_mm[max(v - half, 0) : v + half, max(u - half, 0) : u + half]
+    valid = window[window > 0]
+    if valid.size == 0:
+        return None
+    depth_m = float(np.median(valid)) / 1000.0
+    fx, fy, cx, cy = intrinsics
+    optical = np.array([(u - cx) * depth_m / fx, (v - cy) * depth_m / fy, depth_m, 1.0])
+    world = camera_to_world @ optical
+    return (float(world[0]), float(world[1]), float(world[2]))
 
 
 def posed_frames(images: Any, poses: Any | None, tolerance_s: float) -> Iterator[tuple[Any, Any]]:
@@ -351,6 +544,12 @@ class VisualMemoryIndex:
                     (float(obs.pose_tuple[0]), float(obs.pose_tuple[1]), float(obs.pose_tuple[2]))
                     for obs in observations
                 ],
+                orientations=[
+                    tuple(float(value) for value in obs.pose_tuple[3:7])  # type: ignore[misc]
+                    if len(obs.pose_tuple) >= 7
+                    else (0.0, 0.0, 0.0, 1.0)
+                    for obs in observations
+                ],
             )
         return self._loaded
 
@@ -362,6 +561,25 @@ class VisualMemoryIndex:
             self._background = torch.stack([self._embed(prompt) for prompt in BACKGROUND_PROMPTS])
         keep = (self._background @ query) < BACKGROUND_SYNONYM_CUTOFF
         return self._background[keep]
+
+    def frame_patches(self, text: str, k: int = 12) -> list[FramePatches]:
+        """The *k* best frames for *text* with their full patch score grids."""
+        loaded = self._load()
+        query = self._embed(text)
+        similarity = patch_similarity(loaded.patches, query, self._background_for(query))
+        top = torch.topk(similarity.amax(dim=-1), k=min(k, similarity.shape[0]))
+        return [
+            FramePatches(
+                source_id=loaded.source_ids[frame],
+                ts=loaded.timestamps[frame],
+                position=loaded.positions[frame],
+                orientation=loaded.orientations[frame],
+                similarity=similarity[frame],
+                rows=loaded.rows,
+                cols=loaded.cols,
+            )
+            for frame in top.indices.tolist()
+        ]
 
     def search(self, text: str, k: int = 200) -> list[Place]:
         """Rank indexed frames by similarity to *text*, most similar first."""
@@ -379,6 +597,7 @@ class VisualMemoryIndex:
                     (int(best_patch[frame]) % loaded.cols + 0.5) / loaded.cols,
                     (int(best_patch[frame]) // loaded.cols + 0.5) / loaded.rows,
                 ),
+                orientation=loaded.orientations[frame],
             )
             for score, frame in zip(top.values.tolist(), top.indices.tolist(), strict=True)
         ]
@@ -399,6 +618,7 @@ class _LoadedIndex:
     source_ids: list[int]
     timestamps: list[float]
     positions: list[tuple[float, float, float]]
+    orientations: list[tuple[float, float, float, float]]
 
 
 def _batched(iterator: Iterable[Any], size: int) -> Iterator[list[Any]]:
