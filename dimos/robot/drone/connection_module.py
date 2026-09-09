@@ -75,7 +75,6 @@ class DroneConnectionModule(Module):
     # Internal state
     _odom: PoseStamped | None = None
     _status: dict[str, Any] = {}
-    _latest_video_frame: Image | None = None
     _latest_telemetry: dict[str, Any] | None = None
     _latest_status: dict[str, Any] | None = None
     _latest_status_lock: threading.RLock
@@ -91,7 +90,6 @@ class DroneConnectionModule(Module):
         super().__init__(**kwargs)
         self.connection: MavlinkConnection | None = None
         self.video_stream: DJIDroneVideoStream | None = None
-        self._latest_video_frame = None
         self._latest_telemetry = None
         self._latest_status = None
         self._latest_status_lock = threading.RLock()
@@ -123,9 +121,9 @@ class DroneConnectionModule(Module):
         # Start video stream (already created above)
         if self.video_stream.start():
             logger.info("Video stream started")
-            # Subscribe to video, store latest frame and publish it
+            # Subscribe to video and publish it
             self.register_disposable(
-                self.video_stream.get_stream().subscribe(self._store_and_publish_frame),
+                self.video_stream.get_stream().subscribe(self.video.publish),
             )
             # # TEMPORARY - DELETE AFTER RECORDING
             # from dimos.utils.testing import TimedSensorStorage
@@ -166,11 +164,6 @@ class DroneConnectionModule(Module):
 
         logger.info("Drone connection module started")
         return
-
-    def _store_and_publish_frame(self, frame: Image) -> None:
-        """Store the latest video frame and publish it."""
-        self._latest_video_frame = frame
-        self.video.publish(frame)
 
     def _publish_tf(self, msg: PoseStamped) -> None:
         """Publish odometry and TF transforms."""
@@ -465,12 +458,3 @@ class DroneConnectionModule(Module):
 
         # Call parent stop to clean up Module infrastructure (event loop, LCM, disposables, etc.)
         super().stop()
-
-    @skill
-    def observe(self) -> Image | None:
-        """Returns the latest video frame from the drone camera. Use this skill for any visual world queries.
-
-        This skill provides the current camera view for perception tasks.
-        Returns None if no frame has been captured yet.
-        """
-        return self._latest_video_frame

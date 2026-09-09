@@ -21,52 +21,43 @@ the optional dependency installed.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
-from itertools import pairwise
-from pathlib import Path
 from threading import RLock
-import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 try:
-    import roboplan.cartesian_planning as roboplan_cartesian
     import roboplan.core as roboplan_core
-    import roboplan.rrt as roboplan_rrt
 except ImportError as exc:
     raise ImportError(
         "RoboPlanWorld requires the optional roboplan dependency. "
         "Install the manipulation extra before selecting the roboplan backend."
     ) from exc
 
-from dimos.manipulation.planning.groups.models import PlanningGroup, PlanningGroupSelection
+from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.groups.registry import PlanningGroupRegistry
 from dimos.manipulation.planning.groups.utils import joint_state_to_ordered_positions
-from dimos.manipulation.planning.planners.config import RoboPlanCartesianPathConfig
-from dimos.manipulation.planning.planners.selected_joint_space import normalize_selection_target
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
+from dimos.manipulation.planning.spec.enums import ObstacleType
 from dimos.manipulation.planning.spec.models import (
-    CartesianTarget,
     Obstacle,
     PlanningGroupID,
-    PlanningResult,
-    RobotName,
-    WorldRobotID,
 )
-from dimos.manipulation.planning.spec.validation import validate_obstacle
-from dimos.manipulation.planning.utils.path_utils import compute_path_length
+from dimos.manipulation.planning.spec.validation import (
+    validate_obstacle,
+    validate_robot_model_config,
+)
 from dimos.manipulation.planning.world.roboplan_model import (
+    ROBOPLAN_WORLD_FRAME,
     RoboPlanGroup,
     RoboPlanModel,
     build_roboplan_model,
 )
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
@@ -76,17 +67,11 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from dimos.manipulation.planning.spec.protocols import WorldSpec
-
 logger = setup_logger()
-
-_WORLD_FRAME = "dimos_world"
-_CARTESIAN_COLLISION_STEP_SIZE = 0.05
 
 
 @dataclass
-class _RoboPlanRobotData:
-    robot_id: WorldRobotID
+class _RoboPlanModelData:
     config: RobotModelConfig
     lower_limits: NDArray[np.float64] | None = None
     upper_limits: NDArray[np.float64] | None = None
@@ -96,7 +81,7 @@ class _RoboPlanRobotData:
 class RoboPlanContext:
     """DimOS context wrapper for RoboPlan world state."""
 
-    q_by_robot: dict[WorldRobotID, NDArray[np.float64]] = field(default_factory=dict)
+    q: NDArray[np.float64] = field(default_factory=lambda: np.empty(0, dtype=np.float64))
 
 
 class RoboPlanWorld:
@@ -109,56 +94,62 @@ class RoboPlanWorld:
         if enable_viz:
             logger.warning("RoboPlanWorld does not currently provide manipulation visualization")
 
-        self._robots: dict[WorldRobotID, _RoboPlanRobotData] = {}
+        self._model_data: _RoboPlanModelData | None = None
         self._planning_groups = PlanningGroupRegistry()
         self._obstacles: dict[str, Obstacle] = {}
-        self._authoritative_robot_ids: set[WorldRobotID] = set()
-        self._robot_counter = 0
+        self._has_authoritative_state = False
         self._finalized = False
         self._usable = True
         self._live_context = RoboPlanContext()
+        self._state_lock = RLock()
         self._lock = RLock()
 
-    # Robot Management
+    # Model Management
 
-    def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
-        """Register a robot for the scene built by :meth:`finalize`."""
+    def load_model(self, config: RobotModelConfig) -> None:
+        """Register the logical robot model for :meth:`finalize`."""
         if self._finalized:
-            raise RuntimeError("Cannot add robot after world is finalized")
-        if not Path(config.model_path).exists():
-            raise FileNotFoundError(f"Robot model not found: {Path(config.model_path).resolve()}")
-        if any(data.config.name == config.name for data in self._robots.values()):
-            raise ValueError(f"Robot name '{config.name}' is already registered")
+            raise RuntimeError("Cannot load a model after the world is finalized")
+        if self._model_data is not None:
+            raise ValueError("A model is already loaded")
+        validate_robot_model_config(config)
         self._validate_planning_group_config(config)
-        self._validate_robot_config(config)
-        self._robot_counter += 1
-        robot_id = f"robot_{self._robot_counter}"
-        self._robots[robot_id] = _RoboPlanRobotData(
-            robot_id=robot_id,
-            config=config,
-        )
-        self._planning_groups.add_robot(config)
-        self._live_context.q_by_robot[robot_id] = np.zeros(
-            len(config.joint_names), dtype=np.float64
-        )
-        return robot_id
+        self._validate_model_config(config)
+        self._model_data = _RoboPlanModelData(config=config)
+        self._planning_groups = PlanningGroupRegistry(config.planning_groups)
+        self._live_context.q = np.zeros(len(config.joint_names), dtype=np.float64)
 
-    def get_robot_ids(self) -> list[WorldRobotID]:
-        """Get all robot IDs in the world."""
-        return list(self._robots.keys())
+    def get_model_config(self) -> RobotModelConfig:
+        """Get the logical robot model configuration."""
+        return self._get_model_data().config
 
-    def get_robot_config(self, robot_id: WorldRobotID) -> RobotModelConfig:
-        """Get robot configuration by ID."""
-        return self._get_robot(robot_id).config
-
-    def get_joint_limits(
-        self, robot_id: WorldRobotID
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Get joint limits in DimOS joint order."""
-        robot = self._get_robot(robot_id)
-        if robot.lower_limits is None or robot.upper_limits is None:
+    def get_joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Get joint limits in canonical model order."""
+        model_data = self._get_model_data()
+        if model_data.lower_limits is None or model_data.upper_limits is None:
             raise RuntimeError("Joint limits are available after RoboPlan finalization")
-        return robot.lower_limits.copy(), robot.upper_limits.copy()
+        return model_data.lower_limits.copy(), model_data.upper_limits.copy()
+
+    def ordered_joint_positions(self, joint_state: JointState) -> NDArray[np.float64]:
+        """Return a canonical joint state in configured model order."""
+        return self._joint_state_to_q(joint_state)
+
+    def is_ready(self) -> bool:
+        """Return whether authoritative state is available for planning."""
+        with self._state_lock:
+            return self._model_data is not None and self._has_authoritative_state
+
+    def planning_group(self, group_ids: Sequence[PlanningGroupID]) -> RoboPlanGroup | None:
+        """Return the native group generated for a public group selection."""
+        return self._require_model().groups.get(frozenset(group_ids))
+
+    def all_planning_group(self) -> RoboPlanGroup:
+        """Return the generated group spanning every canonical model joint."""
+        return self._require_model().all_group
+
+    def native_link_name(self, canonical_name: str) -> str:
+        """Return a canonical model link name for the backend."""
+        return canonical_name
 
     # Obstacle Management
 
@@ -218,7 +209,7 @@ class RoboPlanWorld:
                 return False
             scene = self._require_scene()
             try:
-                scene.updateGeometryPlacement(obstacle_id, _WORLD_FRAME, matrix)
+                scene.updateGeometryPlacement(obstacle_id, ROBOPLAN_WORLD_FRAME, matrix)
             except Exception:
                 self._usable = False
                 raise
@@ -250,18 +241,18 @@ class RoboPlanWorld:
             if self._finalized:
                 return
             model = build_roboplan_model(
-                list(self._robots.values()),
+                self._get_model_data().config,
                 self._planning_groups,
                 roboplan_core.Scene,
             )
             self._model = model
             self._scene = model.scene
             try:
-                for robot in self._robots.values():
-                    group = self._legacy_group(robot.config.name)
-                    lower, upper = self._extract_joint_limits(robot.config, group)
-                    robot.lower_limits = lower
-                    robot.upper_limits = upper
+                model_data = self._get_model_data()
+                group = model.all_group
+                lower, upper = self._extract_joint_limits(model_data.config, group)
+                model_data.lower_limits = lower
+                model_data.upper_limits = upper
                 for obstacle_id, obstacle in self._obstacles.items():
                     self._add_obstacle_to_scene(obstacle, obstacle_id)
             except BaseException:
@@ -285,47 +276,43 @@ class RoboPlanWorld:
     @contextmanager
     def scratch_context(self) -> Generator[RoboPlanContext, None, None]:
         """Create a per-consumer context with independent collision scratch."""
-        self._require_finalized()
-        ctx = RoboPlanContext(
-            q_by_robot={robot_id: q.copy() for robot_id, q in self._live_context.q_by_robot.items()}
-        )
+        with self._state_lock:
+            self._require_finalized()
+            ctx = RoboPlanContext(q=self._live_context.q.copy())
         yield ctx
 
-    def sync_from_joint_state(self, robot_id: WorldRobotID, joint_state: JointState) -> None:
+    def sync_from_joint_state(self, joint_state: JointState) -> None:
         """Sync live context from a driver joint-state message."""
         if not self._finalized:
             return
-        self.set_joint_state(self._live_context, robot_id, joint_state)
-        self._authoritative_robot_ids.add(robot_id)
+        q = self._joint_state_to_q(joint_state)
+        with self._state_lock:
+            self._live_context.q = q
+            self._has_authoritative_state = True
 
     # State Operations
 
-    def set_joint_state(
-        self, ctx: RoboPlanContext, robot_id: WorldRobotID, joint_state: JointState
-    ) -> None:
+    def set_joint_state(self, ctx: RoboPlanContext, joint_state: JointState) -> None:
         """Set robot joint state in a context."""
         self._require_finalized()
-        ctx.q_by_robot[robot_id] = self._joint_state_to_q(robot_id, joint_state)
+        ctx.q = self._joint_state_to_q(joint_state)
 
-    def get_joint_state(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> JointState:
+    def get_joint_state(self, ctx: RoboPlanContext) -> JointState:
         """Get robot joint state from a context."""
-        robot = self._get_robot(robot_id)
-        q = ctx.q_by_robot.get(robot_id)
-        if q is None:
-            q = np.zeros(len(robot.config.joint_names), dtype=np.float64)
-        return JointState(name=robot.config.joint_names, position=q.astype(float).tolist())
+        model_data = self._get_model_data()
+        q = ctx.q
+        if not len(q):
+            q = np.zeros(len(model_data.config.joint_names), dtype=np.float64)
+        return JointState(name=model_data.config.joint_names, position=q.astype(float).tolist())
 
     # Collision Checking
 
-    def is_collision_free(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> bool:
+    def is_collision_free(self, ctx: RoboPlanContext) -> bool:
         """Check if the robot configuration in a context is collision-free."""
         self._require_finalized()
-        q = ctx.q_by_robot.get(robot_id)
-        if q is None:
-            raise KeyError(f"Robot '{robot_id}' not found in context")
-        return not self._has_collisions(ctx, robot_id, q)
+        return not self._has_collisions(ctx, ctx.q)
 
-    def get_min_distance(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> float:
+    def get_min_distance(self, ctx: RoboPlanContext) -> float:
         """Get minimum signed distance.
 
         RoboPlan signed-distance semantics are not verified yet, so do not return
@@ -333,34 +320,33 @@ class RoboPlanWorld:
         """
         raise NotImplementedError("RoboPlanWorld.get_min_distance is not implemented")
 
-    def check_config_collision_free(self, robot_id: WorldRobotID, joint_state: JointState) -> bool:
+    def check_config_collision_free(self, joint_state: JointState) -> bool:
         """Check a joint state using a scratch collision context."""
         with self.scratch_context() as ctx:
-            self.set_joint_state(ctx, robot_id, joint_state)
-            return self.is_collision_free(ctx, robot_id)
+            self.set_joint_state(ctx, joint_state)
+            return self.is_collision_free(ctx)
 
     def check_edge_collision_free(
         self,
-        robot_id: WorldRobotID,
         start: JointState,
         end: JointState,
         step_size: float = 0.05,
     ) -> bool:
         """Check if an interpolated edge is collision-free."""
         self._require_finalized()
-        q_start = self._joint_state_to_q(robot_id, start)
-        q_end = self._joint_state_to_q(robot_id, end)
+        q_start = self._joint_state_to_q(start)
+        q_end = self._joint_state_to_q(end)
         with self.scratch_context() as ctx:
-            return not self._call_path_collision_checker(ctx, robot_id, q_start, q_end, step_size)
+            return not self._call_path_collision_checker(ctx, q_start, q_end, step_size)
 
     # Forward Kinematics
 
-    def get_ee_pose(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> PoseStamped:
+    def get_ee_pose(self, ctx: RoboPlanContext) -> PoseStamped:
         """Get end-effector pose if RoboPlan exposes FK."""
-        robot = self._get_robot(robot_id)
-        group_id = self._primary_pose_group_id_for_config(robot.config)
+        model_data = self._get_model_data()
+        group_id = self._primary_pose_group_id_for_config(model_data.config)
         if group_id is None:
-            raise ValueError(f"Robot '{robot.config.name}' has no pose-targetable planning group")
+            raise ValueError("Model has no pose-targetable planning group")
         return self.get_group_ee_pose(ctx, group_id)
 
     def get_group_ee_pose(self, ctx: RoboPlanContext, group_id: PlanningGroupID) -> PoseStamped:
@@ -368,7 +354,7 @@ class RoboPlanWorld:
         group = self._planning_group_from_id(group_id)
         if group.tip_link is None:
             raise ValueError(f"Planning group '{group_id}' has no tip link")
-        mat = self.get_link_pose(ctx, self._robot_id_for_group(group_id), group.tip_link)
+        mat = self.get_link_pose(ctx, group.tip_link)
         pose = matrix_to_pose(mat)
         return PoseStamped(
             frame_id="world",
@@ -381,50 +367,42 @@ class RoboPlanWorld:
             ],
         )
 
-    def get_link_pose(
-        self, ctx: RoboPlanContext, robot_id: WorldRobotID, link_name: str
-    ) -> NDArray[np.float64]:
+    def get_link_pose(self, ctx: RoboPlanContext, link_name: str) -> NDArray[np.float64]:
         """Get link pose as a 4x4 homogeneous transform."""
-        q = ctx.q_by_robot.get(robot_id)
-        if q is None:
-            raise KeyError(f"Robot '{robot_id}' not found in context")
+        q = ctx.q
         scene = self._require_scene()
-        robot = self._get_robot(robot_id)
         with self._lock:
-            scene_q = self._full_scene_q(ctx, overlay=(robot_id, q))
+            scene_q = self._full_scene_q(ctx, overlay=q)
             scene.setJointPositions(scene_q)
             result = scene.forwardKinematics(
                 scene_q,
-                self._require_model().native_link(robot.config.name, link_name),
+                link_name,
                 "",
             )
         return np.asarray(result, dtype=np.float64)
 
-    def get_jacobian(self, ctx: RoboPlanContext, robot_id: WorldRobotID) -> NDArray[np.float64]:
+    def get_jacobian(self, ctx: RoboPlanContext) -> NDArray[np.float64]:
         """Get end-effector Jacobian if RoboPlan exposes a compatible API."""
-        robot = self._get_robot(robot_id)
-        group_id = self._primary_pose_group_id_for_config(robot.config)
+        model_data = self._get_model_data()
+        group_id = self._primary_pose_group_id_for_config(model_data.config)
         if group_id is None:
-            raise ValueError(f"Robot '{robot.config.name}' has no pose-targetable planning group")
+            raise ValueError("Model has no pose-targetable planning group")
         return self.get_group_jacobian(ctx, group_id)
 
     def get_group_jacobian(
         self, ctx: RoboPlanContext, group_id: PlanningGroupID
     ) -> NDArray[np.float64]:
-        """Get planning-group Jacobian projected to group-local joint order."""
+        """Get a planning-group Jacobian in planning-group joint order."""
         group = self._planning_group_from_id(group_id)
         if group.tip_link is None:
             raise ValueError(f"Planning group '{group_id}' has no tip link")
-        robot_id = self._robot_id_for_group(group_id)
-        robot = self._get_robot(robot_id)
         scene = self._require_scene()
-        model = self._require_model()
         with self._lock:
             scene_q = self._full_scene_q(ctx)
             scene.setJointPositions(scene_q)
             result = scene.computeFrameJacobian(
                 scene_q,
-                model.native_link(robot.config.name, group.tip_link),
+                group.tip_link,
                 True,
             )
         arr = np.asarray(result, dtype=np.float64)
@@ -432,463 +410,14 @@ class RoboPlanWorld:
             raise ValueError(f"Unexpected RoboPlan Jacobian shape: {arr.shape}; expected 6 x n")
         scene_joint_order = list(scene.getJointNames())
         if arr.shape[1] == len(scene_joint_order):
-            native_names = [
-                model.native_joint(group.robot_name, name) for name in group.local_joint_names
-            ]
-            return arr[:, [scene_joint_order.index(name) for name in native_names]]
+            return arr[:, [scene_joint_order.index(name) for name in group.joint_names]]
         raise ValueError(
             f"Unexpected RoboPlan Jacobian shape: {arr.shape}; cannot project group '{group_id}'"
         )
 
     # PlannerSpec for native RoboPlan planning
 
-    def plan_joint_path(
-        self,
-        world: WorldSpec,
-        robot_id: WorldRobotID,
-        start: JointState,
-        goal: JointState,
-        timeout: float = 10.0,
-    ) -> PlanningResult:
-        """Plan using the legacy robot-scoped local-name contract."""
-        if world is not self:
-            return PlanningResult(
-                status=PlanningStatus.NO_SOLUTION,
-                message="RoboPlan-native planner requires its RoboPlanWorld instance",
-            )
-        try:
-            q_start = self._joint_state_to_q(robot_id, start)
-        except ValueError as exc:
-            return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
-        try:
-            q_goal = self._joint_state_to_q(robot_id, goal)
-        except ValueError as exc:
-            return PlanningResult(status=PlanningStatus.INVALID_GOAL, message=str(exc))
-        if not self._is_ready():
-            return PlanningResult(
-                status=PlanningStatus.INVALID_START,
-                message="RoboPlan planning scene is not ready: authoritative state is incomplete",
-            )
-        robot = self._get_robot(robot_id)
-        current = self._live_context.q_by_robot[robot_id]
-        if not np.allclose(q_start, current, atol=1e-6, rtol=0.0):
-            return PlanningResult(
-                status=PlanningStatus.INVALID_START,
-                message="Requested start state does not match current scene state",
-            )
-        group = self._legacy_group(robot.config.name)
-        return self._plan_group(
-            group,
-            dict(zip(robot.config.joint_names, q_start, strict=True)),
-            dict(zip(robot.config.joint_names, q_goal, strict=True)),
-            timeout,
-            5000,
-        )
-
-    def plan_selected_joint_path(
-        self,
-        world: WorldSpec,
-        selection: PlanningGroupSelection,
-        start: JointState,
-        goal: JointState,
-        timeout: float = 10.0,
-        max_iterations: int = 5000,
-    ) -> PlanningResult:
-        """Plan one or more non-overlapping groups through RoboPlan RRT."""
-        if world is not self:
-            return PlanningResult(
-                status=PlanningStatus.UNSUPPORTED,
-                message="RoboPlan-native planner requires its RoboPlanWorld instance",
-            )
-        if not selection.groups:
-            return PlanningResult(
-                status=PlanningStatus.INVALID_GOAL,
-                message="No planning groups selected",
-            )
-        group = self._require_model().groups.get(frozenset(selection.group_ids))
-        if group is None:
-            return PlanningResult(
-                status=PlanningStatus.UNSUPPORTED,
-                message="RoboPlan has no generated group for this selection",
-            )
-        try:
-            normalized_goal = normalize_selection_target(selection, goal, "goal")
-        except ValueError as exc:
-            return PlanningResult(status=PlanningStatus.INVALID_GOAL, message=str(exc))
-        try:
-            normalized_start = self._validated_selection_start(selection, start)
-        except ValueError as exc:
-            return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
-        start_by_name = dict(zip(normalized_start.name, normalized_start.position, strict=True))
-        return self._plan_group(
-            group,
-            start_by_name,
-            dict(zip(normalized_goal.name, normalized_goal.position, strict=True)),
-            timeout,
-            max_iterations,
-        )
-
-    def plan_cartesian_path(
-        self,
-        world: WorldSpec,
-        selection: PlanningGroupSelection,
-        start: JointState,
-        targets: Mapping[PlanningGroupID, CartesianTarget],
-        config: RoboPlanCartesianPathConfig,
-        *,
-        auxiliary_groups: Sequence[PlanningGroupID] = (),
-    ) -> PlanningResult:
-        """Plan synchronized TCP waypoint paths with official RoboPlan planning."""
-        started = time.time()
-        if world is not self:
-            return PlanningResult(
-                status=PlanningStatus.UNSUPPORTED,
-                message="RoboPlan-native planner requires its RoboPlanWorld instance",
-            )
-        validation_error = self._validate_cartesian_request(selection, targets, auxiliary_groups)
-        if validation_error is not None:
-            return validation_error
-        try:
-            normalized_start = self._validated_selection_start(selection, start)
-        except ValueError as exc:
-            return PlanningResult(status=PlanningStatus.INVALID_START, message=str(exc))
-
-        group = self._require_model().groups.get(frozenset(selection.group_ids))
-        if group is None:
-            return PlanningResult(
-                status=PlanningStatus.UNSUPPORTED,
-                message="RoboPlan has no generated group for this selection",
-            )
-
-        try:
-            with self.scratch_context() as ctx:
-                self._apply_selected_state(ctx, normalized_start)
-                cartesian_path = self._build_cartesian_path(ctx, selection, targets)
-                trajectory = self._run_cartesian_planner(
-                    ctx,
-                    group,
-                    cartesian_path,
-                    config,
-                )
-            path, timestamps = self._path_from_cartesian_trajectory(
-                selection,
-                group,
-                trajectory,
-            )
-        except (KeyError, RuntimeError, ValueError) as exc:
-            return PlanningResult(
-                status=PlanningStatus.NO_SOLUTION,
-                planning_time=time.time() - started,
-                message=f"RoboPlan Cartesian planning failed: {exc}",
-            )
-
-        if not path:
-            return PlanningResult(
-                status=PlanningStatus.NO_SOLUTION,
-                planning_time=time.time() - started,
-                message="RoboPlan Cartesian planning failed: returned an empty trajectory",
-            )
-        if not self._combined_path_collision_free(path):
-            return PlanningResult(
-                status=PlanningStatus.NO_SOLUTION,
-                planning_time=time.time() - started,
-                message="RoboPlan Cartesian trajectory failed DimOS collision post-validation",
-            )
-        return PlanningResult(
-            status=PlanningStatus.SUCCESS,
-            path=path,
-            planning_time=time.time() - started,
-            path_length=compute_path_length(path),
-            message="RoboPlan Cartesian path found",
-            timestamps=timestamps,
-        )
-
-    def get_name(self) -> str:
-        """Get planner name."""
-        return "RoboPlan"
-
-    # Internals
-
-    def _validated_selection_start(
-        self,
-        selection: PlanningGroupSelection,
-        start: JointState,
-    ) -> JointState:
-        """Return a normalized start matching the authoritative scene state."""
-        if not self._is_ready():
-            raise ValueError(
-                "RoboPlan planning scene is not ready: authoritative state is incomplete"
-            )
-        normalized = normalize_selection_target(selection, start, "start")
-        start_by_name = dict(zip(normalized.name, normalized.position, strict=True))
-        current_by_name = self._current_global_positions()
-        if any(
-            not np.isclose(start_by_name[name], current_by_name[name], atol=1e-6, rtol=0.0)
-            for name in selection.joint_names
-        ):
-            raise ValueError("Requested start state does not match current scene state")
-        return normalized
-
-    def _validate_cartesian_request(
-        self,
-        selection: PlanningGroupSelection,
-        targets: Mapping[PlanningGroupID, CartesianTarget],
-        auxiliary_groups: Sequence[PlanningGroupID],
-    ) -> PlanningResult | None:
-        if not selection.groups:
-            return PlanningResult(
-                status=PlanningStatus.INVALID_GOAL,
-                message="No planning groups selected",
-            )
-        if not targets:
-            return PlanningResult(
-                status=PlanningStatus.INVALID_GOAL,
-                message="Cartesian planning requires at least one target group",
-            )
-        auxiliary_ids = tuple(auxiliary_groups)
-        if len(set(auxiliary_ids)) != len(auxiliary_ids):
-            return PlanningResult(
-                status=PlanningStatus.INVALID_GOAL,
-                message="Auxiliary planning groups must be unique",
-            )
-        target_ids = set(targets)
-        auxiliary_set = set(auxiliary_ids)
-        if target_ids & auxiliary_set:
-            return PlanningResult(
-                status=PlanningStatus.INVALID_GOAL,
-                message="Target and auxiliary planning groups must be disjoint",
-            )
-        selected_ids = set(selection.group_ids)
-        if target_ids | auxiliary_set != selected_ids:
-            return PlanningResult(
-                status=PlanningStatus.INVALID_GOAL,
-                message=(
-                    "Target and auxiliary planning groups must exactly cover the "
-                    "planning-group selection"
-                ),
-            )
-
-        groups_by_id = {group.id: group for group in selection.groups}
-        for group_id, target in targets.items():
-            group = groups_by_id[group_id]
-            if group.tip_link is None:
-                return PlanningResult(
-                    status=PlanningStatus.INVALID_GOAL,
-                    message=f"Planning group '{group_id}' has no TCP tip link",
-                )
-            if not isinstance(target, Sequence) or isinstance(target, (str, bytes)):
-                return PlanningResult(
-                    status=PlanningStatus.INVALID_GOAL,
-                    message=f"Cartesian target for '{group_id}' must be a waypoint sequence",
-                )
-            if len(target) < 2:
-                return PlanningResult(
-                    status=PlanningStatus.INVALID_GOAL,
-                    message=f"Cartesian target for '{group_id}' requires at least two waypoints",
-                )
-            waypoint_type = (
-                PoseStamped
-                if isinstance(target[0], PoseStamped)
-                else Transform
-                if isinstance(target[0], Transform)
-                else None
-            )
-            if waypoint_type is None or any(
-                not isinstance(waypoint, waypoint_type) for waypoint in target
-            ):
-                return PlanningResult(
-                    status=PlanningStatus.INVALID_GOAL,
-                    message=(
-                        f"Cartesian target for '{group_id}' must contain only PoseStamped "
-                        "waypoints or only Transform waypoints"
-                    ),
-                )
-            if any(waypoint.frame_id != "world" for waypoint in target):
-                return PlanningResult(
-                    status=PlanningStatus.UNSUPPORTED,
-                    message="Cartesian planning supports only world-frame waypoints",
-                )
-        return None
-
-    def _apply_selected_state(self, ctx: RoboPlanContext, state: JointState) -> None:
-        positions = dict(zip(state.name, state.position, strict=True))
-        for robot_id, robot in self._robots.items():
-            q = ctx.q_by_robot[robot_id].copy()
-            for index, local_name in enumerate(robot.config.joint_names):
-                global_name = f"{robot.config.name}/{local_name}"
-                if global_name in positions:
-                    q[index] = positions[global_name]
-            ctx.q_by_robot[robot_id] = q
-
-    def _build_cartesian_path(
-        self,
-        ctx: RoboPlanContext,
-        selection: PlanningGroupSelection,
-        targets: Mapping[PlanningGroupID, CartesianTarget],
-    ) -> Any:
-        model = self._require_model()
-        base_frames: list[str] = []
-        tip_frames: list[str] = []
-        waypoint_paths: list[list[NDArray[np.float64]]] = []
-        for group in selection.groups:
-            target = targets.get(group.id)
-            if target is None:
-                continue
-            if group.tip_link is None:
-                raise ValueError(f"Planning group '{group.id}' has no TCP tip link")
-            start_pose = self.get_group_ee_pose(ctx, group.id)
-            start_matrix = np.asarray(pose_to_matrix(start_pose), dtype=np.float64)
-            target_matrices = [
-                self._resolve_cartesian_waypoint(start_matrix, waypoint) for waypoint in target
-            ]
-            if not np.allclose(target_matrices[0], start_matrix, atol=1e-6, rtol=0.0):
-                raise ValueError(
-                    f"Cartesian target for '{group.id}' must begin at its current TCP pose"
-                )
-            base_frames.append(_WORLD_FRAME)
-            tip_frames.append(model.native_link(group.robot_name, group.tip_link))
-            waypoint_paths.append(target_matrices)
-        return roboplan_core.CartesianPath(base_frames, tip_frames, waypoint_paths)
-
-    def _resolve_cartesian_waypoint(
-        self,
-        start_matrix: NDArray[np.float64],
-        waypoint: PoseStamped | Transform,
-    ) -> NDArray[np.float64]:
-        if isinstance(waypoint, PoseStamped):
-            return np.asarray(pose_to_matrix(waypoint), dtype=np.float64)
-        target_matrix = start_matrix.copy()
-        delta_matrix = np.asarray(waypoint.to_matrix(), dtype=np.float64)
-        target_matrix[:3, 3] += delta_matrix[:3, 3]
-        target_matrix[:3, :3] = delta_matrix[:3, :3] @ start_matrix[:3, :3]
-        return target_matrix
-
-    def _run_cartesian_planner(
-        self,
-        ctx: RoboPlanContext,
-        group: RoboPlanGroup,
-        path: Any,
-        config: RoboPlanCartesianPathConfig,
-    ) -> Any:
-        options = self._cartesian_planner_options(group.name, config)
-        with self._lock:
-            scene = self._require_scene()
-            scene_q = self._full_scene_q(ctx)
-            scene.setJointPositions(scene_q)
-            q_start = roboplan_core.JointConfiguration(
-                list(scene.getJointNames()),
-                scene_q,
-            )
-            planner = roboplan_cartesian.CartesianPathPlanner(scene, options)
-            trajectory = planner.plan(path, q_start)
-        if trajectory is None:
-            raise ValueError("official planner returned no trajectory")
-        return trajectory
-
-    @staticmethod
-    def _cartesian_planner_options(
-        group_name: str,
-        config: RoboPlanCartesianPathConfig,
-    ) -> Any:
-        options = roboplan_cartesian.CartesianPlannerOptions()
-        options.group_name = group_name
-        options.speed_mode = {
-            "bounded": roboplan_cartesian.CartesianSpeedMode.Bounded,
-            "time_optimal": roboplan_cartesian.CartesianSpeedMode.TimeOptimal,
-        }[config.speed_mode]
-        for field_name in (
-            "dt",
-            "max_linear_speed",
-            "max_angular_speed",
-            "max_linear_acceleration",
-            "max_angular_acceleration",
-            "max_position_error",
-            "max_orientation_error",
-            "position_cost",
-            "orientation_cost",
-            "task_gain",
-            "lm_damping",
-            "regularization",
-            "config_task_weight",
-            "velocity_scale",
-            "acceleration_scale",
-            "limit_ratio_tolerance",
-            "toppra_blend_deviation",
-            "position_limit_gain",
-            "max_attempts_per_step",
-        ):
-            setattr(options, field_name, getattr(config, field_name))
-        return options
-
-    def _path_from_cartesian_trajectory(
-        self,
-        selection: PlanningGroupSelection,
-        group: RoboPlanGroup,
-        trajectory: Any,
-    ) -> tuple[list[JointState], list[float]]:
-        result_names = tuple(getattr(trajectory, "joint_names", ()))
-        if not result_names:
-            raise ValueError("RoboPlan trajectory does not identify its joints")
-        if not set(group.native_names).issubset(result_names):
-            raise ValueError("RoboPlan trajectory omits joints from the selected group")
-        positions = list(trajectory.positions)
-        velocities = list(trajectory.velocities)
-        timestamps = [float(value) for value in trajectory.times]
-        if not positions:
-            return [], []
-        if len(velocities) != len(positions) or len(timestamps) != len(positions):
-            raise ValueError("RoboPlan trajectory fields have inconsistent waypoint counts")
-
-        native_by_public = dict(zip(group.public_names, group.native_names, strict=True))
-        expected_names = list(selection.joint_names)
-        path: list[JointState] = []
-        for position_row, velocity_row in zip(positions, velocities, strict=True):
-            position_values = np.asarray(position_row, dtype=np.float64)
-            velocity_values = np.asarray(velocity_row, dtype=np.float64)
-            if len(position_values) != len(result_names) or len(velocity_values) != len(
-                result_names
-            ):
-                raise ValueError(
-                    "RoboPlan trajectory waypoint length does not match its joint names"
-                )
-            position_by_native = dict(zip(result_names, position_values, strict=True))
-            velocity_by_native = dict(zip(result_names, velocity_values, strict=True))
-            path.append(
-                JointState(
-                    name=expected_names,
-                    position=[
-                        float(position_by_native[native_by_public[name]]) for name in expected_names
-                    ],
-                    velocity=[
-                        float(velocity_by_native[native_by_public[name]]) for name in expected_names
-                    ],
-                )
-            )
-        return path, timestamps
-
-    def _combined_path_collision_free(self, path: Sequence[JointState]) -> bool:
-        with self.scratch_context() as ctx:
-            for start, end in pairwise(path):
-                q_start = np.asarray(start.position, dtype=np.float64)
-                q_end = np.asarray(end.position, dtype=np.float64)
-                max_change = float(np.max(np.abs(q_end - q_start), initial=0.0))
-                steps = max(1, int(np.ceil(max_change / _CARTESIAN_COLLISION_STEP_SIZE)))
-                for fraction in np.linspace(0.0, 1.0, steps + 1):
-                    sample = JointState(
-                        name=start.name,
-                        position=(q_start + fraction * (q_end - q_start)).tolist(),
-                    )
-                    self._apply_selected_state(ctx, sample)
-                    first_robot_id = next(iter(self._robots))
-                    if not self.is_collision_free(ctx, first_robot_id):
-                        return False
-            if len(path) == 1:
-                self._apply_selected_state(ctx, path[0])
-                first_robot_id = next(iter(self._robots))
-                return self.is_collision_free(ctx, first_robot_id)
-        return True
-
-    def _validate_robot_config(self, config: RobotModelConfig) -> None:
+    def _validate_model_config(self, config: RobotModelConfig) -> None:
         if not config.joint_names:
             raise ValueError("RoboPlanWorld requires explicit joint_names")
         if config.base_pose.frame_id not in ("", "world"):
@@ -901,10 +430,17 @@ class RoboPlanWorld:
             lower = np.asarray(config.joint_limits_lower, dtype=np.float64)
             upper = np.asarray(config.joint_limits_upper, dtype=np.float64)
         else:
-            lower, upper = self._require_scene().getPositionLimitVectors(group.name, False)
+            scene = self._require_scene()
+            lower, upper = scene.getPositionLimitVectors(group.name, False)
             lower = np.asarray(lower, dtype=np.float64)
             upper = np.asarray(upper, dtype=np.float64)
-            by_name = dict(zip(group.public_names, zip(lower, upper, strict=True), strict=True))
+            canonical_names = tuple(scene.getJointGroupInfo(group.name).joint_names)
+            if set(canonical_names) != set(config.joint_names):
+                raise ValueError(
+                    "RoboPlan joint-limit group does not match the prepared model: "
+                    f"{sorted(canonical_names)} != {sorted(config.joint_names)}"
+                )
+            by_name = dict(zip(canonical_names, zip(lower, upper, strict=True), strict=True))
             lower = np.asarray([by_name[name][0] for name in config.joint_names])
             upper = np.asarray([by_name[name][1] for name in config.joint_names])
         if len(lower) != len(config.joint_names) or len(upper) != len(config.joint_names):
@@ -915,36 +451,24 @@ class RoboPlanWorld:
 
     def _validate_planning_group_config(self, config: RobotModelConfig) -> None:
         """Validate planning groups before mutating backend state."""
-        PlanningGroupRegistry([config])
+        PlanningGroupRegistry(config.planning_groups)
 
     def _planning_group_from_id(self, group_id: PlanningGroupID) -> PlanningGroup:
         return self._planning_groups.get(group_id)
 
     def _primary_pose_group_id_for_config(self, config: RobotModelConfig) -> PlanningGroupID | None:
-        return self._planning_groups.primary_pose_group_id_for_robot(config.name)
+        return self._planning_groups.primary_pose_group_id()
 
-    def _get_robot(self, robot_id: WorldRobotID) -> _RoboPlanRobotData:
-        if robot_id not in self._robots:
-            raise KeyError(f"Robot '{robot_id}' not found")
-        return self._robots[robot_id]
+    def _get_model_data(self) -> _RoboPlanModelData:
+        if self._model_data is None:
+            raise RuntimeError("Model is not loaded")
+        return self._model_data
 
-    def _robot_id_for_group(self, group_id: PlanningGroupID) -> WorldRobotID:
-        group = self._planning_group_from_id(group_id)
-        matches = [
-            rid for rid, data in self._robots.items() if data.config.name == group.robot_name
-        ]
-        if not matches:
-            raise KeyError(f"No robot registered for planning group '{group_id}'")
-        return matches[0]
-
-    def _joint_state_to_q(
-        self, robot_id: WorldRobotID, joint_state: JointState
-    ) -> NDArray[np.float64]:
-        robot = self._get_robot(robot_id)
+    def _joint_state_to_q(self, joint_state: JointState) -> NDArray[np.float64]:
+        model_data = self._get_model_data()
         return joint_state_to_ordered_positions(
             joint_state,
-            joint_names=robot.config.joint_names,
-            joint_name_mapping=robot.config.joint_name_mapping,
+            joint_names=model_data.config.joint_names,
         )
 
     def _require_finalized(self) -> None:
@@ -968,64 +492,57 @@ class RoboPlanWorld:
             raise RuntimeError("RoboPlan model is not initialized; finalize the world first")
         return self._model
 
+    @contextmanager
+    def parametrization_model(self) -> Generator[RoboPlanModel, None, None]:
+        """Yield the finalized trajectory model under the world scene lock."""
+        with self._lock:
+            yield self._require_model()
+
     def _full_scene_q(
         self,
         ctx: RoboPlanContext,
-        overlay: tuple[WorldRobotID, NDArray[np.float64]] | None = None,
+        overlay: NDArray[np.float64] | None = None,
     ) -> NDArray[np.float64]:
         scene = self._require_scene()
         group = self._require_model().all_group
-        positions = self._current_global_positions(ctx, overlay)
+        positions = self._current_positions(ctx, overlay)
         q = np.asarray([positions[name] for name in group.public_names], dtype=np.float64)
         return np.asarray(scene.toFullJointPositions(group.name, q), dtype=np.float64)
 
-    def _current_global_positions(
+    def _current_positions(
         self,
         ctx: RoboPlanContext | None = None,
-        overlay: tuple[WorldRobotID, NDArray[np.float64]] | None = None,
+        overlay: NDArray[np.float64] | None = None,
     ) -> dict[str, float]:
         context = ctx if ctx is not None else self._live_context
-        positions: dict[str, float] = {}
-        for robot_id, robot in self._robots.items():
-            q = (
-                overlay[1]
-                if overlay is not None and overlay[0] == robot_id
-                else context.q_by_robot.get(robot_id)
-            )
-            if q is None or len(q) != len(robot.config.joint_names):
-                raise RuntimeError(f"Missing authoritative state for robot '{robot_id}'")
-            positions.update(
-                {
-                    f"{robot.config.name}/{name}": float(value)
-                    for name, value in zip(robot.config.joint_names, q, strict=True)
-                }
-            )
-        return positions
+        model_data = self._get_model_data()
+        q = overlay if overlay is not None else context.q
+        if len(q) != len(model_data.config.joint_names):
+            raise RuntimeError("Missing authoritative model state")
+        return dict(zip(model_data.config.joint_names, map(float, q), strict=True))
 
     def _has_collisions(
         self,
         ctx: RoboPlanContext,
-        robot_id: WorldRobotID,
         q: NDArray[np.float64],
     ) -> bool:
         with self._lock:
             scene = self._require_scene()
-            scene_q = self._full_scene_q(ctx, overlay=(robot_id, q))
+            scene_q = self._full_scene_q(ctx, overlay=q)
             scene.setJointPositions(scene_q)
             return bool(scene.hasCollisions(scene_q))
 
     def _call_path_collision_checker(
         self,
         ctx: RoboPlanContext,
-        robot_id: WorldRobotID,
         q_start: NDArray[np.float64],
         q_end: NDArray[np.float64],
         step_size: float,
     ) -> bool:
         with self._lock:
             scene = self._require_scene()
-            scene_q_start = self._full_scene_q(ctx, overlay=(robot_id, q_start))
-            scene_q_end = self._full_scene_q(ctx, overlay=(robot_id, q_end))
+            scene_q_start = self._full_scene_q(ctx, overlay=q_start)
+            scene_q_end = self._full_scene_q(ctx, overlay=q_end)
             scene.setJointPositions(scene_q_start)
             return bool(
                 roboplan_core.hasCollisionsAlongPath(
@@ -1047,7 +564,7 @@ class RoboPlanWorld:
             width, height, depth = obstacle.dimensions
             scene.addBoxGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                ROBOPLAN_WORLD_FRAME,
                 roboplan_core.Box(width, height, depth),
                 matrix,
                 color,
@@ -1057,7 +574,7 @@ class RoboPlanWorld:
             self._require_dimensions(obstacle, 1)
             (radius,) = obstacle.dimensions
             scene.addSphereGeometry(
-                obstacle_id, _WORLD_FRAME, roboplan_core.Sphere(radius), matrix, color
+                obstacle_id, ROBOPLAN_WORLD_FRAME, roboplan_core.Sphere(radius), matrix, color
             )
             return
         if obstacle.obstacle_type == ObstacleType.CYLINDER:
@@ -1065,7 +582,7 @@ class RoboPlanWorld:
             radius, length = obstacle.dimensions
             scene.addCylinderGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                ROBOPLAN_WORLD_FRAME,
                 roboplan_core.Cylinder(radius, length),
                 matrix,
                 color,
@@ -1076,8 +593,17 @@ class RoboPlanWorld:
                 raise ValueError("MESH obstacle requires mesh_path")
             scene.addMeshGeometry(
                 obstacle_id,
-                _WORLD_FRAME,
+                ROBOPLAN_WORLD_FRAME,
                 roboplan_core.Mesh(obstacle.mesh_path),
+                matrix,
+                color,
+            )
+            return
+        if obstacle.obstacle_type == ObstacleType.OCTREE:
+            scene.addOcTreeGeometry(
+                obstacle_id,
+                ROBOPLAN_WORLD_FRAME,
+                _octree(obstacle),
                 matrix,
                 color,
             )
@@ -1096,106 +622,18 @@ class RoboPlanWorld:
                 f"got {len(obstacle.dimensions)}"
             )
 
-    def _legacy_group(self, robot_name: RobotName) -> RoboPlanGroup:
-        model = self._require_model()
-        group_id = model.legacy_group_ids[robot_name]
-        return model.groups[frozenset((group_id,))]
 
-    def _is_ready(self) -> bool:
-        return bool(self._robots) and self._authoritative_robot_ids == set(self._robots)
+def _octree(obstacle: Obstacle) -> Any:
+    """Build a roboplan octree from an obstacle's occupied cell centers.
 
-    def _plan_group(
-        self,
-        group: RoboPlanGroup,
-        start_by_name: Mapping[str, float],
-        goal_by_name: Mapping[str, float],
-        timeout: float,
-        max_iterations: int,
-    ) -> PlanningResult:
-        started = time.time()
-        try:
-            q_start = np.asarray(
-                [start_by_name[name] for name in group.public_names],
-                dtype=np.float64,
-            )
-            q_goal = np.asarray(
-                [goal_by_name[name] for name in group.public_names],
-                dtype=np.float64,
-            )
-        except KeyError as exc:
-            return PlanningResult(
-                status=PlanningStatus.INVALID_GOAL,
-                message=f"Joint target is missing '{exc.args[0]}'",
-            )
-        try:
-            with self._lock:
-                scene = self._require_scene()
-                scene.setJointPositions(self._full_scene_q(self._live_context))
-                result = self._run_native_rrt(
-                    group,
-                    q_start,
-                    q_goal,
-                    timeout,
-                    max_iterations,
-                )
-            path = self._path_from_native(group, result)
-        except ValueError as exc:
-            return PlanningResult(
-                status=PlanningStatus.NO_SOLUTION,
-                planning_time=time.time() - started,
-                message=f"RoboPlan-native planning failed: {exc}",
-            )
-        if not path:
-            return PlanningResult(
-                status=PlanningStatus.NO_SOLUTION,
-                planning_time=time.time() - started,
-                message="RoboPlan-native planning failed: returned an empty path",
-            )
-        return PlanningResult(
-            status=PlanningStatus.SUCCESS,
-            path=path,
-            planning_time=time.time() - started,
-            path_length=compute_path_length(path),
-            message="RoboPlan path found",
-        )
-
-    def _run_native_rrt(
-        self,
-        group: RoboPlanGroup,
-        q_start: NDArray[np.float64],
-        q_goal: NDArray[np.float64],
-        timeout: float,
-        max_iterations: int,
-    ) -> Any:
-        options: Any = roboplan_rrt.RRTOptions()
-        options.group_name = group.name
-        options.max_planning_time = timeout
-        options.max_nodes = max_iterations
-        options.collision_check_use_bisection = True
-        planner = roboplan_rrt.RRT(self._require_scene(), options)
-        start = roboplan_core.JointConfiguration(list(group.native_names), q_start)
-        goal = roboplan_core.JointConfiguration(list(group.native_names), q_goal)
-        result = planner.plan(start, goal)
-        if result is None:
-            raise ValueError("RoboPlan RRT returned no path")
-        return result
-
-    def _path_from_native(self, group: RoboPlanGroup, result: Any) -> list[JointState]:
-        result_names = tuple(getattr(result, "joint_names", ()) or group.native_names)
-        if set(result_names) != set(group.native_names):
-            raise ValueError("RoboPlan path joint names do not match the selected group")
-        public_by_native = dict(zip(group.native_names, group.public_names, strict=True))
-        source_names = tuple(public_by_native[name] for name in result_names)
-        path: list[JointState] = []
-        for waypoint in result.positions:
-            values = np.asarray(waypoint, dtype=np.float64)
-            if len(values) != len(source_names):
-                raise ValueError("RoboPlan path waypoint length does not match its names")
-            positions = dict(zip(source_names, values, strict=True))
-            path.append(
-                JointState(
-                    name=list(group.output_names),
-                    position=[float(positions[name]) for name in group.output_names],
-                )
-            )
-        return path
+    Coal describes an octree cell as six numbers: center, edge length, cost and
+    occupancy threshold. Every cell is occupied here, so cost is 1.0 against the
+    default 0.5 threshold.
+    """
+    if obstacle.octree_resolution is None:
+        raise ValueError("OCTREE obstacle requires octree_resolution")
+    resolution = float(obstacle.octree_resolution)
+    boxes = [
+        np.array((x, y, z, resolution, 1.0, 0.5), dtype=np.float64) for x, y, z in obstacle.points
+    ]
+    return roboplan_core.OcTree(boxes, resolution)

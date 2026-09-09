@@ -18,19 +18,28 @@ from collections.abc import Sequence
 from io import BytesIO
 import math
 import struct
-from typing import TYPE_CHECKING, BinaryIO, TypeAlias
+from typing import TYPE_CHECKING, Any, BinaryIO, TypeAlias, overload
 
 if TYPE_CHECKING:
     import rerun as rr
 
 from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
 import numpy as np
-from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 # Types that can be converted to/from Quaternion
 QuaternionConvertable: TypeAlias = Sequence[int | float] | LCMQuaternion | np.ndarray
+
+
+def _four_components(value: Any) -> tuple[float, float, float, float]:
+    """Unpack a length-4 sequence or array into (x, y, z, w)."""
+    if not isinstance(value, np.ndarray | Sequence):
+        raise TypeError(f"Cannot initialize Quaternion from {type(value)}")
+    size = value.size if isinstance(value, np.ndarray) else len(value)
+    if size != 4:
+        raise ValueError("Quaternion requires exactly 4 components [x, y, z, w]")
+    return (float(value[0]), float(value[1]), float(value[2]), float(value[3]))
 
 
 class Quaternion(LCMQuaternion):  # type: ignore[misc]
@@ -52,44 +61,61 @@ class Quaternion(LCMQuaternion):  # type: ignore[misc]
     def _lcm_decode_one(cls, buf):  # type: ignore[no-untyped-def]
         return cls(struct.unpack(">dddd", buf.read(32)))
 
-    @dispatch
+    @overload
     def __init__(self) -> None: ...
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, x: int | float, y: int | float, z: int | float, w: int | float) -> None:
-        self.x = float(x)
-        self.y = float(y)
-        self.z = float(z)
-        self.w = float(w)
+    @overload
+    def __init__(
+        self,
+        x: int | float = ...,
+        y: int | float = ...,
+        z: int | float = ...,
+        w: int | float = ...,
+    ) -> None: ...
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, sequence: Sequence[int | float] | np.ndarray) -> None:
-        if isinstance(sequence, np.ndarray):
-            if sequence.size != 4:
-                raise ValueError("Quaternion requires exactly 4 components [x, y, z, w]")
-        else:
-            if len(sequence) != 4:
-                raise ValueError("Quaternion requires exactly 4 components [x, y, z, w]")
+    @overload
+    def __init__(self, value: QuaternionConvertable | Quaternion, /) -> None: ...
 
-        self.x = sequence[0]
-        self.y = sequence[1]
-        self.z = sequence[2]
-        self.w = sequence[3]
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize a quaternion.
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, quaternion: Quaternion) -> None:
-        """Initialize from another Quaternion (copy constructor)."""
-        self.x, self.y, self.z, self.w = quaternion.x, quaternion.y, quaternion.z, quaternion.w
+        Supported forms:
+            Quaternion()                        # identity (0, 0, 0, 1)
+            Quaternion(x, y, z, w)
+            Quaternion(x=1, y=2, z=3, w=4)      # keyword args
+            Quaternion([x, y, z, w])            # sequence
+            Quaternion(np.array([x, y, z, w]))  # numpy array
+            Quaternion(other_quaternion)        # copy constructor
+            Quaternion(lcm_quaternion)          # from LCM message
+        """
+        if len(args) == 4:
+            self.x = float(args[0])
+            self.y = float(args[1])
+            self.z = float(args[2])
+            self.w = float(args[3])
+        elif len(args) == 1:
+            value = args[0]
+            # Quaternion before LCMQuaternion (it is a subclass) and before the
+            # generic sequence branch (a Quaternion is indexable).
+            if isinstance(value, Quaternion):
+                self.x, self.y, self.z, self.w = value.x, value.y, value.z, value.w
+            elif isinstance(value, LCMQuaternion):
+                self.x, self.y, self.z, self.w = value.x, value.y, value.z, value.w
+            else:
+                self.x, self.y, self.z, self.w = _four_components(value)
+        elif args:
+            raise TypeError(
+                f"Quaternion takes 1 sequence or 4 components ({len(args)} positional given)"
+            )
+        elif kwargs:
+            self.x = float(kwargs.pop("x", 0.0))
+            self.y = float(kwargs.pop("y", 0.0))
+            self.z = float(kwargs.pop("z", 0.0))
+            self.w = float(kwargs.pop("w", 1.0))
+        # else: no arguments — the class defaults already spell the identity.
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, lcm_quaternion: LCMQuaternion) -> None:
-        """Initialize from an LCM Quaternion."""
-        self.x, self.y, self.z, self.w = (
-            lcm_quaternion.x,
-            lcm_quaternion.y,
-            lcm_quaternion.z,
-            lcm_quaternion.w,
-        )
+        if kwargs:
+            raise TypeError(f"Quaternion got unexpected keyword arguments {sorted(kwargs)}")
 
     def to_tuple(self) -> tuple[float, float, float, float]:
         """Tuple representation of the quaternion (x, y, z, w)."""

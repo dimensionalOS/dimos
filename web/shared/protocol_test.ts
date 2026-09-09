@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import {
+  CONTROL_CHANNEL,
   ControlFrameReader,
   type DataFrame,
   DataFrameStreamError,
@@ -13,10 +14,13 @@ import {
   frameHeaderFromUnknown,
   MAX_DATA_FRAME_BYTES,
   MAX_HEADER_LEN,
+  MAX_PUB_DATA_BYTES,
+  MAX_REQUEST_ID_LEN,
   type Msg,
   msgFromUnknown,
   peekDataFrameLengths,
   PROTOCOL_VERSION,
+  RESERVED_CHANNEL_PREFIX,
 } from "./protocol.ts";
 import controlFixture from "./fixtures/control_frames.json" with { type: "json" };
 import datagramFixture from "./fixtures/datagrams.json" with { type: "json" };
@@ -72,6 +76,25 @@ Deno.test("datagram decode returns null for junk", () => {
   assertEquals(decodeDatagram(new Uint8Array([0xff, 0x00, 0x80])), null);
   assertEquals(decodeDatagram(new TextEncoder().encode("[1,2]")), null);
   assertEquals(decodeDatagram(new TextEncoder().encode('{"x":1}')), null);
+});
+
+Deno.test("the control_hello vector's payload is the hello datagram encoding", () => {
+  // @control payloads reuse the datagram encoding: the vector's payload must
+  // decode to the same message the hello_robot datagram vector pins.
+  assert(CONTROL_CHANNEL.startsWith(RESERVED_CHANNEL_PREFIX));
+  const control = dataFixture.vectors.find((v) => v.name === "control_hello")!;
+  assertEquals(control.header.ch, CONTROL_CHANNEL);
+  const hello = datagramFixture.vectors.find((v) => v.name === "hello_robot")!;
+  assertEquals(decodeDatagram(fromB64(control.payload_b64)), hello.message as Msg);
+});
+
+Deno.test("the control_subs vector's payload is the subs datagram encoding", () => {
+  // The robot control carrier sends subs snapshots as @control frames with
+  // the same payload-reuses-datagram-encoding rule as control_hello.
+  const control = dataFixture.vectors.find((v) => v.name === "control_subs")!;
+  assertEquals(control.header.ch, CONTROL_CHANNEL);
+  const subs = datagramFixture.vectors.find((v) => v.name === "subs_snapshot")!;
+  assertEquals(decodeDatagram(fromB64(control.payload_b64)), subs.message as Msg);
 });
 
 Deno.test("data frames match golden vectors byte-exactly", () => {
@@ -225,30 +248,84 @@ Deno.test("msgFromUnknown validates nested session-message shapes", () => {
   const spec = { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 };
   // hello stays valid without the optional robot/manifest (viewer form).
   assertEquals(msgFromUnknown({ t: "hello", v: 1, role: "viewer" }) !== null, true);
-  const full = { t: "hello", v: 1, role: "robot", robot, manifest: { channels: [spec] } };
+  const full = {
+    t: "hello",
+    v: 1,
+    role: "robot",
+    robot,
+    manifest: { version: 1, channels: [spec] },
+  };
   assertEquals(msgFromUnknown(full) !== null, true);
   // Optional means absent-or-valid: explicit null is rejected.
   assertEquals(msgFromUnknown({ t: "hello", v: 1, role: "robot", robot: null }), null);
   assertEquals(msgFromUnknown({ ...full, robot: { id: 5, name: "x", model: "m" } }), null);
-  assertEquals(
-    msgFromUnknown({ ...full, manifest: { channels: [{ ...spec, maxHz: "20" }] } }),
-    null,
-  );
-  assertEquals(
-    msgFromUnknown({ ...full, manifest: { channels: [{ ...spec, delivery: "bogus" }] } }),
-    null,
-  );
-  assertEquals(msgFromUnknown({ ...full, manifest: { channels: robot } }), null);
+  // The manifest is opaque at the transport layer: any record passes here
+  // (structure is parseManifest's job, so a garbage manifest gets a proper
+  // invalid_manifest reply instead of a silent drop), but null and
+  // non-records are still protocol violations.
+  assertEquals(msgFromUnknown({ ...full, manifest: { channels: "garbage" } }) !== null, true);
+  assertEquals(msgFromUnknown({ ...full, manifest: null }), null);
+  assertEquals(msgFromUnknown({ ...full, manifest: 5 }), null);
+  assertEquals(msgFromUnknown({ ...full, manifest: [spec] }), null);
   assertEquals(msgFromUnknown({ t: "robots", robots: [robot] }) !== null, true);
   assertEquals(msgFromUnknown({ t: "robots", robots: {} }), null);
   assertEquals(msgFromUnknown({ t: "robots", robots: [{ id: "a", name: "b" }] }), null);
   assertEquals(msgFromUnknown({ t: "robots" }), null);
-  assertEquals(msgFromUnknown({ t: "manifest", robotId: "r", channels: [spec] }) !== null, true);
-  assertEquals(msgFromUnknown({ t: "manifest", channels: [spec] }), null);
+  // ManifestMsg nests the manifest; bare = manifest-less robot.
+  assertEquals(msgFromUnknown({ t: "manifest", robotId: "r" }) !== null, true);
+  assertEquals(
+    msgFromUnknown({ t: "manifest", robotId: "r", manifest: { version: 1, channels: [spec] } }) !==
+      null,
+    true,
+  );
+  assertEquals(msgFromUnknown({ t: "manifest", robotId: "r", manifest: null }), null);
+  assertEquals(msgFromUnknown({ t: "manifest", robotId: "r", manifest: 7 }), null);
+  assertEquals(msgFromUnknown({ t: "manifest", manifest: { channels: [spec] } }), null);
   assertEquals(msgFromUnknown({ t: "watch" }), null);
   assertEquals(msgFromUnknown({ t: "subs", chs: ["a", "b"], n: 1 }) !== null, true);
   assertEquals(msgFromUnknown({ t: "subs", chs: ["a", 5], n: 1 }), null);
   assertEquals(msgFromUnknown({ t: "subs", chs: ["a"] }), null);
+  // Teleop gen mirrors hello.robot: absent ok, null/non-number rejected.
+  const twist = { t: "twist", vx: 0.5, vy: 0, wz: 0, seq: 1, ts: 2.5 };
+  assertEquals(msgFromUnknown(twist) !== null, true);
+  assertEquals(msgFromUnknown({ ...twist, gen: 3 }) !== null, true);
+  assertEquals(msgFromUnknown({ ...twist, gen: null }), null);
+  assertEquals(msgFromUnknown({ ...twist, gen: "1" }), null);
+  assertEquals(msgFromUnknown({ t: "teleop_start", gen: 3 }) !== null, true);
+  assertEquals(msgFromUnknown({ t: "teleop_stop", gen: null }), null);
+});
+
+Deno.test("msgFromUnknown validates publish-message shapes", () => {
+  // Also pins the pub bounds against the Python mirror (test_protocol.py).
+  assertEquals(MAX_PUB_DATA_BYTES, 32 * 1024);
+  assertEquals(MAX_REQUEST_ID_LEN, 64);
+  const ok = { t: "pub", id: "a", ch: "chat", data: { x: 1.5 } };
+  assertEquals(msgFromUnknown(ok) !== null, true);
+  // data is required and spans all of JSON, null included; only an absent
+  // data field is invalid.
+  assertEquals(msgFromUnknown({ t: "pub", id: "a", ch: "chat" }), null);
+  assertEquals(msgFromUnknown({ t: "pub", id: "a", ch: "chat", data: null }) !== null, true);
+  assertEquals(msgFromUnknown({ t: "pub", id: "", ch: "chat", data: 1.5 }), null);
+  const longId = "x".repeat(MAX_REQUEST_ID_LEN + 1);
+  assertEquals(msgFromUnknown({ t: "pub", id: longId, ch: "chat", data: 1.5 }), null);
+  assertEquals(msgFromUnknown({ t: "pub", id: 7, ch: "chat", data: 1.5 }), null);
+  assertEquals(msgFromUnknown({ ...ok, clientTs: null }), null);
+  assertEquals(msgFromUnknown({ ...ok, clientTs: "1" }), null);
+  assertEquals(msgFromUnknown({ ...ok, clientTs: true }), null);
+  const ack = { t: "pub_ack", id: "a", ch: "chat", relayTs: 1.5, bridgeTs: 2.5 };
+  assertEquals(msgFromUnknown(ack) !== null, true);
+  assertEquals(msgFromUnknown({ ...ack, id: "" }), null);
+  assertEquals(msgFromUnknown({ t: "pub_nack", id: "p1", code: "c", message: "m" }) !== null, true);
+  assertEquals(msgFromUnknown({ t: "pub_nack", id: longId, code: "c", message: "m" }), null);
+  // error.requestId: absent for session-level errors, bounded, never null.
+  assertEquals(msgFromUnknown({ t: "error", code: "c", message: "m" }) !== null, true);
+  assertEquals(
+    msgFromUnknown({ t: "error", code: "c", message: "m", requestId: "r-1" }) !== null,
+    true,
+  );
+  assertEquals(msgFromUnknown({ t: "error", code: "c", message: "m", requestId: null }), null);
+  assertEquals(msgFromUnknown({ t: "error", code: "c", message: "m", requestId: "" }), null);
+  assertEquals(msgFromUnknown({ t: "error", code: "c", message: "m", requestId: longId }), null);
 });
 
 Deno.test("frameHeaderFromUnknown validates the header shape", () => {
@@ -258,6 +335,11 @@ Deno.test("frameHeaderFromUnknown validates the header shape", () => {
   assertEquals(frameHeaderFromUnknown({ ...ok, seq: "1" }), null);
   assertEquals(frameHeaderFromUnknown({ ...ok, ch: 5 }), null);
   assertEquals(frameHeaderFromUnknown({ ...ok, meta: 7 }), null); // meta not an object
+  // ch is bounded like manifest channel ids (64): only unroutable undeclared
+  // names are dropped.
+  const atBound = { ...ok, ch: "c".repeat(64) };
+  assertEquals(frameHeaderFromUnknown(atBound), atBound as FrameHeader);
+  assertEquals(frameHeaderFromUnknown({ ...ok, ch: "c".repeat(65) }), null);
 });
 
 Deno.test("decodeDataFrame throws on an invalid header", () => {

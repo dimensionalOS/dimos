@@ -38,7 +38,7 @@ class TFLookup(Protocol):
     """Read side of a tf buffer: resolve ``parent ← child`` at a time point.
 
     Satisfied by the live buffers (:class:`MultiTBuffer`, :class:`TF`) and by
-    replay backends like ``dimos.memory2.tf.StreamTF``. Code that only queries
+    replay backends like ``dimos.memory.tf.StreamTF``. Code that only queries
     transforms should accept this instead of a concrete implementation.
     """
 
@@ -209,13 +209,14 @@ class MultiTBuffer:
         time_tolerance: float | None = None,
         *,
         forward_tolerance: float = 0.0,
+        warn: bool = True,
     ) -> Transform | None:
         result = self._get(parent_frame, child_frame, time_point, time_tolerance)
         if result is None and forward_tolerance > 0:
             result = self._wait_get(
                 parent_frame, child_frame, time_point, time_tolerance, forward_tolerance
             )
-        if result is None:
+        if result is None and warn:
             logger.warning(
                 f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}'"
             )

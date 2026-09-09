@@ -1,0 +1,12 @@
+{
+  "mode": "router",
+  "connect": [],
+  "listen": [
+    "tcp/127.0.0.1:7447"
+  ],
+  "multicast": false,
+  "scout_addr": "",
+  "gossip": true,
+  "interface": "auto",
+  "connect_timeout_ms": 0
+}

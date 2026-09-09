@@ -118,18 +118,15 @@ def collector():
     return SimpleNamespace(received=received, event=event, callback=callback)
 
 
-def test_default_transport_is_lcm_on_linux(mocker) -> None:
-    mocker.patch("dimos.core.global_config.platform.system", return_value="Linux")
+def test_default_transport_is_zenoh() -> None:
+    """Every platform defaults to zenoh; lcm is now the opt-in."""
+    assert GlobalConfig().transport == "zenoh"
 
+
+def test_transport_can_be_set_to_lcm() -> None:
     config = GlobalConfig()
+    config.update(transport="lcm")
     assert config.transport == "lcm"
-
-
-def test_default_transport_is_zenoh_on_macos(mocker) -> None:
-    mocker.patch("dimos.core.global_config.platform.system", return_value="Darwin")
-
-    config = GlobalConfig()
-    assert config.transport == "zenoh"
 
 
 def test_transport_can_be_set_to_zenoh() -> None:

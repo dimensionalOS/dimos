@@ -1,6 +1,6 @@
-# Unitree Go2 — Setup
+# Unitree Go2 Setup
 
-Full autonomous navigation, mapping, and agentic control on a real Go2 — no ROS required.
+Full autonomous navigation, mapping, and agentic control on a real Go2. No ROS required.
 
 ## Requirements
 
@@ -15,7 +15,7 @@ First, install system dependencies for your platform:
 - [macOS](/docs/installation/osx.md)
 - [Nix](/docs/installation/nix.md)
 
-Then install DimOS:
+Then install dimOS:
 
 ```bash
 uv venv --python "3.12"
@@ -29,7 +29,7 @@ uv pip install 'dimos[base,unitree]'
 
 Use `dimos go2tool` to provision wifi and find the robot's IP. Skip if the robot is already on your network and you know its IP.
 
-1. Power on the Go2 — it advertises over BLE immediately.
+1. Power on the Go2. It advertises over BLE immediately.
 
 2. Provision wifi (one-time per network):
 
@@ -66,22 +66,22 @@ export ROBOT_IP=<discovered_ip>
 ping $ROBOT_IP
 ```
 
-2. Built-in obstacle avoidance is on. (DimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer around tight spots)
+2. Built-in obstacle avoidance is on. (dimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer around tight spots)
 
-### Ready to run DimOS
+### Ready to run dimOS
 
 ```bash
 export ROBOT_IP=<YOUR_GO2_IP>
 dimos run unitree-go2
 ```
 
-That's it. DimOS connects via WebRTC (no jailbreak required), starts the full navigation stack, and opens the command center in your browser.
+That's it. dimOS connects via WebRTC (no jailbreak required), starts the full navigation stack, and opens the command center in your browser.
 
 ### What's Running
 
 | Module | What It Does |
 |--------|-------------|
-| **GO2Connection** | WebRTC connection to the robot — streams LiDAR, video, odometry |
+| **GO2Connection** | WebRTC connection to the robot. Streams LiDAR, video, odometry |
 | **VoxelGridMapper** | Builds a 3D voxel map using column-carving (CUDA accelerated) |
 | **CostMapper** | Converts 3D map → 2D costmap via terrain slope analysis |
 | **ReplanningAStarPlanner** | Continuous A* path planning with dynamic replanning |
@@ -113,4 +113,4 @@ humancli
 > explore the space
 ```
 
-The agent subscribes to camera, LiDAR, and spatial memory streams — it sees what the robot sees.
+The agent subscribes to camera, LiDAR, and spatial memory streams. It sees what the robot sees.

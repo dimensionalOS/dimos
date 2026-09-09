@@ -1,6 +1,4 @@
----
-title: "System Requirements"
----
+# System Requirements
 
 ## Hardware
 
@@ -51,12 +49,16 @@ pip install 'dimos[base,unitree,manipulation]'       # + Arm control
 | `unitree-dds` | Unitree DDS bridge (superset of 'unitree') | unitree-sdk2py, cyclonedds | No |
 | `drone` | DJI Tello / MAVLink drones | pymavlink | No |
 | `manipulation` | Arm planning + control | Drake, piper-sdk, xarm-sdk | No |
-| `mapping` | GTSAM-backed pose graph optimization (relocalization, cmu_nav PGO) | gtsam-extended | No |
+| `mapping` | GTSAM-backed pose graph optimization (relocalization) | gtsam-extended | No |
 | `cuda` | GPU acceleration | cupy, onnxruntime-gpu | **Yes** |
 | `cpu` | CPU inference backends | onnxruntime | No |
 | `misc` | Extra models, embeddings, hardware SDKs | edgetam, timm, torchreid, xarm-sdk | Varies |
 | `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |
 | `dds` | DDS transport (CycloneDDS) | cyclonedds | No |
+
+Cockpit voice input and the legacy browser audio upload require the `ffmpeg`
+executable in addition to the Python `web` extra. On Ubuntu/Debian, install it
+with `sudo apt-get install ffmpeg`.
 
 ## Headless / Server Environments
 
@@ -66,4 +68,4 @@ If running on a headless Ubuntu server (no display), install OpenGL libraries fo
 sudo apt-get install -y libgl1 libegl1
 ```
 
-Nix users (`nix develop`) don't need this — the flake provides `libGL`, `libGLU`, and `mesa`.
+Nix users (`nix develop`) don't need this. The flake provides `libGL`, `libGLU`, and `mesa`.

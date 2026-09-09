@@ -84,7 +84,7 @@ def _run(*args: str, timeout: float = 300.0, group: str = "map") -> SimpleNamesp
 
 
 def _stream_counts(db_path: Path) -> dict[str, int]:
-    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.memory.store.sqlite import SqliteStore
 
     store = SqliteStore(path=str(db_path), must_exist=True)
     try:
@@ -151,7 +151,7 @@ def test_pose_fill_snippet(dataset: str, tmp_path: Path) -> None:
     assert res.returncode == 0, res.stderr
     assert out.exists()
 
-    from dimos.memory2.store.sqlite import SqliteStore
+    from dimos.memory.store.sqlite import SqliteStore
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
     store = SqliteStore(path=str(out), must_exist=True)
@@ -222,4 +222,22 @@ def test_global_snippet(dataset: str, tmp_path: Path) -> None:
         timeout=600.0,
     )
     assert res.returncode == 0, res.stderr
+    assert out.exists() and out.stat().st_size > 0
+
+
+def test_view_pc2(tmp_path: Path) -> None:
+    import numpy as np
+
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    pc2 = tmp_path / "map.pc2.lcm"
+    cloud = PointCloud2.from_numpy(
+        np.random.default_rng(0).random((256, 3)), frame_id="world", timestamp=0.0
+    )
+    pc2.write_bytes(cloud.lcm_encode())
+
+    out = tmp_path / "view.rrd"
+    res = _run("view", str(pc2), "--out", str(out))
+    assert res.returncode == 0, res.stderr
+    assert "256 points" in res.stdout
     assert out.exists() and out.stat().st_size > 0

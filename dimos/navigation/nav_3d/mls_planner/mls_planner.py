@@ -21,5 +21,5 @@ try:
 except ImportError as e:
     raise ImportError(
         "dimos_mls_planner is not built. Run: "
-        "uv run maturin develop --uv -m dimos/navigation/nav_3d/mls_planner/rust/Cargo.toml"
+        "uv run maturin develop --release --uv -m dimos/navigation/nav_3d/mls_planner/rust/py/Cargo.toml"
     ) from e

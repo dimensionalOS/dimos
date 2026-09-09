@@ -34,13 +34,13 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
     from dimos.manipulation.planning.spec.models import (
         CartesianTarget,
+        GeneratedPlan,
         IKResult,
         Obstacle,
         PlanningGroupID,
         PlanningResult,
         VisualizationSession,
         VisualizationStateFrame,
-        WorldRobotID,
     )
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.msgs.sensor_msgs.JointState import JointState
@@ -65,23 +65,17 @@ class WorldSpec(Protocol):
         - DrakeWorld: Uses Drake's MultibodyPlant and SceneGraph
     """
 
-    # Robot Management
-    def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
-        """Add a robot to the world. Returns unique robot ID."""
+    # Model Management
+    def load_model(self, config: RobotModelConfig) -> None:
+        """Load the logical robot model."""
         ...
 
-    def get_robot_ids(self) -> list[WorldRobotID]:
-        """Get all robot IDs."""
+    def get_model_config(self) -> RobotModelConfig:
+        """Get the logical robot model configuration."""
         ...
 
-    def get_robot_config(self, robot_id: WorldRobotID) -> RobotModelConfig:
-        """Get robot configuration."""
-        ...
-
-    def get_joint_limits(
-        self, robot_id: WorldRobotID
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:  # lower limits, upper limits
-        """Get joint limits (lower, upper) for a robot."""
+    def get_joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Get model joint limits (lower, upper)."""
         ...
 
     # Obstacle Management
@@ -111,7 +105,7 @@ class WorldSpec(Protocol):
 
     # Lifecycle
     def finalize(self) -> None:
-        """Finalize the world. Must be called after adding robots."""
+        """Finalize the world after loading the model."""
         ...
 
     @property
@@ -128,36 +122,35 @@ class WorldSpec(Protocol):
         """Get a scratch context for planning (thread-safe clone)."""
         ...
 
-    def sync_from_joint_state(self, robot_id: WorldRobotID, joint_state: JointState) -> None:
+    def sync_from_joint_state(self, joint_state: JointState) -> None:
         """Sync live context from joint state message."""
         ...
 
     # State Operations (require context)
-    def set_joint_state(self, ctx: Any, robot_id: WorldRobotID, joint_state: JointState) -> None:
+    def set_joint_state(self, ctx: Any, joint_state: JointState) -> None:
         """Set robot joint state in a context."""
         ...
 
-    def get_joint_state(self, ctx: Any, robot_id: WorldRobotID) -> JointState:
+    def get_joint_state(self, ctx: Any) -> JointState:
         """Get robot joint state from a context."""
         ...
 
     # Collision Checking (require context)
-    def is_collision_free(self, ctx: Any, robot_id: WorldRobotID) -> bool:
+    def is_collision_free(self, ctx: Any) -> bool:
         """Check if robot configuration is collision-free."""
         ...
 
-    def get_min_distance(self, ctx: Any, robot_id: WorldRobotID) -> float:
+    def get_min_distance(self, ctx: Any) -> float:
         """Get minimum distance to obstacles (negative if collision)."""
         ...
 
     # Collision Checking (context-free, for planning)
-    def check_config_collision_free(self, robot_id: WorldRobotID, joint_state: JointState) -> bool:
+    def check_config_collision_free(self, joint_state: JointState) -> bool:
         """Check if a joint state is collision-free (manages context internally)."""
         ...
 
     def check_edge_collision_free(
         self,
-        robot_id: WorldRobotID,
         start: JointState,
         end: JointState,
         step_size: float = 0.05,
@@ -166,17 +159,15 @@ class WorldSpec(Protocol):
         ...
 
     # Forward Kinematics (require context)
-    def get_ee_pose(self, ctx: Any, robot_id: WorldRobotID) -> PoseStamped:
+    def get_ee_pose(self, ctx: Any) -> PoseStamped:
         """Get end-effector pose."""
         ...
 
-    def get_link_pose(
-        self, ctx: Any, robot_id: WorldRobotID, link_name: str
-    ) -> NDArray[np.float64]:
+    def get_link_pose(self, ctx: Any, link_name: str) -> NDArray[np.float64]:
         """Get link pose as 4x4 homogeneous transform."""
         ...
 
-    def get_jacobian(self, ctx: Any, robot_id: WorldRobotID) -> NDArray[np.float64]:
+    def get_jacobian(self, ctx: Any) -> NDArray[np.float64]:
         """Get end-effector Jacobian (6 x n_joints)."""
         ...
 
@@ -229,16 +220,16 @@ class VisualizationSpec(Protocol):
         ...
 
     def update_state(self, frame: VisualizationStateFrame) -> None:
-        """Receive current joint states keyed by initialized world robot ID."""
+        """Receive the current model joint state."""
         ...
 
     def animate_trajectory(
         self, trajectory: JointTrajectory, duration: float | None = None
     ) -> None:
-        """Animate a raw globally named trajectory."""
+        """Animate a raw canonical trajectory."""
         ...
 
-    def cancel_preview_animation(self, robot_ids: Sequence[WorldRobotID] | None = None) -> None:
+    def cancel_preview_animation(self) -> None:
         """Cancel an active preview animation without waiting for its renderer to finish."""
         ...
 
@@ -254,7 +245,6 @@ class KinematicsSpec(Protocol):
     def solve(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         target_pose: PoseStamped,
         seed: JointState | None = None,
         position_tolerance: float = 0.001,
@@ -288,6 +278,11 @@ class PlannerSpec(Protocol):
     They use WorldSpec for collision checking and are stateless.
     All planners are backend-agnostic - they only use WorldSpec methods.
 
+    The supplied ``start`` is the authoritative state snapshot for a planning
+    request. Implementations must not replace it with, or compare it against,
+    a later sample from the live world. Trajectory execution is responsible
+    for rejecting a path when the robot has moved too far from its start.
+
     Implementations:
         - RRTConnectPlanner: Bi-directional RRT-Connect planner
         - RRTStarPlanner: RRT* planner (asymptotically optimal)
@@ -296,7 +291,6 @@ class PlannerSpec(Protocol):
     def plan_joint_path(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         start: JointState,
         goal: JointState,
         timeout: float = 10.0,
@@ -325,10 +319,26 @@ class PlannerSpec(Protocol):
         config: CartesianPathConfig,
         *,
         auxiliary_groups: Sequence[PlanningGroupID] = (),
+        check_collision: bool = True,
     ) -> PlanningResult:
         """Plan synchronized TCP waypoint paths for an ordered group selection."""
         ...
 
     def get_name(self) -> str:
         """Get planner name."""
+        ...
+
+
+@runtime_checkable
+class TrajectoryParametrizerSpec(Protocol):
+    """Convert successful planning output into one canonical generated plan."""
+
+    def materialize_plan(
+        self,
+        world: WorldSpec,
+        selection: PlanningGroupSelection,
+        result: PlanningResult,
+        speed_scale: float = 1.0,
+    ) -> GeneratedPlan:
+        """Preserve timed output or parametrize an untimed path, then validate it."""
         ...

@@ -23,7 +23,7 @@ import pytest
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.core.transport import pLCMTransport
+from dimos.core.transport_factory import make_transport
 
 
 class BurstModule(Module):
@@ -40,7 +40,7 @@ class BurstModule(Module):
 
 
 @pytest.fixture
-def start_burst_module():
+def start_burst_module(each_transport):
     blueprint = BurstModule.blueprint()
     coordinator = ModuleCoordinator.build(blueprint)
     yield
@@ -48,16 +48,16 @@ def start_burst_module():
 
 
 @pytest.fixture
-def burst_a_transport():
-    tr = pLCMTransport("/a")
+def burst_a_transport(each_transport):
+    tr = make_transport("/a")
     tr.start()
     yield tr
     tr.stop()
 
 
 @pytest.fixture
-def burst_record_transport():
-    tr = pLCMTransport("/record")
+def burst_record_transport(each_transport):
+    tr = make_transport("/record")
     tr.start()
     yield tr
     tr.stop()
@@ -121,7 +121,7 @@ class InterleaveModule(Module):
 
 
 @pytest.fixture
-def start_interleave_module():
+def start_interleave_module(each_transport):
     blueprint = InterleaveModule.blueprint()
     coordinator = ModuleCoordinator.build(blueprint)
     yield
@@ -129,16 +129,16 @@ def start_interleave_module():
 
 
 @pytest.fixture
-def interleave_a_transport():
-    tr = pLCMTransport("/a")
+def interleave_a_transport(each_transport):
+    tr = make_transport("/a")
     tr.start()
     yield tr
     tr.stop()
 
 
 @pytest.fixture
-def interleave_record_transport():
-    tr = pLCMTransport("/record")
+def interleave_record_transport(each_transport):
+    tr = make_transport("/record")
     tr.start()
     yield tr
     tr.stop()
@@ -179,16 +179,16 @@ class CleanupModule(Module):
 
 
 @pytest.fixture
-def cleanup_a_transport():
-    tr = pLCMTransport("/a")
+def cleanup_a_transport(each_transport):
+    tr = make_transport("/a")
     tr.start()
     yield tr
     tr.stop()
 
 
 @pytest.fixture
-def cleanup_started_transport():
-    tr = pLCMTransport("/started")
+def cleanup_started_transport(each_transport):
+    tr = make_transport("/started")
     tr.start()
     yield tr
     tr.stop()

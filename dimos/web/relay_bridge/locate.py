@@ -56,7 +56,7 @@ def find_web_dir() -> Path:
 
 
 def build_allowed(web_dir: Path) -> bool:
-    """True when the cockpit auto-build may run in web_dir.
+    """True when the web auto-build may run in web_dir.
 
     A tree selected via DIMOS_WEB_DIR gets its build tooling executed with
     `deno run -A`, so it is served as-is unless DIMOS_WEB_DIR_BUILD=1
@@ -74,20 +74,38 @@ def find_cockpit_dist(web_dir: Path) -> Path | None:
     return dist.resolve() if (dist / "index.html").is_file() else None
 
 
+def find_sdk_dist(web_dir: Path) -> Path | None:
+    """Built SDK bundle dir (web/sdk/dist), canonicalized, or None when not built."""
+    dist = web_dir / "sdk" / "dist"
+    return dist.resolve() if (dist / "sdk.js").is_file() else None
+
+
 def relay_run_cmd(
-    deno: str, web_dir: Path, *args: str, cockpit_dir: Path | None = None
+    deno: str,
+    web_dir: Path,
+    *args: str,
+    cockpit_dir: Path | None = None,
+    sdk_dir: Path | None = None,
+    serve_dir: Path | None = None,
 ) -> list[str]:
     """Build the argv that runs the relay with the pinned config and least permissions."""
     # Canonical paths: the relay realpath-checks served files against its
     # roots, so a symlinked --allow-read scope (macOS /tmp -> /private/tmp)
     # would deny every read.
     web_dir = web_dir.resolve()
-    if cockpit_dir is not None:
-        cockpit_dir = cockpit_dir.resolve()
+    dirs = [
+        (flag, path.resolve())
+        for flag, path in (
+            ("--cockpit-dir", cockpit_dir),
+            ("--sdk-dir", sdk_dir),
+            ("--serve-dir", serve_dir),
+        )
+        if path is not None
+    ]
     # --node-modules-dir=none: the workspace root deno.json says "auto" (for
     # the cockpit build tooling), which would make this run materialize
     # node_modules next to the config -- inside site-packages under a wheel.
-    allow_read = str(web_dir) if cockpit_dir is None else f"{web_dir},{cockpit_dir}"
+    allow_read = ",".join([str(web_dir), *(str(path) for _, path in dirs)])
     cmd = [
         deno,
         "run",
@@ -99,8 +117,8 @@ def relay_run_cmd(
         str(web_dir / "deno.json"),
         str(web_dir / "relay" / "main.ts"),
     ]
-    if cockpit_dir is not None:
-        cmd += ["--cockpit-dir", str(cockpit_dir)]
+    for flag, path in dirs:
+        cmd += [flag, str(path)]
     return [*cmd, *args]
 
 

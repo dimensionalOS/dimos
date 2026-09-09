@@ -15,7 +15,7 @@
 import numpy as np
 import pytest
 
-from dimos.memory2.type.observation import Observation
+from dimos.memory.type.observation import Observation
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.perception.fiducial.marker_detect import detect_markers_in_image

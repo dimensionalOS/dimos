@@ -86,17 +86,22 @@ dimos/control/
 ├── coordinator.py       # Module + RPC interface
 ├── tick_loop.py         # 100Hz control loop
 ├── task.py              # ControlTask protocol + types
+├── routing.py           # Routing rules + card types
 ├── hardware_interface.py # ConnectedHardware wrapper
 ├── components.py        # HardwareComponent config + type aliases
-├── blueprints.py        # Pre-configured setups
+├── blueprints/          # Pre-configured setups
 └── tasks/
-    └── trajectory_task.py  # Joint trajectory controller
+    ├── registry.py         # Task-card discovery + lazy factories
+    └── trajectory_task/    # Joint trajectory controller
 ```
 
 ## Configuration
 
 ```python
-from dimos.control import ControlCoordinator, HardwareComponent, TaskConfig
+from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 
 my_robot = ControlCoordinator.blueprint(
     tick_rate=100.0,
@@ -117,13 +122,7 @@ my_robot = ControlCoordinator.blueprint(
         ),
     ],
     tasks=[
-        TaskConfig(
-            name="trajectory",
-            type="trajectory",
-            joint_names=[...],  # union of both arms
-            priority=10,
-            params={"start_position_tolerance": 0.05},
-        ),
+        joint_trajectory_task([...]),  # union of both arms
     ],
 )
 ```
@@ -195,17 +194,91 @@ class PIDController:
         pass  # Handle preemption
 ```
 
-## Joint State Output
+## Task Cards
 
-The coordinator publishes one aggregated `JointState` message containing all joints:
+Each task type ships a manifest at `dimos/control/tasks/<task>/_registry.py`.
+`tasks/registry.py` discovers these without importing the tasks, so heavy deps
+(Pinocchio, ONNX Runtime) load only when a task is actually created.
 
 ```python
-JointState(
-    name=["left_arm_joint1", ..., "right_arm_joint1", ...],  # All joints
-    position=[...],
-    velocity=[...],
-    effort=[...],
+TASK_FACTORIES = {"servo": "dimos.control.tasks.servo_task.servo_task:create_task"}
+TASK_CONSUMES = {"servo": {"joint_command": ("on_joint_command", "claim_overlap")}}
+TASK_EXPOSES = {"trajectory": ["execute", "cancel", "get_state"]}
+```
+
+`TASK_CONSUMES` maps a coordinator input to `(handler, routing rule)`. The
+handler gets the raw message; the coordinator only routes.
+
+`TASK_EXPOSES` lists what `task_invoke` may call. The method's own signature is
+the argument schema, so `task_invoke` binds kwargs against it and a typo raises
+back to the caller. `describe_task()` reports those signatures live.
+
+### Routing rules
+
+| Rule | Delivers when | Used by |
+|------|---------------|---------|
+| `claim_overlap` | the message names a joint the task currently claims | `joint_command` |
+| `broadcast` | always, to every task on the port | `teleop_buttons`, `gripper_command` |
+| `direct` | always, but the port is meant for one task (a second logs a warning) | `path`, `speed`, `cartesian_command`, `ee_twist_command` |
+
+Addressing is topology: which task gets a message is decided by which port it
+reads (wired once at startup), never by message content. Multi-instance
+deployments give each instance its own port via `stream_bind`.
+
+## Deployment I/O
+
+`ControlCoordinator` declares the shared streams (`joint_command`,
+`twist_command`, `teleop_buttons`, `gripper_command`). Per-instance inputs —
+`cartesian_command`, `ee_twist_command` — are deployment I/O: a deployment
+subclasses the coordinator and annotates one port per consuming task instance:
+
+`gripper_command` carries a normalized `Float32` opening: `0.0` is fully
+closed and `1.0` is fully open. Input devices translate buttons and triggers
+to this scale before publishing.
+
+```python
+class _Go2Coordinator(PathFollowingCoordinator):
+    go2_joints: Out[JointState]
+
+blueprint = _Go2Coordinator.blueprint(
+    instance_name="ControlCoordinator",  # RPC clients look the coordinator up by class name
+    publish_robot_joint_states=True,
 )
 ```
 
-Subscribe via: `/coordinator_joint_state`
+Card-bound ports are checked against the live instance at startup, not the
+registry, since a subclass can declare ports the registry never sees. A missing
+port fails `add_task()` with the annotation to add, before any route registers.
+
+`TaskConfig.stream_bind` remaps a card input per instance, so two tasks of the
+same type can read different ports (task-level remapping, ROS sense). The
+dual-arm teleop coordinator declares `left_cartesian` / `right_cartesian` and
+binds each arm's `teleop_ik` task to its side:
+
+```python
+TaskConfig(name="teleop_xarm", type="teleop_ik",
+           stream_bind={"cartesian_command": "left_cartesian"})
+```
+
+## Joint State Views
+
+The coordinator publishes two views of the same per-tick read. Both are
+permanent; neither is a downgrade from the other.
+
+| View | Stream | Carries | Enabled by |
+|------|--------|---------|------------|
+| Aggregate | `coordinator_joint_state` | every joint, `frame_id="coordinator"` | `publish_joint_state` (on by default) |
+| Per-robot | `{hardware_id}_joints` | one robot, `frame_id=hardware_id` | `publish_robot_joint_states` plus a matching `Out[JointState]` annotation |
+
+Both carry canonical `{hardware_id}/{joint}` names sampled once per tick, so
+they line up with the commands sent on that tick. That is the *control* view.
+Connection modules (`GO2Connection`, `G1WholeBodyConnection`) publish the
+*device* view instead: raw state at the device's own rate, units and ordering.
+
+Choose by what the consumer is, not by how many robots the deployment has.
+
+Consumers that capture or model whatever is present read the aggregate:
+`CollectionRecorder`, `WorldBeliefRecorder`, `ManipulationModule`.
+
+Consumers about one named robot read that robot's stream: `scripts/g1_replay.py`
+reads `/g1/joints`, and the go2 controller blueprints pin `go2_joints`.

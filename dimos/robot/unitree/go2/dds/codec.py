@@ -18,7 +18,7 @@ A :class:`DdsCodec` is the bytes<->payload pair for one DDS message type. The
 same codec decodes a recorded mcap message and a live DDS sample (both are CDR),
 and its ``encode`` half publishes back to the wire — so this is shared by the
 reader, :class:`~dimos.robot.unitree.go2.dds.store.Go2McapStore`, and (later) a live
-DDS bridge. It is distinct from memory2's storage codecs (pickle/lcm/jpeg);
+DDS bridge. It is distinct from memory's storage codecs (pickle/lcm/jpeg);
 they only coincide when an mcap is opened as a store.
 
 ``GO2_CODECS`` is the Go2 channel set — the default registry today.

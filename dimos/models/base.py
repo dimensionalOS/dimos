@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from functools import cached_property
+import sys
 from typing import Annotated, Any
 
 import torch
@@ -24,12 +25,21 @@ import torch
 from dimos.core.resource import Resource
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
-# Device string type - 'cuda', 'cpu', 'cuda:0', 'cuda:1', etc.
-DeviceType = Annotated[str, "Device identifier (e.g., 'cuda', 'cpu', 'cuda:0')"]
+# Device string type - 'cuda', 'cpu', 'cuda:0', 'cuda:1', 'mps', etc.
+DeviceType = Annotated[str, "Device identifier (e.g., 'cuda', 'cpu', 'cuda:0', 'mps')"]
+
+
+def default_torch_device() -> str:
+    """Best available torch device: CUDA, then Apple Metal (MPS), then CPU."""
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
 
 
 class LocalModelConfig(BaseConfig):
-    device: DeviceType = "cuda" if torch.cuda.is_available() else "cpu"
+    device: DeviceType = default_torch_device()
     dtype: torch.dtype = torch.float32
     warmup: bool = False
     autostart: bool = False
@@ -54,8 +64,8 @@ class LocalModel(Resource, Configurable):
         """Initialize local model with device and dtype configuration.
 
         Args:
-            device: Device to run on ('cuda', 'cpu', 'cuda:0', etc.).
-                    Auto-detects CUDA availability if None.
+            device: Device to run on ('cuda', 'cpu', 'cuda:0', 'mps', etc.).
+                    Defaults to the best available device (CUDA, then MPS, then CPU).
             dtype: Model dtype (torch.float16, torch.bfloat16, etc.).
                    Uses class _default_dtype if None.
             autostart: If True, immediately load the model.
@@ -106,9 +116,21 @@ class LocalModel(Resource, Configurable):
         except (ImportError, AttributeError):
             pass
 
+        # torch.compile also spawns inductor compile-worker subprocesses whose
+        # reader thread outlives the model; shut them down (the next compile
+        # respawns them on demand).
+        if "torch._inductor.async_compile" in sys.modules:
+            # Imported lazily: importing async_compile itself spawns a worker
+            # pool, so only touch it when a compile already loaded it.
+            from torch._inductor.async_compile import shutdown_compile_workers
+
+            shutdown_compile_workers()
+
         gc.collect()
         if self.config.device.startswith("cuda") and torch.cuda.is_available():
             torch.cuda.empty_cache()
+        elif self.config.device.startswith("mps") and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
 
     def _ensure_cuda_initialized(self) -> None:
         """Initialize CUDA context to prevent cuBLAS allocation failures.

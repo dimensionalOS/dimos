@@ -1,0 +1,505 @@
+#!/usr/bin/env python3
+"""Build every nix-backed native module, or decide whether CI needs to.
+
+Walks the whole `dimos` package for any `NativeModuleConfig` subclass whose
+`build_command` is a `nix build` (a `nix develop -c cargo build` leaves no
+store path to publish, so it stays outside the gate). Discovery is pure AST (stdlib only, no dimos import),
+so this script runs on a bare `python3` with nothing installed.
+
+Modes:
+
+  (default)      Run every discovered module's `nix build`. Nix content-hashes
+                 all inputs and the Cachix substituter makes an unchanged
+                 closure near-instant, so builds run unconditionally.
+  --dry-run      Report which modules would actually be realised rather than
+                 substituted, without building. Needs nix + the substituter.
+  --inputs-hash  Print a sha256 over everything in this repository that can
+                 affect the modules' derivations. Needs only git — no nix, no
+                 dependencies — so CI can gate the Cachix publish job in
+                 seconds: the publish job saves a marker under this hash, and
+                 the check job skips publishing while the marker exists.
+  --verify-published
+                 Check that every module's built out paths (read from the
+                 `result` symlinks a build just left behind) can actually be
+                 downloaded from the $CACHIX_CACHE_NAME Cachix cache, retrying
+                 while the push daemon drains. cachix-action reports push
+                 failures without failing the build, so CI must run this
+                 before trusting a build enough to save the publish marker.
+
+Why git object hashes are sound gate keys: a nix sandbox only sees store paths,
+and for these flakes every store path copied out of the repo is some tracked
+subtree — the build dir itself, a relative path literal (`../../common`), or a
+`path:` flake input. `git rev-parse HEAD:<path>` (or `HEAD^{tree}` for the
+repository root) hashes exactly that (tracked
+content + modes), so `result` symlinks and other untracked junk can never
+perturb the key, which is what broke the old hashFiles() marker (#2733).
+`git+file:` self-inputs are pinned to a rev + narHash in the module's
+flake.lock — itself part of the hashed tree — so they are deliberately not
+traversed. Hashes come from HEAD: uncommitted edits are invisible until
+committed. Bump MARKER_SALT to invalidate every published marker when build
+semantics change outside the hashed inputs (e.g. docker/ros/install-nix.sh).
+"""
+
+import argparse
+import ast
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
+import hashlib
+import os
+from pathlib import Path, PurePosixPath
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+MARKER_SALT = 1
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+PACKAGE_DIR = REPO_ROOT / "dimos"
+IGNORED_DIRS = {"result", "build", "target", "__pycache__", ".git", "node_modules"}
+# Captured at import time; forked workers inherit it
+_T0 = time.monotonic()
+
+
+def _log(message: str) -> None:
+    print(f"[{time.monotonic() - _T0:6.1f}s] {message}", flush=True)
+
+
+def _github_output(line: str) -> None:
+    github_output = os.environ.get("GITHUB_OUTPUT")
+    if github_output:
+        with open(github_output, "a") as handle:
+            handle.write(line + "\n")
+
+
+# Pre-filter source files for a NativeModuleConfig subclass before parsing
+# them, mirroring what the AST scan below accepts (a direct base by that name).
+_HAS_NATIVE_CONFIG = re.compile(r"^class\s+\w+\s*\(\s*NativeModuleConfig\b", re.MULTILINE)
+_SKIP_PREFIXES = ("test_", "demo_", "conftest")
+
+
+@dataclass(frozen=True, order=True)
+class DiscoveredModule:
+    qualname: str  # dotted module path + class name
+    source: str  # repo-relative path of the defining .py file
+    build_command: str
+    build_dir: str  # repo-relative, source dir joined with the cwd default
+
+
+def _literal_default(classdef: ast.ClassDef, field: str, source: str) -> str | None:
+    """The class-body default for `field` — a string literal, None, or absent.
+
+    Anything the AST cannot prove equal to what pydantic would resolve at
+    runtime (Field(...), default_factory, computed values) fails loudly: a
+    silently skipped module would exempt it from the CI publish gate.
+    """
+    for stmt in classdef.body:
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            target, value = stmt.target.id, stmt.value
+        elif (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+        ):
+            target, value = stmt.targets[0].id, stmt.value
+        else:
+            continue
+        if target != field or value is None:
+            continue
+        if isinstance(value, ast.Constant) and (
+            value.value is None or isinstance(value.value, str)
+        ):
+            return value.value
+        raise SystemExit(
+            f"{source}:{stmt.lineno}: {classdef.name}.{field} must default to a plain string"
+            " literal (or None) so the CI inputs hash can read it without importing dimos"
+        )
+    return None
+
+
+# Modules whose flake attr is chosen per machine at runtime (dim_slam's
+# sdk_variant: nix sees neither the installed GPU driver nor /proc/device-tree, so
+# orin vs thor and cuda12 vs cuda13 are undecidable during evaluation, and a CI
+# runner could only ever build its own variant anyway). They sit deliberately
+# outside this repo's build/publish gate; each machine builds the variant it needs.
+# Every other non-literal build_command still fails loudly.
+EXTERNALLY_PROVISIONED = frozenset({"dimos.mapping.dim_slam.dim_slam.DimSlamConfig"})
+
+
+def is_nix_build(command: str | None) -> bool:
+    """True for a `nix build …` command, the only kind that yields a `result` to publish."""
+    if command is None:
+        return False
+    tokens = command.split()
+    return "nix" in tokens and tokens[tokens.index("nix") + 1 :][:1] == ["build"]
+
+
+def discover() -> tuple[DiscoveredModule, ...]:
+    found = []
+    provisioned_seen = set()
+    for dirpath, dirnames, filenames in os.walk(PACKAGE_DIR):
+        dirnames[:] = sorted(d for d in dirnames if d not in IGNORED_DIRS)
+        for filename in sorted(filenames):
+            if not filename.endswith(".py") or filename.startswith(_SKIP_PREFIXES):
+                continue
+            path = Path(dirpath) / filename
+            if not _HAS_NATIVE_CONFIG.search(path.read_text()):
+                continue
+            source = path.relative_to(REPO_ROOT).as_posix()
+            for node in ast.parse(path.read_text(), filename=source).body:
+                if not isinstance(node, ast.ClassDef) or not any(
+                    isinstance(base, ast.Name) and base.id == "NativeModuleConfig"
+                    for base in node.bases
+                ):
+                    continue
+                qualname = f"{source[: -len('.py')].replace('/', '.')}.{node.name}"
+                if qualname in EXTERNALLY_PROVISIONED:
+                    provisioned_seen.add(qualname)
+                    continue
+                build_command = _literal_default(node, "build_command", source)
+                if not is_nix_build(build_command):
+                    continue
+                cwd = _literal_default(node, "cwd", source)
+                build_dir = os.path.normpath(path.parent / (cwd or "."))
+                build_rel = os.path.relpath(build_dir, REPO_ROOT)
+                if build_rel.startswith(".."):
+                    raise SystemExit(f"{source}: {node.name}.cwd escapes the repository: {cwd!r}")
+                found.append(
+                    DiscoveredModule(
+                        qualname=qualname,
+                        source=source,
+                        build_command=build_command,
+                        build_dir=PurePosixPath(build_rel).as_posix(),
+                    )
+                )
+    stale = EXTERNALLY_PROVISIONED - provisioned_seen
+    if stale:
+        raise SystemExit(
+            f"EXTERNALLY_PROVISIONED entries not found in the tree: {sorted(stale)}"
+            " — remove them from bin/build-native-modules"
+        )
+    return tuple(sorted(found))
+
+
+def _flake_ref_of(module: DiscoveredModule) -> str:
+    """The flake ref a module's `nix build` operates on."""
+    tokens = module.build_command.split()
+    if "--impure" in tokens:
+        raise SystemExit(
+            f"{module.source}: {module.qualname} builds --impure; its inputs can't be hashed"
+        )
+    if "build" not in tokens:
+        raise SystemExit(
+            f"{module.source}: expected a `nix build` command, got {module.build_command!r}"
+        )
+    for token in tokens[tokens.index("build") + 1 :]:
+        if not token.startswith("-"):
+            return token
+    return "."
+
+
+def _is_local_flake(module: DiscoveredModule) -> bool:
+    ref = _flake_ref_of(module)
+    if ref.startswith("github:"):
+        return False  # pinned remote flake; the ref string itself is the whole repo-side input
+    if ref == "." or ref.startswith((".#", "./", "path:")):
+        return True
+    raise SystemExit(f"{module.source}: unrecognised flake ref {ref!r} in {module.build_command!r}")
+
+
+def _strip_nix_comments(text: str) -> str:
+    """Drop `#` and `/* */` comments, preserving string contents.
+
+    String contents must survive: `path:` input URLs live inside "…" strings
+    and `${./src}`-style interpolations inside ''…'' strings, while a `#` in
+    either (`sed '1i #include …'`) must not eat the rest of the line.
+    """
+    out: list[str] = []
+    i, n, state = 0, len(text), "code"
+    while i < n:
+        char, pair = text[i], text[i : i + 2]
+        if state == "code":
+            if char == "#":
+                while i < n and text[i] != "\n":
+                    i += 1
+                continue
+            if pair == "/*":
+                end = text.find("*/", i + 2)
+                i = n if end < 0 else end + 2
+                continue
+            if char == '"':
+                state = "dq"
+            elif pair == "''":
+                state = "ind"
+                out.append(pair)
+                i += 2
+                continue
+        elif state == "dq":
+            if char == "\\":
+                out.append(pair)
+                i += 2
+                continue
+            if char == '"':
+                state = "code"
+        elif pair == "''":
+            if text[i + 2 : i + 3] in ("'", "$", "\\"):  # escape sequence, still in the string
+                out.append(text[i : i + 3])
+                i += 3
+                continue
+            state = "code"
+            out.append(pair)
+            i += 2
+            continue
+        out.append(char)
+        i += 1
+    return "".join(out)
+
+
+# Every way a flake can reference repo content outside its own directory:
+# a bare relative path literal (`../../common`, `${../../../native/cpp}`,
+# `./livox-sdk2-darwin.patch`), a `path:…` input URL, or a `git+file:…` input
+# URL. The scheme decides the handling; the lookbehind keeps the token from
+# starting mid-word.
+_FLAKE_REF = re.compile(
+    r"(?<![\w.@+/-])(?P<scheme>git\+file:|path:)?(?P<path>(?:\.\./)+[\w.@+/-]*|\./[\w.@+/-]*)"
+)
+
+
+def _resolve_ref(flake: Path, token: str) -> str:
+    rel = os.path.relpath(os.path.normpath(flake.parent / token.split("?", 1)[0]), REPO_ROOT)
+    context = f"{flake.relative_to(REPO_ROOT).as_posix()}: reference {token!r}"
+    if rel.startswith(".."):
+        raise SystemExit(f"{context} escapes the repository")
+    if not (REPO_ROOT / rel).exists():
+        raise SystemExit(
+            f"{context} does not exist (fix the flake, or teach this parser the new form)"
+        )
+    return PurePosixPath(rel).as_posix()
+
+
+# Ways a flake can reach repo (or unpinned remote) content with no relative
+# path token for _FLAKE_REF to see: interpolating or dereferencing `self` (for
+# a git-tree flake that is the whole repo), and builtins fetchers. No textual
+# scan can map these to input trees, so they are refused outright.
+_UNANALYZABLE_REFS = (
+    ("${self} interpolation", re.compile(r"\$\{\s*self\s*\}")),
+    ("self.outPath", re.compile(r"(?<![\w.])self\s*\.\s*outPath\b")),
+    ("path arithmetic on self", re.compile(r"(?<![\w.])self\s*\+")),
+    ("a builtins fetcher", re.compile(r"(?<![\w.])builtins\s*\.\s*fetch\w+")),
+)
+
+
+def _flake_refs(flake: Path) -> tuple[set[str], set[str]]:
+    """One flake's (literal paths, `path:` input dirs), repo-relative."""
+    text = _strip_nix_comments(flake.read_text())
+    for what, pattern in _UNANALYZABLE_REFS:
+        if pattern.search(text):
+            raise SystemExit(
+                f"{os.path.relpath(flake, REPO_ROOT)}: {what} reaches content the inputs hash"
+                " cannot follow; use a relative path literal or a locked flake input instead"
+            )
+    literals: set[str] = set()
+    path_inputs: set[str] = set()
+    for match in _FLAKE_REF.finditer(text):
+        if match.group("scheme") == "git+file:":
+            continue  # rev+narHash-pinned in flake.lock, which the build-dir tree covers
+        after = text[match.end() :]
+        if after.startswith("${") or re.match(r"\s*\+", after):
+            # `./cpp + name` / `./mod${variant}` build the real reference at
+            # eval time; hashing just the literal prefix could cover a sibling
+            # of the actual tree, silently exempting it from the publish gate.
+            raise SystemExit(
+                f"{os.path.relpath(flake, REPO_ROOT)}: dynamically composed path near"
+                f" {match.group('path')!r} — the inputs hash can only follow static path"
+                " literals; reference a plain literal (a parent directory is fine) instead"
+            )
+        rel = _resolve_ref(flake, match.group("path"))
+        (path_inputs if match.group("scheme") == "path:" else literals).add(rel)
+    return literals, path_inputs
+
+
+def _collect_input_paths(module: DiscoveredModule) -> set[str]:
+    """Repo paths whose content can reach this module's derivation."""
+    paths = {module.build_dir}
+    if not _is_local_flake(module):
+        return paths
+    root = REPO_ROOT / module.build_dir / "flake.nix"
+    if not root.is_file():
+        raise SystemExit(
+            f"{module.source}: {module.qualname} builds a local flake but {root} is missing"
+        )
+    queue, seen = [root], set()
+    while queue:
+        flake = queue.pop()
+        if flake in seen:
+            continue
+        seen.add(flake)
+        literals, path_inputs = _flake_refs(flake)
+        paths |= literals
+        for rel in path_inputs:
+            paths.add(rel)
+            sub = REPO_ROOT / rel / "flake.nix"
+            if not sub.is_file():
+                raise SystemExit(f"path: input {rel!r} of {flake} has no flake.nix")
+            queue.append(sub)  # a path: input is a flake — its refs count too
+    return paths
+
+
+def _git_object_hash(rel: str) -> str:
+    revision = "HEAD^{tree}" if rel == "." else f"HEAD:{rel}"
+    proc = subprocess.run(
+        ("git", "-C", str(REPO_ROOT), "rev-parse", revision),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise SystemExit(
+            f"cannot hash {rel!r}: {proc.stderr.strip()}"
+            " (every native-module input must be tracked in git)"
+        )
+    return proc.stdout.strip()
+
+
+def build_manifest(modules: tuple[DiscoveredModule, ...]) -> str:
+    """Deterministic text whose sha256 keys the Cachix publish marker."""
+    paths: set[str] = set()
+    for module in modules:
+        paths |= _collect_input_paths(module)
+    # Drop paths nested under another (e.g. a patch file inside its build dir).
+    top: list[str] = []
+    for path in sorted(paths):
+        if not any(path == kept or path.startswith(kept + "/") for kept in top):
+            top.append(path)
+    lines = [
+        f"salt {MARKER_SALT}",
+        f"script {_git_object_hash('bin/build-native-modules')}",
+        f"cachix {os.environ.get('CACHIX_CACHE_NAME', '')}",
+        *(f"module {m.qualname} dir={m.build_dir} cmd={m.build_command}" for m in modules),
+        *(f"path {path} {_git_object_hash(path)}" for path in top),
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _in_cachix_cache(cache: str, store_path: str) -> bool:
+    store_hash = Path(store_path).name.split("-", 1)[0]
+    url = f"https://{cache}.cachix.org/{store_hash}.narinfo"
+    request = urllib.request.Request(
+        url,
+        method="HEAD",
+        # The CDN rejects urllib's default Python-urllib agent with a 403.
+        headers={"User-Agent": "nix/2.28 (dimos bin/build-native-modules)"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return bool(response.status == 200)
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return False
+        # 403 and friends are config problems, not propagation lag — retrying
+        # for the full PUSH_VERIFY_TIMEOUT would just stall the publish job.
+        raise SystemExit(f"{url}: unexpected HTTP {error.code} probing the cache")
+    except OSError:  # DNS failures, timeouts — transient, read as "not there yet"
+        return False
+
+
+def verify_published(modules: tuple[DiscoveredModule, ...]) -> None:
+    cache = os.environ.get("CACHIX_CACHE_NAME")
+    if not cache:
+        raise SystemExit("--verify-published needs CACHIX_CACHE_NAME set")
+    missing: dict[str, str] = {}  # store path -> module qualname, for the error message
+    for module in modules:
+        links = sorted((REPO_ROOT / module.build_dir).glob("result*"))
+        if not links:
+            raise SystemExit(f"{module.build_dir}: no result symlink — run the build first")
+        for link in links:
+            missing[os.readlink(link)] = module.qualname
+    _log(f"Verifying {len(missing)} out path(s) against {cache}.cachix.org")
+    deadline = time.monotonic() + int(os.environ.get("PUSH_VERIFY_TIMEOUT") or 600)
+    while True:
+        for store_path in [path for path in missing if _in_cachix_cache(cache, path)]:
+            _log(f"OK:    {store_path}")
+            del missing[store_path]
+        if not missing or time.monotonic() > deadline:
+            break
+        _log(f"{len(missing)} path(s) not in the cache yet; waiting for the push daemon")
+        time.sleep(10)
+    if missing:
+        listing = "\n".join(f"  {path} ({name})" for path, name in sorted(missing.items()))
+        raise SystemExit(f"paths never appeared in the {cache} Cachix cache:\n{listing}")
+
+
+def build_one(module: DiscoveredModule, dry_run: bool) -> tuple[str, bool, str]:
+    name = module.qualname.rsplit(".", 1)[-1]
+    command = module.build_command + (" --dry-run" if dry_run else "")
+    build_dir = REPO_ROOT / module.build_dir
+    _log(f"START: {name} in {build_dir}: {command}")
+    proc = subprocess.run(
+        command,
+        shell=True,
+        cwd=str(build_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    body = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0:
+        raise RuntimeError(f"{name} exited {proc.returncode}\n{body}")
+    # A dry run lists the derivations it would realise; saying nothing means every
+    # output already substitutes, so a real run would push nothing new.
+    return name, dry_run and "will be built" in body, f"DONE:  {name}\n{body}".rstrip()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="report what a build would realise")
+    mode.add_argument(
+        "--inputs-hash", action="store_true", help="print the publish-marker key material hash"
+    )
+    mode.add_argument(
+        "--verify-published",
+        action="store_true",
+        help="check the built out paths are downloadable from the Cachix cache",
+    )
+    args = parser.parse_args()
+    modules = discover()
+
+    if args.verify_published:
+        verify_published(modules)
+        return
+    if args.inputs_hash:
+        manifest = build_manifest(modules)
+        sys.stderr.write(manifest)
+        digest = hashlib.sha256(manifest.encode()).hexdigest()
+        print(digest)
+        _github_output(f"inputs-hash={digest}")
+        return
+
+    failed = 0
+    pending: list[str] = []
+    workers = int(os.environ.get("BUILD_WORKERS") or os.cpu_count() or 2)
+    verb = "Checking" if args.dry_run else "Building"
+    _log(f"{verb} {len(modules)} module(s) with up to {workers} workers")
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(build_one, module, args.dry_run): module for module in modules}
+        for future in as_completed(futures):
+            try:
+                name, needs_build, status = future.result()
+                _log(status)
+                if needs_build:
+                    pending.append(name)
+            except Exception as error:
+                _log(f"FAIL:  {futures[future].qualname}: {error}")
+                failed += 1
+    if failed:
+        sys.exit(f"{failed} {'check' if args.dry_run else 'build'}(s) failed")
+    if args.dry_run:
+        _log(f"Would build: {', '.join(sorted(pending)) or 'nothing'}")
+        _github_output(f"needs-build={'true' if pending else 'false'}")
+
+
+if __name__ == "__main__":
+    main()

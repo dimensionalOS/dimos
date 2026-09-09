@@ -1,6 +1,4 @@
----
-title: "Testing Guidelines"
----
+# Testing Guidelines
 
 Rules for writing tests in dimos. These address recurring issues found in code review.
 
@@ -68,7 +66,7 @@ import tempfile
 
 import pytest
 
-from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.Image import Image
 
 

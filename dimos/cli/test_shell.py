@@ -37,7 +37,7 @@ def test_shell_starts_ipython_with_debug_namespace_and_disconnects(mocker):
     mocker.patch("dimos.cli.shell._is_interactive_terminal", return_value=True)
     connect = mocker.patch("dimos.cli.shell.Dimos.connect", return_value=app)
     mocker.patch("dimos.cli.shell.get_most_recent", return_value=None)
-    start_ipython = mocker.patch("dimos.cli.shell.start_ipython")
+    start_ipython = mocker.patch("IPython.start_ipython")
 
     result = CliRunner().invoke(main, ["shell"])
 
@@ -169,7 +169,7 @@ def test_shell_reports_connection_failure(mocker):
         "dimos.cli.shell.Dimos.connect",
         side_effect=RuntimeError("No running DimOS coordinator found"),
     )
-    start_ipython = mocker.patch("dimos.cli.shell.start_ipython")
+    start_ipython = mocker.patch("IPython.start_ipython")
 
     result = CliRunner().invoke(main, ["shell"])
 
@@ -185,7 +185,7 @@ def test_shell_disconnects_when_ipython_reports_connection_loss(mocker):
     connect = mocker.patch("dimos.cli.shell.Dimos.connect", return_value=app)
     mocker.patch("dimos.cli.shell.get_most_recent", return_value=None)
     mocker.patch(
-        "dimos.cli.shell.start_ipython",
+        "IPython.start_ipython",
         side_effect=RuntimeError("coordinator connection lost"),
     )
 

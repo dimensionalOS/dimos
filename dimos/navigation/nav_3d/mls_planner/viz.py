@@ -33,10 +33,21 @@ from dimos.msgs.nav_msgs.LineSegments3D import LineSegments3D
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
     from rerun._baseclasses import Archetype
 
 # Small lift so graph artifacts render visibly above the surface points instead of z-fighting.
 _GRAPH_Z_LIFT = 0.05
+
+TIGHT_COLOR = (4.0, 8.0, 48.0)
+OPEN_COLOR = (150.0, 200.0, 255.0)
+
+
+def clearance_colors(clearance: NDArray[np.float32], clamp_m: float) -> NDArray[np.uint8]:
+    """Blue ramp from tight to open, saturating at clamp_m of clearance."""
+    norm = np.clip(np.nan_to_num(clearance / clamp_m, nan=1.0, posinf=1.0), 0.0, 1.0)
+    tight, open_ = np.array(TIGHT_COLOR), np.array(OPEN_COLOR)
+    return np.asarray(tight + norm[:, None] * (open_ - tight), dtype=np.uint8)
 
 
 def render_surface_map(
@@ -58,13 +69,9 @@ def render_surface_map(
         return msg.to_rerun(voxel_size=voxel_size, colors=[40, 75, 130])
     passable = clearance >= wall_clearance_m
     pts, clearance = pts[passable], clearance[passable]
-    norm = np.clip(np.nan_to_num(clearance / clearance_clamp_m, nan=1.0, posinf=1.0), 0.0, 1.0)
-    tight = np.array([4.0, 8.0, 48.0])
-    open_ = np.array([150.0, 200.0, 255.0])
-    colors = (tight + norm[:, None] * (open_ - tight)).astype(np.uint8)
     return rr.Points3D(
         positions=pts,
-        colors=colors,
+        colors=clearance_colors(clearance, clearance_clamp_m),
         radii=voxel_size * 0.5,
     )
 
@@ -81,28 +88,7 @@ def render_nodes(msg: PointCloud2) -> Archetype:
 
 
 def render_node_edges(msg: LineSegments3D) -> Archetype:
-    """Color each segment by its safe-adj weight on a log-scale green->red gradient."""
-    import rerun as rr
-
-    if not msg._segments:
-        return rr.LineStrips3D([])
-    weights = np.asarray(msg._traversability, dtype=np.float64)
-    log_w = np.log10(np.maximum(weights, 1e-6))
-    lo, hi = float(log_w.min()), float(log_w.max())
-    norm = (log_w - lo) / (hi - lo) if hi > lo else np.zeros_like(log_w)
-    r = (255 * norm).astype(np.uint8)
-    g = (255 * (1.0 - norm)).astype(np.uint8)
-    b = np.full_like(r, 60)
-    a = np.full_like(r, 220)
-    colors = np.column_stack([r, g, b, a])
-    strips = [
-        [
-            [p1[0], p1[1], p1[2] + _GRAPH_Z_LIFT],
-            [p2[0], p2[1], p2[2] + _GRAPH_Z_LIFT],
-        ]
-        for p1, p2 in msg._segments
-    ]
-    return rr.LineStrips3D(strips, colors=colors, radii=[0.01] * len(strips))
+    return msg.to_rerun(z_offset=_GRAPH_Z_LIFT, radii=0.01)
 
 
 def planner_visual_override(

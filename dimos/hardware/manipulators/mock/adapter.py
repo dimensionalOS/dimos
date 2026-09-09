@@ -27,9 +27,9 @@ import math
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
-    JointLimits,
     ManipulatorInfo,
 )
+from dimos.hardware.spec import JointLimits
 
 
 class MockAdapter:
@@ -43,10 +43,30 @@ class MockAdapter:
     """
 
     def __init__(
-        self, dof: int = 6, initial_positions: list[float] | None = None, **_: object
+        self,
+        dof: int = 6,
+        initial_positions: list[float] | None = None,
+        limits: JointLimits | None = None,
+        **_: object,
     ) -> None:
         self._dof = dof
+        self._limits = limits or JointLimits(
+            position_lower=[-math.pi] * dof,
+            position_upper=[math.pi] * dof,
+            velocity_max=[1.0] * dof,
+        )
+        if any(
+            len(values) != dof
+            for values in (
+                self._limits.position_lower,
+                self._limits.position_upper,
+                self._limits.velocity_max,
+            )
+        ):
+            raise ValueError(f"MockAdapter limits must contain {dof} entries")
         self._positions = list(initial_positions) if initial_positions is not None else [0.0] * dof
+        if len(self._positions) != dof:
+            raise ValueError(f"MockAdapter initial_positions must contain {dof} entries")
         self._velocities = [0.0] * dof
         self._efforts = [0.0] * dof
         self._enabled = False
@@ -60,7 +80,6 @@ class MockAdapter:
             "pitch": 0.0,
             "yaw": 0.0,
         }
-        self._gripper_position: float = 0.0
         self._error_code: int = 0
         self._error_message: str = ""
 
@@ -97,16 +116,12 @@ class MockAdapter:
         )
 
     def get_dof(self) -> int:
-        """Return DOF."""
+        """Total joints owned by this adapter."""
         return self._dof
 
     def get_limits(self) -> JointLimits:
-        """Return mock joint limits."""
-        return JointLimits(
-            position_lower=[-math.pi] * self._dof,
-            position_upper=[math.pi] * self._dof,
-            velocity_max=[1.0] * self._dof,
-        )
+        """Return limits in adapter order."""
+        return self._limits
 
     def set_control_mode(self, mode: ControlMode) -> bool:
         """Set mock control mode."""
@@ -147,14 +162,14 @@ class MockAdapter:
         positions: list[float],
         velocity: float = 1.0,
     ) -> bool:
-        """Set mock joint positions (instant move)."""
+        """Set mock joint positions (instant move), gripper entry included."""
         if len(positions) != self._dof:
             return False
         self._positions = list(positions)
         return True
 
     def write_joint_velocities(self, velocities: list[float]) -> bool:
-        """Set mock joint velocities."""
+        """Set mock joint velocities; the gripper entry is stored as-is."""
         if len(velocities) != self._dof:
             return False
         self._velocities = list(velocities)
@@ -191,15 +206,6 @@ class MockAdapter:
     ) -> bool:
         """Set mock cartesian position."""
         self._cartesian_position.update(pose)
-        return True
-
-    def read_gripper_position(self) -> float | None:
-        """Return mock gripper position."""
-        return self._gripper_position
-
-    def write_gripper_position(self, position: float) -> bool:
-        """Set mock gripper position."""
-        self._gripper_position = position
         return True
 
     def read_force_torque(self) -> list[float] | None:

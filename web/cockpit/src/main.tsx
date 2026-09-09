@@ -1,11 +1,12 @@
 import { createRoot } from "react-dom/client";
+import { connect } from "@dimos/sdk";
 import { App } from "./App.tsx";
-import { startSession } from "./session/session.ts";
+import { cockpitDecoders, installAutoSubscriptions } from "./subscriptions.ts";
 import "./index.css";
 
 const root = createRoot(document.getElementById("root")!);
 
-// Same capability checks as the debug page: WebTransport needs a secure
+// Capability checks before anything mounts: WebTransport needs a secure
 // context, and Safari has no WebTransport as of mid-2026.
 if (!globalThis.isSecureContext) {
   root.render(
@@ -20,6 +21,7 @@ if (!globalThis.isSecureContext) {
     </p>,
   );
 } else {
-  const session = startSession();
+  const session = connect({ decoders: cockpitDecoders });
+  installAutoSubscriptions(session);
   root.render(<App session={session} />);
 }
