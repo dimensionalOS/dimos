@@ -19,7 +19,8 @@ it stays out of the runnable blueprint registry: sensors with nothing consuming 
 
 The rear D435i stays plugged in, so with both attached librealsense may hand back the wrong
 one. The mast camera is the only D455, so it is found on the USB bus instead of being named
-by a serial that only holds for one robot. Override on a machine with two of them:
+by a serial that only holds for one robot, and startup fails rather than opening the D435i if
+that lookup comes up empty. Override on a machine with two D455s:
 
     dimos run alfred-mls-nav --serial-number=<mast d455 serial>
 """
@@ -28,7 +29,7 @@ from __future__ import annotations
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.hardware.sensors.camera.realsense.discovery import find_serial
+from dimos.hardware.sensors.camera.realsense.discovery import require_serial
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 from dimos.robot.diy.alfred.mount_tf import AlfredMountTf
 
@@ -38,7 +39,7 @@ RealSenseCamera.dedicated_worker = True
 
 _alfred_hardware = autoconnect(
     RealSenseCamera.blueprint(
-        serial_number=find_serial("D455"),
+        serial_number=require_serial("D455"),
         fps=30,
         enable_infrared=True,
         emitter_enabled=False,

@@ -77,6 +77,24 @@ def find_serial(model: str) -> str | None:
     return serials[0]
 
 
+def require_serial(model: str) -> str | None:
+    """``find_serial``, but refusing to silently fall back to a different camera.
+
+    An unpinned RealSense config opens whichever camera librealsense enumerated first, so
+    on a robot carrying two of them a missing serial is a wrong-viewpoint bug rather than a
+    missing-camera error. ``None`` is returned only when no RealSense is attached at all,
+    since a blueprint still has to import on a machine with no hardware.
+    """
+    serial = find_serial(model)
+    attached = _serials_by_product_id()
+    if serial is None and any(pid in attached for pid in PRODUCT_IDS.values()):
+        raise RuntimeError(
+            f"No single {model} on the USB bus, but other RealSense cameras are attached; "
+            f"an unpinned camera would open one of those instead. Pass serial_number."
+        )
+    return serial
+
+
 @cache
 def _serials_by_product_id() -> dict[int, list[str]]:
     try:
