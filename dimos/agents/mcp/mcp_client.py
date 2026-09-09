@@ -30,11 +30,12 @@ warnings.filterwarnings("ignore", category=LangChainPendingDeprecationWarning)
 
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langgraph.graph.state import CompiledStateGraph
+from pydantic import Field
 from reactivex.disposable import Disposable
 import requests
 
@@ -55,7 +56,9 @@ logger = setup_logger()
 _RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
-def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
+def init_model(
+    model_name: str, trace_dir: Path | None = None, *, timeout: float | None = None
+) -> Any:
     """Initialize a model while preserving LangChain provider resolution.
 
     With *trace_dir*, every request/response body goes to disk whole
@@ -63,17 +66,24 @@ def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
     ``http_client``; other providers keep working, untraced at the wire.
     """
     client = None if trace_dir is None else tracing_http_client(trace_dir)
+    client_kwargs: dict[str, Any] = {}
+    if client is not None:
+        client_kwargs["http_client"] = client
+    if timeout is not None:
+        # An interactive robot turn must report failure instead of silently
+        # waiting through several long SDK retries.
+        client_kwargs.update(timeout=timeout, max_retries=0)
     if ":" in model_name or not model_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES):
         model = init_chat_model(model=model_name)
-        if client is not None and isinstance(model, ChatOpenAI):
-            return init_chat_model(model=model_name, http_client=client)
+        if client_kwargs and isinstance(model, ChatOpenAI):
+            return init_chat_model(model=model_name, **client_kwargs)
         return model
 
     return ChatOpenAI(
         model=model_name,
         use_responses_api=True,
         reasoning={"effort": "medium", "summary": "auto"},
-        http_client=client,
+        **client_kwargs,
     )
 
 
@@ -81,6 +91,7 @@ class McpClientConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-5.6-luna"
     model_fixture: str | None = None
+    model_request_timeout: float = Field(default=60.0, gt=0)
     mcp_server_url: str = "http://localhost:9990/mcp"
     trace_dir: Path | None = None
 
@@ -263,7 +274,11 @@ class McpClient(Module):
 
                 model = MockModel(json_path=self.config.model_fixture)
             else:
-                model = init_model(self.config.model, trace_dir=self.config.trace_dir)
+                model = init_model(
+                    self.config.model,
+                    trace_dir=self.config.trace_dir,
+                    timeout=self.config.model_request_timeout,
+                )
             self._state_graph = create_agent(
                 model=model,
                 tools=self._agent_tools or [],
@@ -380,15 +395,65 @@ class McpClient(Module):
         pretty_print_langchain_message(message)
         self.agent.publish(message)
 
-        for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
-            for node_output in update.values():
-                for msg in node_output.get("messages", []):
-                    self._history.append(msg)
-                    pretty_print_langchain_message(msg)
-                    self.agent.publish(msg)
-
-        if self._message_queue.empty():
-            self.agent_idle.publish(True)
+        started = time.monotonic()
+        try:
+            for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
+                for node_output in update.values():
+                    for msg in node_output.get("messages", []):
+                        self._history.append(msg)
+                        pretty_print_langchain_message(msg)
+                        self.agent.publish(msg)
+        except Exception as exc:
+            # Daemon workers redirect stderr to /dev/null. Keep the agent
+            # thread alive and surface failures through its normal chat stream.
+            # Do not log raw provider errors, which can include credentials.
+            error_type = type(exc).__name__
+            status_code = getattr(exc, "status_code", None)
+            error_code = getattr(exc, "code", None)
+            logger.error(
+                "Agent request failed",
+                error_type=error_type,
+                status_code=status_code,
+                error_code=error_code,
+                request_id=getattr(exc, "request_id", None),
+                model=self.config.model,
+                elapsed_s=time.monotonic() - started,
+            )
+            details = error_type
+            if status_code is not None:
+                details += f", HTTP {status_code}"
+            if error_code is not None:
+                details += f", {error_code}"
+            # Preserve an honest, API-valid history if a tool node failed
+            # after publishing calls but before returning all their results.
+            pending_calls: dict[str, str] = {}
+            for historical_message in self._history:
+                if isinstance(historical_message, AIMessage):
+                    for call in historical_message.tool_calls:
+                        pending_calls[call["id"]] = call["name"]
+                elif isinstance(historical_message, ToolMessage):
+                    pending_calls.pop(historical_message.tool_call_id, None)
+            for call_id, name in pending_calls.items():
+                missing_result = ToolMessage(
+                    content="Tool result unavailable because this turn failed. "
+                    "The tool may already have run; inspect the scene before retrying.",
+                    tool_call_id=call_id,
+                    name=name,
+                    status="error",
+                )
+                self._history.append(missing_result)
+                self.agent.publish(missing_result)
+            error_message = AIMessage(
+                content=f"Agent request failed ({details}). This turn ended. "
+                "Earlier tool calls may already have run; inspect the scene before retrying. "
+                "Check dimos log for details, then send a new request."
+            )
+            self._history.append(error_message)
+            pretty_print_langchain_message(error_message)
+            self.agent.publish(error_message)
+        finally:
+            if self._message_queue.empty():
+                self.agent_idle.publish(True)
 
 
 def _append_image_to_history(

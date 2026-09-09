@@ -34,6 +34,33 @@ blueprints select the physics adapter explicitly and reject CAN ports. No
 
 ## Classical segment
 
+For the full interactive MuJoCo window on this laptop, use the completed
+worktree and its existing environment. Export `OPENAI_API_KEY` in the launching
+terminal first; the daemon inherits that environment. Exporting it only in a
+second HumanCLI terminal does not update a running agent.
+
+```bash
+cd /home/mustafa/dimos-wt/hub
+source .venv/bin/activate
+export PYTHONPATH="$PWD"
+export MUJOCO_GL=glfw
+dimos --n-workers 5 run dual-openyam-sim-agent \
+  --MujocoSimModule.headless=false --disable rerun-bridge-module --daemon
+dimos humancli
+```
+
+Type natural-language instructions in HumanCLI, such as “Reset the scene, then
+put bottle_1 and bottle_4 in the bin, return both arms home, and verify both are
+inside.” Direct `dimos mcp call ...` commands run in the regular shell.
+`agent-send` acknowledges queuing a message; it does not confirm model response
+or motion. OpenAI model requests use a 60-second timeout with no automatic SDK
+retries, configurable with `--mcpclient.model-request-timeout=60`. Failed turns
+publish their error type/status to HumanCLI and `dimos log`, restore the idle
+indicator when the queue empties, and leave the chat thread available. Earlier
+tool calls may have executed before an error; inspect before retrying.
+
+For the separate three-camera Rerun browser layout, use EGL instead:
+
 ```bash
 MUJOCO_GL=egl dimos --viewer rerun --rerun-open web run dual-openyam-sim-agent --daemon
 dimos mcp list-tools

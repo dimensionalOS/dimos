@@ -19,7 +19,7 @@ from queue import Empty
 from threading import RLock
 from unittest.mock import MagicMock, create_autospec, patch
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_openai import ChatOpenAI
 import pytest
@@ -290,3 +290,94 @@ def test_set_trace_dir_rebuilds_the_model_with_capture(
         configured_mcp_client.set_trace_dir(None)
         assert init.call_args.kwargs["trace_dir"] is None
         assert create_agent.call_count == 2
+
+
+@pytest.mark.parametrize("model_name", ["gpt-5.6-luna", "gpt-4o", "openai:gpt-4o"])
+def test_model_request_timeout_reaches_openai_client(
+    configured_mcp_client, monkeypatch, model_name
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    configured_mcp_client.config.model = model_name
+    configured_mcp_client.config.model_request_timeout = 9.0
+
+    with patch("dimos.agents.mcp.mcp_client.create_agent") as create_agent:
+        configured_mcp_client.on_system_modules([])
+
+    model = create_agent.call_args.kwargs["model"]
+    try:
+        assert model.root_client.timeout == 9.0
+        assert model.root_client.max_retries == 0
+    finally:
+        model.root_client.close()
+
+
+def test_agent_reports_failed_turn_and_processes_next_message(mcp_client, monkeypatch):
+    published = MagicMock()
+    idle = MagicMock()
+    monkeypatch.setattr(mcp_client.agent, "publish", published)
+    monkeypatch.setattr(mcp_client.agent_idle, "publish", idle)
+    graph = MagicMock()
+    reply = AIMessage("Recovered")
+    calls = []
+
+    def stream(state, *, stream_mode):
+        calls.append(state["messages"][-1].content)
+        if len(calls) == 1:
+            raise TimeoutError("upstream did not respond")
+        mcp_client._stop_event.set()
+        return iter([{"model": {"messages": [reply]}}])
+
+    graph.stream.side_effect = stream
+    mcp_client._state_graph = graph
+    mcp_client.add_message(HumanMessage("First request"))
+    mcp_client.add_message(HumanMessage("Next request"))
+
+    mcp_client._thread_loop()
+
+    assert calls == ["First request", "Next request"]
+    messages = [call.args[0] for call in published.call_args_list]
+    assert "TimeoutError" in messages[1].content
+    assert messages[-1] == reply
+    idle.assert_called_with(True)
+
+
+def test_failed_turn_clears_thinking_indicator(mcp_client, monkeypatch):
+    monkeypatch.setattr(mcp_client.agent, "publish", MagicMock())
+    idle = MagicMock()
+    monkeypatch.setattr(mcp_client.agent_idle, "publish", idle)
+    graph = MagicMock()
+
+    def stream(*args, **kwargs):
+        mcp_client._stop_event.set()
+        raise TimeoutError("upstream did not respond")
+
+    graph.stream.side_effect = stream
+    mcp_client._state_graph = graph
+    mcp_client.add_message(HumanMessage("First request"))
+
+    mcp_client._thread_loop()
+
+    assert [call.args[0] for call in idle.call_args_list] == [False, True]
+
+
+def test_failed_tool_turn_marks_missing_results_unknown(mcp_client, monkeypatch):
+    monkeypatch.setattr(mcp_client.agent, "publish", MagicMock())
+    monkeypatch.setattr(mcp_client.agent_idle, "publish", MagicMock())
+    graph = MagicMock()
+    tool_call = AIMessage(
+        content="",
+        tool_calls=[{"name": "go_home", "args": {}, "id": "home-1", "type": "tool_call"}],
+    )
+
+    def stream(*args, **kwargs):
+        yield {"model": {"messages": [tool_call]}}
+        raise TimeoutError("tool result missing")
+
+    graph.stream.side_effect = stream
+    mcp_client._process_message(graph, HumanMessage("Go home"))
+
+    result = mcp_client._history[-2]
+    assert isinstance(result, ToolMessage)
+    assert result.tool_call_id == "home-1"
+    assert result.status == "error"
+    assert "may already have run" in result.content
