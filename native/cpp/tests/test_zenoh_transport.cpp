@@ -1,13 +1,12 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
-//
-// Compiled only when zenoh-cpp is available, see tests/CMakeLists.txt.
 
 #include <doctest/doctest.h>
 
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -23,19 +22,16 @@ using namespace dimos::native;
 using zenoh_detail::parse_channel_qos;
 using zenoh_detail::settings_from_launch;
 
-// The launch line python sends for a client-mode session.
-constexpr const char* CLIENT_LAUNCH = R"({
-  "session": {
-    "mode": "client",
-    "connect": ["tcp/192.0.2.10:7447"],
-    "listen": [],
-    "multicast": true,
-    "scout_addr": "",
-    "gossip": false,
-    "interface": "lo",
-    "connect_timeout_ms": 2000
-  }
-})";
+// The launch line python sends for a client-mode session. The golden is the
+// one the rust and python suites read, so a field any side renames fails here.
+nlohmann::json client_launch() {
+    const std::string path = std::string(DIMOS_NATIVE_GOLDENS_DIR) + "/session_wire_client.json";
+    std::ifstream golden(path);
+    if (!golden.is_open()) {
+        throw std::runtime_error("cannot read golden: " + path);
+    }
+    return nlohmann::json{{"session", nlohmann::json::parse(golden)}};
+}
 
 TEST_CASE("a dimos topic becomes a zenoh key by losing its leading slash") {
     CHECK(zenoh_key("/robot/cmd_vel") == "robot/cmd_vel");
@@ -64,7 +60,7 @@ TEST_CASE("a session block missing a field is rejected and names it") {
 }
 
 TEST_CASE("a session block with an unknown field is rejected and names it") {
-    nlohmann::json launch = nlohmann::json::parse(CLIENT_LAUNCH);
+    nlohmann::json launch = client_launch();
     launch["session"]["bogus"] = 1;
     try {
         settings_from_launch(launch);
@@ -77,7 +73,7 @@ TEST_CASE("a session block with an unknown field is rejected and names it") {
 TEST_CASE("a negative connect timeout is rejected rather than wrapped") {
     // Cast instead of rejected it is a wait of a few hundred million years,
     // so opening the session would look like a hang.
-    nlohmann::json launch = nlohmann::json::parse(CLIENT_LAUNCH);
+    nlohmann::json launch = client_launch();
     launch["session"]["connect_timeout_ms"] = -1;
     try {
         settings_from_launch(launch);
@@ -88,7 +84,7 @@ TEST_CASE("a negative connect timeout is rejected rather than wrapped") {
 }
 
 TEST_CASE("the session settings become a zenoh config") {
-    auto settings = settings_from_launch(nlohmann::json::parse(CLIENT_LAUNCH));
+    auto settings = settings_from_launch(client_launch());
     REQUIRE(settings.has_value());
     ::zenoh::Config config = zenoh_detail::zenoh_config(*settings);
     CHECK(config.get("mode") == R"("client")");
@@ -117,6 +113,27 @@ TEST_CASE("publisher qos is read per channel, and unset fields keep defaults") {
     CHECK_FALSE(qos.at("/c").congestion_control.has_value());
     CHECK_FALSE(qos.at("/c").locality.has_value());
     CHECK_FALSE(qos.at("/c").reliability.has_value());
+}
+
+TEST_CASE("a qos field of the wrong type keeps the default rather than throwing") {
+    // Rust reads these with as_str, so a wrong type is ignored there. Thrown
+    // here it would kill the module before a single subscriber was wired.
+    auto qos = parse_channel_qos(nlohmann::json::parse(R"({
+      "/a": {"reliability": null, "congestion_control": 7, "locality": ["any"]}
+    })"));
+    REQUIRE(qos.count("/a") == 1);
+    CHECK_FALSE(qos.at("/a").congestion_control.has_value());
+    CHECK_FALSE(qos.at("/a").locality.has_value());
+    CHECK_FALSE(qos.at("/a").reliability.has_value());
+}
+
+TEST_CASE("a locator keeps only the address a link reports") {
+    CHECK(zenoh_detail::locator_address("tcp/192.0.2.10:7447") == "192.0.2.10:7447");
+    // A link reports the address alone, so the metadata and config have to go.
+    CHECK(zenoh_detail::locator_address("tcp/192.0.2.10:7447?iface=eth0") == "192.0.2.10:7447");
+    CHECK(zenoh_detail::locator_address("tcp/192.0.2.10:7447#user=a") == "192.0.2.10:7447");
+    // The path is the address, so splitting at the last slash would lose most.
+    CHECK(zenoh_detail::locator_address("unixsock-stream//tmp/zenoh.sock") == "/tmp/zenoh.sock");
 }
 
 TEST_CASE("an endpoint dialed by name also matches the address a link reports") {
@@ -211,7 +228,7 @@ TEST_CASE("a publish zenoh rejects is logged rather than thrown") {
 // Compiled so every inline body is typechecked against zenoh-cpp.
 [[maybe_unused]] static void zenoh_transport_compile_check() {
     std::unique_ptr<Transport> transport =
-        ZenohTransport::from_launch(nlohmann::json::parse(CLIENT_LAUNCH));
+        ZenohTransport::from_launch(client_launch());
     transport->set_publisher_qos(nlohmann::json::object());
     transport->publish("/c", std::vector<uint8_t>{1, 2, 3});
     transport->subscribe("/c", [](const uint8_t*, std::size_t) {});

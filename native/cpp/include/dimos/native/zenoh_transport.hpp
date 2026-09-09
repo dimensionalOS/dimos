@@ -156,10 +156,13 @@ inline ::zenoh::Config zenoh_config(const SessionSettings& settings) {
     return config;
 }
 
-/// The trailing `host:port`, which is the part a link reports.
+/// The address of a `<proto>/<address>[?metadata][#config]` locator. A link
+/// reports the address alone, so a kept `?iface=eth0` would never match.
 inline std::string locator_address(const std::string& locator) {
-    std::size_t slash = locator.rfind('/');
-    return slash == std::string::npos ? locator : locator.substr(slash + 1);
+    const std::size_t scheme = locator.find('/');
+    const std::size_t begin = scheme == std::string::npos ? 0 : scheme + 1;
+    const std::size_t end = locator.find_first_of("?#", begin);
+    return locator.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
 }
 
 /// Every host:port a live link to this endpoint may report. Dialed by name it
@@ -217,9 +220,15 @@ inline void await_connect(const ::zenoh::Session& session,
     const std::size_t needed = mode == "client" ? 1 : pending.size();
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (true) {
+        // Treated as no links yet: a failed read is worth retrying until the
+        // deadline, not worth killing the module over.
+        ::zenoh::ZResult links_result = Z_OK;
+        const std::vector<::zenoh::Link> links = session.get_links({}, &links_result);
         std::unordered_set<std::string> linked;
-        for (const ::zenoh::Link& link : session.get_links()) {
-            linked.insert(locator_address(link.get_dst()));
+        if (links_result == Z_OK) {
+            for (const ::zenoh::Link& link : links) {
+                linked.insert(locator_address(link.get_dst()));
+            }
         }
         std::erase_if(pending, [&linked](const auto& entry) {
             for (const std::string& address : entry.second) {
@@ -253,6 +262,16 @@ struct ChannelQos {
     std::optional<::zenoh::Reliability> reliability;
 };
 
+/// Empty for anything that is not a string, so a wrong type keeps the default
+/// instead of aborting the module.
+inline std::string qos_field(const nlohmann::json& fields, const char* name) {
+    const auto field = fields.find(name);
+    if (field == fields.end() || !field->is_string()) {
+        return std::string();
+    }
+    return field->get<std::string>();
+}
+
 /// The coordinator's `qos` object, channel -> settings. An unrecognized value
 /// keeps zenoh's default rather than erroring.
 inline std::unordered_map<std::string, ChannelQos> parse_channel_qos(
@@ -267,14 +286,13 @@ inline std::unordered_map<std::string, ChannelQos> parse_channel_qos(
             continue;
         }
         ChannelQos qos;
-        const std::string congestion_control =
-            fields.value("congestion_control", std::string());
+        const std::string congestion_control = qos_field(fields, "congestion_control");
         if (congestion_control == "drop") {
             qos.congestion_control = Z_CONGESTION_CONTROL_DROP;
         } else if (congestion_control == "block") {
             qos.congestion_control = Z_CONGESTION_CONTROL_BLOCK;
         }
-        const std::string locality = fields.value("locality", std::string());
+        const std::string locality = qos_field(fields, "locality");
         if (locality == "session_local") {
             qos.locality = Z_LOCALITY_SESSION_LOCAL;
         } else if (locality == "remote") {
@@ -282,7 +300,7 @@ inline std::unordered_map<std::string, ChannelQos> parse_channel_qos(
         } else if (locality == "any") {
             qos.locality = Z_LOCALITY_ANY;
         }
-        const std::string reliability = fields.value("reliability", std::string());
+        const std::string reliability = qos_field(fields, "reliability");
         if (reliability == "reliable") {
             qos.reliability = Z_RELIABILITY_RELIABLE;
         } else if (reliability == "best_effort") {
