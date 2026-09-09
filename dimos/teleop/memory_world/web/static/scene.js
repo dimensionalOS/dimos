@@ -57,6 +57,14 @@ const HUD_FOLLOW_LERP = 0.18;         // damping per frame
 const IMAGE_QUAD_W = 0.60;
 const IMAGE_QUAD_H = 0.34;            // 16:9-ish
 const IMAGE_QUAD_HEIGHT = 0.9;        // robot z (metres) — chest height in VR
+// Only poses within this radius of the viewer get a decoded thumbnail, and at
+// most this many exist at once. A recording has hundreds of poses; without a
+// budget every one becomes its own texture, material and draw call.
+const IMAGE_RENDER_DISTANCE_M = 12.0;
+const IMAGE_QUAD_BUDGET = 24;
+const IMAGE_LOD_INTERVAL_S = 0.2;     // how often the visible set is recomputed
+// Rolling window for the frame-time readout, ~4s at 60fps.
+const PERF_WINDOW = 240;
 
 export class WorldScene {
     constructor(diag, backgroundMode = 'black') {
@@ -108,11 +116,16 @@ export class WorldScene {
         this._cloudData = null;               // {n, positions, colors, voxelSize}
         this._imagePoseGroup = new THREE.Group();     // always-on ring markers
         this._frameRotate.add(this._imagePoseGroup);
+        this._imageRings = null;                      // THREE.InstancedMesh
         this._imageQuadGroup = new THREE.Group();     // textured quads, toggleable
         this._imageQuadGroup.visible = false;
         this._frameRotate.add(this._imageQuadGroup);
         this._imagePoseMeta = [];                     // per-index {pos, quat}
         this._imageQuadsByIndex = new Map();          // index -> THREE.Mesh
+        this._thumbnailBytes = new Map();             // index -> ArrayBuffer, decoded on demand
+        this._thumbnailDecoding = new Set();
+        this._imageQuadGeom = new THREE.PlaneGeometry(IMAGE_QUAD_W, IMAGE_QUAD_H);
+        this._imageLodAccumS = IMAGE_LOD_INTERVAL_S;
         this._selectedImageIds = new Set();
         this._odomLine = null;
 
@@ -194,6 +207,57 @@ export class WorldScene {
 
         // Spawned-yet flag — first cloud arrival recenters us.
         this._hasSpawned = false;
+
+        this._frameSamples = new Float32Array(PERF_WINDOW);
+        this._frameSampleCount = 0;
+        this._frameSampleCursor = 0;
+    }
+
+    /** Drop the frame-time window so a measurement starts from the current state. */
+    resetPerf() {
+        this._frameSampleCount = 0;
+        this._frameSampleCursor = 0;
+    }
+
+    /** Cost of one render, measured off the vsync clock.
+     *
+     * A 120Hz desktop pins every configuration at 8.3ms, which hides exactly the
+     * regressions this viewer has to avoid on a headset. Rendering back to back
+     * and reading a single pixel afterwards forces the GPU to finish, so the
+     * result is the real per-frame cost.
+     */
+    benchmarkRender(frames = 120) {
+        const gl = this.three.getContext();
+        const pixel = new Uint8Array(4);
+        this.three.render(this.scene, this.camera);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        const started = performance.now();
+        for (let i = 0; i < frames; i++) this.three.render(this.scene, this.camera);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        const perFrameMs = (performance.now() - started) / frames;
+        return { per_frame_ms: perFrameMs, frames, ...this.getPerfStats() };
+    }
+
+    /** Rolling render cost. Medians, because a single GC spike is not the story. */
+    getPerfStats() {
+        const filled = this._frameSamples.slice(0, this._frameSampleCount);
+        const sorted = Array.from(filled).sort((a, b) => a - b);
+        const at = (q) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))] : 0);
+        const median = at(0.5);
+        const info = this.three.info;
+        return {
+            fps: median > 0 ? 1000 / median : 0,
+            median_ms: median,
+            p95_ms: at(0.95),
+            samples: sorted.length,
+            draw_calls: info.render.calls,
+            triangles: info.render.triangles,
+            textures: info.memory.textures,
+            geometries: info.memory.geometries,
+            live_quads: this._imageQuadsByIndex.size,
+            images_visible: this._imageQuadGroup.visible,
+            cloud_visible: Boolean(this._pointsObj && this._pointsObj.visible),
+        };
     }
 
     // ---- session bootstrap ------------------------------------------------
@@ -314,6 +378,12 @@ export class WorldScene {
     }
 
     _tick(timeMs) {
+        const frameMs = this._lastTickMs ? timeMs - this._lastTickMs : 0;
+        if (frameMs > 0) {
+            this._frameSamples[this._frameSampleCursor] = frameMs;
+            this._frameSampleCursor = (this._frameSampleCursor + 1) % PERF_WINDOW;
+            this._frameSampleCount = Math.min(this._frameSampleCount + 1, PERF_WINDOW);
+        }
         const dt = this._lastTickMs ? Math.max((timeMs - this._lastTickMs) / 1000, 0) : 0;
         this._lastTickMs = timeMs;
 
@@ -327,6 +397,7 @@ export class WorldScene {
             this._rotateWorldAround(pivot, this._pendingYawRate * dt);
         }
 
+        this._updateImageLod(dt);
         this._updateHud();
     }
 
@@ -644,107 +715,170 @@ export class WorldScene {
     }
 
     setImagePoses(header, payloadArrayBuffer) {
-        // Clear previous.
-        while (this._imagePoseGroup.children.length) {
-            const c = this._imagePoseGroup.children.pop();
-            if (c.geometry) c.geometry.dispose();
-            if (c.material) c.material.dispose();
+        if (this._imageRings) {
+            this._imagePoseGroup.remove(this._imageRings);
+            this._imageRings.geometry.dispose();
+            this._imageRings.material.dispose();
+            this._imageRings = null;
         }
-        while (this._imageQuadGroup.children.length) {
-            const c = this._imageQuadGroup.children.pop();
-            if (c.geometry) c.geometry.dispose();
-            if (c.material && c.material.map) c.material.map.dispose();
-            if (c.material) c.material.dispose();
-        }
+        this._releaseAllThumbnails();
+        this._thumbnailBytes.clear();
         this._imagePoseMeta = [];
-        this._imageQuadsByIndex.clear();
 
         const n = header.n | 0;
         if (n === 0) return;
 
         const positions = new Float32Array(payloadArrayBuffer, 0, n * 3);
         const quats = new Float32Array(payloadArrayBuffer, n * 12, n * 4);
-        const ringGeom = new THREE.RingGeometry(0.10, 0.13, 24);
-        const ringMat = new THREE.MeshBasicMaterial({
-            color: 0x4cd9ff,
-            transparent: true,
-            opacity: 0.7,
-            side: THREE.DoubleSide,
-        });
+
+        // Default PlaneGeometry normal is +Z. Rotate so the normal points along
+        // robot -X (i.e. "behind" the capture direction), so the image is seen
+        // face-on when the viewer stands in front of the pose.
+        const faceBackward = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2);
+        const standUpright = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 2);
+
+        this._imageRings = new THREE.InstancedMesh(
+            new THREE.RingGeometry(0.10, 0.13, 24),
+            new THREE.MeshBasicMaterial({
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.7,
+                side: THREE.DoubleSide,
+            }),
+            n,
+        );
+        this._imageRings.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        this._imagePoseGroup.add(this._imageRings);
+
         for (let i = 0; i < n; i++) {
-            const rx = positions[i * 3 + 0];
-            const ry = positions[i * 3 + 1];
-            const rz = positions[i * 3 + 2];
-            const qx = quats[i * 4 + 0];
-            const qy = quats[i * 4 + 1];
-            const qz = quats[i * 4 + 2];
-            const qw = quats[i * 4 + 3];
-            const ring = new THREE.Mesh(ringGeom, ringMat.clone());
-            ring.position.set(rx, ry, 0.02);
-            this._imagePoseGroup.add(ring);
+            const quat = new THREE.Quaternion(
+                quats[i * 4 + 0], quats[i * 4 + 1], quats[i * 4 + 2], quats[i * 4 + 3],
+            ).multiply(faceBackward).multiply(standUpright);
             this._imagePoseMeta.push({
                 id: header.ids?.[i] ?? null,
-                rx, ry, rz, qx, qy, qz, qw,
-                ring,
+                rx: positions[i * 3 + 0],
+                ry: positions[i * 3 + 1],
+                rz: positions[i * 3 + 2],
+                quadQuat: quat,
+                selected: false,
             });
+            this._writeRingInstance(i);
+            this._imageRings.setColorAt(i, new THREE.Color(0x4cd9ff));
         }
+        this._imageRings.instanceMatrix.needsUpdate = true;
+        this._imageRings.instanceColor.needsUpdate = true;
         this.diag('image_poses_loaded', { n });
     }
 
-    addImageThumbnail(index, jpegArrayBuffer) {
+    /** Position/scale of one ring marker. Selected poses get a bigger ring. */
+    _writeRingInstance(index) {
         const meta = this._imagePoseMeta[index];
-        if (!meta) return;
-        if (this._imageQuadsByIndex.has(index)) return;
+        const scale = meta.selected ? 1.8 : 1.0;
+        this._imageRings.setMatrixAt(index, new THREE.Matrix4().compose(
+            new THREE.Vector3(meta.rx, meta.ry, 0.02),
+            new THREE.Quaternion(),
+            new THREE.Vector3(scale, scale, scale),
+        ));
+    }
 
-        // Decode JPEG via Blob + ImageBitmap so it's GPU-friendly + async.
-        // Three.js doesn't reliably apply flipY to ImageBitmap textures, so we
-        // flip at decode time and disable the texture's own flip — otherwise
-        // the photos render upside down.
-        const blob = new Blob([jpegArrayBuffer], { type: 'image/jpeg' });
-        createImageBitmap(blob, { imageOrientation: 'flipY' }).then((bitmap) => {
-            const tex = new THREE.Texture(bitmap);
-            tex.flipY = false;
-            tex.colorSpace = THREE.SRGBColorSpace;
-            tex.needsUpdate = true;
-            const mat = new THREE.MeshBasicMaterial({
-                map: tex,
-                side: THREE.DoubleSide,
-                transparent: true,
-                opacity: 0.95,
-            });
-            const quad = new THREE.Mesh(
-                new THREE.PlaneGeometry(IMAGE_QUAD_W, IMAGE_QUAD_H),
-                mat,
-            );
-            // Place at the pose's XY in robot frame, lifted to ~chest height
-            // (Z up). Quad's local +Z points toward the camera; orient it via
-            // the recorded quaternion (camera pose). The quat is in robot frame
-            // where camera forward is robot +X, so we apply directly then rotate
-            // so the plane faces the recorded forward direction.
-            quad.position.set(meta.rx, meta.ry, IMAGE_QUAD_HEIGHT);
-            // Make the quad face along the robot's forward direction at capture.
-            const q = new THREE.Quaternion(meta.qx, meta.qy, meta.qz, meta.qw);
-            // Default PlaneGeometry normal is +Z. Rotate so normal points
-            // along robot -X (i.e. "behind" the capture direction), so the
-            // image is seen face-on when the viewer is in front of the pose.
-            const faceBackward = new THREE.Quaternion().setFromAxisAngle(
-                new THREE.Vector3(0, 1, 0), -Math.PI / 2
-            );
-            const standUpright = new THREE.Quaternion().setFromAxisAngle(
-                new THREE.Vector3(0, 0, 1), -Math.PI / 2
-            );
-            quad.quaternion.copy(q).multiply(faceBackward).multiply(standUpright);
-            quad.visible = this._selectedImageIds.size === 0 || this._selectedImageIds.has(meta.id);
-            this._imageQuadGroup.add(quad);
-            this._imageQuadsByIndex.set(index, quad);
-        }).catch((e) => {
-            this.diag('thumbnail_decode_failed', { index, error: String(e.message || e) });
-        });
+    /** Thumbnails arrive once and are kept as JPEG bytes; decoding is deferred
+     *  to `_updateImageLod` so only nearby poses ever cost a texture. */
+    addImageThumbnail(index, jpegArrayBuffer) {
+        if (!this._imagePoseMeta[index]) return;
+        this._thumbnailBytes.set(index, jpegArrayBuffer);
     }
 
     toggleImages() {
         this._imageQuadGroup.visible = !this._imageQuadGroup.visible;
+        if (!this._imageQuadGroup.visible) this._releaseAllThumbnails();
+        this._imageLodAccumS = IMAGE_LOD_INTERVAL_S;
         this.diag('images_toggle', { visible: this._imageQuadGroup.visible });
+    }
+
+    /** Keep decoded thumbnails to the nearest `IMAGE_QUAD_BUDGET` poses within
+     *  `IMAGE_RENDER_DISTANCE_M`, measured in world metres so zooming out drops
+     *  quads rather than piling up hundreds of textured, sorted transparents. */
+    _updateImageLod(dt) {
+        this._imageLodAccumS += dt;
+        if (this._imageLodAccumS < IMAGE_LOD_INTERVAL_S) return;
+        this._imageLodAccumS = 0;
+        if (!this._imageQuadGroup.visible || this._imagePoseMeta.length === 0) return;
+
+        const eye = this._imageQuadGroup.worldToLocal(this.camera.getWorldPosition(new THREE.Vector3()));
+        const scale = this._worldGroup.scale.x || 1;
+        // A query answer is a handful of poses anywhere in the recording, so the
+        // distance cutoff would hide the very thing the user asked to see. The
+        // budget alone is enough to bound the cost there.
+        const maxDist = this._selectedImageIds.size > 0 ? Infinity : IMAGE_RENDER_DISTANCE_M / scale;
+
+        const candidates = [];
+        for (let i = 0; i < this._imagePoseMeta.length; i++) {
+            const meta = this._imagePoseMeta[i];
+            if (this._selectedImageIds.size > 0 && !this._selectedImageIds.has(meta.id)) continue;
+            if (!this._thumbnailBytes.has(i)) continue;
+            const dx = meta.rx - eye.x;
+            const dy = meta.ry - eye.y;
+            const dz = IMAGE_QUAD_HEIGHT - eye.z;
+            const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (dist > maxDist) continue;
+            candidates.push([dist, i]);
+        }
+        candidates.sort((a, b) => a[0] - b[0]);
+        const wanted = new Set(candidates.slice(0, IMAGE_QUAD_BUDGET).map(([, i]) => i));
+
+        for (const index of Array.from(this._imageQuadsByIndex.keys())) {
+            if (!wanted.has(index)) this._releaseThumbnail(index);
+        }
+        for (const index of wanted) {
+            if (!this._imageQuadsByIndex.has(index)) this._decodeThumbnail(index);
+        }
+    }
+
+    _decodeThumbnail(index) {
+        if (this._thumbnailDecoding.has(index)) return;
+        this._thumbnailDecoding.add(index);
+        // Three.js doesn't reliably apply flipY to ImageBitmap textures, so we
+        // flip at decode time and disable the texture's own flip — otherwise the
+        // photos render upside down.
+        const blob = new Blob([this._thumbnailBytes.get(index)], { type: 'image/jpeg' });
+        createImageBitmap(blob, { imageOrientation: 'flipY' }).then((bitmap) => {
+            this._thumbnailDecoding.delete(index);
+            const meta = this._imagePoseMeta[index];
+            if (!meta || this._imageQuadsByIndex.has(index)) {
+                bitmap.close();
+                return;
+            }
+            const texture = new THREE.Texture(bitmap);
+            texture.flipY = false;
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.generateMipmaps = false;
+            texture.minFilter = THREE.LinearFilter;
+            texture.needsUpdate = true;
+            const quad = new THREE.Mesh(
+                this._imageQuadGeom,
+                new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide }),
+            );
+            quad.position.set(meta.rx, meta.ry, IMAGE_QUAD_HEIGHT);
+            quad.quaternion.copy(meta.quadQuat);
+            this._imageQuadGroup.add(quad);
+            this._imageQuadsByIndex.set(index, quad);
+        }).catch((e) => {
+            this._thumbnailDecoding.delete(index);
+            this.diag('thumbnail_decode_failed', { index, error: String(e.message || e) });
+        });
+    }
+
+    _releaseThumbnail(index) {
+        const quad = this._imageQuadsByIndex.get(index);
+        if (!quad) return;
+        this._imageQuadGroup.remove(quad);
+        quad.material.map.dispose();
+        quad.material.dispose();
+        this._imageQuadsByIndex.delete(index);
+    }
+
+    _releaseAllThumbnails() {
+        for (const index of Array.from(this._imageQuadsByIndex.keys())) this._releaseThumbnail(index);
     }
 
     setQueryResult(result) {
@@ -801,16 +935,20 @@ export class WorldScene {
         }
 
         this._selectedImageIds = new Set(result.observation_ids || []);
-        for (const [index, quad] of this._imageQuadsByIndex) {
-            const meta = this._imagePoseMeta[index];
-            quad.visible = this._selectedImageIds.size === 0 || this._selectedImageIds.has(meta?.id);
+        for (let i = 0; i < this._imagePoseMeta.length; i++) {
+            const meta = this._imagePoseMeta[i];
+            meta.selected = this._selectedImageIds.has(meta.id);
+            this._writeRingInstance(i);
+            this._imageRings.setColorAt(i, new THREE.Color(meta.selected ? 0xfff06a : 0x4cd9ff));
         }
-        for (const meta of this._imagePoseMeta) {
-            const selected = this._selectedImageIds.has(meta.id);
-            meta.ring.material.color.set(selected ? 0xfff06a : 0x4cd9ff);
-            meta.ring.scale.setScalar(selected ? 1.8 : 1.0);
+        if (this._imageRings) {
+            this._imageRings.instanceMatrix.needsUpdate = true;
+            this._imageRings.instanceColor.needsUpdate = true;
         }
         if (this._selectedImageIds.size > 0) this._imageQuadGroup.visible = true;
+        // The selection changes which poses deserve a texture, so rebuild now.
+        this._releaseAllThumbnails();
+        this._imageLodAccumS = IMAGE_LOD_INTERVAL_S;
 
         this._setAnswer(result.answer || 'Memory result');
         this.diag('query_result_loaded', {
@@ -839,6 +977,11 @@ export class WorldScene {
                 if (obj.material) obj.material.dispose();
             });
         }
+    }
+
+    /** Show what the microphone heard, so the headset confirms before the answer. */
+    setHeardText(text) {
+        this._setAnswer(`“${text}” …`);
     }
 
     _setAnswer(answer) {

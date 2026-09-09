@@ -9,6 +9,7 @@
 //   { type: 'reset_view' }                                          // Y button on left controller
 //   { type: 'toggle_images' }                                       // X button on left controller
 //   { type: 'toggle_cloud' }                                        // B button on right controller
+//   { type: 'voice_start' } / { type: 'voice_stop' }                // A button on right controller, push-to-talk
 //
 // Quest 3 gamepad button mapping (per WebXR spec / Meta docs):
 //   buttons[0] = trigger
@@ -100,6 +101,13 @@ export class InputAdapter {
                 const bButton = gp.buttons[5]?.pressed ?? false;
                 if (bButton && !this._rightBWas) this.onGesture({ type: 'toggle_cloud' });
                 this._rightBWas = bButton;
+                // Right A button (index 4) = push-to-talk. Holding is the whole
+                // utterance, so no voice-activity detection is needed.
+                const aButton = gp.buttons[4]?.pressed ?? false;
+                if (aButton !== Boolean(this._rightAWas)) {
+                    this.onGesture({ type: aButton ? 'voice_start' : 'voice_stop' });
+                }
+                this._rightAWas = aButton;
                 // Teleport: aim while trigger held, commit on release.
                 this._handleTriggerTeleport(inputSource, frame, xrRefSpace, triggerVal, scene);
             }

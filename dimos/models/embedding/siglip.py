@@ -39,6 +39,12 @@ class SigLIPModel(EmbeddingModel, HuggingFaceModel):
     hit reuses the cache. Text inputs use ``padding="max_length"`` - SigLIP
     was trained with max-length padded text, and unpadded prompts measurably
     degrade the text-image alignment.
+
+    The pad length comes from the model config, not the tokenizer: SigLIP 2
+    ships a Gemma tokenizer whose ``model_max_length`` is the "unbounded"
+    sentinel, and transformers then silently drops padding altogether, which
+    leaves text embeddings far enough off-distribution to make retrieval
+    rankings meaningless.
     """
 
     config: SigLIPModelConfig
@@ -47,7 +53,11 @@ class SigLIPModel(EmbeddingModel, HuggingFaceModel):
     @cached_property
     def _model(self) -> HFSiglipModel:
         self._ensure_cuda_initialized()
-        return HFSiglipModel.from_pretrained(self.config.model_name).eval().to(self.config.device)
+        return (
+            HFSiglipModel.from_pretrained(self.config.model_name, torch_dtype=self.config.dtype)
+            .eval()
+            .to(self.config.device)
+        )
 
     @cached_property
     def _processor(self) -> SiglipProcessor:
@@ -62,7 +72,11 @@ class SigLIPModel(EmbeddingModel, HuggingFaceModel):
         pil_images = [PILImage.fromarray(img.to_rgb().data) for img in images]
 
         with torch.inference_mode():
-            inputs = self._processor(images=pil_images, return_tensors="pt").to(self.config.device)
+            # pixel_values comes back as float32; a half-precision model needs
+            # it cast, not just moved.
+            inputs = self._move_inputs_to_device(
+                dict(self._processor(images=pil_images, return_tensors="pt"))
+            )
             image_features = self._model.get_image_features(**inputs)
             if self.config.normalize:
                 image_features = functional.normalize(image_features, dim=-1)
@@ -79,9 +93,17 @@ class SigLIPModel(EmbeddingModel, HuggingFaceModel):
     def embed_text(self, *texts: str) -> Embedding | list[Embedding]:
         """Embed one or more text strings into the shared image-text space."""
         with torch.inference_mode():
-            inputs = self._processor(
-                text=list(texts), return_tensors="pt", padding="max_length", truncation=True
-            ).to(self.config.device)
+            inputs = self._move_inputs_to_device(
+                dict(
+                    self._processor(
+                        text=list(texts),
+                        return_tensors="pt",
+                        padding="max_length",
+                        max_length=self._model.config.text_config.max_position_embeddings,
+                        truncation=True,
+                    )
+                )
+            )
             text_features = self._model.get_text_features(**inputs)
             if self.config.normalize:
                 text_features = functional.normalize(text_features, dim=-1)

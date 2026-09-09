@@ -19,6 +19,7 @@ import {
 const statusEl = document.getElementById('status');
 const connectBtn = document.getElementById('connectBtn');
 const disconnectBtn = document.getElementById('disconnectBtn');
+const micBtn = document.getElementById('micBtn');
 const logEl = document.getElementById('log');
 const backgroundMode = document.body.dataset.backgroundMode || 'black';
 
@@ -30,7 +31,13 @@ let input = null;
 let WorldScene = null;
 let pendingQueryResult = null;
 let lastViewerPoseSent = 0;
+let perfReadoutTimer = null;
+let micStream = null;
+let recorder = null;
 const pendingDiag = [];
+
+// The page is served at the module's client_route, so /voice hangs off it.
+const voiceUrl = `${window.location.pathname.replace(/\/$/, '')}/voice`;
 
 function log(msg) {
     if (!logEl) return;
@@ -159,6 +166,10 @@ function handleControl(msg) {
             else pendingQueryResult = msg;
             setStatus(msg.answer || 'Memory result highlighted');
             break;
+        case 'voice_transcript':
+            setStatus(`Heard: “${msg.text}” — searching…`);
+            if (scene) scene.setHeardText(msg.text);
+            break;
         case 'error':
             setStatus(`Server error: ${msg.message || 'unknown'}`);
             break;
@@ -183,6 +194,8 @@ function dispatchGesture(g) {
         case 'reset_view': scene.resetView(); break;
         case 'toggle_images': scene.toggleImages(); break;
         case 'toggle_cloud': scene.toggleCloud(); break;
+        case 'voice_start': startRecording(); break;
+        case 'voice_stop': stopRecording(); break;
         default: break;
     }
     // Lightweight diag — only on discrete events, not continuous.
@@ -216,6 +229,28 @@ function buildScene() {
     }
 }
 
+const perfEl = document.getElementById('perf');
+
+function startPerfReadout() {
+    if (perfReadoutTimer) clearInterval(perfReadoutTimer);
+    perfEl.style.display = 'block';
+    let sinceDiag = 0;
+    perfReadoutTimer = setInterval(() => {
+        if (!scene) return;
+        const s = scene.getPerfStats();
+        perfEl.textContent = [
+            `${s.fps.toFixed(1)} fps  (${s.median_ms.toFixed(1)} ms med, ${s.p95_ms.toFixed(1)} p95)`,
+            `${s.draw_calls} draws  ${(s.triangles / 1000).toFixed(0)}k tris`,
+            `${s.textures} textures  ${s.live_quads} quads`,
+            `images ${s.images_visible ? 'on' : 'off'}  cloud ${s.cloud_visible ? 'on' : 'off'}`,
+        ].join('\n');
+        if (++sinceDiag >= 20) {
+            sinceDiag = 0;
+            diag('perf', s);
+        }
+    }, 250);
+}
+
 function sendViewerPose() {
     const now = performance.now();
     if (ws && ws.readyState === WebSocket.OPEN && now - lastViewerPoseSent >= 500) {
@@ -227,6 +262,7 @@ function sendViewerPose() {
 /** Enter VR when a headset is present, otherwise fall back to the flat viewer. */
 async function startViewer() {
     buildScene();
+    startPerfReadout();
     if (navigator.xr) {
         try {
             await startVR();
@@ -293,15 +329,85 @@ async function startVR() {
     setStatus(`VR active (${mode})`);
 }
 
+// ---- voice query -----------------------------------------------------------
+
+// Quest Browser has no webkitSpeechRecognition, so the audio is recorded here
+// and transcribed server-side. The permission prompt cannot be answered from
+// inside an immersive session, so the stream is acquired before VR starts.
+async function acquireMic() {
+    if (micStream) return micStream;
+    if (!navigator.mediaDevices || !window.MediaRecorder) {
+        diag('voice_unsupported', { secure: window.isSecureContext });
+        return null;
+    }
+    try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        diag('mic_ready');
+    } catch (e) {
+        diag('mic_denied', { error: String(e.message || e) });
+        micStream = null;
+    }
+    return micStream;
+}
+
+async function startRecording() {
+    if (recorder) return;
+    const stream = await acquireMic();
+    if (!stream) {
+        setStatus('Microphone unavailable');
+        return;
+    }
+    const chunks = [];
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    recorder.onstop = () => {
+        recorder = null;
+        sendRecording(new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' }));
+    };
+    recorder.start();
+    micBtn.classList.add('recording');
+    setStatus('Listening…');
+    diag('voice_recording_started');
+}
+
+function stopRecording() {
+    micBtn.classList.remove('recording');
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+}
+
+async function sendRecording(blob) {
+    if (!blob.size) return;
+    setStatus('Transcribing…');
+    diag('voice_recording_sent', { bytes: blob.size, type: blob.type });
+    const body = new FormData();
+    body.append('audio', blob, 'query.webm');
+    try {
+        const response = await fetch(voiceUrl, { method: 'POST', body });
+        const result = await response.json();
+        diag('voice_answer', { transcript: result.transcript, success: result.success });
+        setStatus(result.answer || result.detail || 'No answer');
+    } catch (e) {
+        diag('voice_failed', { error: String(e.message || e) });
+        setStatus(`Voice query failed: ${e.message || e}`);
+    }
+}
+
+micBtn.addEventListener('pointerdown', startRecording);
+micBtn.addEventListener('pointerup', stopRecording);
+micBtn.addEventListener('pointerleave', stopRecording);
+
 // ---- UI handlers -----------------------------------------------------------
 
 async function connect() {
     try {
         connectBtn.disabled = true;
         await setupWebSocket();
+        // Ask before VR starts: an immersive session cannot show the prompt.
+        await acquireMic();
         await startViewer();
         connectBtn.classList.add('hidden');
         disconnectBtn.classList.remove('hidden');
+        micBtn.classList.remove('hidden');
     } catch (e) {
         console.error(e);
         setStatus(`Connection failed: ${e.message || e}`);
@@ -319,14 +425,27 @@ async function disconnect() {
         try { ws.close(); } catch (_) { /* ignore */ }
         ws = null;
     }
+    if (perfReadoutTimer) {
+        clearInterval(perfReadoutTimer);
+        perfReadoutTimer = null;
+    }
+    perfEl.style.display = 'none';
     document.body.classList.remove('desktop-view');
     connectBtn.classList.remove('hidden');
     connectBtn.disabled = false;
     disconnectBtn.classList.add('hidden');
+    micBtn.classList.add('hidden');
     setStatus('Disconnected');
 }
 
-window.app = { connect, disconnect, diag };
+window.app = {
+    connect,
+    disconnect,
+    diag,
+    perf: () => (scene ? scene.getPerfStats() : null),
+    resetPerf: () => scene && scene.resetPerf(),
+    benchmark: (frames) => (scene ? scene.benchmarkRender(frames) : null),
+};
 
 window.addEventListener('load', async () => {
     if (!navigator.xr) {

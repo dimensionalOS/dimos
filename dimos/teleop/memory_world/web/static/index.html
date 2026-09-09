@@ -94,6 +94,11 @@
             border: 1px solid var(--muted);
             margin-top: 14px;
         }
+        #micBtn.recording {
+            background: #ff5f6d;
+            border-color: #ff5f6d;
+            color: var(--bg);
+        }
         #canvas {
             display: none;
             position: absolute;
@@ -103,6 +108,22 @@
             height: 100%;
         }
         .hidden { display: none !important; }
+        #perf {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 110;
+            display: none;
+            font-size: 11px;
+            line-height: 1.6;
+            color: var(--accent);
+            background: rgba(6, 9, 15, 0.78);
+            border: 1px solid var(--accent-soft);
+            padding: 8px 12px;
+            white-space: pre;
+            text-align: right;
+            pointer-events: none;
+        }
         #log {
             position: absolute;
             bottom: 16px;
@@ -152,6 +173,7 @@
         <div id="status">[ READY TO CONNECT ]</div>
         <button id="connectBtn" onclick="window.app.connect()">Connect</button>
         <button id="disconnectBtn" class="secondary hidden" onclick="window.app.disconnect()">Disconnect</button>
+        <button id="micBtn" class="secondary hidden">Hold to ask</button>
         <div id="hints">
             <b>LEFT STICK</b>  walk / strafe<br>
             <b>RIGHT STICK X</b>  smooth yaw turn<br>
@@ -160,7 +182,8 @@
             <b>BOTH HANDS PINCH</b>  same gesture in hand-tracking mode<br>
             <b>LEFT X</b>  toggle image thumbnails<br>
             <b>LEFT Y</b>  reset view<br>
-            <b>RIGHT B</b>  toggle voxel cubes / points
+            <b>RIGHT B</b>  toggle voxel cubes / points<br>
+            <b>RIGHT A</b>  hold to ask "where did I see …"
         </div>
         <div id="desktopHints" class="hints">
             <b>DRAG</b>  look around<br>
@@ -168,9 +191,11 @@
             <b>W A S D</b>  walk / strafe &nbsp; <b>SHIFT</b> sprint<br>
             <b>WHEEL</b>  scale world<br>
             <b>I</b>  toggle image thumbnails &nbsp; <b>V</b>  toggle voxel cubes<br>
-            <b>R</b>  reset view
+            <b>R</b>  reset view<br>
+            <b>HOLD TO ASK</b>  speak a question, e.g. "where did I see a chair"
         </div>
     </div>
+    <div id="perf"></div>
     <canvas id="canvas"></canvas>
     <pre id="log"></pre>
     <script type="module" src="/static_mw/main.js"></script>

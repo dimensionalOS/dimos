@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -41,7 +42,7 @@ from typing import Annotated, Any, Literal
 import uuid
 
 import cv2
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import numpy as np
@@ -69,7 +70,13 @@ from dimos.teleop.memory_world.query import (
     MEMORY_ANALYSIS_BOOTSTRAP,
     RESULT_SENTINEL,
     HighlightPath,
+    HighlightPoint,
     MemoryQueryResult,
+)
+from dimos.teleop.memory_world.visual_search import (
+    SIGLIP2_MODEL_NAME,
+    VisualMemoryIndex,
+    cluster_places,
 )
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -154,6 +161,22 @@ class MemoryWorldConfig(ModuleConfig):
     listen_host: str = "0.0.0.0"
     background_mode: Literal["black", "passthrough"] = "black"
     memory_analysis_max_output_chars: int = PydanticField(default=64_000, gt=0)
+    # ---- spoken "where did I see X" search --------------------------------
+    # SigLIP 2 index over the image stream. Building it is the slow part and
+    # happens once per recording, in the background, into the recording itself.
+    siglip_model_name: str = SIGLIP2_MODEL_NAME
+    image_index_stream_name: str = "image_siglip2"
+    # Every Nth frame. The recording is ~15fps, so 3 keeps sub-metre coverage
+    # at a third of the embedding cost.
+    image_index_stride: int = PydanticField(default=3, ge=1)
+    build_image_index_on_start: bool = True
+    # Two hits closer together than this are one place, not two answers.
+    place_radius_m: float = PydanticField(default=2.5, gt=0.0)
+    max_places: int = PydanticField(default=6, ge=1)
+    # How many nearest neighbours the vector index returns before clustering.
+    search_top_k: int = PydanticField(default=200, ge=1)
+    # faster-whisper model size for the spoken query.
+    whisper_model: str = "base.en"
 
 
 class MemoryWorldModule(Module):
@@ -177,6 +200,10 @@ class MemoryWorldModule(Module):
         self._cached_odom: tuple[dict[str, Any], bytes] | None = None
         self._cached_top_down: tuple[dict[str, Any], bytes] | None = None
         self._viewer_position: tuple[float, float, float] | None = None
+        self._visual_index: VisualMemoryIndex | None = None
+        self._index_lock = threading.Lock()
+        self._index_progress = "not started"
+        self._whisper: Any = None
         self._active_query_result: dict[str, Any] | None = None
         self._query_revision = 0
         self._web_server: RobotWebInterface | None = None
@@ -219,6 +246,28 @@ class MemoryWorldModule(Module):
         @app.websocket(self.config.ws_route)  # type: ignore[misc]
         async def ws_world(ws: WebSocket) -> None:
             await self._handle_ws(ws)
+
+        @app.post(f"{self.config.client_route}/voice")  # type: ignore[misc]
+        async def memory_world_voice(audio: UploadFile) -> dict[str, Any]:
+            """Transcribe a spoken query and highlight the answer in VR.
+
+            The Quest browser exposes no Web Speech API, so the headset records
+            with MediaRecorder and posts the blob here instead.
+            """
+            raw = await audio.read()
+            if not raw:
+                raise HTTPException(status_code=400, detail="empty recording")
+            transcript = await asyncio.to_thread(self._transcribe, raw)
+            if not transcript:
+                return {"transcript": "", "answer": "Nothing was said"}
+            self._broadcast(encode_text("voice_transcript", text=transcript))
+            outcome = await asyncio.to_thread(self.find_in_memory, transcript)
+            return {
+                "transcript": transcript,
+                "success": outcome.success,
+                "answer": outcome.message,
+                "metadata": outcome.metadata,
+            }
 
     # ---- websocket handling ------------------------------------------------
 
@@ -666,16 +715,7 @@ class MemoryWorldModule(Module):
         except Exception as exc:
             return SkillResult.fail("EXECUTION_FAILED", f"Invalid memory result: {exc}")
 
-        with self._clients_lock:
-            query_id = uuid.uuid4().hex
-            self._query_revision += 1
-            payload = result.model_dump(mode="json")
-            payload.update(query_id=query_id, revision=self._query_revision)
-            self._active_query_result = payload
-            clients = tuple(self._world_clients)
-        message = encode_text("query_result", **payload)
-        for client in clients:
-            client.send_threadsafe(message)
+        query_id = self._publish_query_result(result)
 
         return SkillResult(
             success=True,
@@ -689,6 +729,164 @@ class MemoryWorldModule(Module):
                 "route": result.route is not None,
             },
         )
+
+    def _broadcast(self, message: bytes | str) -> None:
+        with self._clients_lock:
+            clients = tuple(self._world_clients)
+        for client in clients:
+            client.send_threadsafe(message)
+
+    def _publish_query_result(self, result: MemoryQueryResult) -> str:
+        """Send a result to every connected viewer and remember it for reconnects."""
+        with self._clients_lock:
+            query_id = uuid.uuid4().hex
+            self._query_revision += 1
+            payload = result.model_dump(mode="json")
+            payload.update(query_id=query_id, revision=self._query_revision)
+            self._active_query_result = payload
+        self._broadcast(encode_text("query_result", **payload))
+        return query_id
+
+    # ---- spoken visual search ---------------------------------------------
+
+    def _ensure_visual_index(self) -> VisualMemoryIndex:
+        if self._visual_index is None:
+            self._visual_index = VisualMemoryIndex(
+                self._ensure_store(),
+                image_stream_name=self.config.image_stream_name,
+                index_stream_name=self.config.image_index_stream_name,
+                model_name=self.config.siglip_model_name,
+            )
+        return self._visual_index
+
+    def _build_visual_index(self) -> None:
+        """Embed the recording's frames. Slow and one-shot; runs off the request path."""
+        with self._index_lock:
+            index = self._ensure_visual_index()
+            existing = index.count()
+            self._index_progress = f"building (had {existing} frames)"
+            try:
+                added = index.build(stride=self.config.image_index_stride)
+            except Exception as error:
+                self._index_progress = f"failed: {error}"
+                logger.exception("visual index build failed")
+                return
+            self._index_progress = f"ready ({index.count()} frames)"
+            logger.info("visual index ready: %d frames (+%d new)", index.count(), added)
+        # Warm both model loads here, off the request path: cold they add ~18s
+        # to whichever query comes first, which is the one being demoed.
+        index.model.embed_text("warmup")
+        _ = self.whisper
+        logger.info("voice query path warm")
+
+    @skill
+    def find_in_memory(self, query: str) -> SkillResult:
+        """Find the distinct places something was seen and highlight them in VR.
+
+        Answers questions like "where did I see a car" by comparing the phrase
+        against precomputed SigLIP 2 embeddings of the recording's camera
+        frames, then reducing the matches to one marker per distinct location.
+
+        Args:
+            query: What to look for, e.g. "a car" or "a whiteboard".
+        """
+        started = time.monotonic()
+        phrase = query.strip()
+        if not phrase:
+            return SkillResult.fail("INVALID_QUERY", "The query text is empty")
+
+        index = self._ensure_visual_index()
+        if index.count() == 0:
+            return SkillResult.fail(
+                "INDEX_NOT_READY",
+                f"The SigLIP index for {self.config.store_path} holds no frames "
+                f"({self._index_progress}). Build it with "
+                f"`python -m dimos.teleop.memory_world.visual_search {self.config.store_path}`.",
+            )
+
+        candidates = index.search(phrase, k=self.config.search_top_k)
+        places = cluster_places(
+            candidates,
+            radius=self.config.place_radius_m,
+            max_places=self.config.max_places,
+        )
+        if not places:
+            return SkillResult.fail("NOT_FOUND", f"Nothing in the recording matches {phrase!r}")
+
+        result = MemoryQueryResult(
+            answer=f"Found {phrase} in {len(places)} place(s), best match {places[0].similarity:+.3f}",
+            focus_point=places[0].position,
+            points=[
+                HighlightPoint(
+                    position=place.position,
+                    label=f"{phrase} ({place.similarity:+.3f})",
+                )
+                for place in places
+            ],
+            observation_ids=self._markers_near([place.position for place in places]),
+        )
+        self._add_route_to_result(result)
+        query_id = self._publish_query_result(result)
+
+        return SkillResult(
+            success=True,
+            message=result.answer,
+            duration_ms=(time.monotonic() - started) * 1000,
+            metadata={
+                "query_id": query_id,
+                "query": phrase,
+                "places": [
+                    {"position": place.position, "similarity": place.similarity} for place in places
+                ],
+                "candidates": len(candidates),
+            },
+        )
+
+    def _markers_near(self, positions: list[tuple[float, float, float]]) -> list[int]:
+        """Ids of the capture-pose markers closest to each place.
+
+        The viewer only holds thumbnails for the ``n_image_markers`` poses it was
+        sent, and a matching frame is usually not one of them. Highlighting the
+        nearest marker instead puts a visible photo at each answer location.
+        """
+        if self._cached_image_poses is None:
+            return []
+        header, payload = self._cached_image_poses
+        n = int(header.get("n", 0))
+        ids = header.get("ids") or []
+        if n == 0 or len(ids) < n:
+            return []
+        marker_xyz = np.frombuffer(payload, dtype=np.float32, count=n * 3).reshape(n, 3)
+        nearest = {
+            int(ids[int(np.argmin(np.linalg.norm(marker_xyz - np.asarray(p, np.float32), axis=1)))])
+            for p in positions
+        }
+        return sorted(nearest)
+
+    @property
+    def whisper(self) -> Any:
+        if self._whisper is None:
+            from faster_whisper import WhisperModel
+
+            self._whisper = WhisperModel(
+                self.config.whisper_model, device="auto", compute_type="int8"
+            )
+            logger.info("loaded faster-whisper %s", self.config.whisper_model)
+        return self._whisper
+
+    def _transcribe(self, audio: bytes) -> str:
+        """Transcribe a browser audio recording with faster-whisper.
+
+        Decoding goes through faster-whisper's own resampler rather than a
+        temp-file handoff, so whatever container MediaRecorder chose (webm/opus
+        on Chromium and the Quest browser, mp4/aac on Safari) is handled the
+        same way.
+        """
+        from faster_whisper import decode_audio
+
+        samples = decode_audio(io.BytesIO(audio), sampling_rate=16_000)
+        segments, _ = self.whisper.transcribe(samples, language="en")
+        return " ".join(segment.text for segment in segments).strip()
 
     def _cap_analysis_output(self, output: str) -> str:
         limit = self.config.memory_analysis_max_output_chars
@@ -787,6 +985,12 @@ class MemoryWorldModule(Module):
             self.config.listen_host,
             self.config.server_port,
         )
+        if self.config.build_image_index_on_start:
+            threading.Thread(
+                target=self._build_visual_index,
+                daemon=True,
+                name="MemoryWorldVisualIndex",
+            ).start()
 
     @rpc
     def stop(self) -> None:
@@ -797,6 +1001,9 @@ class MemoryWorldModule(Module):
                 self._web_server_thread.join(timeout=3)
                 self._web_server_thread = None
         finally:
+            if self._visual_index is not None:
+                self._visual_index.stop()
+                self._visual_index = None
             store = self._store
             self._store = None
             if store is not None:
