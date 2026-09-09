@@ -206,7 +206,9 @@ TEST_CASE("enforce_topics_match_ports passes when every port is wired") {
 
 TEST_CASE("enforce_topics_match_ports names every port the coordinator never wired") {
     Notifier notifier;
-    Builder builder({}, &notifier);
+    // The unclaimed topic is named too, matching rust, even though on its own
+    // it is not what makes this throw.
+    Builder builder({{"tf", "/tf"}}, &notifier);
     builder.input<Bytes>("data", identity_decode, [](Bytes) {});
     builder.output<Bytes>("out", identity_encode);
     try {
@@ -214,7 +216,8 @@ TEST_CASE("enforce_topics_match_ports names every port the coordinator never wir
         FAIL("expected an unwired port to throw");
     } catch (const std::runtime_error& e) {
         CHECK(std::string(e.what()) ==
-              "topics do not match module ports: missing [\"data\", \"out\"]");
+              "topics do not match module ports: missing [\"data\", \"out\"], "
+              "unexpected [\"tf\"]");
     }
 }
 

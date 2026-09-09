@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -306,10 +307,19 @@ public:
                 missing.push_back(port);
             }
         }
-        if (!missing.empty()) {
-            throw std::runtime_error("topics do not match module ports: missing " +
-                                     quoted_list(missing));
+        if (missing.empty()) {
+            return;
         }
+        std::vector<std::string> unexpected;
+        for (const auto& topic : topics_) {
+            if (requested_.find(topic.first) == requested_.end()) {
+                unexpected.push_back(topic.first);
+            }
+        }
+        std::sort(unexpected.begin(), unexpected.end());
+        throw std::runtime_error("topics do not match module ports: missing " +
+                                 quoted_list(missing) + ", unexpected " +
+                                 quoted_list(unexpected));
     }
 
     const std::vector<std::pair<std::string, Dispatch>>& routes() const { return routes_; }
