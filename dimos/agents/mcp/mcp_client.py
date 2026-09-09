@@ -430,7 +430,8 @@ class McpClient(Module):
             for historical_message in self._history:
                 if isinstance(historical_message, AIMessage):
                     for call in historical_message.tool_calls:
-                        pending_calls[call["id"]] = call["name"]
+                        if call["id"] is not None:
+                            pending_calls[call["id"]] = call["name"]
                 elif isinstance(historical_message, ToolMessage):
                     pending_calls.pop(historical_message.tool_call_id, None)
             for call_id, name in pending_calls.items():
