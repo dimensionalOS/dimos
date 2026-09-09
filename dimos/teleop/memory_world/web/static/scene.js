@@ -65,6 +65,12 @@ const IMAGE_QUAD_BUDGET = 24;
 const IMAGE_LOD_INTERVAL_S = 0.2;     // how often the visible set is recomputed
 // Rolling window for the frame-time readout, ~4s at 60fps.
 const PERF_WINDOW = 240;
+// Voxels within a highlighted point's radius are repainted in these. The map
+// itself stays inside a navy-to-cyan band, so warm colours read as "answer".
+const VOXEL_HIGHLIGHT_COLOR = 0xffb347;
+const VOXEL_HIGHLIGHT_FOCUS_COLOR = 0xff5c3a;
+// How far in front of the viewer a focused answer is brought.
+const FOCUS_DISTANCE_M = 4.0;
 
 export class WorldScene {
     constructor(diag, backgroundMode = 'black') {
@@ -133,6 +139,8 @@ export class WorldScene {
         // replaced atomically when a new answer arrives.
         this._highlightGroup = new THREE.Group();
         this._frameRotate.add(this._highlightGroup);
+        this._highlightedVoxels = [];                 // instance indices repainted by the last result
+        this._lastResultPoints = [];                  // so a rebuilt cloud gets repainted too
 
         // Top-down map: shared texture, used twice (ground projection + HUD).
         this._topDownTex = null;
@@ -363,6 +371,7 @@ export class WorldScene {
         }
         if (!isDown) return;
         if (event.code === 'KeyR') this.resetView();
+        if (event.code === 'KeyJ' && this._lastResultPoints.length) this.focusOn(this._lastResultPoints[0].position);
         else if (event.code === 'KeyI') this.toggleImages();
         else if (event.code === 'KeyV') this.toggleCloud();
     }
@@ -706,6 +715,61 @@ export class WorldScene {
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         this._pointsObj = mesh;
         this._frameRotate.add(this._pointsObj);
+        this._highlightedVoxels = [];
+        this._highlightVoxels(this._lastResultPoints);
+    }
+
+    /** Repaint the voxels around each point that carries a radius; the first
+     *  point is the answer and gets the hotter colour. Points without a radius
+     *  are capture poses, and painting the floor under the robot would mislead. */
+    _highlightVoxels(points) {
+        const d = this._cloudData;
+        const mesh = this._pointsObj;
+        if (!d || !mesh) return;
+        const original = new THREE.Color();
+        for (const index of this._highlightedVoxels) {
+            if (d.colors) {
+                original.setRGB(d.colors[index * 3], d.colors[index * 3 + 1], d.colors[index * 3 + 2]);
+            } else {
+                original.setRGB(1, 1, 1);
+            }
+            mesh.setColorAt(index, original);
+        }
+        this._highlightedVoxels = [];
+        points.forEach((point, order) => {
+            if (!(point.radius > 0)) return;
+            const [px, py, pz] = point.position;
+            const r2 = point.radius * point.radius;
+            const paint = new THREE.Color(order === 0 ? VOXEL_HIGHLIGHT_FOCUS_COLOR : VOXEL_HIGHLIGHT_COLOR);
+            for (let i = 0; i < d.n; i++) {
+                const dx = d.positions[i * 3] - px;
+                const dy = d.positions[i * 3 + 1] - py;
+                const dz = d.positions[i * 3 + 2] - pz;
+                if (dx * dx + dy * dy + dz * dz <= r2) {
+                    mesh.setColorAt(i, paint);
+                    this._highlightedVoxels.push(i);
+                }
+            }
+        });
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        this.diag('voxels_highlighted', { n: this._highlightedVoxels.length, points: points.length });
+    }
+
+    /** Bring a robot-frame point to a few metres in front of the viewer. On the
+     *  desktop the world is also lifted so the point sits at eye level; in VR
+     *  the floor stays where the floor is. */
+    focusOn(position) {
+        const [x, y, z] = position;
+        // frameRotate maps robot (x, y, z) to three (x, z, -y); worldGroup then scales and moves it.
+        const local = new THREE.Vector3(x, z, -y).multiplyScalar(this._worldGroup.scale.x);
+        const head = this.getCameraPositionWorld();
+        const fwd = this.getCameraForwardXZ();
+        this._worldGroup.position.x = head.x + fwd[0] * FOCUS_DISTANCE_M - local.x;
+        this._worldGroup.position.z = head.z + fwd[1] * FOCUS_DISTANCE_M - local.z;
+        if (!this.three.xr.isPresenting) {
+            this._worldGroup.position.y = head.y - 0.4 - local.y;
+        }
+        this.diag('focused', { x, y, z });
     }
 
     toggleCloud() {
@@ -917,6 +981,8 @@ export class WorldScene {
         if (result.route) {
             this._addHighlightTube(result.route, 0.065, result.route.color || '#64ff8f');
         }
+        this._lastResultPoints = result.points || [];
+        this._highlightVoxels(this._lastResultPoints);
         for (const point of result.points || []) {
             const marker = new THREE.Mesh(
                 new THREE.SphereGeometry(0.13, 16, 12),

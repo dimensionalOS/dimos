@@ -48,6 +48,9 @@ class HighlightPoint(BaseModel):
     position: Point3
     label: str = Field(default="", max_length=120)
     color: Color = "#ff4d6d"
+    # Metres around the point whose voxels the viewer repaints. Only set when
+    # the point is an object, not a capture pose.
+    radius: float | None = Field(default=None, gt=0.0, le=5.0)
 
 
 class MemoryQueryResult(BaseModel):

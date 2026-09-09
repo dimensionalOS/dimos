@@ -447,6 +447,8 @@ window.app = {
     perf: () => (scene ? scene.getPerfStats() : null),
     resetPerf: () => scene && scene.resetPerf(),
     benchmark: (frames) => (scene ? scene.benchmarkRender(frames) : null),
+    // Bring the i-th answer of the last result in front of the viewer (also key J).
+    jumpTo: (index = 0) => scene && scene.focusOn(scene._lastResultPoints[index].position),
 };
 
 window.addEventListener('load', async () => {
