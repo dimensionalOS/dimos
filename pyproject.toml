@@ -106,6 +106,8 @@ dependencies = [
     "imagecodecs>=2024.6.1", # JPEG-XL for CompressedImage
     "jsonlines>=4,<5",
     # Core
+    # The top-level CLI imports CAN discovery even for navigation commands.
+    "can-motor-control>=0.0.8; sys_platform == 'linux' or sys_platform == 'darwin'",
     "numpy>=1.26.4",
     "scipy>=1.15.1",
     "pin>=3.3.0", # Pinocchio IK library
@@ -132,6 +134,8 @@ dependencies = [
     "opencv-contrib-python>=4.8,<5",
     "open3d-unofficial-arm>=0.19.0.post9; platform_system == 'Linux' and platform_machine == 'aarch64'",
     "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
+    # Ensure Open3D's declared widget dependency is present in profile installs.
+    "ipywidgets>=8.0.4; platform_system != 'Linux' or platform_machine != 'aarch64'",
     # CLI
     "pydantic-settings>=2.11.0,<3",
     "textual==3.7.1",
@@ -288,8 +292,6 @@ manipulation = [
     "piper-sdk",
     "xarm-python-sdk>=1.17.0",
     "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
-
-    "can-motor-control>=0.0.8; sys_platform == 'linux' or sys_platform == 'darwin'",
 
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
@@ -756,6 +758,7 @@ ignore = [
     "*/package-lock.json",
     "Cargo.lock",
     "*/Cargo.lock",
+    "*/pixi.lock",
     "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
     "dimos/manipulation/test_roboplan.py",

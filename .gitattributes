@@ -5,6 +5,7 @@
 *.py text eol=lf
 # Keep dependency lockfiles tracked without including their generated contents in diffs.
 Cargo.lock -diff linguist-generated
+pixi.lock -diff linguist-generated
 uv.lock -diff linguist-generated
 deno.lock -diff linguist-generated
 flake.lock -diff linguist-generated
