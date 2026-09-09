@@ -233,6 +233,10 @@ class MemoryWorldModule(Module):
         self._viewer_position: tuple[float, float, float] | None = None
         self._visual_index: VisualMemoryIndex | None = None
         self._index_lock = threading.Lock()
+        # The world caches are built lazily by whichever client connects first;
+        # without this, two clients arriving together each voxelise the whole
+        # recording.
+        self._world_cache_lock = threading.Lock()
         self._index_progress = "not started"
         self._whisper: Any = None
         self._camera_from_body: np.ndarray | None = None
@@ -357,17 +361,24 @@ class MemoryWorldModule(Module):
             logger.info("opened memory store at %s", self.config.store_path)
         return self._store
 
-    def _send_initial_payload(self, conn: _ClientConn) -> None:
-        try:
+    def _ensure_world_cache(self) -> None:
+        """Build the cloud, top-down map, markers and trail once, whoever asks first."""
+        with self._world_cache_lock:
             if self._cached_cloud is None:
                 self._cached_cloud = self._build_cloud()
+            if self._cached_top_down is None:
+                self._cached_top_down = self._build_top_down_map(self._cached_cloud)
             if self._cached_image_poses is None:
                 self._cached_image_poses, self._cached_thumbnails = self._build_image_poses()
             if self._cached_odom is None:
                 self._cached_odom = self._build_odom_trail()
-            if self._cached_top_down is None:
-                self._cached_top_down = self._build_top_down_map()
 
+    def _send_initial_payload(self, conn: _ClientConn) -> None:
+        try:
+            self._ensure_world_cache()
+            assert self._cached_cloud is not None  # built above; narrows the type
+            assert self._cached_image_poses is not None
+            assert self._cached_odom is not None
             cloud_header, cloud_payload = self._cached_cloud
             conn.send_threadsafe(encode_text("world_summary", **cloud_header))
             conn.send_threadsafe(encode_binary(MSG_POINT_CLOUD, cloud_header, cloud_payload))
@@ -593,16 +604,15 @@ class MemoryWorldModule(Module):
             logger.exception("failed to build image poses")
             return ({"n": 0, "timestamps": [], "ids": []}, b""), []
 
-    def _build_top_down_map(self) -> tuple[dict[str, Any], bytes] | None:
+    def _build_top_down_map(
+        self, cloud: tuple[dict[str, Any], bytes]
+    ) -> tuple[dict[str, Any], bytes] | None:
         """Render a top-down density map from the same point cloud shown in VR.
 
         Used for two things on the client: a GTA-style HUD minimap and a
         ground-pasted texture (so the user sees walls "drawn" on the floor).
         """
-        if self._cached_cloud is None:
-            logger.info("no point cloud available; skipping top-down render")
-            return None
-        cloud_header, cloud_payload = self._cached_cloud
+        cloud_header, cloud_payload = cloud
         n = int(cloud_header.get("n", 0))
         xyz = np.frombuffer(cloud_payload, dtype=np.float32, count=n * 3).reshape(n, 3)
         if xyz is None or xyz.size == 0:

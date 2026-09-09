@@ -96,11 +96,7 @@ def test_lidar_cloud_failure_is_reported(
 def test_top_down_map_uses_the_rendered_cloud(memory_world: MemoryWorldModule) -> None:
     positions = np.asarray([[10.0, 20.0, 0.5], [14.0, 22.0, 0.5]], dtype=np.float32)
     colors = np.zeros((2, 3), dtype=np.uint8)
-    memory_world._cached_cloud = (
-        {"n": 2},
-        positions.tobytes() + colors.tobytes(),
-    )
-    built = memory_world._build_top_down_map()
+    built = memory_world._build_top_down_map(({"n": 2}, positions.tobytes() + colors.tobytes()))
 
     assert built is not None
     header, _payload = built
@@ -260,3 +256,32 @@ def test_height_colours_stay_in_the_blue_band(memory_world: MemoryWorldModule) -
     assert (np.diff(colours.sum(axis=1)) >= 0).all()  # brighter going up
     # The ramp follows the cloud, so the darkest and brightest are both used.
     assert colours[0].sum() < 200 and colours[-1].sum() > 600
+
+
+def test_concurrent_clients_build_the_world_once(
+    memory_world: MemoryWorldModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two headsets connecting together must not each voxelise the recording."""
+    import threading
+    import time
+
+    builds = []
+
+    def slow_cloud() -> tuple[dict[str, object], bytes]:
+        builds.append(threading.get_ident())
+        time.sleep(0.05)
+        positions = np.asarray([[0.0, 0.0, 0.0]], dtype=np.float32)
+        return {"n": 1}, positions.tobytes() + np.zeros((1, 3), dtype=np.uint8).tobytes()
+
+    monkeypatch.setattr(memory_world, "_build_cloud", slow_cloud)
+    monkeypatch.setattr(memory_world, "_build_image_poses", lambda: (({"n": 0}, b""), []))
+    monkeypatch.setattr(memory_world, "_build_odom_trail", lambda: ({"n": 0}, b""))
+
+    threads = [threading.Thread(target=memory_world._ensure_world_cache) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(builds) == 1
+    assert memory_world._cached_top_down is not None
