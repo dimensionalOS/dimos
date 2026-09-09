@@ -1,9 +1,12 @@
 # OpenYAM simulation validation, 2026-09-08
 
 Current source is in `/home/mustafa/dimos-wt/hub`, branch `hackmit/t7-resume`,
-based on fd94f07ec. The T7 implementation commits are b1d17eac6 and 00351206e.
-Nothing has been pushed. The 100-episode dataset is complete; the full ACT
-training run is in progress. Learned physical success has not yet been measured.
+based on fd94f07ec. The T7 implementation commits are b1d17eac6, 00351206e,
+and 97ded8b38.
+Nothing has been pushed. The 100-episode dataset is complete; the full 30,000-step ACT
+training run has completed successfully. All three saved checkpoints scored
+0/10 physical successes. Trained-policy controls and classical recovery passed;
+ACT remains experimental.
 
 The artifact directory is `/home/mustafa/dimos/recordings/openyam-completion`.
 Paths in the evidence tables are relative to that directory. `RESUME.md` and
@@ -26,6 +29,8 @@ commands. The source recording and its manifest remain at their original paths.
 | Camera-enabled local MCP acceptance | 5/5 bimanual trials, both bottles wholly contained, both arms home, no failed skills | `t7-camera-mcp.jsonl`, `t7-camera-mcp.messages.jsonl` |
 | Quality/generator tests | 49 passed; targeted mypy passed three changed production files | T7 implementation checks |
 | Profile, workflow, and CLI tests | 24 passed | `t7-profile-cli-tests.log` |
+| Trained policy MCP controls and recovery | Three accepted chunks; stop roundtrip 7.22 ms, inactive after one second; reset and classical pick/place/home/reset succeeded | `t7-trained-policy-controls.jsonl`, `.log`, `t7-trained-policy-controls-summary.json` |
+| Camera viewer | All three views visibly rendered in headless Chromium with WebGL, no browser errors | `t7-viewer-webgl.png`, `.json`; initial WebGPU failure in `t7-viewer.png`, `.json` |
 
 The source database contains 100 saved episodes and one previously interrupted
 and discarded episode. No old recording rows were changed during resume.
@@ -81,13 +86,16 @@ TorchCodec is unavailable in this environment.
 | Global step | Logged mean loss | Checkpoint / physical evaluation |
 | --- | --- | --- |
 | 5,000 | 0.054 | No checkpoint scheduled |
-| 10,000 | 0.040 | `act-full/checkpoints/010000`; evaluation pending |
-| 20,000 | Pending | Training in progress |
-| 30,000 | Pending | Training in progress |
+| 10,000 | 0.040 | `act-full/checkpoints/010000`; 0/10 physical successes |
+| 20,000 | 0.028 | `act-full/checkpoints/020000`; 0/10 physical successes |
+| 30,000 | 0.024 | `act-full/checkpoints/030000`; 0/10 physical successes |
 
 LeRobot rounds console step labels. `diagnostics/demo_training_progress.py`
 uses the configured 500-step logging interval and explicit resume markers to
 write exact step numbers to `t7-training-metrics.json`.
+
+Training finished with service exit status 0 and all 11 checkpoint files verified.
+`t7-training-loss.png` and `.svg` plot all 60 logging intervals.
 
 At the user's request, training was handed over at a verified complete 10k
 checkpoint to `openyam-act-t7.service`, owned by the Linux user service manager.
@@ -97,20 +105,61 @@ Closing VS Code does not stop this service; the laptop must stay awake and the
 user logged in. It does not automatically restart after reboot. Recovery uses
 the last complete checkpoint, repeating any unsaved steps. See local `RESUME.md`.
 
-### Pending physical evaluation and recovery
+### Physical evaluation and recovery
 
-Evaluate the final checkpoint in ten trials with seed 1000 and 1.5 cm horizontal
+Physical evaluation uses ten trials with seed 1000 and 1.5 cm horizontal
 spawn jitter. Success requires an actual lift of at least 5 cm, an open gripper,
 at least one second of continuous bin containment, and complete sampled bottle
 containment after stopping the policy and waiting another second. The evaluator
 now explicitly requires that dwell even for a deposit immediately before timeout.
 
-The threshold is 7/10. If the final checkpoint is below it, also evaluate the
-10k and 20k checkpoints on the same ten seeds and report all three; do not infer
-physical success from training loss or tune without examining the failures.
-Then verify `run_policy`, `policy_status`, and `stop_policy` through the composed
-agent stack, followed by reset and a successful classical pick/place recovery.
-These checks have not yet been completed with this trained policy.
+All checkpoints miss the 7/10 acceptance threshold:
+
+| Checkpoint | Lift at least 5 cm | Gripper open at final check | Stable bin deposit / success | Runtime errors |
+| --- | --- | --- | --- | --- |
+| 10k | 10/10 | 0/10 | 0/10 | 0 |
+| 20k | 10/10 | 10/10 | 0/10 | 0 |
+| 30k | 10/10 | 3/10 | 0/10 | 0 |
+
+Every trial produced a peak lift above 5 cm, but no trial achieved stable or
+final bin containment. Peak-lift ranges were 0.11834–0.26405 m at 10k,
+0.11926–0.31541 m at 20k, and 0.14743–0.30793 m at 30k. The summed trial wall
+times were 501.59, 505.84, and 505.95 seconds, respectively. Reports, logs, and
+summaries use `policy-eval-10000`, `policy-eval-20000`, and `policy-eval-30000`
+with `.jsonl`, `.log`, and `-summary.json` suffixes.
+
+Gripper readback in this diagnostic is normalized travel (0 closed, 1 open);
+dataset state/action grippers use meters. An open gripper alone does not prove
+a successful release into the bin. All 30 corrected trials had no policy
+runtime error. ACT is **experimental, not ready for the reliable stage segment**.
+Training loss does not establish physical success. No hyperparameters or model
+weights were tuned after the benchmark failures. Inference mode and image
+preprocessing were also checked in the installed LeRobot source; both match the
+adapter's intended use. This does not identify the learned failure's root cause.
+
+The final checkpoint passed the composed stack's local MCP controls check:
+`run_policy` started, `policy_status` reported three accepted chunks, and
+`stop_policy` returned inactive in 7.22 ms roundtrip, remaining inactive after a
+one-second wait. A subsequent reset, classical right-arm pick (0.09975 m lift),
+place, home, physical bin-containment check, and final reset all succeeded.
+The diagnostic made 16 local tool calls and exited 0. It used an explicit local
+model fixture with API credentials removed; it does not test live model judgment.
+
+The first evaluation exposed a deployment bug: MuJoCo measured up to 0.048046 m
+at a gripper's 0.0475 m soft limit. Predicted action targets were bounded, but the
+runtime prepended the unbounded measured state as trajectory point zero, which
+the controller correctly rejected. That diagnostic was stopped after five
+completed rows and is preserved separately as `policy-eval-100.jsonl` and `.log`;
+it is not the benchmark above. The command anchor now obeys the same backend
+action bounds as later command points, while the model receives unchanged
+measurements and the controller keeps its hard-limit and start-state guards.
+The corrected complete benchmark restarted all ten original seeds.
+
+The regression failed on the out-of-range anchor before the fix. All 15 focused
+runtime/skill tests now pass, both changed production files pass targeted mypy,
+and applicable pre-commit hooks pass. Evidence: `t7-start-boundary-red.log` and
+`t7-start-boundary-tests.log`. The evaluator also records final pose and gripper
+position to make physical failures inspectable without changing the score.
 
 ## Commands used
 
@@ -144,7 +193,7 @@ PYTHONPATH=/home/mustafa/dimos-wt/hub .venv/bin/python -m dimos.cli.dimos imitat
   --output /home/mustafa/dimos/recordings/openyam-completion/dataset-100
 ```
 
-The full training command (already running; do not launch it again):
+The completed training command (do not launch it again):
 
 ```bash
 PYTHONPATH=/home/mustafa/dimos-wt/hub .venv/bin/python -m dimos.cli.dimos imitation train \
@@ -201,8 +250,17 @@ files with `--follow-imports=silent`, excluding the isolated LeRobot environment
 no repo-wide test or type-check claim is made. Applicable pre-commit hooks passed;
 `lfs_check` was skipped for the downloaded scene reproducible by the pinned setup.
 
-`openyam-classical-right.mp4` is a three-camera recording of an actual classical
-right-arm take. The composed Rerun viewer and full stage flow need a visual dry
-run. Pim's replacement scene has not been supplied and would require fresh
-calibration and physical acceptance. See the
-[operating guide](/docs/demos/openyam-simulation.md) for setup and stage commands.
+The composed camera layout was visually verified in headless Chromium. Its
+WebGPU backend crashed while creating a mapped 32 MiB buffer; the error page and
+browser log are preserved. Adding `&renderer=webgl` to the same viewer URL
+rendered the table, left-wrist, and right-wrist views successfully, with no
+browser errors. `t7-viewer-webgl.png` is the verified screenshot. This is a
+headless browser check, not a native-viewer or full dress-rehearsal result.
+
+`openyam-classical-right.mp4` remains a three-camera recording of an actual
+classical right-arm take, not an ACT success video. Stage polish still needs a
+3D layout, a full rehearsal script and two dry runs. Pim's replacement scene has
+not been supplied and would require fresh calibration and physical acceptance.
+See the [operating guide](/docs/demos/openyam-simulation.md) for setup and stage
+commands. The updated handoff and local `RESUME.md` preserve the outstanding
+live-model approval and next stage work; no training process remains active.

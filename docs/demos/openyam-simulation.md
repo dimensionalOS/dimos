@@ -50,6 +50,10 @@ The MCP server uses port 9990 by default. If changing `--mcp-port`, also set
 `--mcpclient.mcp-server-url=http://localhost:<port>/mcp` so the client uses the
 same endpoint.
 
+The three-camera layout was verified in a browser. If the WebGPU viewer crashes,
+append `&renderer=webgl` to its URL; that fallback rendered all three views in
+the laptop's headless Chromium check. Native-viewer rehearsal is still pending.
+
 For a scripted physical acceptance run with no model service:
 
 ```bash
@@ -131,8 +135,10 @@ uv run --project dimos/imitation/policy/lerobot/python --frozen --with-editable 
   python -c 'import torch; print(torch.__version__, torch.cuda.is_available())'
 ```
 
-The [validation report](/docs/demos/openyam-validation.md) distinguishes diagnostic checkpoints
-from the full training and evaluation work that remains. To launch a checkpoint
+The [validation report](/docs/demos/openyam-validation.md) records the completed
+100-episode training run and physical benchmark. The 10k, 20k, and 30k
+checkpoints each scored 0/10; ACT remains experimental. Its start/stop controls
+and subsequent classical recovery passed. To launch a checkpoint
 without an agent:
 
 ```bash
