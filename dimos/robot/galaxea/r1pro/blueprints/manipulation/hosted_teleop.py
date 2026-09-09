@@ -15,8 +15,20 @@
 """R1 Pro hosted teleoperation over the dimensional-teleop broker.
 
 One operator session covers both arms (controller poses through the shared
-teleoperation IK task), the holonomic chassis (right stick), and the torso
-height (left stick Y).
+teleoperation IK task), the holonomic chassis and the torso height.
+
+Controls (see ``MobileArmCommandModule``):
+    grips        hold both to engage the arms; also the deadman for driving
+    triggers     grippers, per hand
+    left stick   translate the base
+    right stick  yaw the base; click it in, then Y jogs the torso up/down
+    A (hold)     walk both arms back to the tray pose
+    B (hold)     double the base speed
+    Y            toggle the operator's view between head and wrist cameras
+
+Before starting, stop Galaxea's wrist RealSense pane (``hdas:0.3``,
+``start_realsense_camera_r1pro.sh``): this blueprint reads the wrist cameras
+itself and the two cannot share the devices.
 
 ``r1pro-hosted-teleop-quest`` and ``r1pro-hosted-teleop-pico`` are the same
 stack: both headsets deliver WebXR poses and Joy over the same datachannel, so
@@ -43,6 +55,7 @@ from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.stream import In
 from dimos.core.transport import CloudflareTransport, CloudflareVideoTransport
+from dimos.hardware.sensors.camera.v4l2_camera import V4L2CameraModule
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
@@ -70,6 +83,7 @@ from dimos.robot.galaxea.r1pro.torso import (
 )
 from dimos.robot.manipulators.common.blueprints import teleop_ik_task
 from dimos.teleop.hosted.camera_mux import CameraMuxModule
+from dimos.teleop.hosted.camera_pair import CameraPairSelectModule
 from dimos.teleop.hosted.hosted_stats import HostedStatsModule
 from dimos.teleop.hosted.image_decode import ImageDecodeModule
 from dimos.teleop.hosted.mjpeg_preview import MjpegPreviewModule
@@ -99,12 +113,34 @@ R1PRO_ARM_ONLY_JOINTS = tuple(
 
 # Distinct classes only because blueprints can't yet run two instances of one
 # module (same reason the hosted xArm blueprints declare Front/WristCamera).
-class HeadCameraDecode(ImageDecodeModule):
+class HeadLeftDecode(ImageDecodeModule):
     pass
 
 
-class WristCameraDecode(ImageDecodeModule):
+class HeadRightDecode(ImageDecodeModule):
     pass
+
+
+class WristLeftCamera(V4L2CameraModule):
+    pass
+
+
+class WristRightCamera(V4L2CameraModule):
+    pass
+
+
+# The wrist D405s are read straight off V4L2 rather than through Galaxea's
+# RealSense nodes: with both cameras streaming depth and colour those nodes
+# stall on this host (four isochronous streams on one xHCI), while the bare
+# colour nodes run at sensor rate side by side. Each D405 exposes six video
+# nodes; index4 is its colour stream. by-path pins the node to the USB port
+# (port 1 right, port 2 left) so a re-plug cannot swap the wrists. The
+# vendor wrist pane must not hold the cameras while this blueprint runs.
+_WRIST_V4L2 = (
+    "/dev/v4l/by-path/platform-14160000.pcie-pci-0004:01:00.0-usb-0:{port}:1.0-video-index4"
+)
+WRIST_LEFT_V4L2 = _WRIST_V4L2.format(port=2)
+WRIST_RIGHT_V4L2 = _WRIST_V4L2.format(port=1)
 
 
 def r1pro_teleop_tasks(*, torso: bool = True) -> list[TaskConfig]:
@@ -154,13 +190,15 @@ def r1pro_teleop_tasks(*, torso: bool = True) -> list[TaskConfig]:
 def r1pro_hosted_teleop() -> Blueprint:
     """Broker-facing modules plus the real R1 Pro control stack.
 
-    Head-left and right-wrist colour are decoded to raw frames for the mux;
-    the R1 Pro driver only publishes them compressed.
+    Head colour is decoded from the driver's compressed topics for the mux;
+    the wrist cameras are read off V4L2 directly (see ``WRIST_LEFT_V4L2``).
     """
     return (
         autoconnect(
             # Hold A to walk both arms back to the tray pose; the same pose
             # the ready-pose module boots into and the posture task aims at.
+            # Hold B to drive the base at double speed: the right thumb is
+            # free while the left one is on the translation stick.
             MobileArmCommandModule.blueprint(
                 recover_pose=dict(READY_POSE),
                 torso_fold_drops=list(TORSO_FOLD_DROPS),
@@ -184,8 +222,32 @@ def r1pro_hosted_teleop() -> Blueprint:
                 video_max_width=960,
                 video_max_fps=15.0,
             ),
-            HeadCameraDecode.blueprint(),
-            WristCameraDecode.blueprint(),
+            HeadLeftDecode.blueprint(),
+            HeadRightDecode.blueprint(),
+            # 640x360 at 15 fps: the mux emits 15 fps and shrinks each eye to
+            # 480 px wide, so anything more is captured, converted and thrown
+            # away. Everything here runs in one process, so that waste is
+            # taken from the control loop and the video encoder.
+            WristLeftCamera.blueprint(
+                device=WRIST_LEFT_V4L2,
+                width=640,
+                height=360,
+                fps=15.0,
+                frame_id="wrist_left_optical",
+            ),
+            WristRightCamera.blueprint(
+                device=WRIST_RIGHT_V4L2,
+                width=640,
+                height=360,
+                fps=15.0,
+                frame_id="wrist_right_optical",
+            ),
+            # Both eyes come from the same pair, or the operator gets one eye
+            # off the head and the other off a wrist. Y swaps head for wrists;
+            # B is the drive boost, so the toggle sits on the other hand.
+            CameraPairSelectModule.blueprint(
+                toggle_button="Y", pair_a_name="head", pair_b_name="wrist"
+            ),
             r1pro_control(
                 tasks=r1pro_teleop_tasks(),
                 coordinator_cls=R1ProTeleopCoordinator,
@@ -193,10 +255,16 @@ def r1pro_hosted_teleop() -> Blueprint:
         )
         .remappings(
             [
-                (HeadCameraDecode, "compressed_in", "head_left_color"),
-                (HeadCameraDecode, "image_out", "cam1"),
-                (WristCameraDecode, "compressed_in", "wrist_right_color"),
-                (WristCameraDecode, "image_out", "cam2"),
+                (HeadLeftDecode, "compressed_in", "head_left_color"),
+                (HeadLeftDecode, "image_out", "head_left_view"),
+                (HeadRightDecode, "compressed_in", "head_right_color"),
+                (HeadRightDecode, "image_out", "head_right_view"),
+                (WristLeftCamera, "image_out", "wrist_left_view"),
+                (WristRightCamera, "image_out", "wrist_right_view"),
+                (CameraPairSelectModule, "pair_a_left", "head_left_view"),
+                (CameraPairSelectModule, "pair_a_right", "head_right_view"),
+                (CameraPairSelectModule, "pair_b_left", "wrist_left_view"),
+                (CameraPairSelectModule, "pair_b_right", "wrist_right_view"),
                 (MjpegPreviewModule, "image_in", "mux_image"),
                 (MobileArmCommandModule, "left_controller_output", "left_cartesian_command"),
                 (MobileArmCommandModule, "right_controller_output", "right_cartesian_command"),
