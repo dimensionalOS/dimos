@@ -402,8 +402,10 @@ async function connect() {
     try {
         connectBtn.disabled = true;
         await setupWebSocket();
-        // Ask before VR starts: an immersive session cannot show the prompt.
-        await acquireMic();
+        // Ask for the mic now, before VR starts (an immersive session cannot
+        // show the prompt), but never make the world wait on the answer: an
+        // unanswered prompt would otherwise leave the canvas black forever.
+        void acquireMic();
         await startViewer();
         connectBtn.classList.add('hidden');
         disconnectBtn.classList.remove('hidden');
