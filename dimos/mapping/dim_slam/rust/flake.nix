@@ -7,10 +7,10 @@
     cu-vslam-rs.url = "github:jeff-hykin/cu_vslam_rs";
     cu-vslam-rs.inputs.nixpkgs.follows = "nixpkgs";
     cu-vslam-rs.inputs.flake-utils.follows = "flake-utils";
-    # Relative git+file: will be deprecated (nix#12281) but there's no
-    # viable alternative for reaching local path deps outside the flake dir currently
-    # presumably an alternative will be added before this is removed.
-    dimos-repo = { url = "git+file:../../../.."; flake = false; };
+    # Relative path: resolves against the flake, not the cwd (unlike git+file, nix#12281), and
+    # locks as-is. Only reachable when entered as git+file:<dimos>?dir=...; the devShell never
+    # touches it, so `nix develop path:<this dir>` works from any cwd.
+    dimos-repo = { url = "path:../../../.."; flake = false; };
     crate2nix.url = "github:nix-community/crate2nix";
     crate2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
