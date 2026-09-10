@@ -45,6 +45,21 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
+
+def _physics_steps_due(now: float, next_step: float, dt: float) -> tuple[int, float]:
+    """Keep fixed physics steps on wall time despite rendering delays.
+
+    Bound recovery after a long pause to 64 steps so closing the viewer or
+    stopping control cannot trigger seconds of queued simulation work.
+    """
+    if now < next_step:
+        return 0, next_step
+    count = int((now - next_step) / dt) + 1
+    if count > 64:
+        return 64, now + dt
+    return count, next_step + count * dt
+
+
 _MJOBJ_GEOM = int(mujoco.mjtObj.mjOBJ_GEOM)
 _MJOBJ_MESH = int(mujoco.mjtObj.mjOBJ_MESH)
 _MJGEOM_MESH = int(mujoco.mjtGeom.mjGEOM_MESH)
@@ -656,8 +671,10 @@ class MujocoEngine(SimulationEngine):
         cam_renderers = self._init_cameras()
         lidar_states = self._init_raycast_lidars()
 
-        def _step_once(sync_viewer: bool) -> None:
-            loop_start = time.time()
+        next_step = time.monotonic()
+        next_viewer_sync = 0.0
+
+        def _step_physics() -> None:
             reset_done_events: list[threading.Event] = []
             with self._lock:
                 if self._reset_requested:
@@ -675,34 +692,46 @@ class MujocoEngine(SimulationEngine):
             with self._lock:
                 self._apply_control()
                 mujoco.mj_step(self._model, self._data)
-                if sync_viewer:
-                    m_viewer.sync()
                 self._update_joint_state()
             if self._on_after_step is not None:
                 try:
                     self._on_after_step(self)
                 except Exception as exc:
                     logger.error("on_after_step failed", error=str(exc))
+
+        def _step_once(sync_viewer: bool) -> None:
+            nonlocal next_step, next_viewer_sync
+            steps, next_step = _physics_steps_due(time.monotonic(), next_step, dt)
+            for _ in range(steps):
+                if self._stop_event.is_set():
+                    return
+                _step_physics()
+            now = time.monotonic()
+            # Viewer updates are display work, not part of every 500 Hz motor
+            # tick. Camera/lidar publishers already enforce their own cadence.
+            if sync_viewer and now >= next_viewer_sync:
+                with self._lock:
+                    m_viewer.sync()
+                next_viewer_sync = now + 1.0 / 60.0
             with self._lock:
-                self._render_cameras(loop_start, cam_renderers)
-                self._raycast_lidars(loop_start, lidar_states)
+                stamp = time.time()
+                self._render_cameras(stamp, cam_renderers)
+                self._raycast_lidars(stamp, lidar_states)
+            self._stop_event.wait(max(0.0, next_step - time.monotonic()))
 
-            elapsed = time.time() - loop_start
-            sleep_time = dt - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-
-        if self._headless:
-            while not self._stop_event.is_set():
-                _step_once(sync_viewer=False)
-        else:
-            with viewer.launch_passive(
-                self._model, self._data, show_left_ui=False, show_right_ui=False
-            ) as m_viewer:
-                while m_viewer.is_running() and not self._stop_event.is_set():
-                    _step_once(sync_viewer=True)
-
-        self._close_cam_renderers(cam_renderers)
+        try:
+            if self._headless:
+                while not self._stop_event.is_set():
+                    _step_once(sync_viewer=False)
+            else:
+                with viewer.launch_passive(
+                    self._model, self._data, show_left_ui=False, show_right_ui=False
+                ) as m_viewer:
+                    next_step = time.monotonic()
+                    while m_viewer.is_running() and not self._stop_event.is_set():
+                        _step_once(sync_viewer=True)
+        finally:
+            self._close_cam_renderers(cam_renderers)
         logger.info("sim loop stopped", cls=self.__class__.__name__)
 
     @property

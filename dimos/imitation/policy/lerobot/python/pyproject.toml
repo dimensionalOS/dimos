@@ -64,6 +64,9 @@ follow_imports = "skip"
 [[tool.mypy.overrides]]
 module = [
     "lerobot.configs.policies",
+    "lerobot.configs.types",
+    "lerobot.policies.act.configuration_act",
+    "lerobot.policies.act.modeling_act",
     "lerobot.datasets",
     "lerobot.datasets.lerobot_dataset",
     "lerobot.policies.factory",

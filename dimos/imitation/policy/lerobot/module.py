@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenYAM binding for the isolated LeRobot backend."""
+"""Robot profile bindings for the isolated LeRobot backend."""
 
 from dimos.imitation.policy.module import PolicyRolloutConfig, declare_policy_module
+from dimos.robot.galaxea.r1pro.learning import R1PRO_SIM_ACT_IO
 from dimos.robot.manipulators.dual_openyam.learning import DUAL_OPENYAM_LEROBOT_IO
 from dimos.robot.manipulators.openyam.learning import OPENYAM_QUEST_IO
 
@@ -38,4 +39,13 @@ DualOpenYamLeRobotPolicy = declare_policy_module(
     DUAL_OPENYAM_LEROBOT_IO,
     LeRobotPolicyConfig,
     "dimos_lerobot.runtime:DualOpenYamLeRobotPolicyRuntime",
+)
+
+
+R1ProLeRobotPolicy = declare_policy_module(
+    "R1ProLeRobotPolicy",
+    __name__,
+    R1PRO_SIM_ACT_IO,
+    LeRobotPolicyConfig,
+    "dimos_lerobot.runtime:R1ProLeRobotPolicyRuntime",
 )

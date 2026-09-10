@@ -37,6 +37,7 @@ from dimos.imitation.policy.lerobot.module import (
     DualOpenYamLeRobotPolicy,
     LeRobotPolicyConfig,
     OpenYamLeRobotPolicy,
+    R1ProLeRobotPolicy,
 )
 from dimos.imitation.policy.runtime import declare_policy_runtime
 from dimos.imitation.profile import ImageSource, PolicyIOProfile
@@ -220,3 +221,8 @@ def _positive_int_attribute(instance: object, name: str) -> int:
     if value is None or value <= 0:
         raise ValueError(f"{name} must be a positive int")
     return value
+
+
+R1ProLeRobotPolicyRuntime = declare_policy_runtime(
+    "R1ProLeRobotPolicyRuntime", __name__, R1ProLeRobotPolicy, LeRobotBackend
+)
