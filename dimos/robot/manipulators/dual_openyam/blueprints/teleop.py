@@ -34,7 +34,7 @@ from dimos.robot.manipulators.dual_openyam.teleop_ik import (
 )
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
-DUAL_OPENYAM_QUEST_TASK_NAME = "teleop_dual_openyam"
+DUAL_OPENYAM_WEBXR_TASK_NAME = "teleop_dual_openyam"
 
 _dual_openyam_webxr_pink = PinkKinematicsConfig(
     dt=0.01,
@@ -50,7 +50,7 @@ _dual_openyam_webxr_model = dual_openyam_model_config()
 _dual_openyam_webxr_task = teleop_ik_task(
     _dual_openyam_webxr_hardware,
     robot_model=_dual_openyam_webxr_model,
-    name=DUAL_OPENYAM_QUEST_TASK_NAME,
+    name=DUAL_OPENYAM_WEBXR_TASK_NAME,
     joint_names=DUAL_OPENYAM_ARM_JOINTS,
     priority=10,
     solver_type=DualOpenYamPinkPoseTargetSolver,

@@ -29,7 +29,7 @@ from dimos.robot.manipulators.dual_openyam.blueprints.basic import (
     DualOpenYamCoordinator,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
-    DUAL_OPENYAM_QUEST_TASK_NAME,
+    DUAL_OPENYAM_WEBXR_TASK_NAME,
     teleop_webxr_dual_openyam,
 )
 from dimos.robot.manipulators.dual_openyam.config import (
@@ -88,7 +88,7 @@ def test_mock_webxr_coordinator_commands_both_arms_and_grippers(
 
     coordinator.start()
     try:
-        task = cast("TeleopIKTask", coordinator._tasks[DUAL_OPENYAM_QUEST_TASK_NAME])
+        task = cast("TeleopIKTask", coordinator._tasks[DUAL_OPENYAM_WEBXR_TASK_NAME])
         assert set(task.claim().joints) == set(DUAL_OPENYAM_ARM_JOINTS)
         buttons = Buttons()
         buttons.left_primary = True
@@ -99,11 +99,11 @@ def test_mock_webxr_coordinator_commands_both_arms_and_grippers(
         coordinator._dispatch("right_gripper_command", Float32(data=0.25))
         coordinator._dispatch(
             "left_cartesian_command",
-            PoseStamped(frame_id=DUAL_OPENYAM_QUEST_TASK_NAME, position=[1.0, 0.0, 0.0]),
+            PoseStamped(frame_id=DUAL_OPENYAM_WEBXR_TASK_NAME, position=[1.0, 0.0, 0.0]),
         )
         coordinator._dispatch(
             "right_cartesian_command",
-            PoseStamped(frame_id=DUAL_OPENYAM_QUEST_TASK_NAME, position=[-1.0, 0.0, 0.0]),
+            PoseStamped(frame_id=DUAL_OPENYAM_WEBXR_TASK_NAME, position=[-1.0, 0.0, 0.0]),
         )
         assert coordinator._tick_loop is not None
         coordinator._tick_loop._tick()
