@@ -16,31 +16,12 @@
 
 import os
 from pathlib import Path
-import shutil
-import subprocess
 import tarfile
 
 try:
     import tomllib
 except ImportError:
     import tomli as tomllib
-
-
-def ensure_web_dist(root: Path) -> None:
-    """Build the web assets for Git installs and source distributions."""
-    for project, artifact in (("sdk", "sdk.js"), ("cockpit", "index.html")):
-        source = root / "web" / project
-        if (source / "dist" / artifact).is_file():
-            continue
-        deno = shutil.which("deno")
-        if deno is None:
-            raise RuntimeError(
-                "Deno is required to build DimOS web assets from source. "
-                "Run dimup setup, then retry dependency installation."
-            )
-        subprocess.run([deno, "task", "--cwd", str(source), "build"], check=True)
-        if not (source / "dist" / artifact).is_file():
-            raise RuntimeError(f"Deno build did not produce {source / 'dist' / artifact}")
 
 
 def native_files(root: Path) -> list[Path]:

@@ -13,39 +13,47 @@
 # limitations under the License.
 
 from pathlib import Path
+import runpy
+import shutil
 import subprocess
+import sys
 
 import pytest
-
-from dimos_build import ensure_web_dist
-
-
-def test_bundled_assets_need_no_deno(tmp_path, monkeypatch):
-    for project, artifact in (("sdk", "sdk.js"), ("cockpit", "index.html")):
-        dist = tmp_path / "web" / project / "dist"
-        dist.mkdir(parents=True)
-        (dist / artifact).write_text("built")
-    monkeypatch.setattr("shutil.which", lambda name: None)
-    ensure_web_dist(tmp_path)
+from setuptools import Distribution
+from setuptools.command.build_py import build_py as setuptools_build_py
 
 
-def test_missing_deno_explains_machine_setup(tmp_path, monkeypatch):
-    monkeypatch.setattr("shutil.which", lambda name: None)
-    with pytest.raises(RuntimeError, match="dimup setup"):
-        ensure_web_dist(tmp_path)
+@pytest.mark.parametrize("bundled", [False, True])
+def test_python_build_copies_optional_assets_without_frontend_tools(tmp_path, monkeypatch, bundled):
+    repository = Path(__file__).resolve().parents[2]
+    shutil.copy(repository / "setup.py", tmp_path / "setup.py")
+    source = tmp_path / "web"
+    (source / "relay").mkdir(parents=True)
+    (source / "relay/main.ts").write_text("relay")
+    (source / "deno.json").write_text("{}")
+    if bundled:
+        for project, artifact in (("sdk", "sdk.js"), ("cockpit", "index.html")):
+            dist = source / project / "dist"
+            dist.mkdir(parents=True)
+            (dist / artifact).write_text("prebuilt")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+    monkeypatch.setattr("setuptools.setup", lambda **kwargs: None)
+    namespace = runpy.run_path(str(tmp_path / "setup.py"))
+    monkeypatch.setattr(setuptools_build_py, "run", lambda self: None)
+    monkeypatch.setitem(
+        namespace["build_py"].run.__globals__, "bundle_native_sources", lambda *args: None
+    )
 
+    def unexpected_command(*args, **kwargs):
+        pytest.fail("Python packaging must not invoke frontend tools")
 
-def test_source_build_produces_both_bundles(tmp_path, monkeypatch):
-    commands = []
-
-    def build(command, *, check):
-        commands.append(command)
-        project = Path(command[3])
-        dist = project / "dist"
-        dist.mkdir(parents=True)
-        (dist / ("sdk.js" if project.name == "sdk" else "index.html")).write_text("built")
-
-    monkeypatch.setattr("shutil.which", lambda name: "/bin/deno")
-    monkeypatch.setattr(subprocess, "run", build)
-    ensure_web_dist(tmp_path)
-    assert [Path(command[3]).name for command in commands] == ["sdk", "cockpit"]
+    monkeypatch.setattr(subprocess, "run", unexpected_command)
+    command = namespace["build_py"](Distribution())
+    command.build_lib = str(tmp_path / "build")
+    command.run()
+    packaged = tmp_path / "build/dimos/web/relay_bridge/_relay_dist"
+    assert (packaged / "relay/main.ts").read_text() == "relay"
+    assert (packaged / "cockpit/dist/index.html").exists() is bundled
+    assert (packaged / "sdk/dist/sdk.js").exists() is bundled
+    assert "run" not in namespace["sdist"].__dict__
