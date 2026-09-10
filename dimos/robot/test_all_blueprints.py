@@ -65,6 +65,7 @@ SELF_HOSTED_BLUEPRINTS = frozenset(
         "teleop-webxr-xarm6",
         "teleop-webxr-xarm7",
         "teleop-webxr-xarm7-video",
+        "unitree-g1-sonic-wbc",
         "xarm-perception",
         "xarm-perception-agent",
         "xarm-perception-sim",
