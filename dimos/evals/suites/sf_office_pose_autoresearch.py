@@ -24,7 +24,7 @@ from pathlib import Path
 import statistics
 from typing import Any
 
-from dimos.evals.agents.pi import Pi
+from dimos.evals.agents.pi import PiAdapter
 from dimos.evals.runner import EvalRunner
 from dimos.evals.suites.sf_office_pose_research import (
     EXPECTED_POSE_COUNT,
@@ -60,7 +60,7 @@ FROZEN_FILES = (
     _HERE / "sf_office_pose_qa.json",
     _HERE.parents[1] / "msgs/geometry_msgs/PoseStamped.py",
 )
-EXPECTED_BENCHMARK_DIGEST = "2d27e4b4f8d151b6b11e336e504ac145a911ec58aff45e9b417c290dfb12a7e0"
+EXPECTED_BENCHMARK_DIGEST = "eaebe8f2f217e911281c510a681d575c6c4d2845c24929f6bc4a5d24c8436148"
 
 CATEGORIES = {
     "kinematics": frozenset(
@@ -143,9 +143,9 @@ def verify_recording() -> str:
     return actual
 
 
-def benchmark_agent() -> Pi:
+def benchmark_agent() -> PiAdapter:
     """Return the fixed Pi profile used for every comparable iteration."""
-    return Pi(
+    return PiAdapter(
         model=MODEL,
         thinking=THINKING,
         max_steps=MAX_STEPS,

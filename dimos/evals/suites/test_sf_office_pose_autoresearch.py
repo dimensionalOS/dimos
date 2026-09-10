@@ -37,7 +37,7 @@ from dimos.evals.types import EvalResult
 
 
 def test_benchmark_profile_is_fixed() -> None:
-    agent = benchmark_agent()
+    agent = benchmark_agent().config
 
     assert (agent.model, agent.thinking, agent.max_steps) == (MODEL, THINKING, MAX_STEPS)
     assert agent.max_steps == 40
