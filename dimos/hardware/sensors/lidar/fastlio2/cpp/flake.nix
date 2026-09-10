@@ -2,10 +2,12 @@
   description = "FAST-LIO2 + Livox Mid-360 native module";
 
   inputs = {
+    zenoh.url = "github:jeff-hykin/zenoh_flake";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     livox-sdk.url = "path:../../livox/cpp";
     livox-sdk.inputs.nixpkgs.follows = "nixpkgs";
+    livox-sdk.inputs.zenoh.follows = "zenoh";
     livox-sdk.inputs.flake-utils.follows = "flake-utils";
     livox-sdk.inputs.lcm-extended.follows = "lcm-extended";
     dimos-lcm = {
@@ -30,7 +32,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, livox-sdk, dimos-lcm, pfr, fast-lio, lcm-extended, ... }:
+  outputs = { self, nixpkgs, zenoh, flake-utils, livox-sdk, dimos-lcm, pfr, fast-lio, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         # Overlay fixes for darwin-broken nixpkgs recipes in our transitive
@@ -66,10 +68,12 @@
           };
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [ darwinDepFixes (import ../../../../../../native/cpp/zenoh-overlay.nix) ];
+          overlays = [ darwinDepFixes ];
         };
         livox-sdk2 = livox-sdk.packages.${system}.livox-sdk2;
         lcm = lcm-extended.packages.${system}.lcm;
+        zenohc = zenoh.packages.${system}.zenoh-c;
+        zenohcpp = zenoh.packages.${system}.zenoh-cpp;
 
         livox-common = ../../common;
 
@@ -89,8 +93,8 @@
             pkgs.boost
             pkgs.llvmPackages.openmp
             pkgs.nlohmann_json
-            pkgs.zenoh-c
-            pkgs.zenoh-cpp
+            zenohc
+            zenohcpp
           ];
 
           cmakeFlags = [

@@ -2,6 +2,7 @@
   description = "Livox SDK2 and Mid-360 native module";
 
   inputs = {
+    zenoh.url = "github:jeff-hykin/zenoh_flake";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     dimos-lcm = {
@@ -20,14 +21,13 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, dimos-lcm, pfr, lcm-extended, ... }:
+  outputs = { self, nixpkgs, zenoh, flake-utils, dimos-lcm, pfr, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs {
-          inherit system;
-          overlays = [ (import ../../../../../../native/cpp/zenoh-overlay.nix) ];
-        };
+        pkgs = import nixpkgs { inherit system; };
         lcm = lcm-extended.packages.${system}.lcm;
+        zenohc = zenoh.packages.${system}.zenoh-c;
+        zenohcpp = zenoh.packages.${system}.zenoh-cpp;
 
         livox-sdk2 = pkgs.stdenv.mkDerivation rec {
           pname = "livox-sdk2";
@@ -74,7 +74,7 @@
           src = ./.;
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
-          buildInputs = [ livox-sdk2 lcm pkgs.glib pkgs.nlohmann_json pkgs.zenoh-c pkgs.zenoh-cpp ];
+          buildInputs = [ livox-sdk2 lcm pkgs.glib pkgs.nlohmann_json zenohc zenohcpp ];
 
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"

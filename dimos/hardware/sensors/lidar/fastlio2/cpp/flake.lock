@@ -69,6 +69,24 @@
         "type": "github"
       }
     },
+    "flake-utils_2": {
+      "inputs": {
+        "systems": "systems_2"
+      },
+      "locked": {
+        "lastModified": 1731533236,
+        "narHash": "sha256-l0KFg5HjrsfsO/JpG+r7fRrqm12kzFHyUHqHCVpMMbI=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "11707dc2f618dd54ca8739b309ec4fc024de578b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
     "lcm-extended": {
       "inputs": {
         "flake-utils": [
@@ -104,7 +122,10 @@
         "nixpkgs": [
           "nixpkgs"
         ],
-        "pfr": "pfr"
+        "pfr": "pfr",
+        "zenoh": [
+          "zenoh"
+        ]
       },
       "locked": {
         "path": "../../livox/cpp",
@@ -129,6 +150,22 @@
         "owner": "NixOS",
         "ref": "nixos-unstable",
         "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs_2": {
+      "locked": {
+        "lastModified": 1789012029,
+        "narHash": "sha256-1CBkBf+Nhggykzlx0jvXrj5rk20btl+tK8Fa8Ml/BL4=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "d5dfd8e6716dde34398bc14bc87c10dece9c8c68",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "d5dfd8e6716dde34398bc14bc87c10dece9c8c68",
         "type": "github"
       }
     },
@@ -174,7 +211,8 @@
         "lcm-extended": "lcm-extended",
         "livox-sdk": "livox-sdk",
         "nixpkgs": "nixpkgs",
-        "pfr": "pfr_2"
+        "pfr": "pfr_2",
+        "zenoh": "zenoh"
       }
     },
     "systems": {
@@ -189,6 +227,40 @@
       "original": {
         "owner": "nix-systems",
         "repo": "default",
+        "type": "github"
+      }
+    },
+    "systems_2": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "zenoh": {
+      "inputs": {
+        "flake-utils": "flake-utils_2",
+        "nixpkgs": "nixpkgs_2"
+      },
+      "locked": {
+        "lastModified": 1789053405,
+        "narHash": "sha256-gN5TUSELxYfsGntvu8s+bNicGVXI4MEN21k7je1XeRw=",
+        "owner": "jeff-hykin",
+        "repo": "zenoh_flake",
+        "rev": "5b5ed1c59d678d4425ea1d6c628bb1b54e11f8b7",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jeff-hykin",
+        "repo": "zenoh_flake",
         "type": "github"
       }
     }

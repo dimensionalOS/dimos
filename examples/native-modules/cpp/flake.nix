@@ -2,6 +2,7 @@
   description = "dimos C++ native module ping-pong example";
 
   inputs = {
+    zenoh.url = "github:jeff-hykin/zenoh_flake";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     lcm-extended = {
@@ -21,14 +22,13 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, lcm-extended, dimos-lcm, pfr, ... }:
+  outputs = { self, nixpkgs, zenoh, flake-utils, lcm-extended, dimos-lcm, pfr, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs {
-          inherit system;
-          overlays = [ (import ../../../native/cpp/zenoh-overlay.nix) ];
-        };
+        pkgs = import nixpkgs { inherit system; };
         lcm = lcm-extended.packages.${system}.lcm;
+        zenohc = zenoh.packages.${system}.zenoh-c;
+        zenohcpp = zenoh.packages.${system}.zenoh-cpp;
       in {
         packages.default = pkgs.stdenv.mkDerivation {
           pname = "dimos-native-ping-pong";
@@ -36,7 +36,7 @@
           src = ./.;
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
-          buildInputs = [ lcm pkgs.glib pkgs.nlohmann_json pkgs.zenoh-c pkgs.zenoh-cpp ];
+          buildInputs = [ lcm pkgs.glib pkgs.nlohmann_json zenohc zenohcpp ];
 
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
