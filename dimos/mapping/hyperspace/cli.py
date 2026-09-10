@@ -336,7 +336,7 @@ def main(
     device = pick_device(device)
     stats: dict[str, int] = {}
     if fresh:
-        model = SigLIP2Patches(model_name=model_name, device=device)
+        model = SigLIP2Patches(model_name=model_name, device=device, towers="vision")
         model.start()
         typer.echo(f"embedding with {model_name} on {device} -> {memory_path}")
         stats = ingest(
@@ -359,7 +359,7 @@ def main(
         model.stop()
     else:
         typer.echo(f"reusing {memory_path} (pass --no-reuse to re-embed)")
-    text_model = SigLIP2Patches(model_name=model_name, device=device, text_only=True)
+    text_model = SigLIP2Patches(model_name=model_name, device=device, towers="text")
     text_model.start()
     engine = HyperspaceQuery(
         memory,

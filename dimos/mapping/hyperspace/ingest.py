@@ -144,6 +144,8 @@ class PatchIngestor:
     def add_image(self, image: Image) -> bool:
         """Returns True when this frame produced a keyframe."""
         self.stats["images"] += 1
+        if self.stats["images"] in (1, 50) or self.stats["images"] % 250 == 0:
+            logger.info(f"hyperspace ingest: {self.stats}")
         ts = float(image.ts)
         if ts - self.last_embedded < self.config.min_frame_interval_s:
             return False
@@ -152,7 +154,10 @@ class PatchIngestor:
         if hs.quality_gate(self.config.gate, rgb, speeds) is not None:
             self.stats["gated"] += 1
             return False
+        started = time.monotonic()
         grid = self.model.embed_patches(image)[0]
+        if self.stats["embedded"] == 0:
+            logger.info(f"hyperspace ingest: first embed took {time.monotonic() - started:.2f}s")
         self.last_embedded = ts
         self.stats["embedded"] += 1
         quality = 1.0 if speeds is None else 1.0 / (1.0 + speeds[0] + 0.25 * speeds[1])

@@ -56,14 +56,14 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-def pick_device(device: str) -> str:
+def pick_device(device: str, *, allow_mps: bool = True) -> str:
     if device != "auto":
         return device
     import torch
 
     if torch.cuda.is_available():
         return "cuda"
-    if torch.backends.mps.is_available():
+    if allow_mps and torch.backends.mps.is_available():
         return "mps"
     return "cpu"
 
@@ -71,7 +71,7 @@ def pick_device(device: str) -> str:
 class HyperspacePatchesConfig(MemoryModuleConfig):
     # SigLIP2 snapshot: a Hugging Face id, or a local directory.
     model_name: str = SIGLIP2_MODEL_NAME
-    # "auto" picks cuda, then mps, then cpu.
+    # "auto" = cuda if available, else cpu (never mps inside a worker, see start()).
     device: str = "auto"
     # Frame the quality gate measures camera motion against.
     motion_reference_frame: str = "odom"
@@ -102,6 +102,23 @@ def _optional(value: float) -> float | None:
     return None if value < 0 else value
 
 
+def open_store_with_retry(module: MemoryModule, attempts: int = 20, wait_s: float = 0.5) -> None:
+    """Touch ``module.store`` until it opens. The writer and the reader start in
+    parallel on the same fresh file, and sqlite refuses the second
+    ``PRAGMA journal_mode=WAL`` while the first is still creating it."""
+    import sqlite3
+
+    for attempt in range(attempts):
+        try:
+            _ = module.store
+            return
+        except sqlite3.OperationalError as error:
+            if "locked" not in str(error) or attempt == attempts - 1:
+                raise
+            module._store = None
+            time.sleep(wait_s)
+
+
 class HyperspacePatches(MemoryModule):
     """Keeps the frames worth keeping and writes their patch embeddings to memory."""
 
@@ -113,14 +130,23 @@ class HyperspacePatches(MemoryModule):
     depth_camera_info: In[CameraInfo]
     tf: In[TFMessage]
 
+    ingestor: PatchIngestor | None = None
+
     @rpc
     def start(self) -> None:
-        super().start()
-        device = pick_device(self.config.device)
+        # Everything the handlers need exists before Module.start binds them:
+        # frames arrive the moment the ports connect.
+        # "auto" never picks MPS: Metal asserts inside dimos's forkserver
+        # workers on macOS (MPSKernelDAG.mm failed assertion) and the worker
+        # dies without a traceback. Pass device="mps" to try anyway.
+        device = pick_device(self.config.device, allow_mps=False)
+        logger.info(f"hyperspace patches: loading {self.config.model_name} on {device}")
         self.model = self.register_disposable(
-            SigLIP2Patches(model_name=self.config.model_name, device=device)
+            SigLIP2Patches(model_name=self.config.model_name, device=device, towers="vision")
         )
         self.model.start()
+        logger.info(f"hyperspace patches: model ready, opening {self.config.db_path}")
+        open_store_with_retry(self)
         gate = hs.KeyframeGateConfig(
             buffer_len=self.config.buffer_len,
             novelty_threshold=self.config.novelty_threshold,
@@ -148,6 +174,7 @@ class HyperspacePatches(MemoryModule):
         logger.info(
             f"hyperspace patches: {self.config.model_name} on {device}, db {self.config.db_path}"
         )
+        super().start()
 
     def _lookup(self, target: str, source: str, ts: float) -> NDArray[np.float64] | None:
         try:
@@ -157,18 +184,28 @@ class HyperspacePatches(MemoryModule):
         return None if transform is None else transform_to_matrix(transform)
 
     async def handle_camera_info(self, info: CameraInfo) -> None:
-        self.ingestor.add_camera_info(info)
+        if self.ingestor is not None:
+            self.ingestor.add_camera_info(info)
 
     async def handle_depth_camera_info(self, info: CameraInfo) -> None:
-        self.ingestor.add_camera_info(info)
+        if self.ingestor is not None:
+            self.ingestor.add_camera_info(info)
 
     async def handle_tf(self, msg: TFMessage) -> None:
-        self.ingestor.add_tf(msg)
+        if self.ingestor is not None:
+            self.ingestor.add_tf(msg)
 
     async def handle_depth_image(self, image: Image) -> None:
-        self.ingestor.add_depth(image)
+        if self.ingestor is not None:
+            self.ingestor.add_depth(image)
 
     async def handle_color_image(self, image: Image) -> None:
+        if self.ingestor is None:
+            return
+        if self.ingestor.stats["images"] == 0:
+            logger.info(
+                f"hyperspace patches: first colour frame {image.frame_id} {image.width}x{image.height} {image.format}"
+            )
         # Embedding blocks for ~50 ms on a GPU and ~1 s on a CPU; the handler's
         # latest-only dispatch drops the frames that arrive meanwhile.
         await asyncio.get_running_loop().run_in_executor(None, self.ingestor.add_image, image)
@@ -176,15 +213,16 @@ class HyperspacePatches(MemoryModule):
     @rpc
     def flush(self) -> int:
         """End of stream: judge what is still buffered. Returns keyframes added."""
-        return self.ingestor.flush()
+        return self.ingestor.flush() if self.ingestor is not None else 0
 
     @rpc
     def ingest_stats(self) -> dict[str, int]:
-        return dict(self.ingestor.stats)
+        return dict(self.ingestor.stats) if self.ingestor is not None else {}
 
 
 class HyperspaceConfig(MemoryModuleConfig):
     model_name: str = SIGLIP2_MODEL_NAME
+    # "auto" = cuda if available, else cpu (never mps, see start()).
     device: str = "auto"
     # Frame answers are given in unless a request names another.
     world_frame: str = "odom"
@@ -224,12 +262,19 @@ class Hyperspace(MemoryModule):
 
     @rpc
     def start(self) -> None:
-        super().start()
-        device = pick_device(self.config.device)
+        # Module.start runs main() up to its first yield, so the engine must
+        # exist first.
+        # No MPS here: two workers bringing up torch on Metal at the same time
+        # lose one of them silently on macOS, and HyperspacePatches needs the
+        # GPU more. The text tower is fast enough on the CPU.
+        device = pick_device(self.config.device, allow_mps=False)
+        logger.info(f"hyperspace query: loading text tower on {device}")
         self.model = self.register_disposable(
-            SigLIP2Patches(model_name=self.config.model_name, device=device, text_only=True)
+            SigLIP2Patches(model_name=self.config.model_name, device=device, towers="text")
         )
         self.model.start()
+        logger.info(f"hyperspace query: opening {self.config.db_path}")
+        open_store_with_retry(self)
         query_config = hs.QueryConfig(
             hot_threshold=self.config.hot_threshold,
             max_hot_patches=self.config.max_hot_patches,
@@ -252,6 +297,7 @@ class Hyperspace(MemoryModule):
             f"hyperspace query: {self.config.model_name} text tower on {device}, "
             f"db {self.config.db_path}"
         )
+        super().start()
 
     def answer(
         self, text: str, request_id: int | None = None, frame: str | None = None
@@ -340,9 +386,17 @@ class Hyperspace(MemoryModule):
         return len(voxels)
 
     async def main(self) -> AsyncIterator[None]:
-        if self.config.demo_after_s <= 0 or not self.config.demo_queries:
+        # Code before the first yield is startup; the demo loop must not block it.
+        demo = None
+        if self.config.demo_after_s > 0 and self.config.demo_queries:
+            demo = asyncio.create_task(self._demo_loop())
+        try:
             yield
-            return
+        finally:
+            if demo is not None:
+                demo.cancel()
+
+    async def _demo_loop(self) -> None:
         loop = asyncio.get_running_loop()
         await asyncio.sleep(self.config.demo_after_s)
         while True:
@@ -353,5 +407,4 @@ class Hyperspace(MemoryModule):
                 logger.info(
                     f"hyperspace demo {text!r}: {answer['voxels']} voxels, best {answer['best'][:1]}"
                 )
-            yield
             await asyncio.sleep(self.config.demo_every_s)
