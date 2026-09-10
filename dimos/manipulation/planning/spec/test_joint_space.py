@@ -24,6 +24,7 @@ import pytest
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.joint_space import CoordinateTopology, JointCoordinate
 from dimos.manipulation.planning.spec.validation import prepare_robot_model
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.assets.model import RobotModel
 
 
@@ -159,13 +160,39 @@ def test_joint_space_wraps_interpolates_lifts_and_builds_finite_domains(
             base_link="base",
         )
     ).joint_space
-    start = space.configuration([10.0, math.pi - 0.1])
-    goal = space.configuration([-4.0, -math.pi + 0.1])
+    start = space.from_joint_state(JointState(name=["yaw", "x"], position=[math.pi - 0.1, 10.0]))
+    goal = space.normalize_positions([-4.0, -math.pi + 0.1])
 
-    assert space.delta(start, goal).values == pytest.approx((-14.0, 0.2))
-    assert space.interpolate(start, goal, 0.5).positions == pytest.approx((3.0, -math.pi))
+    assert space.delta(start, goal) == pytest.approx((-14.0, 0.2))
+    midpoint = space.interpolate(start, goal, 0.5)
+    assert midpoint == pytest.approx((3.0, math.pi))
+    assert space.normalize_positions(midpoint) == pytest.approx((3.0, -math.pi))
     assert space.distance(start, goal) == pytest.approx(np.linalg.norm([-7.0, 0.1]))
     lower, upper = space.finite_sampling_domain(start, goal, margin=2.0)
     assert lower == pytest.approx([-6.0, -math.pi])
     assert upper == pytest.approx([12.0, math.pi])
     assert space.lifted_positions([start, goal])[-1] == pytest.approx((-4.0, math.pi + 0.1))
+    assert space.path_length([start, midpoint, goal]) == pytest.approx(space.distance(start, goal))
+    assert start == pytest.approx((10.0, math.pi - 0.1))
+
+
+@pytest.mark.parametrize(
+    ("names", "positions", "message"),
+    [
+        ([], [], "shape"),
+        (["joint"], [math.nan], "finite"),
+        (["joint"], [math.inf], "finite"),
+        (["joint"], [2.0], "outside"),
+        (["other"], [0.0], "missing"),
+        (["joint", "joint"], [0.0, 0.0], "duplicate"),
+    ],
+)
+def test_joint_space_rejects_invalid_input_states(tmp_path, names, positions, message) -> None:
+    path = tmp_path / "model.urdf"
+    _write_model(path, _joint("joint", "revolute", "base", "link1", 'lower="-1" upper="1"'))
+    space = prepare_robot_model(
+        RobotModelConfig(model=RobotModel.from_file(path), joint_names=["joint"], base_link="base")
+    ).joint_space
+
+    with pytest.raises(ValueError, match=message):
+        space.from_joint_state(JointState(name=names, position=positions))

@@ -17,14 +17,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import pairwise
-import math
 
 import numpy as np
 from numpy.typing import NDArray
 
 from dimos.manipulation.planning.groups.models import PlanningGroupSelection
-from dimos.manipulation.planning.spec.joint_space import CoordinateTopology, JointSpace
+from dimos.manipulation.planning.spec.joint_space import JointSpace
 from dimos.manipulation.planning.spec.models import JointPath
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -53,47 +51,6 @@ class SelectedJointSpace:
             joint_space=prepared.joint_space.select(selection.joint_names),
         )
 
-    @property
-    def velocity_limits(self) -> NDArray[np.float64]:
-        return np.asarray(self.joint_space.velocity_limits, dtype=np.float64)
-
-    def joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        return self.joint_space.position_limits()
-
-    def planning_domain(
-        self,
-        start: NDArray[np.float64],
-        goal: NDArray[np.float64],
-        margin: float,
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Return finite request-local sampling bounds."""
-        return self.joint_space.finite_sampling_domain(
-            self.joint_space.configuration(start),
-            self.joint_space.configuration(goal),
-            margin,
-        )
-
-    def delta(self, start: NDArray[np.float64], end: NDArray[np.float64]) -> NDArray[np.float64]:
-        """Return canonical deltas, wrapping periodic coordinates."""
-        delta = np.asarray(end - start, dtype=np.float64)
-        for index, coordinate in enumerate(self.joint_space.coordinates):
-            if coordinate.topology is CoordinateTopology.CIRCLE:
-                delta[index] = (delta[index] + math.pi) % (2.0 * math.pi) - math.pi
-        return delta
-
-    def distance(self, start: NDArray[np.float64], end: NDArray[np.float64]) -> float:
-        """Return velocity-normalized L2 distance."""
-        return float(np.linalg.norm(self.delta(start, end) / self.velocity_limits))
-
-    def interpolate(
-        self,
-        start: NDArray[np.float64],
-        end: NDArray[np.float64],
-        fraction: float,
-    ) -> NDArray[np.float64]:
-        """Interpolate using shortest periodic displacement."""
-        return start + fraction * self.delta(start, end)
-
     def lift_path(self, path: JointPath) -> JointPath:
         """Return a path whose periodic coordinates are continuous scalars."""
         if not path:
@@ -104,13 +61,6 @@ class SelectedJointSpace:
             JointState(name=list(self.selected_joint_names), position=list(values))
             for values in positions
         ]
-
-    def path_length(self, path: JointPath) -> float:
-        """Return velocity-normalized path length."""
-        return sum(
-            self.distance(np.asarray(start.position), np.asarray(end.position))
-            for start, end in pairwise(path)
-        )
 
     def project_config(self, selected_positions: NDArray[np.float64]) -> JointState:
         if len(selected_positions) != len(self.selected_joint_names):
@@ -133,10 +83,12 @@ class SelectedJointSpace:
         end: NDArray[np.float64],
         step_size: float,
     ) -> bool:
-        distance = self.distance(start, end)
+        distance = self.joint_space.distance(start, end)
         steps = max(1, int(np.ceil(distance / step_size)))
         return all(
-            self.config_collision_free(world, self.interpolate(start, end, step / steps))
+            self.config_collision_free(
+                world, self.joint_space.interpolate(start, end, step / steps)
+            )
             for step in range(steps + 1)
         )
 

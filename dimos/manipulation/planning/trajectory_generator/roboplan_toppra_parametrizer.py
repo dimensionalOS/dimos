@@ -228,7 +228,7 @@ class RoboPlanTOPPRAParametrizer(BaseTrajectoryParametrizer):
             [float(position[index]) for index in output_indices] for position in collapsed_positions
         ]
         lifted_positions = joint_space.lifted_positions(
-            [joint_space.configuration(position) for position in canonical_positions]
+            [joint_space.normalize_positions(position) for position in canonical_positions]
         )
         points = [
             TrajectoryPoint(

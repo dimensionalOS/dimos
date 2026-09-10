@@ -373,7 +373,7 @@ def _finite_retry_limits(
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Build finite retry bounds through the canonical joint-space policy."""
     margin = float(2 ** (attempt - 1))
-    seed = joint_space.configuration(seed_positions)
+    seed = joint_space.normalize_positions(seed_positions)
     request_lower, request_upper = joint_space.finite_sampling_domain(seed, seed, margin)
     lower = lower_limits.copy()
     upper = upper_limits.copy()

@@ -55,6 +55,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.trigonometry import angle_diff
 
 logger = setup_logger()
 
@@ -96,11 +97,6 @@ def group_display_name(group: PlanningGroup) -> str:
 
 def _copy_joint_state(state: JointState | None) -> JointState | None:
     return None if state is None else JointState(state)
-
-
-def _wrap_angle(value: float) -> float:
-    """Wrap one angle to the Viser yaw slider's canonical interval."""
-    return (value + math.pi) % (2.0 * math.pi) - math.pi
 
 
 ROBOT_DISPLAY_LABELS = tuple(mode.value.title() for mode in RobotDisplayMode)
@@ -646,7 +642,7 @@ class ViserPanelGui:
                     else:
                         if coordinate.topology is CoordinateTopology.CIRCLE:
                             lower, upper = -math.pi, math.pi
-                            value = _wrap_angle(float(value))
+                            value = angle_diff(float(value), 0.0)
                         else:
                             assert coordinate.lower is not None and coordinate.upper is not None
                             lower, upper = coordinate.lower, coordinate.upper
@@ -838,7 +834,7 @@ class ViserPanelGui:
                     if handle is not None:
                         coordinate = self.scene_info.model.joint_space.coordinate(str(joint_name))
                         if coordinate.topology is CoordinateTopology.CIRCLE:
-                            value = _wrap_angle(float(value))
+                            value = angle_diff(float(value), 0.0)
                         handle.value = float(value)
             finally:
                 self._suppress_target_callbacks = False

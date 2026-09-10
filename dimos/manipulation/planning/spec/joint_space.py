@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from itertools import pairwise
@@ -29,6 +30,7 @@ from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import Self
 
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.utils.trigonometry import angle_diff
 
 
 class CoordinateTopology(StrEnum):
@@ -71,38 +73,12 @@ class JointCoordinate:
 
 
 @dataclass(frozen=True)
-class JointConfiguration:
-    """Immutable normalized point in one named joint space."""
-
-    names: tuple[str, ...]
-    positions: tuple[float, ...]
-
-    def __post_init__(self) -> None:
-        if len(self.names) != len(self.positions):
-            raise ValueError("Joint configuration names and positions must have equal length")
-
-    def as_array(self) -> NDArray[np.float64]:
-        return np.asarray(self.positions, dtype=np.float64)
-
-
-@dataclass(frozen=True)
-class JointTangent:
-    """Immutable tangent vector in one named joint space."""
-
-    names: tuple[str, ...]
-    values: tuple[float, ...]
-
-    def __post_init__(self) -> None:
-        if len(self.names) != len(self.values):
-            raise ValueError("Joint tangent names and values must have equal length")
-
-    def as_array(self) -> NDArray[np.float64]:
-        return np.asarray(self.values, dtype=np.float64)
-
-
-@dataclass(frozen=True)
 class JointSpace:
-    """Ordered product of canonical scalar joint coordinates."""
+    """Ordered joint metadata and topology-aware numerical operations.
+
+    Normalize external inputs before numerical operations. Internal arrays use
+    ``names`` order and may carry lifted (unwrapped) circular positions.
+    """
 
     coordinates: tuple[JointCoordinate, ...]
 
@@ -138,16 +114,17 @@ class JointSpace:
     def select(self, names: tuple[str, ...] | list[str]) -> JointSpace:
         return JointSpace(tuple(self.coordinate(name) for name in names))
 
-    def configuration(
+    def normalize_positions(
         self, positions: tuple[float, ...] | list[float] | NDArray[np.float64]
-    ) -> JointConfiguration:
+    ) -> NDArray[np.float64]:
+        """Validate an ordered input vector and return a normalized copy."""
         values = np.asarray(positions, dtype=np.float64)
         self._validate_vector(values, "configuration")
         normalized = values.copy()
         for index, coordinate in enumerate(self.coordinates):
             value = normalized[index]
             if coordinate.topology is CoordinateTopology.CIRCLE:
-                normalized[index] = _wrap_angle(value)
+                normalized[index] = angle_diff(float(value), 0.0)
             elif coordinate.topology is CoordinateTopology.INTERVAL:
                 assert coordinate.lower is not None and coordinate.upper is not None
                 if value < coordinate.lower or value > coordinate.upper:
@@ -155,60 +132,49 @@ class JointSpace:
                         f"Joint '{coordinate.name}' position {value} is outside "
                         f"[{coordinate.lower}, {coordinate.upper}]"
                     )
-        return JointConfiguration(self.names, tuple(float(value) for value in normalized))
+        return normalized
 
-    def from_joint_state(self, state: JointState) -> JointConfiguration:
+    def from_joint_state(self, state: JointState) -> NDArray[np.float64]:
+        """Extract and validate this space's coordinates from a named state."""
         if not state.name:
-            return self.configuration(state.position)
+            return self.normalize_positions(state.position)
+        if len(state.name) != len(set(state.name)):
+            raise ValueError("Joint state contains duplicate coordinate names")
         positions = dict(zip(state.name, state.position, strict=True))
         missing = [name for name in self.names if name not in positions]
         if missing:
             raise ValueError(f"Joint state is missing coordinates: {missing}")
-        return self.configuration([positions[name] for name in self.names])
+        return self.normalize_positions([positions[name] for name in self.names])
 
-    def to_joint_state(self, configuration: JointConfiguration) -> JointState:
-        self._validate_names(configuration.names)
-        return JointState(name=list(self.names), position=list(configuration.positions))
-
-    def delta(self, start: JointConfiguration, end: JointConfiguration) -> JointTangent:
-        self._validate_names(start.names)
-        self._validate_names(end.names)
-        values = end.as_array() - start.as_array()
+    def delta(self, start: NDArray[np.float64], end: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Return shortest circular displacements in this space's order."""
+        values = end - start
         for index, coordinate in enumerate(self.coordinates):
             if coordinate.topology is CoordinateTopology.CIRCLE:
-                values[index] = _wrap_angle(values[index])
-        return JointTangent(self.names, tuple(float(value) for value in values))
-
-    def integrate(self, start: JointConfiguration, tangent: JointTangent) -> JointConfiguration:
-        self._validate_names(start.names)
-        self._validate_names(tangent.names)
-        return self.configuration(start.as_array() + tangent.as_array())
+                values[index] = angle_diff(float(values[index]), 0.0)
+        return values
 
     def interpolate(
-        self, start: JointConfiguration, end: JointConfiguration, fraction: float
-    ) -> JointConfiguration:
+        self, start: NDArray[np.float64], end: NDArray[np.float64], fraction: float
+    ) -> NDArray[np.float64]:
+        """Interpolate continuously from start without wrapping the result."""
         if not math.isfinite(fraction):
             raise ValueError("Interpolation fraction must be finite")
-        tangent = self.delta(start, end)
-        return self.integrate(
-            start,
-            JointTangent(self.names, tuple(fraction * value for value in tangent.values)),
-        )
+        return start + fraction * self.delta(start, end)
 
-    def distance(self, start: JointConfiguration, end: JointConfiguration) -> float:
-        delta = self.delta(start, end).as_array()
+    def distance(self, start: NDArray[np.float64], end: NDArray[np.float64]) -> float:
+        """Return velocity-normalized L2 distance."""
+        delta = self.delta(start, end)
         return float(np.linalg.norm(delta / np.asarray(self.velocity_limits)))
 
     def finite_sampling_domain(
         self,
-        start: JointConfiguration,
-        goal: JointConfiguration,
+        start: NDArray[np.float64],
+        goal: NDArray[np.float64],
         margin: float,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         if not math.isfinite(margin) or margin <= 0.0:
             raise ValueError("Planning-domain margin must be positive and finite")
-        self._validate_names(start.names)
-        self._validate_names(goal.names)
         lower = np.empty(len(self.coordinates), dtype=np.float64)
         upper = np.empty(len(self.coordinates), dtype=np.float64)
         for index, coordinate in enumerate(self.coordinates):
@@ -216,35 +182,29 @@ class JointSpace:
                 assert coordinate.lower is not None and coordinate.upper is not None
                 lower[index], upper[index] = coordinate.lower, coordinate.upper
             elif coordinate.topology is CoordinateTopology.LINE:
-                lower[index] = min(start.positions[index], goal.positions[index]) - margin
-                upper[index] = max(start.positions[index], goal.positions[index]) + margin
+                lower[index] = min(start[index], goal[index]) - margin
+                upper[index] = max(start[index], goal[index]) + margin
             else:
                 lower[index], upper[index] = -math.pi, math.pi
         return lower, upper
 
     def lifted_positions(
-        self, configurations: list[JointConfiguration] | tuple[JointConfiguration, ...]
-    ) -> list[tuple[float, ...]]:
+        self, configurations: Sequence[NDArray[np.float64]]
+    ) -> list[NDArray[np.float64]]:
         if not configurations:
             return []
-        for configuration in configurations:
-            self._validate_names(configuration.names)
-        lifted = [configurations[0].positions]
-        previous = np.asarray(lifted[0], dtype=np.float64)
-        circle_indices = [
-            index
-            for index, coordinate in enumerate(self.coordinates)
-            if coordinate.topology is CoordinateTopology.CIRCLE
-        ]
+        lifted = [configurations[0].copy()]
         for configuration in configurations[1:]:
-            current = np.asarray(configuration.positions, dtype=np.float64).copy()
-            for index in circle_indices:
-                current[index] = previous[index] + _wrap_angle(current[index] - previous[index])
-            lifted.append(tuple(float(value) for value in current))
-            previous = current
+            previous = lifted[-1]
+            current = configuration.copy()
+            delta = self.delta(previous, current)
+            for index, coordinate in enumerate(self.coordinates):
+                if coordinate.topology is CoordinateTopology.CIRCLE:
+                    current[index] = previous[index] + delta[index]
+            lifted.append(current)
         return lifted
 
-    def path_length(self, configurations: list[JointConfiguration]) -> float:
+    def path_length(self, configurations: Sequence[NDArray[np.float64]]) -> float:
         return sum(self.distance(start, end) for start, end in pairwise(configurations))
 
     def position_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
@@ -264,10 +224,6 @@ class JointSpace:
         )
         return lower, upper
 
-    def _validate_names(self, names: tuple[str, ...]) -> None:
-        if names != self.names:
-            raise ValueError(f"Expected joint coordinates {self.names}, got {names}")
-
     def _validate_vector(self, values: NDArray[np.float64], label: str) -> None:
         if values.shape != (len(self.coordinates),):
             raise ValueError(
@@ -275,7 +231,3 @@ class JointSpace:
             )
         if not np.isfinite(values).all():
             raise ValueError(f"Joint {label} must contain only finite values")
-
-
-def _wrap_angle(value: float) -> float:
-    return (float(value) + math.pi) % (2.0 * math.pi) - math.pi

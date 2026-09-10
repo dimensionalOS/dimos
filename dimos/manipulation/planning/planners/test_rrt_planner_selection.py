@@ -327,11 +327,11 @@ def test_planar_selected_space_uses_request_local_domain_and_velocity_metric() -
     start = np.array([100.0, -50.0, math.pi - 0.1])
     goal = np.array([104.0, -48.0, -math.pi + 0.1])
 
-    lower, upper = space.planning_domain(start, goal, margin=2.0)
+    lower, upper = space.joint_space.finite_sampling_domain(start, goal, margin=2.0)
 
     assert lower == pytest.approx([98.0, -52.0, -math.pi])
     assert upper == pytest.approx([106.0, -46.0, math.pi])
-    assert space.distance(start, goal) == pytest.approx(
+    assert space.joint_space.distance(start, goal) == pytest.approx(
         math.sqrt((4.0 / 2.0) ** 2 + (2.0 / 1.0) ** 2 + (0.2 / 4.0) ** 2)
     )
 

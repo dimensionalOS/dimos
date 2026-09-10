@@ -304,7 +304,7 @@ def test_roboplan_toppra_parametrizes_unbounded_planar_base(tmp_path: Path) -> N
     world = RoboPlanWorld()
     world.load_model(prepare_robot_model(config))
     world.finalize()
-    selection = PlanningGroupRegistry((config,)).select(("moving_base",))
+    selection = PlanningGroupRegistry(config.planning_groups).select(("moving_base",))
     start = [0.0, 0.0, math.pi - 0.1]
     goal = [6.0, -6.0, math.pi + 0.1]
     result = PlanningResult(

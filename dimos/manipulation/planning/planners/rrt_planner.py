@@ -115,7 +115,7 @@ class RRTConnectPlanner:
 
         joint_space = world.get_prepared_model().joint_space
         lower, upper = joint_space.finite_sampling_domain(
-            joint_space.configuration(q_start), joint_space.configuration(q_goal), 1.0
+            joint_space.normalize_positions(q_start), joint_space.normalize_positions(q_goal), 1.0
         )
         start_tree = [TreeNode(config=q_start.copy())]
         goal_tree = [TreeNode(config=q_goal.copy())]
@@ -200,22 +200,17 @@ class RRTConnectPlanner:
             return _create_failure_result(PlanningStatus.INVALID_GOAL, str(exc))
         try:
             selected_space = SelectedJointSpace.from_world(world, selection)
-            q_start = np.asarray(normalized_start.position, dtype=np.float64)
-            q_goal = np.asarray(normalized_goal.position, dtype=np.float64)
-            lower, upper = selected_space.joint_limits()
         except ValueError as exc:
             return _create_failure_result(PlanningStatus.NO_SOLUTION, str(exc))
-
-        if np.any(q_start < lower) or np.any(q_start > upper):
-            return _create_failure_result(
-                PlanningStatus.INVALID_START,
-                "Start configuration is outside joint limits",
-            )
-        if np.any(q_goal < lower) or np.any(q_goal > upper):
-            return _create_failure_result(
-                PlanningStatus.INVALID_GOAL,
-                "Goal configuration is outside joint limits",
-            )
+        joint_space = selected_space.joint_space
+        try:
+            q_start = joint_space.from_joint_state(normalized_start)
+        except ValueError as exc:
+            return _create_failure_result(PlanningStatus.INVALID_START, str(exc))
+        try:
+            q_goal = joint_space.from_joint_state(normalized_goal)
+        except ValueError as exc:
+            return _create_failure_result(PlanningStatus.INVALID_GOAL, str(exc))
 
         if not selected_space.config_collision_free(world, q_start):
             return _create_failure_result(
@@ -257,7 +252,9 @@ class RRTConnectPlanner:
             attempts = attempt
             attempt_budget = min(1000, remaining) if has_line_coordinate else remaining
             try:
-                domain_lower, domain_upper = selected_space.planning_domain(q_start, q_goal, margin)
+                domain_lower, domain_upper = joint_space.finite_sampling_domain(
+                    q_start, q_goal, margin
+                )
             except ValueError as exc:
                 return _create_failure_result(PlanningStatus.NO_SOLUTION, str(exc))
             logger.info(
@@ -357,9 +354,10 @@ class RRTConnectPlanner:
         step_size: float,
     ) -> TreeNode | None:
         """Extend a tree in selected-joint space."""
-        nearest = min(tree, key=lambda node: selected_space.distance(node.config, target))
-        diff = selected_space.delta(nearest.config, target)
-        dist = selected_space.distance(nearest.config, target)
+        joint_space = selected_space.joint_space
+        nearest = min(tree, key=lambda node: joint_space.distance(node.config, target))
+        diff = joint_space.delta(nearest.config, target)
+        dist = joint_space.distance(nearest.config, target)
         if dist <= step_size:
             new_config = nearest.config + diff
         else:
@@ -399,7 +397,7 @@ class RRTConnectPlanner:
             if result is None:
                 return None, added
             added += 1
-            if selected_space.distance(result.config, target) < self._goal_tolerance:
+            if selected_space.joint_space.distance(result.config, target) < self._goal_tolerance:
                 return result, added
         return None, added
 
@@ -585,7 +583,9 @@ def _create_selected_success_result(
         status=PlanningStatus.SUCCESS,
         path=path,
         planning_time=planning_time,
-        path_length=selected_space.path_length(path),
+        path_length=selected_space.joint_space.path_length(
+            [selected_space.joint_space.from_joint_state(state) for state in path]
+        ),
         iterations=iterations,
         message=message,
     )
