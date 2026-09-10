@@ -57,11 +57,12 @@ def test_captured_failure_shows_diagnostic_and_exit_code(tmp_path):
     assert "bad revision" in str(error.value)
 
 
-def test_streams_large_output_literally_to_terminal_and_log(tmp_path, monkeypatch):
+@pytest.mark.parametrize("terminal", [False, True])
+def test_streams_large_output_literally_to_terminal_and_log(tmp_path, monkeypatch, terminal):
     monkeypatch.setenv("NO_COLOR", "1")
     console_output = io.StringIO()
     runner = Runner(tmp_path / "setup.log")
-    runner.console = Console(file=console_output, width=30, no_color=True)
+    runner.console = Console(file=console_output, width=30, no_color=True, force_terminal=terminal)
     runner.run(
         "Install",
         [
@@ -72,9 +73,9 @@ def test_streams_large_output_literally_to_terminal_and_log(tmp_path, monkeypatc
     )
     terminal = console_output.getvalue()
     assert "[red]literal[/red]" in terminal
-    assert "x" * 200000 in terminal
+    assert terminal.count("x") == 200000
     assert "x" * 200000 in runner.log.read_text()
-    assert "\x1b" not in terminal
+    assert "\x1b[31m" not in terminal
     assert "\x1b" not in runner.log.read_text()
 
 
