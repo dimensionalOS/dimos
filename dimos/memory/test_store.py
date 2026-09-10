@@ -20,6 +20,7 @@ The parametrized ``session`` fixture from conftest runs each test against both b
 
 from __future__ import annotations
 
+import json
 import platform
 from typing import TYPE_CHECKING, Any
 
@@ -33,6 +34,37 @@ _SKIP_SQLITE_VEC = platform.machine() == "aarch64" or platform.system() == "Darw
 
 if TYPE_CHECKING:
     from dimos.memory.store.base import Store
+
+
+def test_sqlite_payload_read_records_agent_activity(tmp_path, monkeypatch) -> None:
+    from dimos.memory.store.sqlite import SqliteStore
+
+    path = tmp_path / "recording.db"
+    store = SqliteStore(path=str(path))
+    store.stream("camera", bytes).append(
+        b"frame", ts=12.5, pose=(1.0, 2.0, 3.0), tags={"camera": "front"}
+    )
+    store.stop()
+
+    monkeypatch.setenv("DIMOS_AGENT_ACTIVITY_DIR", str(tmp_path / "activity"))
+    reopened = SqliteStore(path=str(path), must_exist=True)
+    try:
+        assert reopened.streams.camera.first().data == b"frame"
+    finally:
+        reopened.stop()
+
+    event = json.loads((tmp_path / "activity" / "events.jsonl").read_text())
+    assert event == {
+        "event": "observation_read",
+        "wall_time_s": event["wall_time_s"],
+        "pid": event["pid"],
+        "stream": "camera",
+        "observation_id": 1,
+        "timestamp_s": 12.5,
+        "message_type": "bytes",
+        "pose": [1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0],
+        "tags": {"camera": "front"},
+    }
 
 
 class TestStoreBasic:

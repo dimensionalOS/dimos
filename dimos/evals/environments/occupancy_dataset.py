@@ -16,15 +16,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Sequence
 import math
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.evals.types import Agent, RunningEnvironment
+from dimos.evals.environments.base import Environment
+from dimos.evals.types import RunningEnvironment
+from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
+    from dimos.evals.agents.base import Agent
     from dimos.memory.store.base import Store
     from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 
@@ -65,16 +68,7 @@ def _align_grids(grids: list[OccupancyGrid]) -> list[OccupancyGrid]:
     return aligned
 
 
-@dataclass
-class OccupancyDataset:
-    """Rebuild cumulative costmaps from a frozen recording's lidar stream.
-
-    Each output grid accumulates every lidar frame seen so far, matching the
-    live ``VoxelGridMapper -> CostMapper`` data flow. Snapshots are aligned to
-    one world raster so temporal changes are spatially comparable. Only
-    ``global_costmap`` is exposed to the agent; source streams are not.
-    """
-
+class OccupancyDatasetConfig(BaseConfig):
     name: str
     start_s: float | None = None
     stop_s: float | None = None
@@ -84,56 +78,68 @@ class OccupancyDataset:
     occupancy_algo: str = "height_cost"
     device: str = "CPU:0"
 
-    artifacts: ClassVar[tuple[str, ...]] = ("recording",)
-    has_robot: ClassVar[bool] = False
-    _recording: Store | None = field(default=None, init=False, repr=False, compare=False)
+
+class OccupancyDataset(Environment):
+    """Rebuild cumulative costmaps from a frozen recording's lidar stream.
+
+    Each output grid accumulates every lidar frame seen so far, matching the
+    live ``VoxelGridMapper -> CostMapper`` data flow. Snapshots are aligned to
+    one world raster so temporal changes are spatially comparable. Only
+    ``global_costmap`` is exposed to the agent; source streams are not.
+    """
+
+    config: OccupancyDatasetConfig
+
+    def __init__(self, name: str, **kwargs: Any) -> None:
+        super().__init__(name=name, **kwargs)
+        self._recording: Store | None = None
 
     def preflight(self, agent: Agent) -> None:
-        if agent.modules:
+        if agent.config.modules:
             raise RuntimeError(
-                f"OccupancyDataset({self.name!r}) launches nothing; "
-                f"{type(agent).__name__} adds modules {agent.modules!r}"
+                f"OccupancyDataset({self.config.name!r}) launches nothing; "
+                f"{type(agent).__name__} adds modules {agent.config.modules!r}"
             )
-        if self.emit_every < 0:
+        if self.config.emit_every < 0:
             raise ValueError("emit_every must be non-negative")
 
         from dimos.mapping.pointclouds.occupancy import OCCUPANCY_ALGOS
         from dimos.memory.cli.dataset import open_dataset
 
-        if self.occupancy_algo not in OCCUPANCY_ALGOS:
+        if self.config.occupancy_algo not in OCCUPANCY_ALGOS:
             raise ValueError(
-                f"unknown occupancy algorithm {self.occupancy_algo!r}; "
+                f"unknown occupancy algorithm {self.config.occupancy_algo!r}; "
                 f"expected one of {sorted(OCCUPANCY_ALGOS)}"
             )
-        source = open_dataset(self.name)
+        source = open_dataset(self.config.name)
         try:
-            source.streams.lidar.range_time(self.start_s, self.stop_s)
+            source.streams.lidar.range_time(self.config.start_s, self.config.stop_s)
         finally:
             source.stop()
 
-    def start(self, modules: str) -> RunningEnvironment:
+    def start(self, modules: Sequence[str]) -> RunningEnvironment:
         from dimos.mapping.pointclouds.occupancy import OCCUPANCY_ALGOS
         from dimos.mapping.voxels.module import VoxelMapTransformer
         from dimos.memory.cli.dataset import open_dataset, resolve_dataset
         from dimos.memory.store.memory import MemoryStore
         from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 
-        source = open_dataset(self.name)
+        source = open_dataset(self.config.name)
         recording = MemoryStore()
         target = recording.stream("global_costmap", OccupancyGrid)
         try:
-            lidar = source.streams.lidar.range_time(self.start_s, self.stop_s)
+            lidar = source.streams.lidar.range_time(self.config.start_s, self.config.stop_s)
             maps = lidar.transform(
                 VoxelMapTransformer(
-                    emit_every=self.emit_every,
-                    voxel_size=self.voxel_size,
-                    device=self.device,
+                    emit_every=self.config.emit_every,
+                    voxel_size=self.config.voxel_size,
+                    device=self.config.device,
                 )
             )
-            occupancy = OCCUPANCY_ALGOS[self.occupancy_algo]
+            occupancy = OCCUPANCY_ALGOS[self.config.occupancy_algo]
             generated: list[tuple[OccupancyGrid, float, dict[str, Any]]] = []
             for obs in maps:
-                grid = occupancy(obs.data, resolution=self.resolution)
+                grid = occupancy(obs.data, resolution=self.config.resolution)
                 generated.append((grid, obs.ts, obs.tags))
             aligned = _align_grids([grid for grid, _, _ in generated])
             for grid, (_, ts, tags) in zip(aligned, generated, strict=True):
@@ -148,7 +154,7 @@ class OccupancyDataset:
         return RunningEnvironment(
             mcp_url="",
             streams=(target,),
-            artifacts={"recording": resolve_dataset(self.name)},
+            artifacts={"recording": resolve_dataset(self.config.name)},
         )
 
     def settle(self, budget_s: float) -> None:

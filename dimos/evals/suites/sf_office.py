@@ -21,8 +21,7 @@ from dimos.evals.types import EvalCase, Suite
 
 _DATASET = str(
     # Path.home() / "Documents/go2_recordings/2026-08-27_sf_office_8mins_moshi/go2_SF_office_8mins_moshi.db"
-    Path.home()
-    / "Documents/go2_recordings/2026-07-18_sf_office_survey1/sf_office_go2_20260718_survey1.db"
+    Path.home() / "Documents/worktrees/agentencode/recording_go2.db"
 )
 
 # _DATASET = "go2_short"

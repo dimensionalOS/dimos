@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Optional audit trail for agent-facing message encodings."""
+"""Optional audit trail for recording data used by an eval agent."""
 
 from __future__ import annotations
 
@@ -26,6 +26,48 @@ import time
 from typing import Any
 
 AGENT_ACTIVITY_DIR_ENV = "DIMOS_AGENT_ACTIVITY_DIR"
+
+
+def _append_event(event: dict[str, Any]) -> None:
+    configured = os.environ.get(AGENT_ACTIVITY_DIR_ENV)
+    if not configured:
+        return
+
+    root = Path(configured)
+    root.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(event, separators=(",", ":"), default=str) + "\n"
+    with (root / "events.jsonl").open("a") as output:
+        fcntl.flock(output, fcntl.LOCK_EX)
+        output.write(line)
+        output.flush()
+        fcntl.flock(output, fcntl.LOCK_UN)
+
+
+def record_observation_read(
+    *,
+    stream: str,
+    observation_id: int,
+    timestamp_s: float,
+    message_type: str,
+    pose: tuple[float, ...] | None,
+    tags: dict[str, Any],
+) -> None:
+    """Record a traversed observation without copying its payload."""
+    if not os.environ.get(AGENT_ACTIVITY_DIR_ENV):
+        return
+    _append_event(
+        {
+            "event": "observation_read",
+            "wall_time_s": time.time(),
+            "pid": os.getpid(),
+            "stream": stream,
+            "observation_id": observation_id,
+            "timestamp_s": timestamp_s,
+            "message_type": message_type,
+            "pose": list(pose) if pose is not None else None,
+            "tags": tags,
+        }
+    )
 
 
 def record_agent_encode(message_type: str, encoded: Any) -> None:
@@ -65,7 +107,6 @@ def record_agent_encode(message_type: str, encoded: Any) -> None:
             "sha256": digest,
         }
 
-    root.mkdir(parents=True, exist_ok=True)
     event = {
         "event": "agent_encode",
         "wall_time_s": time.time(),
@@ -73,9 +114,4 @@ def record_agent_encode(message_type: str, encoded: Any) -> None:
         "message_type": message_type,
         "output": externalize(encoded),
     }
-    line = json.dumps(event, separators=(",", ":")) + "\n"
-    with (root / "events.jsonl").open("a") as output:
-        fcntl.flock(output, fcntl.LOCK_EX)
-        output.write(line)
-        output.flush()
-        fcntl.flock(output, fcntl.LOCK_UN)
+    _append_event(event)

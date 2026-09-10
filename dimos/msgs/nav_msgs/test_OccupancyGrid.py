@@ -102,6 +102,7 @@ def test_agent_encode_contains_metadata_and_cleaned_world_oriented_map() -> None
         resolution=0.1,
         origin=Pose(1.0, 2.0, 0.0),
         frame_id="map",
+        ts=123.123456789,
     )
 
     metadata, image = grid.agent_encode()
@@ -110,6 +111,7 @@ def test_agent_encode_contains_metadata_and_cleaned_world_oriented_map() -> None
     assert "resolution=0.1 m/cell" in metadata["text"]
     assert "origin=(1, 2)" in metadata["text"]
     assert f"timestamp={grid.ts:g} s" in metadata["text"]
+    assert "exact_timestamp=123.123456789 s" in metadata["text"]
     assert "white=free" in metadata["text"]
     assert "costs >= 50 are occupied" in metadata["text"]
     assert "components smaller than 0.04 m^2 are removed" in metadata["text"]
@@ -128,6 +130,30 @@ def test_agent_encode_contains_metadata_and_cleaned_world_oriented_map() -> None
         [[255, 255, 255], [0, 0, 0], [0, 0, 0], [255, 255, 255]],
         [[255, 255, 255], [255, 255, 255], [255, 255, 255], [127, 127, 127]],
     ]
+
+
+def test_agent_encode_describes_rotated_pixel_coordinates() -> None:
+    origin = Pose(
+        position=(10.0, 20.0, 0.0),
+        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, np.pi / 2)),
+    )
+    grid = OccupancyGrid(
+        grid=np.zeros((1, 2), dtype=np.int8),
+        resolution=1.0,
+        origin=origin,
+    )
+
+    metadata = grid.agent_encode()[0]["text"]
+
+    assert "pixel (row, col) corresponds to grid cell (height-1-row, col)" in metadata
+    assert "top-left=(9.5, 20.5) m, bottom-right=(9.5, 21.5) m" in metadata
+
+
+def test_agent_encode_empty_grid_omits_pixel_anchors() -> None:
+    metadata = OccupancyGrid(ts=1.0).agent_encode()
+
+    assert len(metadata) == 1
+    assert "Pixel-center world anchors" not in metadata[0]["text"]
 
 
 def test_agent_encode_activity_externalizes_image(tmp_path, monkeypatch) -> None:

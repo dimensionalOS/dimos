@@ -23,6 +23,7 @@ from dimos.core.resource import CompositeResource
 from dimos.memory.codecs.base import Codec, codec_id
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.type.observation import _UNLOADED
+from dimos.msgs.agent_activity import record_observation_read
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -80,14 +81,14 @@ class Backend(CompositeResource, Generic[T]):
         """Total stored payload bytes for this stream, or None if not cheaply knowable."""
         return self.blob_store.size_bytes(self.name) if self.blob_store is not None else None
 
-    def _make_loader(self, row_id: int) -> Any:
+    def _make_loader(self, obs: Observation[T]) -> Any:
         bs = self.blob_store
         if bs is None:
             raise RuntimeError("BlobStore required but not configured")
         name, codec = self.name, self.codec
 
         def loader() -> Any:
-            raw = bs.get(name, row_id)
+            raw = bs.get(name, obs.id)
             return codec.decode(raw)
 
         return loader
@@ -124,7 +125,7 @@ class Backend(CompositeResource, Generic[T]):
                 self.blob_store.put(self.name, row_id, encoded)
                 # Replace inline data with lazy loader
                 obs._data = _UNLOADED
-                obs._loader = self._make_loader(row_id)
+                obs._loader = self._make_loader(obs)
 
             # Store embedding vector
             if self.vector_store is not None:
@@ -157,13 +158,25 @@ class Backend(CompositeResource, Generic[T]):
         if self.blob_store is None:
             for obs in it:
                 obs.data_type = self.data_type
+                self._record_read(obs)
                 yield obs
             return
         for obs in it:
             obs.data_type = self.data_type
             if obs._loader is None and isinstance(obs._data, type(_UNLOADED)):
-                obs._loader = self._make_loader(obs.id)
+                obs._loader = self._make_loader(obs)
+            self._record_read(obs)
             yield obs
+
+    def _record_read(self, obs: Observation[T]) -> None:
+        record_observation_read(
+            stream=self.name,
+            observation_id=obs.id,
+            timestamp_s=obs.ts,
+            message_type=self.data_type.__name__,
+            pose=obs.pose_tuple,
+            tags=obs.tags,
+        )
 
     def _iterate_snapshot(self, query: StreamQuery) -> Iterator[Observation[T]]:
         if query.search_vec is not None and self.vector_store is not None:

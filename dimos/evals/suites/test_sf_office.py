@@ -37,9 +37,9 @@ def test_pose_suite_uses_every_agent_encoded_odom_pose() -> None:
     assert len(POSE_SUITE) == 7
     for case in POSE_SUITE:
         assert isinstance(case.environment, Dataset)
-        assert case.environment.name == "go2_short"
-        assert len(case.environment.select) == 1
-        assert case.environment.select[0](store) is odom
+        assert case.environment.config.name.endswith("recording_go2.db")
+        assert len(case.environment.config.select) == 1
+        assert case.environment.config.select[0](store) is odom
         assert case.timeout_s == 120.0
         assert "every observation" in case.inputs
         assert "obs.data.agent_encode()" in case.inputs

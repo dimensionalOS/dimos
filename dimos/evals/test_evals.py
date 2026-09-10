@@ -395,7 +395,9 @@ def test_question_answer_encodes_the_recording_into_one_call(
     assert trajectory.steps[0].message == "how far?"
     _, (messages,) = generate.call_args.args
     text = str(messages[-1].content)
-    assert "stream 'odom'" in text and "4.000" in text and "how far?" in text
+    assert (
+        "stream 'odom'" in text and '"position_m": [4.0, 0.0, 0.0]' in text and "how far?" in text
+    )
     # every call is recorded whole; a fake model has no wire, so normalized
     extra = trajectory.steps[1].extra
     assert extra and extra.request.exists() and extra.response.exists()

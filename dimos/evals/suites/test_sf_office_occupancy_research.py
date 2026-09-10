@@ -28,9 +28,9 @@ def test_research_suite_defines_fifteen_strict_agent_encode_contracts() -> None:
     assert len({case.id for case in SUITE}) == len(SUITE)
     for case in SUITE:
         assert isinstance(case.environment, Dataset)
-        assert case.environment.name.endswith("recording_go2.db")
-        assert len(case.environment.select) == 1
-        assert case.environment.select[0](store) is costmaps
+        assert case.environment.config.name.endswith("recording_go2.db")
+        assert len(case.environment.config.select) == 1
+        assert case.environment.config.select[0](store) is costmaps
         assert case.timeout_s == 120.0
         assert "global_costmap" in case.inputs
         assert "obs.data.agent_encode()" in case.inputs

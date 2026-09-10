@@ -56,11 +56,34 @@ def occupancy_grid_agent_encode(grid: OccupancyGrid) -> list[dict[str, Any]]:
     """Encode metadata and a cleaned, grid-oriented structural map."""
     origin = grid.origin.position
     orientation = grid.origin.orientation
+    yaw = math.atan2(
+        2 * (orientation.w * orientation.z + orientation.x * orientation.y),
+        1 - 2 * (orientation.y**2 + orientation.z**2),
+    )
+    cos_yaw = math.cos(yaw)
+    sin_yaw = math.sin(yaw)
+
+    def pixel_center_world(row: int, col: int) -> tuple[float, float]:
+        local_x = (col + 0.5) * grid.resolution
+        local_y = (grid.height - row - 0.5) * grid.resolution
+        return (
+            origin.x + cos_yaw * local_x - sin_yaw * local_y,
+            origin.y + sin_yaw * local_x + cos_yaw * local_y,
+        )
+
+    anchors = ""
+    if grid.grid.size:
+        top_left = pixel_center_world(0, 0)
+        bottom_right = pixel_center_world(grid.height - 1, grid.width - 1)
+        anchors = (
+            f"Pixel-center world anchors: top-left=({top_left[0]:g}, {top_left[1]:g}) m, "
+            f"bottom-right=({bottom_right[0]:g}, {bottom_right[1]:g}) m. "
+        )
     metadata = (
         f"OccupancyGrid frame={grid.frame_id!r}, size={grid.width}x{grid.height} cells, "
         f"resolution={grid.resolution:g} m/cell, origin=({origin.x:g}, {origin.y:g}) m, "
         f"origin_orientation=({orientation.x:g}, {orientation.y:g}, {orientation.z:g}, "
-        f"{orientation.w:g}), timestamp={grid.ts:g} s. "
+        f"{orientation.w:g}), timestamp={grid.ts:g} s, exact_timestamp={grid.ts:.9f} s. "
         f"Source cells: occupied={grid.occupied_percent:.1f}%, free={grid.free_percent:.1f}%, "
         f"unknown={grid.unknown_percent:.1f}%. The agent image is a cleaned structural "
         f"view: costs >= {_OCCUPIED_THRESHOLD} are occupied, occupied components smaller "
@@ -70,7 +93,17 @@ def occupancy_grid_agent_encode(grid: OccupancyGrid) -> list[dict[str, Any]]:
         "Black cells are occupied obstacles that the robot cannot enter or cross. Gray "
         "cells are unobserved or unknown, not free; treat them as impassable when reasoning "
         "about navigation. Spatial answers must respect these cell semantics. "
-        "Image left/right is -X/+X and bottom/top is -Y/+Y in the grid frame."
+        "PNG indexing and coordinates (zero-based): pixel (row, col) corresponds to grid "
+        "cell (height-1-row, col); its grid-frame center is "
+        "((col+0.5)*resolution, (height-row-0.5)*resolution), then rotate by the origin "
+        "orientation and add the origin to obtain world coordinates. Conversely, inverse-"
+        "rotate (world-origin), divide by resolution, floor to (grid_col, grid_row), then "
+        "use image row=height-1-grid_row. Keep array tuples as (row, col), not (x, y). "
+        f"{anchors}"
+        "For clearance calculations, work at native resolution: one Euclidean distance "
+        "transform of the white mask gives all cell clearances, and a max-priority flood "
+        "with path capacity=min(clearance) gives a widest path. Avoid supersampling and "
+        "repeated radius-by-radius flood fills."
     )
     blocks: list[dict[str, Any]] = [{"type": "text", "text": metadata}]
     if grid.grid.size == 0:

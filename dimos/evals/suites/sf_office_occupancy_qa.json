@@ -1,0 +1,472 @@
+{
+  "review_only": true,
+  "source_experiment": "exp_0008",
+  "source_commit": "14ca6a6f9aab52806d45d76b263db9dcdd981452",
+  "timeout_s": 600,
+  "recording": "recording_go2.db",
+  "notes": [
+    "Review export of the frozen epoch-2 benchmark; this file is not consumed by the evaluator.",
+    "Reference values are copied without correction. They are not newly verified ground truths.",
+    "Join instructions and each question with spaces to reconstruct the task prompt.",
+    "grading fields are copied reference descriptions, not authoritative scoring code; sf_office_occupancy_grading.py defines actual scoring and partial credit.",
+    "Temporal origin/order and raw-versus-cleaned occupancy consistency require review. No corrections to those conventions are applied here."
+  ],
+  "instructions": [
+    "Open the recording listed in the system prompt and use only its global_costmap OccupancyGrid observations.",
+    "You may use SqliteStore only to open the recording and iterate that stream.",
+    "The only permitted operation on each obs.data message is obs.data.agent_encode().",
+    "Treat the returned text and image blocks as the sole spatial evidence.",
+    "Do not inspect raw message attributes or database payloads, access another stream, inspect evaluation files or labels, or use repository mapping, navigation, perception, or evaluation utilities for analysis.",
+    "You may decode returned PNGs and perform generic calculations using only information in the returned blocks.",
+    "Coordinates are world-frame meters.",
+    "Only known-free space is traversable; unknown space is not traversable.",
+    "A doorway-sized opening is 0.6 to 1.2 meters wide.",
+    "Headings are degrees counterclockwise from world +X.",
+    "Robot paths and clearances must account for the stated circular robot radius.",
+    "Times are seconds from the first grid in the selected sequence."
+  ],
+  "cases": [
+    {
+      "id": "sf_office_occupancy_room_count",
+      "question": [
+        "Using the latest grid, how many distinct rooms are enclosed by the mapped wall structure?",
+        "Return only JSON: {\"room_count\": integer}."
+      ],
+      "answer": {
+        "room_count": 4
+      },
+      "grading": {
+        "mode": "exact"
+      },
+      "source": "human-provided",
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "rooms",
+        "static"
+      ]
+    },
+    {
+      "id": "sf_office_occupancy_movement_square",
+      "question": [
+        "Between 190 and 215 seconds in the grid sequence, find the axis-aligned 1 meter by 1 meter square with the most free-to-occupied and occupied-to-free transitions.",
+        "Ignore unknown-to-known changes. Return only JSON: {\"center_m\": [x, y]}."
+      ],
+      "answer": {
+        "center_m": [
+          5.65,
+          -2.35
+        ]
+      },
+      "grading": {
+        "mode": "point_distance",
+        "full_credit_radius_m": 0.5,
+        "zero_credit_radius_m": 1.5
+      },
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "motion",
+        "temporal"
+      ]
+    },
+    {
+      "id": "sf_office_occupancy_three_point_loop",
+      "question": [
+        "Using the latest grid, find the shortest collision-free closed loop for a robot of radius 0.25 meters that starts at (0.00, -4.20), visits (-7.00, -10.30) and (3.30, -1.70) in either order, and returns to (0.00, -4.20).",
+        "Consecutive waypoints define straight path segments. Return only JSON: {\"waypoints_m\": [[x, y], ...], \"length_m\": number}."
+      ],
+      "answer": null,
+      "reference": {
+        "required_points_m": [
+          [
+            0.0,
+            -4.2
+          ],
+          [
+            -7.0,
+            -10.3
+          ],
+          [
+            3.3,
+            -1.7
+          ],
+          [
+            0.0,
+            -4.2
+          ]
+        ],
+        "optimal_length_m": 29.18894,
+        "robot_radius_m": 0.25
+      },
+      "review_note": "No complete waypoint answer is stored. These are required visits and an optimal-length reference, not a collision-free path. answer=null means unavailable in this export, not an expected null response.",
+      "grading": {
+        "mode": "valid_path_and_optimality",
+        "full_credit_excess_m": 0.5,
+        "zero_credit_excess_m": 5.0
+      },
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "routing",
+        "static"
+      ]
+    },
+    {
+      "id": "sf_office_occupancy_max_robot_radius",
+      "question": [
+        "Using the latest grid, what is the largest circular robot radius that can travel from (0.00, -4.20) to (-7.00, -10.30)?",
+        "Return only JSON: {\"max_radius_m\": number}."
+      ],
+      "answer": {
+        "max_radius_m": 0.55899
+      },
+      "grading": {
+        "mode": "absolute_error",
+        "full_credit_error_m": 0.05,
+        "zero_credit_error_m": 0.25
+      },
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "clearance",
+        "routing",
+        "static"
+      ]
+    },
+    {
+      "id": "sf_office_occupancy_blocked_opening_reachability",
+      "question": [
+        "Using the latest grid, suppose the complete opening nearest (-1.50, -7.05) becomes occupied.",
+        "Can a robot of radius 0.25 meters still travel from (0.00, -4.20) to (-7.00, -10.30)? Return only JSON: {\"reachable\": boolean}."
+      ],
+      "answer": {
+        "reachable": true
+      },
+      "grading": {
+        "mode": "exact"
+      },
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "counterfactual",
+        "routing",
+        "static"
+      ]
+    },
+    {
+      "id": "sf_office_occupancy_doorways",
+      "question": [
+        "Using the latest grid, locate all likely doorway-sized openings in the mapped wall structure.",
+        "Each segment must span an opening from one wall edge to the opposite edge, without duplicates.",
+        "Return only JSON: {\"doorways_m\": [[[x1, y1], [x2, y2]], ...]}."
+      ],
+      "answer": null,
+      "reference": {
+        "reference_centers_m": [
+          [
+            -6.1,
+            -1.2
+          ],
+          [
+            -1.5,
+            0.4
+          ],
+          [
+            2.7,
+            -1.9
+          ],
+          [
+            5.4,
+            -3.9
+          ],
+          [
+            3.1,
+            -5.7
+          ],
+          [
+            -4.4,
+            -6.9
+          ],
+          [
+            -1.2,
+            -8.0
+          ],
+          [
+            0.6,
+            -10.3
+          ]
+        ]
+      },
+      "review_note": "Only opening centers are stored, not wall-edge segment endpoints. answer=null means unavailable in this export, not an expected null response.",
+      "grading": {
+        "mode": "matched_segments",
+        "match_radius_m": 1.0,
+        "required_width_range_m": [
+          0.6,
+          1.2
+        ],
+        "metric": "f1"
+      },
+      "source": "translated exploratory annotation",
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "doors",
+        "static"
+      ]
+    },
+    {
+      "id": "sf_office_occupancy_largest_free_circle",
+      "question": [
+        "Using the latest grid, find the largest circle contained entirely in known-free space.",
+        "Return only JSON: {\"center_m\": [x, y], \"radius_m\": number}."
+      ],
+      "answer": {
+        "center_m": [
+          0.0,
+          -4.05
+        ],
+        "radius_m": 1.95576
+      },
+      "grading": {
+        "mode": "circle_quality",
+        "center_full_credit_radius_m": 0.25,
+        "center_zero_credit_radius_m": 1.5,
+        "radius_full_credit_error_m": 0.1,
+        "radius_zero_credit_error_m": 0.75
+      },
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "clearance",
+        "static"
+      ]
+    },
+    {
+      "id": "sf_office_occupancy_possible_person_motion",
+      "question": [
+        "Between 440 and 464 seconds in the grid sequence, identify time intervals with the strongest evidence that a person or another moving object crossed the mapped space.",
+        "Do not treat unknown-to-known exploration as movement. Return only JSON: {\"intervals_s\": [[start, end], ...]}."
+      ],
+      "answer": {
+        "intervals_s": [
+          [
+            442.75,
+            443.38
+          ],
+          [
+            447.3,
+            453.43
+          ]
+        ]
+      },
+      "grading": {
+        "mode": "interval_overlap",
+        "merge_gap_s": 1.0,
+        "metric": "f1"
+      },
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "motion",
+        "temporal"
+      ]
+    },
+    {
+      "id": "sf_office_occupancy_hide_location",
+      "question": [
+        "Using the latest grid, choose the deepest reachable place to hide.",
+        "It must be in known-free space and reachable from (0.00, -4.20) by a robot of radius 0.25 meters; prefer a location concealed by mapped obstacles.",
+        "Return only JSON: {\"position_m\": [x, y]}."
+      ],
+      "answer": {
+        "position_m": [
+          -0.3,
+          -8.9
+        ]
+      },
+      "reference": {
+        "acceptable_region_m": {
+          "x": [
+            -1.2,
+            0.7
+          ],
+          "y": [
+            -10.0,
+            -7.8
+          ]
+        },
+        "robot_radius_m": 0.25
+      },
+      "grading": {
+        "mode": "reachable_concealment_quality",
+        "full_credit_radius_m": 0.75,
+        "zero_credit_radius_m": 2.0
+      },
+      "source": "translated exploratory annotation snapped to reachable clearance",
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "spatial-reasoning",
+        "static"
+      ]
+    },
+    {
+      "id": "sf_office_occupancy_independent_routes",
+      "question": [
+        "Using the latest grid, are there two independent collision-free routes for a robot of radius 0.20 meters between (-1.00, -5.00) and (3.30, -1.70), such that blocking one route at a single location does not block the other?",
+        "Return only JSON: {\"two_independent_routes\": boolean}."
+      ],
+      "answer": {
+        "two_independent_routes": true
+      },
+      "grading": {
+        "mode": "exact"
+      },
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "topology",
+        "routing",
+        "static"
+      ]
+    },
+    {
+      "id": "sf_office_occupancy_doorway_bottleneck",
+      "question": [
+        "Using the latest grid, which doorway-sized opening is the most important bottleneck for reaching the rest of the mapped area from (-7.00, -10.30)?",
+        "Return its wall-edge segment, or null if none exists. Return only JSON: {\"opening_m\": [[x1, y1], [x2, y2]] | null}."
+      ],
+      "answer": {
+        "opening_m": [
+          [
+            -1.8,
+            -6.9
+          ],
+          [
+            -1.0,
+            -6.3
+          ]
+        ]
+      },
+      "grading": {
+        "mode": "segment_midpoint_and_angle",
+        "midpoint_tolerance_m": 1.0,
+        "angle_tolerance_deg": 35.0
+      },
+      "source": "latest-grid route throat annotation",
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "doors",
+        "topology",
+        "static"
+      ]
+    },
+    {
+      "id": "sf_office_occupancy_constant_twist_collision",
+      "question": [
+        "Using the latest grid, a circular robot of radius 0.25 meters starts at (0.00, -4.20) facing 20 degrees and moves for at most 8 seconds with constant forward velocity 0.50 meters per second and angular velocity 15 degrees per second.",
+        "Find its first collision with occupied or unknown space. Return only JSON: {\"collision\": boolean, \"time_s\": number | null, \"position_m\": [x, y] | null}."
+      ],
+      "answer": {
+        "collision": true,
+        "time_s": 4.84,
+        "position_m": [
+          1.2571,
+          -2.3203
+        ]
+      },
+      "grading": {
+        "mode": "collision_event",
+        "time_full_credit_error_s": 0.15,
+        "time_zero_credit_error_s": 1.0,
+        "position_full_credit_error_m": 0.15,
+        "position_zero_credit_error_m": 0.75
+      },
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "collision",
+        "motion-model",
+        "static"
+      ]
+    },
+    {
+      "id": "sf_office_occupancy_first_reachable_time",
+      "question": [
+        "Between 380 and 410 seconds in the grid sequence, when did (0.00, -4.20) first become reachable from (-7.00, -10.30) for a robot of radius 0.20 meters using only known-free space?",
+        "Return null if this never occurred. Return only JSON: {\"time_s\": number | null}."
+      ],
+      "answer": {
+        "time_s": 392.52581
+      },
+      "grading": {
+        "mode": "absolute_error",
+        "full_credit_error_s": 0.75,
+        "zero_credit_error_s": 4.0
+      },
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "routing",
+        "temporal"
+      ]
+    },
+    {
+      "id": "sf_office_occupancy_known_free_area",
+      "question": [
+        "Using the latest grid, what is the total known-free floor area? Return only JSON: {\"known_free_area_m2\": number}."
+      ],
+      "answer": {
+        "known_free_area_m2": 161.455
+      },
+      "grading": {
+        "mode": "absolute_error",
+        "full_credit_error_m2": 1.0,
+        "zero_credit_error_m2": 12.0
+      },
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "area",
+        "static"
+      ]
+    },
+    {
+      "id": "sf_office_occupancy_forward_clearance",
+      "question": [
+        "Using the latest grid, a circular robot of radius 0.30 meters is at (0.00, -4.20) facing 90 degrees.",
+        "Is the full one-meter corridor directly ahead clear enough to move forward without collision? Return only JSON: {\"clear\": boolean}."
+      ],
+      "answer": {
+        "clear": true
+      },
+      "grading": {
+        "mode": "exact"
+      },
+      "tags": [
+        "sf-office",
+        "occupancy",
+        "research",
+        "clearance",
+        "static"
+      ]
+    }
+  ]
+}
