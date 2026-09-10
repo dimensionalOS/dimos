@@ -21,7 +21,9 @@ Skipped where that dataset is not on the machine.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import sqlite3
 import struct
 
 import numpy as np
@@ -30,11 +32,16 @@ import pytest
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.teleop.memory_world.recording import (
+    EMBEDDING_PAYLOAD_MODULE,
     RecordingWithDerivedStreams,
+    StoredEmbeddings,
     decode_camera_info,
     decode_image,
+    decode_multiarray,
     decode_tf_message,
     derived_db_path,
+    embedding_stream_name,
+    grid_side,
     open_recording,
     open_ros2_mcap,
     stream_name_of,
@@ -72,6 +79,72 @@ class _Cdr:
 
     def bytes(self) -> bytes:
         return b"\x00\x01\x00\x00" + bytes(self.body)
+
+
+def encode_multiarray(vectors: np.ndarray) -> bytes:
+    """``std_msgs/msg/Float32MultiArray`` the way siglipify lays it out: [patch, dim] or [dim]."""
+    count, dims = vectors.shape
+    writer = _Cdr()
+    if count == 1:
+        writer.prim("I", 1).string("dim").prim("I", dims, dims)
+    else:
+        writer.prim("I", 2).string("patch").prim("I", count, count * dims)
+        writer.string("dim").prim("I", dims, dims)
+    flat = vectors.astype(np.float32).ravel().tolist()
+    writer.prim("I", 0)  # data_offset
+    return writer.prim("I", len(flat)).prim("f", *flat).bytes()
+
+
+def seed_embedding_stream(
+    db_path: str,
+    name: str,
+    model: str,
+    rows: list[tuple[float, int | None, np.ndarray]],
+    text_aligned: bool | None = True,
+) -> None:
+    """Write (ts, source_id, vectors) rows the way siglipify's mem2 writer does.
+
+    ``text_aligned=None`` leaves the mark out, as siglipify did before it applied
+    the head per patch."""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            f'''CREATE TABLE IF NOT EXISTS "{name}" (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, value NUMERIC,
+                   pose_x REAL, pose_y REAL, pose_z REAL,
+                   pose_qx REAL, pose_qy REAL, pose_qz REAL, pose_qw REAL,
+                   tags BLOB DEFAULT (jsonb('{{}}')));
+               CREATE TABLE IF NOT EXISTS "{name}_blob" (id INTEGER PRIMARY KEY, data BLOB NOT NULL);
+               CREATE TABLE IF NOT EXISTS _streams (name TEXT PRIMARY KEY, config TEXT NOT NULL);'''
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO _streams (name, config) VALUES (?, ?)",
+            (
+                name,
+                json.dumps(
+                    {
+                        "payload_module": EMBEDDING_PAYLOAD_MODULE,
+                        "codec_id": "cdr",
+                        "model": model,
+                        **({} if text_aligned is None else {"text_aligned": text_aligned}),
+                    }
+                ),
+            ),
+        )
+        for ts, source_id, vectors in rows:
+            tags = {"model": model}
+            if source_id is not None:
+                tags["source_id"] = source_id
+            cursor = conn.execute(
+                f'INSERT INTO "{name}" (ts, tags) VALUES (?, jsonb(?))', (ts, json.dumps(tags))
+            )
+            conn.execute(
+                f'INSERT INTO "{name}_blob" (id, data) VALUES (?, ?)',
+                (cursor.lastrowid, encode_multiarray(vectors)),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def test_stream_names_match_the_db_convention() -> None:
@@ -112,6 +185,55 @@ def test_decode_tf_message_by_hand() -> None:
     ]
     assert message.transforms[1].translation.z == 3.0
     assert message.transforms[1].rotation.w == 1.0
+
+
+def test_decode_multiarray_by_hand() -> None:
+    grid = np.arange(6, dtype=np.float32).reshape(2, 3)
+    assert decode_multiarray(encode_multiarray(grid)).sizes == (2, 3)
+    np.testing.assert_array_equal(decode_multiarray(encode_multiarray(grid)).vectors(), grid)
+    pooled = decode_multiarray(encode_multiarray(np.ones((1, 4), np.float32)))
+    assert pooled.sizes == (4,)
+    assert pooled.vectors().shape == (1, 4)
+
+
+def test_embedding_streams_are_named_the_way_siglipify_names_them() -> None:
+    name = embedding_stream_name("color_image", "google/siglip2-giant-opt-patch16-384")
+    assert name == "color_image_siglip2_giant_opt_p16_384"
+
+
+def test_grid_side_needs_a_square() -> None:
+    assert grid_side(576) == 24
+    assert grid_side(1) == 1
+    with pytest.raises(ValueError, match="square"):
+        grid_side(10)
+
+
+def test_stored_embeddings_read_siglipify_rows_from_a_db(tmp_path: Path) -> None:
+    """The stream's payload type is a ROS message dimos cannot import, so the store
+    cannot open it, but its rows are still readable."""
+    path = str(tmp_path / "rec.db")
+    store = SqliteStore(path=path)
+    store.start()
+    try:
+        store.stream("color_image", int).append(1, ts=1.0)
+        seed_embedding_stream(
+            path,
+            "color_image_siglip2_giant_opt_p16_384",
+            "google/siglip2-giant-opt-patch16-384",
+            [(1.5, 3, np.ones((4, 2), np.float32)), (1.0, None, np.zeros((4, 2), np.float32))],
+        )
+        rows = StoredEmbeddings(store, "color_image_siglip2_giant_opt_p16_384")
+        assert "color_image_siglip2_giant_opt_p16_384" in store.list_streams()
+        assert rows.count() == 2
+        loaded = list(rows)
+        assert [(r.ts, r.source_id, r.model) for r in loaded] == [
+            (1.0, None, "google/siglip2-giant-opt-patch16-384"),
+            (1.5, 3, "google/siglip2-giant-opt-patch16-384"),
+        ]
+        assert loaded[1].vectors.shape == (4, 2) and loaded[1].vectors.dtype == np.float32
+        assert rows.text_aligned() is True
+    finally:
+        store.stop()
 
 
 @needs_dataset

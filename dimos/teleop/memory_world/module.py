@@ -984,10 +984,15 @@ class MemoryWorldModule(Module):
                 return
             self._index_progress = f"ready ({index.count()} frames)"
             logger.info("visual index ready: %d frames (+%d new)", index.count(), added)
-        # Warm both model loads here, off the request path: cold they add ~18s
+        # Warm the model loads and the index here, off the request path: cold
+        # they add ~18s (and, for precomputed vectors, the pooling-head pass)
         # to whichever query comes first, which is the one being demoed.
         index.model.embed_text("warmup")
         _ = self.whisper
+        if index.count() > 0:
+            self._index_progress = f"loading ({index.count()} frames)"
+            index.load()
+            self._index_progress = f"ready ({index.count()} frames)"
         logger.info("voice query path warm")
 
     @skill

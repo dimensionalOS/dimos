@@ -34,6 +34,12 @@ removes the floor that every indoor frame shares. A background prompt that is
 nearly a synonym of the query (text-text cosine above ``BACKGROUND_SYNONYM_CUTOFF``)
 is dropped for that query, otherwise "furniture" would erase "a desk".
 
+A recording that siglipify has already embedded (a
+``<image stream>_<model>`` stream of ``std_msgs/msg/Float32MultiArray`` rows) is
+searched from those vectors instead of building anything. siglipify applies
+the same per-patch head trick and marks the stream ``text_aligned``; a stream
+without the mark holds raw tower tokens and is refused rather than searched.
+
 The index stream stores the source observation id as part of its payload
 rather than a copy of the image, and the model name in its tags: the grid
 shape and vector width are fixed by the checkpoint, so an index built with one
@@ -53,13 +59,18 @@ import numpy as np
 import torch
 
 from dimos.models.embedding.siglip import SigLIPModel
+from dimos.teleop.memory_world.recording import (
+    StoredEmbeddings,
+    embedding_stream_name,
+    grid_side,
+)
 from dimos.teleop.memory_world.tf_tree import quaternion_from_matrix
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
 
-    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.memory.store.base import Store
 
 # How index rows say which frame their pose describes.
 POSE_FRAME_TAG = "camera_optical"
@@ -72,6 +83,16 @@ logger = setup_logger()
 SIGLIP2_MODEL_NAME = "google/siglip2-giant-opt-patch16-384"
 
 
+def model_slug(model_name: str) -> str:
+    """``google/siglip2-giant-opt-patch16-384`` -> ``siglip2_giant_opt_p16_384``.
+
+    The same abbreviation siglipify uses, so its streams and this module's are
+    named alike and found by the model that made them.
+    """
+    tail = model_name.rsplit("/", 1)[-1].replace("patch", "p")
+    return re.sub(r"[^a-z0-9]+", "_", tail.lower()).strip("_")
+
+
 def index_stream_name_of(model_name: str) -> str:
     """Name the index stream after the model that built it.
 
@@ -80,9 +101,7 @@ def index_stream_name_of(model_name: str) -> str:
     scored against each other: ``google/siglip2-giant-opt-patch16-384`` ->
     ``image_siglip2_giant_opt_p16_384``.
     """
-    tail = model_name.rsplit("/", 1)[-1].replace("patch", "p")
-    slug = re.sub(r"[^a-z0-9]+", "_", tail.lower()).strip("_")
-    return f"image_{slug}"
+    return f"image_{model_slug(model_name)}"
 
 
 BACKGROUND_PROMPTS = (
@@ -103,6 +122,8 @@ HOT_PATCH_RATIO = 0.75
 # Frames scored per matmul. The index stays fp16 in memory (5 fps of 848x480
 # for four minutes is ~2 GB); each chunk is widened to fp32 for the product.
 SCORE_CHUNK_FRAMES = 64
+# An mcap embedding names its frame only by stamp; this is how close it must be.
+STAMP_MATCH_TOLERANCE_S = 1e-3
 
 
 @dataclass(frozen=True)
@@ -367,19 +388,26 @@ def patch_world_position(
     return (float(world[0]), float(world[1]), float(world[2]))
 
 
-def per_patch_embeddings(model: SigLIPModel, pixel_values: torch.Tensor) -> torch.Tensor:
+def align_patch_tokens(model: SigLIPModel, tokens: torch.Tensor) -> torch.Tensor:
     """Run each patch token through the attention-pooling head on its own.
 
-    Returns (batch, patches, dims), L2-normalised. Pooling a length-1 sequence
-    is the MaskCLIP trick: the head's cross-attention collapses to a projection
-    of that single token, which lands it in the text-aligned space the pooled
-    vector lives in.
+    *tokens* is (batch, patches, dims) straight out of the vision tower (after
+    its final layernorm); returns the same shape, L2-normalised. Pooling a
+    length-1 sequence is the MaskCLIP trick: the head's cross-attention
+    collapses to a projection of that single token, which lands it in the
+    text-aligned space the pooled vector lives in.
     """
-    vision = model._model.vision_model
-    hidden = vision(pixel_values=pixel_values).last_hidden_state
-    batch, n_patches, dims = hidden.shape
-    pooled = vision.head(hidden.reshape(batch * n_patches, 1, dims))
+    head = model._model.vision_model.head
+    batch, n_patches, dims = tokens.shape
+    weight = next(head.parameters())
+    pooled = head(tokens.to(weight.device, weight.dtype).reshape(batch * n_patches, 1, dims))
     return torch.nn.functional.normalize(pooled.reshape(batch, n_patches, dims), dim=-1)
+
+
+def per_patch_embeddings(model: SigLIPModel, pixel_values: torch.Tensor) -> torch.Tensor:
+    """Embed images to (batch, patches, dims) text-aligned, L2-normalised patch vectors."""
+    hidden = model._model.vision_model(pixel_values=pixel_values).last_hidden_state
+    return align_patch_tokens(model, hidden)
 
 
 class VisualMemoryIndex:
@@ -387,7 +415,7 @@ class VisualMemoryIndex:
 
     def __init__(
         self,
-        store: SqliteStore,
+        store: Store,
         pose_of: Callable[[Any], np.ndarray | None],
         image_stream_name: str = "color_image",
         index_stream_name: str = "",  # default: named after the model
@@ -406,6 +434,7 @@ class VisualMemoryIndex:
         self._dtype = dtype
         self._model: SigLIPModel | None = None
         self._index_stream: Any = None
+        self._precomputed: str | None | _Unresolved = _UNRESOLVED
         self._loaded: _LoadedIndex | None = None
         self._background: torch.Tensor | None = None
 
@@ -440,8 +469,21 @@ class VisualMemoryIndex:
             self._index_stream = stream
         return self._index_stream
 
+    @property
+    def precomputed_stream_name(self) -> str | None:
+        """The stream siglipify wrote for this image stream and model, if the recording has one.
+
+        When it does, nothing is built: those vectors are the index.
+        """
+        if isinstance(self._precomputed, _Unresolved):
+            name = embedding_stream_name(self.image_stream_name, self.model_name)
+            self._precomputed = name if name in self.store.list_streams() else None
+        return self._precomputed
+
     def count(self) -> int:
         """How many frames are already indexed."""
+        if self.precomputed_stream_name is not None:
+            return StoredEmbeddings(self.store, self.precomputed_stream_name).count()
         return int(self.index_stream.count())
 
     def _posed_frames(self) -> Iterator[tuple[Any, np.ndarray]]:
@@ -459,6 +501,13 @@ class VisualMemoryIndex:
         """
         if stride < 1:
             raise ValueError(f"stride must be at least 1, got {stride}")
+        if self.precomputed_stream_name is not None:
+            logger.info(
+                "using the %d frames siglipify embedded into %r; nothing to build",
+                self.count(),
+                self.precomputed_stream_name,
+            )
+            return 0
 
         from PIL import Image as PILImage
 
@@ -504,8 +553,14 @@ class VisualMemoryIndex:
         self._loaded = None
         return added
 
+    def load(self) -> None:
+        """Bring the index into memory now, so the first query does not pay for it."""
+        self._load()
+
     def _load(self) -> _LoadedIndex:
         """Pull the whole index into memory once, as stored (fp16)."""
+        if self._loaded is None and self.precomputed_stream_name is not None:
+            self._loaded = self._load_precomputed(self.precomputed_stream_name)
         if self._loaded is None:
             observations = [obs for obs in self.index_stream if obs.pose_tuple is not None]
             if not observations:
@@ -529,6 +584,88 @@ class VisualMemoryIndex:
                 ],
             )
         return self._loaded
+
+    def _load_precomputed(self, name: str) -> _LoadedIndex:
+        """Read siglipify's rows and place each frame with ``pose_of``.
+
+        A mem2 row names its source frame; an mcap row only shares its stamp.
+        Rows whose frame cannot be found or placed are dropped.
+        """
+        rows = StoredEmbeddings(self.store, name)
+        total = rows.count()
+        if total == 0:
+            raise LookupError(f"embedding stream {name!r} is empty")
+        if rows.text_aligned() is False:
+            raise ValueError(
+                f"embedding stream {name!r} holds raw vision-tower tokens, which text cannot "
+                "score; re-run siglipify (it now applies the pooling head per patch)"
+            )
+        frames = list(self.store.streams[self.image_stream_name].order_by("ts"))
+        by_id = {int(obs.id): obs for obs in frames}
+        stamps = np.array([float(obs.ts) for obs in frames])
+
+        def frame_of(row: Any) -> Any | None:
+            if row.source_id is not None:
+                return by_id.get(row.source_id)
+            after = int(np.searchsorted(stamps, row.ts))
+            nearest = min(
+                (i for i in (after - 1, after) if 0 <= i < len(frames)),
+                key=lambda i: abs(stamps[i] - row.ts),
+                default=None,
+            )
+            if nearest is None or abs(stamps[nearest] - row.ts) > STAMP_MATCH_TOLERANCE_S:
+                return None
+            return frames[nearest]
+
+        patches: torch.Tensor | None = None
+        side = 1
+        source_ids: list[int] = []
+        timestamps: list[float] = []
+        positions: list[tuple[float, float, float]] = []
+        orientations: list[tuple[float, float, float, float]] = []
+        dropped = 0
+        for row in rows:
+            if row.model is not None and row.model != self.model_name:
+                raise ValueError(
+                    f"embedding stream {name!r} was built with {row.model}, not "
+                    f"{self.model_name}; pass model_name={row.model!r}"
+                )
+            obs = frame_of(row)
+            matrix = None if obs is None else self.pose_of(obs)
+            if obs is None or matrix is None:
+                dropped += 1
+                continue
+            if patches is None:
+                side = grid_side(row.vectors.shape[0])
+                patches = torch.empty((total, *row.vectors.shape), dtype=torch.float16)
+            if row.vectors.shape != patches.shape[1:]:
+                raise ValueError(
+                    f"embedding stream {name!r} mixes shapes: {row.vectors.shape} after "
+                    f"{tuple(patches.shape[1:])}"
+                )
+            slot = len(source_ids)
+            source_ids.append(int(obs.id))
+            timestamps.append(float(obs.ts))
+            positions.append((float(matrix[0, 3]), float(matrix[1, 3]), float(matrix[2, 3])))
+            orientations.append(quaternion_from_matrix(matrix[:3, :3]))
+            patches[slot] = torch.nn.functional.normalize(torch.from_numpy(row.vectors), dim=-1).to(
+                torch.float16
+            )
+            if slot % 256 == 255:
+                logger.info("loaded %d/%d precomputed frames of %r", slot + 1, total, name)
+        if patches is None:
+            raise LookupError(f"none of the {total} frames in {name!r} could be placed")
+        if dropped:
+            logger.warning("%d of %d rows of %r have no placeable frame", dropped, total, name)
+        return _LoadedIndex(
+            patches=patches[: len(source_ids)],
+            rows=side,
+            cols=side,
+            source_ids=source_ids,
+            timestamps=timestamps,
+            positions=positions,
+            orientations=orientations,
+        )
 
     def _embed(self, text: str) -> torch.Tensor:
         return self.model.embed_text(text).to_torch("cpu").to(torch.float32)
@@ -585,6 +722,13 @@ class VisualMemoryIndex:
             self._model = None
         self._loaded = None
         self._background = None
+
+
+class _Unresolved:
+    """Marker for "not looked up yet" where None means "the recording has none"."""
+
+
+_UNRESOLVED = _Unresolved()
 
 
 @dataclass(frozen=True)

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sqlite3
 import tempfile
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -26,6 +27,7 @@ import torch
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.teleop.memory_world.test_recording import seed_embedding_stream
 from dimos.teleop.memory_world.tf_tree import pose_matrix
 from dimos.teleop.memory_world.visual_search import (
     POSE_FRAME_TAG,
@@ -33,11 +35,13 @@ from dimos.teleop.memory_world.visual_search import (
     PatchHit,
     Place,
     VisualMemoryIndex,
+    align_patch_tokens,
     body_style_quaternion,
     cluster_hits,
     cluster_places,
     hot_patches,
     index_stream_name_of,
+    model_slug,
     patch_world_position,
     score_frames,
     search_phrase,
@@ -258,6 +262,109 @@ def test_frames_the_tf_tree_cannot_place_are_skipped(sqlite_store: SqliteStore) 
     posed = [(obs.data, tuple(matrix[:3, 3])) for obs, matrix in index._posed_frames()]
 
     assert posed == [(1, (1.0, 0.0, 0.0))]
+
+
+# ---- vectors siglipify already wrote into the recording ---------------------
+
+
+def _fake_head_model(dims: int) -> SimpleNamespace:
+    """A stand-in vision head: swaps the first two coordinates, so its use is visible."""
+    head = torch.nn.Linear(dims, dims, bias=False)
+    with torch.no_grad():
+        head.weight.copy_(torch.eye(dims)[[1, 0, *range(2, dims)]])
+    return SimpleNamespace(_model=SimpleNamespace(vision_model=SimpleNamespace(head=head)))
+
+
+def test_align_patch_tokens_runs_the_head_per_token_and_normalises() -> None:
+    tokens = torch.tensor([[[3.0, 0.0], [0.0, 4.0]]])  # one frame, two patches
+    aligned = align_patch_tokens(_fake_head_model(2), tokens)  # type: ignore[arg-type]
+    assert aligned.shape == (1, 2, 2)
+    torch.testing.assert_close(aligned[0], torch.tensor([[0.0, 1.0], [1.0, 0.0]]))
+
+
+def _seed_precomputed(
+    sqlite_store: SqliteStore,
+    rows: list[tuple[float, int | None, np.ndarray]],
+    model_name: str = GIANT,
+    text_aligned: bool | None = True,
+) -> None:
+    images = sqlite_store.stream("color_image", int)
+    for source_id, ts in ((1, 1.0), (2, 2.0), (3, 3.0)):
+        images.append(source_id, ts=ts, pose=None)
+    seed_embedding_stream(
+        sqlite_store.config.path,
+        f"color_image_{model_slug(model_name)}",
+        model_name,
+        rows,
+        text_aligned=text_aligned,
+    )
+
+
+def _placed(obs: object) -> np.ndarray | None:
+    positions = {1.0: (0.0, 0.0, 0.0), 2.0: (5.0, 0.0, 0.0)}  # frame 3 has no pose
+    position = positions.get(float(obs.ts))  # type: ignore[attr-defined]
+    return None if position is None else pose_matrix(position, (0.0, 0.0, 0.0, 1.0))
+
+
+def test_precomputed_vectors_are_the_index_and_nothing_is_built(sqlite_store: SqliteStore) -> None:
+    """Pooled rows are already text-aligned; frames are matched by id or, failing
+    that, by stamp, and a frame the tf tree cannot place is dropped."""
+    _seed_precomputed(
+        sqlite_store,
+        [
+            (1.0, 1, np.array([[0.0, 2.0]], np.float32)),  # by id; not unit length on purpose
+            (2.0, None, np.array([[1.0, 0.0]], np.float32)),  # by stamp
+            (3.0, 3, np.array([[1.0, 0.0]], np.float32)),  # unplaceable
+        ],
+    )
+    index = VisualMemoryIndex(sqlite_store, pose_of=_placed, model_name=GIANT)
+    assert index.precomputed_stream_name == "color_image_siglip2_giant_opt_p16_384"
+    assert index.count() == 3
+    assert index.build() == 0
+    index._embed = lambda text: unit(1.0, 0.0)  # type: ignore[method-assign]
+    index._background = torch.zeros(0, 2)
+
+    places = index.search("a cone", k=5)
+
+    assert [(p.source_id, p.position) for p in places] == [
+        (2, (5.0, 0.0, 0.0)),
+        (1, (0.0, 0.0, 0.0)),
+    ]
+    assert places[0].similarity == pytest.approx(1.0)
+    assert places[1].similarity == pytest.approx(0.0, abs=1e-3)
+
+
+def test_precomputed_patch_grids_are_searched_patch_by_patch(sqlite_store: SqliteStore) -> None:
+    grid = np.array([[0.0, 1.0], [0.0, 1.0], [1.0, 0.0], [0.0, 1.0]], np.float32)  # patch 2 differs
+    _seed_precomputed(sqlite_store, [(1.0, 1, grid)])
+    index = VisualMemoryIndex(sqlite_store, pose_of=_placed, model_name=GIANT)
+    index._embed = lambda text: unit(1.0, 0.0)  # type: ignore[method-assign]
+    index._background = torch.zeros(0, 2)
+
+    (place,) = index.search("a cone", k=5)
+
+    assert place.image_uv == (0.25, 0.75)
+    assert place.similarity == pytest.approx(1.0)
+
+
+def test_precomputed_raw_tower_tokens_are_refused(sqlite_store: SqliteStore) -> None:
+    """A stream siglipify wrote before it applied the head is not text-searchable."""
+    _seed_precomputed(sqlite_store, [(1.0, 1, np.ones((4, 2), np.float32))], text_aligned=None)
+    index = VisualMemoryIndex(sqlite_store, pose_of=_placed, model_name=GIANT)
+    assert index.count() == 1
+    with pytest.raises(ValueError, match="raw"):
+        index.load()
+
+
+def test_precomputed_vectors_from_another_model_are_refused(sqlite_store: SqliteStore) -> None:
+    other = "google/siglip2-so400m-patch16-384"
+    _seed_precomputed(sqlite_store, [(1.0, 1, np.ones((1, 2), np.float32))], model_name=other)
+    index = VisualMemoryIndex(
+        sqlite_store, pose_of=_placed, model_name=GIANT, image_stream_name="color_image"
+    )
+    assert index.precomputed_stream_name is None  # named for the other model
+    index = VisualMemoryIndex(sqlite_store, pose_of=_placed, model_name=other)
+    assert index.count() == 1
 
 
 # ---- putting the answer on the object ---------------------------------------

@@ -27,8 +27,12 @@ info and tf messages are decoded here.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
+import json
+import math
 from pathlib import Path
+import sqlite3
 from typing import Any
 
 import numpy as np
@@ -95,7 +99,7 @@ def decode_image(buf: bytes) -> Image:
     if w.encoding not in IMAGE_ENCODINGS:
         raise ValueError(f"unsupported image encoding {w.encoding!r}")
     fmt, dtype, channels = IMAGE_ENCODINGS[w.encoding]
-    pixels = w.data.view(dtype)
+    pixels: np.ndarray = w.data.view(dtype)
     shape = (w.height, w.width, channels) if channels > 1 else (w.height, w.width)
     return Image.from_numpy(
         pixels.reshape(shape), format=fmt, frame_id=w.header.frame_id, ts=ros._ts(w.header)
@@ -214,6 +218,56 @@ def decode_tf_message(buf: bytes) -> TFMessage:
     )
 
 
+@dataclass
+class _DimensionWire:
+    label: str
+    size: int
+    stride: int
+
+    __cdr_align__ = 1  # CDR aligns primitives, not structs
+    __cdr_fields__ = [("label", "string"), ("size", "u32"), ("stride", "u32")]
+
+
+@dataclass
+class _Float32MultiArrayWire:
+    dim: list[_DimensionWire]
+    data_offset: int
+    data: np.ndarray
+
+    __cdr_align__ = 1  # CDR aligns primitives, not structs
+    __cdr_fields__ = [
+        ("dim", ("seq", _DimensionWire)),
+        ("data_offset", "u32"),
+        ("data", ("seq", "f32")),
+    ]
+
+
+@dataclass(frozen=True)
+class MultiArray:
+    """``std_msgs/msg/Float32MultiArray``: the shape siglipify stores embeddings in.
+
+    One row per frame, laid out ``[patch, dim]`` for per-patch vectors and
+    ``[dim]`` for a pooled one. A plain ROS message so anything that reads
+    ROS data can read the vectors, not only this module.
+    """
+
+    sizes: tuple[int, ...]
+    data: np.ndarray  # float32, flat, row-major over ``sizes``
+
+    def vectors(self) -> np.ndarray:
+        """The row as ``(count, dims)``: one vector per patch, or a single pooled one."""
+        dims = self.sizes[-1] if self.sizes else self.data.size
+        return self.data.reshape(-1, dims) if dims else self.data.reshape(0, 0)
+
+
+def decode_multiarray(buf: bytes) -> MultiArray:
+    w: _Float32MultiArrayWire = cdr.decode(buf, _Float32MultiArrayWire)[0]
+    return MultiArray(
+        sizes=tuple(int(d.size) for d in w.dim),
+        data=np.asarray(w.data, dtype=np.float32)[int(w.data_offset) :],
+    )
+
+
 # schema name -> codec, for every channel the memory world can use
 ROS2_CODECS: dict[str, FnCodec] = {
     "sensor_msgs/msg/PointCloud2": FnCodec(PointCloud2, ros.decode_pointcloud2),
@@ -222,6 +276,7 @@ ROS2_CODECS: dict[str, FnCodec] = {
     "sensor_msgs/msg/Imu": FnCodec(Imu, ros.decode_imu),
     "nav_msgs/msg/Odometry": FnCodec(Odometry, ros.decode_odometry),
     "tf2_msgs/msg/TFMessage": FnCodec(TFMessage, decode_tf_message),
+    "std_msgs/msg/Float32MultiArray": FnCodec(MultiArray, decode_multiarray),
 }
 
 
@@ -394,3 +449,108 @@ def detect_streams(store: Store) -> dict[str, Any]:
         if paired in by_type.get("CameraInfo", []):
             detected["camera_info"] = paired
     return detected
+
+
+# ---- embeddings another tool wrote into the recording -----------------------
+
+# The type siglipify registers its streams under. It is not a dimos class, so
+# a SqliteStore cannot open such a stream itself; the rows are read directly.
+EMBEDDING_PAYLOAD_MODULE = "std_msgs.msg.Float32MultiArray"
+
+
+def embedding_stream_name(image_stream_name: str, model_name: str) -> str:
+    """siglipify's name for a model's vectors of an image stream.
+
+    ``color_image`` embedded with ``google/siglip2-giant-opt-patch16-384`` is
+    ``color_image_siglip2_giant_opt_p16_384``: the source stream, then the
+    model, so two checkpoints' vectors never share a stream.
+    """
+    from dimos.teleop.memory_world.visual_search import model_slug
+
+    return f"{image_stream_name}_{model_slug(model_name)}"
+
+
+@dataclass(frozen=True)
+class StoredEmbedding:
+    """One frame's vectors as another tool stored them, before any alignment."""
+
+    ts: float
+    vectors: np.ndarray  # (count, dims) float32: one row per patch, or one pooled row
+    # A mem2 row names the frame it embeds; an mcap message only shares its stamp.
+    source_id: int | None = None
+    model: str | None = None
+
+
+class StoredEmbeddings:
+    """The rows of an embedding stream, from either container.
+
+    In a mem2 database the stream is read straight from its tables, because
+    its payload type is a ROS message dimos has no class for. In an mcap it is
+    an ordinary channel decoded by schema name.
+    """
+
+    def __init__(self, store: Store, name: str) -> None:
+        self.store = store
+        self.name = name
+        self._db_path = store.config.path if isinstance(store, SqliteStore) else None
+
+    def _connect(self) -> sqlite3.Connection:
+        return sqlite3.connect(f"file:{self._db_path}?mode=ro", uri=True)
+
+    def text_aligned(self) -> bool | None:
+        """Whether every vector went through the pooling head, so text can score it.
+
+        siglipify marks its streams; one written before the mark existed holds
+        raw tower tokens. None when the container carries no such mark (mcap).
+        """
+        if self._db_path is None:
+            return None
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT json_extract(config, '$.text_aligned') FROM _streams WHERE name = ?",
+                (self.name,),
+            ).fetchone()
+        finally:
+            conn.close()
+        return None if row is None else bool(row[0])
+
+    def count(self) -> int:
+        if self._db_path is None:
+            return int(self.store.streams[self.name].count())
+        conn = self._connect()
+        try:
+            return int(conn.execute(f'SELECT count(*) FROM "{self.name}"').fetchone()[0])
+        finally:
+            conn.close()
+
+    def __iter__(self) -> Iterator[StoredEmbedding]:
+        if self._db_path is None:
+            for obs in self.store.streams[self.name].order_by("ts"):
+                yield StoredEmbedding(ts=float(obs.ts), vectors=obs.data.vectors())
+            return
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                f'SELECT s.ts, json(s.tags), b.data FROM "{self.name}" s '
+                f'JOIN "{self.name}_blob" b ON b.id = s.id ORDER BY s.ts'
+            )
+            for ts, tags_json, blob in rows:
+                tags = json.loads(tags_json) if tags_json else {}
+                source_id = tags.get("source_id")
+                yield StoredEmbedding(
+                    ts=float(ts),
+                    vectors=decode_multiarray(blob).vectors(),
+                    source_id=None if source_id is None else int(source_id),
+                    model=tags.get("model"),
+                )
+        finally:
+            conn.close()
+
+
+def grid_side(patch_count: int) -> int:
+    """Rows (= columns) of a square patch grid; a pooled row is a 1x1 grid."""
+    side = math.isqrt(patch_count)
+    if side * side != patch_count:
+        raise ValueError(f"{patch_count} patches do not form a square grid")
+    return side
