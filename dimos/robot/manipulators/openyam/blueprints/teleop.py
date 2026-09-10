@@ -85,7 +85,7 @@ keyboard_teleop_openyam = autoconnect(
     ),
 )
 
-OPENYAM_QUEST_TASK_NAME = "teleop_openyam"
+OPENYAM_WEBXR_TASK_NAME = "teleop_openyam"
 
 _openyam_webxr_pink = PinkKinematicsConfig(
     dt=0.01,
@@ -101,7 +101,7 @@ _openyam_webxr_model = make_openyam_model_config()
 _openyam_webxr_task = teleop_ik_task(
     _openyam_webxr_hw,
     robot_model=_openyam_webxr_model,
-    name=OPENYAM_QUEST_TASK_NAME,
+    name=OPENYAM_WEBXR_TASK_NAME,
     joint_names=OPENYAM_ARM_JOINTS,
     priority=10,
     bindings=[
