@@ -137,54 +137,41 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 # Installation
 
-## Interactive Install
+## Test a dimOS SDK application
 
-```sh skip
-curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
-```
-
-> See [`scripts/install.sh --help`](scripts/install.sh) for non-interactive and advanced options.
-
-## Manual System Install
-
-To set up your system dependencies, follow one of these guides:
-
-- 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
-- 🟩 [NixOS / General Linux](docs/installation/nix.md)
-- 🟧 [macOS](docs/installation/osx.md)
-
-> Full system requirements, tested configs, and dependency tiers: [docs/requirements.md](docs/requirements.md)
-
-## Python Install
-
-### Quickstart
+Test the current installer PR on Ubuntu 22.04/24.04 x86_64 or Apple Silicon macOS
+14+. Use both branch overrides below until the changes merge:
 
 ```bash
-uv venv --python "3.12"
-source .venv/bin/activate
-uv pip install 'dimos[base,unitree]'
-
-# Replay a recorded quadruped session (no hardware needed)
-# NOTE: First run will show a black rerun window while ~75 MB downloads from LFS
-dimos --replay run unitree-go2
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/feat/dimup-release/installer/bootstrap.sh \
+  | DIMUP_REF=feat/dimup-release bash
+dimup init my-robot --ref feat/dimup-release
+cd my-robot
+source .dimos/activate.sh
+dimos run my-robot.demo
 ```
+
+The bootstrap installs `dimup` and prepares the machine; follow its printed PATH
+instruction before running `dimup init`. That command creates an
+editable application pinned to the resolved SDK commit from the PR branch. Its two-module
+example generates images and prints their dimensions, without hardware or datasets.
+Edit `src/my_robot/demo.py`, run `pytest`, and rerun the blueprint.
+
+See the [installation guide](docs/installation/installer.md) for machine setup,
+SDK revision selection, cloning applications, diagnostics, and optional direnv.
+
+To work on dimOS itself after the bootstrap:
 
 ```bash
-# Install with simulation support
-uv pip install 'dimos[base,unitree,sim]'
-
-# Run quadruped in MuJoCo simulation
-dimos --simulation run unitree-go2
-
-# Run humanoid in simulation
-dimos --simulation run unitree-g1-sim
+dimup dev dimos --ref feat/dimup-release
+cd dimos
+source .dimos/activate.sh
+dimos doctor
+git switch -c feat/my-change
 ```
 
-```bash
-# Control a real robot (Unitree quadruped over WebRTC)
-export ROBOT_IP=<YOUR_ROBOT_IP>
-dimos run unitree-go2
-```
+This prepares an editable contributor checkout with test/lint tools and commit
+hooks. See the [contributor setup procedure](docs/installation/installer.md#work-on-dimos-itself).
 
 # Featured Runfiles
 

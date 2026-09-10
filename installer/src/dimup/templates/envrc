@@ -1,0 +1,3 @@
+watch_file pyproject.toml
+watch_file uv.lock
+source_env .dimos/activate.sh

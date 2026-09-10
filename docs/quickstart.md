@@ -1,57 +1,11 @@
 # Quickstart
 
-This quickstart gets dimOS running on your laptop. You install it, then play back a recorded Unitree Go2 session and watch the robot map and navigate an office in a live visualization. You do not need a robot or a GPU for this.
+Start by [creating an SDK application](/docs/installation/installer.md). Run its
+synthetic image example, edit the generated source, and run `pytest`.
 
-When you are ready for more, the same install works with physics simulation, a real robot, or an LLM agent you can talk to.
-
-## Before you begin
-
-You need a machine running **Ubuntu 22.04 or newer** or **macOS 12.6 or newer**, with **Python 3.12**, about **10 GB of free disk**, and **16 GB of RAM**. A GPU is only required later for perception and AI features, so any reasonably modern laptop can run this quickstart.
-
-The full hardware matrix, including tested configurations and Jetson boards, is on the [system requirements](/docs/requirements.md) page.
-
-If you use a coding agent such as Claude Code or OpenClaw, point it at the repository's [AGENTS.md](https://github.com/dimensionalOS/dimos/blob/main/AGENTS.md) so it understands the codebase conventions.
-
-## Install dimOS
-
-There are two ways to install, and you only need one of them.
-
-### Option A: guided installer (recommended)
-
-The installer script walks you through the whole setup interactively. It installs the system packages dimOS needs (such as git-lfs and portaudio), installs the [uv](https://docs.astral.sh/uv/) Python package manager if you don't have it, creates a virtual environment, and installs dimOS into it with the extras you choose.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
-```
-
-If you prefer to read the script before running it, it lives at [scripts/install.sh](https://github.com/dimensionalOS/dimos/blob/main/scripts/install.sh) in the repository.
-
-When the installer finishes, activate the environment it created and **skip ahead to [Run your first replay](#run-your-first-replay)**. Everything in Option B has already been done for you.
-
-### Option B: manual install
-
-First install the system dependencies for your OS by following the matching guide:
-
-| OS guide | Notes |
-| --- | --- |
-| [Ubuntu](/docs/installation/ubuntu.md) | Primary tested path |
-| [macOS](/docs/installation/osx.md) | Homebrew-based, less mature than Linux |
-| [Nix](/docs/installation/nix.md) | Flakes and dev shell |
-
-Then create a Python 3.12 environment. The examples use [uv](https://docs.astral.sh/uv/), though plain `python -m venv` and `pip` work the same way:
-
-```bash
-uv venv --python "3.12"
-source .venv/bin/activate
-```
-
-Finally install dimOS with the extras this quickstart uses:
-
-```bash
-uv pip install 'dimos[base,unitree]'
-```
-
-Extras keep the install lean. The `base` extra brings the runtime, modules, transports, and CLI, while `unitree` adds WebRTC support and the skills for the Go2 and G1 robots, whether real or replayed.
+Once that works, the same application environment can run the built-in examples
+below. Replay workloads download recorded data; hardware workloads require the
+corresponding robot. Activate your application before running these commands.
 
 ## Run your first replay
 

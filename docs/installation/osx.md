@@ -1,46 +1,21 @@
-# macOS Install (12.6 or newer)
+# Apple Silicon macOS
+
+For SDK applications and contributor checkouts, follow the
+[dimup installation guide](/docs/installation/installer.md).
+
+After its machine bootstrap, prepare a contributor checkout with:
 
 ```sh skip
-# install homebrew
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-# install dependencies
-brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python pre-commit
-
-# install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
-```
-
-## Using dimOS as a library
-
-```sh skip
-mkdir myproject && cd myproject
-
-uv venv --python 3.12
-source .venv/bin/activate
-
-# install everything (depending on your use case you might not need all extras,
-# check your respective platform guides)
-uv pip install 'dimos[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu]'
-```
-
-## Developing on dimOS
-
-```sh skip
-# this allows getting large files on-demand (and not pulling all immediately)
-export GIT_LFS_SKIP_SMUDGE=1
-git clone https://github.com/dimensionalOS/dimos.git
+dimup dev dimos --ref feat/dimup-release
 cd dimos
-
-# Install all dependency groups (tests, lint, …) so mypy + pytest are
-# both available. For self-hosted tests, see docs/development/testing.md.
-uv sync --all-groups
-
-# type check
-uv run mypy dimos
-
-# tests (around a minute to run)
-uv run pytest --numprocesses=auto dimos
+source .dimos/activate.sh
+dimos doctor
+git switch -c feat/my-change
 ```
+
+Keep the branch override while testing this PR. After merge, omit `--ref` to
+start from `main`. The command installs the editable SDK, runtime dependencies,
+test/lint tools, and commit hooks. Native modules build on demand.
 
 ## Transport note for macOS
 
@@ -50,10 +25,4 @@ See the [Zenoh quickstart](/docs/usage/transports/index.md#zenoh-quickstart) for
 
 ```sh skip
 dimos --dtop --replay --replay-db=go2_bigoffice run unitree-go2
-```
-
-If you are developing on the repository, prefer syncing the full environment with the checked-in lockfile:
-
-```sh skip
-uv sync --extra all --frozen
 ```

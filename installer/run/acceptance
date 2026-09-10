@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Exercise the documented SDK application journey using the installed dimup."""
+
+import argparse
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import tempfile
+import threading
+
+
+def contributor_journey(parent: Path, ref: str, results: Path) -> None:
+    root = parent / "dimos"
+    log = results / "contributor.log"
+    try:
+        run(parent, ["dimup", "dev", str(root), "--ref", ref], log)
+    finally:
+        setup_log = root / ".dimos/setup.log"
+        if setup_log.exists():
+            shutil.copy(setup_log, results / "contributor-setup.log")
+    activated(root, ["dimos", "doctor"], log)
+    activated(
+        root,
+        ["pytest", "--noconftest", "-o", "addopts=", "dimos/utils/test_sequential_ids.py"],
+        log,
+    )
+    for hook in ("pre-commit", "commit-msg"):
+        if not os.access(root / ".git/hooks" / hook, os.X_OK):
+            raise RuntimeError(f"Missing executable contributor hook: {hook}")
+    source = root / "dimos/__init__.py"
+    original = source.read_text()
+    source.write_text(original + '\nDIMUP_ACCEPTANCE_MARKER = "source edit is live"\n')
+    try:
+        activated(
+            root,
+            [
+                "python",
+                "-I",
+                "-c",
+                'import dimos; assert dimos.DIMUP_ACCEPTANCE_MARKER == "source edit is live"',
+            ],
+            log,
+        )
+    finally:
+        source.write_text(original)
+    status = subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True)
+    if status:
+        raise RuntimeError(f"Contributor setup changed repository files:\n{status}")
+    transcript = log.read_text()
+    for expected in (
+        "Clone DimOS",
+        "Install development dependencies",
+        "Install commit hooks",
+        "Verify contributor checkout",
+        "Ready · dimos",
+    ):
+        if expected not in transcript:
+            raise RuntimeError(f"Missing contributor CLI output {expected!r}; see {log}")
+
+
+def run(root: Path, command: list[str], log: Path) -> None:
+    with log.open("a") as output:
+        subprocess.run(
+            command, cwd=root, stdout=output, stderr=subprocess.STDOUT, check=True, timeout=1800
+        )
+
+
+def activated(root: Path, command: list[str], log: Path) -> None:
+    run(
+        root,
+        [
+            "bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            'source .dimos/activate.sh && exec "$@"',
+            "acceptance",
+            *command,
+        ],
+        log,
+    )
+
+
+def run_demo(root: Path, expected: str, log: Path) -> None:
+    ready = threading.Event()
+    failures: list[str] = []
+    with log.open("a") as output:
+        process = subprocess.Popen(
+            [
+                "bash",
+                "--noprofile",
+                "--norc",
+                "-c",
+                "source .dimos/activate.sh && exec dimos --viewer none run my-robot.demo",
+            ],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+
+        def read() -> None:
+            assert process.stdout is not None
+            for line in process.stdout:
+                output.write(line)
+                output.flush()
+                if (
+                    "Exception in RPC handler" in line
+                    or "Traceback (most recent call last)" in line
+                ):
+                    failures.append(line)
+                if expected in line:
+                    ready.set()
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        try:
+            if not ready.wait(90):
+                raise RuntimeError(f"No {expected!r} output; see {log}")
+            os.killpg(process.pid, signal.SIGINT)
+            code = process.wait(timeout=30)
+            if code not in (0, 130, -signal.SIGINT):
+                raise RuntimeError(f"Demo exited with {code}; see {log}")
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+            reader.join(timeout=5)
+            if process.stdout is not None:
+                process.stdout.close()
+        if failures:
+            raise RuntimeError(f"Demo reported runtime errors; see {log}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ref", required=True)
+    parser.add_argument("--results", type=Path, required=True)
+    parser.add_argument("--native", action="store_true")
+    parser.add_argument("--contributor", action="store_true")
+    args = parser.parse_args()
+    results = args.results.resolve()
+    results.mkdir(parents=True, exist_ok=True)
+    log = results / "journey.log"
+    with tempfile.TemporaryDirectory(prefix="dimup-acceptance-") as temporary:
+        parent = Path(temporary)
+        # Hosted runners may already have Deno. Make any implicit frontend build fail.
+        bins = parent / "without-frontend"
+        bins.mkdir()
+        deno = bins / "deno"
+        deno.write_text(
+            '#!/bin/sh\necho "Unexpected frontend tooling during Python setup" >&2\nexit 99\n'
+        )
+        deno.chmod(0o755)
+        os.environ["PATH"] = str(bins) + os.pathsep + os.environ["PATH"]
+        project = parent / "my-robot"
+        try:
+            run(parent, ["dimup", "init", str(project), "--ref", args.ref], log)
+        finally:
+            setup_log = project / ".dimos/setup.log"
+            if setup_log.exists():
+                shutil.copy(setup_log, results / "setup.log")
+        transcript = log.read_text()
+        for expected in (
+            "Resolve SDK",
+            "Create project files",
+            "Install dependencies",
+            "Resolved ",
+            "Verify application",
+            "Ready · my-robot",
+            "source .dimos/activate.sh",
+            "dimos run my-robot.demo",
+            "direnv allow",
+        ):
+            if expected not in transcript:
+                raise RuntimeError(f"Missing CLI output {expected!r}; see {log}")
+        if "\x1b[" in transcript or "Read SDK dependencies" in transcript:
+            raise RuntimeError(f"Unexpected terminal decoration or metadata output; see {log}")
+        activated(project, ["pytest", "-q"], log)
+        activated(project, ["dimos", "doctor"], log)
+        run_demo(project, "image 160x120", results / "demo.log")
+        activated(project, ["uv", "add", "humanize"], log)
+        for path in (project / "src/my_robot/demo.py", project / "tests/test_demo.py"):
+            path.write_text(path.read_text().replace("160", "192"))
+        activated(project, ["pytest", "-q"], log)
+        run_demo(project, "image 192x120", results / "edited-demo.log")
+        run(project, ["git", "init", "--quiet"], log)
+        run(project, ["git", "add", "."], log)
+        run(
+            project,
+            [
+                "git",
+                "-c",
+                "user.name=DimOS",
+                "-c",
+                "user.email=build@dimos.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "--no-gpg-sign",
+                "-m",
+                "Application",
+            ],
+            log,
+        )
+        clone = parent / "clone"
+        run(parent, ["git", "clone", str(project), str(clone)], log)
+        run(clone, ["uv", "sync", "--locked"], log)
+        activated(clone, ["pytest", "-q"], log)
+        activated(clone, ["dimos", "doctor"], log)
+        run_demo(clone, "image 192x120", results / "clone-demo.log")
+        if args.contributor:
+            contributor_journey(parent, args.ref, results)
+        if args.native:
+            script = Path(__file__).with_name("native_acceptance.py")
+            activated(
+                clone,
+                ["env", "DIMOS_TRANSPORT=lcm", "python", str(script), str(results)],
+                results / "native.log",
+            )
+    print(f"Application journey passed. Results: {results}")
+
+
+if __name__ == "__main__":
+    main()
