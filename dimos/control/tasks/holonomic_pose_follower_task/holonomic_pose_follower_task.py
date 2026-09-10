@@ -150,6 +150,8 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         )
 
     def is_active(self) -> bool:
+        # A latched path counts: the tick loop only calls compute() on active
+        # tasks, and compute() is what arms it.
         return self._state in ("tracking", "settling", "stopping") or self._pending_path is not None
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
@@ -190,6 +192,7 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         if joints & self._joint_names and self.is_active():
             logger.warning(f"HolonomicPoseFollowerTask '{self._name}' preempted by {by_task}")
             self._state = "aborted"
+            self._pending_path = None
 
     # Control law
 
@@ -488,6 +491,7 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         if not self.is_active():
             return False
         self._state = "aborted"
+        self._pending_path = None
         return True
 
     def reset(self) -> bool:

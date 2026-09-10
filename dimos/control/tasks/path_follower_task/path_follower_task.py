@@ -208,7 +208,12 @@ class PathFollowerTask(BaseControlTask):
         )
 
     def is_active(self) -> bool:
-        return self._state in ("initial_rotation", "path_following", "final_rotation")
+        # A latched path counts: the tick loop only calls compute() on active
+        # tasks, and compute() is what arms it.
+        return (
+            self._state in ("initial_rotation", "path_following", "final_rotation")
+            or self._pending_path is not None
+        )
 
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         if self._pending_path is not None:
@@ -329,6 +334,7 @@ class PathFollowerTask(BaseControlTask):
         if joints & self._joint_names and self.is_active():
             logger.warning(f"PathFollowerTask '{self._name}' preempted by {by_task}")
             self._state = "aborted"
+            self._pending_path = None
 
     # State-machine bodies (mirrors LocalPlanner._compute_*)
 
@@ -602,6 +608,7 @@ class PathFollowerTask(BaseControlTask):
         if not self.is_active():
             return False
         self._state = "aborted"
+        self._pending_path = None
         return True
 
     def reset(self) -> bool:
