@@ -12,20 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The shipped agent: the blueprint's own ``McpClient`` over ``/human_input``."""
+"""Evaluate the production McpClient through its input and output topics."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
 from pathlib import Path
 import threading
-import time
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
-from dimos.evals.agents.lib.langchain_recorder import LangChainRecorder
-from dimos.evals.types import Environment, RunningEnvironment, Trajectory
+from dimos.agents.llm_trace import list_llm_trace_pairs
+from dimos.evals.agents.base import Agent
+from dimos.evals.agents.lib.langchain_to_atif import append_ai_message_to_atif
+from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
+from dimos.evals.environments.base import Environment
+from dimos.evals.types import RunningEnvironment, Trajectory
 
 
 class _Turn:
@@ -36,7 +39,7 @@ class _Turn:
     the raw trace, which is complete before the idle flip is published."""
 
     def __init__(self, raw_dir: Path) -> None:
-        self.received: list[tuple[BaseMessage, float]] = []  # message, epoch it arrived
+        self.received: list[BaseMessage] = []
         self.done = threading.Event()
         self._started = threading.Event()
         self._lock = threading.Lock()
@@ -46,7 +49,7 @@ class _Turn:
     def on_agent(self, msg: Any) -> None:
         if isinstance(msg, BaseMessage):
             with self._lock:
-                self.received.append((msg, time.time()))
+                self.received.append(msg)
                 self._maybe_done()
 
     def on_idle(self, flag: Any) -> None:
@@ -54,59 +57,35 @@ class _Turn:
             self._started.set()
         elif flag is True and self._started.is_set():
             with self._lock:
-                self._expected = len(_pairs(self._raw_dir))
+                self._expected = len(list_llm_trace_pairs(self._raw_dir))
                 self._maybe_done()
 
     def _maybe_done(self) -> None:
         if self._expected is not None and (
-            sum(isinstance(m, AIMessage) for m, _ in self.received) >= self._expected
+            sum(isinstance(m, AIMessage) for m in self.received) >= self._expected
         ):
             self.done.set()
 
 
-def _pairs(raw_dir: Path) -> list[tuple[Path, Path]]:
-    """The McpClient's request/response pairs under *raw_dir*, in order."""
-    pairs: list[tuple[Path, Path]] = []
-    for req in sorted(raw_dir.glob("*-request.json")):
-        resp = req.with_name(req.name.replace("-request.json", "-response.json"))
-        if resp.exists():
-            pairs.append((req, resp))
-    return pairs
+class McpClientAdapter(Agent):
+    """An eval adapter for the production ``McpClient``.
 
-
-@dataclass
-class McpClientAgent:
-    """The production agent: ``inputs`` on ``/human_input``, the turn read
-    back from ``/agent`` until ``/agent_idle``. Its model and prompt are the
-    ``McpClient`` module's own — configure the module, not this agent. Raw
-    capture is the McpClient's trace dir, which this agent points at
-    ``run_dir/raw`` (the ``set_trace_dir`` RPC) as the turn starts —
-    launched and attached McpClients alike.
-
-    ``modules`` is the agentic composite appended to the case's stack, e.g.
-    ``"unitree-go2-agentic"`` (the whole shipped stack; ``autoconnect``
-    dedups the base it shares with the case); on a frozen ``Dataset`` it is
-    the whole launched stack. ``""`` attaches to a dimos that is already
-    running.
+    Send the instruction on ``/human_input`` and capture ``/agent`` until
+    ``/agent_idle``. Configure the model and prompt on the production module;
+    this adapter only redirects its trace to ``run_dir/raw`` for each case.
+    ``modules`` adds an agentic stack to the environment; an empty sequence
+    uses the agent already supplied by the environment.
     """
-
-    modules: str = ""
 
     def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
         """The shipped agent can call every tool its MCP server exposes."""
         return environment_tools
 
     def preflight(self, environment: Environment) -> None:
-        from dimos.core.run_registry import list_runs
-
-        if not environment.has_robot and not self.modules:
+        if not environment.has_robot and not self.config.modules:
             raise RuntimeError(
-                f"McpClientAgent needs a running McpClient; {type(environment).__name__} "
+                f"McpClientAdapter needs a running McpClient; {type(environment).__name__} "
                 "has no robot and this agent adds no modules"
-            )
-        if not self.modules and not list_runs(alive_only=True):
-            raise RuntimeError(
-                "McpClientAgent adds no McpClient and no dimos is running to attach to"
             )
 
     def run(
@@ -116,6 +95,8 @@ class McpClientAgent:
         from dimos.core.transport_factory import make_transport
         from dimos.porcelain.dimos import Dimos
 
+        # Set the directory for logging raw request/response payloads
+        # in dimos.agents.mcp.mcp_client.McpClient
         app = Dimos.connect()
         try:
             mcp_client: Any = app.McpClient  # handle type depends on what's importable
@@ -123,8 +104,9 @@ class McpClientAgent:
         finally:
             app.stop()
 
-        recorder = LangChainRecorder(
-            inputs, name=type(self).__name__, model=McpClientConfig().model, raw_dir=run_dir / "raw"
+        # init the stateful trajectory builder and subscribe to McpClient events
+        trajectory = TrajectoryBuilder(
+            inputs, name=type(self).__name__, model=McpClientConfig().model
         )
         turn = _Turn(run_dir / "raw")
         agent_t, idle_t, human_t = (
@@ -142,17 +124,29 @@ class McpClientAgent:
         finally:
             for t in (agent_t, idle_t, human_t):
                 t.stop()
-        pairs = _pairs(run_dir / "raw")
+
+        # build and return the ATIF trajectory
+        pairs = list_llm_trace_pairs(run_dir / "raw")
         calls = 0
-        for msg, at in turn.received:
+        for msg in turn.received:
             if isinstance(msg, AIMessage):
                 if calls >= len(pairs):
                     raise RuntimeError(
                         f"McpClient wrote no LLM trace for call {calls} under {run_dir / 'raw'}; "
                         "every call must be captured whole"
                     )
-                recorder.record(msg, request=pairs[calls][0], response=pairs[calls][1], at=at)
+                _, request_path, response_path = pairs[calls]
+                request = json.loads(request_path.read_text())
+                response = json.loads(response_path.read_text())
+                append_ai_message_to_atif(
+                    trajectory,
+                    msg,
+                    request=request_path,
+                    response=response_path,
+                    at=request["started_at"],
+                    latency_s=response["latency_s"],
+                )
                 calls += 1
             elif isinstance(msg, ToolMessage):
-                recorder.observe(str(msg.tool_call_id), str(msg.content))
-        return recorder.build("answer" if finished else "timeout")
+                trajectory.observe(str(msg.tool_call_id), str(msg.content))
+        return trajectory.build("answer" if finished else "timeout")

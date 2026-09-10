@@ -16,11 +16,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
-
-from dimos.evals.agents.lib.chat import ChatAgent, single_call
-from dimos.evals.types import Environment, RunningEnvironment, Trajectory
+from dimos.evals.agents.lib.single_call import Blocks, SingleCallAgent
+from dimos.evals.types import RunningEnvironment
 
 BLIND_BLOCK: dict[str, str] = {
     "type": "text",
@@ -28,14 +25,8 @@ BLIND_BLOCK: dict[str, str] = {
 }
 
 
-@dataclass
-class Blind(ChatAgent):
+class Blind(SingleCallAgent):
     """One model call, instruction only. Never reads the recording."""
 
-    def preflight(self, environment: Environment) -> None:
-        """Any environment."""
-
-    def run(
-        self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
-    ) -> Trajectory:
-        return single_call(self, [BLIND_BLOCK], inputs, run_dir)
+    def _observation_blocks(self, env: RunningEnvironment) -> Blocks:
+        return [BLIND_BLOCK]

@@ -12,48 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Eval primitives: the task and the agent are separate things.
-
-A :class:`EvalCase` is an environment, an instruction, and a grader; nothing
-else. Which agent runs it is the run's business. The same case is benchmarked
-under a bare model, the production agent, or an external CLI without
-changing, so scores stay comparable across years.
-
-- :class:`Environment` says what exists: a frozen recording (``Dataset``), a
-  standalone image (``ImageFile``), or a live simulator (``Sim``). It starts,
-  yields a :class:`RunningEnvironment` (an MCP url when there is a robot, the
-  memory recording, and artifact paths), and stops.
-- :class:`Agent` delivers the instruction, acts, and returns a
-  :class:`Trajectory` (Harbor's ATIF document) with every provider
-  request/response saved whole.
-- ``grade(Outcome) -> float`` runs once, after the agent finishes, over the
-  trajectory and the artifacts.
-
-Suites are Python modules exporting ``SUITE: Suite``; an agent is a module
-defining one :class:`Agent` class (:mod:`dimos.evals.agents`), constructed
-from the command line with ``--set field=value`` overrides.
-"""
+"""Eval cases, results, and Harbor ATIF trajectory records."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    from dimos.evals.environments.base import Environment
     from dimos.memory.store.base import Store
     from dimos.memory.stream import Stream
 
-Select = Callable[["Store"], "Stream[Any, Any]"]
-"""Stream selector — what a frozen recording holds for a case::
-
-    lambda s: s.streams.lidar.limit(1)
-    lambda s: s.streams.odom.range_time(0, 600)
-"""
-
-
-# -- trajectory (Harbor ATIF) ----------------------------------------------------------
 # https://www.harborframework.com/docs/agents/trajectory-format
 
 
@@ -142,9 +114,7 @@ class Trajectory:
     each call's request is a whole record named in its step, never
     reconstructed from the steps."""
 
-    schema_version: str = (
-        "ATIF-v1.7"  # v1.8 only adds audio parts; Harbor's validator stops at v1.7
-    )
+    schema_version: str = "ATIF-v1.7"
     agent: AgentInfo
     steps: tuple[Step, ...]
     final_metrics: FinalMetrics
@@ -159,45 +129,11 @@ class Trajectory:
         )
 
 
-# -- environment -----------------------------------------------------------------------
-
-
 @dataclass(frozen=True, kw_only=True)
 class RunningEnvironment:
     mcp_url: str  # "" when there is no robot
     streams: Sequence[Stream[Any, Any]]  # what the agent may look at. Dataset: the selection
-    artifacts: Mapping[str, Path]  # name -> path; every declared name is present
-
-
-class Environment(Protocol):
-    """What exists for a case. Implementations: :mod:`dimos.evals.environments`."""
-
-    @property
-    def artifacts(self) -> tuple[str, ...]:
-        """Names this environment produces, e.g. ``("recording",)``."""
-
-    @property
-    def has_robot(self) -> bool:
-        """True: ``start()`` returns an MCP url on its own, with no modules
-        from the agent (``Sim``; ``Dataset`` only with ``mcp_url``)."""
-
-    def preflight(self, agent: Agent) -> None:
-        """Raise if this environment can't run *agent* (it adds modules this
-        environment can't launch; a stream a case selected is missing).
-        Cheap: no data read, no process started."""
-
-    def start(self, modules: str) -> RunningEnvironment:
-        """Start, with *modules* (what the agent adds) on top of this
-        environment's own stack where it launches one."""
-
-    def settle(self, budget_s: float) -> None:
-        """Block until the world has finished reacting to the agent's actions,
-        at most *budget_s* seconds. Skills can return before the motion they
-        started completes; the case is over when the world is at rest, not
-        when the agent stops talking. An environment where nothing keeps
-        happening returns immediately."""
-
-    def stop(self) -> None: ...
+    artifacts: Mapping[str, Path]  # files produced by the environment, by name
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -211,46 +147,6 @@ def recording(o: Outcome) -> Store:
     from dimos.memory.store.sqlite import SqliteStore
 
     return SqliteStore(path=str(o.artifacts["recording"]), must_exist=True)
-
-
-# -- agent -----------------------------------------------------------------------------
-
-
-class Agent(Protocol):
-    """How the instruction reaches a model and how the model acts.
-
-    How the recording reaches the model is what an agent *is*: ``QuestionAnswer``
-    encodes the whole recording into one prompt, ``Blind`` never looks, ``Pi``
-    and ``McpClientAgent`` act through tools. No agent knows anything about
-    any particular case.
-    """
-
-    modules: str
-    """Blueprint atoms this agent brings; ``""`` for none. ``Sim`` appends
-    them to its launch (``dimos run <case stack> <modules>``), ``Dataset``
-    launches exactly them (a frozen recording has no stack to add to), and
-    ``ImageFile`` rejects a non-empty value in ``preflight``."""
-
-    def preflight(self, environment: Environment) -> None:
-        """Raise if this agent can't run in *environment* (needs a robot and
-        there is none; needs a stream it lacks). Runs before any environment
-        starts."""
-
-    def available_tools(self, environment_tools: tuple[str, ...]) -> tuple[str, ...]:
-        """Every tool this agent can call. *environment_tools* are the MCP
-        tools exposed by the running environment."""
-
-    def run(
-        self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
-    ) -> Trajectory:
-        """Deliver *inputs* and let the agent act until it stops, hits its own
-        step limit, or *timeout_s* passes (return what it has, marked
-        ``timeout``). Write raw provider request/response bodies under
-        ``run_dir``. Return the trajectory. Synchronous: nothing of the
-        agent's outlives the call. Never grades."""
-
-
-# -- case ------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, kw_only=True)

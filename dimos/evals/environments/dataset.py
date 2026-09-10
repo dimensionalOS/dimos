@@ -16,95 +16,80 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, ClassVar
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
-from dimos.evals.environments.lib.launch import blueprint_modules, default_mcp_url
-from dimos.evals.types import Agent, RunningEnvironment, Select
+from dimos.agents.mcp.mcp_adapter import McpAdapter
+from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+from dimos.evals.environments.base import Environment
+from dimos.evals.environments.lib.launch import default_mcp_url, validate_blueprints
+from dimos.evals.types import RunningEnvironment
+from dimos.memory.cli.dataset import open_dataset, resolve_dataset
+from dimos.memory.store.base import Store
+from dimos.memory.stream import Stream
+from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
-    from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-    from dimos.memory.store.base import Store
+    from dimos.evals.agents.base import Agent
 
 
-@dataclass
-class Dataset:
-    """A frozen recording, restricted to what the task is about.
+class DatasetConfig(BaseConfig):
+    name: str
+    select: tuple[Callable[[Store], Stream[Any, Any]], ...] = ()
+    mcp_url: str = ""
+    launch_timeout_s: float = 300.0
 
-    ``select`` decides what the recording *contains* for this case ("the point
-    cloud shown" is one lidar frame; "how far between t=20 and t=30" is that
-    odom window); ``()`` keeps all of it. How the agent gets to see it is the
-    agent's business. A tool-using agent brings its tool surface itself: its
-    ``modules`` are launched as their own stack (``dimos run <modules>`` —
-    there is no world for them to stand on) and torn down with the case.
-    ``mcp_url`` attaches a running MCP server instead; with neither there is
-    no robot.
+
+class Dataset(Environment):
+    """A frozen recording; ``select`` restricts the streams available to the agent.
+
+    Agent modules launch as their own stack. ``mcp_url`` instead attaches to
+    an existing MCP server; with neither, the recording stands alone.
     """
 
-    name: str  # a memory dataset name ("go2_short") or a path
-    select: tuple[Select, ...] = ()
-    mcp_url: str = ""
-    launch_timeout_s: float = 300.0  # module stack + MCP readiness; no simulator to boot
+    config: DatasetConfig
 
-    artifacts: ClassVar[tuple[str, ...]] = ("recording",)
-    _store: Store | None = field(default=None, init=False, repr=False, compare=False)
-    _proc: DimosCliCall | None = field(default=None, init=False, repr=False, compare=False)
+    def __init__(self, name: str, **kwargs: Any) -> None:
+        super().__init__(name=name, **kwargs)
 
     @property
     def has_robot(self) -> bool:
-        return bool(self.mcp_url)
+        return bool(self.config.mcp_url)
 
     def preflight(self, agent: Agent) -> None:
-        if agent.modules and self.mcp_url:
+        if agent.config.modules and self.config.mcp_url:
             raise RuntimeError(
-                f"Dataset({self.name!r}) already attaches to {self.mcp_url}; "
-                f"{type(agent).__name__} also adds modules {agent.modules!r}"
+                f"Dataset({self.config.name!r}) already attaches to {self.config.mcp_url}; "
+                f"{type(agent).__name__} also adds modules {agent.config.modules!r}"
             )
-        if agent.modules:
-            blueprint_modules(agent.modules)  # raises: unknown name
-        from dimos.memory.cli.dataset import open_dataset
+        if agent.config.modules:
+            validate_blueprints(agent.config.modules)
+        with open_dataset(self.config.name) as store:
+            for select in self.config.select:
+                select(store)
 
-        store = open_dataset(self.name)  # raises: dataset unresolvable
-        try:
-            for sel in self.select:
-                sel(store)  # raises "No stream 'x'. Available: [...]" — no data read
-        finally:
-            store.stop()
-
-    def start(self, modules: str) -> RunningEnvironment:
-        from dimos.memory.cli.dataset import open_dataset, resolve_dataset
-
-        mcp_url = self.mcp_url
+    def start(self, modules: Sequence[str]) -> RunningEnvironment:
+        mcp_url = self.config.mcp_url
         if modules:
-            from dimos.agents.mcp.mcp_adapter import McpAdapter
-            from dimos.e2e_tests.dimos_cli_call import DimosCliCall
-
             proc = DimosCliCall()
             proc.simulator = None
-            proc.demo_args = ["run", *modules.split()]
+            proc.demo_args = ["run", *modules]
+            self._resources.callback(proc.stop)
             proc.start()
-            self._proc = proc
             mcp_url = default_mcp_url()
-            if not McpAdapter(mcp_url).wait_for_ready(timeout=self.launch_timeout_s, interval=2.0):
+            if not McpAdapter(mcp_url).wait_for_ready(
+                timeout=self.config.launch_timeout_s, interval=2.0
+            ):
                 raise RuntimeError(f"MCP at {mcp_url} not ready — is dimos up?")
-        store = open_dataset(self.name)
-        self._store = store  # stays open while the agent reads; stop() closes it
+        store = open_dataset(self.config.name)
+        self._resources.callback(store.stop)
         streams = (
-            [sel(store) for sel in self.select]
-            if self.select
+            [select(store) for select in self.config.select]
+            if self.config.select
             else [store.stream(name) for name in store.list_streams()]
         )
         return RunningEnvironment(
-            mcp_url=mcp_url, streams=streams, artifacts={"recording": resolve_dataset(self.name)}
+            mcp_url=mcp_url,
+            streams=streams,
+            artifacts={"recording": resolve_dataset(self.config.name)},
         )
-
-    def settle(self, budget_s: float) -> None:
-        return None
-
-    def stop(self) -> None:
-        if self._store is not None:
-            self._store.stop()
-            self._store = None
-        if self._proc is not None:
-            self._proc.stop()
-            self._proc = None

@@ -19,24 +19,30 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 import importlib
+import inspect
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
+
+if TYPE_CHECKING:
+    from dimos.evals.agents.base import Agent
 
 app = typer.Typer(help="Run agent evals on recordings, sim, or a live robot.")
 
 
-def agent_class(module: str) -> type:
+def agent_class(module: str) -> type[Agent]:
     """The one agent class defined in *module* — an agent is a module."""
+    from dimos.evals.agents.base import Agent
+
     mod = importlib.import_module(module)
     found = [
         v
         for v in vars(mod).values()
         if isinstance(v, type)
         and v.__module__ == mod.__name__
-        and callable(getattr(v, "run", None))
-        and callable(getattr(v, "preflight", None))
+        and issubclass(v, Agent)
+        and not inspect.isabstract(v)
     ]
     if len(found) != 1:
         raise TypeError(f"{module} defines {len(found)} agents, expected one")
@@ -78,7 +84,7 @@ def run_provenance(source: dict[str, Any], module: str, kwargs: dict[str, Any]) 
     return {"source": source, "agent": agent}
 
 
-def load_agent(module: str, overrides: Iterable[str] = ()) -> Any:
+def load_agent(module: str, overrides: Iterable[str] = ()) -> Agent:
     """``--agent module --set field=value ...``: the agent class in *module*,
     constructed with the overrides. A field the agent does not have is the
     constructor's own ``TypeError``."""

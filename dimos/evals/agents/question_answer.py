@@ -17,17 +17,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from dimos.evals.agents.lib.chat import Blocks, ChatAgent, single_call
-from dimos.evals.types import Environment, RunningEnvironment, Trajectory
+from pydantic import Field
+
+from dimos.evals.agents.lib.single_call import (
+    Blocks,
+    SingleCallAgent,
+    SingleCallAgentConfig,
+)
+from dimos.evals.types import RunningEnvironment
 
 if TYPE_CHECKING:
-    from dimos.memory.stream import Stream
     from dimos.memory.type.observation import Observation
 
 
@@ -50,34 +52,27 @@ def _legend_block(obs: Observation[Any]) -> Blocks:
     return [{"type": "text", "text": f"format: {legend}"}] if isinstance(legend, str) else []
 
 
-@dataclass
-class QuestionAnswer(ChatAgent):
+class QuestionAnswerConfig(SingleCallAgentConfig):
+    frames_per_stream: int = Field(default=8, ge=1)
+
+
+class QuestionAnswer(SingleCallAgent):
     """One model call: ``agent_encode()`` of everything in the recording, then
     the instruction. At most ``frames_per_stream`` observations per stream,
     spread evenly over the stream."""
 
-    frames_per_stream: int = 8
+    config: QuestionAnswerConfig
 
-    def preflight(self, environment: Environment) -> None:
-        """Any environment with a recording."""
-
-    def run(
-        self, inputs: str, env: RunningEnvironment, run_dir: Path, *, timeout_s: float
-    ) -> Trajectory:
-        blocks = self._encode(env.streams)
-        if not blocks:
-            raise RuntimeError("nothing in the recording to encode; the run would be blind")
-        return single_call(self, blocks, inputs, run_dir)
-
-    def _encode(self, streams: Sequence[Stream[Any, Any]]) -> Blocks:
+    def _observation_blocks(self, env: RunningEnvironment) -> Blocks:
         blocks: Blocks = []
-        for stream in streams:
-            name = stream.name
+        for stream in env.streams:
             observations = list(stream)
             if not observations:
                 continue
-            n = self.frames_per_stream
-            if len(observations) > n:
+            n = self.config.frames_per_stream
+            if n == 1:
+                observations = observations[:1]
+            elif len(observations) > n:
                 observations = [
                     observations[round(i * (len(observations) - 1) / (n - 1))] for i in range(n)
                 ]
@@ -85,10 +80,12 @@ class QuestionAnswer(ChatAgent):
             blocks.append(
                 {
                     "type": "text",
-                    "text": f"observations from stream {name!r} (t is seconds from the first shown):",
+                    "text": f"observations from stream {stream.name!r} (t is seconds from the first shown):",
                 }
             )
             blocks += _legend_block(observations[0])
             for obs in observations:
                 blocks += _observation_blocks(obs, f"[t={obs.ts - t0:.1f}s]")
+        if not blocks:
+            raise ValueError("nothing in the recording to encode; the run would be blind")
         return blocks

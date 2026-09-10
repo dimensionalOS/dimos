@@ -31,7 +31,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from dimos.evals.agents.pi import Pi
+from dimos.evals.agents.pi import PiAdapter
 from dimos.evals.runner import EvalRunner
 from dimos.evals.suites.sf_office_occupancy_research import SUITE
 from dimos.evals.types import EvalResult
@@ -123,9 +123,9 @@ def verify_benchmark() -> str:
     return actual
 
 
-def benchmark_agent() -> Pi:
+def benchmark_agent() -> PiAdapter:
     """The fixed Pi profile used for every comparable research iteration."""
-    return Pi(
+    return PiAdapter(
         model=MODEL,
         thinking=THINKING,
         max_steps=MAX_STEPS,
