@@ -77,5 +77,10 @@
         # module that dies at the first CUDA call. dim_slam.py's sdk_variant() detects the
         # hardware and names the variant on the build command.
         packages = nixpkgs.lib.genAttrs variants packageFor;
+
+        # The cargo-clippy pre-commit hook enters `nix develop` in every crate dir that has
+        # a flake. The rust toolchain comes from the enclosing dimos shell, and without
+        # CUVSLAM_SDK_DIR cu_vslam_rs builds its SDK-less stub, so clippy needs nothing.
+        devShells.default = pkgs.mkShellNoCC { };
       });
 }
