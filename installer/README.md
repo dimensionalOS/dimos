@@ -1,15 +1,25 @@
-# dimup
+# dimup machine setup
 
-Prepare a machine for DimOS SDK development:
+Install uv and dimup, then prepare your machine from this PR branch:
 
 ```bash
-uv tool install --python 3.12 ./installer
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/feat/dimup-setup/installer/bootstrap.sh | bash
+```
+
+The bootstrap installs the standalone dimup tool and runs `dimup setup`. Follow
+its printed PATH instruction to use dimup in the current terminal. Rerun setup
+when prerequisites are missing:
+
+```bash
 dimup setup
 ```
 
-This package is independent of the DimOS runtime. It supports Ubuntu 22.04/24.04
-x86_64 and Apple Silicon macOS 14+. Setup installs host packages with apt/Homebrew,
-prepares Cargo and Nix, and writes a detailed log. It is safe to rerun.
+Automatic setup covers Ubuntu 22.04/24.04 x86_64 and Apple Silicon macOS 14+.
+Other platforms, including Arch Linux, receive manual prerequisite instructions.
+Setup installs apt/Homebrew dependencies and prepares Cargo, Nix, and Deno.
+It is safe to rerun. Tool output streams to the terminal and is saved in the
+setup log; each stage reports its elapsed time. `NO_COLOR=1` disables color.
 
-The release bootstrap installs uv and this tool, then runs setup. It does not
-install a global `dimos` runtime. Release publishing is handled by DimOS CI.
+The repository bootstrap uses a pinned source archive. Release packaging creates
+a standalone wheel, a checksum file, and a bootstrap that verifies the wheel.
+These are GitHub release assets; SDK PyPI uploads remain separate.
