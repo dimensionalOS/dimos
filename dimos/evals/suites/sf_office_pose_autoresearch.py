@@ -57,10 +57,10 @@ FROZEN_FILES = (
     _HERE / "sf_office_pose_research.py",
     _HERE / "sf_office_pose_grading.py",
     _HERE / "sf_office_pose_preprocessing.py",
-    _HERE / "sf_office_pose_answers.json",
+    _HERE / "sf_office_pose_qa.json",
     _HERE.parents[1] / "msgs/geometry_msgs/PoseStamped.py",
 )
-EXPECTED_BENCHMARK_DIGEST = "24fb111eb9d7c67401a8ff08e6cd06c093c9606e46383f19fc8a40bf31b00609"
+EXPECTED_BENCHMARK_DIGEST = "2d27e4b4f8d151b6b11e336e504ac145a911ec58aff45e9b417c290dfb12a7e0"
 
 CATEGORIES = {
     "kinematics": frozenset(
@@ -79,7 +79,6 @@ CATEGORIES = {
         }
     ),
     "planning": frozenset({"sf_office_pose_path_compression"}),
-    "patterns": frozenset({"sf_office_pose_repeated_patrol_cycle"}),
 }
 
 

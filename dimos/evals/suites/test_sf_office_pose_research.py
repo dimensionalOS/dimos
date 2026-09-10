@@ -19,13 +19,31 @@ from dimos.evals.suites.sf_office_pose_research import SUITE
 
 
 def test_pose_research_suite_matches_reference_manifest() -> None:
-    manifest = json.loads(Path(__file__).with_name("sf_office_pose_answers.json").read_text())[
-        "answers"
-    ]
+    manifest = json.loads(Path(__file__).with_name("sf_office_pose_qa.json").read_text())
+    records = manifest["cases"]
 
-    assert len(SUITE) == 9
-    assert {case.id for case in SUITE} == set(manifest)
+    assert len(SUITE) == 8
+    assert {case.id for case in SUITE} == {record["id"] for record in records}
     assert len({case.id for case in SUITE}) == len(SUITE)
+    assert all(set(record) == {"id", "question", "answer", "tags"} for record in records)
+    assert all(
+        case.inputs == " ".join([*manifest["instructions"], *record["question"]])
+        for case, record in zip(SUITE, records, strict=True)
+    )
+
+
+def test_review_manifest_matches_runtime_answers_and_tags() -> None:
+    runtime = json.loads(Path(__file__).with_name("sf_office_pose_qa.json").read_text())["cases"]
+    review = json.loads(Path(__file__).with_name("sf_office_pose_qa_review.json").read_text())
+
+    assert [record["id"] for record in review] == [record["id"] for record in runtime]
+    assert all(set(record) == {"id", "question", "answer", "tags"} for record in review)
+    assert all(record["question"] for record in review)
+    assert all(
+        review_record["answer"] == runtime_record["answer"]
+        and review_record["tags"] == runtime_record["tags"]
+        for review_record, runtime_record in zip(review, runtime, strict=True)
+    )
 
 
 def test_pose_research_cases_enforce_encoded_odom_evidence() -> None:
@@ -36,12 +54,3 @@ def test_pose_research_cases_enforce_encoded_odom_evidence() -> None:
         assert "preprocess_encoded_poses" in case.inputs
         assert case.timeout_s == 180.0
         assert "autoresearch" in case.tags
-
-
-def test_repeated_cycle_case_defines_non_overlapping_boundaries() -> None:
-    case = next(case for case in SUITE if case.id == "sf_office_pose_repeated_patrol_cycle")
-
-    assert "t0 < t1 < t2" in case.inputs
-    assert "[t0, t1] and [t1, t2]" in case.inputs
-    assert "arbitrary overlapping intervals do not qualify" in case.inputs
-    assert "lexicographically earliest (t0, t1, t2)" in case.inputs

@@ -1,0 +1,151 @@
+[
+  {
+    "id": "sf_office_pose_return_distance",
+    "question": [
+      "How far apart are the robot's final and initial positions?",
+      "Measure the direct distance in the horizontal XY plane and ignore obstacles."
+    ],
+    "answer": {
+      "remaining_distance_m": 0.21423652089047535
+    },
+    "tags": ["sf-office", "pose", "autoresearch", "kinematics", "return"]
+  },
+  {
+    "id": "sf_office_pose_stationary_percentage",
+    "question": [
+      "For how much of the recording was the robot stationary?",
+      "Stationary means moving slower than 0.08 m/s.",
+      "Treat brief movement lasting at most 1 second as part of the same stop.",
+      "Ignore stops shorter than 2 seconds."
+    ],
+    "answer": {
+      "stationary_time_s": 212.8,
+      "stationary_percent": 45.68484328037784
+    },
+    "tags": ["sf-office", "pose", "autoresearch", "kinematics", "stationary"]
+  },
+  {
+    "id": "sf_office_pose_backward_intervals",
+    "question": [
+      "When did the robot walk backward relative to the direction its body was facing?",
+      "The robot must be moving faster than 0.10 m/s while its forward speed is below -0.08 m/s.",
+      "Join backward periods separated by gaps of at most 0.5 seconds.",
+      "Only report intervals lasting at least 1 second."
+    ],
+    "answer": {
+      "backward_intervals_s": [
+        {"start_s": 52.9, "end_s": 55.2},
+        {"start_s": 82.7, "end_s": 84.8},
+        {"start_s": 125.9, "end_s": 128.1},
+        {"start_s": 220.6, "end_s": 222.4},
+        {"start_s": 334.8, "end_s": 336.0},
+        {"start_s": 342.9, "end_s": 344.2}
+      ]
+    },
+    "tags": ["sf-office", "pose", "autoresearch", "kinematics", "backward"]
+  },
+  {
+    "id": "sf_office_pose_self_intersections",
+    "question": [
+      "How many times did the robot's simplified path cross itself?",
+      "Simplify the path with a 0.10 m Ramer-Douglas-Peucker tolerance.",
+      "Only count proper crossings between nonadjacent path segments at least 5 seconds apart.",
+      "Merge nearby crossings into one event when they occur within 2 seconds and 0.30 m.",
+      "Report the average later-crossing time for each merged event."
+    ],
+    "answer": {
+      "intersection_count": 19,
+      "crossing_times_s": [
+        54.25564297058175,
+        103.93805489390945,
+        107.72132627446545,
+        233.15869831405774,
+        248.26976925849704,
+        250.65876457774246,
+        338.84551451950597,
+        352.1811998992477,
+        354.09725491447807,
+        360.8045165271485,
+        362.62059481933596,
+        368.1122569301386,
+        407.67030404774977,
+        427.57531252947456,
+        429.18507021309307,
+        430.96526259498415,
+        452.6133897826374,
+        453.2756724383576,
+        457.4290895564774
+      ]
+    },
+    "tags": ["sf-office", "pose", "autoresearch", "topology", "intersection"]
+  },
+  {
+    "id": "sf_office_pose_path_compression",
+    "question": [
+      "How much can the robot's XY path be simplified into straight segments?",
+      "Use Ramer-Douglas-Peucker with a 0.20 m tolerance and ignore collisions.",
+      "Compare the original and simplified lengths and count turns of at least 20 degrees.",
+      "A segment is backward when its median cosine alignment with body yaw is negative.",
+      "For stationary rotations, use speed below 0.08 m/s, bridge movement gaps of at most 1 second,",
+      "ignore stops shorter than 2 seconds, and require at least 30 degrees of net unwrapped rotation."
+    ],
+    "answer": {
+      "original_length_m": 105.74777768735322,
+      "optimized_length_m": 99.93750821465862,
+      "reduction_percent": 5.494460119883415,
+      "line_segments": 61,
+      "turns": 55,
+      "reverse_segments": 6,
+      "in_place_rotations": 16
+    },
+    "tags": ["sf-office", "pose", "autoresearch", "planning", "compression"]
+  },
+  {
+    "id": "sf_office_pose_opposite_retrace",
+    "question": [
+      "Where did the robot later travel back along a path it had previously followed?",
+      "Compare 2-second movement windows that are at least 10 seconds apart.",
+      "Their midpoint locations must be within 0.30 m and directions at least 150 degrees apart.",
+      "Join matching periods across gaps of at most 0.5 seconds.",
+      "Report the longest match lasting at least 1 second and its most recent earlier path."
+    ],
+    "answer": {
+      "interval_s": [423.3, 431.7],
+      "earlier_interval_s": [365.9, 373.4],
+      "retrace_length_m": 3.884127999062443
+    },
+    "tags": ["sf-office", "pose", "autoresearch", "topology", "retrace"]
+  },
+  {
+    "id": "sf_office_pose_longest_elapsed_return",
+    "question": [
+      "Which location did the robot leave and return to after the longest time?",
+      "The two positions must be within 0.30 m and at least 10 seconds apart.",
+      "Between them, the robot must have traveled at least 1 m away from the earlier position.",
+      "Report the midpoint of the matching positions and the elapsed time."
+    ],
+    "answer": {
+      "location_m": [0.9206673846045013, -2.1849416919502165],
+      "previous_time_s": 0.0,
+      "return_time_s": 465.8,
+      "elapsed_s": 465.8
+    },
+    "tags": ["sf-office", "pose", "autoresearch", "topology", "return"]
+  },
+  {
+    "id": "sf_office_pose_least_aligned",
+    "question": [
+      "When was the robot facing most directly away from its direction of travel?",
+      "Compare body direction with movement over each centered 2-second window.",
+      "Only consider windows where movement speed is at least 0.10 m/s.",
+      "Report the window with the largest angle between body direction and travel direction."
+    ],
+    "answer": {
+      "interval_s": [125.0, 127.0],
+      "center_time_s": 126.0,
+      "misalignment_deg": 179.94637071163214,
+      "position_m": [5.31169264301306, -1.1255418905434056]
+    },
+    "tags": ["sf-office", "pose", "autoresearch", "kinematics", "alignment"]
+  }
+]

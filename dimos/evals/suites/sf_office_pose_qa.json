@@ -1,0 +1,186 @@
+{
+  "instructions": [
+    "Open the recording listed in the system prompt and use only its odom PoseStamped",
+    "observations.",
+    "Iterate observations in timestamp order and call obs.data.agent_encode() on each one.",
+    "The returned dictionaries are the sole evidence. Do not inspect raw pose attributes or",
+    "database payloads, skip observations, inspect evaluation files or labels, construct a Path,",
+    "or use repository pose, mapping,",
+    "navigation, or evaluation utilities. Pass the complete list of returned dictionaries to",
+    "dimos.evals.suites.sf_office_pose_preprocessing.preprocess_encoded_poses and use its",
+    "time_s, position_m, yaw_rad, velocity_xy_m_s, and speed_m_s arrays for analysis.",
+    "This frozen helper is the only repository analysis utility you may use. You may use generic",
+    "Python, NumPy, and SciPy calculations on its output.",
+    "Unless the question says otherwise, analyze world-frame XY motion and express times as",
+    "seconds from the first pose. The frozen helper already performs timestamp sorting, duplicate",
+    "retention, quaternion normalization, yaw unwrapping, 10 Hz interpolation, Hampel and",
+    "Savitzky-Golay filtering, and centered",
+    "velocity calculation; do not repeat preprocessing."
+  ],
+  "cases": [
+    {
+      "id": "sf_office_pose_return_distance",
+      "question": [
+        "What minimum additional straight-line XY distance must the robot travel from its final",
+        "processed",
+        "position to return to its initial processed position? Ignore obstacles.",
+        "Return only JSON: {\"remaining_distance_m\": number}."
+      ],
+      "answer": {
+        "remaining_distance_m": 0.21423652089047535
+      },
+      "tags": ["sf-office", "pose", "autoresearch", "kinematics", "return"]
+    },
+    {
+      "id": "sf_office_pose_stationary_percentage",
+      "question": [
+        "Stationary means planar speed below 0.08 m/s. Bridge nonstationary gaps no longer than",
+        "1.0 s and discard stationary runs shorter than 2.0 s. What percentage of total elapsed",
+        "time was stationary?",
+        "Return only JSON: {\"stationary_time_s\": number, \"stationary_percent\": number}."
+      ],
+      "answer": {
+        "stationary_time_s": 212.8,
+        "stationary_percent": 45.68484328037784
+      },
+      "tags": ["sf-office", "pose", "autoresearch", "kinematics", "stationary"]
+    },
+    {
+      "id": "sf_office_pose_backward_intervals",
+      "question": [
+        "Body-forward speed is XY velocity dotted with [cos(yaw), sin(yaw)]. Backward requires",
+        "total speed above 0.10 m/s and body-forward speed below -0.08 m/s. Bridge gaps no longer",
+        "than 0.5 s and retain",
+        "intervals at least 1.0 s long. During which intervals did the robot walk backward?",
+        "Return only JSON: {\"backward_intervals_s\":",
+        "[{\"start_s\": number, \"end_s\": number}, ...]}."
+      ],
+      "answer": {
+        "backward_intervals_s": [
+          {"start_s": 52.9, "end_s": 55.2},
+          {"start_s": 82.7, "end_s": 84.8},
+          {"start_s": 125.9, "end_s": 128.1},
+          {"start_s": 220.6, "end_s": 222.4},
+          {"start_s": 334.8, "end_s": 336.0},
+          {"start_s": 342.9, "end_s": 344.2}
+        ]
+      },
+      "tags": ["sf-office", "pose", "autoresearch", "kinematics", "backward"]
+    },
+    {
+      "id": "sf_office_pose_self_intersections",
+      "question": [
+        "Simplify XY with standard recursive Ramer-Douglas-Peucker epsilon 0.10 m. Count proper",
+        "interior intersections between nonadjacent segments separated by at least 5 s. Group",
+        "successive crossings when later times differ by at most 2 s and locations by at most",
+        "0.30 m; report each group's mean",
+        "later crossing time.",
+        "Return only JSON: {\"intersection_count\": integer, \"crossing_times_s\": [number, ...]}."
+      ],
+      "answer": {
+        "intersection_count": 19,
+        "crossing_times_s": [
+          54.25564297058175,
+          103.93805489390945,
+          107.72132627446545,
+          233.15869831405774,
+          248.26976925849704,
+          250.65876457774246,
+          338.84551451950597,
+          352.1811998992477,
+          354.09725491447807,
+          360.8045165271485,
+          362.62059481933596,
+          368.1122569301386,
+          407.67030404774977,
+          427.57531252947456,
+          429.18507021309307,
+          430.96526259498415,
+          452.6133897826374,
+          453.2756724383576,
+          457.4290895564774
+        ]
+      },
+      "tags": ["sf-office", "pose", "autoresearch", "topology", "intersection"]
+    },
+    {
+      "id": "sf_office_pose_path_compression",
+      "question": [
+        "Build a collision-unaware replay plan by simplifying XY with Ramer-Douglas-Peucker",
+        "epsilon 0.20 m. Report original and simplified polyline lengths. Count turns with heading",
+        "change at least 20 degrees. A simplified leg is reverse when its median cosine alignment",
+        "with body yaw is negative. An in-place rotation is an interval with planar speed below",
+        "0.08 m/s, after bridging nonstationary gaps no longer than 1.0 s and discarding runs",
+        "shorter than 2.0 s, with at least 30 degrees net unwrapped yaw change.",
+        "Return only JSON: {\"original_length_m\": number, \"optimized_length_m\": number,",
+        "\"reduction_percent\": number, \"line_segments\": integer, \"turns\": integer,",
+        "\"reverse_segments\": integer, \"in_place_rotations\": integer}."
+      ],
+      "answer": {
+        "original_length_m": 105.74777768735322,
+        "optimized_length_m": 99.93750821465862,
+        "reduction_percent": 5.494460119883415,
+        "line_segments": 61,
+        "turns": 55,
+        "reverse_segments": 6,
+        "in_place_rotations": 16
+      },
+      "tags": ["sf-office", "pose", "autoresearch", "planning", "compression"]
+    },
+    {
+      "id": "sf_office_pose_opposite_retrace",
+      "question": [
+        "Use centered 2 s displacement windows with speed at least 0.10 m/s. A window retraces an",
+        "earlier path when the earlier window is at least 10 s older, midpoint separation is at",
+        "most 0.30 m, and travel directions differ by at least 150 degrees. Bridge gaps no longer",
+        "than 0.5 s, retain runs at least 1.0 s, and report the longest run, its most-recent",
+        "matching earlier span, and processed-path length during the",
+        "later run.",
+        "Return only JSON: {\"interval_s\": [start, end], \"earlier_interval_s\": [start, end],",
+        "\"retrace_length_m\": number}."
+      ],
+      "answer": {
+        "interval_s": [423.3, 431.7],
+        "earlier_interval_s": [365.9, 373.4],
+        "retrace_length_m": 3.884127999062443
+      },
+      "tags": ["sf-office", "pose", "autoresearch", "topology", "retrace"]
+    },
+    {
+      "id": "sf_office_pose_longest_elapsed_return",
+      "question": [
+        "Among pose pairs at least 10 s apart and within 0.30 m in XY, require the intervening",
+        "trajectory to depart at least 1.0 m from the earlier location. Which location was",
+        "revisited after the greatest",
+        "elapsed time? Report the midpoint of the paired positions.",
+        "Return only JSON: {\"location_m\": [x, y], \"previous_time_s\": number,",
+        "\"return_time_s\": number, \"elapsed_s\": number}."
+      ],
+      "answer": {
+        "location_m": [0.9206673846045013, -2.1849416919502165],
+        "previous_time_s": 0.0,
+        "return_time_s": 465.8,
+        "elapsed_s": 465.8
+      },
+      "tags": ["sf-office", "pose", "autoresearch", "topology", "return"]
+    },
+    {
+      "id": "sf_office_pose_least_aligned",
+      "question": [
+        "For each centered 2 s window with displacement speed at least 0.10 m/s, compute the",
+        "unsigned wrapped angle between midpoint body yaw and the window displacement direction.",
+        "During which window was facing",
+        "least aligned with travel?",
+        "Return only JSON: {\"interval_s\": [start, end], \"center_time_s\": number,",
+        "\"misalignment_deg\": number, \"position_m\": [x, y]}."
+      ],
+      "answer": {
+        "interval_s": [125.0, 127.0],
+        "center_time_s": 126.0,
+        "misalignment_deg": 179.94637071163214,
+        "position_m": [5.31169264301306, -1.1255418905434056]
+      },
+      "tags": ["sf-office", "pose", "autoresearch", "kinematics", "alignment"]
+    }
+  ]
+}

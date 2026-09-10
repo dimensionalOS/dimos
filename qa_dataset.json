@@ -1,0 +1,128 @@
+[
+  {
+    "id": "Q111",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "What stretches of mapped floor have a clear passage width above 0.9 m?",
+    "ground_truth": "",
+    "tags": ["region", "list"]
+  },
+  {
+    "id": "Q021",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "How many people are seated at a desk?",
+    "ground_truth": "",
+    "tags": ["count"]
+  },
+  {
+    "id": "Q063",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "When and where was the backpack last observed?",
+    "ground_truth": "",
+    "tags": ["time", "pos3d"]
+  },
+  {
+    "id": "Q070",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "Where are the bottles?",
+    "ground_truth": "",
+    "tags": ["pos3d", "list"]
+  },
+  {
+    "id": "Q133",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "Does every desk have a monitor on it?",
+    "ground_truth": "",
+    "tags": ["bool"]
+  },
+  {
+    "id": "Q234",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "Search until a bottle is located and return its position with a candidate frame.",
+    "ground_truth": "",
+    "tags": ["pos3d", "frame"]
+  },
+  {
+    "id": "Q020",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "Which named region held the most people at any point in the recording?",
+    "ground_truth": "",
+    "tags": ["region"]
+  },
+  {
+    "id": "Q023",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "How many people were standing rather than seated, per region?",
+    "ground_truth": "",
+    "tags": ["region", "count"]
+  },
+  {
+    "id": "Q076",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "Which regions contain a trash can?",
+    "ground_truth": "",
+    "tags": ["region", "list"]
+  },
+  {
+    "id": "Q128",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "Are there boxes in the region containing the flag?",
+    "ground_truth": "",
+    "tags": ["bool"]
+  },
+  {
+    "id": "Q183",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "Navigate to the nearest region that is both free space and unoccupied.",
+    "ground_truth": "",
+    "tags": ["pos3d"]
+  },
+  {
+    "id": "Q086",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "Re-inspect the region containing the oven at fixed intervals and report what changed.",
+    "ground_truth": "",
+    "tags": ["list", "text"]
+  },
+  {
+    "id": "Q139",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "Report every interval in which a chosen region held no people for longer than 60 s.",
+    "ground_truth": "",
+    "tags": ["timeline"]
+  },
+  {
+    "id": "Q166",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "Report the timestamp at which a chosen region transitions from occupied to empty.",
+    "ground_truth": "",
+    "tags": ["time"]
+  },
+  {
+    "id": "Q059",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "Is the traffic cone in the same position at the end of the recording as at the start?",
+    "ground_truth": "",
+    "tags": ["bool"]
+  },
+  {
+    "id": "Q193",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "Report any interval in which three or more people stand within 2 m of each other.",
+    "ground_truth": "",
+    "tags": ["timeline"]
+  },
+  {
+    "id": "Q182",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "Is the oven in an active or idle state?",
+    "ground_truth": "",
+    "tags": ["bool"]
+  },
+  {
+    "id": "Q142",
+    "dataset": "go2_SF_office_8mins_moshi",
+    "question": "Which 30-second bucket contains the most person-entry events?",
+    "ground_truth": "",
+    "tags": ["time"]
+  }
+]

@@ -27,9 +27,12 @@ from scipy.optimize import linear_sum_assignment
 
 from dimos.evals.types import Outcome
 
-_ANSWERS = json.loads(Path(__file__).with_name("sf_office_pose_answers.json").read_text())[
-    "answers"
-]
+_ANSWERS = {
+    record["id"]: record["answer"]
+    for record in json.loads(Path(__file__).with_name("sf_office_pose_qa.json").read_text())[
+        "cases"
+    ]
+}
 
 
 def _clamp(value: float) -> float:
@@ -216,21 +219,6 @@ def _least_aligned(answer: dict[str, Any]) -> float:
     return (interval + center + angle + position) / 4.0
 
 
-def _repeated_cycle(answer: dict[str, Any]) -> float:
-    expected = _ANSWERS["sf_office_pose_repeated_patrol_cycle"]
-    value = answer.get("repeated_cycle")
-    if not isinstance(value, bool) or value is not expected["repeated_cycle"]:
-        return 0.0
-    if not value:
-        return 1.0
-    scores = [
-        _numeric_score(answer, "start_time_s", expected["start_time_s"], 1.0, 6.0),
-        _numeric_score(answer, "duration_s", expected["duration_s"], 1.0, 6.0),
-        _numeric_score(answer, "length_m", expected["length_m"], 0.5, 3.0),
-    ]
-    return 0.25 + 0.75 * sum(scores) / len(scores)
-
-
 _SCORERS: dict[str, Callable[[dict[str, Any]], float]] = {
     "sf_office_pose_return_distance": _return_distance,
     "sf_office_pose_stationary_percentage": _stationary,
@@ -240,7 +228,6 @@ _SCORERS: dict[str, Callable[[dict[str, Any]], float]] = {
     "sf_office_pose_opposite_retrace": _opposite_retrace,
     "sf_office_pose_longest_elapsed_return": _longest_return,
     "sf_office_pose_least_aligned": _least_aligned,
-    "sf_office_pose_repeated_patrol_cycle": _repeated_cycle,
 }
 
 

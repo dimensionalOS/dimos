@@ -15,12 +15,17 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 from dimos.evals.suites.sf_office_pose_grading import grader, score_answer
+from dimos.evals.types import Outcome
 
-_ANSWERS = json.loads(Path(__file__).with_name("sf_office_pose_answers.json").read_text())[
-    "answers"
-]
+_ANSWERS = {
+    record["id"]: record["answer"]
+    for record in json.loads(Path(__file__).with_name("sf_office_pose_qa.json").read_text())[
+        "cases"
+    ]
+}
 
 
 def test_all_reference_answers_receive_full_credit() -> None:
@@ -59,7 +64,10 @@ def test_interval_matching_penalizes_missing_and_extra_predictions() -> None:
 
 
 def test_malformed_json_scores_zero_without_raising() -> None:
-    outcome = SimpleNamespace(trajectory=SimpleNamespace(final_answer="not json"), artifacts={})
+    outcome = cast(
+        "Outcome",
+        SimpleNamespace(trajectory=SimpleNamespace(final_answer="not json"), artifacts={}),
+    )
 
     assert grader("sf_office_pose_return_distance")(outcome) == 0.0
 
@@ -68,21 +76,3 @@ def test_extreme_json_integer_scores_zero_without_raising() -> None:
     answer = {"remaining_distance_m": 10**1000}
 
     assert score_answer("sf_office_pose_return_distance", answer) == 0.0
-
-
-def test_cycle_answer_requires_correct_negative_classification() -> None:
-    correct = score_answer("sf_office_pose_repeated_patrol_cycle", {"repeated_cycle": False})
-    incorrect = score_answer("sf_office_pose_repeated_patrol_cycle", {"repeated_cycle": True})
-    incorrect_with_metrics = score_answer(
-        "sf_office_pose_repeated_patrol_cycle",
-        {
-            "repeated_cycle": True,
-            "start_time_s": 309.0,
-            "duration_s": 59.5,
-            "length_m": 16.83461727719095,
-        },
-    )
-
-    assert correct == 1.0
-    assert incorrect == 0.0
-    assert incorrect_with_metrics == 0.0
