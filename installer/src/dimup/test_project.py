@@ -48,14 +48,35 @@ def test_rejects_invalid_package_name(name):
         package_name(Path(name))
 
 
-def test_nonempty_destination_is_untouched(tmp_path, monkeypatch):
-    monkeypatch.setattr("dimup.project.supported_platform", lambda: "ubuntu")
+def test_nonempty_destination_is_untouched(tmp_path):
     existing = tmp_path / "notes"
     existing.write_text("my work")
     with pytest.raises(SetupError, match="new or empty"):
         create(tmp_path, "main")
     assert list(tmp_path.iterdir()) == [existing]
     assert existing.read_text() == "my work"
+
+
+def test_init_on_arch_installs_and_verifies_application(tmp_path, monkeypatch):
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    monkeypatch.setattr("platform.machine", lambda: "x86_64")
+    monkeypatch.setattr("platform.freedesktop_os_release", lambda: {"ID": "arch"})
+    monkeypatch.setattr("dimup.project.executable", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        "dimup.project.resolve_sdk",
+        lambda ref, runner: ("a" * 40, {"project": {"optional-dependencies": {"all": []}}}),
+    )
+    commands = []
+
+    def run(self, stage, command, **kwargs):
+        commands.append(command)
+        return ""
+
+    monkeypatch.setattr("dimup.project.Runner.run", run)
+    create(tmp_path / "my-robot", "main")
+    assert (tmp_path / "my-robot/pyproject.toml").is_file()
+    assert commands[0] == ["/usr/bin/uv", "sync", "--python", "3.12"]
+    assert commands[1][0] == str(tmp_path / "my-robot/.venv/bin/python")
 
 
 def test_init_requires_directory():

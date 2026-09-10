@@ -27,7 +27,6 @@ import tomllib
 
 from dimup.process import Runner, SetupError, executable
 from dimup.sdk import SDK_URL, consumer_policy
-from dimup.setup import supported_platform
 
 
 def package_name(directory: Path) -> str:
@@ -115,7 +114,6 @@ def write_project(root: Path, name: str, sha: str, sdk: dict[str, Any]) -> None:
 
 
 def create(directory: Path, ref: str) -> None:
-    supported_platform()
     root = directory.expanduser().absolute()
     name = package_name(root)
     if root.is_symlink() or (root.exists() and (not root.is_dir() or any(root.iterdir()))):
