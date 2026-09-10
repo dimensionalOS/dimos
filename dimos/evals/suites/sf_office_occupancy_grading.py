@@ -233,7 +233,10 @@ def _doorway_score(answer: dict[str, Any]) -> float:
         return 0.0
     references = _ANSWERS["sf_office_occupancy_doorways"]["reference_centers_m"]
     distances = np.array(
-        [[_distance(prediction[0], reference) for reference in references] for prediction in predictions]
+        [
+            [_distance(prediction[0], reference) for reference in references]
+            for prediction in predictions
+        ]
     )
     rows, columns = linear_sum_assignment(distances)
     credit = sum(
@@ -267,7 +270,9 @@ def _interval_score(answer: dict[str, Any]) -> float:
         boundary = _falloff(abs(left[0] - right[0]) + abs(left[1] - right[1]), 1.0, 6.0)
         return max(iou, 0.8 * boundary)
 
-    quality = np.array([[overlap(item, reference) for reference in references] for item in predicted])
+    quality = np.array(
+        [[overlap(item, reference) for reference in references] for item in predicted]
+    )
     rows, columns = linear_sum_assignment(-quality)
     credit = sum(float(quality[row, column]) for row, column in zip(rows, columns, strict=True))
     recall = credit / len(references)
@@ -336,9 +341,7 @@ def score_answer(case_id: str, answer: dict[str, Any], map_data: MapData | None 
     if case_id == "sf_office_occupancy_hide_location":
         return _hide_score(answer, _require_map(map_data))
     if case_id == "sf_office_occupancy_independent_routes":
-        return _boolean(
-            answer, "two_independent_routes", bool(reference["two_independent_routes"])
-        )
+        return _boolean(answer, "two_independent_routes", bool(reference["two_independent_routes"]))
     if case_id == "sf_office_occupancy_doorway_bottleneck":
         return _bottleneck_score(answer)
     if case_id == "sf_office_occupancy_constant_twist_collision":

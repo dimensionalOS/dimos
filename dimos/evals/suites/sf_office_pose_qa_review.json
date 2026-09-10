@@ -8,7 +8,13 @@
     "answer": {
       "remaining_distance_m": 0.21423652089047535
     },
-    "tags": ["sf-office", "pose", "autoresearch", "kinematics", "return"]
+    "tags": [
+      "sf-office",
+      "pose",
+      "autoresearch",
+      "kinematics",
+      "return"
+    ]
   },
   {
     "id": "sf_office_pose_stationary_percentage",
@@ -22,7 +28,13 @@
       "stationary_time_s": 212.8,
       "stationary_percent": 45.68484328037784
     },
-    "tags": ["sf-office", "pose", "autoresearch", "kinematics", "stationary"]
+    "tags": [
+      "sf-office",
+      "pose",
+      "autoresearch",
+      "kinematics",
+      "stationary"
+    ]
   },
   {
     "id": "sf_office_pose_backward_intervals",
@@ -34,15 +46,39 @@
     ],
     "answer": {
       "backward_intervals_s": [
-        {"start_s": 52.9, "end_s": 55.2},
-        {"start_s": 82.7, "end_s": 84.8},
-        {"start_s": 125.9, "end_s": 128.1},
-        {"start_s": 220.6, "end_s": 222.4},
-        {"start_s": 334.8, "end_s": 336.0},
-        {"start_s": 342.9, "end_s": 344.2}
+        {
+          "start_s": 52.9,
+          "end_s": 55.2
+        },
+        {
+          "start_s": 82.7,
+          "end_s": 84.8
+        },
+        {
+          "start_s": 125.9,
+          "end_s": 128.1
+        },
+        {
+          "start_s": 220.6,
+          "end_s": 222.4
+        },
+        {
+          "start_s": 334.8,
+          "end_s": 336.0
+        },
+        {
+          "start_s": 342.9,
+          "end_s": 344.2
+        }
       ]
     },
-    "tags": ["sf-office", "pose", "autoresearch", "kinematics", "backward"]
+    "tags": [
+      "sf-office",
+      "pose",
+      "autoresearch",
+      "kinematics",
+      "backward"
+    ]
   },
   {
     "id": "sf_office_pose_self_intersections",
@@ -77,7 +113,13 @@
         457.4290895564774
       ]
     },
-    "tags": ["sf-office", "pose", "autoresearch", "topology", "intersection"]
+    "tags": [
+      "sf-office",
+      "pose",
+      "autoresearch",
+      "topology",
+      "intersection"
+    ]
   },
   {
     "id": "sf_office_pose_path_compression",
@@ -98,7 +140,13 @@
       "reverse_segments": 6,
       "in_place_rotations": 16
     },
-    "tags": ["sf-office", "pose", "autoresearch", "planning", "compression"]
+    "tags": [
+      "sf-office",
+      "pose",
+      "autoresearch",
+      "planning",
+      "compression"
+    ]
   },
   {
     "id": "sf_office_pose_opposite_retrace",
@@ -110,11 +158,23 @@
       "Report the longest match lasting at least 1 second and its most recent earlier path."
     ],
     "answer": {
-      "interval_s": [423.3, 431.7],
-      "earlier_interval_s": [365.9, 373.4],
+      "interval_s": [
+        423.3,
+        431.7
+      ],
+      "earlier_interval_s": [
+        365.9,
+        373.4
+      ],
       "retrace_length_m": 3.884127999062443
     },
-    "tags": ["sf-office", "pose", "autoresearch", "topology", "retrace"]
+    "tags": [
+      "sf-office",
+      "pose",
+      "autoresearch",
+      "topology",
+      "retrace"
+    ]
   },
   {
     "id": "sf_office_pose_longest_elapsed_return",
@@ -125,12 +185,21 @@
       "Report the midpoint of the matching positions and the elapsed time."
     ],
     "answer": {
-      "location_m": [0.9206673846045013, -2.1849416919502165],
+      "location_m": [
+        0.9206673846045013,
+        -2.1849416919502165
+      ],
       "previous_time_s": 0.0,
       "return_time_s": 465.8,
       "elapsed_s": 465.8
     },
-    "tags": ["sf-office", "pose", "autoresearch", "topology", "return"]
+    "tags": [
+      "sf-office",
+      "pose",
+      "autoresearch",
+      "topology",
+      "return"
+    ]
   },
   {
     "id": "sf_office_pose_least_aligned",
@@ -141,11 +210,23 @@
       "Report the window with the largest angle between body direction and travel direction."
     ],
     "answer": {
-      "interval_s": [125.0, 127.0],
+      "interval_s": [
+        125.0,
+        127.0
+      ],
       "center_time_s": 126.0,
       "misalignment_deg": 179.94637071163214,
-      "position_m": [5.31169264301306, -1.1255418905434056]
+      "position_m": [
+        5.31169264301306,
+        -1.1255418905434056
+      ]
     },
-    "tags": ["sf-office", "pose", "autoresearch", "kinematics", "alignment"]
+    "tags": [
+      "sf-office",
+      "pose",
+      "autoresearch",
+      "kinematics",
+      "alignment"
+    ]
   }
 ]

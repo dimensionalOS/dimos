@@ -130,7 +130,7 @@ SUITE: Suite = [
         "sf_office_occupancy_hide_location",
         "Using the latest grid, choose the deepest reachable place to hide. It must be in "
         "known-free space and reachable from (0.00, -4.20) by a robot of radius 0.25 meters; "
-        'prefer a location concealed by mapped obstacles. Return only JSON: '
+        "prefer a location concealed by mapped obstacles. Return only JSON: "
         '{"position_m": [x, y]}.',
         "spatial-reasoning",
         "static",
@@ -139,7 +139,7 @@ SUITE: Suite = [
         "sf_office_occupancy_independent_routes",
         "Using the latest grid, are there two independent collision-free routes for a robot of "
         "radius 0.20 meters between (-1.00, -5.00) and (3.30, -1.70), such that blocking one "
-        'route at a single location does not block the other? Return only JSON: '
+        "route at a single location does not block the other? Return only JSON: "
         '{"two_independent_routes": boolean}.',
         "topology",
         "routing",
@@ -149,7 +149,7 @@ SUITE: Suite = [
         "sf_office_occupancy_doorway_bottleneck",
         "Using the latest grid, which doorway-sized opening is the most important bottleneck for "
         "reaching the rest of the mapped area from (-7.00, -10.30)? Return its wall-edge "
-        'segment, or null if none exists. Return only JSON: '
+        "segment, or null if none exists. Return only JSON: "
         '{"opening_m": [[x1, y1], [x2, y2]] | null}.',
         "doors",
         "topology",
@@ -171,7 +171,7 @@ SUITE: Suite = [
         "sf_office_occupancy_first_reachable_time",
         "Between 380 and 410 seconds in the grid sequence, when did (0.00, -4.20) first become "
         "reachable from (-7.00, -10.30) for a robot of radius 0.20 meters using only known-free "
-        'space? Return null if this never occurred. Return only JSON: '
+        "space? Return null if this never occurred. Return only JSON: "
         '{"time_s": number | null}.',
         "routing",
         "temporal",

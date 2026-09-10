@@ -60,7 +60,7 @@ FROZEN_FILES = (
     _HERE / "sf_office_pose_qa.json",
     _HERE.parents[1] / "msgs/geometry_msgs/PoseStamped.py",
 )
-EXPECTED_BENCHMARK_DIGEST = "eaebe8f2f217e911281c510a681d575c6c4d2845c24929f6bc4a5d24c8436148"
+EXPECTED_BENCHMARK_DIGEST = "b988e49105f8b794a9c642e06f298bf006ed75a8c5f22442934ba85d1bdad06d"
 
 CATEGORIES = {
     "kinematics": frozenset(

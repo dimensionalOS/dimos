@@ -62,8 +62,7 @@ def test_digest_changes_with_file_content(tmp_path: Path) -> None:
 
 def test_objective_emits_only_aggregate_feedback(tmp_path: Path) -> None:
     results = [
-        EvalResult(case_id=case.id, score=0.5, final_answer="{}", duration_s=1.0)
-        for case in SUITE
+        EvalResult(case_id=case.id, score=0.5, final_answer="{}", duration_s=1.0) for case in SUITE
     ]
 
     result = objective(results, tmp_path, EXPECTED_BENCHMARK_DIGEST)

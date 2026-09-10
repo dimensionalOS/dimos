@@ -52,7 +52,7 @@ FROZEN_FILES = (
     _HERE / "sf_office_occupancy_grading.py",
     _HERE / "sf_office_occupancy_answers.json",
 )
-EXPECTED_BENCHMARK_DIGEST = "939eef6e1255fd3b7549790a3518f86f88665e6dab81f3458b6d22b0c25eab75"
+EXPECTED_BENCHMARK_DIGEST = "3035fc03aeab4f442819f59cc59cd664801dd54fd2e33a2a88176d6bbf7c5701"
 
 CATEGORIES = {
     "semantics": frozenset(
