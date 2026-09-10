@@ -20,7 +20,7 @@ wheel. Both run `dimup setup` and install only the setup CLI globally.
 Until the SDK changes merge, create an application with the tested PR revision:
 
 ```bash
-dimup init my-robot --ref 8409a5c7fd9f88abb3fa855cd4bb38e06c2a3f4c
+dimup init my-robot --ref f4053beb18ec9b0c87e895f2b0d6ac2c5f969f14
 cd my-robot
 source .dimos/activate.sh
 dimos run my-robot.demo
