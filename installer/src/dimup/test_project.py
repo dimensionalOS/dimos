@@ -19,11 +19,10 @@ import subprocess
 import sys
 import venv
 
-import pytest
-import tomllib
-
 from dimup.process import Runner, SetupError
 from dimup.project import create, manifest, package_name, resolve_sdk, write_project
+import pytest
+import tomllib
 
 
 def test_generated_application_pins_sdk_and_registers_blueprint(tmp_path):
@@ -62,7 +61,10 @@ def test_init_on_arch_installs_and_verifies_application(tmp_path, monkeypatch):
     monkeypatch.setattr("platform.system", lambda: "Linux")
     monkeypatch.setattr("platform.machine", lambda: "x86_64")
     monkeypatch.setattr("platform.freedesktop_os_release", lambda: {"ID": "arch"})
-    monkeypatch.setattr("dimup.project.executable", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        "dimup.project.executable",
+        lambda name: f"/usr/bin/{name}" if name != "deno" else pytest.fail("Deno is optional"),
+    )
     monkeypatch.setattr(
         "dimup.project.resolve_sdk",
         lambda ref, runner: ("a" * 40, {"project": {"optional-dependencies": {"all": []}}}),

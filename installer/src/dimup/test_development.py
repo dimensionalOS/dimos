@@ -126,7 +126,11 @@ def commands(monkeypatch):
     # All system provisioning is outside this test; Git remains a real subprocess.
     monkeypatch.setattr(
         "dimup.development.executable",
-        lambda name: shutil.which("git") if name == "git" else f"/tools/{name}",
+        lambda name: shutil.which("git")
+        if name == "git"
+        else f"/tools/{name}"
+        if name != "deno"
+        else pytest.fail("Deno is optional"),
     )
     return calls
 

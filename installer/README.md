@@ -58,3 +58,7 @@ with runtime/test/lint dependencies, and installs commit hooks. It requires a
 new or empty directory. Web assets and bulk datasets are not built or downloaded.
 The [contributor test procedure](../docs/installation/installer.md#work-on-dimos-itself)
 covers source edits and opening a PR.
+
+Deno and generated cockpit/JavaScript SDK assets are optional. Machine setup does
+not install Deno, and Python packaging never builds the frontend. Existing
+prebuilt assets may still be packaged.

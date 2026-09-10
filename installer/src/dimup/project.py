@@ -146,7 +146,7 @@ def create(directory: Path, ref: str) -> None:
     details.add_row("  SDK", Text(ref))
     runner.console.print(details)
     try:
-        for tool in ("uv", "git", "cargo", "nix", "deno"):
+        for tool in ("uv", "git", "cargo", "nix"):
             executable(tool)
         with runner.stage("Resolve SDK"):
             sha, sdk = resolve_sdk(ref, runner)
@@ -156,7 +156,7 @@ def create(directory: Path, ref: str) -> None:
             write_project(root, name, sha, sdk)
         env = dict(os.environ)
         tool_paths = [
-            str(Path(executable(tool)).parent) for tool in ("uv", "git", "cargo", "nix", "deno")
+            str(Path(executable(tool)).parent) for tool in ("uv", "git", "cargo", "nix")
         ]
         env["PATH"] = os.pathsep.join([*tool_paths, env.get("PATH", "")])
         env["GIT_LFS_SKIP_SMUDGE"] = "1"

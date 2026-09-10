@@ -161,6 +161,15 @@ def main() -> None:
     log = results / "journey.log"
     with tempfile.TemporaryDirectory(prefix="dimup-acceptance-") as temporary:
         parent = Path(temporary)
+        # Hosted runners may already have Deno. Make any implicit frontend build fail.
+        bins = parent / "without-frontend"
+        bins.mkdir()
+        deno = bins / "deno"
+        deno.write_text(
+            '#!/bin/sh\necho "Unexpected frontend tooling during Python setup" >&2\nexit 99\n'
+        )
+        deno.chmod(0o755)
+        os.environ["PATH"] = str(bins) + os.pathsep + os.environ["PATH"]
         project = parent / "my-robot"
         try:
             run(parent, ["dimup", "init", str(project), "--ref", args.ref], log)

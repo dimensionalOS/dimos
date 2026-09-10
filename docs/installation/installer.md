@@ -11,7 +11,8 @@ without installing system packages. Setup also configures the shell setting desc
 below. Once prerequisites are installed, both `dimup init` and `dimup dev` work
 without a host-platform gate.
 uv owns Python, apt/Homebrew install host libraries, and Cargo and Nix build
-native modules. You do not need Python installed before starting.
+native modules. You do not need Python installed before starting. Deno and generated frontend
+assets are not required; the experimental web UI has a separate development workflow.
 
 ## Prepare your machine
 

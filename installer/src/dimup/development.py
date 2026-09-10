@@ -91,7 +91,7 @@ def develop(directory: Path, ref: str) -> None:
         runner.console.print(details)
         log = root / ".dimos/setup.log"
         try:
-            tools = {name: executable(name) for name in ("uv", "git", "cargo", "nix", "deno")}
+            tools = {name: executable(name) for name in ("uv", "git", "cargo", "nix")}
             env = dict(os.environ)
             env["PATH"] = os.pathsep.join(
                 [*(str(Path(p).parent) for p in tools.values()), env.get("PATH", "")]

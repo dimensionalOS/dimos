@@ -152,7 +152,7 @@ def diagnose(root: Path) -> list[tuple[bool, str, str]]:
             )
     else:
         results.append((False, "Installed metadata", f"{detail}\nRun uv sync --locked"))
-    for tool in ("uv", "cargo", "nix", "deno", "git"):
+    for tool in ("uv", "cargo", "nix", "git"):
         found = shutil.which(tool)
         results.append(
             (found is not None, tool, found or "Run dimup setup, then activate the project")

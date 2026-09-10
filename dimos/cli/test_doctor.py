@@ -68,7 +68,9 @@ def application(tmp_path, monkeypatch):
     python.parent.mkdir(parents=True)
     python.touch()
     monkeypatch.setattr(sys, "prefix", str(tmp_path / ".venv"))
-    monkeypatch.setattr("dimos.cli.doctor.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        "dimos.cli.doctor.shutil.which", lambda name: f"/usr/bin/{name}" if name != "deno" else None
+    )
     return tmp_path
 
 
@@ -93,6 +95,7 @@ def test_doctor_checks_pinned_sdk_and_editable_app(
     assert results["Blueprint registration"]
     assert results["Active environment"]
     assert results["Native libraries and image codec"]
+    assert "deno" not in results
 
 
 def test_doctor_reports_missing_metadata_tools_and_libraries(application, monkeypatch):
