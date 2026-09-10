@@ -26,12 +26,7 @@
           config = { allowUnfree = true; cudaSupport = !isDarwin; };
         };
 
-        # cuVSLAM SDKs come from the cu_vslam_rs flake: one sdk-<variant> package per build
-        # that exists for this system. metal on aarch64-darwin; orin and thor on
-        # aarch64-linux; x86_64-cuda12 and x86_64-cuda13 on x86_64-linux. Taken from that
-        # flake rather than listed here so the two cannot drift apart.
-        sdkPackages = nixpkgs.lib.filterAttrs (name: _: nixpkgs.lib.hasPrefix "sdk-" name)
-          cu-vslam-rs.packages.${system};
+        sdkPackages = nixpkgs.lib.filterAttrs (name: _: nixpkgs.lib.hasPrefix "sdk-" name) cu-vslam-rs.packages.${system};
         variants = map (nixpkgs.lib.removePrefix "sdk-") (builtins.attrNames sdkPackages);
 
         src = pkgs.runCommand "dim-slam-module-src" {} ''
@@ -46,11 +41,6 @@
           cp -r ${dimos-repo}/native/rust/dimos-module-macros $out/native/rust/dimos-module-macros
         '';
 
-        # One derivation per crate rather than one vendored blob, so a dependency bump
-        # only rebuilds what changed and the SDK variants share everything below
-        # cu_vslam_rs.
-        # src, not the crate dir: the whole tree has to be visible or the crate's
-        # ../../../../native path dependency escapes it.
         generatedCargoNix = crate2nix.tools.${system}.generatedCargoNix {
           name = "dim-slam-module";
           inherit src;
@@ -72,19 +62,9 @@
             };
           }).rootCrate.build;
       in {
-        # No `default`: nix sees neither /proc/device-tree nor the installed driver, so orin
-        # vs thor and cuda12 vs cuda13 are not decidable here, and guessing one builds a
-        # module that dies at the first CUDA call. dim_slam.py's sdk_variant() detects the
-        # hardware and names the variant on the build command.
         packages = nixpkgs.lib.genAttrs variants packageFor;
 
-        # Entered by the cargo-clippy pre-commit hook and by hand. The rust toolchain and C
-        # compiler come from the enclosing environment: a nix cc here links proc-macro
-        # dylibs against nix's glibc, which a host rustc then cannot load (E0463 on Ubuntu
-        # 22.04). The hook below picks the SDK the way dimos/utils/nvidia_env.py's
-        # sdk_variant() does; it can, because unlike the package set it runs on the host.
-        # The .drv paths are referenced without string context so entering the shell
-        # realises only the variant this machine needs.
+        # script needs to detect cuda/non-cuda to pick the right things to load
         devShells.default = pkgs.mkShellNoCC {
           shellHook = ''
             if [ -z "''${CUVSLAM_SDK_DIR:-}" ]; then
