@@ -57,4 +57,10 @@ def open_dataset(dataset: str | Path) -> Store:
 
 def stream_payload_types(store: Store) -> dict[str, type]:
     """Map each stream name in *store* to its payload type (any backend)."""
-    return {name: store.stream(name).data_type or object for name in store.list_streams()}
+    out: dict[str, type] = {}
+    for name in store.list_streams():
+        try:
+            out[name] = store.stream(name).data_type or object
+        except (ImportError, AttributeError) as e:
+            print(f"  skip {name}: payload type unavailable ({e})")
+    return out

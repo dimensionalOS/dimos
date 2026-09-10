@@ -93,7 +93,7 @@ class Replay(Configurable):
         for name in self.store.list_streams():
             try:
                 candidates.append(float(self.store.stream(name).first().ts))
-            except LookupError:
+            except (LookupError, ImportError, AttributeError):
                 continue
         return min(candidates) if candidates else None
 
