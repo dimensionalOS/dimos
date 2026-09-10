@@ -31,7 +31,8 @@ from dimos.experimental.isolated_python.module import (
     IsolatedPythonModule,
     IsolatedPythonModuleConfig,
 )
-from dimos.imitation.profile import ImageSource, PolicyIOProfile
+from dimos.imitation.observation import VectorObservation
+from dimos.imitation.profile import ImageSource, PolicyIOProfile, VectorSource
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -128,6 +129,11 @@ class _PolicyModule(IsolatedPythonModule):
         raise NotImplementedError
 
     @rpc
+    def clear_rollout_observations(self) -> RolloutStatus:
+        """Discard prior-goal inputs while stopped; await fresh observations before restart."""
+        raise NotImplementedError
+
+    @rpc
     def rollout_status(self) -> RolloutStatus:
         """Return the lifecycle and observation state of the configured policy."""
         raise NotImplementedError
@@ -144,7 +150,11 @@ def declare_policy_module(
     annotations: dict[str, object] = {"config": config_type}
     for source in profile.observations.values():
         annotations[source.stream] = (
-            In[Image] if isinstance(source, ImageSource) else In[JointState]
+            In[Image]
+            if isinstance(source, ImageSource)
+            else In[VectorObservation]
+            if isinstance(source, VectorSource)
+            else In[JointState]
         )
 
     return type(

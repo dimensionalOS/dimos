@@ -62,7 +62,23 @@ class JointPositionSource(BaseConfig):
         return self
 
 
-PolicySource = ImageSource | JointPositionSource
+class VectorSource(BaseConfig):
+    """One numeric vector, for example a selected object and placement goal."""
+
+    stream: str
+    features: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_source(self) -> VectorSource:
+        _validate_stream_name(self.stream)
+        if any(not feature.strip() for feature in self.features):
+            raise ValueError("vector feature names must not be blank")
+        if len(set(self.features)) != len(self.features):
+            raise ValueError("vector feature names must be unique")
+        return self
+
+
+PolicySource = ImageSource | JointPositionSource | VectorSource
 
 
 class JointPositionAction(BaseConfig):
@@ -144,6 +160,14 @@ def _feature_spec(source: PolicySource) -> FeatureSpec:
             dtype="video",
             shape=source.shape,
             names=["height", "width", "channels"],
+        )
+    if isinstance(source, VectorSource):
+        return FeatureSpec(
+            stream=source.stream,
+            field="values",
+            dtype="float32",
+            shape=(len(source.features),),
+            names=list(source.features),
         )
     return FeatureSpec(
         stream=source.stream,

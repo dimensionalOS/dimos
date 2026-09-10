@@ -1,5 +1,8 @@
 # Trained R1Pro ACT in MuJoCo
 
+For the new five-bottle packing work, see [BOTTLE_PACKING.md](BOTTLE_PACKING.md).
+Its new goal-conditioned policy is being trained and evaluated separately.
+
 The physical delivery task is: **ACT picks up the blue bottle and puts it in
 an orange tray resting on the worktop; both hands lift the tray, the base drives
 through the house, and both hands set it down on the table beside the laptop**.

@@ -25,13 +25,19 @@ import shutil
 from dimos_lerobot.runtime import _validate_features
 from lerobot.configs.policies import PreTrainedConfig
 
-from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_IO
+from dimos.imitation.profile import PolicyIOProfile
+from dimos.robot.galaxea.r1pro.learning import R1PRO_PACKING_IO, R1PRO_PICK_PLACE_IO
 
 
-def prepare(source: Path, output: Path, action_steps: int = 30) -> None:
+def prepare(
+    source: Path,
+    output: Path,
+    action_steps: int = 30,
+    profile: PolicyIOProfile = R1PRO_PICK_PLACE_IO,
+) -> None:
     """Preserve trained weights and record the inference-only configuration change."""
     config = PreTrainedConfig.from_pretrained(source)
-    _validate_features(config, R1PRO_PICK_PLACE_IO)
+    _validate_features(config, profile)
     raw = json.loads((source / "config.json").read_text())
     if raw.get("type") != "act" or not 1 <= action_steps <= raw["chunk_size"]:
         raise ValueError("Expected an ACT checkpoint and execution length within its chunk")
@@ -49,7 +55,7 @@ def prepare(source: Path, output: Path, action_steps: int = 30) -> None:
                 "weights_modified": False,
                 "weights_sha256": checksum,
                 "override": {"n_action_steps": action_steps},
-                "profile": R1PRO_PICK_PLACE_IO.name,
+                "profile": profile.name,
             },
             indent=2,
         )
@@ -62,8 +68,14 @@ def main() -> None:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--action-steps", type=int, default=30)
+    parser.add_argument("--packing", action="store_true")
     args = parser.parse_args()
-    prepare(args.source, args.output, args.action_steps)
+    prepare(
+        args.source,
+        args.output,
+        args.action_steps,
+        R1PRO_PACKING_IO if args.packing else R1PRO_PICK_PLACE_IO,
+    )
 
 
 if __name__ == "__main__":

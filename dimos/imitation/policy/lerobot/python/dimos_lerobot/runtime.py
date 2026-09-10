@@ -38,10 +38,11 @@ from dimos.imitation.policy.lerobot.module import (
     LeRobotPolicyConfig,
     OpenYamLeRobotPolicy,
     R1ProLeRobotPolicy,
+    R1ProPackingPolicy,
     R1ProPickPlacePolicy,
 )
 from dimos.imitation.policy.runtime import declare_policy_runtime
-from dimos.imitation.profile import ImageSource, PolicyIOProfile
+from dimos.imitation.profile import ImageSource, PolicyIOProfile, VectorSource
 
 
 @dataclass(frozen=True)
@@ -171,6 +172,8 @@ def _validate_features(policy_config: PreTrainedConfig, profile: PolicyIOProfile
         expected = (
             (source.shape[2], source.shape[0], source.shape[1])
             if isinstance(source, ImageSource)
+            else (len(source.features),)
+            if isinstance(source, VectorSource)
             else (len(source.joints),)
         )
         if actual != expected:
@@ -231,4 +234,9 @@ R1ProLeRobotPolicyRuntime = declare_policy_runtime(
 
 R1ProPickPlacePolicyRuntime = declare_policy_runtime(
     "R1ProPickPlacePolicyRuntime", __name__, R1ProPickPlacePolicy, LeRobotBackend
+)
+
+
+R1ProPackingPolicyRuntime = declare_policy_runtime(
+    "R1ProPackingPolicyRuntime", __name__, R1ProPackingPolicy, LeRobotBackend
 )

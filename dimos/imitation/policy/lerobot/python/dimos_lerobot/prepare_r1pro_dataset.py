@@ -26,6 +26,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.robot.galaxea.r1pro.learning import (
+    R1PRO_PACKING_GOAL_FEATURES,
+    R1PRO_PACKING_IO,
+    R1PRO_PACKING_TASK,
     R1PRO_PICK_PLACE_FPS,
     R1PRO_PICK_PLACE_IMAGE_SIZE,
     R1PRO_PICK_PLACE_JOINTS,
@@ -65,14 +68,25 @@ def stable_joint_statistics(
 def update_joint_statistics(source: Path, output: Path) -> None:
     """Retain image statistics and replace the numerically unstable joint stats."""
     manifest = json.loads((source / "manifest.json").read_text())
-    states, actions = [], []
+    states, actions, goals = [], [], []
     for episode in manifest["episodes"]:
         with np.load(source / episode["file"], allow_pickle=False) as data:
             states.append(data["observation.state"])
             actions.append(data["action"])
+            if "observation.environment_state" in data:
+                goals.append(data["observation.environment_state"])
     stats_path = output / "meta" / "stats.json"
     stats = json.loads(stats_path.read_text())
     stats.update(stable_joint_statistics(np.concatenate(states), np.concatenate(actions)))
+    if goals:
+        values = np.concatenate(goals).astype(np.float64)
+        stats["observation.environment_state"] = {
+            "mean": values.mean(axis=0).tolist(),
+            "std": np.maximum(values.std(axis=0), 0.01).tolist(),
+            "min": values.min(axis=0).tolist(),
+            "max": values.max(axis=0).tolist(),
+            "count": [len(values)],
+        }
     stats_path.write_text(json.dumps(stats, indent=2) + "\n")
     (output / "normalization.json").write_text(
         json.dumps(
@@ -114,11 +128,22 @@ def convert(source: Path, output: Path) -> None:
             "shape": (size, size, 3),
             "names": ["height", "width", "channels"],
         }
+    packing = manifest.get("profile") == R1PRO_PACKING_IO.name
+    if packing:
+        if not manifest.get("images") or not (
+            manifest.get("sequences") or manifest.get("choice_groups")
+        ):
+            raise ValueError("Packing training requires verified demonstrations with images")
+        features["observation.environment_state"] = {
+            "dtype": "float32",
+            "shape": (len(R1PRO_PACKING_GOAL_FEATURES),),
+            "names": list(R1PRO_PACKING_GOAL_FEATURES),
+        }
     dataset = LeRobotDataset.create(
-        repo_id="local/r1pro-pick-place",
+        repo_id="local/r1pro-bottle-packing" if packing else "local/r1pro-pick-place",
         root=output,
         fps=R1PRO_PICK_PLACE_FPS,
-        robot_type="r1pro_sim_pick_place",
+        robot_type=R1PRO_PACKING_IO.robot_type if packing else "r1pro_sim_pick_place",
         features=features,
         use_videos=False,
         image_writer_threads=4,
@@ -133,7 +158,7 @@ def convert(source: Path, output: Path) -> None:
                     dataset.add_frame(
                         {
                             **{key: arrays[key][index] for key in features},
-                            "task": R1PRO_PICK_PLACE_TASK,
+                            "task": R1PRO_PACKING_TASK if packing else R1PRO_PICK_PLACE_TASK,
                         }
                     )
                 dataset.save_episode()

@@ -31,7 +31,11 @@ from dimos.core.core import rpc
 from dimos.core.stream import Out
 from dimos.hardware.spec import JointLimits
 from dimos.imitation.policy.lerobot.module import R1ProPickPlacePolicy
-from dimos.imitation.policy.module import POLICY_ROLLOUT_INSTANCE_NAME, POLICY_ROLLOUT_TASK_NAME
+from dimos.imitation.policy.module import (
+    POLICY_ROLLOUT_INSTANCE_NAME,
+    POLICY_ROLLOUT_TASK_NAME,
+    _PolicyModule,
+)
 from dimos.imitation.policy.skills import PolicySkills
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.galaxea.r1pro.grasping_sim import VIRTUAL_BASE_JOINTS, prepare_grasping_scene
@@ -204,6 +208,28 @@ def build_r1pro_pick_place(
     The base stays parked during this manipulation task. The checkpoint must
     match R1PRO_PICK_PLACE_IO. Policy activation is explicit through PolicySkills.
     """
+    return build_r1pro_manipulation(
+        scene_path=scene_path,
+        artifact=artifact,
+        device=device,
+        headless=headless,
+        simulator=R1ProGraspingSim,
+        policy_module=R1ProPickPlacePolicy,
+        task_description=R1PRO_PICK_PLACE_TASK,
+    )
+
+
+def build_r1pro_manipulation(
+    *,
+    scene_path: Path,
+    artifact: str,
+    device: str,
+    headless: bool,
+    simulator: type[R1ProGraspingSim],
+    policy_module: type[_PolicyModule],
+    task_description: str,
+) -> Blueprint:
+    """Shared physical robot/camera/coordinator wiring for manipulation profiles."""
     scene_path = scene_path.expanduser().resolve()
     with GraspingTask(scene_path, images=False) as task:
         mobile = (
@@ -229,7 +255,7 @@ def build_r1pro_pick_place(
         ),
     )
     return autoconnect(
-        R1ProGraspingSim.blueprint(
+        simulator.blueprint(
             address=scene_path,
             dof=len(joints),
             headless=headless,
@@ -287,10 +313,10 @@ def build_r1pro_pick_place(
                 ),
             ],
         ),
-        R1ProPickPlacePolicy.blueprint(
+        policy_module.blueprint(
             instance_name=POLICY_ROLLOUT_INSTANCE_NAME,
             artifact=artifact,
-            task=R1PRO_PICK_PLACE_TASK,
+            task=task_description,
             device=device,
             startup_timeout=120.0,
             max_execution_horizon_s=1.5,

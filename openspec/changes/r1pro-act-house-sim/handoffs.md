@@ -375,3 +375,237 @@ payload/destination authorization and repository trust. A question naming that
 branch/destination/commit `0b816edf49` remains unanswered. Do not bypass the
 rejection. The R1Pro source is also local until an authorized push completes.
 A source push alone does not transfer the local training artifacts.
+
+
+## 2026-09-10 — Five-bottle ACT packing in progress
+
+User chose planned neat placements and stop when full, with no rearrangement.
+Tray grasp learning and navigation changes are deferred. Existing single-bottle
+and tray-delivery demos remain separate.
+
+New source (not yet committed): `packing.py`, `packing_sim.py`, `packing_task.py`,
+`demo_collect_packing.py`, typed `VectorObservation`/`VectorSource` support,
+`R1PRO_PACKING_IO`, packing dataset conversion/initialization, and isolated native
+viewer evaluator `dimos_lerobot.demo_r1pro_packing`.
+
+The new policy receives RGB + 20 measured joints + an eight-value simulator
+geometry vector (selected source XYZ, destination XYZ, radius, half-height).
+This explicitly differs from the older image/joint-only policy. Original 5 cm
+wide, 14 cm tall bottles fit in the original 21 cm square tray. Local overlay
+moves the tray to (0.30, -0.10) and places five sources within right-arm reach;
+house package files are untouched. No object poses change after reset.
+
+Joint-interpolated demonstrations failed randomized orders because the gripper
+swept through the tray. The revised teacher follows Cartesian paths, releases
+at TCP Z=0.855 to clear the wall, and uses torso damping 80 in the new packing
+scene. Four randomized full sequences (8100–8103, ±3 mm position jitter) passed
+all five physical picks and final containment, with no rejected sequences.
+Evidence: `recordings/r1pro-act-task/packing-physical-cartesian/raw/manifest.json`.
+These are TEACHER results, not learned ACT results.
+
+Detached pilot started at PID 1403319:
+`recordings/r1pro-act-task/jobs/packing-pilot/run.sh` / `run.log`, `stage`, `pid`,
+`exit-code`. It collects 20 successful house scenes (100 pick episodes) starting
+at seed 8200, converts data, initializes the new ACT environment token from
+`policy-free-tray`, trains 5000 steps, and evaluates 10 fresh seeds 9000–9009.
+At this update collection is running; no packing checkpoint is trained or
+validated yet. All jobs are detached from the terminal. Do not relaunch a
+second pipeline over these outputs. Watch stage/log and inspect physical
+outcomes before calling this complete. Planned outputs: `raw-packing-20`,
+`dataset-packing-20`, `init-packing-20`, `train-packing-5000`,
+`policy-packing-pilot`, `eval-packing-5000`.
+
+31 focused planner/profile/runtime tests passed. Host mypy identified a context
+manager return type issue; corrected to Self, recheck pending. Native DimOS
+ControlCoordinator integration for multi-pick selection is not yet implemented;
+the current new evaluator uses the same LeRobot backend directly with a native
+MuJoCo viewer. The old single-bottle stack remains available. No push performed;
+prior automatic approval rejection remains unresolved.
+
+
+### Packing update: clear source order and native wiring
+
+The first house trial with unconstrained random order failed because carrying
+rear source 5 could knock over still-unpicked source 2. Owned job PID 1403319
+was stopped. `clear_pick_order()` now chooses among accessible bottles while
+requiring front bottles to be cleared first. No object dimensions were reduced.
+The corrected teacher passed **20/20 full scenes, 100/100 picks**, seeds
+8200–8219, ±3 mm jitter, no rejected scenes:
+`recordings/r1pro-act-task/packing-physical-clear/raw/manifest.json`.
+
+Replacement detached pipeline PID **1410041**:
+`recordings/r1pro-act-task/jobs/packing-clear-pilot/{run.sh,run.log,stage,pid,exit-code}`.
+Outputs now use `raw-packing-clear-20`, `dataset-packing-clear-20`,
+`init-packing-clear-20`, `train-packing-clear-5000`,
+`policy-packing-clear-pilot`, `eval-packing-clear-5000`.
+Collection is running (20 successful house scenes required). A separate
+technical smoke test PID 1441712, `jobs/packing-smoke/`, converts one completed
+scene, initializes the goal token and runs two training steps. Its checkpoint
+is NOT a learned packing skill; this only checks the training pipeline.
+
+Native DimOS wiring is now implemented but not yet run: `packing_blueprint.py`
+with `R1ProPackingSim`/`R1ProPackingPolicy`, `demo_packing_stack.py`. The existing
+builder delegates common hardware/camera/coordinator wiring to
+`build_r1pro_manipulation`; existing single-bottle callers keep the same API.
+`PackingMonitor` tracks per-bottle contact/lift evidence on physics steps.
+Goal vectors share the head-camera timestamps. Between picks,
+`clear_rollout_observations()` discards stale prior-goal inputs before preflight.
+33 focused tests pass; host mypy found a disposable wrapper type issue, fixed
+with `Disposable(...)`; rerun pending. Registry generation, isolated typing,
+physical regression, learned evaluation and repeated native runs remain.
+
+
+### Training and integration checkpoint
+
+Smaller early feedback pipeline PID **1446801**, `jobs/packing-early/`, snapshots
+four complete scenes into `raw-packing-early` (20 pick episodes), holds one scene
+out (`eval_split=.25`), trains 3000 steps and evaluates seeds 9100–9102.
+Its current stage is training. Larger job PID 1410041 continues collecting
+`raw-packing-clear-20` (six scenes completed at this update, zero rejects).
+Do not confuse either job with the completed two-step technical smoke test.
+
+Both native preflight tests passed with CUDA, synchronized goal inputs and zero
+motion chunks. Latest: `native-packing-preflight-2/result.json`, exit 0. Added an
+initial 0.6 s physics-settle gate so the first goal uses settled source/floor
+heights, and a timestamp floor in `clear_rollout_observations()` so delayed
+prior-goal packets cannot re-enter the buffers after clearing.
+
+Ten physical regression tests passed, including two full five-bottle sequences
+and old single-bottle/mobile-task tests. 33 focused tests passed; 20 combined
+registry/runtime tests passed after regeneration (normal generator first reports
+uncommitted output, CI=1 comparison passes). Host mypy passed eight integration
+files; isolated LeRobot mypy passed all five changed/new files. New operator doc:
+`dimos/robot/galaxea/r1pro/BOTTLE_PACKING.md`, linked from ACT_SIM.md. It explicitly
+marks learned validation pending. Source changes are still uncommitted.
+
+Next: inspect the early learned evaluation; adjust training/chunk settings from
+physical evidence; finish the larger pipeline and evaluate fresh seeds. Run the
+trained checkpoint repeatedly through `demo_packing_stack` with the full native
+viewer, inspect final geometry visually, and update docs/results before committing.
+Pre-commit and final broader checks still pending. No push is authorized after
+the earlier automatic-review rejection; do not bypass it.
+
+
+### Learned pilot failure and conditioning correction
+
+The four-scene pilot finished 3000 steps. **0/3 full learned sequences passed**
+on seeds 9100–9102, both at 20 and 30 executed actions/chunk. Reports:
+`eval-packing-early/result.json`, `eval-packing-early-30/result.json`. Failures
+include selecting the wrong bottle, inaccurate grasps and not releasing; no
+native learned rollout should be presented as ready. A direct same-observation
+probe showed changing source XY barely changed predicted approach. Checkpoint
+ENV feature/normalization configuration is correct, so this is learned goal
+use, not a missing stream or profile mismatch. Diagnostic:
+`jobs/packing-goal-probe/run.log` (kinematic predictions only).
+
+New supplementary collector `demo_collect_packing_choices.py` generates three
+successful first-pick episodes from exactly the same reset scene, selecting
+bottles 1, 2 and 4 (the initially accessible sources). These are explicitly
+single-pick demonstrations, not successes at packing all five. The first pair
+was verified to have bit-identical initial RGB and joint state, different goal
+vectors and different teacher approaches. This removes the scene-appearance
+shortcut for identifying the requested bottle.
+
+Detached collection PID **1462561**, `jobs/packing-choices/`, writes
+`raw-packing-choices` (10 layouts × 3 choices, seeds 8300+). Converter accepts
+verified `choice_groups` as supplementary demonstrations. Main job 1410041
+continues unchanged (11 complete house scenes at the last count, no rejects).
+
+Queued conditioning run PID **1470063**, `jobs/packing-conditioned/`, waits for
+4 complete choice groups and 8 complete full sequences. It snapshots a combined
+manifest (`raw-packing-conditioned`) with choices first, full scenes last, so
+`eval_split=.09` holds out exactly the last full scene (5 of 52 episodes).
+Then it converts, fine-tunes from `policy-packing-early` for 8000 steps at LR
+5e-5/backbone 1e-5, prepares `policy-packing-conditioned` with 30-action chunks,
+and evaluates seeds 9100–9102. All job scripts/logs/PIDs/exit files persist.
+No new architecture variation (e.g. disabling VAE) has been applied.
+
+Next agent should inspect these jobs and physical learned results before
+choosing a final artifact. The original user task is not complete: five-bottle
+ACT success, repeated native learned runs, final docs, and commit are pending.
+Mixed shapes remain deferred; original bottle geometry is retained. Do not
+claim the 20/20 teacher results are learned policy performance.
+
+
+### Paired conditioning in progress; stricter neat-placement checks
+
+Conditioned run 1470063 is training (approximately 3600/8000 steps at 14:40 PDT).
+A direct probe of its 2000-step checkpoint now produces clearly different
+reaches when only the requested source changes; errors still reach several cm,
+so this is diagnostic progress, not learned pick success. Main collection has
+16 full successful scenes; supplementary collection has 8 choice groups.
+
+Packing-specific scoring now also requires upright orientation within 15 degrees
+of the tray normal. Shared single-bottle scoring remains unchanged. The slot
+planner conservatively expands the footprint of tilted bottles. Five packing
+physics tests pass, including both complete teacher sequences under stricter
+criteria, rejecting a contained lying bottle, and refusing a placement without
+mutating state when a fallen bottle blocks all slots. Focused Ruff passes.
+Default host mypy follows unrelated imports and reports 10 pre-existing errors
+in five modules; a focused `--follow-imports=silent` check is being used for the
+changed packing sources.
+
+Additional owned diagnostic jobs: `jobs/packing-native-lifecycle` PID 1478985
+uses the known failing early checkpoint for six seconds solely to exercise
+native ACT trajectory/stop plumbing, on isolated bus 19468. Do not score it as a
+trained demo. `jobs/packing-conditioned-mid` waits for checkpoint 004000, prepares
+`policy-packing-conditioned-mid`, and physically evaluates three tuning scenes
+9100–9102 while the 8000-step run continues.
+
+
+### First learned picks, native timing fix, full-data continuation
+
+The 4000-step paired checkpoint completed first picks in seeds 9100 and 9101,
+then failed the second pick; 9102 failed its first pick. Full learned score is
+still **0/3**. See `eval-packing-conditioned-mid/result.json`. This establishes
+some learned goal use but does not satisfy the task.
+
+Native lifecycle 1 failed after one chunk with a transient 431 ms camera skew.
+The runtime now waits up to `max_observation_age_s` for a complete matching input
+set at each inference, preserving the existing strict age/skew limits. Any valid
+input wakes the condition variable, and stop interrupts it immediately. All 17
+runtime tests pass. Native lifecycle 2 then completed the first ACT pick and
+started the next; the second physically failed as in the offline test. Both
+rollouts accepted 11 chunks and stopped with `active=false`, `last_error=null`;
+the process exited 0. Result: `native-packing-lifecycle-2/result.json`.
+Shared-memory resource_tracker teardown KeyErrors remain visible; no claim of
+fixing those or the earlier unreproduced RPC stall is made.
+
+Full-data continuation `jobs/packing-full-conditioned` is queued. Current PID
+**1489438** (supersedes its never-started-training PID 1488083). It waits for all
+20 full scenes plus 10 choice groups, then stops only the owned old baseline
+job 1410041 so we do not spend another GPU round on unpaired data. It snapshots
+130 successful picks, converts `dataset-packing-full-conditioned`, and waits for
+`packing-conditioned` to finish. Then fine-tunes from its 8000-step checkpoint
+for up to 20000 steps, batch 32, 8 loaders, LR 5e-5/backbone 1e-5. Last two complete
+scenes (10 episodes) are held out by `.077` split. Saves every 5000 steps so we
+can physically evaluate and choose an earlier checkpoint if it performs better.
+Final planned paths: `policy-packing-full-conditioned`,
+`eval-packing-full-conditioned` (fresh 9200–9204). All exact scripts/logs are saved.
+The source task remains incomplete until full learned sequences and native runs
+pass; docs deliberately mark the proposed command as pending validation.
+
+
+### Implementation checkpoint before full-data training
+
+The 8000-step paired pilot finished with eval loss 0.0094, but still **0/3 full
+physical sequences** (9100–9102). Earlier first-pick successes are insufficient:
+failed later motion can also knock already-placed bottles out. The eight-scene
+training subset contained no bottle-2-as-second-pick examples. The complete
+20-scene dataset contains seven such sequences and covers more source/slot
+combinations. Do not conflate the low supervised loss with physical success.
+
+All collection finished: 20 full scenes / 100 picks, plus 10 paired-choice
+groups / 30 single picks. The old unpaired baseline job is superseded after
+collection (see its `superseded-by` file even if its shell exit code is 0).
+Full-data job PID 1489438 finished conversion and is waiting for the pilot to
+exit before training. Its 5000/10000/15000-step physical tuning evaluations are
+also detached: `jobs/packing-full-checkpoints`, PID **1490960**, seeds 9100–9102.
+Fresh final validation must use unused seeds (e.g. 9400+) after choosing a model.
+
+Focused host mypy passed 16 changed/new files with `--follow-imports=silent`;
+isolated mypy passed five LeRobot files with the same import setting. Ruff and
+`git diff --check` pass across all changed Python source. Saving source in a local
+implementation commit with explicit pending-validation documentation; trained
+weights/data remain ignored local artifacts. Final learned validation, repeated
+native full-viewer runs and final operator documentation are still outstanding.

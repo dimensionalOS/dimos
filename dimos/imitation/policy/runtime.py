@@ -33,6 +33,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecut
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
+from dimos.imitation.observation import VectorObservation
 from dimos.imitation.policy.backend import PolicyBackend, PolicyBackendInfo
 from dimos.imitation.policy.module import (
     PolicyControlSpec,
@@ -40,7 +41,7 @@ from dimos.imitation.policy.module import (
     RolloutStatus,
     _PolicyModule,
 )
-from dimos.imitation.profile import ImageSource, JointPositionSource, PolicyIOProfile
+from dimos.imitation.profile import ImageSource, PolicyIOProfile, PolicySource, VectorSource
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
@@ -74,6 +75,7 @@ class _PolicyRuntimeMixin:
         self._buffers: dict[str, deque[_TimedValue]] = {
             key: deque(maxlen=64) for key in self.profile.observations
         }
+        self._observation_floor_ts = 0.0
         self._backend = self.backend_type(self.config)
         self._backend_info: PolicyBackendInfo | None = None
         self._stop_event = Event()
@@ -170,6 +172,17 @@ class _PolicyRuntimeMixin:
         return self.rollout_status()
 
     @rpc
+    def clear_rollout_observations(self) -> RolloutStatus:
+        with self._lock:
+            if self._active or (self._thread is not None and self._thread.is_alive()):
+                raise RuntimeError("Stop rollout before changing its observation context")
+            self._observation_floor_ts = time.time()
+            for buffer in self._buffers.values():
+                buffer.clear()
+            self._last_error = None
+            return self._status_locked()
+
+    @rpc
     def rollout_status(self) -> RolloutStatus:
         with self._lock:
             return self._status_locked()
@@ -193,7 +206,7 @@ class _PolicyRuntimeMixin:
         }
 
     def _on_observation(self, stream_name: str, message: object) -> None:
-        changed_action_state = False
+        changed_observation = False
         with self._observation_changed:
             for key, source in self.profile.observations.items():
                 if source.stream != stream_name:
@@ -207,9 +220,11 @@ class _PolicyRuntimeMixin:
                         error=str(exc),
                     )
                     continue
+                if ts < self._observation_floor_ts:
+                    continue
                 self._buffers[key].append(_TimedValue(value=value, ts=ts))
-                changed_action_state = changed_action_state or key == self.profile.action_state_key
-            if changed_action_state:
+                changed_observation = True
+            if changed_observation:
                 self._observation_changed.notify_all()
 
     def _on_button_pressed(self, buttons: Buttons) -> None:
@@ -272,6 +287,22 @@ class _PolicyRuntimeMixin:
         observations = {key: item.value.copy() for key, item in selected.items()}
         return observations, np.asarray(state_item.value, dtype=np.float32), state_item.ts
 
+    def _wait_for_observation(
+        self,
+    ) -> tuple[dict[str, NDArray[Any]], NDArray[np.float32], float] | None:
+        """Wait briefly for an in-flight camera pair without relaxing input limits."""
+        deadline = time.monotonic() + self.config.max_observation_age_s
+        with self._observation_changed:
+            while not self._stop_event.is_set():
+                try:
+                    return self._snapshot_observation(time.time())
+                except RuntimeError:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise
+                    self._observation_changed.wait(timeout=remaining)
+        return None
+
     def _run_rollout(self) -> None:
         info: PolicyBackendInfo | None = None
         try:
@@ -285,8 +316,10 @@ class _PolicyRuntimeMixin:
             execution_steps = self._execution_steps(info)
 
             while not self._stop_event.is_set():
-                with self._lock:
-                    observations, state, state_ts = self._snapshot_observation(time.time())
+                snapshot = self._wait_for_observation()
+                if snapshot is None:
+                    break
+                observations, state, state_ts = snapshot
                 action_chunk = np.asarray(
                     self._backend.predict(observations, self.config.task),
                     dtype=np.float32,
@@ -477,7 +510,7 @@ def declare_policy_runtime(
 
 
 def _read_source(
-    source: ImageSource | JointPositionSource,
+    source: PolicySource,
     message: object,
 ) -> tuple[NDArray[Any], float]:
     if isinstance(source, ImageSource):
@@ -488,6 +521,14 @@ def _read_source(
         if message.data.shape != source.shape:
             raise ValueError(f"image shape {message.data.shape} does not match {source.shape}")
         return np.ascontiguousarray(message.data), message.ts
+
+    if isinstance(source, VectorSource):
+        if not isinstance(message, VectorObservation):
+            raise TypeError(f"expected VectorObservation, got {type(message).__name__}")
+        value = np.asarray(message.values, dtype=np.float32)
+        if value.shape != (len(source.features),) or not np.isfinite(value).all():
+            raise ValueError("numeric observation must match the profile and contain finite values")
+        return value, message.ts
 
     if not isinstance(message, JointState):
         raise TypeError(f"expected JointState, got {type(message).__name__}")

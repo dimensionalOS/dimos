@@ -24,7 +24,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import mujoco
 import numpy as np
@@ -72,9 +72,13 @@ def score_task(
     peak_lift: float,
     bilateral_grasp: bool,
     touching_pads: set[int],
+    bottle_name: str = "task_bottle",
+    joint_name: str = "task_bottle_free",
+    radius: float = BOTTLE_RADIUS,
+    half_height: float = BOTTLE_HALF_HEIGHT,
 ) -> TaskResult:
     """Apply the same physical success criteria in offline and distributed runs."""
-    bottle = data.body("task_bottle")
+    bottle = data.body(bottle_name)
     world_pos = bottle.xpos.copy()
     container = data.body("task_bin")
     bin_rotation = container.xmat.reshape(3, 3)
@@ -82,13 +86,13 @@ def score_task(
     # Project the cylinder onto each world axis, including tilt. Checking
     # the centre alone would count bottles balanced across a bin wall.
     axis = bin_rotation.T @ bottle.xmat.reshape(3, 3)[:, 2]
-    extent = BOTTLE_HALF_HEIGHT * np.abs(axis) + BOTTLE_RADIUS * np.sqrt(np.maximum(0, 1 - axis**2))
+    extent = half_height * np.abs(axis) + radius * np.sqrt(np.maximum(0, 1 - axis**2))
     inside = bool(
         np.all(np.abs(pos[:2]) + extent[:2] < BIN_INNER_HALF_SIZE)
         and abs(pos[2] - extent[2] - (BIN_FLOOR_Z - TABLE_Z)) < 0.008
     )
     released = not touching_pads and data.joint("r1pro/right_gripper").qpos[0] > 0.04
-    settled = bool(np.linalg.norm(data.joint("task_bottle_free").qvel) < 0.03)
+    settled = bool(np.linalg.norm(data.joint(joint_name).qvel) < 0.03)
     success = peak_lift > 0.06 and bilateral_grasp and inside and released and settled
     return TaskResult(
         bool(success),
@@ -145,7 +149,7 @@ class GraspingTask:
             self.renderer.close()
             self.renderer = None
 
-    def __enter__(self) -> GraspingTask:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *_: Any) -> None:
@@ -197,7 +201,7 @@ class GraspingTask:
                     base_start + (base_target - base_start) * (substep + 1) / self.frame_steps
                 )
             mujoco.mj_step(self.model, self.data)
-            lift = float(self.data.body("task_bottle").xpos[2]) - self.initial_height
+            lift = float(self.data.xpos[self.bottle_id, 2]) - self.initial_height
             self.peak_lift = max(self.peak_lift, lift)
             if lift > 0.04 and self.touching_pads() == self.pad_ids:
                 self.bilateral_grasp = True

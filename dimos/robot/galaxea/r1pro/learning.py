@@ -20,6 +20,7 @@ from dimos.imitation.profile import (
     JointPositionAction,
     JointPositionSource,
     PolicyIOProfile,
+    VectorSource,
 )
 from dimos.robot.galaxea.r1pro.joints import UPPER_BODY_JOINTS, coordinator_name
 
@@ -85,4 +86,35 @@ R1PRO_PICK_PLACE_IO = PolicyIOProfile(
         max_camera_gap_ms=100.0,
         max_alignment_error_ms=20.0,
     ),
+)
+
+
+# Geometry is supplied by the simulator for this prototype. This is a distinct
+# contract: the old image/joint-only checkpoint cannot accept packing goals.
+R1PRO_PACKING_GOAL_FEATURES = (
+    "source_x",
+    "source_y",
+    "source_z",
+    "target_x",
+    "target_y",
+    "target_z",
+    "radius",
+    "half_height",
+)
+R1PRO_PACKING_TASK = (
+    "Pick the selected bottle and release it upright at the selected empty tray slot."
+)
+R1PRO_PACKING_IO = PolicyIOProfile(
+    name="r1pro-sim-bottle-packing-v1",
+    robot_type="r1pro_sim_bottle_packing",
+    observations={
+        **R1PRO_PICK_PLACE_IO.observations,
+        "observation.environment_state": VectorSource(
+            stream="packing_goal",
+            features=R1PRO_PACKING_GOAL_FEATURES,
+        ),
+    },
+    action=R1PRO_PICK_PLACE_IO.action,
+    sync=R1PRO_PICK_PLACE_IO.sync,
+    quality=R1PRO_PICK_PLACE_IO.quality,
 )

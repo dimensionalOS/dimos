@@ -13,7 +13,9 @@
 # limitations under the License.
 
 from collections.abc import Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 import time
 from typing import Any
 
@@ -359,3 +361,66 @@ def test_runtime_accepts_every_declared_input_transport(runtime, mocker):
 
     assert connected == dict.fromkeys(expected, True)
     assert set(module.inputs) == expected
+
+
+def test_new_pick_discards_old_observations_without_reloading_the_backend(runtime):
+    module, _ = runtime
+    now = time.time()
+    _provide(module, top_ts=now, other_ts=now)
+    assert module.preflight_rollout()["observations_ready"]
+    cleared = module.clear_rollout_observations()
+    assert cleared["policy_ready"] and not cleared["observations_ready"]
+    # A delayed pre-clear packet must not make the old goal usable again.
+    _provide(module, top_ts=now, other_ts=now)
+    assert not module.rollout_status()["observations_ready"]
+    _provide(module, top_ts=now + 0.01, other_ts=now + 0.01)
+    assert module.preflight_rollout()["observations_ready"]
+    assert module._backend.load_count == 1
+
+
+def test_rollout_waits_for_matching_camera_without_relaxing_skew(runtime, mocker):
+    module, _control = runtime
+    now = time.time()
+    _provide(module, top_ts=now, other_ts=now - 0.021)
+    waiting = Event()
+    original_wait = module._observation_changed.wait
+
+    def signal_wait(timeout):
+        waiting.set()
+        return original_wait(timeout)
+
+    mocker.patch.object(module._observation_changed, "wait", side_effect=signal_wait)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        result = executor.submit(module._wait_for_observation)
+        assert waiting.wait(timeout=1)
+        _provide(module, top_ts=now, other_ts=now)
+        snapshot = result.result(timeout=1)
+    assert snapshot is not None
+    np.testing.assert_array_equal(snapshot[1], [1, 2])
+    assert snapshot[2] == now
+
+
+def test_missing_observations_time_out_without_policy_execution(runtime):
+    module, control = runtime
+    module.config.max_observation_age_s = 0.02
+    with pytest.raises(RuntimeError, match="no 'top' observation"):
+        module._wait_for_observation()
+    control.execute_trajectory.assert_not_called()
+
+
+def test_stop_interrupts_waiting_for_a_camera(runtime, mocker):
+    module, control = runtime
+    waiting = Event()
+    original_wait = module._observation_changed.wait
+
+    def signal_wait(timeout):
+        waiting.set()
+        return original_wait(timeout)
+
+    mocker.patch.object(module._observation_changed, "wait", side_effect=signal_wait)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        result = executor.submit(module._wait_for_observation)
+        assert waiting.wait(timeout=1)
+        module.stop_rollout()
+        assert result.result(timeout=1) is None
+    control.execute_trajectory.assert_not_called()

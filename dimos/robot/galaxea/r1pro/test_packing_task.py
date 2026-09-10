@@ -1,0 +1,99 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Physical five-object regressions; no synthetic object attachments."""
+
+import mujoco
+import numpy as np
+import pytest
+
+from dimos.robot.galaxea.r1pro.packing_sim import prepare_packing_scene
+from dimos.robot.galaxea.r1pro.packing_state import PackingMonitor, plan_bottle_goal, score_packing
+from dimos.robot.galaxea.r1pro.packing_task import PackingTask
+
+pytestmark = [pytest.mark.mujoco, pytest.mark.self_hosted]
+
+
+@pytest.fixture(scope="module")
+def scene(tmp_path_factory):
+    return prepare_packing_scene(tmp_path_factory.mktemp("packing") / "scene.xml")
+
+
+@pytest.fixture
+def task(scene):
+    with PackingTask(scene, images=False) as environment:
+        yield environment
+
+
+def test_goal_selection_is_read_only_and_reset_clears_episode_evidence(task):
+    task.reset_packing(8200, 0.003)
+    before = task.data.qpos.copy(), task.data.qvel.copy(), task.data.ctrl.copy()
+    assert plan_bottle_goal(task.data, 0) is not None
+    for actual, expected in zip(
+        (task.data.qpos, task.data.qvel, task.data.ctrl), before, strict=True
+    ):
+        np.testing.assert_array_equal(actual, expected)
+    assert task.report()["packed"] == 0
+
+
+@pytest.mark.parametrize("seed", [8200, 8217])
+def test_five_bottles_are_lifted_released_and_remain_in_the_tray(task, seed):
+    task.reset_packing(seed, 0.003)
+    monitor = PackingMonitor(task.model, task.data)
+    for index in task.pick_order(seed):
+        assert task.select_bottle(index)
+        for _, action in task.teacher_actions():
+            task.step(action)
+            monitor.observe()
+        task.remember_result()
+        assert task.pick_complete()
+    assert task.report()["success"]
+    assert monitor.report()["packed"] == 5
+    assert all(row["released"] and row["settled"] for row in monitor.report()["bottles"])
+    task.reset_packing(seed, 0.003)
+    assert not task.report()["success"]
+    assert task.report()["packed"] == 0
+
+
+def test_contained_bottle_lying_down_is_not_a_neat_packing_success(task):
+    task.reset_packing(8200, 0.003)
+    tray = task.data.body("task_bin").xpos.copy()
+    task.data.joint("task_bottle_free").qpos[:] = (
+        *tuple(tray + np.array([0, 0, 0.040])),
+        np.sqrt(0.5),
+        0,
+        np.sqrt(0.5),
+        0,
+    )
+    task.data.joint("task_bottle_free").qvel[:] = 0
+    mujoco.mj_forward(task.model, task.data)
+    result = score_packing(task.data, 0, peak_lift=0.12, bilateral_grasp=True, touching_pads=set())
+    assert result.inside_bin and result.released and result.settled
+    assert not result.upright
+    assert not result.success
+
+
+def test_a_fallen_bottle_blocks_slots_that_an_upright_bottle_would_clear(task):
+    task.reset_packing(8200, 0.003)
+    tray = task.data.body("task_bin").xpos.copy()
+    joint = task.data.joint("task_bottle_free_2")
+    joint.qpos[:] = (*tuple(tray + np.array([0, 0, 0.085])), 1, 0, 0, 0)
+    mujoco.mj_forward(task.model, task.data)
+    assert plan_bottle_goal(task.data, 0) is not None
+    joint.qpos[:] = (*tuple(tray + np.array([0, 0, 0.040])), np.sqrt(0.5), 0, np.sqrt(0.5), 0)
+    mujoco.mj_forward(task.model, task.data)
+    before = task.data.qpos.copy(), task.data.ctrl.copy()
+    assert not task.select_bottle(0)
+    np.testing.assert_array_equal(task.data.qpos, before[0])
+    np.testing.assert_array_equal(task.data.ctrl, before[1])
