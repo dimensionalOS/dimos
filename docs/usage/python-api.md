@@ -55,7 +55,7 @@ For manual arm control, open `dimos shell` against a running manipulation
 blueprint. Import the client-only SDK and reuse the shell's connected `app`:
 
 ```python skip
-from dimos.sdk.manipulation import Arm
+from dimos.manipulation.sdk import Arm
 
 arm = Arm.from_app(app)
 arm.joints()
@@ -67,7 +67,7 @@ For scripts, create and close your own connection:
 
 ```python skip
 from dimos.porcelain.dimos import Dimos
-from dimos.sdk.manipulation import Arm
+from dimos.manipulation.sdk import Arm
 
 app = Dimos.connect()
 try:

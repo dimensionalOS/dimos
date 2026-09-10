@@ -35,7 +35,7 @@ The shell provides a connected `app`. Import the SDK and select an arm explicitl
 there are no manipulation-specific preloads or setup helpers:
 
 ```python skip
-from dimos.sdk.manipulation import Arm
+from dimos.manipulation.sdk import Arm
 
 arm = Arm.from_app(app)
 arm.info
@@ -55,7 +55,7 @@ arm = Arm.from_app(app, group="left_arm", instance_name="robot0/manipulation")
 
 Module resolution checks advertised RPCs and signatures using the same rules
 as blueprint Spec injection. Deployed module classes must be importable in the
-client. Import `Arm` directly from `dimos.sdk.manipulation`; this is a convenience
+client. Import `Arm` directly from `dimos.manipulation.sdk`; this is a convenience
 module in dimOS, not a separate SDK installation.
 
 ### Explore without moving
@@ -144,7 +144,7 @@ the move and wait for completion.
 ### Failures and connection ownership
 
 ```python skip
-from dimos.sdk.manipulation import MotionError
+from dimos.manipulation.sdk import MotionError
 
 try:
     arm.move_linear(dz=0.01, check_collision=True, timeout=30.0)
@@ -210,7 +210,7 @@ disconnect in `finally`; inside `dimos shell`, reuse its existing `app` instead:
 
 ```python skip
 from dimos.porcelain.dimos import Dimos
-from dimos.sdk.manipulation import Arm
+from dimos.manipulation.sdk import Arm
 
 app = Dimos.connect()
 try:

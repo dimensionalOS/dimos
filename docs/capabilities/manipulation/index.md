@@ -91,7 +91,7 @@ dimos shell
 Import the SDK and reuse the shell's connected `app`:
 
 ```python skip
-from dimos.sdk.manipulation import Arm
+from dimos.manipulation.sdk import Arm
 
 arm = Arm.from_app(app)
 arm.joints()

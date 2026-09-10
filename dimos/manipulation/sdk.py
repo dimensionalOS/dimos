@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Client-only conveniences for sequential arm motion over existing RPCs."""
+"""Client-only conveniences for sequential arm motion over manipulation RPCs."""
 
 from __future__ import annotations
 

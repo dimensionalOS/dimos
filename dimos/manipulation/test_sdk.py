@@ -37,11 +37,11 @@ from dimos.manipulation.manipulation_spec import (
     PlanStatus,
 )
 from dimos.manipulation.planning.spec.models import GeneratedPlan
+from dimos.manipulation.sdk import Arm, MotionError
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.porcelain.dimos import Dimos
-from dimos.sdk.manipulation import Arm, MotionError
 
 
 @pytest.fixture
@@ -116,7 +116,7 @@ def ipython(app, tmp_path):
 
 def test_sdk_manual_import_completion_and_help_in_dimos_shell(ipython, app, rpc, mocker):
     mocker.patch("IPython.core.page.page")
-    result = ipython.run_cell("from dimos.sdk.manipulation import Arm\narm = Arm.from_app(app)")
+    result = ipython.run_cell("from dimos.manipulation.sdk import Arm\narm = Arm.from_app(app)")
 
     assert result.success
     with provisionalcompleter():
