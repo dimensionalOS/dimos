@@ -25,8 +25,8 @@ import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.manipulation.grasping import grasp_gen_x
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, LegacyGraspGenSpec
-import dimos.manipulation.grasping.grasp_gen_x as grasp_gen_x
 from dimos.manipulation.grasping.grasp_gen_x import (
     GraspGenXConfig,
     GraspGenXError,

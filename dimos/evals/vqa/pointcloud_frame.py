@@ -22,6 +22,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
+from typing_extensions import Self
 
 from dimos.memory.cli.dataset import open_dataset
 from dimos.memory.store.base import Store
@@ -84,7 +85,7 @@ class PointCloudFrameLoader:
         self._recorded_tf: TFLookup | None = None
         self._rectifier = _ImageRectifier()
 
-    def __enter__(self) -> PointCloudFrameLoader:
+    def __enter__(self) -> Self:
         return self.start()
 
     def __exit__(

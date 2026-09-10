@@ -111,16 +111,20 @@ def test_no_get_logger():
     violations = find_get_logger_usages()
     if violations:
         report_lines = [
-            f"Found {len(violations)} forbidden use(s) of `logging.getLogger`. "
-            "Use `setup_logger` instead:",
+            (
+                f"Found {len(violations)} forbidden use(s) of `logging.getLogger`. "
+                "Use `setup_logger` instead:"
+            ),
             "",
             "    from dimos.utils.logging_config import setup_logger",
             "",
             "    logger = setup_logger()",
             "",
-            "If the usage is legitimate (e.g. standalone script, logging "
-            "infrastructure, or third-party logger suppression), add it to the "
-            "WHITELIST in dimos/codebase_checks/test_get_logger.py.",
+            (
+                "If the usage is legitimate (e.g. standalone script, logging "
+                "infrastructure, or third-party logger suppression), add it to the "
+                "WHITELIST in dimos/codebase_checks/test_get_logger.py."
+            ),
             "",
         ]
         for path, lineno, text in violations:

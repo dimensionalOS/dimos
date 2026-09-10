@@ -27,12 +27,14 @@ def timed(fn):
 
     Touches ``img.data.shape`` first so the lazy blob load isn't counted.
     """
+
     def _fn(obs):
         img = obs.data
         _ = img.data  # warm lazy load, this actually loads from sql
         t0 = time.perf_counter()
         fn(img)
         return (time.perf_counter() - t0) * 1000
+
     return _fn
 
 
@@ -81,7 +83,6 @@ delta_plot.add(
 )
 
 delta_plot.to_svg("assets/plot_brightness_algo_delta.svg")
-
 ```
 
 ![output](assets/plot_brightness_algo.svg)
@@ -139,19 +140,33 @@ def compute(obs):
 metrics = images.transform(throttle(0.5)).map_data(compute).materialize()
 
 plot = Plot()
-plot.add(metrics.map_data(lambda o: o.data["fast"]),
-         label="brightness", color=color.blue)
-plot.add(metrics.map_data(lambda o: o.data["slow"]),
-         label="slow_brightness", color=color.red, style=Style.dashed)
-plot.add(metrics.map_data(lambda o: o.data["fast_ms"]),
-         label="brightness (ms)", axis="time", color=color.blue, opacity=0.5)
-plot.add(metrics.map_data(lambda o: o.data["slow_ms"]),
-         label="slow_brightness (ms)", axis="time", color=color.red, opacity=0.5)
+plot.add(metrics.map_data(lambda o: o.data["fast"]), label="brightness", color=color.blue)
+plot.add(
+    metrics.map_data(lambda o: o.data["slow"]),
+    label="slow_brightness",
+    color=color.red,
+    style=Style.dashed,
+)
+plot.add(
+    metrics.map_data(lambda o: o.data["fast_ms"]),
+    label="brightness (ms)",
+    axis="time",
+    color=color.blue,
+    opacity=0.5,
+)
+plot.add(
+    metrics.map_data(lambda o: o.data["slow_ms"]),
+    label="slow_brightness (ms)",
+    axis="time",
+    color=color.red,
+    opacity=0.5,
+)
 plot.to_svg("assets/plot_brightness_algo.svg")
 
 delta_plot = Plot()
-delta_plot.add(metrics.map_data(lambda o: o.data["delta"]),
-               label="delta (fast - slow)", color=color.green)
+delta_plot.add(
+    metrics.map_data(lambda o: o.data["delta"]), label="delta (fast - slow)", color=color.green
+)
 delta_plot.add(HLine(y=0, style=Style.dashed, color=color.red))
 delta_plot.to_svg("assets/plot_brightness_algo_delta.svg")
 ```

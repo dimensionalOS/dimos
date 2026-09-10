@@ -63,7 +63,6 @@ video_stream = video_replay.stream(from_timestamp=seek_ts, duration=2.0).pipe(
 lidar_stream = lidar_replay.stream(from_timestamp=seek_ts, duration=2.0).pipe(
     ops.do_action(lambda x: lidar_scans.append(x))
 )
-
 ```
 
 </details>
@@ -76,12 +75,16 @@ Assume we have them. Let's align them.
 # Align video (primary) with lidar (secondary)
 # match_tolerance: max time difference for a match (seconds)
 # buffer_size: how long to keep messages waiting for matches (seconds)
-aligned_pairs = align_timestamped(
-    video_stream,
-    lidar_stream,
-    match_tolerance=0.025,  # 25ms tolerance
-    buffer_size=5.0, # how long to wait for match
-).pipe(ops.to_list()).run()
+aligned_pairs = (
+    align_timestamped(
+        video_stream,
+        lidar_stream,
+        match_tolerance=0.025,  # 25ms tolerance
+        buffer_size=5.0,  # how long to wait for match
+    )
+    .pipe(ops.to_list())
+    .run()
+)
 
 print(f"Video: {len(video_frames)} frames, Lidar: {len(lidar_scans)} scans")
 print(f"Aligned pairs: {len(aligned_pairs)} out of {len(video_frames)} video frames")
@@ -90,7 +93,7 @@ print(f"Aligned pairs: {len(aligned_pairs)} out of {len(video_frames)} video fra
 if aligned_pairs:
     img, pc = aligned_pairs[0]
     dt = abs(img.ts - pc.ts)
-    print(f"\nFirst matched pair: Δ{dt*1000:.1f}ms")
+    print(f"\nFirst matched pair: Δ{dt * 1000:.1f}ms")
 ```
 
 ```results
@@ -107,10 +110,11 @@ First matched pair: Δ11.3ms
 import matplotlib
 import matplotlib.pyplot as plt
 
+
 def plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, path):
     """Single timeline: video above axis, lidar below, green lines for matches."""
-    matplotlib.use('Agg')
-    plt.style.use('dark_background')
+    matplotlib.use("Agg")
+    plt.style.use("dark_background")
 
     # Get base timestamp for relative times (frames have .ts attribute)
     base_ts = video_frames[0].ts
@@ -127,28 +131,30 @@ def plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, path):
     for frame in video_frames:
         rel_ts = frame.ts - base_ts
         matched = frame.ts in matched_video_ts
-        ax.plot(rel_ts, 0.3, 'o', color='cyan' if matched else '#688', markersize=8)
+        ax.plot(rel_ts, 0.3, "o", color="cyan" if matched else "#688", markersize=8)
 
     # Lidar markers below axis (y=-0.3) - squares, orange when matched
     for scan in lidar_scans:
         rel_ts = scan.ts - base_ts
         matched = scan.ts in matched_lidar_ts
-        ax.plot(rel_ts, -0.3, 's', color='orange' if matched else '#a86', markersize=8)
+        ax.plot(rel_ts, -0.3, "s", color="orange" if matched else "#a86", markersize=8)
 
     # Green lines connecting matched pairs
     for img, pc in aligned_pairs:
         img_rel = img.ts - base_ts
         pc_rel = pc.ts - base_ts
-        ax.plot([img_rel, pc_rel], [0.3, -0.3], '-', color='lime', alpha=0.6, linewidth=1)
+        ax.plot([img_rel, pc_rel], [0.3, -0.3], "-", color="lime", alpha=0.6, linewidth=1)
 
     # Axis styling
-    ax.axhline(y=0, color='white', linewidth=0.5, alpha=0.3)
+    ax.axhline(y=0, color="white", linewidth=0.5, alpha=0.3)
     ax.set_xlim(-0.1, max(video_ts + lidar_ts) + 0.1)
     ax.set_ylim(-0.6, 0.6)
-    ax.set_xlabel('Time (s)')
+    ax.set_xlabel("Time (s)")
     ax.set_yticks([0.3, -0.3])
-    ax.set_yticklabels(['Video', 'Lidar'])
-    ax.set_title(f'{len(aligned_pairs)} matched from {len(video_frames)} video + {len(lidar_scans)} lidar')
+    ax.set_yticklabels(["Video", "Lidar"])
+    ax.set_title(
+        f"{len(aligned_pairs)} matched from {len(video_frames)} video + {len(lidar_scans)} lidar"
+    )
     plt.tight_layout()
     plt.savefig(path, transparent=True)
     plt.close()
@@ -157,7 +163,7 @@ def plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, path):
 </details>
 
 ```python skip session=align output=assets/alignment_timeline.png
-plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
+plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, "{output}")
 ```
 
 ![output](assets/alignment_timeline.png)
@@ -165,12 +171,16 @@ plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 If we loosen up our match tolerance, we might get multiple pairs matching the same lidar frame.
 
 ```python skip session=align
-aligned_pairs = align_timestamped(
-    video_stream,
-    lidar_stream,
-    match_tolerance=0.05,  # 50ms tolerance
-    buffer_size=5.0, # how long to wait for match
-).pipe(ops.to_list()).run()
+aligned_pairs = (
+    align_timestamped(
+        video_stream,
+        lidar_stream,
+        match_tolerance=0.05,  # 50ms tolerance
+        buffer_size=5.0,  # how long to wait for match
+    )
+    .pipe(ops.to_list())
+    .run()
+)
 
 print(f"Video: {len(video_frames)} frames, Lidar: {len(lidar_scans)} scans")
 print(f"Aligned pairs: {len(aligned_pairs)} out of {len(video_frames)} video frames")
@@ -182,7 +192,7 @@ Aligned pairs: 23 out of 58 video frames
 ```
 
 ```python skip session=align output=assets/alignment_timeline2.png
-plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
+plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, "{output}")
 ```
 
 ![output](assets/alignment_timeline2.png)
@@ -199,24 +209,26 @@ video_frames = []
 lidar_scans = []
 
 video_stream = video_replay.stream(from_timestamp=seek_ts, duration=2.0).pipe(
-    sharpness_barrier(3.0),
-    ops.do_action(lambda x: video_frames.append(x))
+    sharpness_barrier(3.0), ops.do_action(lambda x: video_frames.append(x))
 )
 
 lidar_stream = lidar_replay.stream(from_timestamp=seek_ts, duration=2.0).pipe(
     ops.do_action(lambda x: lidar_scans.append(x))
 )
 
-aligned_pairs = align_timestamped(
-    video_stream,
-    lidar_stream,
-    match_tolerance=0.025,  # 25ms tolerance
-    buffer_size=5.0, # how long to wait for match
-).pipe(ops.to_list()).run()
+aligned_pairs = (
+    align_timestamped(
+        video_stream,
+        lidar_stream,
+        match_tolerance=0.025,  # 25ms tolerance
+        buffer_size=5.0,  # how long to wait for match
+    )
+    .pipe(ops.to_list())
+    .run()
+)
 
 print(f"Video: {len(video_frames)} frames, Lidar: {len(lidar_scans)} scans")
 print(f"Aligned pairs: {len(aligned_pairs)} out of {len(video_frames)} video frames")
-
 ```
 
 ```results
@@ -225,7 +237,7 @@ Aligned pairs: 1 out of 6 video frames
 ```
 
 ```python skip session=align output=assets/alignment_timeline3.png
-plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
+plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, "{output}")
 ```
 
 ![output](assets/alignment_timeline3.png)

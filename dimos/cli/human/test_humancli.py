@@ -50,7 +50,7 @@ async def test_block_content_messages_render(monkeypatch: pytest.MonkeyPatch) ->
         return transports[name]
 
     monkeypatch.setattr(humancli, "make_transport", fake_make_transport)
-    monkeypatch.setattr(tool_stream, "subscribe", lambda cb: (lambda: None))
+    monkeypatch.setattr(tool_stream, "subscribe", lambda cb: lambda: None)
 
     app = HumanCLIApp()
     async with app.run_test(size=(120, 40)) as pilot:

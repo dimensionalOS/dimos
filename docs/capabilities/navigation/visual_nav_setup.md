@@ -53,11 +53,11 @@ blueprint = autoconnect(
     ),
     YourRobotStaticTf.blueprint(),
     DimSlam.blueprint(
-        camera_mode="stereo", # pick one of "mono", "stereo", "rgbd", or "multisensor".
+        camera_mode="stereo",  # pick one of "mono", "stereo", "rgbd", or "multisensor".
         imus=[
             # NOTE: keep the robot still for a moment when powering it on to calibrate IMU gravity
             ImuConfig(
-                frame_id="camera_accel_optical_frame", # needs to match the frame name from RealSenseCamera (or your camera module)
+                frame_id="camera_accel_optical_frame",  # needs to match the frame name from RealSenseCamera (or your camera module)
                 gyro_noise_density=2e-4,
                 gyro_random_walk=1e-5,
                 accel_noise_density=1.8e-3,
@@ -147,9 +147,7 @@ DimSlam.blueprint(
     ),
     # Wheel odometry can cross Wi-Fi seconds late.
     replay_buffer_seconds=2.0,
-).remappings(
-    [(DimSlam, "odom_sources", "source_odometry")]
-)
+).remappings([(DimSlam, "odom_sources", "source_odometry")])
 ```
 
 The measured results explain why these details matter:
@@ -184,7 +182,7 @@ These values are per-axis variances:
 Start by telling dimSLAM that the robot stays on the ground. An indoor ground robot normally does not move vertically, roll, or pitch.
 
 ```python skip
-per_dimension_error_variance=Covariance(
+per_dimension_error_variance = Covariance(
     z=1e-6,
     roll=1e-6,
     pitch=1e-6,
@@ -198,7 +196,7 @@ This acts as a virtual zero-twist measurement whenever dimSLAM receives a source
 A camera can be reliable in some dimensions and unreliable in others:
 
 ```python skip
-visual_odom_pose_variances=Covariance(
+visual_odom_pose_variances = Covariance(
     x=0.01,
     y=0.01,
     z=0.0,

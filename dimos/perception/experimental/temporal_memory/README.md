@@ -66,36 +66,30 @@ from dimos.perception.experimental.temporal_memory import TemporalMemory, Tempor
 
 config = TemporalMemoryConfig(
     # Frame processing
-    fps=1.0,                    # Target frame sampling rate (Hz)
-    window_s=5.0,               # Window duration (seconds)
-    stride_s=5.0,               # Stride between windows (seconds)
-    max_frames_per_window=3,    # Max frames sent to VLM per window
-    max_buffer_frames=100,      # Ring buffer capacity
-
+    fps=1.0,  # Target frame sampling rate (Hz)
+    window_s=5.0,  # Window duration (seconds)
+    stride_s=5.0,  # Stride between windows (seconds)
+    max_frames_per_window=3,  # Max frames sent to VLM per window
+    max_buffer_frames=100,  # Ring buffer capacity
     # VLM call frequencies
-    summary_interval_s=30.0,    # Rolling summary update interval
+    summary_interval_s=30.0,  # Rolling summary update interval
     enable_distance_estimation=True,  # Background distance VLM calls
-    max_distance_pairs=5,       # Max entity pairs per distance call
+    max_distance_pairs=5,  # Max entity pairs per distance call
     stale_scene_threshold=5.0,  # Seconds before scene considered stale
-
     # VLM parameters
-    max_tokens=900,             # Max tokens per VLM response
-    temperature=0.2,            # VLM temperature
-
+    max_tokens=900,  # Max tokens per VLM response
+    temperature=0.2,  # VLM temperature
     # Storage
-    db_dir=None,                # Persistent DB dir (default: ~/.local/state/dimos/temporal_memory/)
-    new_memory=False,           # Clear persistent DB on start
-
+    db_dir=None,  # Persistent DB dir (default: ~/.local/state/dimos/temporal_memory/)
+    new_memory=False,  # Clear persistent DB on start
     # Visualization
-    visualize=True,             # Rerun entity graph (GraphNodes + GraphEdges)
-
+    visualize=True,  # Rerun entity graph (GraphNodes + GraphEdges)
     # CLIP filtering
-    use_clip_filtering=True,    # Filter duplicate/static frames via CLIP
-    clip_model="ViT-B/32",     # CLIP model name
-
+    use_clip_filtering=True,  # Filter duplicate/static frames via CLIP
+    clip_model="ViT-B/32",  # CLIP model name
     # Graph context
     max_relations_per_entity=10,  # Max relations returned per entity query
-    nearby_distance_meters=5.0,   # Threshold for "nearby" in distance queries
+    nearby_distance_meters=5.0,  # Threshold for "nearby" in distance queries
 )
 
 bp = TemporalMemory.blueprint(config=config)

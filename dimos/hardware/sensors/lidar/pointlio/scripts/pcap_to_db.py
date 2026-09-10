@@ -315,9 +315,12 @@ def _build_blueprint(
     from dimos.hardware.sensors.lidar.pointlio.recorder import PointlioRecorder
     from dimos.hardware.sensors.lidar.virtual_mid360.module import VirtualMid360
 
-    pointlio_kwargs: dict[str, Any] = dict(
-        host_ip=args.host_ip, lidar_ip=args.lidar_ip, odom_freq=args.odom_freq, debug=False
-    )
+    pointlio_kwargs: dict[str, Any] = {
+        "host_ip": args.host_ip,
+        "lidar_ip": args.lidar_ip,
+        "odom_freq": args.odom_freq,
+        "debug": False,
+    }
     pointlio_kwargs.update(overrides)
 
     return (

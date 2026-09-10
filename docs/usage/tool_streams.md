@@ -29,6 +29,7 @@ import time
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
 
+
 class Counter(Module):
     @skill
     def count_to(self, n: int) -> str:
@@ -59,6 +60,7 @@ from threading import Thread
 
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
+
 
 class Streamer(Module):
     @skill

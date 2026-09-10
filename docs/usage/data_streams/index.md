@@ -26,15 +26,13 @@ camera_stream = camera.observable()
 lidar_stream = lidar.observable()
 
 # Pipeline: filter blurry frames -> align with lidar -> handle slow consumers
-processed = (
-    camera_stream.pipe(
-        sharpness_barrier(10.0),  # Keep sharpest frame per 100ms window (10Hz)
-    )
+processed = camera_stream.pipe(
+    sharpness_barrier(10.0),  # Keep sharpest frame per 100ms window (10Hz)
 )
 
 aligned = align_timestamped(
-    backpressure(processed),     # Camera as primary
-    lidar_stream,                # Lidar as secondary
+    backpressure(processed),  # Camera as primary
+    lidar_stream,  # Lidar as secondary
     match_tolerance=0.1,
 )
 

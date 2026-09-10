@@ -98,7 +98,7 @@ _ALERT_TYPES = {
 _ALERT = re.compile(
     r"^(?P<indent>[ \t]*)> \[!(?P<kind>[A-Z]+)\][ \t]*\n"
     r"(?P<body>(?:(?P=indent)>[^\n]*\n?)*)",
-    re.M,
+    re.MULTILINE,
 )
 
 
@@ -161,9 +161,9 @@ def _readme_as_home() -> str:
 
     # Badges, star counts and the trendshift ribbon are furniture for a repo
     # landing page. Here they are a wall of images above the first sentence.
-    text = re.sub(r"^\[!\[.*img\.shields\.io.*$", "", text, flags=re.M)
-    text = re.sub(r"^!\[.*img\.shields\.io.*$", "", text, flags=re.M)
-    text = re.sub(r"^<a href=\"https://trendshift\.io.*$", "", text, flags=re.M)
+    text = re.sub(r"^\[!\[.*img\.shields\.io.*$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^!\[.*img\.shields\.io.*$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^<a href=\"https://trendshift\.io.*$", "", text, flags=re.MULTILINE)
 
     # A 1px transparent gif forcing a minimum column width is a github table
     # hack. Here the cells already carry width="20%", and the spacer only adds
@@ -171,7 +171,7 @@ def _readme_as_home() -> str:
     text = re.sub(r"\s*<img[^>]*spacer\.png[^>]*>", "", text)
 
     # A bare <br> between blocks becomes an empty paragraph: a 1.5em hole.
-    text = re.sub(r"^<br\s*/?>\s*$", "", text, flags=re.M)
+    text = re.sub(r"^<br\s*/?>\s*$", "", text, flags=re.MULTILINE)
 
     # <big> is deprecated, and being an inline tag it re-blocks markdown even
     # inside a div that asked for it. Material sizes the banner text anyway.
