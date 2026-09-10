@@ -105,6 +105,7 @@ def available(name: str) -> bool:
 
 
 def prepare(runner: Runner) -> None:
+    runner.console.print("\n  dimup · Prepare machine\n", style="bold cyan")
     target = supported_platform()
     if target is None:
         print(
@@ -177,4 +178,5 @@ def prepare(runner: Runner) -> None:
         "Check Nix store",
         [executable("nix"), "--extra-experimental-features", "nix-command flakes", "store", "info"],
     )
-    print(f"Machine setup complete. Log: {runner.log}")
+    runner.console.print("\n  Machine setup complete", style="bold green")
+    runner.console.print(f"Log: {runner.log}", style="dim", markup=False)
