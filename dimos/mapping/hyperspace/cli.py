@@ -207,6 +207,7 @@ def run_offline(
     model_dir: str,
     depth_weights: str,
     cuda: bool,
+    max_depth: float,
 ) -> dict[str, Any]:
     """Ingest the export and score the queries. Returns the driver's JSON."""
     if not OFFLINE_BIN.exists():
@@ -222,6 +223,8 @@ def run_offline(
         frame,
         "--voxel-size",
         str(voxel_size),
+        "--max-depth",
+        str(max_depth),
     ]
     for query in queries:
         command += ["--query", query]
