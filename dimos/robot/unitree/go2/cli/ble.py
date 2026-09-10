@@ -279,7 +279,7 @@ async def provision_wifi(
 
     Retries the BLE connection step up to `connect_retries` times. Once connected,
     handshake/SSID/password/country failures are not retried — those indicate a
-    protocol-level problem (or partial state on the robot) where blind retry is
+    protocol-level problem (or partial state on the robot) where a bare retry is
     counterproductive.
     """
     progress = on_progress or (lambda _msg: None)

@@ -27,7 +27,7 @@ from dimos.cli.bake.discovery import (
     select_modules,
 )
 from dimos.cli.bake.errors import BakeError
-from dimos.core.stream import In, Out
+from dimos.core.stream import IO, In, Out
 from dimos.core.transport_factory import zenoh_key_expr
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
 
@@ -141,13 +141,17 @@ def test_the_real_repo_registers_the_two_shipped_modules() -> None:
 
 
 def wrapper_ports(python_ref: str) -> dict[str, type]:
-    """The python wrapper's ports, keyed by name, as message classes."""
+    """The python wrapper's ports, keyed by name, as message classes.
+
+    `IO` counts: a port that both subscribes and publishes (tf) rides in the
+    manifest's `inputs` table, because the bake graph has no io kind.
+    """
     module_name, _, class_name = python_ref.partition(":")
     wrapper = getattr(importlib.import_module(module_name), class_name)
     return {
         name: get_args(hint)[0]
         for name, hint in get_type_hints(wrapper).items()
-        if get_origin(hint) in (In, Out)
+        if get_origin(hint) in (In, Out, IO)
     }
 
 

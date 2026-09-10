@@ -359,11 +359,12 @@ TEST_CASE("publishing on a default-constructed Output throws") {
     CHECK_THROWS_AS(out.publish({1}), std::runtime_error);
 }
 
-TEST_CASE("parse_stdin_config extracts topics and config, ignoring other keys") {
+TEST_CASE("parse_stdin_config extracts topics and config and keeps the launch blob") {
     StdinConfig p = parse_stdin_config(
         R"({"topics":{"data":"/d"},"config":{"x":1},"qos":{"/d":{"reliability":"reliable"}}})");
     CHECK(p.topics.at("data") == "/d");
     CHECK(p.config.at("x") == 1);
+    CHECK(p.launch.at("qos").at("/d").at("reliability") == "reliable");
 }
 
 TEST_CASE("parse_stdin_config tolerates a missing config") {

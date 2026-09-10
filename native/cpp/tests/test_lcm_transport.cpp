@@ -1,7 +1,7 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Typechecks LcmTransport's inline bodies against the real LCM headers. Opens no
+// Typechecks LcmTransport and the umbrella header against the real LCM headers. Opens no
 // endpoint, so it never assumes a multicast route. Compiled only when liblcm is
 // available, see tests/CMakeLists.txt.
 
@@ -12,7 +12,7 @@
 #include <type_traits>
 #include <vector>
 
-#include "dimos/native/lcm_transport.hpp"
+#include "dimos/native.hpp"
 
 using namespace dimos::native;
 
@@ -23,7 +23,7 @@ using namespace dimos::native;
     Transport& base = t;
     base.publish("/c", std::vector<uint8_t>{1, 2, 3});
     base.subscribe("/c", [](const uint8_t*, std::size_t) {});
-    auto owned = make_transport_from_env();
+    auto owned = make_transport_from_env(nlohmann::json::object());
     (void)owned;
 }
 

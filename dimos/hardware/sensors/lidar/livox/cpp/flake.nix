@@ -2,6 +2,10 @@
   description = "Livox SDK2 and Mid-360 native module";
 
   inputs = {
+    # zenoh-c for the SDK's ZenohTransport, from a nixpkgs that carries the 1.10
+    # line the Rust module pins. Separate from `nixpkgs` so this module's other
+    # deps keep their binary-cache hits.
+    nixpkgs-zenoh.url = "github:NixOS/nixpkgs/d5dfd8e6716dde34398bc14bc87c10dece9c8c68";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     dimos-lcm = {
@@ -20,11 +24,12 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, dimos-lcm, pfr, lcm-extended, ... }:
+  outputs = { self, nixpkgs, nixpkgs-zenoh, flake-utils, dimos-lcm, pfr, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
         lcm = lcm-extended.packages.${system}.lcm;
+        zenohc = nixpkgs-zenoh.legacyPackages.${system}.zenoh-c;
 
         livox-sdk2 = pkgs.stdenv.mkDerivation rec {
           pname = "livox-sdk2";
@@ -71,7 +76,7 @@
           src = ./.;
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
-          buildInputs = [ livox-sdk2 lcm pkgs.glib pkgs.nlohmann_json ];
+          buildInputs = [ livox-sdk2 lcm zenohc pkgs.glib pkgs.nlohmann_json ];
 
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"

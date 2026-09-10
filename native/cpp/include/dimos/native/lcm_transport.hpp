@@ -10,7 +10,6 @@
 
 #include <atomic>
 #include <cstdint>
-#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -22,7 +21,6 @@
 
 #include "dimos/native/log.hpp"
 #include "dimos/native/transport.hpp"
-#include "dimos/native/transport_selection.hpp"
 
 namespace dimos::native {
 
@@ -115,13 +113,5 @@ private:
     std::thread recv_thread_;
 };
 
-/// Construct the transport named by `DIMOS_TRANSPORT`. Errors clearly for zenoh
-/// or any unknown/unset value.
-inline std::unique_ptr<Transport> make_transport_from_env() {
-    const char* env = std::getenv("DIMOS_TRANSPORT");
-    std::string name = env != nullptr ? env : "";
-    require_supported_transport(name);
-    return std::make_unique<LcmTransport>();
-}
 
 }  // namespace dimos::native
