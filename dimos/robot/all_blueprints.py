@@ -22,6 +22,7 @@ all_blueprints = {
     "alfred-record": "dimos.robot.diy.alfred.blueprints.record:alfred_record",
     "alfred-record-mcap": "dimos.robot.diy.alfred.blueprints.record:alfred_record_mcap",
     "alfred-record-front": "dimos.robot.diy.alfred.blueprints.record:alfred_record_front",
+    "alfred-sim": "dimos.robot.diy.alfred.blueprints.alfred_sim:alfred_sim",
     "coordinator-a1z": "dimos.robot.manipulators.a1z.blueprints.basic:coordinator_a1z",
     "coordinator-basic": "dimos.control.blueprints.basic:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.robot.manipulators.piper.blueprints.teleop:coordinator_cartesian_ik_mock",
