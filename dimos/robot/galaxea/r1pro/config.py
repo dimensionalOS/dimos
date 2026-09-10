@@ -13,25 +13,21 @@
 # limitations under the License.
 
 
-"""Galaxea R1 Pro planning model (hardware wiring lives in ``connection.py``).
-
-The vendor description is fetched from the pinned upstream URDF repo; set
-``R1PRO_DESCRIPTION`` to point at a local checkout instead.
-"""
+"""Galaxea R1 Pro planning model (hardware wiring lives in ``connection.py``)."""
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
+import math
 
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 from dimos.robot.assets.source import RobotDescriptionSource
 from dimos.robot.galaxea.r1pro.joints import (
     LEFT_ARM_JOINTS,
     PASSIVE_JOINTS,
     RIGHT_ARM_JOINTS,
+    TORSO_JOINTS,
     UPPER_BODY_JOINTS,
     coordinator_name,
 )
@@ -40,22 +36,22 @@ R1PRO_DESCRIPTION_SOURCE = RobotDescriptionSource(
     url="https://github.com/userguide-galaxea/URDF",
     ref="2e5d31e1784481a34d178006c0d0e18e0a84a82a",
 )
-
-
-def _description_root() -> Path:
-    override = os.getenv("R1PRO_DESCRIPTION")
-    if override:
-        return Path(override)
-    return R1PRO_DESCRIPTION_SOURCE / "R1Pro" / "urdf_r1pro_g1z_2026"
-
-
-R1PRO_PACKAGE_ROOT = _description_root()
+R1PRO_PACKAGE_ROOT = R1PRO_DESCRIPTION_SOURCE / "R1Pro" / "urdf_r1pro_g1z_2026"
 R1PRO_MODEL_PATH = R1PRO_PACKAGE_ROOT / "urdf" / "r1pro_2026.urdf"
+
+R1PRO_PLANAR_BASE = PlanarBaseDefinition(
+    workspace_lower=(-5.0, -5.0, -math.pi),
+    workspace_upper=(5.0, 5.0, math.pi),
+    velocity_limits=(1.0, 1.0, 2.0),
+    acceleration_limits=(2.0, 2.0, 4.0),
+    root_link="r1pro_planar_base_root",
+    joint_names=("r1pro/base_x", "r1pro/base_y", "r1pro/base_yaw"),
+)
 
 # Structural mesh overlaps in the full-body URDF plus the gripper parallel
 # linkages, which legitimately intersect. Wrist camera links follow the
 # upstream naming (d405 + gmsl), not the vendor build's single realsense link.
-R1PRO_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
+R1PRO_COLLISION_EXCLUSIONS = (
     ("base_link", "wheel_motor_link1"),
     ("base_link", "wheel_motor_link2"),
     ("base_link", "wheel_motor_link3"),
@@ -84,7 +80,7 @@ R1PRO_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("right_arm_link7", "right_d405_link"),
     ("right_gripper_link", "right_gmsl_link"),
     ("right_arm_link7", "right_gmsl_link"),
-]
+)
 
 
 R1PRO_MODEL = (
@@ -95,35 +91,65 @@ R1PRO_MODEL = (
     .with_fixed_joints(*PASSIVE_JOINTS)
     .with_renamed_joints({joint: coordinator_name(joint) for joint in UPPER_BODY_JOINTS})
 )
+R1PRO_PLANAR_MODEL = R1PRO_MODEL.with_planar_base(R1PRO_PLANAR_BASE)
+R1PRO_UPPER_BODY_PLANNING_JOINTS = tuple(coordinator_name(joint) for joint in UPPER_BODY_JOINTS)
+R1PRO_PLANNING_JOINTS = (
+    *R1PRO_PLANAR_BASE.joint_names,
+    *R1PRO_UPPER_BODY_PLANNING_JOINTS,
+)
+_R1PRO_UPPER_BODY_PLANNING_GROUPS = (
+    PlanningGroupDefinition(
+        name="left_arm",
+        joint_names=tuple(coordinator_name(joint) for joint in LEFT_ARM_JOINTS),
+        base_link="left_arm_base_link",
+        tip_link="left_gripper_link",
+    ),
+    PlanningGroupDefinition(
+        name="right_arm",
+        joint_names=tuple(coordinator_name(joint) for joint in RIGHT_ARM_JOINTS),
+        base_link="right_arm_base_link",
+        tip_link="right_gripper_link",
+    ),
+    PlanningGroupDefinition(
+        name="torso",
+        joint_names=tuple(coordinator_name(joint) for joint in TORSO_JOINTS),
+        base_link="base_link",
+    ),
+)
 
 
 def make_r1pro_model_config() -> RobotModelConfig:
-    """Full-body collision model with the two arms as planning groups.
-
-    The chassis is welded at the URDF root: base motion is commanded through the
-    coordinator's chassis velocity task, not planned.
-    """
+    """Build the hardware-backed torso and bimanual planning model."""
     return RobotModelConfig(
         model=R1PRO_MODEL,
-        joint_names=[coordinator_name(joint) for joint in UPPER_BODY_JOINTS],
+        joint_names=list(R1PRO_UPPER_BODY_PLANNING_JOINTS),
         base_link="base_link",
+        planning_groups=list(_R1PRO_UPPER_BODY_PLANNING_GROUPS),
+        auto_convert_meshes=True,
+        collision_exclusion_pairs=list(R1PRO_COLLISION_EXCLUSIONS),
+        max_velocity=0.5,
+        max_acceleration=1.0,
+        home_joints=[0.0] * len(R1PRO_UPPER_BODY_PLANNING_JOINTS),
+    )
+
+
+def make_r1pro_planar_model_config() -> RobotModelConfig:
+    """Build the preview-only planar-base, torso, and bimanual model."""
+    return RobotModelConfig(
+        model=R1PRO_PLANAR_MODEL,
+        joint_names=list(R1PRO_PLANNING_JOINTS),
+        base_link=R1PRO_PLANAR_BASE.root_link,
         planning_groups=[
+            *_R1PRO_UPPER_BODY_PLANNING_GROUPS,
             PlanningGroupDefinition(
-                name="left_arm",
-                joint_names=tuple(coordinator_name(j) for j in LEFT_ARM_JOINTS),
-                base_link="left_arm_base_link",
-                tip_link="left_gripper_link",
-            ),
-            PlanningGroupDefinition(
-                name="right_arm",
-                joint_names=tuple(coordinator_name(j) for j in RIGHT_ARM_JOINTS),
-                base_link="right_arm_base_link",
-                tip_link="right_gripper_link",
+                name="moving_base",
+                joint_names=R1PRO_PLANAR_BASE.joint_names,
+                base_link=R1PRO_PLANAR_BASE.root_link,
             ),
         ],
         auto_convert_meshes=True,
-        collision_exclusion_pairs=R1PRO_COLLISION_EXCLUSIONS,
+        collision_exclusion_pairs=list(R1PRO_COLLISION_EXCLUSIONS),
         max_velocity=0.5,
         max_acceleration=1.0,
-        home_joints=[0.0] * len(UPPER_BODY_JOINTS),
+        home_joints=[0.0] * len(R1PRO_PLANNING_JOINTS),
     )
