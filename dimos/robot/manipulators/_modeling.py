@@ -16,29 +16,11 @@
 
 from __future__ import annotations
 
-import math
 from typing import TypeAlias
-
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 DegreesOfFreedom: TypeAlias = int
 JointPrefix: TypeAlias = str
 UrdfJointName: TypeAlias = str
-
-
-def base_pose(
-    x: float = 0.0,
-    y: float = 0.0,
-    z: float = 0.0,
-    pitch: float = 0.0,
-) -> PoseStamped:
-    half_pitch = pitch / 2.0
-    return PoseStamped(
-        position=Vector3(x=x, y=y, z=z),
-        orientation=Quaternion([0.0, math.sin(half_pitch), 0.0, math.cos(half_pitch)]),
-    )
 
 
 def joint_names(

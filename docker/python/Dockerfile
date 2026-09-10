@@ -1,4 +1,4 @@
-ARG FROM_IMAGE=ghcr.io/dimensionalos/ros:dev
+ARG FROM_IMAGE=dimensional/ros:latest
 FROM ${FROM_IMAGE}
 
 # Install basic requirements
@@ -30,16 +30,18 @@ RUN apt-get update && apt-get install -y \
     qt5-qmake \
     qtbase5-dev-tools \
     supervisor \
-    iproute2 # for LCM networking system config \
+    # for LCM networking system config
+    iproute2 \
     liblcm-dev \
     libturbojpeg0-dev \
-    cyclonedds-dev  # For unitree-sdk2py
+    # For unitree-sdk2py
+    cyclonedds-dev
 
 # Fix distutils-installed packages that block pip upgrades
 RUN apt-get purge -y python3-blinker python3-sympy python3-oauthlib || true
 
 # Setup needed for Python's cyclonedds to work.
-RUN mkdir -p /opt/cyclonedds && ln -s /usr/include /opt/cyclonedds/include && ln -s /usr/lib/x86_64-linux-gnu /opt/cyclonedds/lib
+RUN mkdir -p /opt/cyclonedds && ln -s /usr/include /opt/cyclonedds/include && ln -s /usr/lib/x86_64-linux-gnu /opt/cyclonedds/lib && ln -s /usr/bin /opt/cyclonedds/bin
 ENV CYCLONEDDS_HOME=/opt/cyclonedds
 
 # Install UV for fast Python package management

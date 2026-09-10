@@ -29,26 +29,25 @@ from dimos.robot.assets.model import RobotModel
 
 
 class RobotModelConfig(ModuleConfig):
-    """Configuration for adding a robot to the world.
+    """Configuration for the logical robot model loaded into the world.
 
     Attributes:
         model: Portable robot model loaded by backend adapters
         srdf_path: Optional path to SRDF file containing planning group definitions
-        base_pose: Placement transform. This is the canonical world placement for
-            robot instances.
+        base_pose: Placement transform for the model's base link in the world.
         joint_names: Ordered list of controllable joints in the canonical model
             namespace. This is not a planning group.
         base_link: Robot-scoped link that base_pose places in the world and
             current backends use for weld/placement.
-        joint_limits_lower: Lower joint limits (radians)
-        joint_limits_upper: Upper joint limits (radians)
-        velocity_limits: Joint velocity limits (rad/s)
+        joint_limits_lower: Lower limits in each joint's native coordinate unit
+        joint_limits_upper: Upper limits in each joint's native coordinate unit
+        velocity_limits: Velocity limits in each joint's native coordinate unit per second
         auto_convert_meshes: Auto-convert DAE/STL meshes to OBJ for Drake
         collision_exclusion_pairs: List of (link1, link2) pairs to exclude from collision.
             Useful for parallel linkage mechanisms like grippers where non-adjacent
             links may legitimately overlap (e.g., mimic joints).
-        max_velocity: Maximum joint velocity for trajectory generation (rad/s)
-        max_acceleration: Maximum joint acceleration for trajectory generation (rad/s^2)
+        max_velocity: Maximum native-coordinate velocity for trajectory generation
+        max_acceleration: Maximum native-coordinate acceleration for trajectory generation
     """
 
     model: RobotModel

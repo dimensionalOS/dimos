@@ -122,6 +122,7 @@ Config(
         robot_rotation_diameter=0.6,
         nerf_speed=1.0,
         mcp_port=9990,
+        mcp_timeout=30,
         transport='zenoh',
         build_native=False,
         dtop=False,
@@ -133,7 +134,7 @@ Config(
         dimsim_headless=True,
         local_relay=False,
         relay_url=None,
-        dimos_cloud_url='https://login.dimensional.org',
+        dimos_cloud_url='https://api.dimensional.org',
         dimos_api_key=None
     ),
     publish_interval=0,

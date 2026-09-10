@@ -79,6 +79,7 @@ def module_factory(mocker: MockerFixture) -> Iterator[ModuleFactory]:
         # Nulling a port drops it from Module.inputs, so start() does not bind
         # handle_voxel_map and no transport is needed. Same reason as above.
         cast("Any", module).voxel_map = None
+        cast("Any", module).objects = None
         mocker.patch.object(module, "_initialize_planning")
         module.start()
         return module

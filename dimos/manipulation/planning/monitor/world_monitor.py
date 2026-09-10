@@ -89,7 +89,7 @@ class WorldMonitor:
             self._validate_planning_group_config(config)
             self._world.load_model(config)
             self._model_config = config
-            self._planning_groups.add_model(config)
+            self._planning_groups = PlanningGroupRegistry(config.planning_groups)
 
     @property
     def planning_groups(self) -> PlanningGroupRegistry:
@@ -397,7 +397,7 @@ class WorldMonitor:
 
         Args:
             path: List of JointState waypoints
-            step_size: Max step size for interpolation (radians)
+            step_size: Max step size for interpolation in native joint coordinates
 
         Returns:
             True if entire path is collision-free

@@ -395,7 +395,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         return pose_groups[0].name
 
     def get_joint_limits(self) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        """Get joint limits (lower, upper) in radians."""
+        """Get lower and upper limits in each joint's native coordinate."""
         robot_data = self._require_model()
         config = robot_data.config
 
@@ -1061,7 +1061,7 @@ class DrakeWorld(WorldSpec, VisualizationSpec):
         return self.get_group_jacobian(ctx, group_id)
 
     def get_group_jacobian(self, ctx: Context, group_id: PlanningGroupID) -> NDArray[np.float64]:
-        """Get geometric Jacobian (6 x group joints) in group-local order."""
+        """Get geometric Jacobian (6 x group joints) in planning-group order."""
         with self._lock:
             self._require_finalized()
             return self._get_group_jacobian(ctx, group_id)

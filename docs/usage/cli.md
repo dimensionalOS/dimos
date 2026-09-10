@@ -17,6 +17,10 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--simulation` / `--no-simulation` | bool | `False` | Enable MuJoCo simulation |
 | `--replay` / `--no-replay` | bool | `False` | Use recorded replay data |
 | `--replay-db` | TEXT | `go2_bigoffice` | Replay memory SQLite database name |
+| `--record [sqlite\|mcap]` | `sqlite\|mcap` | off | Record selected streams to one artifact; bare `--record` means SQLite ([Recording](/docs/usage/recording.md)) |
+| `--record-engine` | `python\|rust` | `python` | Recording implementation; Rust is experimental and never selected implicitly |
+| `--record-topics` | TEXT | `*` | Comma-separated globs on stream names to record |
+| `--record-encoding-threads` | INT | unset (Rust uses `4`) | Native encoding workers; valid only with `--record-engine rust` |
 | `--new-memory` / `--no-new-memory` | bool | `False` | Clear persistent memory on start |
 | `--viewer` | `rerun\|none` | `rerun` | Visualization backend |
 | `--rerun-open` | `native\|web\|both\|none` | `native` | How to open the Rerun viewer |
@@ -92,6 +96,10 @@ dimos run unitree-go2-agentic --daemon
 # Replay with Rerun viewer
 dimos --replay --viewer rerun run unitree-go2
 
+# Record every stream of a run, then replay it
+dimos --record --simulation run unitree-go2
+dimos --replay --replay-db recordings/<run-id>/memory.db run unitree-go2
+
 # Replay Big Office (Zenoh is the default transport)
 dimos --transport=zenoh --dtop --replay --replay-db=go2_bigoffice run unitree-go2
 
@@ -141,6 +149,20 @@ This auto-generates `dimos/robot/all_blueprints.py` for built-in blueprints. Ext
 packages do not edit that file; they expose blueprints through Python package entry
 points. See [blueprints](/docs/usage/blueprints.md) for composition and external
 publishing details.
+
+### `dimos graph`
+
+Render a Blueprint's stream flow as a Graphviz SVG without starting the Blueprint or
+opening its runtime transports. RPC relationships are hidden by default; pass `--rpc`
+to include RPC contracts and their declared Spec methods as dashed edges.
+
+```bash
+dimos graph unitree-go2-agentic
+dimos graph unitree-go2-agentic --rpc --output go2-agentic.svg
+```
+
+The default output is `<blueprint>.svg` in the current directory. Graphviz's `dot`
+executable must be installed.
 
 ### `dimos shell`
 
@@ -330,6 +352,21 @@ dimos spy --transport zenoh   # filter to one transport (repeatable flag)
 dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
 ```
 
+### `dimos login`
+
+Device-code sign-in for the hosted platform; `dimos logout` and `dimos whoami` manage the stored key.
+
+### `dimos data`
+
+Upload recordings (or any file) to hosted storage and pull them back. See [Cloud data](/docs/usage/cloud_data.md).
+
+| Subcommand | Description |
+|------------|-------------|
+| `upload [PATH\|latest] [--since 1h] [--robot ID] [--kind KIND] [--chunk MB]` | Upload; no argument means the newest recording |
+| `ls` | List uploads: id, date, kind, blueprint, topics, size, state |
+| `pull [ID-PREFIX\|latest] [--dest PATH]` | Download to `downloads/`, sha256-verified |
+| `status ID` / `quota` | Upload state and parts on server / storage quota |
+
 ## Agent & MCP Commands
 
 ### `dimos agent-send`
@@ -377,13 +414,14 @@ Returns JSON with tool names, descriptions, and parameter schemas.
 Call a skill by name.
 
 ```bash
-dimos mcp call <tool_name> [--arg key=value ...] [--json-args '{}']
+dimos mcp call <tool_name> [--arg key=value ...] [--json-args '{}'] [--timeout SECONDS]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--arg`, `-a` | Arguments as `key=value` pairs (repeatable) |
 | `--json-args`, `-j` | Arguments as a JSON string |
+| `--timeout`, `-t` | Seconds to wait for the tool. Default is `mcp_timeout` (30). The client cuts off a skill that runs longer. |
 
 ```bash
 dimos mcp call move_to --arg x=3.2 --arg y=-0.5

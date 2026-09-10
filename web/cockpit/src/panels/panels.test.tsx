@@ -8,6 +8,7 @@ import { ChannelStore } from "@dimos/sdk";
 import type { DrawHealth } from "../layout/PanelFrame.tsx";
 import { MapPanel, startMapSink } from "./MapPanel.tsx";
 import { fitTransform, posePath } from "./mapRenderer.ts";
+import { ChatPanel } from "./ChatPanel.tsx";
 import { getPanel, UnknownPanel } from "./registry.tsx";
 import { startVideoSink, VideoPanel } from "./VideoPanel.tsx";
 
@@ -340,6 +341,7 @@ describe("registry", () => {
     // channel of a newer bridge (see channelSubscribable in session.ts).
     expect(getPanel("video")).toBe(VideoPanel);
     expect(getPanel("map2d")).toBe(MapPanel);
+    expect(getPanel("chat")).toBe(ChatPanel);
     expect(getPanel("hologram")).toBeUndefined();
   });
 

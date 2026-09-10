@@ -174,14 +174,14 @@ def bench_results():
 
 
 @pytest.mark.parametrize("proto", ["lcm", "zenoh"])
-def test_benchmark_image_vs_compressed(proto, session_pool, bench_results) -> None:
+def test_benchmark_image_vs_compressed(proto, session_pool, bench_results, lcm_url) -> None:
     """Old path (raw Image on the wire) vs CompressedCodec(CompressedImage), same transport."""
     frame = make_image()  # 720p, 2.76 MB raw
     n = 15
 
     def inner(topic: str, typ: type):
         if proto == "lcm":
-            return LCMTransport(topic, typ)
+            return LCMTransport(topic, typ, url=f"{lcm_url}&recv_buf_size={2 * 1024 * 1024}")
         return ZenohTransport(topic, typ, session_pool=session_pool)
 
     raw_wire = len(frame.lcm_encode())

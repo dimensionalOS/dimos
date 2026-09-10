@@ -14,4 +14,4 @@ dimos-mls-planner = { path = ".." }
 numpy = "0.25"
 pyo3 = { version = "0.25", features = ["extension-module", "abi3-py310"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-validator = { version = "0.20", features = ["derive"] }
+validator = { version = "0.21", features = ["derive"] }

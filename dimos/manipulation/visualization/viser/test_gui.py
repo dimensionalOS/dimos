@@ -24,8 +24,13 @@ pytest.importorskip("viser", reason="Viser optional dependency is not installed"
 
 from dimos.manipulation.planning.groups.models import PlanningGroup
 from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import PlanningStatus
 from dimos.manipulation.planning.spec.models import GeneratedPlan, PlanningSceneInfo
-from dimos.manipulation.visualization.operator import OperatorStatus, TargetEvaluationResult
+from dimos.manipulation.visualization.operator import (
+    ManipulationOperator,
+    OperatorStatus,
+    TargetEvaluationResult,
+)
 from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
 from dimos.manipulation.visualization.viser.gui import ViserPanelGui
 from dimos.manipulation.visualization.viser.state import (
@@ -33,6 +38,7 @@ from dimos.manipulation.visualization.viser.state import (
     BackendConnectionStatus,
     FeasibilityStatus,
     OperationWorker,
+    PanelPlanState,
     PanelRuntime,
     PlanStatus,
     TargetEvaluationWorker,
@@ -40,6 +46,8 @@ from dimos.manipulation.visualization.viser.state import (
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.robot.assets.model import RobotModel
 
 
@@ -176,6 +184,136 @@ def make_gui(module: FakeOperatorBackend | None = None) -> ViserPanelGui:
     )
 
 
+@pytest.fixture
+def executable_gui(monkeypatch, mocker):
+    gui = make_gui()
+    submissions = []
+    mocker.patch.object(
+        gui._operation_worker,
+        "submit",
+        side_effect=lambda operation, **kwargs: submissions.append(operation),
+    )
+    monkeypatch.setattr(gui, "refresh", lambda: None)
+    gui.state.runtime = PanelRuntime.RUNNING
+    gui.state.backend_status = BackendConnectionStatus.READY
+    gui.state.target_status = TargetStatus.FEASIBLE
+    gui.state.manipulation_state = "COMPLETED"
+    gui.state.selected_group_ids = ("manipulator",)
+    gui.state.plan_state = PanelPlanState(
+        status=PlanStatus.FRESH,
+        group_ids=gui.state.selected_group_ids,
+        plan=GeneratedPlan(
+            group_ids=gui.state.selected_group_ids,
+            trajectory=JointTrajectory(
+                joint_names=["arm/j0"],
+                points=[
+                    TrajectoryPoint(positions=[0.0], time_from_start=0.0),
+                    TrajectoryPoint(positions=[1.0], time_from_start=1.0),
+                ],
+            ),
+            path=[JointState(name=["arm/j0"], position=[value]) for value in (0.0, 1.0)],
+            status=PlanningStatus.SUCCESS,
+        ),
+    )
+    execute = mocker.patch.object(gui.operator, "execute", create=True)
+    try:
+        yield gui, submissions, execute
+    finally:
+        gui.close()
+
+
+@pytest.mark.parametrize("accepted", [True, False])
+def test_execute_consumes_plan_before_dispatch(executable_gui, accepted):
+    gui, submissions, execute = executable_gui
+    plan = gui.state.plan_state.plan
+
+    def dispatch(dispatched_plan):
+        assert dispatched_plan is plan
+        assert gui.state.plan_state == PanelPlanState()
+        assert gui.state.action_status is ActionStatus.EXECUTING
+        return accepted
+
+    execute.side_effect = dispatch
+    gui._submit_execute()
+    submissions[0]()
+
+    assert gui.state.plan_state == PanelPlanState()
+    assert gui.state.action_status is ActionStatus.IDLE
+    assert gui.state.last_result == f"execute={accepted}"
+
+
+def test_execute_exception_leaves_plan_consumed(executable_gui):
+    gui, submissions, execute = executable_gui
+    execute.side_effect = RuntimeError("dispatch failed")
+    gui._submit_execute()
+
+    with pytest.raises(RuntimeError, match="dispatch failed"):
+        submissions[0]()
+
+    assert gui.state.plan_state == PanelPlanState()
+
+
+def test_execute_validation_failure_retains_plan(executable_gui):
+    gui, submissions, execute = executable_gui
+    plan = gui.state.plan_state.plan
+    gui.state.target_status = TargetStatus.INFEASIBLE
+
+    gui._submit_execute()
+
+    assert gui.state.plan_state.plan is plan
+    assert submissions == []
+    execute.assert_not_called()
+
+
+def test_late_execute_result_preserves_newer_plan_after_cancel(executable_gui, mocker):
+    gui, submissions, execute = executable_gui
+    newer_plan = PanelPlanState(status=PlanStatus.FRESH)
+    mocker.patch.object(gui, "_restart_operation_worker")
+
+    def dispatch(_plan):
+        gui._submit_cancel()
+        assert gui.state.plan_state == PanelPlanState()
+        gui.state.plan_state = newer_plan
+        return False
+
+    execute.side_effect = dispatch
+    gui._submit_execute()
+    submissions[0]()
+
+    assert gui.state.plan_state is newer_plan
+    assert gui.state.plan_state.status is PlanStatus.FRESH
+    assert gui.state.last_result == "cancel=True"
+
+
+def test_gui_completion_enables_next_plan_without_cancel(executable_gui, module_factory, mocker):
+    gui, submissions, _execute = executable_gui
+    module = module_factory()
+    mocker.patch.object(gui, "operator", ManipulationOperator(module, mocker.Mock()))
+    status = mocker.patch.object(
+        module._control_coordinator,
+        "task_invoke",
+        return_value=TrajectoryStatus(state=TrajectoryState.EXECUTING),
+    )
+    cancel = mocker.spy(module, "cancel")
+
+    gui._submit_execute()
+    submissions[0]()
+    gui._refresh_model_state()
+    assert gui.state.manipulation_state == "EXECUTING"
+    assert gui.state.can_plan() is False
+    assert gui.state.can_cancel() is True
+    assert gui.state.plan_state == PanelPlanState()
+
+    status.return_value = TrajectoryStatus(state=TrajectoryState.COMPLETED)
+    gui._refresh_model_state()
+
+    assert gui.state.manipulation_state == "COMPLETED"
+    assert gui.state.can_plan() is True
+    assert gui.state.can_cancel() is False
+    assert gui.state.can_execute() is False
+    cancel.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("result", "success", "collision_free", "expected"),
     [
@@ -236,7 +374,7 @@ def test_gui_feasibility_status_uses_exact_status_mapping(
     assert gui._feasibility_status(result, success, collision_free) == expected
 
 
-def test_group_status_composes_shared_panel_state_without_robot_dropdown(
+def test_group_status_composes_shared_panel_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gui = make_gui()
@@ -250,7 +388,6 @@ def test_group_status_composes_shared_panel_state_without_robot_dropdown(
 
     gui._update_status_text()
 
-    assert "robot" not in gui._handles
     assert values == {
         "status": "### Status\n\n**State:** planner unavailable\n\n"
         "Target: `feasible` · Plan: `fresh`\n\nState stale: `True`",

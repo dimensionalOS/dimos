@@ -34,10 +34,9 @@ from collections.abc import AsyncGenerator
 import math
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import portal
 from pydantic import Field, FiniteFloat
 
 from dimos.agents.annotation import skill
@@ -52,6 +51,9 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.robot.diy.alfred.config import DEFAULT_ADDRESS
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    import portal
 
 logger = setup_logger()
 
@@ -82,6 +84,10 @@ class AlfredHighLevel(Module):
         self._odometry_stop = asyncio.Event()
 
     async def main(self) -> AsyncGenerator[None, None]:
+        # Only the running module needs the SDK; importing it at module scope would make
+        # every blueprint that composes Alfred unimportable without the misc extra.
+        import portal
+
         # Recreated each run so a restart binds it to the new event loop.
         self._odometry_stop = asyncio.Event()
         client = portal.Client(self.config.address)

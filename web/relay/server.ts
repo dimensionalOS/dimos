@@ -10,10 +10,6 @@ import { LATEST_STALE_MS } from "./forward.ts";
 import { Registry } from "./registry.ts";
 import { RobotSession, ViewerSession } from "./session.ts";
 
-// Subs snapshots ride lossy datagrams; this resend interval is the loss- and
-// reorder-healing mechanism (bridges ignore stale `n`).
-const SNAPSHOT_RESEND_MS = 2_000;
-
 export interface RelayOptions {
   /** TCP port for the HTTP side. Default 7780; 0 picks an ephemeral port. */
   port?: number;
@@ -191,13 +187,11 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     wt.closed.catch(() => {}).finally(() => sessions.delete(wt));
   }
 
-  const resendTimer = setInterval(() => registry.resendSnapshots(), SNAPSHOT_RESEND_MS);
-  // A pending resend must not keep the Deno process alive after shutdown().
-  Deno.unrefTimer(resendTimer);
   // Offers reap stale latest streams opportunistically, but an idle input
   // stops offering; this interval bounds an idle stream's lifetime to just
   // under 2x the stale window.
   const reapTimer = setInterval(() => registry.reapAll(Date.now()), LATEST_STALE_MS);
+  // A pending reap must not keep the Deno process alive after shutdown().
   Deno.unrefTimer(reapTimer);
 
   (async () => {
@@ -280,7 +274,6 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     wtUrl,
     certHash: cert.certHashB64,
     async shutdown(): Promise<void> {
-      clearInterval(resendTimer);
       clearInterval(reapTimer);
       for (const wt of sessions) {
         try {

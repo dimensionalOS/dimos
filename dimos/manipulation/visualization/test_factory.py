@@ -382,7 +382,7 @@ def test_drake_meshcat_visualization_lifecycle_is_noop_without_meshcat() -> None
     world.close()
 
 
-def test_create_viser_visualization_has_group_preview_protocol_without_legacy_path_api() -> None:
+def test_create_viser_visualization_has_group_preview_protocol() -> None:
     pytest.importorskip("viser")
 
     visualization = create_manipulation_visualization(
@@ -394,4 +394,3 @@ def test_create_viser_visualization_has_group_preview_protocol_without_legacy_pa
 
     assert isinstance(visualization, VisualizationSpec)
     assert isinstance(FakeVisualization(), VisualizationSpec)
-    assert not hasattr(visualization, "animate_path")

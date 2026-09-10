@@ -3,6 +3,8 @@
 Motion planning and teleoperation for robotic manipulators. RoboPlan provides
 the default world and native path planner.
 
+For typed client RPCs, see [Manipulation from Python](/docs/capabilities/manipulation/python_api.md).
+
 ## Quick Start
 
 Recent addition: the A-750 keyboard teleop blueprint is now available via:
@@ -18,6 +20,7 @@ Each blueprint launches the full stack: keyboard UI, mock controller, IK solver,
 ```bash
 dimos run keyboard-teleop-a750    # A-750 6-DOF
 dimos run openarm-planner-coordinator # OpenArm bimanual 2x(7-DOF + gripper)
+dimos run r1pro-planar-preview # R1 Pro mobile bimanual planning preview + fake hardware
 dimos run keyboard-teleop-a1z     # Galaxea A1Z 6-DOF
 dimos run keyboard-teleop-piper   # Piper 6-DOF
 dimos run keyboard-teleop-openyam # OpenYAM 6-DOF + gripper
@@ -71,26 +74,32 @@ dimos run xarm7-planner-coordinator \
   --kinematics.dt=0.02
 ```
 
-The same nested shorthand applies to blueprints that instantiate
-`PickAndPlaceModule`:
+The same nested shorthand applies to the `ManipulationModule` composed by
+pick-and-place blueprints:
 
 ```bash
 dimos run xarm-perception-sim \
   --kinematics.backend=pink
 ```
 
-Then use the IPython client:
+Then open an attached Python shell in a second terminal:
 
-```bash
-python -m dimos.manipulation.planning.examples.manipulation_client
+```bash skip
+dimos shell
 ```
+
+Import the SDK and reuse the shell's connected `app`:
 
 ```python skip
-joints()                # Get current joints
-plan([0.1] * 7)         # Plan to target
-preview()               # Preview in Meshcat
-execute()               # Execute via coordinator
+from dimos.manipulation.sdk import Arm
+
+arm = Arm.from_app(app)
+arm.joints()
+arm.pose()
 ```
+
+The [Python guide](/docs/capabilities/manipulation/python_api.md) walks through
+joint, pose, linear, and gripper commands.
 
 ### Planning backend selection
 
@@ -161,8 +170,8 @@ velocities bypasses path parametrization and retains its existing timing after
 canonical validation. TOPP-RA follows the collision-checked geometric path
 without corner blending; collision checking remains the planner's concern.
 Explicit configuration overrides the world-based default.
-RoboPlan model composition preserves authored acceleration limits and inserts a
-temporary global `2.0 rad/s²` fallback where they are absent. Formal per-joint
+RoboPlan model preparation preserves authored acceleration limits and inserts a
+temporary default `2.0 rad/s²` limit where they are absent. Formal per-joint
 acceleration overrides will replace this fallback.
 
 The Viser panel's **Next plan speed** slider provides runtime speed tuning from
@@ -199,11 +208,6 @@ from dimos.manipulation.planning.planners.roboplan_config import (
 )
 
 path_config = RoboPlanCartesianPathConfig()
-
-module.plan_cartesian_targets(
-    {"arm/manipulator": (current_tcp_pose, goal_tcp_pose)},
-    path_config,
-)
 ```
 
 The default `time_optimal` mode returns the TOPP-RA trajectory constrained by
@@ -237,8 +241,8 @@ handling. RoboPlan 0.6 removed the former `limit_ratio_tolerance` and
 `max_attempts_per_step` settings.
 
 Cartesian path planning remains a low-level internal capability in this
-release. `ManipulationModule.plan_cartesian_targets()` accepts an ordered
-waypoint sequence for each target planning group. A sequence contains only
+release. The internal generator accepts an ordered waypoint sequence for each
+target planning group. A sequence contains only
 `PoseStamped` absolute waypoints or only `Transform` displacements relative to
 the planning start, and begins at the current TCP pose or identity transform.
 RoboPlan plans all target groups simultaneously. The Viser panel constructs a
@@ -343,7 +347,7 @@ from dimos.manipulation.manipulation_module import ManipulationModule, Manipulat
 
 manipulation = ManipulationModule.blueprint(
     config=ManipulationModuleConfig(
-        robots=[...],
+        model=robot_model,
         visualization={
             "backend": "viser",
             "host": "127.0.0.1",
@@ -383,19 +387,18 @@ failure leaves the plan unavailable. Preview and execution use RoboPlan's
 original synchronized timestamps and velocities.
 
 External manipulation visualizers are initialized from a backend-neutral
-`VisualizationSession` after the planning world has added its robots. The
-session contains static `PlanningSceneInfo` metadata: world robot IDs,
-`RobotModelConfig` values, and resolved planning groups. Runtime joint state is
+`VisualizationSession` after the planning world has loaded its model. The
+session contains static `PlanningSceneInfo` metadata: the `RobotModelConfig`
+and resolved planning groups. Runtime joint state is
 then pushed through `VisualizationStateFrame` updates so renderers do not poll
 world/module state or own freshness policy. Embedded Meshcat visualization does
 not need extra setup because it observes the Drake world directly.
 
 Previews use the stored synchronized `JointTrajectory` from the generated plan.
-Viser projects the globally named trajectory into robot-local preview ghosts and
-plays the stored timestamped points directly; optional preview duration only
-scales the stored delays. Execution projects that same accepted trajectory into
-each robot's local joint order while preserving timestamps and velocities; it
-does not regenerate or retime it. Execute freshness is enforced by the
+Viser plays the stored canonical trajectory directly; optional preview duration
+only scales the stored delays. Execution forwards that same accepted trajectory
+with unchanged joint names, ordering, timestamps, and velocities; it does not
+regenerate or retime it. Execute freshness is enforced by the
 manipulation module/operator immediately before dispatch, not by Viser-side
 telemetry snapshots.
 
@@ -474,6 +477,7 @@ planner is locked for its whole native call.
 | `keyboard-teleop-xarm7` | XArm7 7-DOF keyboard teleop with Drake viz |
 | `xarm7-planner-coordinator` | XArm7 planner with coordinator integration |
 | `dual-xarm6-planner-coordinator` | Dual XArm6 planning with mock coordinator hardware |
+| `r1pro-planar-preview` | R1 Pro planar-base, torso, and bimanual planning preview with fake hardware |
 | `xarm-perception` | XArm7 + RealSense camera for perception |
 | `xarm-perception-agent` | XArm7 perception + LLM agent |
 | `xarm-perception-sim` | XArm7 simulation perception stack |
