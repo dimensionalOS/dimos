@@ -142,7 +142,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 On Ubuntu 22.04/24.04 x86_64 or Apple Silicon macOS 14+:
 
 ```bash
-curl -fsSL https://github.com/dimensionalOS/dimos/releases/latest/download/dimup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/installer/bootstrap.sh | bash
 dimup init my-robot
 cd my-robot
 source .dimos/activate.sh

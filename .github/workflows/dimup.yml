@@ -13,7 +13,6 @@ on:
       - 'dimos/cli/entrypoint.py'
       - 'native/**'
       - '.github/workflows/dimup.yml'
-      - '.github/workflows/release.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -33,12 +32,6 @@ jobs:
         env:
           MYPYPATH: installer/src
         run: uv run --project installer --with mypy mypy --strict --follow-imports=silent installer/src/dimup/cli.py installer/src/dimup/project.py installer/src/dimup/process.py installer/src/dimup/setup.py installer/src/dimup/sdk.py
-      - name: Build release artifacts
-        run: python3 installer/run/package "$RUNNER_TEMP/dimup-dist" --release test
-      - uses: actions/upload-artifact@v7
-        with:
-          name: dimup-candidate
-          path: ${{ runner.temp }}/dimup-dist/
   journey:
     needs: unit
     strategy:
@@ -49,19 +42,16 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.1
-      - uses: actions/download-artifact@v8
-        with:
-          name: dimup-candidate
-          path: ${{ runner.temp }}/dimup-dist
-      - name: Install candidate and prepare machine
+      - name: Bootstrap from source and prepare machine
+        env:
+          DIMUP_REF: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          uv tool install --python 3.12 "$RUNNER_TEMP"/dimup-dist/*.whl
-          export PATH="$(uv tool dir --bin):$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
+          export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
+          bash installer/bootstrap.sh
+          export PATH="$(uv tool dir --bin):$PATH"
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          dimup setup
           dimup setup
       - name: Create, edit, clone, and run
         env:

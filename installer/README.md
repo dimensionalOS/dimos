@@ -3,7 +3,8 @@
 Install uv and dimup, then prepare your machine from the current PR branch:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/feat/dimup-release/installer/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/feat/dimup-release/installer/bootstrap.sh \
+  | DIMUP_REF=feat/dimup-release bash
 ```
 
 This package is independent of the DimOS runtime. Automatic setup covers Ubuntu
@@ -12,15 +13,19 @@ Linux, receive manual prerequisite instructions; `dimup init` has no host-platfo
 gate. Automatic setup installs host packages with apt/Homebrew,
 prepares Cargo and Nix, and writes a detailed log. It is safe to rerun.
 
-The repository bootstrap installs dimup from a pinned source archive, so it needs
-neither Git nor a published release. Follow the printed PATH instruction to use
-dimup in your current terminal. The release bootstrap uses a checksum-verified
-wheel. Both run `dimup setup` and install only the setup CLI globally.
+The bootstrap downloads the dimOS repository and installs its `installer/`
+directory with uv. It defaults to `main`; set `DIMUP_REF` to a branch, tag, or
+commit when testing another version. No Git installation or separate package
+release is required. Follow the printed PATH instruction to use dimup in the
+current terminal.
 
-Until the SDK changes merge, create an application with the tested PR revision:
+`DIMUP_REF` selects the installer source. `dimup init --ref` separately selects
+the SDK revision pinned in the generated application.
+
+Until the SDK changes merge, create an application from the PR branch:
 
 ```bash
-dimup init my-robot --ref fe0f492f18412e2b64b0343fdae31f312542ae95
+dimup init my-robot --ref feat/dimup-release
 cd my-robot
 source .dimos/activate.sh
 dimos run my-robot.demo

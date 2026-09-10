@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Works directly from the repository; release packaging stamps a verified wheel.
+# Install dimup from this repository. DIMUP_REF selects a branch, tag, or commit.
 set -euo pipefail
-wheel_url='@DIMUP_WHEEL_URL@'
-wheel_sha='@DIMUP_WHEEL_SHA@'
-source_ref='fe0f492f18412e2b64b0343fdae31f312542ae95'
+source_ref="${DIMUP_REF:-main}"
 if ! command -v uv >/dev/null 2>&1; then
     curl --fail --show-error --location --proto '=https' --tlsv1.2 \
         https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
@@ -11,25 +9,12 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
-if [[ "$wheel_url" == @* ]]; then
-    # A source archive needs neither Git nor a published release on a new machine.
-    curl --fail --show-error --location --proto '=https' --tlsv1.2 \
-        "https://codeload.github.com/dimensionalOS/dimos/tar.gz/$source_ref" \
-        --output "$work/source.tar.gz"
-    mkdir "$work/source"
-    tar -xzf "$work/source.tar.gz" --strip-components=1 -C "$work/source"
-    uv tool install --force --python 3.12 "$work/source/installer"
-else
-    curl --fail --show-error --location --proto '=https' --tlsv1.2 \
-        "$wheel_url" --output "$work/${wheel_url##*/}"
-    case "$(uname -s)" in
-        Darwin) actual=$(shasum -a 256 "$work/${wheel_url##*/}") ;;
-        Linux) actual=$(sha256sum "$work/${wheel_url##*/}") ;;
-        *) echo 'Supported platforms: Ubuntu and Apple Silicon macOS.' >&2; exit 1 ;;
-    esac
-    [[ "${actual%% *}" == "$wheel_sha" ]] || { echo 'dimup checksum mismatch' >&2; exit 1; }
-    uv tool install --force --python 3.12 "$work/${wheel_url##*/}"
-fi
+curl --fail --show-error --location --proto '=https' --tlsv1.2 \
+    "https://codeload.github.com/dimensionalOS/dimos/tar.gz/$source_ref" \
+    --output "$work/source.tar.gz"
+mkdir "$work/source"
+tar -xzf "$work/source.tar.gz" --strip-components=1 -C "$work/source"
+uv tool install --force --python 3.12 "$work/source/installer"
 dimup_bin="$(uv tool dir --bin)/dimup"
 if [[ -t 0 ]]; then
     "$dimup_bin" setup

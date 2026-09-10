@@ -11,12 +11,24 @@ native modules. You do not need Python installed before starting.
 ## Prepare your machine
 
 ```bash
-curl -fsSL https://github.com/dimensionalOS/dimos/releases/latest/download/dimup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/installer/bootstrap.sh | bash
 ```
 
-The bootstrap installs persistent `dimup` and runs machine setup. Follow its PATH
+The bootstrap installs uv if needed, downloads this repository at `main`, installs
+its standalone `dimup` tool, and runs machine setup. No separate package release
+is required. Follow its PATH
 instruction if the command is not yet available in your terminal. On macOS,
 install Xcode Command Line Tools if setup requests them with `xcode-select --install`.
+
+To test a particular installer branch or commit, set `DIMUP_REF` for the bootstrap:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/installer/bootstrap.sh \
+  | DIMUP_REF=<branch-or-commit> bash
+```
+
+This selects the installer source. `dimup init --ref` selects the application's
+SDK revision separately.
 
 Rerun machine setup when prerequisites are missing:
 
