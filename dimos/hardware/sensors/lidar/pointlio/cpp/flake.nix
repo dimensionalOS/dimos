@@ -111,10 +111,16 @@
             "-DDIMOS_NATIVE_CPP_DIR=${../../../../../../native/cpp}"
           ];
         };
+        # Golden noise-band variants: same tree, harness compiled with extra flags (;-separated: cmakeFlags splits on space).
+        withHarnessFlags = flags: pointlio_native.overrideAttrs (o: {
+          cmakeFlags = o.cmakeFlags ++ [ "-DHARNESS_EXTRA_FLAGS=${flags}" ];
+        });
       in {
         packages = {
           default = pointlio_native;
           inherit pointlio_native;
+          harness_fma = withHarnessFlags "-mfma;-ffp-contract=fast";
+          harness_o2 = withHarnessFlags "-O2";
         };
       });
 }

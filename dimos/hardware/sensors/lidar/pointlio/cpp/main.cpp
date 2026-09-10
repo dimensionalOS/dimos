@@ -30,6 +30,8 @@
 #include "pointlio.hpp"
 #include "pointlio_debug.hpp"
 
+#include "params.hpp"
+
 using dimos::native::Builder;
 using dimos::native::Config;
 using dimos::native::Module;
@@ -39,101 +41,12 @@ namespace logging = dimos::native::log;
 using livox_common::DATA_TYPE_CARTESIAN_HIGH;
 using livox_common::DATA_TYPE_CARTESIAN_LOW;
 
-struct PointLioConfig {
-    std::string host_ip;
-    std::string lidar_ip;
-    double frequency;
-    std::string frame_id;
-    std::string sensor_frame_id;
-    double msr_freq;
-    double main_freq;
-    double pointcloud_freq;
-    double odom_freq;
-    bool debug;
-    bool con_frame;
-    int con_frame_num;
-    bool cut_frame;
-    double cut_frame_time_interval;
-    double time_lag_imu_to_lidar;
-    int scan_line;
-    int scan_rate;
-    double blind;
-    int point_filter_num;
-    bool use_imu_as_input;
-    bool prop_at_freq_of_imu;
-    bool check_satu;
-    int init_map_size;
-    bool space_down_sample;
-    double satu_acc;
-    double satu_gyro;
-    double acc_norm;
-    double plane_thr;
-    double filter_size_surf;
-    double filter_size_map;
-    double ivox_grid_resolution;
-    std::string ivox_nearby_type;
-    double cube_side_length;
-    double det_range;
-    double fov_degree;
-    bool imu_en;
-    bool start_in_aggressive_motion;
-    bool extrinsic_est_en;
-    double imu_time_inte;
-    double lidar_meas_cov;
-    double acc_cov_input;
-    double vel_cov;
-    double gyr_cov_input;
-    double gyr_cov_output;
-    double acc_cov_output;
-    double b_gyr_cov;
-    double b_acc_cov;
-    double imu_meas_acc_cov;
-    double imu_meas_omg_cov;
-    double match_s;
-    bool gravity_align;
-    std::vector<double> gravity;
-    std::vector<double> gravity_init;
-    std::vector<double> extrinsic_t;
-    std::vector<double> extrinsic_r;
-    bool publish_odometry_without_downsample;
-    bool odom_only;
-    int cmd_data_port;
-    int push_msg_port;
-    int point_data_port;
-    int imu_data_port;
-    int log_data_port;
-    int host_cmd_data_port;
-    int host_push_msg_port;
-    int host_point_data_port;
-    int host_imu_data_port;
-    int host_log_data_port;
-
-    void validate() const {
-        dimos::native::require_positive(frequency, "frequency");
-        dimos::native::require_positive(msr_freq, "msr_freq");
-        dimos::native::require_positive(main_freq, "main_freq");
-        dimos::native::require_positive(pointcloud_freq, "pointcloud_freq");
-        dimos::native::require_positive(odom_freq, "odom_freq");
-    }
-};
-
 namespace {
 
 using dimos::has_estimate;
 using dimos::make_header;
 using dimos::make_xyzi_cloud;
 using dimos::xyzi_point;
-
-// iVox neighbour stencil codes, from Point-LIO's parameters.cpp.
-int ivox_nearby_code(const std::string& name) {
-    if (name == "center") return 0;
-    if (name == "nearby6") return 6;
-    if (name == "nearby18") return 18;
-    if (name == "nearby26") return 26;
-    throw std::runtime_error(
-        "ivox_nearby_type must be one of: center nearby6 nearby18 nearby26, got '" +
-        name + "'");
-}
 
 uint64_t packet_timestamp_ns(const LivoxLidarEthernetPacket* pkt) {
     uint64_t ns = 0;
@@ -164,55 +77,7 @@ public:
         // Propagates to the Point-LIO core. false -> only real errors print.
         pointlio_debug = cfg_.debug;
 
-        PointLioParams params;
-        params.con_frame = cfg_.con_frame;
-        params.con_frame_num = cfg_.con_frame_num;
-        params.cut_frame = cfg_.cut_frame;
-        params.cut_frame_time_interval = cfg_.cut_frame_time_interval;
-        params.time_lag_imu_to_lidar = cfg_.time_lag_imu_to_lidar;
-        params.scan_line = cfg_.scan_line;
-        params.scan_rate = cfg_.scan_rate;
-        params.blind = cfg_.blind;
-        params.point_filter_num = cfg_.point_filter_num;
-        params.use_imu_as_input = cfg_.use_imu_as_input;
-        params.prop_at_freq_of_imu = cfg_.prop_at_freq_of_imu;
-        params.check_satu = cfg_.check_satu;
-        params.init_map_size = cfg_.init_map_size;
-        params.space_down_sample = cfg_.space_down_sample;
-        params.satu_acc = cfg_.satu_acc;
-        params.satu_gyro = cfg_.satu_gyro;
-        params.acc_norm = cfg_.acc_norm;
-        params.plane_thr = cfg_.plane_thr;
-        params.filter_size_surf = cfg_.filter_size_surf;
-        params.filter_size_map = cfg_.filter_size_map;
-        params.ivox_grid_resolution = cfg_.ivox_grid_resolution;
-        params.ivox_nearby_type = ivox_nearby_code(cfg_.ivox_nearby_type);
-        params.cube_side_length = cfg_.cube_side_length;
-        params.det_range = cfg_.det_range;
-        params.fov_degree = cfg_.fov_degree;
-        params.imu_en = cfg_.imu_en;
-        params.start_in_aggressive_motion = cfg_.start_in_aggressive_motion;
-        params.extrinsic_est_en = cfg_.extrinsic_est_en;
-        params.imu_time_inte = cfg_.imu_time_inte;
-        params.lidar_meas_cov = cfg_.lidar_meas_cov;
-        params.acc_cov_input = cfg_.acc_cov_input;
-        params.vel_cov = cfg_.vel_cov;
-        params.gyr_cov_input = cfg_.gyr_cov_input;
-        params.gyr_cov_output = cfg_.gyr_cov_output;
-        params.acc_cov_output = cfg_.acc_cov_output;
-        params.b_gyr_cov = cfg_.b_gyr_cov;
-        params.b_acc_cov = cfg_.b_acc_cov;
-        params.imu_meas_acc_cov = cfg_.imu_meas_acc_cov;
-        params.imu_meas_omg_cov = cfg_.imu_meas_omg_cov;
-        params.match_s = cfg_.match_s;
-        params.gravity_align = cfg_.gravity_align;
-        params.gravity = cfg_.gravity;
-        params.gravity_init = cfg_.gravity_init;
-        params.extrinsic_T = cfg_.extrinsic_t;
-        params.extrinsic_R = cfg_.extrinsic_r;
-        params.publish_odometry_without_downsample =
-            cfg_.publish_odometry_without_downsample;
-        params.odom_only = cfg_.odom_only;
+        PointLioParams params = to_params(cfg_);
 
         point_lio_ = std::make_unique<PointLio>(params, cfg_.msr_freq, cfg_.main_freq);
 

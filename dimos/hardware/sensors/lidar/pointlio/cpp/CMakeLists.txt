@@ -111,4 +111,28 @@ target_link_directories(pointlio_native PRIVATE
   ${LCM_LIBRARY_DIRS}
 )
 
-install(TARGETS pointlio_native DESTINATION bin)
+# Golden harness: same core, no Livox SDK. -ffp-contract=off so the golden is
+# the same on x86 and aarch64 (GCC contracts FMA by default on the latter).
+add_executable(pointlio_harness
+  harness.cpp
+  ${FASTLIO_DIR}/src/preprocess.cpp
+  ${FASTLIO_DIR}/src/Estimator.cpp
+  ${FASTLIO_DIR}/src/parameters.cpp
+)
+# HARNESS_EXTRA_FLAGS: noise-band builds only (flake: harness_fma, harness_o2).
+set(HARNESS_EXTRA_FLAGS "" CACHE STRING "extra compile flags for pointlio_harness (;-separated)")
+target_compile_options(pointlio_harness PRIVATE -ffp-contract=off ${HARNESS_EXTRA_FLAGS})
+target_include_directories(pointlio_harness PRIVATE
+  ${FASTLIO_DIR}/include
+  ${FASTLIO_DIR}/include/IKFoM/IKFoM_toolkit
+  ${FASTLIO_DIR}/src
+  ${EIGEN3_INCLUDE_DIR}
+  ${PCL_INCLUDE_DIRS}
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(pointlio_harness PRIVATE dimos_native ${PCL_LIBRARIES} glog::glog)
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(pointlio_harness PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+install(TARGETS pointlio_native pointlio_harness DESTINATION bin)
