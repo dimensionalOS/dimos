@@ -60,3 +60,32 @@ commands so the most recent target runs after the active move completes.
 `app.PillarConnection.stop_motion()` maps to the firmware's ramped `x` stop.
 It is not an emergency stop. A future firmware e-stop should stop step pulses,
 engage the SSR brake, abort homing, and invalidate the position reference.
+
+## Whole-robot URDF, sim, and navigation + manipulation
+
+The full robot description (FlowBase + pillar lift + bimanual OpenArm v2.0 + Mid-360 + front
+D455 + rear D435) lives in the LFS archive `data/.lfs/alfred_description.tar.gz`
+(`alfred_v1.urdf`: casters welded; `alfred_v2.urdf`: eight steer/drive caster joints). It is
+built from the Onshape CAD by `alfred_description/build_alfred_urdf.py` inside the archive;
+`alfred_description/README.md` has the frame table. `alfred_model.py` wraps it as a
+`RobotModelConfig` with the ControlCoordinator joint names (`pillar/lift`, `openarm_*_joint*`,
+`casters/*`).
+
+Lift convention (URDF and hardware agree): `pillar/lift` is zero at the TOP limit switch,
+positive is up, so every reachable position is negative, `-0.500 .. -0.002` m.
+
+```bash
+# Simulation: viser planner (http://127.0.0.1:8095) on alfred_v2 with mock lift, arms and
+# casters; pygame WASD/QE window drives the base, CasterKinematics animates the wheels.
+dimos run alfred-sim
+
+# Robot: Jeff's alfred-mls-nav-lidar (dimSLAM + MLS click-and-go in rerun) plus the pillar
+# and both arms on a ControlCoordinator, planned from viser; WASD overrides navigation.
+# Real arms only when both CAN ports are set, mock otherwise. Needs `uv sync --extra misc --extra alfred`.
+OPENARM_LEFT_CAN=can0 OPENARM_RIGHT_CAN=can1 dimos run alfred-nav
+```
+
+`alfred-nav` deliberately keeps the base out of the coordinator: `AlfredHighLevel` is the only
+FlowBase writer (Portal RPC + wheel odometry for dimSLAM) and `MovementManager` muxes
+teleop over navigation. The planner publishes no tf (it would root at `world`, beside the
+navigation `map` tree); sensor mounts on tf come from `AlfredMountTf` / `alfred.urdf`.

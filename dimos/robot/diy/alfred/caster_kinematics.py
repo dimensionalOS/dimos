@@ -133,7 +133,9 @@ class CasterKinematics(Module):
     def start(self) -> None:
         super().start()
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run_loop, daemon=True, name="caster-kinematics")
+        self._thread = threading.Thread(
+            target=self._run_loop, daemon=True, name="caster-kinematics"
+        )
         self._thread.start()
 
     @rpc

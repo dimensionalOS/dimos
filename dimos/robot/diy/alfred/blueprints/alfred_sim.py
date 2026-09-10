@@ -27,10 +27,11 @@ from __future__ import annotations
 from dimos.control.blueprints.mobile import _mock_twist_base
 from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY_TASK_NAME
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.whole_body.spec import WholeBodyConfig
-from dimos.robot.diy.alfred.alfred_sim_model import alfred_sim_model_config
+from dimos.robot.diy.alfred.alfred_model import alfred_sim_model_config
+from dimos.robot.diy.alfred.blueprints.pillar import PILLAR_LIFT_VELOCITY_LIMIT_M_S
 from dimos.robot.diy.alfred.caster_kinematics import (
     CASTER_HARDWARE_ID,
     CasterKinematics,
@@ -44,10 +45,13 @@ from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 _base_joints = make_twist_base_joints("base")
 
 
-# With the lift at its bottom stop and the arms hanging straight down, the right gripper
+# lift_joint follows the pillar firmware: 0 = top limit switch, range [-0.5, -0.002] m.
+# With the lift at its bottom stop (-0.5) and the arms hanging straight down, the right gripper
 # overlaps the lidar/ZED module box on the base (CAD: ~3 cm). Start the sim lift raised so
 # the home configuration is collision-free; the planner refuses to plan into that zone.
-SIM_LIFT_START_M = 0.25
+SIM_LIFT_START_M = -0.25
+CASTER_STREAM_VELOCITY_LIMIT = 100.0  # rad/s; display joints, not a controller
+ARM_VELOCITY_LIMIT = 1.0  # rad/s, the trajectory task's own default
 
 
 def mock_pillar_hardware() -> HardwareComponent:
@@ -79,7 +83,7 @@ def mock_caster_hardware() -> HardwareComponent:
 alfred_sim = (
     autoconnect(
         planner(
-            robots=[alfred_sim_model_config(wheels=True)],
+            model=alfred_sim_model_config(wheels=True),
             visualization={"backend": "viser"},
         ),
         ControlCoordinator.blueprint(
@@ -99,24 +103,22 @@ alfred_sim = (
                     priority=10,
                     params={"timeout": 0.2, "zero_on_timeout": True},
                 ),
-                TaskConfig(
-                    name="servo_casters",
-                    type="servo",
-                    joint_names=caster_coordinator_joints(),
-                    priority=10,
-                    auto_start=True,
-                ),
-                TaskConfig(
-                    name=JOINT_TRAJECTORY_TASK_NAME,
-                    type="trajectory",
-                    joint_names=[*OPENARM_ARM_JOINTS, PILLAR_LIFT_JOINT],
-                    priority=10,
-                    params={"start_position_tolerance": 0.05},
+                # One canonical trajectory task: planner executions (arms + lift) and the
+                # streamed caster joint_command from CasterKinematics both land here. Casters
+                # get a high velocity bound so the drive angle's ±π wrap is a one-tick jump.
+                joint_trajectory_task(
+                    [*OPENARM_ARM_JOINTS, PILLAR_LIFT_JOINT, *caster_coordinator_joints()],
+                    # The task wants a limit for every joint once any is given.
+                    velocity_limits={
+                        **dict.fromkeys(OPENARM_ARM_JOINTS, ARM_VELOCITY_LIMIT),
+                        PILLAR_LIFT_JOINT: PILLAR_LIFT_VELOCITY_LIMIT_M_S,
+                        **dict.fromkeys(caster_coordinator_joints(), CASTER_STREAM_VELOCITY_LIMIT),
+                    },
                 ),
             ],
         ),
         KeyboardTeleop.blueprint(),  # WASD pygame window -> cmd_vel -> vel_base task
-        CasterKinematics.blueprint(),  # cmd_vel -> caster steer/drive joint_command -> servo_casters (viser wheels)
+        CasterKinematics.blueprint(),  # cmd_vel -> caster steer/drive joint_command -> trajectory task (viser wheels)
     )
     .remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
     .global_config(n_workers=4)

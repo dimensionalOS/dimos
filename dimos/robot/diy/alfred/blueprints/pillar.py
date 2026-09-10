@@ -16,7 +16,11 @@
 
 from __future__ import annotations
 
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
+from dimos.control.tasks.trajectory_task.trajectory_task import (
+    JOINT_TRAJECTORY_TASK_NAME,
+    joint_trajectory_task,
+)
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -28,9 +32,21 @@ from dimos.robot.diy.alfred.pillar_connection import (
     pillar_hardware,
 )
 
-PILLAR_SERVO_TASK_NAME = "servo_pillar"
+# Streamed joint_command positions are consumed by the canonical trajectory task (#3610
+# removed the servo task); the lift is velocity-bounded on the way to each new target.
+PILLAR_TASK_NAME = JOINT_TRAJECTORY_TASK_NAME
+PILLAR_LIFT_VELOCITY_LIMIT_M_S = 0.1
 
 _pillar_hardware = pillar_hardware()
+
+PILLAR_MOTOR_TRANSPORTS = {
+    ("motor_command", MotorCommandArray): LCMTransport.spec(
+        f"/{PILLAR_HARDWARE_ID}/motor_command", MotorCommandArray
+    ),
+    ("motor_states", JointState): LCMTransport.spec(
+        f"/{PILLAR_HARDWARE_ID}/motor_states", JointState
+    ),
+}
 
 alfred_pillar = autoconnect(
     PillarConnection.blueprint(),
@@ -38,23 +54,15 @@ alfred_pillar = autoconnect(
         instance_name="ControlCoordinator",
         hardware=[_pillar_hardware],
         tasks=[
-            TaskConfig(
-                name=PILLAR_SERVO_TASK_NAME,
-                type="servo",
-                joint_names=[PILLAR_LIFT_JOINT],
-                priority=10,
-                auto_start=True,
+            joint_trajectory_task(
+                [PILLAR_LIFT_JOINT],
+                velocity_limits={PILLAR_LIFT_JOINT: PILLAR_LIFT_VELOCITY_LIMIT_M_S},
             ),
         ],
     ),
 ).transports(
     {
-        ("motor_command", MotorCommandArray): LCMTransport.spec(
-            f"/{PILLAR_HARDWARE_ID}/motor_command", MotorCommandArray
-        ),
-        ("motor_states", JointState): LCMTransport.spec(
-            f"/{PILLAR_HARDWARE_ID}/motor_states", JointState
-        ),
+        **PILLAR_MOTOR_TRANSPORTS,
         ("joint_command", JointState): LCMTransport.spec(
             f"/{PILLAR_HARDWARE_ID}/joint_command", JointState
         ),

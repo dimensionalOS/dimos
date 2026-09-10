@@ -22,7 +22,8 @@ from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.robot.diy.alfred.blueprints.pillar import (
-    PILLAR_SERVO_TASK_NAME,
+    PILLAR_LIFT_VELOCITY_LIMIT_M_S,
+    PILLAR_TASK_NAME,
     alfred_pillar,
 )
 from dimos.robot.diy.alfred.pillar_connection import (
@@ -54,11 +55,14 @@ def test_alfred_pillar_composes_connection_and_one_joint_coordinator() -> None:
     assert hardware.wb_config == WholeBodyConfig(kp=(0.0,), kd=(0.0,))
     assert tasks == [
         TaskConfig(
-            name=PILLAR_SERVO_TASK_NAME,
-            type="servo",
+            name=PILLAR_TASK_NAME,
+            type="trajectory",
             joint_names=[PILLAR_LIFT_JOINT],
             priority=10,
-            auto_start=True,
+            params={
+                "start_position_tolerance": 0.05,
+                "velocity_limits": {PILLAR_LIFT_JOINT: PILLAR_LIFT_VELOCITY_LIMIT_M_S},
+            },
         )
     ]
 
