@@ -32,6 +32,7 @@ jobs:
       contents: read  # For checkout
     outputs:
       digest: ${{ steps.read.outputs.digest }}
+      self_hosted_matrix: ${{ steps.matrix.outputs.include }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -43,6 +44,31 @@ jobs:
             exit 1
           fi
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+      - id: matrix
+        # One macOS runner serves the whole org, so a merge_group entry can wait
+        # on it long enough to be cancelled, and a cancelled leg fails ci-complete
+        # and ejects the PR from the queue. The leg still runs on every PR.
+        env:
+          DIGEST: ${{ steps.read.outputs.digest }}
+        run: |
+          LINUX=$(jq -cn --arg image "dimensional/ros-dev@$DIGEST" '{
+            os: "Linux",
+            container: {
+              image: $image,
+              options: "--memory=6g --memory-swap=6g",
+              volumes: ["/var/cache/dimos-root-cache:/root/.cache"]
+            },
+            markers: "self_hosted or skipif_no_ros",
+            experimental: false
+          }')
+          MACOS=$(jq -cn '{
+            os: "macOS", container: null, markers: "self_hosted", experimental: true
+          }')
+          if [ "${{ github.event_name }}" = "merge_group" ]; then
+            echo "include=$(jq -cn --argjson l "$LINUX" '[$l]')" >> "$GITHUB_OUTPUT"
+          else
+            echo "include=$(jq -cn --argjson l "$LINUX" --argjson m "$MACOS" '[$l, $m]')" >> "$GITHUB_OUTPUT"
+          fi
 
   cachix-build-check:
     # Mirror check in cachix-build to skip forks.
@@ -630,23 +656,12 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      # Built in compute-ros-pin so the macOS leg can be dropped on merge_group.
+      # Linux pins the ros-dev container (RAM-capped so a runaway test OOMs inside
+      # it, not as a host OOM); macOS runs on the host, as `container:` is
+      # Linux-only.
       matrix:
-        include:
-          - os: Linux
-            # GitHub Actions only honours `container:` on Linux runners.
-            container:
-              image: dimensional/ros-dev@${{ needs.compute-ros-pin.outputs.digest }}
-              # Hard-cap container RAM so a runaway test OOMs inside the container, not
-              # as a host global-OOM that takes out sshd/tmux.
-              options: --memory=6g --memory-swap=6g
-              volumes:
-                - /var/cache/dimos-root-cache:/root/.cache
-            markers: "self_hosted or skipif_no_ros"
-            experimental: false
-          - os: macOS
-            container: null  # run on host — `container:` is Linux-only
-            markers: "self_hosted"
-            experimental: true
+        include: ${{ fromJSON(needs.compute-ros-pin.outputs.self_hosted_matrix) }}
     runs-on:
       - self-hosted
       - ${{ matrix.os }}
