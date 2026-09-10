@@ -476,11 +476,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--dry-run", action="store_true", help="only report the statistics")
     args = parser.parse_args(argv)
 
-    from dimos.memory.store.sqlite import SqliteStore
     from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.teleop.memory_world.recording import open_recording
     from dimos.teleop.memory_world.tf_tree import TfTree
 
-    store = SqliteStore(path=args.store_path, must_exist=True)
+    store = open_recording(args.store_path)
     tree = TfTree.from_stream(store.streams[args.tf_stream])
 
     def to_world(obs: Any) -> PointCloud2 | None:

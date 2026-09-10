@@ -30,13 +30,21 @@ from dataclasses import replace
 from functools import partial
 from typing import Any, Protocol, runtime_checkable
 
+import numpy as np
+
 from dimos.memory.backend import Backend
 from dimos.memory.codecs.base import codec_for
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.base import ObservationStore, ObservationStoreConfig
 from dimos.memory.store.base import Store, StoreConfig
-from dimos.memory.type.filter import StreamQuery
+from dimos.memory.type.filter import (
+    AfterFilter,
+    AtFilter,
+    BeforeFilter,
+    StreamQuery,
+    TimeRangeFilter,
+)
 from dimos.memory.type.observation import Observation
 
 
@@ -103,12 +111,25 @@ class McapObservationStore(ObservationStore[Any]):
     def name(self) -> str:
         return self.config.name
 
-    def _iter(self, reverse: bool = False) -> Iterator[Observation[Any]]:
+    def _iter(
+        self,
+        reverse: bool = False,
+        start_ns: int | None = None,
+        end_ns: int | None = None,
+    ) -> Iterator[Observation[Any]]:
         from mcap.reader import make_reader  # optional mcap dependency
 
         decode, dtype, n = self._codec.decode, self._codec.payload_type, self._count
         with open(self._path, "rb") as f:
-            msgs = make_reader(f).iter_messages(topics=[self._topic], reverse=reverse)
+            reader = make_reader(f)
+            if start_ns is not None or end_ns is not None:
+                # A time window skips whole chunks; ids then count from the
+                # window's first message, which is all a windowed read needs.
+                msgs = reader.iter_messages(
+                    topics=[self._topic], start_time=start_ns, end_time=end_ns, reverse=reverse
+                )
+            else:
+                msgs = reader.iter_messages(topics=[self._topic], reverse=reverse)
             for i, (_schema, _channel, message) in enumerate(msgs):
                 observation_time = (
                     message.publish_time
@@ -122,17 +143,43 @@ class McapObservationStore(ObservationStore[Any]):
                     _loader=partial(decode, message.data),
                 )
 
+    def _time_window(self, q: StreamQuery) -> tuple[int | None, int | None]:
+        """Log-time bounds (ns) implied by the query's time filters, or None.
+
+        Without this every ``.at(t)`` reads the whole channel off disk. The
+        filters still run on what comes back, so the window only prunes; it
+        is widened when observation time is publish time, which can differ
+        from the log time the mcap index is keyed on.
+        """
+        lo, hi = -np.inf, np.inf
+        for f in q.filters:
+            if isinstance(f, AtFilter):
+                lo, hi = max(lo, f.t - f.tolerance), min(hi, f.t + f.tolerance)
+            elif isinstance(f, TimeRangeFilter):
+                lo, hi = max(lo, f.t1), min(hi, f.t2)
+            elif isinstance(f, AfterFilter):
+                lo = max(lo, f.t)
+            elif isinstance(f, BeforeFilter):
+                hi = min(hi, f.t)
+        if lo == -np.inf and hi == np.inf:
+            return None, None
+        slack = 1.0 if self._observation_uses_publish_time else 1e-3
+        start = None if lo == -np.inf else int((lo - slack) * 1e9)
+        end = None if hi == np.inf else int((hi + slack) * 1e9) + 1
+        return start, end
+
     def query(self, q: StreamQuery) -> Iterator[Observation[Any]]:
+        start_ns, end_ns = self._time_window(q)
         # MCAP is natively log-time ordered, so id ordering never needs a sort.
         # Native DimOS recordings expose publish_time as observation ts; source
         # time can differ from log/reception order and must use the generic sort.
         if q.order_field == "id" or (
             q.order_field == "ts" and not self._observation_uses_publish_time
         ):
-            it = self._iter(reverse=q.order_desc)
+            it = self._iter(reverse=q.order_desc, start_ns=start_ns, end_ns=end_ns)
             q = replace(q, order_field=None, order_desc=False)
             return q.apply(it)
-        return q.apply(self._iter())
+        return q.apply(self._iter(start_ns=start_ns, end_ns=end_ns))
 
     def count(self, q: StreamQuery) -> int:
         if not q.filters and q.search_text is None and q.search_vec is None:

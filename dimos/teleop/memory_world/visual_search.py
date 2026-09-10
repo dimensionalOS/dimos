@@ -598,7 +598,7 @@ def main() -> None:
     """Build the index for a recording: ``python -m ...visual_search <db>``."""
     import argparse
 
-    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.teleop.memory_world.recording import open_recording
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("store_path")
@@ -620,7 +620,7 @@ def main() -> None:
 
     from dimos.teleop.memory_world.tf_tree import TfTree
 
-    store = SqliteStore(path=args.store_path, must_exist=True)
+    store = open_recording(args.store_path)
     store.start()
     tree = TfTree.from_stream(store.streams[args.tf_stream])
     camera_frame = args.camera_frame or str(

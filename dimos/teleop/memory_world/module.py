@@ -55,7 +55,7 @@ from dimos.agents.skill_result import SkillResult
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.memory.store.sqlite import SqliteStore
+from dimos.memory.store.base import Store
 from dimos.memory.transform import throttle
 from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.teleop.memory_world.messages import (
@@ -76,6 +76,7 @@ from dimos.teleop.memory_world.query import (
     HighlightPoint,
     MemoryQueryResult,
 )
+from dimos.teleop.memory_world.recording import open_recording
 from dimos.teleop.memory_world.replay import VoxelReplay, build_replay_streams
 from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix
 from dimos.teleop.memory_world.visual_search import (
@@ -267,7 +268,7 @@ class MemoryWorldModule(Module):
         self._world_clients: set[_ClientConn] = set()
         self._clients_lock = threading.Lock()
 
-        self._store: SqliteStore | None = None
+        self._store: Store | None = None
         # Cached payloads so reconnects are cheap.
         self._cached_cloud: tuple[dict[str, Any], bytes] | None = None
         self._cached_image_poses: tuple[dict[str, Any], bytes] | None = None
@@ -292,6 +293,7 @@ class MemoryWorldModule(Module):
         # at once, and a scrubbing viewer fetches segments and frames together.
         self._replay_read_lock = threading.Lock()
         self._replay_progress = "not started"
+        self._replay_index: dict[str, Any] | None = None
         self._replay_frames: OrderedDict[int, tuple[bytes, dict[str, Any]]] = OrderedDict()
         self._camera_hfov_deg: float | None = None
         self._active_query_result: dict[str, Any] | None = None
@@ -299,6 +301,7 @@ class MemoryWorldModule(Module):
         self._query_revision = 0
         self._web_server: RobotWebInterface | None = None
         self._web_server_thread: threading.Thread | None = None
+        self._prepare_thread: threading.Thread | None = None
 
         super().__init__(**kwargs)
         self.config.store_path = str(self._resolve_store_path(self.config.store_path))
@@ -462,9 +465,9 @@ class MemoryWorldModule(Module):
 
     # ---- initial payload ---------------------------------------------------
 
-    def _ensure_store(self) -> SqliteStore:
+    def _ensure_store(self) -> Store:
         if self._store is None:
-            self._store = SqliteStore(path=self.config.store_path, must_exist=True)
+            self._store = open_recording(self.config.store_path)
             logger.info("opened memory store at %s", self.config.store_path)
         return self._store
 
@@ -664,7 +667,17 @@ class MemoryWorldModule(Module):
             timestamps: list[float] = []
             ids: list[int] = []
             thumbnails: list[bytes] = []
-            for obs in stream.transform(throttle(interval)):  # type: ignore[var-annotated]
+
+            # One indexed read per marker rather than a pass over every frame:
+            # on an mcap a full pass decompresses every image chunk (minutes),
+            # while a read from a stamp touches only the chunk that holds it.
+            def sampled() -> Any:
+                for k in range(n):
+                    found = stream.after(float(first.ts) + k * interval - 1e-6).limit(1).to_list()
+                    if found:
+                        yield found[0]
+
+            for obs in sampled():
                 optical = self._camera_pose_of(obs)
                 if optical is None:
                     continue
@@ -906,6 +919,11 @@ class MemoryWorldModule(Module):
 
     def _build_visual_index(self) -> None:
         """Embed the recording's frames. Slow and one-shot; runs off the request path."""
+        if self.config.image_stream_name not in self._ensure_store().list_streams():
+            # Nothing to index; saves loading a 3.7 GB model to find that out.
+            self._index_progress = f"no {self.config.image_stream_name!r} stream"
+            logger.warning("visual index skipped: %s", self._index_progress)
+            return
         with self._index_lock:
             index = self._ensure_visual_index()
             existing = index.count()
@@ -1125,6 +1143,9 @@ class MemoryWorldModule(Module):
             self._replay = VoxelReplay(
                 store, z_min=self.config.map_z_min, z_max=self.config.map_z_max
             )
+            # Listing every camera stamp is a pass over the image stream (on
+            # an mcap that decompresses every chunk), so it is done here, once.
+            self._replay_index = self._build_replay_index_json(self._replay)
             self._replay_progress = "ready"
             return self._replay
 
@@ -1141,7 +1162,11 @@ class MemoryWorldModule(Module):
             logger.exception("voxel replay build failed")
 
     def _replay_index_json(self) -> dict[str, Any]:
-        replay = self._ensure_replay()
+        self._ensure_replay()
+        assert self._replay_index is not None  # set together with _replay
+        return self._replay_index
+
+    def _build_replay_index_json(self, replay: VoxelReplay) -> dict[str, Any]:
         images = self._ensure_store().streams[self.config.image_stream_name]
         payload = replay.index.to_json()
         # Frame stamps let the viewer ask for exact frames, so its cache hits.
@@ -1390,18 +1415,27 @@ class MemoryWorldModule(Module):
             self.config.listen_host,
             self.config.server_port,
         )
-        if self.config.build_image_index_on_start:
-            threading.Thread(
-                target=self._build_visual_index,
-                daemon=True,
-                name="MemoryWorldVisualIndex",
-            ).start()
+        self._prepare_thread = threading.Thread(
+            target=self._prepare, daemon=True, name="MemoryWorldPrepare"
+        )
+        self._prepare_thread.start()
+
+    def _prepare(self) -> None:
+        """Build what every client needs, in order of urgency, on one thread.
+
+        Each step is a pass over the recording; run together they starve each
+        other (on an mcap every pass decompresses the image chunks), so the
+        world cache goes first, the replay second and the slow SigLIP index
+        last. A client that connects mid-way waits on the world cache lock.
+        """
+        try:
+            self._ensure_world_cache()
+        except Exception:
+            logger.exception("world cache build failed")
         if self.config.build_replay_on_start:
-            threading.Thread(
-                target=self._build_replay,
-                daemon=True,
-                name="MemoryWorldReplay",
-            ).start()
+            self._build_replay()
+        if self.config.build_image_index_on_start:
+            self._build_visual_index()
 
     @rpc
     def stop(self) -> None:
@@ -1411,6 +1445,9 @@ class MemoryWorldModule(Module):
             if self._web_server_thread is not None:
                 self._web_server_thread.join(timeout=3)
                 self._web_server_thread = None
+            if self._prepare_thread is not None:
+                self._prepare_thread.join(timeout=10)
+                self._prepare_thread = None
         finally:
             if self._visual_index is not None:
                 self._visual_index.stop()
