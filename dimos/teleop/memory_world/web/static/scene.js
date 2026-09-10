@@ -31,6 +31,7 @@
 //   worldToRobot(point)  -- for diag / future use
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
+import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms, viewportHeight, viewportHeightPx } from '/static_mw/voxel_sprites.js';
 
 const WALK_SPEED_M_PER_S = 1.4;               // headset-relative
 const POINT_SIZE = 0.025;                     // metres
@@ -145,7 +146,8 @@ export class WorldScene {
         this._frameRotate.add(grid);
 
         // Containers we (re)populate on payload receive.
-        this._pointsObj = null;               // THREE.InstancedMesh
+        this._pointsObj = null;               // THREE.Points of sphere sprites
+        this._voxelsDrawn = 0;
         this._cloudData = null;               // {n, positions, colors, voxelSize}
         this._imageQuadGroup = new THREE.Group();     // textured quads, toggleable
         this._imageQuadGroup.visible = false;
@@ -330,7 +332,7 @@ export class WorldScene {
             quality: this._quality,
             quality_auto: this._qualityAuto,
             replay_voxels: this._replayLayer && this._replayGroup.visible ? this._replayLayer.drawn : 0,
-            voxels_drawn: this._pointsObj ? this._pointsObj.count : 0,
+            voxels_drawn: this._voxelsDrawn,
             voxels_total: this._cloudData ? this._cloudData.n : 0,
         };
     }
@@ -526,6 +528,7 @@ export class WorldScene {
     }
 
     _tick(timeMs) {
+        viewportHeight.value = viewportHeightPx(this.three);
         const frameMs = this._lastTickMs ? timeMs - this._lastTickMs : 0;
         if (frameMs > 0) {
             this._frameSamples[this._frameSampleCursor] = frameMs;
@@ -920,28 +923,44 @@ export class WorldScene {
             if (d.colors) d.paint.set(d.colors); else d.paint.fill(1);
         }
 
-        // Lit cube faces preserve depth cues against both opaque and
-        // passthrough backgrounds. Unlit cubes appeared like square sprites.
-        const box = new THREE.BoxGeometry(d.voxelSize, d.voxelSize, d.voxelSize);
-        const mat = new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0 });
-        const mesh = new THREE.InstancedMesh(box, mat, d.n);
-        mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-        mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(d.n * 3), 3);
-        mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
-        mesh.frustumCulled = false; // the bounding sphere would be recomputed on every compaction
-        this._pointsObj = mesh;
+        // One sphere sprite per voxel: a vertex each, lit in the fragment
+        // shader so depth cues survive against passthrough.
+        const geometry = new THREE.BufferGeometry();
+        const positions = new THREE.BufferAttribute(new Float32Array(d.n * 3), 3);
+        const colors = new THREE.BufferAttribute(new Float32Array(d.n * 3), 3);
+        positions.setUsage(THREE.DynamicDrawUsage);
+        colors.setUsage(THREE.DynamicDrawUsage);
+        geometry.setAttribute('position', positions);
+        geometry.setAttribute('color', colors);
+        geometry.setDrawRange(0, 0);
+        const material = new THREE.ShaderMaterial({
+            uniforms: spriteUniforms(d.voxelSize),
+            vertexColors: true,
+            vertexShader: `${SPRITE_VERTEX_GLSL}
+                varying vec3 vColor;
+                void main() {
+                    vColor = color;
+                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    gl_PointSize = spritePointSize(mvPosition);
+                    gl_Position = projectionMatrix * mvPosition;
+                }`,
+            fragmentShader: SPRITE_FRAGMENT_SHADER,
+        });
+        const points = new THREE.Points(geometry, material);
+        points.frustumCulled = false; // the bounding sphere would be recomputed on every compaction
+        this._pointsObj = points;
         this._frameRotate.add(this._pointsObj);
         this._highlightedVoxels = [];
         this._highlightVoxels(this._lastResultPoints);
     }
 
-    /** Write the voxels the current quality level draws into the instance
+    /** Write the voxels the current quality level draws into the sprite
      *  buffers: a uniform `voxel_fraction` of them, within `voxel_range_m` of
      *  the viewer. Everything else is simply not drawn. */
     _compactCloud() {
         const d = this._cloudData;
-        const mesh = this._pointsObj;
-        if (!d || !mesh) return;
+        const points = this._pointsObj;
+        if (!d || !points) return;
         const level = QUALITY_LEVELS[this._quality];
         const budget = Math.max(1, Math.round(d.n * level.voxel_fraction));
         const eye = this._robotFrameEye();
@@ -949,8 +968,10 @@ export class WorldScene {
         const range2 = Number.isFinite(level.voxel_range_m)
             ? (level.voxel_range_m / scale) * (level.voxel_range_m / scale)
             : Infinity;
-        const matrices = mesh.instanceMatrix.array;
-        const colours = mesh.instanceColor.array;
+        const positionAttr = points.geometry.getAttribute('position');
+        const colorAttr = points.geometry.getAttribute('color');
+        const positions = positionAttr.array;
+        const colours = colorAttr.array;
         let written = 0;
         for (let k = 0; k < budget; k++) {
             const i = d.order[k];
@@ -959,18 +980,15 @@ export class WorldScene {
                 const dx = x - eye.x, dy = y - eye.y, dz = z - eye.z;
                 if (dx * dx + dy * dy + dz * dz > range2) continue;
             }
-            const m = written * 16;
-            matrices[m] = 1; matrices[m + 1] = 0; matrices[m + 2] = 0; matrices[m + 3] = 0;
-            matrices[m + 4] = 0; matrices[m + 5] = 1; matrices[m + 6] = 0; matrices[m + 7] = 0;
-            matrices[m + 8] = 0; matrices[m + 9] = 0; matrices[m + 10] = 1; matrices[m + 11] = 0;
-            matrices[m + 12] = x; matrices[m + 13] = y; matrices[m + 14] = z; matrices[m + 15] = 1;
             const c = written * 3;
+            positions[c] = x; positions[c + 1] = y; positions[c + 2] = z;
             colours[c] = d.paint[i * 3]; colours[c + 1] = d.paint[i * 3 + 1]; colours[c + 2] = d.paint[i * 3 + 2];
             written++;
         }
-        mesh.count = written;
-        mesh.instanceMatrix.needsUpdate = true;
-        mesh.instanceColor.needsUpdate = true;
+        points.geometry.setDrawRange(0, written);
+        positionAttr.needsUpdate = true;
+        colorAttr.needsUpdate = true;
+        this._voxelsDrawn = written;
         this._voxelCullEye = eye;
     }
 

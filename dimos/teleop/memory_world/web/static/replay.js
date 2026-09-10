@@ -11,6 +11,7 @@
 // visible slots in one linear pass.
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
+import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms } from '/static_mw/voxel_sprites.js';
 
 const OP_ADD = 1;
 const OP_REMOVE = 2;
@@ -67,43 +68,35 @@ export class ReplaySegment {
     }
 }
 
-/** One instanced draw of every visible voxel, coloured by height in the shader. */
-export class ReplayLayer extends THREE.Mesh {
+/** One draw of every visible voxel as sphere sprites, coloured by height in the shader. */
+export class ReplayLayer extends THREE.Points {
     constructor(voxelSize, height, colors) {
-        const box = new THREE.BoxGeometry(voxelSize, voxelSize, voxelSize);
-        const geometry = new THREE.InstancedBufferGeometry();
-        geometry.index = box.index;
-        geometry.setAttribute('position', box.getAttribute('position'));
-        geometry.setAttribute('normal', box.getAttribute('normal'));
-        geometry.instanceCount = 0;
+        const geometry = new THREE.BufferGeometry();
+        geometry.setDrawRange(0, 0);
         const material = new THREE.ShaderMaterial({
             uniforms: {
+                ...spriteUniforms(voxelSize),
                 floorZ: { value: height.floor },
                 spanZ: { value: height.span },
                 color0: { value: new THREE.Vector3(...colors[0]) },
                 color1: { value: new THREE.Vector3(...colors[1]) },
                 color2: { value: new THREE.Vector3(...colors[2]) },
                 freshColor: { value: new THREE.Vector3(...FRESH_COLOR) },
-                lightDir: { value: new THREE.Vector3(2, 4, 3).normalize() },
             },
-            vertexShader: `
-                attribute vec3 offset;
+            vertexShader: `${SPRITE_VERTEX_GLSL}
                 attribute float fresh;
                 uniform float floorZ, spanZ;
-                uniform vec3 color0, color1, color2, freshColor, lightDir;
+                uniform vec3 color0, color1, color2, freshColor;
                 varying vec3 vColor;
                 void main() {
-                    float t = clamp((offset.z - floorZ) / spanZ, 0.0, 1.0);
+                    float t = clamp((position.z - floorZ) / spanZ, 0.0, 1.0);
                     vec3 ramp = t < 0.5 ? mix(color0, color1, t * 2.0) : mix(color1, color2, t * 2.0 - 1.0);
-                    vec3 n = normalize(normalMatrix * normal);
-                    // the same ambient + one directional light the static map uses
-                    float light = 0.45 + 0.75 * max(dot(n, lightDir), 0.0);
-                    vColor = mix(ramp, freshColor, fresh) * light;
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position + offset, 1.0);
+                    vColor = mix(ramp, freshColor, fresh);
+                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    gl_PointSize = spritePointSize(mvPosition);
+                    gl_Position = projectionMatrix * mvPosition;
                 }`,
-            fragmentShader: `
-                varying vec3 vColor;
-                void main() { gl_FragColor = vec4(vColor, 1.0); }`,
+            fragmentShader: SPRITE_FRAGMENT_SHADER,
         });
         super(geometry, material);
         this.frustumCulled = false;
@@ -116,18 +109,18 @@ export class ReplayLayer extends THREE.Mesh {
     _ensureCapacity(count) {
         if (count <= this._capacity) return;
         this._capacity = Math.max(count, Math.ceil(this._capacity * 1.5));
-        const offsets = new THREE.InstancedBufferAttribute(new Float32Array(this._capacity * 3), 3);
-        const fresh = new THREE.InstancedBufferAttribute(new Float32Array(this._capacity), 1);
-        offsets.setUsage(THREE.DynamicDrawUsage);
+        const positions = new THREE.BufferAttribute(new Float32Array(this._capacity * 3), 3);
+        const fresh = new THREE.BufferAttribute(new Float32Array(this._capacity), 1);
+        positions.setUsage(THREE.DynamicDrawUsage);
         fresh.setUsage(THREE.DynamicDrawUsage);
-        this.geometry.setAttribute('offset', offsets);
+        this.geometry.setAttribute('position', positions);
         this.geometry.setAttribute('fresh', fresh);
     }
 
-    /** Refill the instance buffers from a segment's table and a visibility byte per slot. */
+    /** Refill the sprite buffers from a segment's table and a visibility byte per slot. */
     fill(segment, visible, freshSlots) {
         this._ensureCapacity(segment.slotCount);
-        const out = this.geometry.getAttribute('offset').array;
+        const out = this.geometry.getAttribute('position').array;
         const fresh = this.geometry.getAttribute('fresh').array;
         const src = segment.offsets;
         const fraction = this.fraction;
@@ -140,14 +133,14 @@ export class ReplayLayer extends THREE.Mesh {
             fresh[n] = freshSlots[slot];
             n++;
         }
-        this.geometry.getAttribute('offset').needsUpdate = true;
+        this.geometry.getAttribute('position').needsUpdate = true;
         this.geometry.getAttribute('fresh').needsUpdate = true;
-        this.geometry.instanceCount = n;
+        this.geometry.setDrawRange(0, n);
         this.drawn = n;
     }
 
     clear() {
-        this.geometry.instanceCount = 0;
+        this.geometry.setDrawRange(0, 0);
         this.drawn = 0;
     }
 }
