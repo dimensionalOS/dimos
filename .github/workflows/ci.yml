@@ -31,7 +31,6 @@ jobs:
     permissions:
       contents: read  # For checkout
     outputs:
-      digest: ${{ steps.read.outputs.digest }}
       self_hosted_matrix: ${{ steps.matrix.outputs.include }}
     steps:
       - name: Checkout
@@ -46,8 +45,7 @@ jobs:
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
       - id: matrix
         # One macOS runner serves the whole org, so a merge_group entry can wait
-        # on it long enough to be cancelled, and a cancelled leg fails ci-complete
-        # and ejects the PR from the queue. The leg still runs on every PR.
+        # on it clogging the pipeline
         env:
           DIGEST: ${{ steps.read.outputs.digest }}
         run: |
