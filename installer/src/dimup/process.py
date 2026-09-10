@@ -144,13 +144,24 @@ class Runner:
                         else:
                             assert process.stdout is not None
                             decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+                            pending = ""
                             while True:
                                 chunk = os.read(process.stdout.fileno(), 65536)
                                 rendered = tool_text(decoder.decode(chunk, final=not chunk))
                                 output.write(rendered.plain)
                                 output.flush()
                                 tail = (tail + rendered.plain)[-8000:]
-                                if rendered:
+                                if self.console.is_terminal:
+                                    # Live redraws must start on a fresh line. uv may write a
+                                    # single line across several pipe chunks.
+                                    pending += rendered.plain
+                                    complete, separator, pending = pending.rpartition("\n")
+                                    if separator:
+                                        self.console.print(Text(complete), soft_wrap=True)
+                                    if pending and (not chunk or len(pending) >= 65536):
+                                        self.console.print(Text(pending), soft_wrap=True)
+                                        pending = ""
+                                elif rendered:
                                     self.console.print(rendered, end="", soft_wrap=True)
                                 if not chunk:
                                     break
@@ -170,7 +181,7 @@ class Runner:
                 raise SetupError(
                     f"Failed: {stage}\nCommand: {shlex.join(command)}\nLog: {self.log}\n{error}"
                 ) from error
-        if not capture and tail and not tail.endswith("\n"):
+        if not capture and not self.console.is_terminal and tail and not tail.endswith("\n"):
             self.console.print()
         if returncode:
             detail = "\n" + "\n".join(tail.splitlines()[-12:]) if capture else ""
