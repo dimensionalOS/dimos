@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import sys
@@ -22,8 +22,8 @@ import venv
 import pytest
 import tomllib
 
-from dimup.process import SetupError
-from dimup.project import create, manifest, package_name, write_project
+from dimup.process import Runner, SetupError
+from dimup.project import create, manifest, package_name, resolve_sdk, write_project
 
 
 def test_generated_application_pins_sdk_and_registers_blueprint(tmp_path):
@@ -128,10 +128,98 @@ test -z "${NIX_CONFIG+x}"
 def test_direnv_selects_application_python(tmp_path):
     if shutil.which("direnv") is None:
         pytest.skip("direnv integration is exercised by CI with direnv installed")
-    write_project(tmp_path, "my-robot", "a" * 40, {"project": {"optional-dependencies": {"all": []}}})
+    write_project(
+        tmp_path, "my-robot", "a" * 40, {"project": {"optional-dependencies": {"all": []}}}
+    )
     venv.EnvBuilder(with_pip=False).create(tmp_path / ".venv")
     env = {**os.environ, "XDG_CONFIG_HOME": str(tmp_path / "config")}
     subprocess.run(["direnv", "allow", str(tmp_path)], env=env, check=True, capture_output=True)
-    result = subprocess.run(["direnv", "exec", str(tmp_path), "python", "-c", "import sys; print(sys.prefix)"],
-                            env=env, check=True, capture_output=True, text=True)
+    result = subprocess.run(
+        ["direnv", "exec", str(tmp_path), "python", "-c", "import sys; print(sys.prefix)"],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     assert result.stdout.strip() == str(tmp_path / ".venv")
+
+
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_init_presents_live_installation_and_preserves_failures(
+    tmp_path, monkeypatch, capsys, exit_code
+):
+    root = tmp_path / "my [robot]"
+    sha = "a" * 40
+    monkeypatch.setenv("COLUMNS", "40")
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setattr("dimup.project.executable", lambda name: name)
+    monkeypatch.setattr(
+        "dimup.project.resolve_sdk",
+        lambda ref, runner: (sha, {"project": {"optional-dependencies": {"all": []}}}),
+    )
+    popen = subprocess.Popen
+
+    def run_tool(command, **kwargs):
+        script = (
+            f"import sys; print('Installed 2 packages', file=sys.stderr); sys.exit({exit_code})"
+            if command[0] == "uv"
+            else "print('application registered')"
+        )
+        return popen([sys.executable, "-c", script], **kwargs)
+
+    monkeypatch.setattr("dimup.process.subprocess.Popen", run_tool)
+    if exit_code:
+        with pytest.raises(SetupError, match="exit 7") as error:
+            create(root, sha)
+        assert "directory has been kept" in str(error.value)
+        assert "Ready" not in capsys.readouterr().out
+    else:
+        create(root, sha)
+        output = capsys.readouterr().out
+        assert "Installed 2 packages" in output
+        assert "Ready · my-robot" in output
+        assert f"cd '{root}'" in output
+        assert "dimos run my-robot.demo" in output
+        assert "direnv allow" in output
+        assert "→" not in output
+        assert "\x1b" not in output
+    assert (root / "pyproject.toml").is_file()
+    assert "Installed 2 packages" in (root / ".dimos/setup.log").read_text()
+
+
+def test_sdk_resolution_keeps_git_metadata_out_of_console(tmp_path, monkeypatch, capsys):
+    sdk = tmp_path / "sdk"
+    sdk.mkdir()
+    (sdk / "pyproject.toml").write_text('[project]\nname = "metadata-only"\n')
+    subprocess.run(["git", "init", "--quiet", str(sdk)], check=True)
+    subprocess.run(["git", "-C", str(sdk), "add", "pyproject.toml"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(sdk),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "--quiet",
+            "-m",
+            "SDK",
+        ],
+        check=True,
+    )
+    monkeypatch.setattr("dimup.project.SDK_URL", str(sdk))
+    runner = Runner(tmp_path / "setup.log")
+    with runner.stage("Resolve SDK"):
+        sha, metadata = resolve_sdk("HEAD", runner)
+    assert len(sha) == 40
+    assert metadata == {"project": {"name": "metadata-only"}}
+    output = capsys.readouterr().out
+    assert "Read SDK dependencies" not in output
+    assert "metadata-only" not in output
+    assert "metadata-only" in runner.log.read_text()

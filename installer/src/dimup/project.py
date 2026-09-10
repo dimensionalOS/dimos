@@ -22,6 +22,8 @@ import shlex
 import tempfile
 from typing import Any
 
+from rich.table import Table
+from rich.text import Text
 import tomli_w
 import tomllib
 
@@ -42,15 +44,21 @@ def resolve_sdk(ref: str, runner: Runner) -> tuple[str, dict[str, Any]]:
     with tempfile.TemporaryDirectory(prefix="dimup-sdk-") as temporary:
         checkout = Path(temporary)
         git = executable("git")
-        runner.run("Prepare SDK metadata", [git, "init", "--quiet", str(checkout)])
+        runner.run("Prepare SDK metadata", [git, "init", "--quiet", str(checkout)], capture=True)
         runner.run(
             "Resolve SDK revision",
             [git, "fetch", "--depth=1", "--filter=blob:none", "--no-tags", "--", SDK_URL, ref],
             cwd=checkout,
+            capture=True,
         )
-        sha = runner.run("Read SDK commit", [git, "rev-parse", "FETCH_HEAD"], cwd=checkout)
+        sha = runner.run(
+            "Read SDK commit", [git, "rev-parse", "FETCH_HEAD"], cwd=checkout, capture=True
+        )
         source = runner.run(
-            "Read SDK dependencies", [git, "show", f"{sha}:pyproject.toml"], cwd=checkout
+            "Read SDK dependencies",
+            [git, "show", f"{sha}:pyproject.toml"],
+            cwd=checkout,
+            capture=True,
         )
         return sha, tomllib.loads(source)
 
@@ -123,12 +131,22 @@ def create(directory: Path, ref: str) -> None:
         raise SetupError(f"Destination must be new or empty: {root}")
     root.mkdir(parents=True, exist_ok=True)
     runner = Runner(root / ".dimos/setup.log")
+    runner.console.print("\n  dimup · Create application\n", style="bold cyan")
+    details = Table.grid(padding=(0, 2))
+    details.add_column(style="dim")
+    details.add_column()
+    details.add_row("  Project", Text(str(root)))
+    details.add_row("  SDK", Text(ref))
+    runner.console.print(details)
     try:
         for tool in ("uv", "git", "cargo", "nix", "deno"):
             executable(tool)
-        sha, sdk = resolve_sdk(ref, runner)
-        print(f"SDK: {ref} -> {sha}")
-        write_project(root, name, sha, sdk)
+        with runner.stage("Resolve SDK"):
+            sha, sdk = resolve_sdk(ref, runner)
+        if ref != sha:
+            runner.console.print(Text(f"  {ref} → {sha[:12]}", style="dim"))
+        with runner.stage("Create project files"):
+            write_project(root, name, sha, sdk)
         env = dict(os.environ)
         tool_paths = [
             str(Path(executable(tool)).parent) for tool in ("uv", "git", "cargo", "nix", "deno")
@@ -136,31 +154,43 @@ def create(directory: Path, ref: str) -> None:
         env["PATH"] = os.pathsep.join([*tool_paths, env.get("PATH", "")])
         env["GIT_LFS_SKIP_SMUDGE"] = "1"
         runner.run(
-            "Install application dependencies",
+            "Install dependencies · uv sync",
             [executable("uv"), "sync", "--python", "3.12"],
             cwd=root,
             env=env,
         )
         python = root / ".venv/bin/python"
         runner.run(
-            "Verify application registration",
+            "Verify application",
             [
                 str(python),
                 "-c",
-                "from importlib.metadata import distribution; import sys; "
-                "ep = next(e for e in distribution(sys.argv[1]).entry_points "
-                "if e.group == 'dimos.blueprints' and e.name == 'demo'); ep.load()",
+                (
+                    "from importlib.metadata import distribution; import sys; "
+                    "ep = next(e for e in distribution(sys.argv[1]).entry_points "
+                    "if e.group == 'dimos.blueprints' and e.name == 'demo'); ep.load()"
+                ),
                 name,
             ],
             cwd=root,
             env=env,
         )
+    except KeyboardInterrupt:
+        runner.console.print(Text(f"Project kept: {root}\nLog: {runner.log}", style="dim"))
+        raise
     except (SetupError, OSError, ValueError, KeyError) as error:
         raise SetupError(
             f"{error}\nThe project directory has been kept: {root}\n"
             "Fix the problem, then remove this directory or choose a new empty directory before retrying."
         ) from error
-    print(
-        f"\nApplication created. Log: {runner.log}\n\ncd {shlex.quote(str(directory))}\n"
-        f"source .dimos/activate.sh\ndimos run {name}.demo"
+    runner.console.print(Text(f"\n  Ready · {name}\n", style="bold green"))
+    runner.console.print(
+        Text(
+            f"  cd {shlex.quote(str(directory.expanduser()))}\n"
+            f"  source .dimos/activate.sh\n"
+            f"  dimos run {name}.demo\n"
+        ),
+        soft_wrap=True,
     )
+    runner.console.print("  Optional: run direnv allow to activate automatically", style="dim")
+    runner.console.print(Text(f"  Log: {runner.log}", style="dim"), soft_wrap=True)
