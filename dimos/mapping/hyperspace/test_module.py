@@ -56,3 +56,36 @@ def test_heat_colors_run_dark_to_light() -> None:
     assert colors.shape == (3, 3)
     brightness = colors.astype(int).sum(axis=1)
     assert brightness[0] < brightness[1] < brightness[2]
+
+
+def test_summarize_answer_orders_by_score() -> None:
+    from dimos.mapping.hyperspace.module import summarize_answer
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    cloud = PointCloud2.from_numpy(
+        np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=np.float32),
+        frame_id="odom",
+        timestamp=1.0,
+        intensities=np.array([0.2, 1.0, 0.5], dtype=np.float32),
+    )
+    cloud.seq = 7
+    decoded = PointCloud2.lcm_decode(cloud.lcm_encode())
+    assert decoded.seq == 7, "the query id must survive the wire"
+    summary = summarize_answer(decoded, top=2)
+    assert summary["frame"] == "odom"
+    assert summary["voxels"] == 3
+    assert [b["xyz"][0] for b in summary["best"]] == [1.0, 2.0]
+    assert summary["best"][0]["score"] == 1.0
+
+
+def test_summarize_answer_handles_an_empty_cloud() -> None:
+    from dimos.mapping.hyperspace.module import summarize_answer
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    empty = PointCloud2.lcm_decode(PointCloud2(frame_id="odom", ts=1.0).lcm_encode())
+    assert summarize_answer(empty) == {"frame": "odom", "voxels": 0, "best": []}
+
+
+def test_find_is_an_instant_skill() -> None:
+    assert Hyperspace.find.__skill__ is True
+    assert Hyperspace.find.__skill_lifecycle__ == "instant"

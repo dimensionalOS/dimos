@@ -15,8 +15,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import itertools
+import json
+import threading
+from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
+from dimos.agents.annotation import skill
+from dimos.agents.skill_result import SkillResult
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
@@ -29,6 +36,30 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 # A colour frame pairs with the depth frame nearest it in time; a RealSense
 # publishes both within a frame period of each other.
 DEPTH_MAX_DT_S = 0.05
+
+# Scoring every stored patch is seconds on a full map; an agent waiting longer
+# than this is better off hearing "timed out" than hanging.
+FIND_TIMEOUT_S = 30.0
+
+
+def summarize_answer(cloud: PointCloud2, top: int = 10) -> dict[str, Any]:
+    """The voxels an answer cloud carries, best first.
+
+    Scores ride in the cloud's ``intensity`` field (missing on an empty answer).
+    """
+    points, _ = cloud.as_numpy()
+    points = np.asarray(points, dtype=float).reshape(-1, 3)
+    tensor = getattr(cloud, "_pcd_tensor", None)
+    if tensor is not None and "intensities" in tensor.point:
+        scores = np.asarray(tensor.point["intensities"].numpy(), dtype=float).ravel()
+    else:
+        scores = np.ones(len(points))
+    order = np.argsort(-scores) if len(scores) == len(points) else np.arange(len(points))
+    best = [
+        {"xyz": [round(float(v), 3) for v in points[i]], "score": round(float(scores[i]), 3)}
+        for i in order[:top]
+    ]
+    return {"frame": cloud.frame_id, "voxels": len(points), "best": best}
 
 
 class HyperspaceConfig(NativeModuleConfig):
@@ -123,10 +154,52 @@ class Hyperspace(NativeModule):
     # {"id": 7, "text": "a chair", "frame": "odom"}, or bare text for id 0.
     query: In[String]
 
-    # Voxel centers with a `score` field, `header.seq` = the id that asked.
+    # Voxel centers with an `intensity` (score) field, `header.seq` = the id that asked.
     query_result: Out[PointCloud2]
     # Occupied voxels from the kept keyframes' depth, for context in a viewer.
     scene_map: Out[PointCloud2]
+
+    _query_ids = itertools.count(1)
+
+    @skill
+    def find(self, text: str, timeout_s: float = FIND_TIMEOUT_S, top: int = 10) -> SkillResult:
+        """Where in the map is `text`? E.g. "a traffic cone", "the red chair".
+
+        Publishes a query with a fresh id and waits for the answer that carries
+        that id back on ``query_result.header.seq``, so several callers can be
+        in flight at once. Returns the best-scoring voxel centers (meters, in
+        the module's world frame) and how many voxels answered in total.
+        """
+        text = text.strip()
+        if not text:
+            return SkillResult.fail("INVALID_INPUT", "text must not be empty")
+        request_id = next(self._query_ids)
+        got = threading.Event()
+        answer: dict[str, PointCloud2] = {}
+
+        def on_result(cloud: PointCloud2) -> None:
+            if getattr(cloud, "seq", None) == request_id:
+                answer["cloud"] = cloud
+                got.set()
+
+        unsubscribe = self.query_result.subscribe(on_result)
+        try:
+            self.query.transport.publish(String(json.dumps({"id": request_id, "text": text})))
+            if not got.wait(timeout_s):
+                return SkillResult.fail(
+                    "TIMEOUT", f"no answer to {text!r} (id {request_id}) within {timeout_s:.0f}s"
+                )
+        finally:
+            unsubscribe()
+        summary = summarize_answer(answer["cloud"], top=top)
+        if not summary["best"]:
+            return SkillResult.ok(f"nothing in the map looks like {text!r}", query=text, **summary)
+        best = summary["best"][0]
+        return SkillResult.ok(
+            f"{text!r}: {summary['voxels']} voxels, best at {best['xyz']} (score {best['score']})",
+            query=text,
+            **summary,
+        )
 
 
 if TYPE_CHECKING:

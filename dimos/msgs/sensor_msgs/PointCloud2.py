@@ -87,6 +87,9 @@ class PointCloud2(Timestamped):
 
         self.ts = ts  # type: ignore[assignment]
         self.frame_id = frame_id
+        # header.seq. Zero unless a producer set it; hyperspace answers carry
+        # the id of the query they answer here.
+        self.seq: int = 0
 
         # Store internally as tensor pointcloud for speed
         if pointcloud is None:
@@ -529,7 +532,9 @@ class PointCloud2(Timestamped):
 
         # Header
         msg.header = Header()
-        msg.header.seq = 0
+        # Producers use seq to pair an answer with its request (hyperspace's
+        # query_result), so it must survive a decode/encode round trip.
+        msg.header.seq = getattr(self, "seq", 0)
         msg.header.frame_id = frame_id or self.frame_id
 
         msg.header.stamp.sec = int(self.ts)
@@ -658,13 +663,15 @@ class PointCloud2(Timestamped):
 
         if msg.width == 0 or msg.height == 0:
             pc = o3d.geometry.PointCloud()
-            return cls(
+            empty = cls(
                 pointcloud=pc,
                 frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
                 ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
                 if hasattr(msg, "header") and msg.header.stamp.sec > 0
                 else None,
             )
+            empty.seq = msg.header.seq if hasattr(msg, "header") else 0
+            return empty
 
         # Parse field offsets. The message is self-describing; a known field is
         # honored only when its advertised datatype matches what we read it as,
@@ -798,13 +805,15 @@ class PointCloud2(Timestamped):
             colors = np.column_stack([r, g, b])
             pcd_t.point["colors"] = o3c.Tensor(colors, dtype=o3c.float32)
 
-        return cls(
+        cloud = cls(
             pointcloud=pcd_t,
             frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
             ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
             if hasattr(msg, "header") and msg.header.stamp.sec > 0
             else None,
         )
+        cloud.seq = msg.header.seq if hasattr(msg, "header") else 0
+        return cloud
 
     def _create_xyz_fields(self) -> list:  # type: ignore[type-arg]
         """Create X, Y, Z, intensity field definitions."""

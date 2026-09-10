@@ -190,7 +190,9 @@ fn expect_len(data: &[u8], expected: usize, encoding: &str) -> Result<(), String
     Ok(())
 }
 
-/// Voxel centres as an xyz + score cloud. `seq` carries the id of the query that
+/// Voxel centres as an xyz + intensity cloud (intensity = score, the field name
+/// every viewer and dimos's PointCloud2 wrapper already understand). `seq`
+/// carries the id of the query that
 /// produced it, so a subscriber can pair an answer with its request without an RPC.
 pub fn heatmap_cloud(heatmap: &VoxelHeatmap, seq: i32, stamp: Time) -> PointCloud2 {
     let points = heatmap.voxels.iter().map(|(index, score)| {
@@ -249,7 +251,7 @@ fn scored_cloud(
             field("x", 0),
             field("y", 4),
             field("z", 8),
-            field("score", 12),
+            field("intensity", 12),
         ],
         is_bigendian: false,
         point_step: POINT_STEP,
@@ -334,7 +336,7 @@ mod tests {
                 .iter()
                 .map(|f| f.name.as_str())
                 .collect::<Vec<_>>(),
-            ["x", "y", "z", "score"]
+            ["x", "y", "z", "intensity"]
         );
         let first_x = f32::from_le_bytes(cloud.data[0..4].try_into().unwrap());
         assert!((first_x - 0.15).abs() < 1e-6);
