@@ -36,7 +36,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
       # Shell integration test tools, not DimOS runtime dependencies.
       - run: sudo apt-get update && sudo apt-get install -y zsh direnv
-      - run: uv run --no-project --with pytest -- pytest -c /dev/null -p no:cacheprovider installer/tests dimos/cli/test_doctor.py -q
+      - run: uv run --no-project --with pytest -- python -m pytest --import-mode=importlib --noconftest -c /dev/null -p no:cacheprovider installer/tests dimos/cli/test_doctor.py -q
   ubuntu:
     strategy:
       fail-fast: false
