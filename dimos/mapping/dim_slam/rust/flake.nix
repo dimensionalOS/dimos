@@ -7,15 +7,11 @@
     cu-vslam-rs.url = "github:jeff-hykin/cu_vslam_rs";
     cu-vslam-rs.inputs.nixpkgs.follows = "nixpkgs";
     cu-vslam-rs.inputs.flake-utils.follows = "flake-utils";
-    # Relative git+file: will be deprecated (nix#12281) but there's no
-    # viable alternative for reaching local path deps outside the flake dir currently
-    # presumably an alternative will be added before this is removed.
-    dimos-repo = { url = "git+file:../../../.."; flake = false; };
     crate2nix.url = "github:nix-community/crate2nix";
     crate2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, flake-utils, cu-vslam-rs, dimos-repo, crate2nix }:
+  outputs = { self, nixpkgs, flake-utils, cu-vslam-rs, crate2nix }:
     # Not eachDefaultSystem: nixpkgs 26.11 dropped x86_64-darwin, and merely naming
     # it is an eval error.
     flake-utils.lib.eachSystem [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ] (system:
@@ -42,8 +38,8 @@
           cp ${./build.rs} $out/dimos/mapping/dim_slam/rust/build.rs
 
           mkdir -p $out/native/rust
-          cp -r ${dimos-repo}/native/rust/dimos-module $out/native/rust/dimos-module
-          cp -r ${dimos-repo}/native/rust/dimos-module-macros $out/native/rust/dimos-module-macros
+          cp -r ${../../../../native/rust/dimos-module} $out/native/rust/dimos-module
+          cp -r ${../../../../native/rust/dimos-module-macros} $out/native/rust/dimos-module-macros
         '';
 
         # One derivation per crate rather than one vendored blob, so a dependency bump

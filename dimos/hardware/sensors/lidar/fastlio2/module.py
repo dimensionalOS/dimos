@@ -57,6 +57,7 @@ from dimos.spec import perception
 
 
 class FastLio2Config(NativeModuleConfig):
+    bundled_sources: bool = True
     cwd: str | None = "cpp"
     executable: str = "result/bin/fastlio2_native"
     build_command: str | None = "nix build -L .#fastlio2_native"

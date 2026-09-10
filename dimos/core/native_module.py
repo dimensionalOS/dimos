@@ -54,12 +54,14 @@ import threading
 import time
 from typing import IO, Any
 
+from filelock import FileLock
 from pydantic import Field, model_validator
 
-from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT, DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.native_sources import native_source_root
 from dimos.core.transport_factory import session_config
 from dimos.protocol.service.spec import SessionConfig
 from dimos.utils.logging_config import setup_logger
@@ -120,6 +122,7 @@ class NativeModuleConfig(ModuleConfig):
     executable: str
     build_command: str | None = None
     cwd: str | None = None
+    bundled_sources: bool = False
     extra_args: list[str] = Field(default_factory=list)
     extra_env: dict[str, str] = Field(default_factory=dict)
     # Session settings for this module alone, e.g. opening it as the zenoh router
@@ -223,7 +226,13 @@ class NativeModule(Module):
 
         if self.config.cwd is not None and not Path(self.config.cwd).is_absolute():
             base_dir = Path(inspect.getfile(type(self))).resolve().parent
+            if self.config.bundled_sources:
+                base_dir = native_source_root() / base_dir.relative_to(DIMOS_PROJECT_ROOT)
             self.config.cwd = str(base_dir / self.config.cwd)
+            if self.config.bundled_sources:
+                self.config.extra_env.setdefault(
+                    "CARGO_TARGET_DIR", str(Path(self.config.cwd) / "target")
+                )
         if not Path(self.config.executable).is_absolute():
             # The spawn runs from the executable's own directory, so a relative
             # path has to be resolved before then or it resolves against itself.
@@ -233,7 +242,11 @@ class NativeModule(Module):
     @rpc
     def build(self) -> None:
         super().build()
-        self._maybe_build()
+        if self.config.bundled_sources and self.config.cwd:
+            with FileLock(str(Path(self.config.cwd) / ".build.lock")):
+                self._maybe_build()
+        else:
+            self._maybe_build()
 
     def _spawn_env(self) -> dict[str, str]:
         env = {**os.environ, **self.config.extra_env}

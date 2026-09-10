@@ -120,6 +120,7 @@ class SourceConfig(BaseModel):
 
 
 class DimSlamConfig(NativeModuleConfig):
+    bundled_sources: bool = True
     cwd: str | None = "rust"
     executable: str = "result/bin/dim_slam"
     build_command: str | None = Field(

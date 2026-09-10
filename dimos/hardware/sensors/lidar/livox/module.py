@@ -54,6 +54,7 @@ from dimos.spec import perception
 
 
 class Mid360Config(NativeModuleConfig):
+    bundled_sources: bool = True
     cwd: str | None = "cpp"
     executable: str = "result/bin/mid360_native"
     build_command: str | None = "nix build -L .#mid360_native"
