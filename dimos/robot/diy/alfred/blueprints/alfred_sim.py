@@ -16,7 +16,8 @@
 
 Same composition as ``alfred`` (base + pillar + both arms under one coordinator, planner with
 viser) but every hardware component is in-memory, and the lift joins the trajectory task so
-``plan_to_joints`` can drive lift + arms together against the full Alfred URDF.
+``plan_to_joints`` can drive lift + arms together against the full Alfred URDF (alfred_v2, with
+caster joints animated from cmd_vel by CasterKinematics).
 
     dimos run alfred-sim          # viser at http://127.0.0.1:8095, WASD in the pygame window drives the base
 """
@@ -30,6 +31,11 @@ from dimos.control.tasks.trajectory_task.trajectory_task import JOINT_TRAJECTORY
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.robot.diy.alfred.alfred_sim_model import alfred_sim_model_config
+from dimos.robot.diy.alfred.caster_kinematics import (
+    CASTER_HARDWARE_ID,
+    CasterKinematics,
+    caster_coordinator_joints,
+)
 from dimos.robot.diy.alfred.pillar_connection import PILLAR_HARDWARE_ID, PILLAR_LIFT_JOINT
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.openarm.config import OPENARM_ARM_JOINTS, openarm_hardware
@@ -57,16 +63,34 @@ def mock_pillar_hardware() -> HardwareComponent:
     )
 
 
+def mock_caster_hardware() -> HardwareComponent:
+    """Eight caster joints (steer/drive per corner) driven by CasterKinematics for display."""
+    joints = caster_coordinator_joints()
+    return HardwareComponent(
+        hardware_id=CASTER_HARDWARE_ID,
+        hardware_type=HardwareType.WHOLE_BODY,
+        joints=joints,
+        adapter_type="mock_whole_body",
+        auto_enable=True,
+        wb_config=WholeBodyConfig(kp=(0.0,) * len(joints), kd=(0.0,) * len(joints)),
+    )
+
+
 alfred_sim = (
     autoconnect(
         planner(
-            robots=[alfred_sim_model_config()],
+            robots=[alfred_sim_model_config(wheels=True)],
             visualization={"backend": "viser"},
         ),
         ControlCoordinator.blueprint(
             instance_name="ControlCoordinator",
             # openarm_hardware() is the mock whole-body adapter unless both CAN ports are set.
-            hardware=[_mock_twist_base(), mock_pillar_hardware(), openarm_hardware()],
+            hardware=[
+                _mock_twist_base(),
+                mock_pillar_hardware(),
+                mock_caster_hardware(),
+                openarm_hardware(),
+            ],
             tasks=[
                 TaskConfig(
                     name="vel_base",
@@ -74,6 +98,13 @@ alfred_sim = (
                     joint_names=_base_joints,
                     priority=10,
                     params={"timeout": 0.2, "zero_on_timeout": True},
+                ),
+                TaskConfig(
+                    name="servo_casters",
+                    type="servo",
+                    joint_names=caster_coordinator_joints(),
+                    priority=10,
+                    auto_start=True,
                 ),
                 TaskConfig(
                     name=JOINT_TRAJECTORY_TASK_NAME,
@@ -85,6 +116,7 @@ alfred_sim = (
             ],
         ),
         KeyboardTeleop.blueprint(),  # WASD pygame window -> cmd_vel -> vel_base task
+        CasterKinematics.blueprint(),  # cmd_vel -> caster steer/drive joint_command -> servo_casters (viser wheels)
     )
     .remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
     .global_config(n_workers=4)
