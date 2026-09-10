@@ -78,9 +78,41 @@
         # hardware and names the variant on the build command.
         packages = nixpkgs.lib.genAttrs variants packageFor;
 
-        # The cargo-clippy pre-commit hook enters `nix develop` in every crate dir that has
-        # a flake. The rust toolchain comes from the enclosing dimos shell, and without
-        # CUVSLAM_SDK_DIR cu_vslam_rs builds its SDK-less stub, so clippy needs nothing.
-        devShells.default = pkgs.mkShellNoCC { };
+        # Entered by the cargo-clippy pre-commit hook and by hand. The rust toolchain comes
+        # from the enclosing dimos shell. The hook below picks the SDK the way
+        # dimos/utils/nvidia_env.py's sdk_variant() does; it can, because unlike the
+        # package set it runs on the host. The .drv paths are referenced without string
+        # context so entering the shell realises only the variant this machine needs.
+        devShells.default = pkgs.mkShell {
+          shellHook = ''
+            if [ -z "''${CUVSLAM_SDK_DIR:-}" ]; then
+              case "$(uname -s)-$(uname -m)" in
+                Darwin-arm64) cuvslam_variant=metal ;;
+                Linux-aarch64)
+                  case "$(tr -d '\0' < /proc/device-tree/compatible 2>/dev/null)" in
+                    *tegra264*) cuvslam_variant=thor ;;
+                    *tegra234*) cuvslam_variant=orin ;;
+                    *) cuvslam_variant=aarch64 ;;
+                  esac ;;
+                *)
+                  cuda_major=$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9]*\).*/\1/p')
+                  cuvslam_variant="x86_64''${cuda_major:+-cuda$cuda_major}" ;;
+              esac
+              case "$cuvslam_variant" in
+${nixpkgs.lib.concatMapStringsSep "\n" (variant:
+  "                ${variant}) cuvslam_sdk_drv=${builtins.unsafeDiscardStringContext sdkPackages."sdk-${variant}".drvPath} ;;"
+) variants}
+                *) cuvslam_sdk_drv= ;;
+              esac
+              if [ -n "$cuvslam_sdk_drv" ] \
+                && CUVSLAM_SDK_DIR=$(nix build --no-link --print-out-paths "$cuvslam_sdk_drv^out"); then
+                export CUVSLAM_SDK_DIR
+              else
+                echo "no cuVSLAM SDK for variant '$cuvslam_variant'; building the stub" >&2
+              fi
+              unset cuvslam_variant cuvslam_sdk_drv cuda_major
+            fi
+          '';
+        };
       });
 }
