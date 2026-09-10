@@ -159,6 +159,7 @@ teleop_webxr_openarm = autoconnect(
         ],
     ),
     _OpenArmManipulationModule.blueprint(
+        model=openarm_bimanual_model_config(),
         kinematics=_openarm_webxr_pink,
         visualization={"backend": "viser"},
     ),

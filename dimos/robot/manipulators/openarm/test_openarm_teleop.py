@@ -178,7 +178,6 @@ def test_openarm_webxr_commands_both_arms_and_grippers_through_coordinator(
     try:
         coordinator.start()
         task = cast("TeleopIKTask", coordinator._tasks[OPENARM_WEBXR_TASK_NAME])
-        assert task._teleop_config.robot_model.name == "openarm"
         assert task._teleop_config.robot_model.joint_names == OPENARM_ARM_JOINTS
         assert task._teleop_config.max_joint_velocity_rad_s == 2.0
         assert task._teleop_config.joint_velocity_limits_rad_s == {

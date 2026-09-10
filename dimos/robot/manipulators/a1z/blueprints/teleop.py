@@ -79,7 +79,7 @@ coordinator_teleop_a1z = autoconnect(
                 bindings=[
                     {
                         "hand": "left",
-                        "target_frame": _a1z_webxr_model.end_effector_link,
+                        "target_frame": "gripper_eef_link",
                     }
                 ],
                 priority=20,
