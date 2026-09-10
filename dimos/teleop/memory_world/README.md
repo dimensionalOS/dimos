@@ -35,7 +35,6 @@ every lidar frame.
 5. Hold both grips, or pinch both hands, and change their separation to scale.
 6. Press left X to toggle images, left Y to reset, and right B to toggle voxels.
 
-A minimap shows the current position and heading. The same cloud-derived map is
-projected onto the ground.
+A minimap shows the current position and heading.
 
 Host and headset must be on the same Wi-Fi / LAN.

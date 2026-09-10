@@ -178,10 +178,9 @@ export class WorldScene {
         this._queryImageMeshes = [];                  // their quads, so one can be shown alone
         this._queryImageCursor = -1;
 
-        // Top-down map: shared texture, used twice (ground projection + HUD).
+        // Top-down map texture for the HUD minimap.
         this._topDownTex = null;
         this._topDownBounds = null;
-        this._groundMesh = null;
 
         // HUD minimap — head-locked panel attached to scene root (not world).
         this._hudGroup = new THREE.Group();
@@ -1483,39 +1482,8 @@ export class WorldScene {
             this._topDownTex = tex;
             this._topDownBounds = header;
 
-            // 1) Ground projection in robot frame.
-            const w = header.x_max - header.x_min;
-            const h = header.y_max - header.y_min;
-            const cx = (header.x_min + header.x_max) / 2;
-            const cy = (header.y_min + header.y_max) / 2;
-            const planeGeom = new THREE.PlaneGeometry(w, h);
-            const planeMat = new THREE.MeshBasicMaterial({
-                map: tex,
-                transparent: true,
-                opacity: this.backgroundMode === 'passthrough' ? 1.0 : 0.85,
-                side: THREE.DoubleSide,
-            });
-            if (this._groundMesh) {
-                this._frameRotate.remove(this._groundMesh);
-                this._groundMesh.geometry.dispose();
-                this._groundMesh.material.dispose();
-            }
-            this._groundMesh = new THREE.Mesh(planeGeom, planeMat);
-            // The histogram image is built with robot +X as horizontal and
-            // +Y up after a transpose+flipud. Lay it on the floor (z=0) in
-            // robot frame centred on (cx, cy). PlaneGeometry's +Y axis is up
-            // in its local space; for a floor-prone plane in robot Z-up we
-            // keep it in the XY plane — which is exactly what PlaneGeometry
-            // gives us once the frameRotate group flips back to Y-up later.
-            this._groundMesh.position.set(cx, cy, 0.01);
-            // Default plane lies in XY of its parent. Robot frame is what we
-            // want, no extra rotation needed. But the texture's row 0 is at
-            // y_max (since we did flipud), so flip Y to align UV.
-            this._groundMesh.material.map.repeat.y = -1;
-            this._groundMesh.material.map.offset.y = 1;
-            this._frameRotate.add(this._groundMesh);
-
-            // 2) HUD panel uses the same texture, also with V flipped.
+            // The HUD minimap shows the texture with V flipped, since the
+            // image's row 0 is at y_max after the flipud on the server.
             const hudTex = tex.clone();
             hudTex.needsUpdate = true;
             hudTex.colorSpace = THREE.SRGBColorSpace;
@@ -1526,7 +1494,7 @@ export class WorldScene {
             this._hudPanelMat.opacity = 0.95;
             this._hudPanelMat.needsUpdate = true;
 
-            this.diag('top_down_map_loaded', { w, h });
+            this.diag('top_down_map_loaded', { w: header.x_max - header.x_min, h: header.y_max - header.y_min });
         }).catch((e) => {
             this.diag('top_down_decode_failed', { error: String(e.message || e) });
         });
