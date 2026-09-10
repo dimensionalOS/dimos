@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Manipulation Module - Motion planning with ControlCoordinator execution.
-
-Base module providing core manipulation infrastructure:
-- @rpc: Typed motion building blocks (plan_to_poses, plan_to_joints, preview_plan, execute)
-
-PickAndPlaceModule composes this module's RPCs with perception and grasp generation.
-"""
+"""Group-native motion planning and execution RPC module."""
 
 from __future__ import annotations
 
@@ -169,10 +163,7 @@ class ManipulationModuleConfig(ModuleConfig):
 
 
 class ManipulationModule(Module):
-    """Motion planning RPCs with ControlCoordinator execution.
-
-    PickAndPlaceModule composes these RPCs with perception and grasping.
-    """
+    """Primitive manipulation RPCs; agent skills live in a separate adapter."""
 
     config: ManipulationModuleConfig
     _control_coordinator: ControlCoordinator
@@ -367,6 +358,7 @@ class ManipulationModule(Module):
     @rpc
     def get_state(self) -> ManipulationSnapshot:
         """Return one snapshot containing every planning group."""
+        self._refresh_execution_status()
         groups: dict[PlanningGroupID, PlanningGroupState] = {}
         if self._world_monitor is not None:
             for group in self._world_monitor.planning_groups.list():
@@ -407,10 +399,18 @@ class ManipulationModule(Module):
 
     def get_operation_status(self) -> OperationStatus:
         """Return the current operation status without collecting telemetry."""
+        self._refresh_execution_status()
         with self._lock:
             return OperationStatus[self._state.name]
 
-    @rpc
+    def _refresh_execution_status(self) -> None:
+        """Poll active nonblocking execution once, without waiting for motion."""
+        if self._execution_manager.status in {
+            ExecutionStatus.ACCEPTED,
+            ExecutionStatus.EXECUTING,
+        }:
+            self.wait_for_execution(timeout=0.0)
+
     def get_error(self) -> str:
         """Get last error message.
 
@@ -437,7 +437,6 @@ class ManipulationModule(Module):
         self._apply_execution_result(result)
         return result
 
-    @rpc
     def get_current_joints(self) -> list[float] | None:
         """Get the complete canonical model joint positions."""
         if self._world_monitor:
@@ -446,7 +445,6 @@ class ManipulationModule(Module):
                 return list(state.position)
         return None
 
-    @rpc
     def get_ee_pose(self, group_id: PlanningGroupID | None = None) -> Pose | None:
         """Get a planning group's current tip pose."""
         if self._world_monitor:
@@ -458,7 +456,6 @@ class ManipulationModule(Module):
                 return None
         return None
 
-    @rpc
     def is_collision_free(self, joints: list[float]) -> bool:
         """Check if joint configuration is collision-free.
 
@@ -613,7 +610,6 @@ class ManipulationModule(Module):
             return
         self._world_monitor.cancel_preview_animation()
 
-    @rpc
     def inverse_kinematics(
         self,
         pose_targets: Mapping[PlanningGroupID, PoseStamped],
@@ -879,7 +875,6 @@ class ManipulationModule(Module):
         self._world_monitor.animate_trajectory(plan.trajectory, duration)
         return CommandResult(CommandStatus.SUCCEEDED, "Preview requested")
 
-    @rpc
     def has_planned_path(self) -> bool:
         """Check if there's a planned path ready.
 
@@ -963,7 +958,6 @@ class ManipulationModule(Module):
             return None
         return self._world_monitor.get_current_joint_state()
 
-    @rpc
     def get_model_info(self) -> ModelInfoPayload:
         """Get information about the configured logical robot model."""
         config = self.config.model
@@ -985,12 +979,10 @@ class ManipulationModule(Module):
         """Return the configured model for in-process visualization adapters."""
         return self.config.model
 
-    @rpc
     def get_init_joints(self) -> JointState | None:
         """Get the init joint state captured at startup or set manually."""
         return self._init_joints
 
-    @rpc
     def set_init_joints(self, joint_state: JointState) -> bool:
         """Set the init joint state.
 
@@ -1001,7 +993,6 @@ class ManipulationModule(Module):
         logger.info("Init joints set", positions=joint_state.position)
         return True
 
-    @rpc
     def set_init_joints_to_current(self) -> bool:
         """Set init joints to the current joint positions."""
         if self._world_monitor is None:

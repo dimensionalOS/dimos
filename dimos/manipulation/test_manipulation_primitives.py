@@ -41,6 +41,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.manipulators.openyam.config import make_openyam_model_config
 
 
 def _model(
@@ -158,6 +159,27 @@ def test_set_gripper_position_routes_normalized_command(module_factory) -> None:
     module._control_coordinator.task_invoke.assert_called_once_with(
         "arm_gripper", "set_normalized", {"values": [0.4]}
     )
+
+
+def test_openyam_gripper_commands_and_feedback_use_registered_task(module_factory) -> None:
+    module = module_factory()
+    _set_groups(module, make_openyam_model_config())
+    coordinator = module._control_coordinator
+    coordinator.task_invoke.return_value = True
+
+    result = module.set_gripper_position(0.4, "manipulator")
+
+    assert result.succeeded
+    coordinator.task_invoke.assert_called_once_with(
+        "openyam_gripper", "set_normalized", {"values": [0.4]}
+    )
+    coordinator.task_invoke.reset_mock()
+    coordinator.task_invoke.return_value = [0.4]
+    module._world_monitor.current_group_joint_state.return_value = None
+    module._world_monitor.get_group_ee_pose.return_value = None
+
+    assert module.get_state().groups["manipulator"].gripper_position == pytest.approx(0.4)
+    coordinator.task_invoke.assert_called_once_with("openyam_gripper", "get_normalized", {})
 
 
 def test_move_linear_rejects_ambiguous_default_group(module_factory) -> None:
