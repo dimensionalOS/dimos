@@ -14,7 +14,7 @@
 
 """Map a live DimSim apartment and count its rooms.
 
-    uv run dimos evals run dimos.evals.suites.dimsim_pointcloud_mapping \
+    uv run dimos evals run dimos.evals.suites.pointcloud.sim.dimsim_pointcloud_mapping \
         --agent <agent module>
 """
 

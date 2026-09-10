@@ -1,0 +1,140 @@
+[
+  {
+    "id": "go2_agentic_20260819_rooms_300_1150",
+    "family": "rooms",
+    "type": "numeric",
+    "q": "You are shown the point cloud the robot mapped over a stretch of driving (world frame: +x is east, +y is north, coordinates in meters). How many separate rooms does this map cover? Count two areas as separate rooms only when the only way between them is a doorway-width opening. Answer with a single number.",
+    "a": 2,
+    "band": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          300.0,
+          1150.0
+        ],
+        {
+          "downsample": 6,
+          "voxel_size": 0.05,
+          "device": "CPU:0"
+        }
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_rooms_330_1200",
+    "family": "rooms",
+    "type": "numeric",
+    "q": "You are shown the point cloud the robot mapped over a stretch of driving (world frame: +x is east, +y is north, coordinates in meters). How many separate rooms does this map cover? Count two areas as separate rooms only when the only way between them is a doorway-width opening. Answer with a single number.",
+    "a": 2,
+    "band": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          330.0,
+          1200.0
+        ],
+        {
+          "downsample": 6,
+          "voxel_size": 0.05,
+          "device": "CPU:0"
+        }
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_rooms_350_450",
+    "family": "rooms",
+    "type": "numeric",
+    "q": "You are shown the point cloud the robot mapped over a stretch of driving (world frame: +x is east, +y is north, coordinates in meters). How many separate rooms does this map cover? Count two areas as separate rooms only when the only way between them is a doorway-width opening. Answer with a single number.",
+    "a": 2,
+    "band": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          350.0,
+          450.0
+        ],
+        {
+          "downsample": 6,
+          "voxel_size": 0.05,
+          "device": "CPU:0"
+        }
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_agentic_20260819_rooms_1150_1430",
+    "family": "rooms",
+    "type": "numeric",
+    "q": "You are shown the point cloud the robot mapped over a stretch of driving (world frame: +x is east, +y is north, coordinates in meters). How many separate rooms does this map cover? Count two areas as separate rooms only when the only way between them is a doorway-width opening. Answer with a single number.",
+    "a": 1,
+    "band": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          1150.0,
+          1430.0
+        ],
+        {
+          "downsample": 6,
+          "voxel_size": 0.05,
+          "device": "CPU:0"
+        }
+      ]
+    ],
+    "dataset": "go2_agentic_20260819"
+  },
+  {
+    "id": "go2_teleop_20260819_rooms_0_60",
+    "family": "rooms",
+    "type": "numeric",
+    "q": "You are shown the point cloud the robot mapped over a stretch of driving (world frame: +x is east, +y is north, coordinates in meters). How many separate rooms does this map cover? Count two areas as separate rooms only when the only way between them is a doorway-width opening. Answer with a single number.",
+    "a": 1,
+    "band": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          0.0,
+          60.0
+        ],
+        {
+          "downsample": 6,
+          "voxel_size": 0.05,
+          "device": "CPU:0"
+        }
+      ]
+    ],
+    "dataset": "go2_teleop_20260819"
+  },
+  {
+    "id": "go2_teleop_20260819_rooms_0_150",
+    "family": "rooms",
+    "type": "numeric",
+    "q": "You are shown the point cloud the robot mapped over a stretch of driving (world frame: +x is east, +y is north, coordinates in meters). How many separate rooms does this map cover? Count two areas as separate rooms only when the only way between them is a doorway-width opening. Answer with a single number.",
+    "a": 1,
+    "band": 1.0,
+    "context": [
+      [
+        "lidar",
+        [
+          0.0,
+          150.0
+        ],
+        {
+          "downsample": 6,
+          "voxel_size": 0.05,
+          "device": "CPU:0"
+        }
+      ]
+    ],
+    "dataset": "go2_teleop_20260819"
+  }
+]
