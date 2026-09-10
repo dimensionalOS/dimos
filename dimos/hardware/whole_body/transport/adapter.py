@@ -20,10 +20,11 @@ Subscribes /{hardware_id}/motor_states + /{hardware_id}/imu, publishes
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import threading
 from typing import Any
 
-from dimos.core.transport import LCMTransport
+from dimos.core.transport_factory import make_transport
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -41,7 +42,7 @@ class TransportWholeBodyAdapter:
         self,
         dof: int = 29,
         hardware_id: str = "wholebody",
-        transport_cls: type = LCMTransport,
+        transport_cls: Callable[[str, type], Any] = make_transport,
         network_interface: int | str = "",  # accepted-and-ignored — see module docstring
         **_: object,
     ) -> None:
@@ -183,8 +184,12 @@ class TransportWholeBodyAdapter:
 
 
 def transport_lcm_factory(**kwargs: Any) -> TransportWholeBodyAdapter:
-    """Factory for the ``transport_lcm`` adapter (see ``_registry.py``)."""
-    kwargs.setdefault("transport_cls", LCMTransport)
+    """Factory for the ``transport_lcm`` adapter (see ``_registry.py``).
+
+    Despite the name it follows the active backend, so it meets the driver
+    module's blueprint-pinned topics, which are coerced the same way.
+    """
+    kwargs.setdefault("transport_cls", make_transport)
     return TransportWholeBodyAdapter(**kwargs)
 
 
