@@ -1,27 +1,6 @@
-# macOS Install (12.6 or newer)
+# Apple Silicon macOS
 
-```sh skip
-# install homebrew
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-# install dependencies
-brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python pre-commit
-
-# install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
-```
-
-## Using dimOS as a library
-
-```sh skip
-mkdir myproject && cd myproject
-
-uv venv --python 3.12
-source .venv/bin/activate
-
-# install everything (depending on your use case you might not need all extras,
-# check your respective platform guides)
-uv pip install 'dimos[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu]'
-```
+For SDK applications, follow the [dimup installation guide](/docs/installation/installer.md).
 
 ## Developing on dimOS
 

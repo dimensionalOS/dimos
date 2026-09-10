@@ -137,54 +137,25 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 # Installation
 
-## Interactive Install
+## Start a DimOS SDK application
 
-```sh skip
-curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
-```
-
-> See [`scripts/install.sh --help`](scripts/install.sh) for non-interactive and advanced options.
-
-## Manual System Install
-
-To set up your system dependencies, follow one of these guides:
-
-- 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
-- 🟩 [NixOS / General Linux](docs/installation/nix.md)
-- 🟧 [macOS](docs/installation/osx.md)
-
-> Full system requirements, tested configs, and dependency tiers: [docs/requirements.md](docs/requirements.md)
-
-## Python Install
-
-### Quickstart
+On Ubuntu 22.04/24.04 x86_64 or Apple Silicon macOS 14+:
 
 ```bash
-uv venv --python "3.12"
-source .venv/bin/activate
-uv pip install 'dimos[base,unitree]'
-
-# Replay a recorded quadruped session (no hardware needed)
-# NOTE: First run will show a black rerun window while ~75 MB downloads from LFS
-dimos --replay run unitree-go2
+curl -fsSL https://github.com/dimensionalOS/dimos/releases/latest/download/dimup.sh | bash
+dimup init my-robot
+cd my-robot
+source .dimos/activate.sh
+dimos run my-robot.demo
 ```
 
-```bash
-# Install with simulation support
-uv pip install 'dimos[base,unitree,sim]'
+The bootstrap installs `dimup` and prepares the machine. `dimup init` creates an
+editable application pinned to the current DimOS `main` commit. Its two-module
+example generates images and prints their dimensions, without hardware or datasets.
+Edit `src/my_robot/demo.py`, run `pytest`, and rerun the blueprint.
 
-# Run quadruped in MuJoCo simulation
-dimos --simulation run unitree-go2
-
-# Run humanoid in simulation
-dimos --simulation run unitree-g1-sim
-```
-
-```bash
-# Control a real robot (Unitree quadruped over WebRTC)
-export ROBOT_IP=<YOUR_ROBOT_IP>
-dimos run unitree-go2
-```
+See the [installation guide](docs/installation/installer.md) for machine setup,
+SDK revision selection, cloning applications, diagnostics, and optional direnv.
 
 # Featured Runfiles
 

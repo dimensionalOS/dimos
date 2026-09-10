@@ -100,3 +100,6 @@ site/
 
 # Optuna study store, written by the relocalization eval (see lidar/eval.md)
 optuna.db
+
+# Local installer validation artifacts
+/.dimos/

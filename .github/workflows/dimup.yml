@@ -1,0 +1,74 @@
+name: DimOS SDK onboarding
+on:
+  pull_request:
+    paths:
+      - 'installer/**'
+      - 'dimos_build.py'
+      - 'setup.py'
+      - 'MANIFEST.in'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'dimos/core/native*'
+      - 'dimos/cli/doctor.py'
+      - 'dimos/cli/entrypoint.py'
+      - 'native/**'
+      - '.github/workflows/dimup.yml'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - name: Install shell test tools
+        run: sudo apt-get update && sudo apt-get install -y zsh direnv
+      - name: Installer, packaging, and diagnostic tests
+        env:
+          PYTHONPATH: .
+        run: uv run --project installer --with pytest --with filelock pytest --noconftest -c installer/pyproject.toml installer/src tests/packaging dimos/core/test_native_sources.py dimos/cli/test_doctor.py
+      - name: Type check dimup
+        env:
+          MYPYPATH: installer/src
+        run: uv run --project installer --with mypy mypy --strict --follow-imports=silent installer/src/dimup/cli.py installer/src/dimup/project.py installer/src/dimup/process.py installer/src/dimup/setup.py installer/src/dimup/sdk.py
+      - name: Build release artifacts
+        run: python3 installer/run/package "$RUNNER_TEMP/dimup-dist" --release test
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dimup-candidate
+          path: ${{ runner.temp }}/dimup-dist/
+  journey:
+    needs: unit
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/download-artifact@v8
+        with:
+          name: dimup-candidate
+          path: ${{ runner.temp }}/dimup-dist
+      - name: Install candidate and prepare machine
+        run: |
+          uv tool install --python 3.12 "$RUNNER_TEMP"/dimup-dist/*.whl
+          export PATH="$(uv tool dir --bin):$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
+          echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          dimup setup
+          dimup setup
+      - name: Create, edit, clone, and run
+        env:
+          SDK_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 installer/run/acceptance --ref "$SDK_REF" --results "$RUNNER_TEMP/dimup-results" --native
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: dimup-${{ matrix.os }}
+          path: ${{ runner.temp }}/dimup-results/
