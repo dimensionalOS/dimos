@@ -1,7 +1,10 @@
 # Create a DimOS application
 
-The supported development platforms are Ubuntu 22.04/24.04 x86_64 and Apple
-Silicon macOS 14+. Setup uses administrator access to prepare host prerequisites.
+Automatic machine setup covers Ubuntu 22.04/24.04 x86_64 and Apple Silicon
+macOS 14+ and uses administrator access to prepare host prerequisites. On other
+platforms, including Arch Linux, setup prints manual prerequisite instructions
+without changing the machine. Once those prerequisites are installed, use the same
+`dimup init` command; application creation does not reject the host platform.
 uv owns Python, apt/Homebrew install host libraries, and Cargo and Nix build
 native modules. You do not need Python installed before starting.
 

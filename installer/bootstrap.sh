@@ -3,7 +3,7 @@
 set -euo pipefail
 wheel_url='@DIMUP_WHEEL_URL@'
 wheel_sha='@DIMUP_WHEEL_SHA@'
-source_ref='9e0bf017e084f499efb6ec1e641cf2c6e6a40291'
+source_ref='8409a5c7fd9f88abb3fa855cd4bb38e06c2a3f4c'
 if ! command -v uv >/dev/null 2>&1; then
     curl --fail --show-error --location --proto '=https' --tlsv1.2 \
         https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
@@ -38,4 +38,4 @@ elif (exec 3</dev/tty) 2>/dev/null; then
 else
     "$dimup_bin" setup
 fi
-printf '\nInstalled dimup. To use the prepared tools in this terminal, run:\nexport PATH="%s:$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"\n' "$(uv tool dir --bin)"
+printf '\nInstalled dimup. To use dimup in this terminal, run:\nexport PATH="%s:$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"\n' "$(uv tool dir --bin)"
