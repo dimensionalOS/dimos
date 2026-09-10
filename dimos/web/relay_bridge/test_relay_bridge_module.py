@@ -452,12 +452,15 @@ def test_stop_disposes_costmap_cache_subscription(monkeypatch) -> None:
     assert transport.unsubscribed == 1
 
 
-def test_bridge_import_does_not_pull_matplotlib() -> None:
+def test_bridge_import_does_not_pull_matplotlib_or_langchain() -> None:
     # OccupancyGrid's visualization imports are lazy so the bridge does not
-    # cost every relay worker matplotlib's ~0.5 s / ~28 MiB (review issue 9).
+    # cost every relay worker matplotlib's ~0.5 s / ~28 MiB (review issue 9),
+    # and langchain belongs to the [agents] extra: a web-only install must
+    # still run the bridge (the chat codec loads with the Chat panel).
     code = (
         "import sys; import dimos.web.relay_bridge.relay_bridge_module; "
-        "assert 'matplotlib' not in sys.modules"
+        "assert 'matplotlib' not in sys.modules; "
+        "assert 'langchain_core' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
 
