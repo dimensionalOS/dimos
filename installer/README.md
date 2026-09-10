@@ -1,5 +1,8 @@
 # dimup
 
+For the complete test procedure and expected results, see the
+[installation test guide](../docs/installation/installer.md).
+
 Install uv and dimup, then prepare your machine from the current PR branch:
 
 ```bash

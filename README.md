@@ -137,20 +137,23 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 # Installation
 
-## Start a DimOS SDK application
+## Test a dimOS SDK application
 
-On Ubuntu 22.04/24.04 x86_64 or Apple Silicon macOS 14+:
+Test the current installer PR on Ubuntu 22.04/24.04 x86_64 or Apple Silicon macOS
+14+. Use both branch overrides below until the changes merge:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/installer/bootstrap.sh | bash
-dimup init my-robot
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/feat/dimup-release/installer/bootstrap.sh \
+  | DIMUP_REF=feat/dimup-release bash
+dimup init my-robot --ref feat/dimup-release
 cd my-robot
 source .dimos/activate.sh
 dimos run my-robot.demo
 ```
 
-The bootstrap installs `dimup` and prepares the machine. `dimup init` creates an
-editable application pinned to the current DimOS `main` commit. Its two-module
+The bootstrap installs `dimup` and prepares the machine; follow its printed PATH
+instruction before running `dimup init`. That command creates an
+editable application pinned to the resolved SDK commit from the PR branch. Its two-module
 example generates images and prints their dimensions, without hardware or datasets.
 Edit `src/my_robot/demo.py`, run `pytest`, and rerun the blueprint.
 
