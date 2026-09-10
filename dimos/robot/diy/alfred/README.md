@@ -79,13 +79,16 @@ positive is up, so every reachable position is negative, `-0.500 .. -0.002` m.
 # casters; pygame WASD/QE window drives the base, CasterKinematics animates the wheels.
 dimos run alfred-sim
 
-# Robot: Jeff's alfred-mls-nav-lidar (dimSLAM + MLS click-and-go in rerun) plus the pillar
-# and both arms on a ControlCoordinator, planned from viser; WASD overrides navigation.
+# Robot: lidar click-and-go (Point-LIO on the Mid-360 -> RayTracingVoxelMap -> MLS planner ->
+# dannav holonomic follower -> MovementManager, the same chain as the Go2) plus the pillar and
+# both arms on a ControlCoordinator, planned from viser; WASD overrides navigation.
 # Real arms only when both CAN ports are set, mock otherwise. Needs `uv sync --extra misc --extra alfred`.
-OPENARM_LEFT_CAN=can0 OPENARM_RIGHT_CAN=can1 dimos run alfred-nav
+DIMOS_POINTLIO_HOST_IP=192.168.1.100 OPENARM_LEFT_CAN=can0 OPENARM_RIGHT_CAN=can1 dimos run alfred-nav
 ```
 
 `alfred-nav` deliberately keeps the base out of the coordinator: `AlfredHighLevel` is the only
 FlowBase writer (Portal RPC + wheel odometry for dimSLAM) and `MovementManager` muxes
 teleop over navigation. The planner publishes no tf (it would root at `world`, beside the
-navigation `map` tree); sensor mounts on tf come from `AlfredMountTf` / `alfred.urdf`.
+navigation `odom` tree); sensor mounts on tf come from `AlfredLidarMountTf`, Jeff's `alfred.urdf` mount
+tree re-rooted at `mid360_link` because Point-LIO owns the lidar's parent edge. Jeff's dimSLAM vision
+variants (`alfred-mls-nav`, `alfred-mls-nav-lidar`) are untouched.

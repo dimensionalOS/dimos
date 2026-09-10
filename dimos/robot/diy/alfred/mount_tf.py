@@ -67,3 +67,28 @@ class AlfredMountTf(StaticTfPublisher):
 
     def transforms(self) -> list[Transform]:
         return mount_transforms()
+
+
+def lidar_rooted_mount_transforms() -> list[Transform]:
+    """The same mount tree, re-rooted at ``mid360_link`` for lidar odometry.
+
+    Point-LIO owns the live ``odom -> mid360_link`` edge, and tf allows one parent per
+    frame, so the lidar's mount edge is published inverted (``mid360_link -> base_link``)
+    the way the Go2 rig does it; every other mount edge keeps ``base_link`` (or the lidar)
+    as its parent. The tf buffer composes either direction, so ``odom <- base_link``
+    resolves for the planner and the followers.
+    """
+    transforms = []
+    for transform in mount_transforms():
+        if transform.frame_id == "base_link" and transform.child_frame_id == "mid360_link":
+            transforms.append(-transform)
+        else:
+            transforms.append(transform)
+    return transforms
+
+
+class AlfredLidarMountTf(StaticTfPublisher):
+    """Publishes Alfred's mount tree rooted at ``mid360_link`` (for Point-LIO odometry)."""
+
+    def transforms(self) -> list[Transform]:
+        return lidar_rooted_mount_transforms()
