@@ -39,6 +39,7 @@ def test_generated_application_pins_sdk_and_registers_blueprint(tmp_path):
     }
     assert config["tool"]["uv"]["sources"]["dimos"]["rev"] == "a" * 40
     assert config["project"]["dependencies"] == ["dimos[all,spot]"]
+    assert config["tool"]["uv"]["python-preference"] == "only-managed"
     assert "APP_MODULE" not in (tmp_path / "tests/test_demo.py").read_text()
 
 
