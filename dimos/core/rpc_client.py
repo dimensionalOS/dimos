@@ -142,9 +142,15 @@ class RPCClient:
         self._unsub_fns: list = []  # type: ignore[type-arg]
 
     @classmethod
-    def remote(cls, actor_class: type[ModuleBase], *, rpc: RPCSpec | None = None) -> RPCClient:
+    def remote(
+        cls,
+        actor_class: type[ModuleBase],
+        remote_name: str | None = None,
+        *,
+        rpc: RPCSpec | None = None,
+    ) -> RPCClient:
         """Build an RPCClient with no parent-side Actor (cross-process clients)."""
-        return cls(None, actor_class, rpc=rpc)
+        return cls(None, actor_class, remote_name, rpc=rpc)
 
     def stop_rpc_client(self) -> None:
         for unsub in self._unsub_fns:
@@ -167,6 +173,9 @@ class RPCClient:
             self.__class__,
             (self.actor_instance, self.actor_class, self.remote_name),
         )
+
+    def __dir__(self) -> list[str]:
+        return sorted(set(super().__dir__()) | set(self.rpcs))
 
     # passthrough
     def __getattr__(self, name: str):  # type: ignore[no-untyped-def]

@@ -109,7 +109,7 @@ def test_move_linear_uses_world_relative_target_and_default_speed(
     assert relative.translation.z == pytest.approx(-0.01)
     assert generate.call_args.kwargs["check_collision"] is False
     assert generate.call_args.kwargs["speed_scale"] == pytest.approx(0.5)
-    execute.assert_called_once_with(blocking=False, timeout=None)
+    execute.assert_called_once_with(blocking=False, timeout=None, plan_id=generated.plan_id)
 
 
 def test_get_state_returns_every_group_with_presets(module_factory) -> None:
