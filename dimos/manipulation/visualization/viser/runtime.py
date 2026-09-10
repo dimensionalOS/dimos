@@ -20,7 +20,7 @@ from dimos.manipulation.visualization.viser.config import ViserVisualizationConf
 
 VISER_INSTALL_HINT = (
     "Viser manipulation visualization requires Viser with URDF support. "
-    "Install it with: uv sync --extra manipulation --inexact"
+    "Install it with: uv sync --extra planning"
 )
 VISER_URDF_INSTALL_HINT = VISER_INSTALL_HINT
 

@@ -138,7 +138,7 @@ Images use [uv](https://github.com/astral-sh/uv) for fast dependency installatio
 ```dockerfile skip
 ENV UV_SYSTEM_PYTHON=1
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-RUN uv pip install '.[misc,cpu,sim,drone,unitree,web,perception,visualization]'
+RUN uv pip install '.[control,cpu,sim,drone,unitree,web,perception,visualization]'
 ```
 
 ### Dev Image Features

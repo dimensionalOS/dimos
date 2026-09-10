@@ -723,6 +723,18 @@ jobs:
           uv pip install --python .codecov-venv/bin/python codecov-cli==11.2.8
       - name: Install dependencies
         run: uv sync --group tests-self-hosted --frozen
+      - name: Check manipulation extras without development dependencies
+        if: matrix.os == 'Linux'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          extras_env=$(mktemp -d)
+          trap 'rm -rf "$extras_env"' EXIT
+          for extra in control planning manipulation; do
+            UV_PROJECT_ENVIRONMENT="$extras_env/$extra" uv sync --locked --no-default-groups --extra "$extra"
+            "$extras_env/$extra/bin/python" -m dimos.robot.tool_check_manipulation_extra "$extra"
+          done
       - name: Build C++ extensions in-place
         run: uv run python setup.py build_ext --inplace
       - name: Source ROS environment

@@ -475,12 +475,12 @@ class _FakeWorld:
         return self.collision_free
 
 
-def test_create_kinematics_pink_unavailable_solver_mentions_manipulation_extra(
+def test_create_kinematics_pink_unavailable_solver_mentions_control_extra(
     mocker: MockerFixture,
 ) -> None:
     mocker.patch.object(pink_ik.qpsolvers, "available_solvers", [])
 
-    with pytest.raises(ImportError, match="--extra manipulation --inexact"):
+    with pytest.raises(ImportError, match="--extra control"):
         create_kinematics("pink")
 
 

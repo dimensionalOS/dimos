@@ -180,30 +180,6 @@ Issues = "https://github.com/dimensionalOS/dimos/issues"
 Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
-misc = [
-    # Developer Specific
-    "ipykernel",
-
-    # Perception Dependencies
-    "timm>=1.0.15",  # runtime backbone for the EdgeTAM/sam2 segmentation config
-    "edgetam-dimos>=1.0.1",
-
-    # embedding models
-    "open_clip_torch==3.2.0",
-    "torchreid==0.2.5",
-    # torchreid's setup.py omits these but its package __init__ imports them at load:
-    # `data` -> gdown, `engine` -> torch.utils.tensorboard.
-    "gdown>=5.2.2",
-    "tensorboard==2.20.0",
-
-    # Mapping
-    "googlemaps>=4.10.0",
-
-    # Hardware SDKs
-    "xarm-python-sdk>=1.17.0",
-    "portal",
-]
-
 spot = [
     "bosdyn-client>=4.0.0",
     "bosdyn-api>=4.0.0",
@@ -242,6 +218,7 @@ agents = [
 
 web = [
     "fastapi>=0.115.6",
+    "python-socketio>=5.16.1",  # WebsocketVisModule, also imported by Quest visualization
     "python-multipart>=0.0.27",
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
@@ -252,6 +229,13 @@ web = [
 ]
 
 perception = [
+    "timm>=1.0.15",  # runtime backbone for the EdgeTAM/sam2 segmentation config
+    "edgetam-dimos>=1.0.1",
+    "open_clip_torch==3.2.0",
+    "torchreid==0.2.5",
+    # torchreid imports these at runtime but omits them from its package metadata.
+    "gdown>=5.2.2",
+    "tensorboard==2.20.0",
     "ultralytics>=8.3.70",
     "Pillow",
     "lap>=0.5.12",
@@ -280,32 +264,36 @@ unitree-dds = [
     "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2 dds store)
 ]
 
-manipulation = [
-    # Planning (Drake)
-    "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
-    "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
-
-    # Hardware SDKs
+# Coordinators, arm hardware adapters, and keyboard/Cartesian control.
+control = [
     "piper-sdk",
     "xarm-python-sdk>=1.17.0",
     "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
-
     "can-motor-control>=0.0.8; sys_platform == 'linux' or sys_platform == 'darwin'",
+    "python-can>=4",
+    "portal",
+    "pygame>=2.6.1",
+    "xacro",
+]
 
+# Motion planning and its interactive visualization, without perception or agents.
+planning = [
+    "dimos[control]",
+    "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
+    "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
+    "roboplan>=0.6.0,<0.7.0",
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
     "pycollada",
-
-    # Visualization (Optional)
-    "pygame>=2.6.1",
     "viser[urdf]>=1.0.29",
     "yourdfpy>=0.0.60",
-    "xacro",
-
-    # Other
     "matplotlib>=3.7.1",
     "pyyaml>=6.0",
-    "roboplan>=0.6.0,<0.7.0",
+]
+
+# Complete manipulation workflow: control, planning, perception, agents, and simulation.
+manipulation = [
+    "dimos[planning,base,sim,cpu]",
 ]
 
 cpu = [
@@ -326,6 +314,7 @@ sim = [
 ]
 
 mapping = [
+    "googlemaps>=4.10.0",
     # PGO for reloc premap
     # Jeff's https://github.com/jeff-hykin/gtsam-extended
     "gtsam-extended>=4.3a1.post1",
@@ -387,7 +376,7 @@ graspgenx = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
+    "dimos[apriltag,cuda,drone,manipulation,scene,unitree,webrtc]",
 ]
 
 [dependency-groups]
@@ -412,8 +401,8 @@ project-deps = [
     "openai",
     "moondream",
     "torchreid==0.2.5",
-    "gdown==6.0.0",          # torchreid runtime import (see misc extra)
-    "tensorboard==2.20.0",   # torchreid runtime import (see misc extra)
+    "gdown==6.0.0",          # torchreid runtime import (see perception extra)
+    "tensorboard==2.20.0",   # torchreid runtime import (see perception extra)
     "chromadb>=1.0.0",       # spatial-memory tests
     "xacro",
     "lap>=0.5.12",
@@ -502,7 +491,7 @@ lint = [
 # GPU, ROS-dependent integration tests, simulation).
 tests-self-hosted = [
     {include-group = "tests"},
-    "dimos[agents,perception,manipulation,sim,unitree,misc]",
+    "dimos[manipulation,unitree]",
     # go2 dds store tests decode mcap (pure-Python). The full `unitree-dds` extra
     # pulls `cyclonedds`, whose wheel needs a CycloneDDS C lib the ros-dev image
     # doesn't expose to the build — and these tests never open a live DDS link.
@@ -519,6 +508,7 @@ docs = [
     "mkdocs-redirects>=1.2.3",
 ]
 dev = [
+    "ipykernel",
     "optuna>=4.9.0",
 ]
 

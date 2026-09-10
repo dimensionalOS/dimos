@@ -28,9 +28,7 @@ try:
     import pinocchio
     import qpsolvers
 except ImportError as exc:
-    msg = (
-        "Pink IK dependencies not found; install them with: uv sync --extra manipulation --inexact."
-    )
+    msg = "Pink IK dependencies not found; install them with: uv sync --extra control."
     raise ImportError(msg) from exc
 
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
@@ -93,7 +91,7 @@ class _PinkSolverCore:
                 f"Pink IK solver '{self.config.solver}' is unavailable. "
                 f"Available solvers: {sorted(qpsolvers.available_solvers)}. "
                 "Install manipulation dependencies with: "
-                "uv sync --extra manipulation --inexact."
+                "uv sync --extra control."
             )
 
     def _create_tasks(

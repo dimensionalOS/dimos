@@ -629,7 +629,7 @@ Cartesian, EEF-twist, and engagement-relative teleoperation tasks share the
 Pink backend. Install its dependencies with the manipulation extra:
 
 ```bash skip
-uv sync --extra manipulation --inexact
+uv sync --extra manipulation
 ```
 
 Use one control task for each robot model that Pink should solve as one system:

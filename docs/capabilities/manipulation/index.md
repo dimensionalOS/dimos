@@ -291,12 +291,33 @@ hardware use.
 Install the manipulation dependencies:
 
 ```bash
-uv sync --extra manipulation --inexact
+uv sync --extra manipulation
 ```
 
-The `manipulation` extra includes RoboPlan via `roboplan` from PyPI.
-The `--inexact` flag preserves other extras already installed in your current
-environment.
+The `manipulation` extra bundles control, planning, perception (including
+EdgeTAM), agents/MCP, web interfaces, visualization, and MuJoCo simulation.
+It includes RoboPlan via `roboplan` from PyPI. No previously installed extras
+are needed.
+
+| Extra | Use it for |
+|-------|------------|
+| `control` | Coordinators, arm SDKs, Cartesian IK, and keyboard input |
+| `planning` | Control plus RoboPlan/Drake planning and Viser visualization |
+| `manipulation` | Planning plus perception, agents, web, and simulation |
+
+For a smaller installation, use `uv sync --extra planning` or
+`uv sync --extra control`. Add `--no-default-groups` to omit contributor test
+dependencies. Library installations use `pip install 'dimos[manipulation]'`.
+When combining capabilities, specify all desired extras in the same sync
+command rather than relying on packages left in the environment.
+
+Python extras do not install native RealSense binaries, vendor SDK setup,
+system libraries, or robot/model assets. Follow the hardware-specific setup
+instructions. Agentic blueprints require provider credentials; the default
+EdgeTAM backend requires CUDA or MPS. The bundle includes CPU ONNX inference;
+specialized CUDA backends, GraspGenX, dataset export (`learning`), and DDS remain
+separate extras. Linux x86_64 is the primary supported bundle platform; backend
+and hardware wheel availability still limits macOS and ARM installations.
 
 Safety behavior for unsupported RoboPlan features:
 
@@ -362,7 +383,7 @@ manipulation = ManipulationModule.blueprint(
 Viser support is included in the `manipulation` extra:
 
 ```bash
-uv sync --extra manipulation --inexact
+uv sync --extra manipulation
 ```
 
 The Viser panel talks to the concrete `ManipulationOperator` bound into its
