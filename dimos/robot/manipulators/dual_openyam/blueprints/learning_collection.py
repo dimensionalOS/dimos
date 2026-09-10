@@ -12,40 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dual OpenYAM Quest collection with profile-defined camera inputs."""
+"""Dual OpenYAM collection using ordinary blueprint configuration."""
 
-from pathlib import Path
-
-from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.imitation.cameras import CameraDevice, profile_cameras
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.native_recorder import collection_recorder
-from dimos.imitation.collection.profile import CollectionProfile
+from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_quest_dual_openyam
 from dimos.robot.manipulators.dual_openyam.learning import DUAL_OPENYAM_COLLECTION
 
-
-def build_dual_openyam_quest_collection(
-    *,
-    recording: Path,
-    task: str,
-    cameras: dict[str, CameraDevice],
-    profile: CollectionProfile = DUAL_OPENYAM_COLLECTION,
-    left_can_port: str | None = None,
-    right_can_port: str | None = None,
-) -> Blueprint:
-    """Build bimanual collection; camera count and feature names come from the profile."""
-    camera_blueprints, remappings = profile_cameras(profile, cameras)
-    # Pink and the dual robot model are optional until this stack is selected.
-    from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
-        build_dual_openyam_quest_teleop,
-    )
-
-    return autoconnect(
-        collection_recorder(profile=profile, recording=recording),
-        EpisodeMonitorModule.blueprint(task=task),
-        build_dual_openyam_quest_teleop(
-            left_can_port=left_can_port,
-            right_can_port=right_can_port,
+dual_openyam_quest_collection = autoconnect(
+    teleop_quest_dual_openyam,
+    CameraModule.blueprint(
+        instance_name="left_wrist",
+        hardware=WebcamConfig(
+            camera_index=0, width=640, height=480, fps=30, frame_id_prefix="left_wrist_image"
         ),
-        *camera_blueprints,
-    ).remappings(remappings)
+        frame_id="left_wrist_camera_link",
+    ),
+    CameraModule.blueprint(
+        instance_name="right_wrist",
+        hardware=WebcamConfig(
+            camera_index=1, width=640, height=480, fps=30, frame_id_prefix="right_wrist_image"
+        ),
+        frame_id="right_wrist_camera_link",
+    ),
+    collection_recorder(profile=DUAL_OPENYAM_COLLECTION),
+    EpisodeMonitorModule.blueprint(instance_name="episodes"),
+).remappings(
+    [
+        ("left_wrist", "color_image", "left_wrist_image"),
+        ("left_wrist", "camera_info", "left_wrist_camera_info"),
+        ("left_wrist", "tf", "left_wrist_tf"),
+        ("right_wrist", "color_image", "right_wrist_image"),
+        ("right_wrist", "camera_info", "right_wrist_camera_info"),
+        ("right_wrist", "tf", "right_wrist_tf"),
+    ]
+)
