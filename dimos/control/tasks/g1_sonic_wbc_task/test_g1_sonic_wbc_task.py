@@ -67,7 +67,6 @@ def make_task(mocker: Any):
             auto_arm=auto_arm,
             auto_dry_run=auto_dry_run,
             default_ramp_seconds=default_ramp_seconds,
-            zmq_enabled=False,
         )
         return G1SonicWBCTask("sonic", config, mocker.MagicMock())
 

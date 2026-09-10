@@ -73,14 +73,10 @@ _CANONICAL_PARENTS: Final[tuple[int, ...]] = (
     25,
     26,
 )
-_OUTPUT_JOINTS: Final[NDArray[np.intp]] = np.array(
-    [*range(22), 24, 27], dtype=np.intp
-)
+_OUTPUT_JOINTS: Final[NDArray[np.intp]] = np.array([*range(22), 24, 27], dtype=np.intp)
 _PICO_GLOBAL_OFFSET: Final[Rotation] = Rotation.from_euler("y", 180.0, degrees=True)
 _SMPL_Y_UP_TO_Z_UP: Final[Rotation] = Rotation.from_euler("x", 90.0, degrees=True)
-_SMPL_BASE_ROTATION_INVERSE: Final[Rotation] = Rotation.from_quat(
-    [-0.5, -0.5, -0.5, 0.5]
-)
+_SMPL_BASE_ROTATION_INVERSE: Final[Rotation] = Rotation.from_quat([-0.5, -0.5, -0.5, 0.5])
 _ELBOW_AXIS: Final[NDArray[np.float64]] = np.array([0.0, 1.0, 0.0], dtype=np.float64)
 
 

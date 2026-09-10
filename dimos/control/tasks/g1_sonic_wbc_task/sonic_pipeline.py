@@ -463,6 +463,7 @@ def _transition_stages(current: int | None, target: int | None) -> list[int | No
     if cur_chain is None and tgt_chain is None:
         return [target]
     if cur_chain is None:
+        assert tgt_chain is not None
         return list(tgt_chain)
     if tgt_chain is None:
         up = list(reversed(cur_chain[:-1]))
@@ -474,18 +475,18 @@ def _transition_stages(current: int | None, target: int | None) -> list[int | No
         common += 1
     up = list(reversed(cur_chain[common:-1]))
     down = tgt_chain[common:]
-    stages = [*up, *down]
+    stages: list[int | None] = [*up, *down]
     return stages if stages else [target]
 
 
 # Quaternion helpers ([w, x, y, z] convention throughout)
 
 
-def _quat_conjugate(q: NDArray) -> NDArray:
+def _quat_conjugate(q: NDArray[Any]) -> NDArray[Any]:
     return np.array([q[0], -q[1], -q[2], -q[3]], dtype=np.float64)
 
 
-def _quat_multiply(q1: NDArray, q2: NDArray) -> NDArray:
+def _quat_multiply(q1: NDArray[Any], q2: NDArray[Any]) -> NDArray[Any]:
     w1, x1, y1, z1 = q1
     w2, x2, y2, z2 = q2
     return np.array(
@@ -499,7 +500,7 @@ def _quat_multiply(q1: NDArray, q2: NDArray) -> NDArray:
     )
 
 
-def _quat_to_rotmat(q: NDArray) -> NDArray:
+def _quat_to_rotmat(q: NDArray[Any]) -> NDArray[Any]:
     w, x, y, z = np.asarray(q, dtype=np.float64)
     n = math.sqrt(w * w + x * x + y * y + z * z)
     if n > 1e-10:
@@ -514,14 +515,14 @@ def _quat_to_rotmat(q: NDArray) -> NDArray:
     )
 
 
-def _rotmat_to_6d(rot: NDArray) -> NDArray:
+def _rotmat_to_6d(rot: NDArray[Any]) -> NDArray[Any]:
     return np.array(
         [rot[0, 0], rot[0, 1], rot[1, 0], rot[1, 1], rot[2, 0], rot[2, 1]],
         dtype=np.float32,
     )
 
 
-def _quat_lerp(q0: NDArray, q1: NDArray, t: float) -> NDArray:
+def _quat_lerp(q0: NDArray[Any], q1: NDArray[Any], t: float) -> NDArray[Any]:
     q0 = np.asarray(q0, dtype=np.float64)
     q1 = np.asarray(q1, dtype=np.float64)
     if np.dot(q0, q1) < 0:
@@ -531,17 +532,17 @@ def _quat_lerp(q0: NDArray, q1: NDArray, t: float) -> NDArray:
     return (q / n if n > 1e-10 else q0).astype(np.float32)
 
 
-def _yaw_from_quat(q: NDArray) -> float:
+def _yaw_from_quat(q: NDArray[Any]) -> float:
     w, x, y, z = q
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
-def _calc_heading_quat(q: NDArray) -> NDArray:
+def _calc_heading_quat(q: NDArray[Any]) -> NDArray[Any]:
     half = _yaw_from_quat(q) / 2.0
     return np.array([math.cos(half), 0.0, 0.0, math.sin(half)], dtype=np.float64)
 
 
-def _calc_heading_quat_inv(q: NDArray) -> NDArray:
+def _calc_heading_quat_inv(q: NDArray[Any]) -> NDArray[Any]:
     half = -_yaw_from_quat(q) / 2.0
     return np.array([math.cos(half), 0.0, 0.0, math.sin(half)], dtype=np.float64)
 
@@ -668,12 +669,12 @@ class SonicPipeline:
         self._upper_vel_dds: NDArray[Any] | None = None
         # Wire-order (17: waist + arms) upper-body buffers; take precedence
         # over the DDS-14 arm API when set
-        self._ub17_pos: NDArray | None = None
-        self._ub17_vel: NDArray | None = None
+        self._ub17_pos: NDArray[Any] | None = None
+        self._ub17_vel: NDArray[Any] | None = None
         # VR 3-point teleop (encoder mode 1). Root-relative, sender-normalized:
         # positions [L wrist, R wrist, head] xyz; orientations 3x quat wxyz.
-        self._vr_pos: NDArray | None = None
-        self._vr_orn: NDArray | None = None
+        self._vr_pos: NDArray[Any] | None = None
+        self._vr_orn: NDArray[Any] | None = None
         self._vr_time = 0.0
         self._warm_planner()
 
@@ -720,7 +721,7 @@ class SonicPipeline:
         self._height_cmd = float(height)
 
     def set_upper_body(
-        self, targets_dds_14: NDArray, velocities_dds_14: NDArray | None = None
+        self, targets_dds_14: NDArray[Any], velocities_dds_14: NDArray[Any] | None = None
     ) -> None:
         self._upper_targets_dds = np.asarray(targets_dds_14, dtype=np.float32).flatten()[:14]
         self._upper_vel_dds = (
@@ -730,7 +731,7 @@ class SonicPipeline:
         )
 
     def set_upper_body_wire17(
-        self, positions_17: NDArray | None, velocities_17: NDArray | None
+        self, positions_17: NDArray[Any] | None, velocities_17: NDArray[Any] | None
     ) -> None:
         """Upper-body targets in SONIC wire order (17: waist + arms). None clears."""
         self._ub17_pos = (
@@ -743,7 +744,7 @@ class SonicPipeline:
         )
 
     def set_vr_3point(
-        self, positions_9: NDArray, orientations_12: NDArray, t_now: float | None = None
+        self, positions_9: NDArray[Any], orientations_12: NDArray[Any], t_now: float | None = None
     ) -> None:
         """VR 3-point teleop targets (encoder mode 1).
 
@@ -934,8 +935,8 @@ class SonicPipeline:
     def set_planner_command(
         self,
         mode: int,
-        movement: NDArray,
-        facing: NDArray,
+        movement: NDArray[Any],
+        facing: NDArray[Any],
         speed: float = -1.0,
         height: float = -1.0,
     ) -> None:
@@ -975,7 +976,7 @@ class SonicPipeline:
         self._reset_heading_alignment()
         self._clear_planner_transition_prepare()
 
-    def apply_pose_message(self, fields: dict) -> dict:
+    def apply_pose_message(self, fields: dict[str, NDArray[Any]]) -> dict[str, Any]:
         """Merge one decoded pose-topic chunk; returns a merge summary."""
         res = self._merger.merge(fields, self._streamed_frame)
         if res.error:
@@ -1048,7 +1049,7 @@ class SonicPipeline:
             return True
         return not np.allclose(self._upper_targets_dds, DEFAULT_ANGLES_DDS[15:], atol=1e-6)
 
-    def _upper_body_17_onnx(self) -> NDArray:
+    def _upper_body_17_onnx(self) -> NDArray[Any]:
         if self._ub17_pos is not None:
             return self._ub17_pos
         full = DEFAULT_ANGLES_ONNX.copy()
@@ -1056,7 +1057,7 @@ class SonicPipeline:
             full[DDS_TO_ONNX[dds_i]] = self._upper_targets_dds[dds_i - 15]
         return full[UPPER_BODY_ONNX_INDICES]
 
-    def _upper_body_vel_17_onnx(self) -> NDArray:
+    def _upper_body_vel_17_onnx(self) -> NDArray[Any]:
         if self._ub17_vel is not None:
             return self._ub17_vel
         full = np.zeros(NUM_JOINTS, dtype=np.float32)
@@ -1065,7 +1066,7 @@ class SonicPipeline:
                 full[DDS_TO_ONNX[dds_i]] = self._upper_vel_dds[dds_i - 15]
         return full[UPPER_BODY_ONNX_INDICES]
 
-    def _inject_upper_body(self, enc_obs: NDArray) -> None:
+    def _inject_upper_body(self, enc_obs: NDArray[Any]) -> None:
         """Encoder-observation injection (D3): positions replaced; velocities
         replaced with provided upper-body velocities (zero when absent) for
         the 17 upper-body joints across all 10 frames."""
@@ -1105,7 +1106,7 @@ class SonicPipeline:
             )
         return enc_obs
 
-    def _build_teleop_encoder_obs(self, base_quat: NDArray) -> NDArray:
+    def _build_teleop_encoder_obs(self, base_quat: NDArray[Any]) -> NDArray[Any]:
         """Encoder obs for teleop mode (1): mode scalar, lowerbody joint
         pos/vel history from the planner trajectory, single-frame anchor
         orientation, VR 3-point blocks. All other fields stay zero - the C++
@@ -1155,7 +1156,7 @@ class SonicPipeline:
             return 2
         return 3
 
-    def _build_planner_context(self) -> NDArray:
+    def _build_planner_context(self) -> NDArray[Any]:
         context = np.zeros((4, 36), dtype=np.float32)
         if (
             not self._planner_transition_preparing
@@ -1177,7 +1178,7 @@ class SonicPipeline:
                 context[n, 7:36] = self._cur_q_dds[DDS_TO_ONNX]
         return context
 
-    def _build_planner_inputs(self) -> dict:
+    def _build_planner_inputs(self) -> dict[str, NDArray[Any]]:
         if self._planner_cmd is not None:
             # Direct planner command: mode/movement/facing given directly
             c = self._planner_cmd
@@ -1223,11 +1224,11 @@ class SonicPipeline:
     def _planner_inputs_dict(
         self,
         mode: int,
-        move_dir: NDArray,
-        face_dir: NDArray,
+        move_dir: NDArray[Any],
+        face_dir: NDArray[Any],
         target_vel: float,
         height: float,
-    ) -> dict:
+    ) -> dict[str, NDArray[Any]]:
         return {
             "context_mujoco_qpos": self._build_planner_context().reshape(1, 4, 36),
             "target_vel": np.array([target_vel], dtype=np.float32),
@@ -1283,7 +1284,7 @@ class SonicPipeline:
         self._planner_started_at = None
         self._planner_future = None
 
-    def _apply_planner_result(self, result: list) -> None:
+    def _apply_planner_result(self, result: list[Any]) -> None:
         qpos_30hz = result[0].squeeze()
         num_frames = int(result[1].item())
         if num_frames < 2:
@@ -1328,7 +1329,7 @@ class SonicPipeline:
         self._heading_delta_quat = _quat_multiply(init_heading, init_ref_inv)
         self._heading_initialized = True
 
-    def _resample_to_50hz(self, qpos_30hz: NDArray, n30: int) -> _Trajectory:
+    def _resample_to_50hz(self, qpos_30hz: NDArray[Any], n30: int) -> _Trajectory:
         n50 = max(2, int(n30 / 30.0 * 50.0))
         traj = _Trajectory(n50)
         for f in range(n50):
@@ -1349,7 +1350,7 @@ class SonicPipeline:
 
     # -- step -------------------------------------------------------------
 
-    def _nan_check(self, name: str, arr: NDArray) -> bool:
+    def _nan_check(self, name: str, arr: NDArray[Any]) -> bool:
         if np.isnan(arr).any() or np.isinf(arr).any():
             if self._nan_reported < 10:
                 logger.warning(
@@ -1364,12 +1365,12 @@ class SonicPipeline:
 
     def step(
         self,
-        q_dds: NDArray,
-        dq_dds: NDArray,
-        base_quat_wxyz: NDArray,
-        gyro_body: NDArray,
-        gravity_body: NDArray,
-    ) -> NDArray:
+        q_dds: NDArray[Any],
+        dq_dds: NDArray[Any],
+        base_quat_wxyz: NDArray[Any],
+        gyro_body: NDArray[Any],
+        gravity_body: NDArray[Any],
+    ) -> NDArray[Any]:
         """One 50 Hz policy step. Returns 29 position targets, DDS order."""
         self._step_count += 1
 
@@ -1518,7 +1519,7 @@ class SonicPipeline:
 
         return targets_onnx[DDS_TO_ONNX]
 
-    def _build_streamed_encoder_obs(self, base_quat: NDArray) -> NDArray:
+    def _build_streamed_encoder_obs(self, base_quat: NDArray[Any]) -> NDArray[Any]:
         """Encoder obs from the streamed motion (pose topic).
 
         Mode 0 (protocol v1): joint fields step5, like a planner trajectory.
@@ -1575,7 +1576,7 @@ class SonicPipeline:
 
     # -- telemetry --------------------------------------------------------
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> dict[str, Any]:
         speed = math.hypot(self._vx, self._vy)
         mode = self._mode_override if self._mode_override is not None else self._auto_mode(speed)
         stream_backlog_frames = (

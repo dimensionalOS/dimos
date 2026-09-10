@@ -34,6 +34,7 @@ policy encoder consumes. Semantics preserved exactly:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -55,11 +56,11 @@ class StreamedMotion:
     """Merged sliding-window motion. Joint data in ONNX/IsaacLab order
     (the wire convention of the pose topic)."""
 
-    joint_pos: NDArray  # [T, 29]
-    joint_vel: NDArray  # [T, 29]
-    root_quat: NDArray  # [T, 4] (w, x, y, z) - body_quat[:, 0]
-    smpl_joints: NDArray | None  # [T, 24, 3]
-    smpl_pose: NDArray | None  # [T, 21, 3]
+    joint_pos: NDArray[Any]  # [T, 29]
+    joint_vel: NDArray[Any]  # [T, 29]
+    root_quat: NDArray[Any]  # [T, 4] (w, x, y, z) - body_quat[:, 0]
+    smpl_joints: NDArray[Any] | None  # [T, 24, 3]
+    smpl_pose: NDArray[Any] | None  # [T, 21, 3]
     encode_mode: int = 0
     timesteps: int = 0
 
@@ -75,7 +76,7 @@ class MergeResult:
     error: str | None = None
 
 
-def infer_protocol_version(fields: dict[str, NDArray]) -> int:
+def infer_protocol_version(fields: dict[str, NDArray[Any]]) -> int:
     """v3: SMPL + joints; v2: SMPL only; v1: joints only (upstream protocol rules)."""
     has_smpl = "smpl_joints" in fields and "smpl_pose" in fields
     has_joints = "joint_pos" in fields and "joint_vel" in fields
@@ -97,7 +98,7 @@ class StreamedMotionMerger:
         self._window_start = 0
         self._active_protocol: int | None = None
 
-    def merge(self, fields: dict[str, NDArray], current_playback_frame: int) -> MergeResult:
+    def merge(self, fields: dict[str, NDArray[Any]], current_playback_frame: int) -> MergeResult:
         """Merge one decoded pose-topic message. ``fields`` are the raw
         decoded arrays keyed by wire name."""
         result = MergeResult()
@@ -201,6 +202,7 @@ class StreamedMotionMerger:
                     new.joint_vel[dst0 : dst0 + n] = old.joint_vel[src0 : src0 + n]
                     new.root_quat[dst0 : dst0 + n] = old.root_quat[src0 : src0 + n]
                     if new.smpl_joints is not None and old.smpl_joints is not None:
+                        assert new.smpl_pose is not None and old.smpl_pose is not None
                         new.smpl_joints[dst0 : dst0 + n] = old.smpl_joints[src0 : src0 + n]
                         new.smpl_pose[dst0 : dst0 + n] = old.smpl_pose[src0 : src0 + n]
 
@@ -214,6 +216,7 @@ class StreamedMotionMerger:
         bq = np.asarray(body_quat, dtype=np.float32).reshape(num_frames, -1, 4)
         new.root_quat[merge_dst:] = bq[:, 0, :]
         if new.smpl_joints is not None:
+            assert new.smpl_pose is not None
             new.smpl_joints[merge_dst:] = np.asarray(smpl_joints, dtype=np.float32).reshape(
                 num_frames, NUM_SMPL_JOINTS, 3
             )

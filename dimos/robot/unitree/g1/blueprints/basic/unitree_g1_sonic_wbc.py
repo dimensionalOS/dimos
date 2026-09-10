@@ -290,7 +290,6 @@ def _g1_sonic_coordinator(
     *,
     task_type: str,
     task_name: str,
-    zmq_enabled: bool,
 ) -> Any:
     coordinator_type = (
         _G1SonicTeleopCoordinator if task_type == "g1_sonic_teleop" else _G1SonicCoordinator
@@ -341,7 +340,6 @@ def _g1_sonic_coordinator(
                     "auto_dry_run": _auto_dry_run,
                     "default_ramp_seconds": _default_ramp_seconds,
                     "decimation": _decimation,
-                    "zmq_enabled": zmq_enabled,
                 },
             ),
         ],
@@ -371,12 +369,10 @@ def _g1_sonic_control_blueprint(
     *,
     task_type: str,
     task_name: str,
-    zmq_enabled: bool,
 ) -> Any:
     coordinator = _g1_sonic_coordinator(
         task_type=task_type,
         task_name=task_name,
-        zmq_enabled=zmq_enabled,
     )
     return (
         autoconnect(_backend, coordinator)
@@ -432,7 +428,6 @@ unitree_g1_sonic_wbc = (
         _g1_sonic_control_blueprint(
             task_type="g1_sonic_wbc",
             task_name="sonic_wbc",
-            zmq_enabled=True,
         ),
         _nav_stack,
         _g1_sonic_visualization(),

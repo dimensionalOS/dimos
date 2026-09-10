@@ -572,9 +572,7 @@ class MujocoSimModule(
             before=self._sim_hooks.pre_step,
             after=self._publish_shm_and_lcm,
             should_step=(
-                self._sim_hooks.ready_for_physics
-                if self.config.wait_for_control_command
-                else None
+                self._sim_hooks.ready_for_physics if self.config.wait_for_control_command else None
             ),
         )
 

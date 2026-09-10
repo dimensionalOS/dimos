@@ -40,7 +40,6 @@ unitree_g1_sonic_webxr_teleop = autoconnect(
     _g1_sonic_control_blueprint(
         task_type="g1_sonic_teleop",
         task_name="sonic_teleop",
-        zmq_enabled=False,
     ),
     _g1_sonic_visualization(),
 ).global_config(robot_model="unitree_g1", n_workers=3)

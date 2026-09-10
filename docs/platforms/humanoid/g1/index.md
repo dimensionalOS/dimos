@@ -187,7 +187,7 @@ environment with CPython 3.10 so the Open3D ARM wheel remains compatible with
 JetPack 5's Ubuntu 20.04 userspace.
 
 The setup script installs
-[`onnxruntime-gpu-extended-auto==1.23.3`](https://github.com/jeff-hykin/onnxruntime-gpu-extended-auto)
+[onnxruntime-gpu-extended-auto==1.23.3](https://github.com/jeff-hykin/onnxruntime-gpu-extended-auto)
 with target-side package detection. CUDA 11 and cuDNN 8 resolve to the pinned
 `onnxruntime-gpu-extended==1.18.1.11.8` JetPack 5 wheel. The script bypasses
 the pip cache and verifies the dispatcher, distribution, runtime, and CUDA
@@ -278,7 +278,7 @@ Select the NVIDIA policy bundle when launching the blueprint. Encoder,
 decoder, observation layout, and pose window always switch together:
 [NVIDIA's model card](https://github.com/NVlabs/GR00T-WholeBodyControl/blob/main/docs/source/model_card.md)
 documents both contracts, and the setup script downloads their pinned files
-from [`nvidia/GEAR-SONIC`](https://huggingface.co/nvidia/GEAR-SONIC/tree/main).
+from [nvidia/GEAR-SONIC](https://huggingface.co/nvidia/GEAR-SONIC/tree/main).
 
 | `--sonic-pipeline` | Pose window | Use when |
 |---|---:|---|

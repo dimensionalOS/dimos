@@ -53,7 +53,6 @@ assert task.params["auto_arm"] is {auto_arm!r}
 assert task.params["auto_dry_run"] is {auto_dry_run!r}
 assert task.params["default_ramp_seconds"] == {ramp_seconds!r}
 assert task.params["decimation"] == {decimation!r}
-assert task.params["zmq_enabled"] is False
 assert coordinator.kwargs["pose_transition_seconds"] == 0.5
 assert blueprint.global_config_overrides["transport"] == "zenoh"
 assert blueprint.global_config_overrides["zenoh_mode"] == "peer"

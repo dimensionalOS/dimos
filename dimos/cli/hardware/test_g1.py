@@ -319,7 +319,7 @@ def test_enable_rejects_robot_that_has_not_completed_arming(mocker) -> None:
 
 
 def test_enable_snapshot_failure_restores_dry_run(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     coordinator.task_invoke.side_effect = [
         _state(armed=True, dry_run=True),
         RuntimeError("state snapshot timed out"),
@@ -336,7 +336,7 @@ def test_enable_snapshot_failure_restores_dry_run(mocker) -> None:
 
 
 def test_enable_reports_snapshot_and_dry_run_restore_failures(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     coordinator.task_invoke.side_effect = [
         _state(armed=True, dry_run=True),
         RuntimeError("state snapshot timed out"),
@@ -355,7 +355,7 @@ def test_enable_reports_snapshot_and_dry_run_restore_failures(mocker) -> None:
 
 
 def test_enable_failed_verification_reasserts_dry_run(mocker) -> None:
-    coordinator = Mock()
+    coordinator = _coordinator()
     coordinator.task_invoke.side_effect = [
         _state(armed=True, dry_run=True),
         _state(armed=True, dry_run=True),

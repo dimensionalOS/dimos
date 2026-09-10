@@ -220,6 +220,7 @@ def _subscribe_topics(
         for name, msg_name in topics.items()
     ]
 
+
 if TYPE_CHECKING:
     BlueprintFactory: TypeAlias = Callable[[], "Blueprint"]
     VisualOverride: TypeAlias = Callable[[Any], "Archetype"]
@@ -614,6 +615,7 @@ class RerunBridgeModule(Module):
         dispatcher: _LatestOnlyDispatcher | None = None
         callback: Callable[[Any, Any], None] = self._on_message
         if self.config.latest_only:
+
             def log_latest(msg: Any, topic: Any) -> None:
                 self._on_message(msg, topic, throttle=False)
 

@@ -132,7 +132,6 @@ def task_and_pipeline(mocker: Any) -> Iterator[tuple[G1SonicTeleopTask, Any]]:
         joint_names=_JOINT_NAMES,
         auto_arm=True,
         default_ramp_seconds=0.0,
-        zmq_enabled=False,
     )
     task = G1SonicTeleopTask("sonic_teleop", config, adapter)
     task.start()
@@ -338,7 +337,6 @@ def test_low_latency_pipeline_requires_four_frames_and_is_reported(mocker: Any) 
         sonic_pipeline="sonic-low-latency",
         auto_arm=True,
         default_ramp_seconds=0.0,
-        zmq_enabled=False,
     )
     task = G1SonicTeleopTask("sonic_teleop", config, adapter)
     try:

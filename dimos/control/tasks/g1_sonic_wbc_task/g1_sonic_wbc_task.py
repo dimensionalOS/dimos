@@ -590,7 +590,7 @@ class G1SonicWBCTask(BaseControlTask):
         logger.info("G1SonicWBCTask dry_run changed", task=self._name, dry_run=new_val)
 
     def state_snapshot(self) -> dict[str, Any]:
-        snap = {
+        snap: dict[str, Any] = {
             "active": self._active,
             "armed": self._control_state is SonicControlState.CONTROL,
             "arming": self._control_state is SonicControlState.INITIALIZING,
@@ -698,7 +698,6 @@ class G1SonicWBCTaskParams(BaseConfig):
     auto_dry_run: bool = False
     default_ramp_seconds: float = 3.0
     decimation: int | None = None
-    zmq_enabled: bool = True
     sonic_pipeline: SonicTeleopPipeline = SONIC_V1_1_PIPELINE
     pose_transition_seconds: float = Field(default=0.5, gt=0.0, allow_inf_nan=False)
 
@@ -745,7 +744,6 @@ def _create_task(
         auto_arm=params.auto_arm,
         auto_dry_run=params.auto_dry_run,
         default_ramp_seconds=params.default_ramp_seconds,
-        zmq_enabled=params.zmq_enabled,
         sonic_pipeline=params.sonic_pipeline,
         pose_transition_seconds=params.pose_transition_seconds,
     )
