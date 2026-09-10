@@ -25,7 +25,7 @@ from setuptools.command.sdist import sdist as _sdist
 
 # PEP 517 executes this file without adding the source root to sys.path.
 sys.path.insert(0, str(Path(__file__).parent))
-from dimos_build import bundle_native_sources, ensure_web_dist, native_files
+from dimos_build import bundle_native_sources, native_files
 
 
 def python_is_macos_universal_binary(executable: str | None = None) -> bool:
@@ -96,8 +96,6 @@ class build_py(_build_py):
         ]
 
     def run(self):
-        if not getattr(self, "editable_mode", False):
-            ensure_web_dist(Path(__file__).parent)
         super().run()
         if not getattr(self, "editable_mode", False):
             self._copy_relay_dist()
@@ -112,7 +110,9 @@ class build_py(_build_py):
         dst = Path(self.build_lib) / RELAY_DIST_TARGET
         for name in RELAY_DIST_SOURCES:
             entry = src / name
-            if not entry.exists():  # only the dists may be absent (env-var opt-out above)
+            if (
+                not entry.exists()
+            ):  # Frontend bundles are optional; Python builds never create them.
                 continue
             for path in sorted(entry.rglob("*")) if entry.is_dir() else [entry]:
                 # Filter on the path below src: matching path.parts would also
@@ -135,10 +135,6 @@ class sdist(_sdist):
             for path in native_files(Path(__file__).parent)
         ]
         super().make_release_tree(base_dir, sorted(set(files) | set(sources)))
-
-    def run(self):
-        ensure_web_dist(Path(__file__).parent)
-        super().run()
 
 
 extra_compile_args = [

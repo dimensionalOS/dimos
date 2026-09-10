@@ -34,7 +34,7 @@ jobs:
       - name: Installer and SDK packaging tests
         env:
           PYTHONPATH: .
-        run: uv run --project installer --with pytest --with filelock pytest --noconftest -c installer/pyproject.toml installer/src tests/packaging dimos/core/test_native_sources.py
+        run: uv run --project installer --with pytest --with filelock --with setuptools --with pybind11 pytest --noconftest -c installer/pyproject.toml installer/src tests/packaging dimos/core/test_native_sources.py
       - name: Type check dimup
         env:
           MYPYPATH: installer/src
