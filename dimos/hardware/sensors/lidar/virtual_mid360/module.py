@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.utils.logging_config import setup_logger
@@ -55,9 +54,10 @@ _MACOS_IFACE = "lo0"
 
 
 class VirtualMid360Config(NativeModuleConfig):
+    bundled_sources: bool = True
     cwd: str | None = "."
     # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "virtual_mid360")
+    executable: str = "target/release/virtual_mid360"
     build_command: str | None = "cargo build --release"
     # The rust binary reads its config as a JSON object on stdin (required).
     stdin_config: bool = True

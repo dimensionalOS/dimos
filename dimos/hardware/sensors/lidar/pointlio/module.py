@@ -68,6 +68,7 @@ IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 
 
 class PointLioConfig(NativeModuleConfig):
+    bundled_sources: bool = True
     cwd: str | None = "cpp"
     executable: str = "result/bin/pointlio_native"
     build_command: str | None = "nix build -L .#pointlio_native"

@@ -31,10 +31,10 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
       - name: Install shells for configuration tests
         run: sudo apt-get update && sudo apt-get install -y zsh fish
-      - name: Installer tests
+      - name: Installer and SDK packaging tests
         env:
           PYTHONPATH: .
-        run: uv run --project installer --with pytest pytest --noconftest -c installer/pyproject.toml installer/src
+        run: uv run --project installer --with pytest --with filelock --with setuptools --with pybind11 pytest --noconftest -c installer/pyproject.toml installer/src tests/packaging dimos/core/test_native_sources.py
       - name: Type check dimup
         env:
           MYPYPATH: installer/src
