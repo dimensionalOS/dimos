@@ -150,6 +150,21 @@ def alfred_model_config(
     )
 
 
+def alfred_rerun_urdf(wheels: bool = False) -> Path:
+    """A materialized copy of the model for Rerun's URDF loaders (yourdfpy, rerun.urdf).
+
+    Those load a file straight from disk and cannot resolve ``package://`` URIs, so this
+    writes ``RobotModel.load().xml`` (absolute mesh paths, coordinator joint names) next to
+    the source URDF and returns its path. Rewritten on every call: cheap, and always in
+    step with the archive.
+    """
+    loaded = (ALFRED_V2_MODEL if wheels else ALFRED_V1_MODEL).load()
+    out = Path(loaded.source_path).with_name(".rerun") / Path(loaded.source_path).name
+    out.parent.mkdir(exist_ok=True)
+    out.write_text(loaded.xml)
+    return out
+
+
 def alfred_sim_model_config(wheels: bool = False) -> RobotModelConfig:
     """The sim/viser flavour: also publishes the sensor links on tf (no nav tree to clash with)."""
     return alfred_model_config(

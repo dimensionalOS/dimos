@@ -16,7 +16,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import re
 from typing import Any, cast
+
+import pytest
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.coordination.blueprints import Blueprint
@@ -24,10 +28,12 @@ from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.diy.alfred.alfred_model import (
+    ALFRED_DESCRIPTION_ROOT,
     ALFRED_LIFT_LOWER_M,
     ALFRED_LIFT_UPPER_M,
     alfred_joint_names,
     alfred_model_config,
+    alfred_rerun_urdf,
 )
 from dimos.robot.diy.alfred.blueprints.alfred_nav import alfred_nav
 from dimos.robot.diy.alfred.blueprints.alfred_sim import alfred_sim
@@ -122,3 +128,24 @@ def test_alfred_model_uses_pillar_joint_convention() -> None:
 def test_alfred_sim_still_composes() -> None:
     hardware_ids = {hw.hardware_id for hw in _coordinator_kwargs(alfred_sim)["hardware"]}
     assert {PILLAR_HARDWARE_ID, OPENARM_HARDWARE_ID, "casters"} <= hardware_ids
+
+
+def _lfs_archive_available() -> bool:
+    archive = Path(ALFRED_DESCRIPTION_ROOT).parent / ".lfs" / "alfred_description.tar.gz"
+    try:
+        with archive.open("rb") as f:
+            return not f.read(64).startswith(b"version https://git-lfs")
+    except OSError:
+        return False
+
+
+@pytest.mark.skipif(
+    not _lfs_archive_available(), reason="alfred_description LFS archive not pulled"
+)
+def test_rerun_urdf_is_materialized_with_resolved_meshes_and_coordinator_joints() -> None:
+    urdf = alfred_rerun_urdf()
+    xml = urdf.read_text()
+    assert "package://" not in xml
+    assert 'name="pillar/lift"' in xml, "renamed lift joint must reach the rerun model"
+    meshes = re.findall(r'filename="([^"]+)"', xml)
+    assert meshes and all(Path(m).is_file() for m in meshes), "unresolved mesh path"

@@ -89,6 +89,7 @@ DIMOS_POINTLIO_HOST_IP=192.168.1.100 OPENARM_LEFT_CAN=can0 OPENARM_RIGHT_CAN=can
 `alfred-nav` deliberately keeps the base out of the coordinator: `AlfredHighLevel` is the only
 FlowBase writer (Portal RPC + wheel odometry for dimSLAM) and `MovementManager` muxes
 teleop over navigation. The planner publishes no tf (it would root at `world`, beside the
-navigation `odom` tree); sensor mounts on tf come from `AlfredLidarMountTf`, Jeff's `alfred.urdf` mount
+navigation `odom` tree). Rerun shows the full `alfred_v1` model on `base_link`, lift and arms animated from the
+coordinator joint state. Sensor mounts on tf come from `AlfredLidarMountTf`, Jeff's `alfred.urdf` mount
 tree re-rooted at `mid360_link` because Point-LIO owns the lidar's parent edge. Jeff's dimSLAM vision
 variants (`alfred-mls-nav`, `alfred-mls-nav-lidar`) are untouched.

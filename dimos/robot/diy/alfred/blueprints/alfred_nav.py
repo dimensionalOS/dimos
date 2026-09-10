@@ -62,12 +62,16 @@ from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
-from dimos.robot.diy.alfred.alfred_model import alfred_arm_joints, alfred_model_config
+from dimos.robot.diy.alfred.alfred_model import (
+    alfred_arm_joints,
+    alfred_model_config,
+    alfred_rerun_urdf,
+)
 from dimos.robot.diy.alfred.blueprints.pillar import (
     PILLAR_LIFT_VELOCITY_LIMIT_M_S,
     PILLAR_MOTOR_TRANSPORTS,
 )
-from dimos.robot.diy.alfred.config import ALFRED, ALFRED_URDF
+from dimos.robot.diy.alfred.config import ALFRED
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
 from dimos.robot.diy.alfred.mount_tf import AlfredLidarMountTf
 from dimos.robot.diy.alfred.pillar_connection import (
@@ -78,7 +82,10 @@ from dimos.robot.diy.alfred.pillar_connection import (
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.openarm.config import openarm_hardware
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
-from dimos.visualization.rerun.urdf_robot import UrdfRobotStaticRerunFactory
+from dimos.visualization.rerun.urdf_robot import (
+    UrdfRobotJointStateRerunFactory,
+    UrdfRobotStaticRerunFactory,
+)
 from dimos.visualization.vis_module import vis_module
 
 OPENARM_LEFT_CAN_ENV = "OPENARM_LEFT_CAN"
@@ -130,11 +137,34 @@ def _empty_path_dropped(msg: Any) -> Any:
 
 
 def _alfred_urdf_static(rr: Any) -> list[tuple[str, Any]]:
-    factory = UrdfRobotStaticRerunFactory(urdf_path=ALFRED_URDF, root_path=ALFRED_RERUN_ROOT)
+    """The whole-robot alfred_v1 meshes (base, pillar, carriage, arms, sensors) on base_link."""
+    factory = UrdfRobotStaticRerunFactory(
+        urdf_path=alfred_rerun_urdf(), root_path=ALFRED_RERUN_ROOT
+    )
     return [
         *factory(rr),
         (ALFRED_RERUN_ROOT, rr.Transform3D(parent_frame="tf#/base_link")),
     ]
+
+
+class _AlfredJointStateVisual:
+    """Animate the lift and the arms in rerun from the coordinator's joint state.
+
+    Joint names in the materialized URDF already are the coordinator names, so no mapping.
+    Loaded lazily on the first message so the LFS archive is not touched at import time.
+    """
+
+    def __init__(self) -> None:
+        self._factory: UrdfRobotJointStateRerunFactory | None = None
+
+    def __call__(self, msg: Any) -> list[tuple[str, Any]]:
+        if self._factory is None:
+            self._factory = UrdfRobotJointStateRerunFactory(
+                urdf_path=alfred_rerun_urdf(),
+                root_path=ALFRED_RERUN_ROOT,
+                joint_name_mapper=lambda name: name,
+            )
+        return self._factory(msg)
 
 
 def _rerun_blueprint() -> Any:
@@ -169,6 +199,8 @@ _rerun_config = {
     "visual_override": {
         "world/planner_path": _empty_path_dropped,
         "world/path": partial(_path_colored, color=(60, 220, 120)),
+        # Lift + arms follow the real joint state on the static model above.
+        "world/coordinator_joint_state": _AlfredJointStateVisual(),
     },
 }
 
