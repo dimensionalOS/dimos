@@ -51,38 +51,9 @@ app.GO2Connection.move(Twist(linear=(1, 0, 0), angular=(0, 0, 0)), duration=0.05
 
 ## Manipulation SDK
 
-For manual arm control, open `dimos shell` against a running manipulation
-blueprint. Import the client-only SDK and reuse the shell's connected `app`:
-
-```python skip
-from dimos.manipulation.sdk import Arm
-
-arm = Arm.from_app(app)
-arm.joints()
-arm.pose()
-```
-
-Use `arm.` followed by Tab for completion and `arm.move_linear?` for help.
-For scripts, create and close your own connection:
-
-```python skip
-from dimos.porcelain.dimos import Dimos
-from dimos.manipulation.sdk import Arm
-
-app = Dimos.connect()
-try:
-    arm = Arm.from_app(app)
-    print(arm.joints())
-    print(arm.pose())
-finally:
-    app.stop()
-```
-
-`Arm` selects the unique pose-capable group and raises on failed actions. It
-accepts numeric sequences and NumPy arrays for joint and pose targets. Explicit
-planning and execution controls remain available through `arm.rpc`. See the
-[manipulation Python guide](/docs/capabilities/manipulation/python_api.md) for
-presets, failure handling, and simulation examples.
+See the [manipulation Python guide](/docs/capabilities/manipulation/python_api.md)
+for arm control from scripts or `dimos shell`, including setup, motion, and
+failure handling.
 
 ## Discovering modules and RPCs
 
