@@ -44,14 +44,19 @@ from dimos.robot.galaxea.r1pro.learning import (
     R1PRO_PICK_PLACE_IO,
     R1PRO_PICK_PLACE_TASK,
 )
+from dimos.robot.galaxea.r1pro.tray_sim import prepare_tray_delivery_scene
 
 
 def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     args.output.mkdir(parents=True, exist_ok=True)
-    scene = prepare_grasping_scene(
-        args.output / "scene.xml",
-        scene_package=args.scene_package,
-        mobile=args.mobile,
+    scene = (
+        prepare_tray_delivery_scene(args.output / "scene.xml", scene_package=args.scene_package)
+        if args.free_tray
+        else prepare_grasping_scene(
+            args.output / "scene.xml",
+            scene_package=args.scene_package,
+            mobile=args.mobile,
+        )
     )
     torch.set_num_threads(4)
     backend = LeRobotBackend(
@@ -166,6 +171,11 @@ def main() -> None:
     parser.add_argument("--video", action="store_true")
     parser.add_argument("--scene-package", type=Path)
     parser.add_argument("--mobile", action="store_true")
+    parser.add_argument(
+        "--free-tray",
+        action="store_true",
+        help="Evaluate ACT bottle loading with the physically supported delivery tray",
+    )
     args = parser.parse_args()
     if args.episodes < 1 or not 0 < args.seconds <= 120 or not 0 <= args.jitter <= 0.02:
         parser.error("Invalid episode count, duration, or position jitter")

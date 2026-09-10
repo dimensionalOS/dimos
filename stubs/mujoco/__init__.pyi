@@ -74,8 +74,28 @@ def mj_saveModel(model: MjModel, filename: str, buffer: Any = ...) -> None: ...
 def set_mjcb_control(
     cb: Callable[[MjModel, MjData], None] | None,
 ) -> None: ...
+def mj_contactForce(model: MjModel, data: MjData, id: int, result: NDArray[np.float64]) -> None: ...
+def mju_mulQuat(
+    result: NDArray[np.float64], quat1: NDArray[np.float64], quat2: NDArray[np.float64]
+) -> None: ...
+def mj_ray(
+    model: MjModel,
+    data: MjData,
+    pnt: NDArray[np.float64],
+    vec: NDArray[np.float64],
+    geomgroup: NDArray[np.uint8] | None,
+    flg_static: int,
+    bodyexclude: int,
+    geomid: NDArray[np.int32],
+) -> float: ...
 
 # --- enum-like namespaces ---------------------------------------------
+
+class mjtCamera:
+    mjCAMERA_FREE: int
+    mjCAMERA_TRACKING: int
+    mjCAMERA_FIXED: int
+    mjCAMERA_USER: int
 
 class mjtObj:
     mjOBJ_ACTUATOR: int

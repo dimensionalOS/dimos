@@ -296,6 +296,8 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     spawn_yaw: float | None = None
     reset_joint_positions: list[float] | None = None
     headless: bool = False
+    position_target_velocity_limits: dict[str, float] = Field(default_factory=dict)
+    viewer_track_body: str | None = None
     viewer_lookat: tuple[float, float, float] | None = None
     viewer_distance: float | None = Field(default=None, gt=0)
     dof: int = 7
@@ -562,6 +564,8 @@ class MujocoSimModule(
             raycast_lidars=raycast_lidars,
             robot_sim_spec=self.config.robot_sim_spec,
             reset_joint_positions=self.config.reset_joint_positions,
+            position_target_velocity_limits=self.config.position_target_velocity_limits,
+            viewer_track_body=self.config.viewer_track_body,
             viewer_lookat=self.config.viewer_lookat,
             viewer_distance=self.config.viewer_distance,
         )

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -37,6 +38,9 @@ from dimos.robot.galaxea.r1pro.grasping_sim import VIRTUAL_BASE_JOINTS, prepare_
 from dimos.robot.galaxea.r1pro.grasping_task import GraspingTask, score_task
 from dimos.robot.galaxea.r1pro.grasping_transport import PlanarTransport
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_JOINTS, R1PRO_PICK_PLACE_TASK
+from dimos.robot.galaxea.r1pro.tray_motion import TrayMotion
+from dimos.robot.galaxea.r1pro.tray_sim import configure_tray_holding
+from dimos.robot.galaxea.r1pro.tray_task import laptop_destination, tray_state
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, SimCameraSpec
 from dimos.simulation.engines.robot_sim_binding import RobotSimSpec
 
@@ -70,6 +74,9 @@ class R1ProGraspingSim(MujocoSimModule):
             raise RuntimeError("Simulation has not started")
         with engine._lock:
             model, data = engine.model, engine.data
+            free_tray = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "task_tray_free") >= 0
+            if free_tray and self._transport_planner is None:
+                self._transport_planner = PlanarTransport(model, data)
             body = data.body("task_bottle")
             pos = body.xpos.copy()
             if self._initial_bottle_z is None:
@@ -101,6 +108,14 @@ class R1ProGraspingSim(MujocoSimModule):
             return {
                 **result.to_dict(),
                 **base,
+                **(
+                    {"tray": tray_state(model, data)}
+                    if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "task_tray_free") >= 0
+                    else {}
+                ),
+                "robot_obstacles": self._transport_planner.collisions(data, ignore_cargo=True)
+                if self._transport_planner
+                else [],
                 "gripper": float(data.joint("r1pro/right_gripper").qpos[0]),
                 "sim_time": float(data.time),
                 "obstacles": self._transport_planner.collisions(data)
@@ -109,16 +124,72 @@ class R1ProGraspingSim(MujocoSimModule):
             }
 
     @rpc
-    def plan_transport(self, x: float, y: float) -> list[list[float]]:
+    def plan_transport(self, x: float, y: float, yaw: float | None = None) -> list[list[float]]:
         """Plan a local collision-free planar path after ACT has loaded the tray."""
         engine = self._engine
         if engine is None or self.config.dof <= 20:
             raise RuntimeError("This scene has no movable planar base")
         with engine._lock:
             planner = PlanarTransport(engine.model, engine.data)
-        path = planner.plan((x, y))
+        path = planner.plan_delivery([x, y, yaw]) if yaw is not None else planner.plan((x, y))
         self._transport_planner = planner
         return path
+
+    @rpc
+    def simulation_snapshot(self) -> dict[str, Any]:
+        """Read complete simulation state for replaying evaluation evidence."""
+        engine = self._engine
+        if engine is None:
+            raise RuntimeError("Simulation has not started")
+        with engine._lock:
+            return {
+                "qpos": engine.data.qpos.tolist(),
+                "qvel": engine.data.qvel.tolist(),
+                "ctrl": engine.data.ctrl.tolist(),
+                "sim_time": float(engine.data.time),
+                "actuator_biasprm": engine.model.actuator_biasprm.tolist(),
+            }
+
+    @rpc
+    def prepare_tray_holding(self) -> None:
+        """Apply loaded-torso damping and pause policy RGB after rollout stops."""
+        engine = self._engine
+        if engine is None:
+            raise RuntimeError("Simulation has not started")
+        with engine._lock:
+            configure_tray_holding(engine.model)
+        engine.set_camera_streaming_enabled(False)
+
+    @rpc
+    def tray_destination(self) -> dict[str, Any]:
+        """Resolve the actual tabletop beside the laptop from house geometry."""
+        engine = self._engine
+        if engine is None:
+            raise RuntimeError("Simulation has not started")
+        with engine._lock:
+            return laptop_destination(engine.model, engine.data).to_dict()
+
+    @rpc
+    def plan_tray_motion(
+        self, phase: str, target: list[float] | None = None
+    ) -> list[dict[str, Any]]:
+        """Compute bimanual waypoints in a snapshot; execution belongs to the coordinator."""
+        engine = self._engine
+        if engine is None:
+            raise RuntimeError("Simulation has not started")
+        with engine._lock:
+            snapshot = mujoco.MjData(engine.model)
+            snapshot.qpos[:] = engine.data.qpos
+            snapshot.ctrl[:] = engine.data.ctrl
+            mujoco.mj_forward(engine.model, snapshot)
+        motion = TrayMotion(engine.model, snapshot)
+        if phase == "pickup":
+            points = motion.pickup(snapshot)
+        elif phase == "place" and target is not None and len(target) == 3:
+            points = motion.placement(snapshot, target)
+        else:
+            raise ValueError("Expected pickup or place with a three-dimensional target")
+        return [asdict(point) for point in points]
 
 
 def build_r1pro_pick_place(
@@ -138,6 +209,7 @@ def build_r1pro_pick_place(
         mobile = (
             mujoco.mj_name2id(task.model, mujoco.mjtObj.mjOBJ_JOINT, VIRTUAL_BASE_JOINTS[0]) >= 0
         )
+        free_tray = mujoco.mj_name2id(task.model, mujoco.mjtObj.mjOBJ_JOINT, "task_tray_free") >= 0
         joints = (*R1PRO_PICK_PLACE_JOINTS, *(VIRTUAL_BASE_JOINTS if mobile else ()))
         home = task.home.tolist() + ([0.0] * 3 if mobile else [])
         ranges = [task.model.joint(name).range.tolist() for name in joints]
@@ -163,6 +235,10 @@ def build_r1pro_pick_place(
             headless=headless,
             viewer_lookat=(0.0, -0.4, 0.85),
             viewer_distance=3.0,
+            viewer_track_body="base_link" if free_tray else None,
+            position_target_velocity_limits=(
+                dict(zip(VIRTUAL_BASE_JOINTS, [0.1, 0.1, 0.15], strict=True)) if free_tray else {}
+            ),
             camera_name="head",
             width=160,
             height=160,
@@ -194,6 +270,13 @@ def build_r1pro_pick_place(
                     ]
                     if mobile
                     else []
+                ),
+                TaskConfig(
+                    name="tray_manipulation",
+                    type="trajectory",
+                    joint_names=list(R1PRO_PICK_PLACE_JOINTS),
+                    priority=30,
+                    params={"start_position_tolerance": 0.05},
                 ),
                 TaskConfig(
                     name=POLICY_ROLLOUT_TASK_NAME,

@@ -5,6 +5,135 @@ Branch: `feat/r1pro-act-sim`
 Worktree: `/home/mustafa/dimos-wt/r1pro-act-sim`
 Base: `hackmit/t7-resume` at `0b816edf49`; initial diagnostic commit `eb2efd8d03`.
 
+## Active extension: physically carried tray (2026-09-10)
+
+The user successfully replayed `policy-house`, then requested a supported tray,
+two-handed pickup after ACT loads the bottle, and delivery onto the actual house
+table beside the laptop. The previous mobile tray is a fixed child of `base_link`;
+that is a shortcut, not a two-handed physical grasp. Preserve the old working ACT
+checkpoint and baseline while implementing the new free-body scene.
+
+Implemented: `tray_sim.py` adds a free tray, rectangular handles and friction
+refinement (`noslip_iterations=20`); no welds/attachments or actual object-pose
+writes after reset. `tray_motion.py` plans bimanual waypoints. `tray_task.py`
+scores actual four-pad forces, support contacts, tilt and release, and derives
+the laptop tabletop from a downward ray. `tray_delivery.py` orchestrates the
+new coordinator `tray_manipulation` task and `base_transport` after ACT stops.
+Native launcher option: `--deliver-to-laptop` (requires house package).
+
+Physical evidence so far:
+- `tray-dev/probe-5`: successful contact-only lift, bottle contained.
+- `jobs/tray-checks/physics.log`: nine passing new/existing physics tests,
+  including physical carrying and a release test proving the tray falls when
+  both hands open away from the table.
+- `tray-dev/house-3`: successful physical carry through the narrow kitchen exit
+  to the laptop desk, all four pad contacts and bottle containment retained.
+  Turns near the workbench, then travels with yaw -pi/2. Placement reach failed.
+- `tray-dev/house-8`: restored that arrival for a placement experiment; successful
+  release onto the actual tabletop, final tray approx (-1.9877,-2.9463,.768),
+  bottle contained and settled. This is NOT yet one complete fresh native run.
+- `tray-dev/house-1..7`: retained failed geometry/reach/contact experiments;
+  do not count them as successful complete deliveries.
+
+Current destination is the clear front-left part of the actual laptop table:
+geom `43ae5bbfa16a74dbc82d29041846e0b92ccafabc-articulated-001_collision_000`.
+Target derives from its bounds (left edge +.20m, front edge -.18m, top .768m),
+base approaches from the north with yaw -pi/2 and .48m reach. Earlier side
+approaches hit furniture; overextending the arms/torso was unreliable.
+Placement approach clearance is +.07m. The arm planner now chooses nearby IK
+solutions and checks interpolated arm paths against environment geometry before
+execution. A blocked-path regression proves rejection preserves actual state.
+
+Selected assumption: ACT handles the bottle; coordinated trajectories handle
+the tray. No learned bimanual policy has been trained. An optional user question
+about also training the tray task remains unanswered.
+The old `policy-house` scored only 2/3 on the changed tray scene (5000 failed,
+5001/5002 passed). It is preserved. The detached pipeline completed with exit 0:
+`jobs/tray-finetune/run.sh` + `job.log` + `pid` + `exit-code`.
+Thirty successful new demonstrations (7000–7029) are in `raw-free-tray-30`;
+`dataset-free-tray-30` and `train-free-tray-1000` hold data/optimizer state.
+`policy-free-tray` is the separate new deployment, 30-action chunks.
+`eval-free-tray-1000/result.json`: **10/10** physical bottle successes,
+seeds 5000–5009. Training and evaluation are no longer running.
+
+Native integration evidence is under `jobs/tray-native-N/` and `native-tray-N/`:
+1. Type-only ModuleProxy import failed before sim creation; fixed with TYPE_CHECKING.
+2. Old policy seed 5001 hit 351ms camera skew while fine-tuning was starting;
+   no overlap/orphan was present. Camera tolerance was not relaxed.
+3. New ACT succeeded (8 chunks), then contact monitoring caught a wide left-arm
+   approach hitting furniture. Choosing nearby IK solutions fixed that path.
+4. ACT, lift and full carry succeeded, but settling timed out at the desk due
+   to torso oscillation. The grasp and bottle containment remained intact.
+5. Added loaded-torso damping (velocity coefficient 80 instead of 20 after ACT)
+   and paused unused sensor-camera rendering; the full viewer remains active.
+   This exposed a phase handoff that briefly removed grip preload.
+6. Handoffs now preserve previous commanded positions (especially .009m finger
+   commands while measured openings are about .012m). Unit regression passes.
+   Lift was steady (tray speed norm .000408, all four loaded pads), but 5cm A*
+   cells missed a narrow valid passage. A planning-only reproduction from its
+   commands found a collision-free route with a 2.5cm grid.
+7. The finer grid found the route, but native-tray-7 lost its bottle after a
+   wall-time trajectory advanced ~12 seconds ahead of lagging physics. Measured
+   base speed jumped from ~.05 to 1.8 m/s. Do not loosen containment checks.
+8. Added opt-in per-joint position-target slew limits per physics timestep in
+   MujocoEngine; free-tray base limits are .1 m/s XY and .15 rad/s yaw. The
+   delivery runner now executes smooth segments individually and waits for
+   measured settling before the next segment. A physical-time jump regression
+   and 20 other shared simulation tests pass; scoped 10-file mypy passes.
+   native-tray-8 stalled at the second policy RPC and failed cleanly after the
+   stop timeout. native-tray-9 subsequently completed all 41 stages with
+   success=true and exit 0. ACT loaded the bottle; four loaded finger pads
+   remained in contact throughout transport; max base XY speed .09914 m/s,
+   max carrying tilt .05099 rad. Tray released onto the actual desktop at
+   (-1.987915,-2.957273,.767992), all hand contacts gone, velocity norm 1.9e-6,
+   bottle contained/settled, robot obstacles empty. Full result includes final
+   snapshot. native-tray-10 also completed with success=true and exit 0 on
+   seed 5001: eight ACT chunks, all four pads held throughout transport, no
+   obstacle contacts, peak XY speed .08581 m/s, peak tilt .05005 rad. Final
+   tray (-1.987898,-2.957170,.767992), supported/released/settled, bottle inside.
+   Native tests use 224.0.0.224:19468, seed 5000, no --stay-open.
+
+User steering: a nearby kitchen counter or stool is an acceptable destination
+instead of the laptop desk if the passage is difficult. Counter top is .904m
+(27e2... kitchen island); two adjacent stools have seats near .49m. Temporary
+/tmp/r1_counter_* probes are checking reach. The initial vertical wrist pose
+cannot reach counter height; pitch -pi/2 can, but transition must preserve
+physical grip. The loaded wrist rotation retained both hands after preserving
+preload, but tilted the tray beyond .25 rad; rejected without relaxing criteria.
+No counter/stool option is shipped. The request was conditional on the passage
+being too narrow; the original laptop route now succeeds after fixing control
+timing, so fallback is unnecessary. Communicated this result and retained the
+original destination. No production wrist/torso experiments were applied.
+
+`simulation_snapshot()` now records read-only qpos/qvel/ctrl and actuator damping
+at pickup, arrival, and final placement, for reproducible diagnostics/rendering.
+Actual simulation object poses are never overwritten by the delivery runner.
+Native viewer tracking is optional `viewer_track_body` on the shared engine and
+module. `set_camera_streaming_enabled()` pauses only offscreen policy sensors;
+physics and the native viewer continue, and sensor rendering can resume.
+
+Checks: `jobs/tray-checks-2` has 10 passing contact/path tests and eight-file
+scoped mypy success. `jobs/tray-final-checks` had 17 passes plus a test typo in
+the new camera pause test; corrected public `read_camera()` call now passes all
+four timing/camera-pause tests (`timing-final.log`). Ten-file scoped mypy passes.
+Final `jobs/tray-release-checks`: 32 physics/shared simulation tests pass,
+including phase preload and slew/reset checks; 10-file scoped mypy passes.
+`jobs/tray-evidence`: six CI-mode registry tests and isolated evaluator mypy
+also pass. Native runs 9 and 10 exited with all workers shut down. Saved
+read-only snapshots render the actual arrival/final state. Rendering exposed
+that the package's laptop meshes default to hidden group 3; loaded-tray setup
+now shows them in group 2 after ACT stops. No geometry/contacts/poses changed.
+Images are in native-tray-9/delivery-{arrival,final}.png. All training and
+validation jobs finished; no R1Pro demo is left running. Implementation and
+validation are complete; the source commit includes this handoff and run guide.
+
+All long tuning and validation jobs are detached with saved logs/PIDs. Preserve
+OpenYAM PID 3599494 and never run global dimos stop. Do not add `.venv`, recordings
+or MUJOCO_LOG.TXT. All source remains in the isolated R1Pro worktree.
+The main checkout is `cc/feat/unbounded-planar-base`; its R1Pro planar preview uses
+a mock adapter. This ACT worktree uses its own MuJoCo XY/yaw stage with matching
+joint names, not that preview/planar-model implementation. No merge performed.
+
 ## User replay failure and launcher fix (2026-09-10)
 
 The user saw the assistant's visual run succeed, then copied the README command

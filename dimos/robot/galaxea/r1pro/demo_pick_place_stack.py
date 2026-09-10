@@ -39,6 +39,8 @@ from dimos.robot.galaxea.r1pro.grasping_sim import (
     prepare_grasping_scene,
 )
 from dimos.robot.galaxea.r1pro.sim_session import DemoSessionInUseError, reserve_demo_session
+from dimos.robot.galaxea.r1pro.tray_delivery import run_tray_delivery
+from dimos.robot.galaxea.r1pro.tray_sim import prepare_tray_delivery_scene
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -48,10 +50,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
 def _run(args: argparse.Namespace) -> dict[str, Any]:
     args.output.mkdir(parents=True, exist_ok=True)
-    scene = prepare_grasping_scene(
-        args.output / "scene.xml",
-        scene_package=args.scene_package,
-        mobile=args.mobile,
+    scene = (
+        prepare_tray_delivery_scene(args.output / "scene.xml", scene_package=args.scene_package)
+        if args.deliver_to_laptop
+        else prepare_grasping_scene(
+            args.output / "scene.xml",
+            scene_package=args.scene_package,
+            mobile=args.mobile,
+        )
     )
     # Episode randomization belongs to scene initialization, before physics starts.
     root = ET.parse(scene)
@@ -118,6 +124,12 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         report["final"] = sim.task_state()
         report["history"] = history
         report["manipulation_success"] = report["success"]
+        if report["success"] and args.deliver_to_laptop:
+            report["success"] = False
+            report["delivery"] = {}
+            run_tray_delivery(coordinator.get_instance(ControlCoordinator), sim, report["delivery"])
+            report["success"] = report["delivery"]["success"]
+            report["final"] = sim.task_state()
         if report["success"] and args.transport_x is not None:
             report["success"] = False
             control = coordinator.get_instance(ControlCoordinator)
@@ -180,7 +192,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
                 {
                     key: value
                     for key, value in report.items()
-                    if key not in ("history", "transport")
+                    if key not in ("history", "transport", "delivery")
                 },
                 indent=2,
             ),
@@ -217,9 +229,24 @@ def main() -> None:
     parser.add_argument("--stay-open", action="store_true")
     parser.add_argument("--scene-package", type=Path)
     parser.add_argument("--mobile", action="store_true")
+    parser.add_argument(
+        "--deliver-to-laptop",
+        action="store_true",
+        help="ACT loads a free tray; both hands carry it to the house laptop table",
+    )
     parser.add_argument("--transport-x", type=float)
     parser.add_argument("--transport-y", type=float)
     args = parser.parse_args()
+    if args.deliver_to_laptop:
+        if (
+            args.scene_package is None
+            or args.transport_x is not None
+            or args.transport_y is not None
+        ):
+            parser.error(
+                "--deliver-to-laptop requires --scene-package and chooses its own destination"
+            )
+        args.mobile = True
     if not 0 < args.seconds <= 120:
         parser.error("Duration must be between 0 and 120 seconds")
     if (args.transport_x is None) != (args.transport_y is None):

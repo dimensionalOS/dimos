@@ -32,6 +32,7 @@ import numpy as np
 from dimos.robot.galaxea.r1pro.grasping_sim import prepare_grasping_scene
 from dimos.robot.galaxea.r1pro.grasping_task import GraspingTask
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_FPS, R1PRO_PICK_PLACE_JOINTS
+from dimos.robot.galaxea.r1pro.tray_sim import prepare_tray_delivery_scene
 
 
 def collect(
@@ -41,6 +42,7 @@ def collect(
     jitter: float,
     scene_package: Path | None = None,
     mobile: bool = False,
+    free_tray: bool = False,
 ) -> None:
     output.mkdir(parents=True, exist_ok=True)
     manifest_path = output / "manifest.json"
@@ -49,7 +51,8 @@ def collect(
         "joints": list(R1PRO_PICK_PLACE_JOINTS),
         "jitter_m": jitter,
         "scene_package": str(scene_package.resolve()) if scene_package else None,
-        "mobile": mobile,
+        "mobile": mobile or free_tray,
+        "free_tray": free_tray,
         "episodes": [],
         "rejected": [],
     }
@@ -58,9 +61,17 @@ def collect(
         for key in ("fps", "joints", "jitter_m", "scene_package", "mobile"):
             if previous.get(key) != manifest[key]:
                 raise ValueError(f"Cannot resume a collection with different {key}")
+        if previous.get("free_tray", False) != free_tray:
+            raise ValueError("Cannot resume collection with a different tray model")
         manifest = previous
     completed = {entry["seed"] for entry in manifest["episodes"] + manifest["rejected"]}
-    scene = prepare_grasping_scene(output / "scene.xml", scene_package=scene_package, mobile=mobile)
+    scene = (
+        prepare_tray_delivery_scene(output / "scene.xml", scene_package=scene_package)
+        if free_tray
+        else prepare_grasping_scene(
+            output / "scene.xml", scene_package=scene_package, mobile=mobile
+        )
+    )
     with GraspingTask(scene) as task:
         seed = start_seed
         while len(manifest["episodes"]) < episodes:
@@ -113,11 +124,18 @@ def main() -> None:
     parser.add_argument("--jitter", type=float, default=0.012)
     parser.add_argument("--scene-package", type=Path)
     parser.add_argument("--mobile", action="store_true")
+    parser.add_argument("--free-tray", action="store_true")
     args = parser.parse_args()
     if args.episodes < 1 or not 0 <= args.jitter <= 0.02:
         parser.error("Use positive episodes and jitter between 0 and 0.02 metres")
     collect(
-        args.output, args.episodes, args.start_seed, args.jitter, args.scene_package, args.mobile
+        args.output,
+        args.episodes,
+        args.start_seed,
+        args.jitter,
+        args.scene_package,
+        args.mobile,
+        args.free_tray,
     )
 
 

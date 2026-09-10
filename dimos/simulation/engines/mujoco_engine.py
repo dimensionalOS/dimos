@@ -221,6 +221,8 @@ class MujocoEngine(SimulationEngine):
         spawn_z: float | None = None,
         spawn_yaw: float | None = None,
         reset_joint_positions: list[float] | None = None,
+        position_target_velocity_limits: dict[str, float] | None = None,
+        viewer_track_body: str | None = None,
         viewer_lookat: tuple[float, float, float] | None = None,
         viewer_distance: float | None = None,
     ) -> None:
@@ -231,6 +233,8 @@ class MujocoEngine(SimulationEngine):
         self._spawn_z = spawn_z
         self._spawn_yaw = spawn_yaw
         self._reset_joint_positions = reset_joint_positions
+        self._camera_streaming_enabled = True
+        self._viewer_track_body = viewer_track_body
         self._viewer_lookat = viewer_lookat
         self._viewer_distance = viewer_distance
 
@@ -266,6 +270,10 @@ class MujocoEngine(SimulationEngine):
             self._joint_mappings = list(self._robot_binding.joint_mappings)
         self._joint_names = [mapping.name for mapping in self._joint_mappings]
         self._num_joints = len(self._joint_names)
+        self._position_target_velocity_limits = dict(position_target_velocity_limits or {})
+        for name, limit in self._position_target_velocity_limits.items():
+            if name not in self._joint_names or not math.isfinite(limit) or limit <= 0:
+                raise ValueError(f"Invalid position target velocity limit: {name}={limit}")
         self._root_qpos_adr = self._robot_binding.root_qpos_adr if self._robot_binding else None
         self._root_qvel_adr = self._robot_binding.root_qvel_adr if self._robot_binding else None
         if self._root_qpos_adr is None:
@@ -294,6 +302,11 @@ class MujocoEngine(SimulationEngine):
             current_pos = self._current_position(mapping)
             self._joint_position_targets[i] = current_pos
             self._joint_positions[i] = current_pos
+            if (
+                mapping.actuator_id is not None
+                and mapping.name in self._position_target_velocity_limits
+            ):
+                self._data.ctrl[mapping.actuator_id] = current_pos
 
         # Camera rendering state (renderers created in sim thread)
         self._camera_configs = cameras or []
@@ -354,7 +367,16 @@ class MujocoEngine(SimulationEngine):
                 if mapping.actuator_id is None:
                     continue
                 if i < len(targets):
-                    self._data.ctrl[mapping.actuator_id] = targets[i]
+                    target = targets[i]
+                    limit = self._position_target_velocity_limits.get(mapping.name)
+                    if self._command_mode == "position" and limit is not None:
+                        # The coordinator follows wall time, which can advance
+                        # while a viewer stalls physics. Bound motor setpoint
+                        # motion per physical step, including after such pauses.
+                        previous = float(self._data.ctrl[mapping.actuator_id])
+                        step = limit * float(self._model.opt.timestep)
+                        target = previous + max(-step, min(step, target - previous))
+                    self._data.ctrl[mapping.actuator_id] = target
 
     def _update_joint_state(self) -> None:
         with self._lock:
@@ -503,8 +525,15 @@ class MujocoEngine(SimulationEngine):
             )
         return lidar_states
 
+    def set_camera_streaming_enabled(self, enabled: bool) -> None:
+        """Pause sensor RGB/depth rendering while keeping physics and the viewer live."""
+        with self._lock:
+            self._camera_streaming_enabled = enabled
+
     def _render_cameras(self, now: float, cam_renderers: dict[str, _CameraRendererState]) -> None:
         """Render all due cameras and store frames. Must be called from sim thread."""
+        if not self._camera_streaming_enabled:
+            return
         for state in cam_renderers.values():
             if now - state.last_render_time < state.interval:
                 continue
@@ -619,6 +648,11 @@ class MujocoEngine(SimulationEngine):
         self._apply_reset_joint_positions_unlocked()
         for i, mapping in enumerate(self._joint_mappings):
             self._joint_position_targets[i] = self._current_position(mapping)
+            if (
+                mapping.actuator_id is not None
+                and mapping.name in self._position_target_velocity_limits
+            ):
+                self._data.ctrl[mapping.actuator_id] = self._joint_position_targets[i]
         self._command_mode = "position"
 
         root_pose = self.get_root_pose_unlocked()
@@ -731,6 +765,9 @@ class MujocoEngine(SimulationEngine):
                 with viewer.launch_passive(
                     self._model, self._data, show_left_ui=False, show_right_ui=False
                 ) as m_viewer:
+                    if self._viewer_track_body is not None:
+                        m_viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+                        m_viewer.cam.trackbodyid = self._model.body(self._viewer_track_body).id
                     if self._viewer_lookat is not None:
                         m_viewer.cam.lookat[:] = self._viewer_lookat
                     if self._viewer_distance is not None:

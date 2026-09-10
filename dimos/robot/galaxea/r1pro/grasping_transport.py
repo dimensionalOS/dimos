@@ -50,6 +50,15 @@ class PlanarTransport:
             if int(model.body_parentid[body]) in self.robot_bodies:
                 self.robot_bodies.add(body)
         self.bottle_id = model.body("task_bottle").id
+        self.carried_qpos: list[tuple[int, NDArray[np.float64]]] = []
+        if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "task_tray_free") >= 0:
+            for name, body_name in (
+                ("task_tray_free", "task_bin"),
+                ("task_bottle_free", "task_bottle"),
+            ):
+                address = int(model.joint(name).qposadr[0])
+                self.carried_qpos.append((address, data.qpos[address : address + 7].copy()))
+                self.robot_bodies.add(model.body(body_name).id)
         # Inflate only the planning copy. The tray intentionally parks just
         # above the worktop; its actual geometry is checked without inflation.
         tray_id = model.body("task_bin").id
@@ -58,33 +67,88 @@ class PlanarTransport:
                 self.model.geom_margin[gid] = max(float(model.geom_margin[gid]), 0.02)
         self.start = data.qpos[self.qids].copy()
 
-    def collisions(self, data: mujoco.MjData) -> list[str]:
+    def collisions(self, data: mujoco.MjData, *, ignore_cargo: bool = False) -> list[str]:
         """Report robot/environment penetration, excluding floor support and cargo."""
         obstacles = set()
         for contact in data.contact:
             if contact.dist > (0.02 if data is self.probe else 0.0) or contact.pos[2] < 0.06:
                 continue
             bodies = [int(self.model.geom_bodyid[geom]) for geom in contact.geom]
-            if self.bottle_id in bodies:
+            if self.bottle_id in bodies and not self.carried_qpos:
+                continue
+            if ignore_cargo and (
+                self.bottle_id in bodies or self.model.body("task_bin").id in bodies
+            ):
                 continue
             if (bodies[0] in self.robot_bodies) != (bodies[1] in self.robot_bodies):
                 other = bodies[1] if bodies[0] in self.robot_bodies else bodies[0]
                 obstacles.add(self.model.body(other).name or f"body:{other}")
         return sorted(obstacles)
 
-    def clear_segment(self, first: NDArray[Any], second: NDArray[Any]) -> bool:
-        count = max(1, math.ceil(float(np.linalg.norm(second - first)) / 0.05))
+    def clear_pose_segment(self, first: NDArray[Any], second: NDArray[Any]) -> bool:
+        """Check translations and turns, including the full held-cargo envelope."""
+        count = max(
+            1,
+            math.ceil(float(np.linalg.norm(second[:2] - first[:2])) / 0.05),
+            math.ceil(abs(float(second[2] - first[2])) / 0.08),
+        )
         for fraction in np.linspace(0, 1, count + 1):
-            self.probe.qpos[self.qids[:2]] = first + fraction * (second - first)
+            pose = first + fraction * (second - first)
+            self.probe.qpos[self.qids] = pose
+            angle = float(pose[2] - self.start[2])
+            rotation = np.array(
+                [[math.cos(angle), -math.sin(angle)], [math.sin(angle), math.cos(angle)]]
+            )
+            quaternion = np.array([math.cos(angle / 2), 0, 0, math.sin(angle / 2)])
+            for address, initial in self.carried_qpos:
+                self.probe.qpos[address : address + 3] = initial[:3]
+                self.probe.qpos[address : address + 2] = pose[:2] + rotation @ (
+                    initial[:2] - self.start[:2]
+                )
+                mujoco.mju_mulQuat(
+                    self.probe.qpos[address + 3 : address + 7], quaternion, initial[3:7]
+                )
             mujoco.mj_forward(self.model, self.probe)
             if self.collisions(self.probe):
                 return False
         return True
 
-    def plan(self, goal: tuple[float, float], *, resolution: float = 0.05) -> list[list[float]]:
+    def clear_segment(self, first: NDArray[Any], second: NDArray[Any]) -> bool:
+        return self.clear_pose_segment(np.r_[first, self.start[2]], np.r_[second, self.start[2]])
+
+    def plan_delivery(self, goal: list[float]) -> list[list[float]]:
+        """Translate through the room, turn clear of the desk, then approach it."""
+        target = np.array(goal, dtype=np.float64)
+        if target.shape != (3,) or not np.isfinite(target).all():
+            raise ValueError("Delivery destination must be a finite planar pose")
+        if not self.clear_pose_segment(target, target):
+            raise RuntimeError("Tray delivery parking pose is obstructed")
+        # The kitchen exit is narrow: turn near the workbench, then plan
+        # translation with the carrying posture aligned down the corridor.
+        for dx, dy in ((-0.2, 0.0), (-0.1, 0.0), (-0.3, 0.0), (-0.2, -0.1), (0.0, 0.0)):
+            departure = self.start + np.array([dx, dy, 0.0])
+            turned = np.r_[departure[:2], target[2]]
+            if not self.clear_pose_segment(self.start, departure) or not self.clear_pose_segment(
+                departure, turned
+            ):
+                continue
+            aligned = PlanarTransport(self.model, self.probe)
+            try:
+                path = aligned.plan(tuple(target[:2]), resolution=0.025, max_distance=6.0)
+            except RuntimeError:
+                continue
+            return [self.start.tolist(), departure.tolist(), *path]
+        raise RuntimeError("No collision-free departure turn and route to the laptop table")
+
+    def plan(
+        self, goal: tuple[float, float], *, resolution: float = 0.05, max_distance: float = 3.0
+    ) -> list[list[float]]:
         """Use bounded A* over translation with fixed yaw and a carried tray."""
-        if not np.isfinite(goal).all() or np.linalg.norm(np.asarray(goal) - self.start[:2]) > 3:
-            raise ValueError("This local transport demo accepts finite goals within three metres")
+        if (
+            not np.isfinite(goal).all()
+            or np.linalg.norm(np.asarray(goal) - self.start[:2]) > max_distance
+        ):
+            raise ValueError(f"Transport requires finite goals within {max_distance:g} metres")
         exact_goal = np.asarray(goal)
         if not self.clear_segment(exact_goal, exact_goal):
             raise RuntimeError("Transport goal is obstructed")
@@ -96,14 +160,16 @@ class PlanarTransport:
         cost = {start: 0.0}
         blocked: dict[tuple[tuple[int, int], tuple[int, int]], bool] = {}
         found = False
-        while frontier and len(cost) < 1600:
+        while frontier and len(cost) < 12000:
             _, current = heapq.heappop(frontier)
             if current == target:
                 found = True
                 break
             for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 neighbor = (current[0] + dx, current[1] + dy)
-                if any(abs(index) > math.ceil(3.5 / resolution) for index in neighbor):
+                if any(
+                    abs(index) > math.ceil((max_distance + 0.5) / resolution) for index in neighbor
+                ):
                     continue
                 new_cost = cost[current] + 1
                 if new_cost >= cost.get(neighbor, math.inf):
@@ -147,7 +213,11 @@ class PlanarTransport:
         """Smooth position targets with a bounded peak translational speed."""
         for first, second in pairwise(path):
             start, goal = np.asarray(first), np.asarray(second)
-            seconds = max(0.5, 1.5 * float(np.linalg.norm(goal[:2] - start[:2])) / speed)
+            seconds = max(
+                0.5,
+                1.5 * float(np.linalg.norm(goal[:2] - start[:2])) / speed,
+                1.5 * abs(float(goal[2] - start[2])) / 0.15,
+            )
             frames = math.ceil(seconds * fps)
             for frame in range(frames):
                 t = (frame + 1) / frames
