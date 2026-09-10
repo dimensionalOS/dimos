@@ -225,17 +225,17 @@ def add_scene_package_entities_to_spec(
 
         rgba = _entity_rgba(descriptor)
         friction = _entity_friction(entity)
-        geom_kwargs: dict[str, Any] = dict(
-            name=f"{scene_package_entity_body_name(entity_id)}:geom",
-            rgba=list(rgba),
-            friction=list(friction),
-            group=_ENTITY_GEOM_GROUP,
+        geom_kwargs: dict[str, Any] = {
+            "name": f"{scene_package_entity_body_name(entity_id)}:geom",
+            "rgba": list(rgba),
+            "friction": list(friction),
+            "group": _ENTITY_GEOM_GROUP,
             # priority=1: contact friction comes from the entity geom alone.
             # MuJoCo's default combine rule (element-wise max across the
             # pair) would otherwise let the μ=1.0 floor override every
             # entity's friction.
-            priority=1,
-        )
+            "priority": 1,
+        }
         if dynamic:
             geom_kwargs["mass"] = mass
 

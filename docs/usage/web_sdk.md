@@ -117,11 +117,11 @@ So far the page could only subscribe to the bridge's built-in channels (`odom`, 
 
 ```python skip
 Channel(
-    stream,                  # stream name, matched by autoconnect
-    message_type,            # the stream's Python type
-    encoding="json.v1",      # wire encoding (see codecs below)
-    delivery="reliable",     # or "latest"
-    max_hz=10.0,             # encode-rate cap
+    stream,  # stream name, matched by autoconnect
+    message_type,  # the stream's Python type
+    encoding="json.v1",  # wire encoding (see codecs below)
+    delivery="reliable",  # or "latest"
+    max_hz=10.0,  # encode-rate cap
 )
 ```
 
@@ -289,9 +289,11 @@ Decoder notes:
 A `dir="tx"` channel with `publish="shared"` is a browser input: any viewer may publish, the bridge decodes the JSON value with the matching `@web_decoder` and publishes it on a typed `Out` port, and your modules consume it like any other stream.
 
 ```python skip
-cockpit(channels=[
-    Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
-])
+cockpit(
+    channels=[
+        Channel("human_input", str, dir="tx", encoding="text.json.v1", publish="shared"),
+    ]
+)
 ```
 
 ```js

@@ -56,7 +56,7 @@ class PinkIK(_PinkSolverCore):
     def __init__(
         self,
         config: PinkKinematicsConfig | None = None,
-        **overrides: bool | float | int | str,
+        **overrides: bool | float | str,
     ) -> None:
         super().__init__(config, **overrides)
         self._model_context: _PinkRobotContext | None = None

@@ -133,16 +133,16 @@ class MultipartBackend:
             else:
                 artifact = path
             size = artifact.stat().st_size
-            spec = dict(
-                filename=artifact.name,
-                size=size,
-                sha256=_sha256(artifact),
-                kind=kind,
-                content_encoding=self.codec_id if compress else None,
-                robot_id=robot_id,
-                manifest=manifest,
-                part_size=part_size,
-            )
+            spec = {
+                "filename": artifact.name,
+                "size": size,
+                "sha256": _sha256(artifact),
+                "kind": kind,
+                "content_encoding": self.codec_id if compress else None,
+                "robot_id": robot_id,
+                "manifest": manifest,
+                "part_size": part_size,
+            }
             create = self.api.create(**spec)
             if create["state"] == "complete":
                 return {**create, "skipped": True}

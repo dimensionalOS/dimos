@@ -118,10 +118,12 @@ def test_start_drains_subprocess_output_larger_than_a_pipe(
             [
                 sys.executable,
                 "-c",
-                "import sys; "
-                "sys.stderr.buffer.write(b'x' * 4_000_000); "
-                "sys.stderr.flush(); "
-                "sys.stdin.buffer.read(1)",
+                (
+                    "import sys; "
+                    "sys.stderr.buffer.write(b'x' * 4_000_000); "
+                    "sys.stderr.flush(); "
+                    "sys.stdin.buffer.read(1)"
+                ),
             ],
             stdin=subprocess.PIPE,
             **kwargs,

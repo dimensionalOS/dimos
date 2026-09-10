@@ -25,10 +25,10 @@ class Codec(Protocol[T]):
 ```python
 from dimos.memory.codecs import codec_for
 
-codec_for(Image)        # → JpegCodec(quality=50)
-codec_for(SomeLcmMsg)   # → LcmCodec(SomeLcmMsg)   (if has lcm_encode/lcm_decode)
-codec_for(dict)         # → PickleCodec()            (fallback)
-codec_for(None)         # → PickleCodec()
+codec_for(Image)  # → JpegCodec(quality=50)
+codec_for(SomeLcmMsg)  # → LcmCodec(SomeLcmMsg)   (if has lcm_encode/lcm_decode)
+codec_for(dict)  # → PickleCodec()            (fallback)
+codec_for(None)  # → PickleCodec()
 ```
 
 ## Writing a new codec
@@ -37,11 +37,9 @@ codec_for(None)         # → PickleCodec()
 
 ```python
 class MyCodec:
-    def encode(self, value: MyType) -> bytes:
-        ...
+    def encode(self, value: MyType) -> bytes: ...
 
-    def decode(self, data: bytes) -> MyType:
-        ...
+    def decode(self, data: bytes) -> MyType: ...
 ```
 
 2. Add a branch in `codec_for()` in `base.py` to auto-select it for the relevant type.
@@ -50,8 +48,7 @@ class MyCodec:
 
 ```python
 @pytest.fixture(params=[..., ("mycodec", MyCodec(), sample_value)])
-def codec_case(request):
-    ...
+def codec_case(request): ...
 ```
 
 No base class needed — `Codec` is a protocol. Just implement `encode` and `decode`.

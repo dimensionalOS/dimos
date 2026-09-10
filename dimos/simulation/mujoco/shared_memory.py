@@ -79,17 +79,17 @@ class ShmSet:
 
     @classmethod
     def from_names(cls, shm_names: dict[str, str]) -> "ShmSet":
-        return cls(**{k: _unregister(SharedMemory(name=shm_names[k])) for k in _shm_sizes.keys()})
+        return cls(**{k: _unregister(SharedMemory(name=shm_names[k])) for k in _shm_sizes})
 
     @classmethod
     def from_sizes(cls) -> "ShmSet":
-        return cls(**{k: SharedMemory(create=True, size=_shm_sizes[k]) for k in _shm_sizes.keys()})
+        return cls(**{k: SharedMemory(create=True, size=_shm_sizes[k]) for k in _shm_sizes})
 
     def to_names(self) -> dict[str, str]:
-        return {k: getattr(self, k).name for k in _shm_sizes.keys()}
+        return {k: getattr(self, k).name for k in _shm_sizes}
 
     def as_list(self) -> list[SharedMemory]:
-        return [getattr(self, k) for k in _shm_sizes.keys()]
+        return [getattr(self, k) for k in _shm_sizes]
 
 
 class ShmReader:

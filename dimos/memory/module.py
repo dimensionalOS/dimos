@@ -79,7 +79,7 @@ def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
     """
 
     def _on_error(e: Exception) -> None:
-        logger.error("stream_to_port() pipeline error: %s", e, exc_info=True)
+        logger.error("stream_to_port() pipeline error: %s", e)
 
     return stream.observable().subscribe(
         on_next=lambda obs: out.publish(obs.data),

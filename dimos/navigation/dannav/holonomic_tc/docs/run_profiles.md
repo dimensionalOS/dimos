@@ -100,7 +100,7 @@ performance**.
 Example blueprint line:
 
 ```python
-DanHolonomicTC.blueprint(run_profile="walk"),
+(DanHolonomicTC.blueprint(run_profile="walk"),)
 ```
 
 Example CLI override:

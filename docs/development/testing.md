@@ -109,6 +109,7 @@ Simple example code:
 ```python
 import pytest
 
+
 class RobotArm:
     def __init__(self, device: str) -> None:
         self.device = device
@@ -127,12 +128,14 @@ class RobotArm:
     def position(self) -> tuple[float, float, float]:
         return self._position
 
+
 @pytest.fixture
 def arm():
     arm = RobotArm(device="/dev/ttyUSB0")
     arm.connect()
     yield arm
     arm.disconnect()
+
 
 def test_arm_moves_to_position(arm):
     arm.move_to(x=0.5, y=0.3, z=0.1)

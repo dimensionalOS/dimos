@@ -24,6 +24,7 @@ from typing import (
 
 import numpy as np
 from numpy.typing import NDArray
+from typing_extensions import Self
 
 T = TypeVar("T", bound="Vector")
 
@@ -118,31 +119,31 @@ class Vector:
         """Serialize the vector to a dictionary."""
         return {"type": "vector", "c": self._data.tolist()}
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: object) -> bool:
         if isinstance(other, Vector):
             return np.array_equal(self._data, other._data)
         return np.array_equal(self._data, np.array(other, dtype=float))
 
-    def __add__(self: T, other: Union["Vector", Iterable[float]]) -> T:
+    def __add__(self, other: Union["Vector", Iterable[float]]) -> Self:
         if isinstance(other, Vector):
             return self.__class__(self._data + other._data)
         return self.__class__(self._data + np.array(other, dtype=float))
 
-    def __sub__(self: T, other: Union["Vector", Iterable[float]]) -> T:
+    def __sub__(self, other: Union["Vector", Iterable[float]]) -> Self:
         if isinstance(other, Vector):
             return self.__class__(self._data - other._data)
         return self.__class__(self._data - np.array(other, dtype=float))
 
-    def __mul__(self: T, scalar: float) -> T:
+    def __mul__(self, scalar: float) -> Self:
         return self.__class__(self._data * scalar)
 
-    def __rmul__(self: T, scalar: float) -> T:
+    def __rmul__(self, scalar: float) -> Self:
         return self.__mul__(scalar)
 
-    def __truediv__(self: T, scalar: float) -> T:
+    def __truediv__(self, scalar: float) -> Self:
         return self.__class__(self._data / scalar)
 
-    def __neg__(self: T) -> T:
+    def __neg__(self) -> Self:
         return self.__class__(-self._data)
 
     def dot(self, other: Union["Vector", Iterable[float]]) -> float:
@@ -151,7 +152,7 @@ class Vector:
             return float(np.dot(self._data, other._data))
         return float(np.dot(self._data, np.array(other, dtype=float)))
 
-    def cross(self: T, other: Union["Vector", Iterable[float]]) -> T:
+    def cross(self, other: Union["Vector", Iterable[float]]) -> Self:
         """Compute cross product (3D vectors only)."""
         if self.dim != 3:
             raise ValueError("Cross product is only defined for 3D vectors")
@@ -174,14 +175,14 @@ class Vector:
         """Compute the squared length of the vector (faster than length())."""
         return float(np.sum(self._data * self._data))
 
-    def normalize(self: T) -> T:
+    def normalize(self) -> Self:
         """Return a normalized unit vector in the same direction."""
         length = self.length()
         if length < 1e-10:  # Avoid division by near-zero
             return self.__class__(np.zeros_like(self._data))
         return self.__class__(self._data / length)
 
-    def to_2d(self: T) -> T:
+    def to_2d(self) -> Self:
         """Convert a vector to a 2D vector by taking only the x and y components."""
         return self.__class__(self._data[:2])
 
@@ -217,7 +218,7 @@ class Vector:
         )
         return float(np.arccos(cos_angle))
 
-    def project(self: T, onto: Union["Vector", Iterable[float]]) -> T:
+    def project(self, onto: Union["Vector", Iterable[float]]) -> Self:
         """Project this vector onto another vector."""
         if isinstance(onto, Vector):
             onto_data = onto._data
@@ -232,31 +233,31 @@ class Vector:
         return self.__class__(scalar_projection * onto_data)
 
     @classmethod
-    def zeros(cls: type[T], dim: int) -> T:
+    def zeros(cls, dim: int) -> Self:
         """Create a zero vector of given dimension."""
         return cls(np.zeros(dim))
 
     @classmethod
-    def ones(cls: type[T], dim: int) -> T:
+    def ones(cls, dim: int) -> Self:
         """Create a vector of ones with given dimension."""
         return cls(np.ones(dim))
 
     @classmethod
-    def unit_x(cls: type[T], dim: int = 3) -> T:
+    def unit_x(cls, dim: int = 3) -> Self:
         """Create a unit vector in the x direction."""
         v = np.zeros(dim)
         v[0] = 1.0
         return cls(v)
 
     @classmethod
-    def unit_y(cls: type[T], dim: int = 3) -> T:
+    def unit_y(cls, dim: int = 3) -> Self:
         """Create a unit vector in the y direction."""
         v = np.zeros(dim)
         v[1] = 1.0
         return cls(v)
 
     @classmethod
-    def unit_z(cls: type[T], dim: int = 3) -> T:
+    def unit_z(cls, dim: int = 3) -> Self:
         """Create a unit vector in the z direction."""
         v = np.zeros(dim)
         if dim > 2:
@@ -329,9 +330,7 @@ def to_tuple(value: VectorLike) -> tuple[float, ...]:
     """
     if isinstance(value, Vector):
         return tuple(float(x) for x in value.data)
-    elif isinstance(value, np.ndarray):
-        return tuple(float(x) for x in value)
-    elif isinstance(value, tuple):
+    elif isinstance(value, (np.ndarray, tuple)):
         return tuple(float(x) for x in value)
     else:
         # Convert to list first to ensure we have an indexable sequence
@@ -350,9 +349,7 @@ def to_list(value: VectorLike) -> list[float]:
     """
     if isinstance(value, Vector):
         return [float(x) for x in value.data]
-    elif isinstance(value, np.ndarray):
-        return [float(x) for x in value]
-    elif isinstance(value, list):
+    elif isinstance(value, (np.ndarray, list)):
         return [float(x) for x in value]
     else:
         # Convert to list using indexing

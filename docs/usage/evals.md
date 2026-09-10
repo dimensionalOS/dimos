@@ -51,8 +51,11 @@ store = SqliteStore(path="/tmp/evals_intro.db")
 odom = store.stream("odom", PoseStamped)
 for i in range(20):
     odom.append(
-        PoseStamped(position=make_vector3(float(i), 2.5, 0.0),
-                    orientation=Quaternion(0, 0, 0, 1), frame_id="world"),
+        PoseStamped(
+            position=make_vector3(float(i), 2.5, 0.0),
+            orientation=Quaternion(0, 0, 0, 1),
+            frame_id="world",
+        ),
         ts=1000.0 + i,
     )
 ```
@@ -79,10 +82,10 @@ case = PassiveEval(
     id="how_far",
     inputs="How far along x did you travel, in meters?",
     expected=19.0,
-    parse=first_number,          # model text -> float
-    score=within(1.0),           # graded: 1.0 exact, linear to 0 at ±1m
+    parse=first_number,  # model text -> float
+    score=within(1.0),  # graded: 1.0 exact, linear to 0 at ±1m
     context=(lambda s: s.streams.odom,),
-    dataset="/tmp/evals_intro.db",   # a mem2 name ("go2_short") or a path
+    dataset="/tmp/evals_intro.db",  # a mem2 name ("go2_short") or a path
 )
 ```
 
