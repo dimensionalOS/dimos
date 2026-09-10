@@ -375,11 +375,12 @@ private:
     Notifier* notifier_ = nullptr;
 };
 
-// Parse the coordinator's stdin line into topics / config. Other keys the
-// coordinator sends, such as qos, are ignored.
+// Parse the coordinator's stdin line into topics / config. The whole blob is
+// kept as `launch` for the transport (zenoh reads its session and qos blocks).
 struct StdinConfig {
     std::unordered_map<std::string, std::string> topics;
     nlohmann::json config;
+    nlohmann::json launch;
 };
 
 inline StdinConfig parse_stdin_config(const std::string& line) {
@@ -397,15 +398,18 @@ inline StdinConfig parse_stdin_config(const std::string& line) {
         }
     }
     out.config = blob.contains("config") ? blob["config"] : nlohmann::json();
+    out.launch = std::move(blob);
     return out;
 }
 
-template <class M>
-void run_fallible(std::unique_ptr<Transport> transport) {
+inline StdinConfig read_stdin_config() {
     std::string line;
     std::getline(std::cin, line);
-    StdinConfig parsed = parse_stdin_config(line);
+    return parse_stdin_config(line);
+}
 
+template <class M>
+void run_fallible(std::unique_ptr<Transport> transport, StdinConfig parsed) {
     Notifier notifier;
     Builder builder(std::move(parsed.topics), &notifier);
     M module;
@@ -460,6 +464,12 @@ void run_fallible(std::unique_ptr<Transport> transport) {
         throw;
     }
     module.teardown();
+}
+
+/// Run module `M` over `transport`, reading the launch line from stdin.
+template <class M>
+void run_fallible(std::unique_ptr<Transport> transport) {
+    run_fallible<M>(std::move(transport), read_stdin_config());
 }
 
 /// Run module `M` over `transport`, reading config from stdin and blocking until

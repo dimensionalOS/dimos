@@ -28,6 +28,21 @@ if(NOT nlohmann_json_FOUND)
   FetchContent_MakeAvailable(nlohmann_json)
 endif()
 
+# zenoh-c backs ZenohTransport. Same 1.10 line the Rust native module pins;
+# nix provides it via buildInputs, CI installs the upstream deb. pkg-config
+# first: nixpkgs splits zenoh-c into dev/out and its CMake config points the
+# library at the wrong output, while its .pc is right. The deb ships only the
+# CMake config.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+  pkg_check_modules(ZENOHC QUIET IMPORTED_TARGET zenohc>=1.10)
+endif()
+if(ZENOHC_FOUND)
+  add_library(zenohc::lib ALIAS PkgConfig::ZENOHC)
+else()
+  find_package(zenohc 1.10 REQUIRED CONFIG)
+endif()
+
 # module.hpp runs the dispatch loop and publish workers on std::thread.
 find_package(Threads REQUIRED)
 
@@ -40,6 +55,7 @@ target_compile_features(dimos_native INTERFACE cxx_std_20)
 target_link_libraries(dimos_native INTERFACE
   pfr
   nlohmann_json::nlohmann_json
+  zenohc::lib
   Threads::Threads
 )
 
