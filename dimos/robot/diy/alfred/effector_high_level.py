@@ -85,7 +85,7 @@ class AlfredHighLevel(Module):
 
     async def main(self) -> AsyncGenerator[None, None]:
         # Only the running module needs the SDK; importing it at module scope would make
-        # every blueprint that composes Alfred unimportable without the control extra.
+        # every blueprint that composes Alfred unimportable without the misc extra.
         import portal
 
         # Recreated each run so a restart binds it to the new event loop.

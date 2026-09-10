@@ -11,7 +11,7 @@ the underlying planning and perception stack.
 Install the manipulation dependencies:
 
 ```bash
-uv sync --extra manipulation
+uv sync --extra manipulation --inexact
 ```
 
 This installs perception, EdgeTAM, MuJoCo, web/MCP, and agent dependencies

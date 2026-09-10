@@ -291,7 +291,7 @@ hardware use.
 Install the manipulation dependencies:
 
 ```bash
-uv sync --extra manipulation
+uv sync --extra manipulation --inexact
 ```
 
 The `manipulation` extra bundles control, planning, perception (including
@@ -305,11 +305,12 @@ are needed.
 | `planning` | Control plus RoboPlan/Drake planning and Viser visualization |
 | `manipulation` | Planning plus perception, agents, web, and simulation |
 
-For a smaller installation, use `uv sync --extra planning` or
-`uv sync --extra control`. Add `--no-default-groups` to omit contributor test
+For a smaller installation, use `uv sync --extra planning --inexact` or
+`uv sync --extra control --inexact`. Add `--no-default-groups` to omit contributor test
 dependencies. Library installations use `pip install 'dimos[manipulation]'`.
-When combining capabilities, specify all desired extras in the same sync
-command rather than relying on packages left in the environment.
+The `--inexact` flag preserves additional packages already installed in your
+environment. The bundle supplies its own dependencies without requiring `misc`.
+Embedding models and unrelated utilities remain available through `misc`.
 
 Python extras do not install native RealSense binaries, vendor SDK setup,
 system libraries, or robot/model assets. Follow the hardware-specific setup
@@ -383,7 +384,7 @@ manipulation = ManipulationModule.blueprint(
 Viser support is included in the `manipulation` extra:
 
 ```bash
-uv sync --extra manipulation
+uv sync --extra manipulation --inexact
 ```
 
 The Viser panel talks to the concrete `ManipulationOperator` bound into its

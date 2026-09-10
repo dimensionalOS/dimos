@@ -614,7 +614,7 @@ prompt_extras() {
         "Which features do you need?" \
         "AI Agents (LangChain, voice control)" "Perception (object detection, VLMs)" \
         "Visualization (Rerun 3D viewer)" "Simulation (MuJoCo)" \
-        "Web Interface (FastAPI dashboard)"
+        "Web Interface (FastAPI dashboard)" "Misc (extra ML models)"
     _features="$PROMPT_RESULT"
     while IFS= read -r line; do [[ -n "$line" ]] && feature_sel+=("$line"); done <<< "$_features"
 
@@ -624,7 +624,7 @@ prompt_extras() {
     done
     for f in "${feature_sel[@]}"; do
         case "$f" in *Agent*) extras_list+=("agents");; *Perception*) extras_list+=("perception");; *Visualization*) extras_list+=("visualization");;
-            *Simulation*) extras_list+=("sim");; *Web*) extras_list+=("web");; esac
+            *Simulation*) extras_list+=("sim");; *Web*) extras_list+=("web");; *Misc*) extras_list+=("misc");; esac
     done
 
     if [[ "$DETECTED_GPU" == "nvidia" ]] && [[ "$NO_CUDA" != "1" ]]; then

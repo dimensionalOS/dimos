@@ -80,7 +80,7 @@ case "$SYSTEM" in
 esac
 
 echo "A1Z source setup will run:"
-echo "  uv sync --locked --extra manipulation"
+echo "  uv sync --locked --extra manipulation --inexact"
 printf "  uv pip install --python %q" "$REPO_ROOT/.venv/bin/python"
 printf " %q" "${PYTHON_REQUIREMENTS[@]}"
 printf "\n"
@@ -102,7 +102,7 @@ if [[ "$ASSUME_YES" != true ]]; then
 fi
 
 cd "$REPO_ROOT"
-uv sync --locked --extra manipulation
+uv sync --locked --extra manipulation --inexact
 uv pip install --python "$REPO_ROOT/.venv/bin/python" "${PYTHON_REQUIREMENTS[@]}"
 if [[ ${#SYSTEM_COMMAND[@]} -gt 0 ]]; then
     "${SYSTEM_COMMAND[@]}"

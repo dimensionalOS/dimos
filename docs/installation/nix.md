@@ -30,7 +30,7 @@ source .venv/bin/activate
 
 # install everything (depending on your use case you might not need all extras,
 # check your respective platform guides)
-pip install "dimos[manipulation,unitree]"
+pip install "dimos[manipulation,misc,unitree]"
 ```
 
 ## Developing on dimOS
@@ -47,7 +47,7 @@ nix develop
 python3 -m venv .venv
 source .venv/bin/activate
 
-pip install -e ".[manipulation,unitree]"
+pip install -e ".[manipulation,misc,unitree]"
 
 # type check
 mypy dimos
