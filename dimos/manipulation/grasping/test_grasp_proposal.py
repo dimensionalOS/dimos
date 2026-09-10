@@ -35,6 +35,7 @@ from dimos.robot.manipulators.xarm.blueprints.simulation import (
     xarm_room_sim,
 )
 from dimos.spec.utils import spec_annotation_compliance
+from dimos.utils.data import LfsPath
 
 
 @pytest.fixture
@@ -154,9 +155,19 @@ def test_invalid_or_incomplete_backend_config_fails_before_start(backend):
 
 @pytest.mark.parametrize("backend", ["heuristic", "graspgenx"])
 @pytest.mark.parametrize("blueprint", [xarm_perception, xarm_perception_sim, xarm_room_sim])
-def test_xarm_blueprints_select_one_configurable_provider(blueprint, backend):
+def test_xarm_blueprints_select_one_configurable_provider(blueprint, backend, mocker, tmp_path):
+    # Config parsing needs paths, not downloaded robot models or simulator assets.
+    # Patch resolution rather than get_data so shared LfsPath caches stay untouched.
+    mocker.patch.object(
+        LfsPath,
+        "_ensure_downloaded",
+        autospec=True,
+        side_effect=lambda path: tmp_path / path._lfs_filename,
+    )
     providers = [
-        atom.module for atom in blueprint.active_blueprints if issubclass(atom.module, GraspGenSpec)
+        atom.module
+        for atom in blueprint.active_blueprints
+        if spec_annotation_compliance(atom.module, GraspGenSpec)
     ]
     assert providers == [GraspProposalModule]
     parsed = BlueprintConfigParser(blueprint).parse(
