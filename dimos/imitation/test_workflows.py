@@ -33,6 +33,7 @@ def test_collection_and_rollout_catalogs_are_independent() -> None:
         "dual-openyam-quest",
     ]
     assert list(ROLLOUT_WORKFLOWS) == [
+        "r1pro-sim-lerobot",
         "dual-openyam-lerobot",
         "openyam-lerobot",
         "dual-openyam-abc",
@@ -62,3 +63,17 @@ def test_unknown_workflows_list_only_the_relevant_catalog() -> None:
         get_collection_workflow("missing")
     with pytest.raises(ValueError, match="dual-openyam-abc"):
         get_rollout_workflow("missing")
+
+
+def test_r1pro_rollout_uses_simulation_cameras_and_actuated_grippers():
+    workflow = get_rollout_workflow("r1pro-sim-lerobot")
+    profile = workflow.load_profile()
+    assert workflow.simulated and workflow.required_hardware == ()
+    assert {
+        source.stream for source in profile.observations.values() if isinstance(source, ImageSource)
+    } == {
+        "color_image",
+        "right_wrist",
+    }
+    assert profile.action.demonstration.joints[-2:] == ("r1pro/left_gripper", "r1pro/right_gripper")
+    assert len(profile.action.demonstration.joints) == 20

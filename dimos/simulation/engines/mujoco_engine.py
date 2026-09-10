@@ -221,6 +221,8 @@ class MujocoEngine(SimulationEngine):
         spawn_z: float | None = None,
         spawn_yaw: float | None = None,
         reset_joint_positions: list[float] | None = None,
+        viewer_lookat: tuple[float, float, float] | None = None,
+        viewer_distance: float | None = None,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
         self._on_before_step: StepHook | None = on_before_step
@@ -229,6 +231,8 @@ class MujocoEngine(SimulationEngine):
         self._spawn_z = spawn_z
         self._spawn_yaw = spawn_yaw
         self._reset_joint_positions = reset_joint_positions
+        self._viewer_lookat = viewer_lookat
+        self._viewer_distance = viewer_distance
 
         model_path = self._resolve_model_path(config_path)
         binary_model = model_path.suffix.lower() == ".mjb"
@@ -727,6 +731,10 @@ class MujocoEngine(SimulationEngine):
                 with viewer.launch_passive(
                     self._model, self._data, show_left_ui=False, show_right_ui=False
                 ) as m_viewer:
+                    if self._viewer_lookat is not None:
+                        m_viewer.cam.lookat[:] = self._viewer_lookat
+                    if self._viewer_distance is not None:
+                        m_viewer.cam.distance = self._viewer_distance
                     next_step = time.monotonic()
                     while m_viewer.is_running() and not self._stop_event.is_set():
                         _step_once(sync_viewer=True)

@@ -306,6 +306,7 @@ all_modules = {
     "policy-skills": "dimos.imitation.policy.skills.PolicySkills",
     "quest-teleop-module": "dimos.teleop.quest.quest_teleop_module.QuestTeleopModule",
     "r1-pro-connection": "dimos.robot.galaxea.r1pro.connection.R1ProConnection",
+    "r1-pro-grasping-sim": "dimos.robot.galaxea.r1pro.grasping_blueprint.R1ProGraspingSim",
     "ray-tracing-voxel-map": "dimos.mapping.ray_tracing.module.RayTracingVoxelMap",
     "real-sense-camera": "dimos.hardware.sensors.camera.realsense.camera.RealSenseCamera",
     "real-sense-mount-tf": "dimos.hardware.sensors.camera.realsense.blueprints.RealSenseMountTf",

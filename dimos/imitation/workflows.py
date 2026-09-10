@@ -107,9 +107,19 @@ COLLECTION_WORKFLOWS = {
     )
 }
 
+_R1PRO = "dimos.robot.galaxea.r1pro"
+
 ROLLOUT_WORKFLOWS = {
     workflow.name: workflow
     for workflow in (
+        RolloutWorkflow(
+            name="r1pro-sim-lerobot",
+            backend="LeRobot",
+            required_hardware=(),
+            builder=f"{_R1PRO}.grasping_blueprint:build_r1pro_sim_rollout",
+            profile=f"{_R1PRO}.learning:R1PRO_PICK_PLACE_IO",
+            simulated=True,
+        ),
         RolloutWorkflow(
             name="dual-openyam-lerobot",
             backend="LeRobot",

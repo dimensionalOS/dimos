@@ -750,6 +750,30 @@ class TestJointTrajectoryTask:
         assert result.status is TrajectoryExecutionStatus.POSITION_LIMITS_UNAVAILABLE
         assert task.get_state() is TrajectoryState.IDLE
 
+    @pytest.mark.parametrize(
+        "target,expected",
+        [
+            (0.05000000074505806, TrajectoryExecutionStatus.ACCEPTED),
+            (-0.05000000074505806, TrajectoryExecutionStatus.ACCEPTED),
+            (0.0501, TrajectoryExecutionStatus.POSITION_LIMIT_VIOLATION),
+            (-0.0501, TrajectoryExecutionStatus.POSITION_LIMIT_VIOLATION),
+        ],
+    )
+    def test_float32_limit_rounding_preserves_real_limit_rejection(
+        self, trajectory_task, mock_adapter, target, expected
+    ):
+        mock_adapter.get_limits.return_value = JointLimits(
+            position_lower=[-0.05] * 6,
+            position_upper=[0.05] * 6,
+            velocity_max=[1.0] * 6,
+        )
+        trajectory = JointTrajectory(
+            joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
+            points=[TrajectoryPoint(positions=[target, 0.0, 0.0], velocities=[0.0] * 3)],
+        )
+        result = trajectory_task.execute(trajectory, {})
+        assert result.status is expected
+
     def test_position_limit_violation_rejects_atomically(self, trajectory_task, simple_trajectory):
         assert (
             trajectory_task.execute(

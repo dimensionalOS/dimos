@@ -15,7 +15,7 @@
 """Robot profile bindings for the isolated LeRobot backend."""
 
 from dimos.imitation.policy.module import PolicyRolloutConfig, declare_policy_module
-from dimos.robot.galaxea.r1pro.learning import R1PRO_SIM_ACT_IO
+from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_IO, R1PRO_SIM_ACT_IO
 from dimos.robot.manipulators.dual_openyam.learning import DUAL_OPENYAM_LEROBOT_IO
 from dimos.robot.manipulators.openyam.learning import OPENYAM_QUEST_IO
 
@@ -48,4 +48,13 @@ R1ProLeRobotPolicy = declare_policy_module(
     R1PRO_SIM_ACT_IO,
     LeRobotPolicyConfig,
     "dimos_lerobot.runtime:R1ProLeRobotPolicyRuntime",
+)
+
+
+R1ProPickPlacePolicy = declare_policy_module(
+    "R1ProPickPlacePolicy",
+    __name__,
+    R1PRO_PICK_PLACE_IO,
+    LeRobotPolicyConfig,
+    "dimos_lerobot.runtime:R1ProPickPlacePolicyRuntime",
 )

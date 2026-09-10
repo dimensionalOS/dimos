@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Initial R1Pro ACT deployment contract: 18 upper-body joints, one RGB view.
-
-The base and vendor zero-travel grippers stay fixed. This profile is deliberately
-separate from any future mobile grasping profile and from OpenYAM checkpoints.
-"""
+"""Distinct R1Pro contracts for deployment diagnostics and learned grasping."""
 
 from dimos.imitation.dataprep.core import QualityConfig, SyncConfig
 from dimos.imitation.profile import (
@@ -46,6 +42,42 @@ R1PRO_SIM_ACT_IO = PolicyIOProfile(
         ),
     ),
     sync=SyncConfig(anchor="observation.images.overview", rate_hz=15.0, tolerance_ms=20.0),
+    quality=QualityConfig(
+        mode="fill",
+        max_filled_frame_ratio=0.03,
+        min_source_rate_ratio=0.95,
+        max_camera_gap_ms=100.0,
+        max_alignment_error_ms=20.0,
+    ),
+)
+
+
+R1PRO_GRIPPER_JOINTS = ("r1pro/left_gripper", "r1pro/right_gripper")
+R1PRO_PICK_PLACE_JOINTS = (*R1PRO_SIM_ACT_JOINTS, *R1PRO_GRIPPER_JOINTS)
+R1PRO_PICK_PLACE_FPS = 20
+R1PRO_PICK_PLACE_IMAGE_SIZE = 160
+R1PRO_PICK_PLACE_TASK = (
+    "Pick up the blue bottle with the right gripper and place it inside the orange bin."
+)
+R1PRO_PICK_PLACE_IO = PolicyIOProfile(
+    name="r1pro-sim-pick-place-v1",
+    robot_type="r1pro_sim_pick_place",
+    observations={
+        "observation.images.head": ImageSource(stream="color_image", shape=(160, 160, 3)),
+        "observation.images.right_wrist": ImageSource(stream="right_wrist", shape=(160, 160, 3)),
+        "observation.state": JointPositionSource(
+            stream="coordinator_joint_state",
+            joints=R1PRO_PICK_PLACE_JOINTS,
+        ),
+    },
+    action=JointPositionAction(
+        key="action",
+        demonstration=JointPositionSource(
+            stream="applied_joint_position_command",
+            joints=R1PRO_PICK_PLACE_JOINTS,
+        ),
+    ),
+    sync=SyncConfig(anchor="observation.images.head", rate_hz=20.0, tolerance_ms=20.0),
     quality=QualityConfig(
         mode="fill",
         max_filled_frame_ratio=0.03,

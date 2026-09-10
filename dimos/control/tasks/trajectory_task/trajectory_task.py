@@ -470,7 +470,16 @@ class JointTrajectoryTask(BaseControlTask):
         for point_index, point in enumerate(trajectory.points):
             for joint_name, position in zip(trajectory.joint_names, point.positions, strict=True):
                 lower, upper = position_limits[joint_name]
-                if position < lower or position > upper:
+                # Learned actions commonly arrive as float32. Decimal joint
+                # stops such as 0.05 are not exactly representable; allow only
+                # floating-point rounding at the limit, not a motion margin.
+                below = position < lower and not math.isclose(
+                    position, lower, rel_tol=1e-7, abs_tol=1e-8
+                )
+                above = position > upper and not math.isclose(
+                    position, upper, rel_tol=1e-7, abs_tol=1e-8
+                )
+                if below or above:
                     return TrajectoryExecutionResult(
                         TrajectoryExecutionStatus.POSITION_LIMIT_VIOLATION,
                         f"Trajectory point {point_index} for joint {joint_name!r} has position "

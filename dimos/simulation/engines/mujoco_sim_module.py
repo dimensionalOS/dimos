@@ -296,6 +296,8 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     spawn_yaw: float | None = None
     reset_joint_positions: list[float] | None = None
     headless: bool = False
+    viewer_lookat: tuple[float, float, float] | None = None
+    viewer_distance: float | None = Field(default=None, gt=0)
     dof: int = 7
 
     # Camera config (matches former MujocoCameraConfig).
@@ -560,6 +562,8 @@ class MujocoSimModule(
             raycast_lidars=raycast_lidars,
             robot_sim_spec=self.config.robot_sim_spec,
             reset_joint_positions=self.config.reset_joint_positions,
+            viewer_lookat=self.config.viewer_lookat,
+            viewer_distance=self.config.viewer_distance,
         )
         if self.config.robot_mjcf is not None:
             engine_kwargs["config_path"] = Path(self.config.robot_mjcf)

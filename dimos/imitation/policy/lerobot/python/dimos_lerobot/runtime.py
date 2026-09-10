@@ -38,6 +38,7 @@ from dimos.imitation.policy.lerobot.module import (
     LeRobotPolicyConfig,
     OpenYamLeRobotPolicy,
     R1ProLeRobotPolicy,
+    R1ProPickPlacePolicy,
 )
 from dimos.imitation.policy.runtime import declare_policy_runtime
 from dimos.imitation.profile import ImageSource, PolicyIOProfile
@@ -225,4 +226,9 @@ def _positive_int_attribute(instance: object, name: str) -> int:
 
 R1ProLeRobotPolicyRuntime = declare_policy_runtime(
     "R1ProLeRobotPolicyRuntime", __name__, R1ProLeRobotPolicy, LeRobotBackend
+)
+
+
+R1ProPickPlacePolicyRuntime = declare_policy_runtime(
+    "R1ProPickPlacePolicyRuntime", __name__, R1ProPickPlacePolicy, LeRobotBackend
 )
