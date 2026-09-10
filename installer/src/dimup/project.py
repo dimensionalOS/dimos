@@ -57,6 +57,9 @@ def resolve_sdk(ref: str, runner: Runner) -> tuple[str, dict[str, Any]]:
 
 def manifest(name: str, sha: str, sdk: dict[str, Any]) -> dict[str, Any]:
     extras, policy = consumer_policy(sdk)
+    # System Python builds (notably python.org macOS builds) may lack SQLite
+    # extension loading. Keep the interpreter policy when applications are cloned.
+    policy["python-preference"] = "only-managed"
     # uv sources apply to direct requirements, not arbitrary transitive packages.
     sourced_dependencies = sorted(policy.get("sources", {}))
     policy["environments"] = [
