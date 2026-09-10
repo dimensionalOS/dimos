@@ -46,11 +46,8 @@ def _selection() -> PlanningGroupSelection:
     return PlanningGroupSelection.from_groups(
         (
             PlanningGroup(
-                id="arm/manipulator",
-                robot_name="arm",
-                group_name="manipulator",
+                id="manipulator",
                 joint_names=("arm/a", "arm/b"),
-                local_joint_names=("a", "b"),
                 base_link="base",
                 tip_link="tip",
             ),
@@ -60,17 +57,15 @@ def _selection() -> PlanningGroupSelection:
 
 def _world(*, velocity: float = 2.0, acceleration: float = 6.0) -> WorldSpec:
     config = RobotModelConfig(
-        name="arm",
         model=RobotModel.from_file(Path("/robot.urdf")),
         base_pose=PoseStamped(),
-        joint_names=["a", "b"],
+        joint_names=["arm/a", "arm/b"],
         base_link="base",
         max_velocity=velocity,
         max_acceleration=acceleration,
     )
     world = MagicMock(spec=WorldSpec)
-    world.get_robot_ids.return_value = ["arm-id"]
-    world.get_robot_config.return_value = config
+    world.get_model_config.return_value = config
     return world
 
 
@@ -103,7 +98,7 @@ def test_simple_parametrizer_materializes_segmented_trapezoid_plan() -> None:
         speed_scale=0.5,
     )
 
-    assert plan.group_ids == ("arm/manipulator",)
+    assert plan.group_ids == ("manipulator",)
     assert plan.trajectory.joint_names == ["arm/a", "arm/b"]
     assert len(plan.trajectory.points) == 9
     assert plan.trajectory.points[0].positions == [0.0, 0.0]

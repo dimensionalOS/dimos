@@ -23,13 +23,8 @@ from dimos.robot.manipulators.a750.config import (
     a750_hardware,
     make_a750_model_config,
 )
-from dimos.robot.manipulators.common.blueprints import (
-    eef_twist_task,
-    trajectory_task,
-)
-from dimos.robot.manipulators.common.coordinators import (
-    ArmTwistCoordinator,
-)
+from dimos.robot.manipulators.common.blueprints import eef_twist_task, trajectory_task
+from dimos.robot.manipulators.common.coordinators import ArmTwistCoordinator
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _a750_hw = a750_hardware("arm", mock_without_address=True)
@@ -47,6 +42,7 @@ keyboard_teleop_a750 = autoconnect(
             eef_twist_task(
                 _a750_hw,
                 robot_model=_a750_model,
+                target_frame="gripper_base",
             ),
             trajectory_task(_a750_hw),
             TaskConfig(
@@ -58,7 +54,7 @@ keyboard_teleop_a750 = autoconnect(
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_a750_model],
+        model=_a750_model,
         visualization={"backend": "viser"},
     ),
 )

@@ -85,7 +85,8 @@ def test_a1z_hardware_uses_mock_adapter_in_simulation(monkeypatch: pytest.Monkey
 
     assert hardware.adapter_type == "mock"
     assert hardware.address is None
-    assert hardware.adapter_kwargs["limits"].position_upper[-1] > 0.0
+    assert hardware.limits is not None
+    assert hardware.limits.position_upper[-1] > 0.0
     assert hardware.joints[-1] == "arm/gripper"
 
 

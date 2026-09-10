@@ -188,6 +188,7 @@ print(f"With prefix: {sensor2.frame_id}")
 ```
 
 ```results
+00:33:00.665 [inf][otocol/service/zenohservice.py] Zenoh session opened connect=[] gossip=True listen=['tcp/127.0.0.1:0'] mode=peer multicast_interface=lo
 Default frame_id: sensor_link
 With prefix: robot1/sensor_link
 ```

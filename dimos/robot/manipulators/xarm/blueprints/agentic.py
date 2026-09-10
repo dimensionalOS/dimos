@@ -37,14 +37,12 @@ xarm7_planner_coordinator_agent = autoconnect(
 
 xarm_perception_agent = autoconnect(
     xarm_perception,
-    ManipulationSkills.blueprint(),
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
 
 xarm_perception_sim_agent = autoconnect(
     xarm_perception_sim,
-    ManipulationSkills.blueprint(),
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=MANIPULATION_AGENT_SYSTEM_PROMPT),
 )

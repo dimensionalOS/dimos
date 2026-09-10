@@ -128,7 +128,6 @@ def test_openarm_quest_blueprint_has_one_bimanual_mock_task() -> None:
     assert task.priority == 10
     assert trajectory.joint_names == OPENARM_JOINTS
     assert trajectory.priority == 20
-    assert "robots" not in manipulation_kwargs
     assert manipulation_kwargs["kinematics"] == task.params["pink"]
     assert manipulation_kwargs["visualization"] == {"backend": "viser"}
     assert teleop_kwargs == {}
@@ -179,7 +178,7 @@ def test_openarm_quest_commands_both_arms_and_grippers_through_coordinator(
     try:
         coordinator.start()
         task = cast("TeleopIKTask", coordinator._tasks[OPENARM_QUEST_TASK_NAME])
-        assert task._teleop_config.robot_model.name == "openarm"
+        assert task._teleop_config.robot_model.joint_names == OPENARM_ARM_JOINTS
         assert task._teleop_config.max_joint_velocity_rad_s == 2.0
         assert task._teleop_config.joint_velocity_limits_rad_s == {
             joint_name: limit

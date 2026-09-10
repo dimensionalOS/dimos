@@ -49,6 +49,7 @@ struct SessionSettings {
     connect: Vec<String>,
     listen: Vec<String>,
     multicast: bool,
+    scout_addr: String,
     gossip: bool,
     interface: String,
     connect_timeout_ms: u64,
@@ -86,6 +87,11 @@ impl SessionSettings {
             ("scouting/multicast/interface", json_text(&self.interface)),
             ("scouting/gossip/enabled", json_text(&self.gossip)),
         ];
+        // Empty means the stock multicast group. A moved group is a private
+        // discovery bus, which is how parallel sessions on one host stay apart.
+        if !self.scout_addr.is_empty() {
+            inserts.push(("scouting/multicast/address", json_text(&self.scout_addr)));
+        }
         // An empty list means "whatever zenoh listens on by default", which for
         // a peer is an ephemeral port, not nothing at all.
         if !self.connect.is_empty() {
@@ -343,6 +349,7 @@ mod tests {
             "connect": [],
             "listen": [],
             "multicast": true,
+            "scout_addr": "",
             "gossip": false,
             "interface": "lo",
             "connect_timeout_ms": 1000,
@@ -379,6 +386,7 @@ mod tests {
         assert_eq!(settings.connect, ["tcp/192.0.2.10:7447"]);
         assert!(settings.listen.is_empty());
         assert!(settings.multicast);
+        assert!(settings.scout_addr.is_empty());
         assert!(!settings.gossip);
         assert_eq!(settings.interface, "lo");
         assert_eq!(settings.connect_timeout_ms, 2000);
@@ -391,6 +399,7 @@ mod tests {
         assert!(settings.connect.is_empty());
         assert_eq!(settings.listen, ["tcp/127.0.0.1:7447"]);
         assert!(!settings.multicast);
+        assert!(settings.scout_addr.is_empty());
         assert!(settings.gossip);
         assert_eq!(settings.interface, "auto");
         assert_eq!(settings.connect_timeout_ms, 0);
@@ -421,6 +430,27 @@ mod tests {
             r#""wlan0""#
         );
         assert_eq!(config.get_json("connect/timeout_ms").unwrap(), "1000");
+    }
+
+    #[test]
+    fn a_moved_scout_group_reaches_the_session_config() {
+        let config = settings(serde_json::json!({"scout_addr": "224.0.0.224:17700"}))
+            .zenoh_config()
+            .expect("valid settings apply");
+        assert_eq!(
+            config.get_json("scouting/multicast/address").unwrap(),
+            r#""224.0.0.224:17700""#
+        );
+    }
+
+    #[test]
+    fn an_empty_scout_group_keeps_zenohs_own() {
+        let config = settings(serde_json::json!({})).zenoh_config().unwrap();
+        let default = ::zenoh::Config::default();
+        assert_eq!(
+            config.get_json("scouting/multicast/address").unwrap(),
+            default.get_json("scouting/multicast/address").unwrap()
+        );
     }
 
     #[test]

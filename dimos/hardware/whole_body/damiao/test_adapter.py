@@ -25,6 +25,7 @@ import numpy as np
 import pytest
 from pytest_mock import MockerFixture
 
+from dimos.hardware.whole_body.damiao import adapter as adapter_module
 from dimos.hardware.whole_body.damiao.adapter import DamiaoWholeBodyAdapter
 from dimos.hardware.whole_body.damiao.config import DamiaoRuntimeConfig
 from dimos.hardware.whole_body.spec import MotorCommand, MotorState
@@ -142,7 +143,7 @@ class DualAdapter(DamiaoWholeBodyAdapter):
         "left_gripper": "left_arm/gripper",
         "right_gripper": "right_arm/gripper",
     }
-    bus_defaults = {"left": "can0", "right": "can1"}
+    bus_names = ("left", "right")
 
     def __init__(self, robot: FakeRobot, **kwargs: object) -> None:
         self.fake_robot = robot
@@ -283,7 +284,7 @@ def gravity_adapter_factory(
 def test_init_scalar_address_raises_named_bus_configuration_error(
     dual_robot: FakeRobot,
 ) -> None:
-    with pytest.raises(ValueError, match="runtime_config.bus_addresses"):
+    with pytest.raises(ValueError, match="runtime_config.bus_devices"):
         DualAdapter(dual_robot, address="can0")
 
 
@@ -291,8 +292,16 @@ def test_init_unknown_bus_override_raises_value_error(dual_robot: FakeRobot) -> 
     with pytest.raises(ValueError, match="unknown CAN bus"):
         DualAdapter(
             dual_robot,
-            runtime_config=DamiaoRuntimeConfig(bus_addresses={"missing": "can9"}),
+            runtime_config=DamiaoRuntimeConfig(bus_devices={"missing": "can9"}),
         )
+
+
+def test_init_duplicate_logical_bus_names_raises_value_error(dual_robot: FakeRobot) -> None:
+    class DuplicateBusAdapter(DualAdapter):
+        bus_names = ("left", "left")
+
+    with pytest.raises(ValueError, match="duplicate logical bus names"):
+        DuplicateBusAdapter(dual_robot)
 
 
 def test_init_mismatched_dof_raises_value_error(dual_robot: FakeRobot) -> None:
@@ -317,49 +326,104 @@ def test_init_incomplete_gravity_mapping_raises_value_error(dual_robot: FakeRobo
         IncompleteGravityAdapter(dual_robot)
 
 
-def test_bus_address_runtime_override_returns_configured_interface(
+def test_make_can_bus_linux_uses_ordered_defaults(
     dual_robot: FakeRobot,
+    mocker: MockerFixture,
 ) -> None:
+    socketcan = mocker.patch.object(can_motor_control, "SocketCanBus")
+    mocker.patch.object(adapter_module.sys, "platform", "linux")
+    adapter = DualAdapter(dual_robot)
+
+    assert adapter._make_can_bus("left") is socketcan.return_value
+    assert adapter._make_can_bus("right") is socketcan.return_value
+    assert socketcan.call_args_list == [mocker.call("can0"), mocker.call("can1")]
+
+
+def test_make_can_bus_linux_uses_configured_interface(
+    dual_robot: FakeRobot,
+    mocker: MockerFixture,
+) -> None:
+    socketcan = mocker.patch.object(can_motor_control, "SocketCanBus")
+    mocker.patch.object(adapter_module.sys, "platform", "linux")
     adapter = DualAdapter(
         dual_robot,
-        runtime_config=DamiaoRuntimeConfig(
-            bus_addresses={"left": "can8"},
-            gravity_comp=False,
-        ),
+        runtime_config=DamiaoRuntimeConfig(bus_devices={"left": "can8"}),
     )
 
-    assert adapter.bus_address("left") == "can8"
+    assert adapter._make_can_bus("left") is socketcan.return_value
+    socketcan.assert_called_once_with("can8")
 
 
 def test_init_rehydrates_serialized_runtime_config(dual_robot: FakeRobot) -> None:
     adapter = DualAdapter(
         dual_robot,
         runtime_config={
-            "bus_addresses": {"left": "can8"},
+            "bus_devices": {"left": "can8"},
             "gravity_comp": False,
             "tick_deadline_us": 2_000,
         },
     )
 
-    assert adapter.bus_address("left") == "can8"
+    assert adapter._runtime_config.bus_devices == {"left": "can8"}
+    assert adapter._runtime_config.gravity_comp is False
+    assert adapter._runtime_config.tick_deadline_us == 2_000
 
 
-def test_bus_address_without_override_returns_declared_default(
+def test_make_can_bus_macos_uses_ordered_indices(
     dual_robot: FakeRobot,
+    mocker: MockerFixture,
 ) -> None:
-    adapter = DualAdapter(
+    gs_usb = mocker.patch.object(can_motor_control, "GsUsbBus", create=True)
+    mocker.patch.object(adapter_module.sys, "platform", "darwin")
+    adapter = DualAdapter(dual_robot)
+
+    assert adapter._make_can_bus("left") is gs_usb.return_value
+    assert adapter._make_can_bus("right") is gs_usb.return_value
+    assert gs_usb.call_args_list == [
+        mocker.call(vendor_id=0x1D50, product_id=0x606F, index=0),
+        mocker.call(vendor_id=0x1D50, product_id=0x606F, index=1),
+    ]
+
+
+def test_make_can_bus_macos_uses_configured_serial_number_and_device_ids(
+    dual_robot: FakeRobot,
+    mocker: MockerFixture,
+) -> None:
+    class VendorAdapter(DualAdapter):
+        gs_usb_vendor_id = 0x1234
+        gs_usb_product_id = 0x5678
+
+    gs_usb = mocker.patch.object(can_motor_control, "GsUsbBus", create=True)
+    mocker.patch.object(adapter_module.sys, "platform", "darwin")
+    adapter = VendorAdapter(
         dual_robot,
-        runtime_config=DamiaoRuntimeConfig(gravity_comp=False),
+        runtime_config=DamiaoRuntimeConfig(bus_devices={"right": "serial-B"}),
     )
 
-    assert adapter.bus_address("right") == "can1"
+    assert adapter._make_can_bus("right") is gs_usb.return_value
+    gs_usb.assert_called_once_with(
+        vendor_id=0x1234,
+        product_id=0x5678,
+        serial_number="serial-B",
+    )
 
 
-def test_bus_address_undeclared_bus_raises_value_error(dual_robot: FakeRobot) -> None:
+def test_make_can_bus_undeclared_bus_raises_value_error(dual_robot: FakeRobot) -> None:
     adapter = DualAdapter(dual_robot)
 
     with pytest.raises(ValueError, match="did not declare CAN bus 'missing'"):
-        adapter.bus_address("missing")
+        adapter._make_can_bus("missing")
+
+
+def test_make_can_bus_unsupported_platform_raises_runtime_error(
+    dual_robot: FakeRobot,
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch.object(adapter_module.sys, "platform", "win32")
+    adapter = DualAdapter(dual_robot)
+
+    with pytest.raises(RuntimeError, match="unsupported on win32"):
+        adapter._make_can_bus("left")
 
 
 def test_connect_robot_build_failure_returns_false(

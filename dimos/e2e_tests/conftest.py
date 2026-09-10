@@ -20,7 +20,9 @@ import time
 
 import pytest
 
-from dimos.core.transport import pLCMTransport
+from dimos.core.coordination.coordinator_rpc import CoordinatorRPC
+from dimos.core.global_config import global_config
+from dimos.core.transport_factory import make_transport
 from dimos.e2e_tests.conf_types import StartPersonTrack
 from dimos.e2e_tests.dim_sim_client import DimSimClient
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
@@ -31,6 +33,20 @@ from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 from dimos.simulation.mujoco.person_on_track import PersonTrackPublisher
+
+
+@pytest.fixture(autouse=True)
+def _pin_dimsim_to_lcm(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests driving DimSim run the whole stack on LCM.
+
+    Its deno bridge publishes odom and subscribes cmd_vel over LCM only, so
+    under zenoh nothing reaches the sim and nothing comes back. The env var is
+    what reaches the ``dimos`` CLI these tests spawn.
+    """
+    if "dim_sim" not in request.fixturenames:
+        return
+    monkeypatch.setenv("DIMOS_TRANSPORT", "lcm")
+    monkeypatch.setattr(global_config, "transport", "lcm")
 
 
 @pytest.fixture(scope="session")
@@ -96,16 +112,30 @@ def start_blueprint(mcp_port: int) -> Iterator[Callable[..., DimosCliCall]]:
 
 
 @pytest.fixture
+def wait_for_system_ready() -> Callable[..., None]:
+    """Block until the blueprint is up.
+
+    The CLI serves Coordinator RPC only after build() started every module and
+    delivered on_system_modules.
+    """
+
+    def wait(timeout: float = 120.0) -> None:
+        CoordinatorRPC.connect(timeout=timeout).stop()
+
+    return wait
+
+
+@pytest.fixture
 def human_input():
-    transport = pLCMTransport("/human_input")
-    transport.lcm.start()
+    transport = make_transport("/human_input")
+    transport.start()
 
     def send_human_input(message: str) -> None:
         transport.publish(message)
 
     yield send_human_input
 
-    transport.lcm.stop()
+    transport.stop()
 
 
 @pytest.fixture

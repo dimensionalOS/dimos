@@ -22,6 +22,3 @@ mod planner;
 mod smoother;
 mod surfaces;
 pub mod voxel;
-
-#[cfg(feature = "python")]
-mod python;

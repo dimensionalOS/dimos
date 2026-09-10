@@ -36,7 +36,7 @@ def test_keyboard_teleop_a750_wires_joint_trajectory_execution() -> None:
 
     assert trajectory.type == "trajectory"
     assert trajectory.joint_names == [
-        *(f"arm/joint{i}" for i in range(1, 7)),
+        *(f"joint{i}" for i in range(1, 7)),
         "arm/finger",
     ]
     assert (gripper.name, gripper.joint_names) == ("arm_gripper", ["arm/finger"])

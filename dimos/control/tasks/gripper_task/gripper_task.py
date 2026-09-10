@@ -266,15 +266,15 @@ def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
         connected = owners[0]
         component = connected.component
         index = component.joints.index(joint_name)
-        limits = connected.adapter.get_limits()
+        limits = connected.get_limits()
         if limits is None:
             raise ValueError(
-                f"{where}: adapter {component.adapter_type!r} does not declare joint limits"
+                f"{where}: hardware {component.hardware_id!r} does not declare joint limits"
             )
         arrays = (limits.position_lower, limits.position_upper, limits.velocity_max)
         if any(len(array) != len(component.joints) for array in arrays):
             raise ValueError(
-                f"{where}: adapter {component.adapter_type!r} limits must contain "
+                f"{where}: hardware {component.hardware_id!r} limits must contain "
                 f"{len(component.joints)} entries"
             )
         lower = limits.position_lower[index]

@@ -2442,7 +2442,17 @@ pub fn plan(
     incumbent: Option<&[[f64; 3]]>,
     commit_margin: f64,
 ) -> Option<Vec<[f64; 3]>> {
-    plan_explored(points, &[], 1.0, pose, goal, emb, resolution, incumbent, commit_margin)
+    plan_explored(
+        points,
+        &[],
+        1.0,
+        pose,
+        goal,
+        emb,
+        resolution,
+        incumbent,
+        commit_margin,
+    )
 }
 
 /// `plan`, pricing unexplored terrain: a lattice cell with no `ground` return
@@ -2545,14 +2555,35 @@ mod tests {
             ground.push(c);
         }
         let run = |cost: f64| {
-            let p = plan_explored(&[], &ground, cost, (0.0, 0.0, 0.0), (4.0, 0.0), &emb, 0.1, None, COMMIT_MARGIN)
-                .expect("open world routes");
+            let p = plan_explored(
+                &[],
+                &ground,
+                cost,
+                (0.0, 0.0, 0.0),
+                (4.0, 0.0),
+                &emb,
+                0.1,
+                None,
+                COMMIT_MARGIN,
+            )
+            .expect("open world routes");
             p.iter().map(|s| s[1]).fold(0.0f64, f64::max)
         };
         assert!(run(1.0) < 0.2, "straight without the layer");
         assert!(run(5.0) > 0.8, "bends into the seen corridor");
         // Forbidding is not the contract: a goal in the dark is still reached.
-        assert!(plan_explored(&[], &[[0.0, 0.0]], 5.0, (0.0, 0.0, 0.0), (4.0, 0.0), &emb, 0.1, None, COMMIT_MARGIN).is_some());
+        assert!(plan_explored(
+            &[],
+            &[[0.0, 0.0]],
+            5.0,
+            (0.0, 0.0, 0.0),
+            (4.0, 0.0),
+            &emb,
+            0.1,
+            None,
+            COMMIT_MARGIN
+        )
+        .is_some());
     }
 
     /// Ring of obstacle points (square outline), spacing `step`, half-size `h`.

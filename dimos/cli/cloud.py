@@ -14,7 +14,7 @@
 
 """Dimensional cloud auth: `dimos login` / `dimos logout` / `dimos whoami`.
 
-Device-code flow (RFC 8628 shaped) against login.dimensional.org — built for robots:
+Device-code flow (RFC 8628 shaped) against api.dimensional.org — built for robots:
 no browser or clipboard needed on this machine. The CLI prints an 8-character code,
 you approve it from any signed-in browser (laptop, phone), and the minted API key is
 stored in the system keyring, falling back to a plain-text 0600 file
@@ -47,7 +47,9 @@ def _base() -> str:
 
 def _post(path: str, **params: str | int) -> dict[str, Any]:
     url = f"{_base()}{path}?" + urllib.parse.urlencode(params)
-    with urllib.request.urlopen(urllib.request.Request(url, method="POST")) as r:
+    with urllib.request.urlopen(
+        urllib.request.Request(url, method="POST"), timeout=global_config.dimos_http_timeout
+    ) as r:
         return cast("dict[str, Any]", json.load(r))
 
 
@@ -126,9 +128,9 @@ def login() -> None:
 
 
 def logout() -> None:
-    """Forget the stored key. Revoke it fully at login.dimensional.org/keys."""
+    """Forget the stored key. The key itself stays valid until revoked in the console."""
     if _forget():
-        typer.echo(f"Logged out. Revoke the key at {_base()}/keys.")
+        typer.echo("Logged out. The key stays valid until you revoke it in the console.")
     else:
         typer.echo("Not logged in.")
 
@@ -143,7 +145,7 @@ def whoami() -> None:
         f"{_base()}/auth/whoami", headers={"Authorization": f"Bearer {key}"}
     )
     try:
-        with urllib.request.urlopen(req) as r:
+        with urllib.request.urlopen(req, timeout=global_config.dimos_http_timeout) as r:
             who = json.load(r)
     except urllib.error.HTTPError as e:
         typer.echo(

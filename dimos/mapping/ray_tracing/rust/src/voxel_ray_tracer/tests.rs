@@ -18,6 +18,7 @@ fn basic_config() -> Config {
     Config {
         voxel_size: 1.0,
         fine_divisor: 0,
+        emit_fine: false,
         max_range: 100.0,
         ray_subsample: 1,
         shadow_depth: 2.0,
@@ -291,6 +292,7 @@ fn ground_clipping_single_ray() {
     let cfg = Config {
         voxel_size,
         fine_divisor: 0,
+        emit_fine: false,
         max_range: 50.0,
         ray_subsample: 1,
         shadow_depth: 0.2,
@@ -447,6 +449,7 @@ fn stair_clipping_ray_fan() {
     let cfg = Config {
         voxel_size,
         fine_divisor: 0,
+        emit_fine: false,
         max_range: 50.0,
         ray_subsample: 1,
         shadow_depth: 0.2,
@@ -525,6 +528,7 @@ fn landing_floor_ray_fan() {
     let cfg = Config {
         voxel_size,
         fine_divisor: 0,
+        emit_fine: false,
         max_range: 50.0,
         ray_subsample: 1,
         shadow_depth: 0.2,
@@ -591,6 +595,7 @@ fn landing_grazed_from_below() {
     let cfg = |graze_cos| Config {
         voxel_size,
         fine_divisor: 0,
+        emit_fine: false,
         max_range: 50.0,
         ray_subsample: 1,
         shadow_depth: 0.2,
@@ -726,6 +731,7 @@ fn grazing_ray_spares_planar_floor() {
     let cfg = Config {
         voxel_size,
         fine_divisor: 0,
+        emit_fine: false,
         max_range: 50.0,
         ray_subsample: 1,
         shadow_depth: 0.2,
@@ -1052,6 +1058,10 @@ fn config_rejects_bad_fine_settings() {
     assert!(cfg.validate().is_err(), "divisor^3 bits must fit in a u64");
     cfg.fine_divisor = 2;
     assert!(cfg.validate().is_ok());
+    cfg.emit_fine = true;
+    assert!(cfg.validate().is_ok());
+    cfg.fine_divisor = 0;
+    assert!(cfg.validate().is_err(), "emit_fine needs the fine layer");
 }
 
 #[test]
@@ -1356,4 +1366,92 @@ fn fine_children_bin_exactly_to_their_parents() {
         .map(|&(x, y, z)| world_to_voxel(x, y, z, 1.0))
         .collect();
     assert_eq!(binned, healthy);
+}
+
+#[test]
+fn metric_voxel_keys_quantize_by_map_resolution() {
+    let keys: Vec<VoxelKey> =
+        metric_voxel_keys([(0.049, 0.05, -0.001), (0.1, -0.1, 0.0)], 0.05).collect();
+
+    assert_eq!(keys, vec![(0, 1, -1), (2, -2, 0)]);
+}
+
+/// A naive `voxels.remove` leaves the healthy-chunk index pointing at a voxel
+/// that is gone. With support_min 0, emit_points reads only the index, so the
+/// deleted voxel would come straight back out.
+#[test]
+fn clear_voxels_removes_from_the_healthy_chunk_index() {
+    let cfg = basic_config();
+    let mut map = VoxelMap::default();
+    update_map(&mut map, (0.0, 0.0, 0.0), &[(5.5, 0.5, 0.5)], &cfg);
+    let no_live = AHashSet::new();
+    assert!(!emit_points(&map, 1.0, None, 0, &no_live).is_empty());
+
+    assert_eq!(map.clear_voxels([(5, 0, 0)]), 1);
+
+    assert_eq!(map.health((5, 0, 0)), None);
+    assert!(
+        emit_points(&map, 1.0, None, 0, &no_live).is_empty(),
+        "cleared voxel must not emit from a stale chunk index"
+    );
+}
+
+/// Every one of the 26 neighbors counts a healthy voxel in its `support`.
+/// Deleting it without decrementing them leaves counts that never come back
+/// down, and support_min then keeps phantom surfaces in the local map.
+#[test]
+fn clear_voxels_decrements_neighbor_support() {
+    let mut map = VoxelMap::default();
+    map.set_health((0, 0, 0), 1);
+    map.set_health((1, 0, 0), 1);
+    map.set_health((0, 1, 0), 1);
+    assert_eq!(map.voxels[&(1, 0, 0)].support, 2);
+    assert_eq!(map.voxels[&(0, 1, 0)].support, 2);
+
+    assert_eq!(map.clear_voxels([(0, 0, 0)]), 1);
+
+    assert_eq!(map.voxels[&(1, 0, 0)].support, 1);
+    assert_eq!(map.voxels[&(0, 1, 0)].support, 1);
+}
+
+/// An unhealthy voxel was never counted in its neighbors' support, so removing
+/// it must not decrement them or the counts go stale downward.
+#[test]
+fn clear_voxels_leaves_support_alone_for_an_unhealthy_voxel() {
+    let mut map = VoxelMap::default();
+    map.set_health((1, 0, 0), 1);
+    map.set_health((0, 0, 0), 0);
+    assert_eq!(map.voxels[&(1, 0, 0)].support, 0);
+
+    assert_eq!(map.clear_voxels([(0, 0, 0)]), 1);
+
+    assert_eq!(map.voxels[&(1, 0, 0)].support, 0);
+}
+
+#[test]
+fn clear_voxels_skips_keys_the_map_does_not_hold() {
+    let mut map = VoxelMap::default();
+    map.set_health((0, 0, 0), 1);
+
+    assert_eq!(map.clear_voxels([(0, 0, 0), (9, 9, 9), (0, 0, 0)]), 1);
+
+    assert!(map.voxels.is_empty());
+}
+
+/// The fine-cell bitmask lives inside the voxel, so clearing the coarse voxel
+/// has to take its fine children with it.
+#[test]
+fn clear_voxels_takes_the_fine_layer_with_it() {
+    let cfg = Config {
+        fine_divisor: 2,
+        ..basic_config()
+    };
+    let mut map = VoxelMap::default();
+    update_map(&mut map, (0.0, 0.0, 0.0), &[(5.1, 0.1, 0.1)], &cfg);
+    let no_live = AHashSet::new();
+    assert!(!emit_points_fine(&map, 1.0, 2, None, 0, &no_live).is_empty());
+
+    assert_eq!(map.clear_voxels([(5, 0, 0)]), 1);
+
+    assert!(emit_points_fine(&map, 1.0, 2, None, 0, &no_live).is_empty());
 }

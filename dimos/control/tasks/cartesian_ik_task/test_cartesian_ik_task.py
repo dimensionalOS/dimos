@@ -36,10 +36,8 @@ def _config(target_frames: tuple[str, ...] = ("tool",)) -> CartesianIKTaskConfig
     return CartesianIKTaskConfig(
         joint_names=("arm/joint",),
         robot_model=RobotModelConfig(
-            name="arm",
             model=RobotModel.from_file(Path("fake.urdf")),
-            joint_names=["model_joint"],
-            joint_name_mapping={"arm/joint": "model_joint"},
+            joint_names=["arm/joint"],
         ),
         target_frames=target_frames,
     )

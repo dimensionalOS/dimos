@@ -54,11 +54,8 @@ def _selection() -> PlanningGroupSelection:
     return PlanningGroupSelection.from_groups(
         (
             PlanningGroup(
-                id="arm/group",
-                robot_name="arm",
-                group_name="group",
+                id="group",
                 joint_names=("arm/a", "arm/b"),
-                local_joint_names=("a", "b"),
                 base_link="base",
             ),
         )

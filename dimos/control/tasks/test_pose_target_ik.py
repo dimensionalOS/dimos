@@ -65,10 +65,8 @@ class _Task(PoseTargetIKTask):
 
 def _robot_model() -> RobotModelConfig:
     return RobotModelConfig(
-        name="arm",
         model=RobotModel.from_file(Path("fake.urdf")),
-        joint_names=["model_a", "model_b"],
-        joint_name_mapping={"arm/a": "model_a", "arm/b": "model_b"},
+        joint_names=["arm/a", "arm/b"],
     )
 
 
