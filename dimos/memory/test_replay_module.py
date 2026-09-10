@@ -67,3 +67,14 @@ def test_portless_class_gets_ports_from_dataset(recording: str) -> None:
     module = replay_module("")(dataset=recording)
     assert sorted(module.outputs) == ["goal", "odom"]
     module.stop()
+
+
+def test_recorded_rerun_config_from_run_dir(tmp_path: Path) -> None:
+    from dimos.memory.replay_module import recorded_rerun_config
+
+    db = tmp_path / "20260910-135235-unitree-go2" / "memory.db"
+    cfg = recorded_rerun_config(str(db))
+    assert "world/robot_body" in cfg["static"]
+    assert "blueprint" not in cfg
+    assert recorded_rerun_config(str(tmp_path / "downloads" / "x.db")) == {}
+    assert recorded_rerun_config(str(tmp_path / "20260910-135235-no-such-bp" / "m.db")) == {}

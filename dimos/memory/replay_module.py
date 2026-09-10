@@ -22,6 +22,8 @@ class still ends up with the same ports.
 
 from __future__ import annotations
 
+from pathlib import Path
+import re
 import sys
 from typing import TYPE_CHECKING, Any
 
@@ -122,6 +124,30 @@ def replay_module(dataset: str, topics: str = "*", name: str = "Replay") -> type
         "stream_types": {n: types[n] for n in ports} if dataset else {},
     }
     return type(name, (ReplayModule,), namespace)
+
+
+_VIS_KEYS = ("static", "visual_override", "max_hz", "tf_axes")
+
+
+def recorded_rerun_config(dataset: str) -> dict[str, Any]:
+    """Viewer config of the blueprint that made *dataset*: robot body, converters, rate caps.
+
+    Run dirs are ``<stamp>-<blueprint>`` (``generate_run_id``). Anything else, or a
+    blueprint without a Rerun bridge, yields ``{}``.
+    """
+    m = re.fullmatch(r"\d{8}-\d{6}-(.+)", Path(dataset).parent.name)
+    if not m:
+        return {}
+    from dimos.robot.all_blueprints import all_blueprints
+    from dimos.robot.get_all_blueprints import get_blueprint_by_name
+    from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+    if m.group(1) not in all_blueprints:
+        return {}
+    for atom in get_blueprint_by_name(m.group(1)).blueprints:
+        if atom.module is RerunBridgeModule:
+            return {k: atom.kwargs[k] for k in _VIS_KEYS if k in atom.kwargs}
+    return {}
 
 
 def rerun_layout(stream_types: dict[str, type]) -> Any:
