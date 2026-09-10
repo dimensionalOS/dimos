@@ -29,7 +29,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
 
 requires_drake = pytest.mark.skipif(
     not DRAKE_AVAILABLE,
@@ -323,6 +323,50 @@ def test_drake_applies_config_base_pose_when_urdf_has_world_base_joint(
     base_pose = world.get_link_pose(ctx, "base_link")
 
     assert base_pose[1, 3] == pytest.approx(0.5)
+
+
+@requires_drake
+def test_drake_planar_base_coordinates_move_original_robot_root(tmp_path: Path) -> None:
+    urdf = tmp_path / "robot.urdf"
+    _write_urdf(urdf)
+    planar_base = PlanarBaseDefinition(
+        workspace_lower=(-2.0, -2.0, -3.14),
+        workspace_upper=(2.0, 2.0, 3.14),
+        velocity_limits=(1.0, 1.0, 2.0),
+        acceleration_limits=(2.0, 2.0, 4.0),
+    )
+    joint_names = [*planar_base.joint_names, "joint1", "joint2"]
+    world = DrakeWorld(enable_viz=False)
+    world.load_model(
+        RobotModelConfig(
+            model=RobotModel.from_file(urdf).with_planar_base(planar_base),
+            base_pose=PoseStamped(position=[0, 0, 0.5], orientation=[0, 0, 0, 1]),
+            joint_names=joint_names,
+            base_link=planar_base.root_link,
+            planning_groups=[
+                PlanningGroupDefinition(
+                    name="mobile_arm",
+                    joint_names=tuple(joint_names),
+                    base_link=planar_base.root_link,
+                    tip_link="tool0",
+                )
+            ],
+        )
+    )
+    world.finalize()
+    context = world.get_live_context()
+    world.set_joint_state(
+        context,
+        JointState(name=joint_names, position=[1.0, 2.0, np.pi / 2.0, 0.0, 0.0]),
+    )
+
+    original_root_pose = world.get_link_pose(context, "base_link")
+    tool_pose = world.get_group_ee_pose(context, "mobile_arm")
+
+    np.testing.assert_allclose(original_root_pose[:3, 3], [1.0, 2.0, 0.5], atol=1e-8)
+    assert tool_pose.position.x == pytest.approx(1.0)
+    assert tool_pose.position.y == pytest.approx(4.0)
+    assert tool_pose.position.z == pytest.approx(0.5)
 
 
 @requires_drake

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 import threading
 import time
 from typing import Any, Literal
@@ -111,19 +112,32 @@ class ObjectSceneRegistrationModule(Module):
         self._use_aabb = self.config.use_aabb
         self._max_obstacle_width = self.config.max_obstacle_width
 
+        # Initial deployment constructs modules serially within each worker.
+        # Resolve only the selected detector before parallel start RPCs; importing
+        # this module stays lazy, and model construction/loading stays in start().
+        self._detector_class: type[Any] | None = None
+        try:
+            if self._detector_backend == "owlv2":
+                from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
+
+                self._detector_class = Owlv2Detector
+            elif self._detector_backend == "moondream":
+                from dimos.models.vl.moondream import MoondreamVlModel
+
+                self._detector_class = MoondreamVlModel
+        except BaseException:
+            # The worker cannot track an instance whose constructor failed.
+            # Release its resources without masking the original import error.
+            with suppress(Exception):
+                super().stop()
+            raise
+
     @rpc
     def start(self) -> None:
         super().start()
 
-        if self._detector_backend == "owlv2":
-            from dimos.perception.detection.detectors.owlv2 import Owlv2Detector
-
-            self._detector = Owlv2Detector()
-            self._detector.start()
-        elif self._detector_backend == "moondream":
-            from dimos.models.vl.moondream import MoondreamVlModel
-
-            self._detector = MoondreamVlModel()
+        if self._detector_class is not None:
+            self._detector = self._detector_class()
             self._detector.start()
         else:
             if self._prompt_mode == YoloePromptMode.LRPC:

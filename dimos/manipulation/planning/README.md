@@ -9,22 +9,31 @@ planning from conversion to an executable timed trajectory.
 # 1. Verify manipulation dependencies with mock hardware:
 dimos run xarm7-planner-coordinator
 
+# Plan for the mobile, bimanual R1 Pro with fake hardware:
+dimos run r1pro-planar-preview
+
 # 2. Keyboard teleop with mock arm (single command):
 dimos run keyboard-teleop-xarm7
 
-# 3. Interactive RPC client (plan, preview, execute from Python):
-dimos run xarm7-planner-coordinator                                    # terminal 1
-python -i -m dimos.manipulation.planning.examples.manipulation_client  # terminal 2
+# 3. SDK and RPCs in the generic Python shell:
+dimos run xarm7-planner-coordinator  # terminal 1
+dimos shell                         # terminal 2
 ```
 
-In the interactive client:
+In the shell, import the SDK and reuse the connected `app`:
+
 ```python skip
-commands()              # List available commands
-joints()                # Get current joint positions
-plan([0.1] * 7)         # Plan to target
-preview()               # Preview in Meshcat (url() for link)
-execute()               # Execute via coordinator
+from dimos.manipulation.sdk import Arm
+
+arm = Arm.from_app(app)
+arm.joints()
+arm.pose()
+help(arm)
 ```
+
+Use `arm.` followed by Tab for completion and `arm.move_linear?` for method help.
+The [manipulation guide](/docs/capabilities/manipulation/python_api.md) covers
+manual motion and explicit planning, preview, and execution through `arm.rpc`.
 
 ## Architecture
 
@@ -99,6 +108,61 @@ module.plan_to_joints(
 )
 module.execute()  # Sends to coordinator
 ```
+
+## Planar Mobile Bases
+
+Represent a floor-constrained mobile base as three ordinary one-coordinate
+joints prepended to the robot's existing URDF: prismatic `x`, prismatic `y`,
+then revolute `yaw`. This keeps the model portable across Drake, RoboPlan,
+Pinocchio/Pink, and Viser without relying on backend-specific floating-joint
+representations.
+
+```python skip
+from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.robot.assets.model import PlanarBaseDefinition, RobotModel
+
+base = PlanarBaseDefinition(
+    workspace_lower=(-5.0, -5.0, -3.14),
+    workspace_upper=(5.0, 5.0, 3.14),
+    velocity_limits=(1.0, 1.0, 2.0),
+    acceleration_limits=(2.0, 2.0, 4.0),
+)
+model = RobotModel.from_file("/path/to/robot.urdf").with_planar_base(base)
+all_joints = [*base.joint_names, *arm_joint_names]
+
+config = RobotModelConfig(
+    model=model,
+    joint_names=all_joints,
+    base_link=base.root_link,
+    planning_groups=[
+        PlanningGroupDefinition(
+            name="mobile_arm",
+            joint_names=tuple(all_joints),
+            base_link=base.root_link,
+            tip_link="tool0",
+        )
+    ],
+)
+```
+
+The finite workspace bounds define the current planner search domain, not
+physical base stops. `x` and `y` use meters; `yaw` uses radians. `base_pose`
+remains the static world placement of the generated root, including the robot's
+floor height. Include all three generated joint names in
+`RobotModelConfig.joint_names`; individual planning groups opt into mobile-base
+motion by including those names.
+
+The R1 Pro blueprint exposes disjoint `left_arm`, `right_arm`, `torso`, and
+`moving_base` groups. In Viser, select an arm plus `torso` and `moving_base` to
+give the arm a Cartesian goal while allowing the waist and planar base to
+participate as auxiliary IK degrees of freedom. Select both arms for a bimanual
+goal; RoboPlan composes the selected groups automatically.
+
+Planar-base trajectories support planning and preview only. `execute()` rejects
+a plan containing any generated base joint until a feedback-controlled base
+trajectory executor is implemented. Arm-only trajectories from the same model
+remain executable.
 
 ## Path-to-Trajectory Lifecycle
 
@@ -175,8 +239,9 @@ DimOS supports RoboPlan `0.6.x` for this integration.
 
 For every selected movable joint, the RoboPlan URDF must provide a finite,
 positive velocity limit. DimOS uses an authored extended acceleration limit
-when present; otherwise it temporarily inserts a default `2.0 rad/s²` limit
-while preparing the RoboPlan model. Formal per-joint acceleration overrides
+when present; otherwise it temporarily inserts a global `2.0` fallback in each
+joint's native coordinate per second² while composing the RoboPlan model.
+Formal per-joint acceleration overrides
 will replace this fallback.
 
 ```xml
@@ -204,8 +269,8 @@ canonical per-joint overrides are future work.
 | `joint_names` | Canonical joint names in the model |
 | `base_link` | Base link name |
 | `planning_groups` | Named planning subsets with canonical joints and frames |
-| `max_velocity` | Max joint velocity (rad/s) |
-| `max_acceleration` | Max acceleration (rad/s²) |
+| `max_velocity` | Max velocity in each joint's native coordinate per second |
+| `max_acceleration` | Max acceleration in each joint's native coordinate per second² |
 
 ## Components
 
@@ -246,6 +311,7 @@ accepted.
 |-----------|-------------|
 | `xarm7-planner-coordinator` | XArm 7-DOF with coordinator |
 | `dual-xarm6-planner-coordinator` | Dual XArm 6-DOF with mock coordinator hardware |
+| `r1pro-planar-preview` | R1 Pro planar base, torso, and both arms with fake hardware |
 | `xarm-perception-sim` | XArm 7-DOF simulation perception stack |
 
 ## Directory Structure
@@ -263,9 +329,7 @@ planning/
 ├── planners/
 │   └── rrt_planner.py       # RRTConnectPlanner
 ├── monitor/                 # WorldMonitor (live state sync)
-├── trajectory_generator/    # Time-parameterized trajectories
-└── examples/
-    └── manipulation_client.py    # Interactive RPC client (python -i)
+└── trajectory_generator/    # Time-parameterized trajectories
 ```
 
 ## Obstacle Types
