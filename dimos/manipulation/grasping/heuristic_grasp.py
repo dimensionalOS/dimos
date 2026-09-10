@@ -21,9 +21,6 @@ import math
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.core.core import rpc
-from dimos.core.module import Module
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -33,13 +30,12 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
 
 
-class HeuristicGraspModule(Module, GraspGenSpec):
+class HeuristicGraspBackend:
     """Generate one top-down parallel-jaw grasp from a gravity-aligned point cloud.
 
     The input frame's XY plane must be horizontal and its -Z axis must point down.
     """
 
-    @rpc
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
         if object_pointcloud.ts is None or not math.isfinite(float(object_pointcloud.ts)):
             raise ValueError("object pointcloud must have a finite timestamp")

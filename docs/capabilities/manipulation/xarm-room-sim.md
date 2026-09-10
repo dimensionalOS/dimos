@@ -59,3 +59,77 @@ print(app.ManipulationModule.get_obstacles())
 Wait for `scan_objects` to finish before issuing another scan. The prompt set
 includes a `green ring` fallback because the tape loses its category silhouette
 in the wrist camera's top-down view.
+
+## Selecting the grasp generator
+
+The room, basic perception simulation, and real perception blueprints share
+`GraspProposalModule`. Its default generator is the top-down heuristic:
+
+```bash
+dimos run xarm-room-sim
+```
+
+The xArm blueprints supply gripper settings from `XARM_GRASPGENX_CONFIG` in
+[xArm config](/dimos/robot/manipulators/xarm/config.py). Select GraspGenX with one
+module-config override; no JSON file is required. The `all` extra does not
+include GraspGenX.
+
+```bash
+uv sync --extra all --extra graspgenx
+dimos run xarm-room-sim --graspproposalmodule.backend graspgenx
+```
+
+Use the headless rendering environment from the launch example above when
+needed. The same options work with `xarm-perception-sim` and
+`xarm-perception`; the real blueprint still requires its camera mount TF and
+hardware coordinator to be completed.
+
+The shared xArm gripper profile is derived from
+`data/xarm_grasp_sim/xarm7.xml`, not calibrated against physical hardware:
+
+- Open and half-open joint angles are 0 and 0.425 radians (the joint range is
+  0–0.85). All six gripper linkage joints take the same angle, keeping the
+  finger pads parallel.
+- Each volume bounds the inward-facing surfaces of the four collision pad
+  boxes after MuJoCo forward kinematics. Open width is 0.088924 m; half-open
+  width is 0.047946871 m. Pad thickness across the other horizontal axis is
+  0.03 m and contact height is 0.037 m.
+- The model frame is at the gripper base, with +X along physical gripper +Y
+  (jaw closure), +Y along physical −X, and +Z along the fingers. This follows
+  [GraspGenX's canonical frame convention](https://github.com/NVlabs/GraspGenX#integrating-a-new-gripper).
+- The TCP transform rotates back to the robot axes and translates 0.172 m
+  along +Z, matching the simulator's `link_tcp` site. Fingertip depth is the
+  open pad's top plane, 0.160637 m.
+
+The config is a model-derived starting point for simulation, not evidence of
+successful picking. For a different gripper, supply its own geometry, family,
+and TCP transform. Identity is valid only if model and robot TCP frames coincide.
+
+Backend selection (`backend`) is separate from learned-backend settings
+(`graspgenx`), so switching backends preserves the blueprint's gripper profile.
+For example, add `--graspproposalmodule.graspgenx.max-candidates 20` to limit
+returned proposals. Custom JSON config files remain optional through the
+standard `--config` mechanism; CLI overrides take precedence.
+Run `dimos run xarm-room-sim --help` to inspect available config fields.
+Backend changes take effect on restart. GraspGenX initializes in a dedicated
+worker, downloads its pinned checkpoint on first use, and reports failures
+without falling back to the heuristic. Heuristic startup and CLI help do not
+load the optional model runtime.
+
+After scanning, inspect proposals without moving the arm in `dimos shell`:
+
+```python skip
+print(scan.metadata["objects"])
+object_id = "COPY_AN_ID_FROM_THE_SCAN"
+cloud = app.ObjectSceneRegistrationModule.get_object_pointcloud_by_object_id(object_id)
+assert cloud is not None
+proposals = app.GraspProposalModule.propose_grasps(cloud)
+print(proposals.header.frame_id, len(proposals))
+for candidate in proposals.candidates[:5]:
+    print(candidate.score, candidate.pose)
+```
+
+`app.PickAndPlaceModule.pick_object(object_id)` generates a fresh set of proposals
+and attempts its first candidate. It does not execute a previously inspected
+proposal or retry other candidates. Retrieve that set through
+`app.PickAndPlaceModule.get_grasp_candidates()`.

@@ -21,9 +21,6 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
 import numpy as np
 from pydantic import Field, FiniteFloat, field_validator
 
-from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -68,12 +65,19 @@ class SweepVolumeGripperConfig(BaseConfig):
     family: GripperFamily = "parallel_2f"
 
 
-class GraspGenXConfig(ModuleConfig):
+class GraspGenXConfig(BaseConfig):
     """GraspGenX deployment settings, serializable by DimOS blueprints."""
 
     gripper: SweepVolumeGripperConfig
     grasp_frame_to_tcp: RigidTransform = IDENTITY_TRANSFORM
     max_candidates: PositiveCount = 100
+
+    @field_validator("max_candidates", mode="before")
+    @classmethod
+    def _parse_candidate_count(cls, value: Any) -> Any:
+        # Dynamic CLI options arrive as strings; retain strict integer validation
+        # for Python/JSON values (notably bools and fractional numbers).
+        return int(value) if isinstance(value, str) else value
 
     # Relational matrix properties cannot be expressed through scalar Field constraints.
     @field_validator("grasp_frame_to_tcp")
@@ -101,19 +105,14 @@ def _create_runtime(config: GraspGenXConfig) -> GraspGenXRuntime:
     return GraspGenXRuntime(config)
 
 
-class GraspGenXModule(Module, GraspGenSpec):
+class GraspGenXBackend:
     """Direct adapter whose optional runtime is loaded synchronously by ``start``."""
 
-    dedicated_worker = True
-    config: GraspGenXConfig  # type: ignore[assignment]
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    def __init__(self, config: GraspGenXConfig) -> None:
+        self.config = config
         self._runtime: GraspGenXRuntime | None = None
 
-    @rpc
     def start(self) -> None:
-        super().start()
         if self._runtime is not None:
             return
         try:
@@ -121,12 +120,9 @@ class GraspGenXModule(Module, GraspGenSpec):
         except Exception as exc:
             raise GraspGenXError("failed to initialize GraspGenX") from exc
 
-    @rpc
     def stop(self) -> None:
         self._runtime = None
-        super().stop()
 
-    @rpc
     def propose_grasps(self, object_pointcloud: PointCloud2) -> GraspCandidateArray:
         if self._runtime is None:
             raise GraspGenXError("GraspGenX module has not been started")

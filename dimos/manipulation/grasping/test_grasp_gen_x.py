@@ -28,9 +28,9 @@ from pytest_mock import MockerFixture
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec, LegacyGraspGenSpec
 import dimos.manipulation.grasping.grasp_gen_x as grasp_gen_x
 from dimos.manipulation.grasping.grasp_gen_x import (
+    GraspGenXBackend,
     GraspGenXConfig,
     GraspGenXError,
-    GraspGenXModule,
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
@@ -51,10 +51,6 @@ def config(**overrides: object) -> GraspGenXConfig:
     }
     values.update(overrides)
     return GraspGenXConfig(**values)  # type: ignore[arg-type]
-
-
-def module_args(value: GraspGenXConfig | None = None) -> dict[str, Any]:
-    return (value or config()).model_dump(exclude={"rpc_transport", "tf_transport", "g"})
 
 
 def cloud(points: np.ndarray | None = None) -> PointCloud2:
@@ -140,7 +136,7 @@ def test_gripper_constraints_are_declared_by_fields(field: str, value: object) -
         config(gripper={**gripper, field: value})
 
 
-@pytest.mark.parametrize("value", [0, -1, True])
+@pytest.mark.parametrize("value", [0, -1, True, 1.5, "1.5", "invalid"])
 def test_candidate_limit_is_a_strict_positive_integer(value: object) -> None:
     with pytest.raises(ValueError):
         config(max_candidates=value)
@@ -159,7 +155,7 @@ def test_rigid_transform_relational_validation() -> None:
 
 
 def test_start_is_synchronous_and_idempotent(runtime: Any) -> None:
-    module = GraspGenXModule(**module_args())
+    module = GraspGenXBackend(config())
     try:
         module.start()
         module.start()
@@ -172,7 +168,7 @@ def test_start_is_synchronous_and_idempotent(runtime: Any) -> None:
 
 def test_start_failure_is_explicit(runtime: Any) -> None:
     runtime.side_effect = RuntimeError("CUDA unavailable")
-    module = GraspGenXModule(**module_args())
+    module = GraspGenXBackend(config())
     try:
         with pytest.raises(GraspGenXError, match="initialize"):
             module.start()
@@ -196,7 +192,7 @@ def test_adapter_sorts_stably_truncates_and_applies_tcp_transform(runtime: Any) 
             (0.0, 0.0, 0.0, 1.0),
         ),
     )
-    module = GraspGenXModule(**module_args(cfg))
+    module = GraspGenXBackend(cfg)
     try:
         module.start()
         result = module.propose_grasps(cloud())
@@ -214,7 +210,7 @@ def test_empty_backend_result_preserves_input_header(runtime: Any) -> None:
         np.empty((0, 4, 4), dtype=np.float32),
         np.empty(0, dtype=np.float32),
     )
-    module = GraspGenXModule(**module_args())
+    module = GraspGenXBackend(config())
     try:
         module.start()
         result = module.propose_grasps(cloud())
@@ -235,7 +231,7 @@ def test_empty_backend_result_preserves_input_header(runtime: Any) -> None:
     ],
 )
 def test_invalid_cloud_points_are_rejected(runtime: Any, points: np.ndarray) -> None:
-    module = GraspGenXModule(**module_args())
+    module = GraspGenXBackend(config())
     try:
         module.start()
         with pytest.raises(ValueError, match="pointcloud|XYZ"):
@@ -257,7 +253,7 @@ def test_invalid_backend_outputs_are_rejected(
     runtime: Any, backend: tuple[np.ndarray, np.ndarray]
 ) -> None:
     runtime.return_value.infer.return_value = backend
-    module = GraspGenXModule(**module_args())
+    module = GraspGenXBackend(config())
     try:
         module.start()
         with pytest.raises(ValueError):
@@ -268,7 +264,7 @@ def test_invalid_backend_outputs_are_rejected(
 
 def test_inference_failure_is_wrapped(runtime: Any) -> None:
     runtime.return_value.infer.side_effect = RuntimeError("backend")
-    module = GraspGenXModule(**module_args())
+    module = GraspGenXBackend(config())
     try:
         module.start()
         with pytest.raises(GraspGenXError, match="inference"):
@@ -278,7 +274,7 @@ def test_inference_failure_is_wrapped(runtime: Any) -> None:
 
 
 def test_not_started_and_missing_metadata_are_rejected(runtime: Any) -> None:
-    module = GraspGenXModule(**module_args())
+    module = GraspGenXBackend(config())
     missing_frame = cloud()
     missing_frame.frame_id = ""
     missing_timestamp = cloud()

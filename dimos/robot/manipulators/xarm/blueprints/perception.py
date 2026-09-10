@@ -20,7 +20,7 @@ import math
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
-from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.grasping.grasp_proposal import GraspProposalModule
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
@@ -29,7 +29,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
+from dimos.robot.manipulators.xarm.config import XARM_GRASPGENX_CONFIG, make_xarm7_model_config
 
 XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
     translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
@@ -53,7 +53,7 @@ xarm_perception = autoconnect(
     ),
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
-    HeuristicGraspModule.blueprint(),
+    GraspProposalModule.blueprint(graspgenx=XARM_GRASPGENX_CONFIG),
     # TODO: tf tree is broken here; RealSenseCamera no longer publishes its mount
     # edge, so camera_link needs a parent (e.g. from the arm) to resolve into world.
     RealSenseCamera.blueprint(),
