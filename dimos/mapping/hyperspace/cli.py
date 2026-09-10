@@ -349,7 +349,9 @@ def write_rrd(result: dict[str, Any], out: Path, *, recording: Path, cutoff: flo
 def main(
     recording: Path = typer.Argument(..., help="A memory2 .db or an .mcap"),
     query: list[str] = typer.Option(..., "--query", "-q", help="Text query; repeat for several"),
-    out: Path = typer.Option(Path("hyperspace.rrd"), "--out", "-o", help="Where to write the rrd"),
+    out: Path | None = typer.Option(
+        None, "--out", "-o", help="Where to write the rrd; omitted = a temp file, opened in rerun"
+    ),
     hz: float = typer.Option(5.0, help="Colour frames per second to ingest"),
     max_seconds: float = typer.Option(1e9, help="Stop after this much of the recording"),
     frame: str = typer.Option("odom", help="Frame to answer in"),
@@ -406,8 +408,19 @@ def main(
             depth_weights=depth_weights,
             cuda=cuda,
         )
+        open_after = out is None
+        if out is None:
+            slug = "_".join("".join(c if c.isalnum() else "_" for c in q).strip("_") for q in query)
+            out = Path(tempfile.gettempdir()) / f"hyperspace_{recording.stem}_{slug[:60]}.rrd"
         write_rrd(result, out, recording=recording, cutoff=cutoff)
         typer.echo(f"wrote {out}")
+        if open_after:
+            # Detached: the viewer outlives this command. If a viewer is already
+            # up on rerun's default port the file streams into it instead.
+            subprocess.Popen(
+                ["rerun", str(out)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            typer.echo("opened in rerun")
     finally:
         if keep_export:
             typer.echo(f"kept {export_dir}")
