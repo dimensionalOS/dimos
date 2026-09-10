@@ -37,6 +37,7 @@ from dimos.teleop.memory_world.visual_search import (
     cluster_hits,
     cluster_places,
     hot_patches,
+    index_stream_name_of,
     patch_world_position,
     score_frames,
     search_phrase,
@@ -179,7 +180,7 @@ def _seed_index(
     source_id: int = 7,
 ) -> None:
     grid = patches if patches is not None else np.zeros((4, 2), dtype=np.float16)
-    store.stream("image_siglip2_patches", PatchGrid).append(
+    store.stream(index_stream_name_of(model_name), PatchGrid).append(
         PatchGrid(source_id=source_id, rows=2, cols=2, patches=grid),
         ts=ts,
         pose=PoseStamped(position=Vector3(*position)),
@@ -190,10 +191,23 @@ def _seed_index(
 GIANT = "google/siglip2-giant-opt-patch16-384"
 
 
+def test_each_model_gets_its_own_stream() -> None:
+    """Two models' vectors are not comparable, so they must not share a stream."""
+    assert index_stream_name_of(GIANT) == "image_siglip2_giant_opt_p16_384"
+    assert index_stream_name_of("google/siglip2-so400m-patch16-384") != index_stream_name_of(GIANT)
+
+
 def test_index_built_by_another_model_is_refused(sqlite_store: SqliteStore) -> None:
-    _seed_index(sqlite_store, "google/siglip2-so400m-patch16-384")
+    """Naming per model keeps them apart; an explicit override can still collide."""
+    other = "google/siglip2-so400m-patch16-384"
+    _seed_index(sqlite_store, other)
     with pytest.raises(ValueError, match="so400m"):
-        _ = VisualMemoryIndex(sqlite_store, pose_of=lambda obs: None, model_name=GIANT).index_stream
+        _ = VisualMemoryIndex(
+            sqlite_store,
+            pose_of=lambda obs: None,
+            index_stream_name=index_stream_name_of(other),
+            model_name=GIANT,
+        ).index_stream
 
 
 def test_index_built_by_the_same_model_opens(sqlite_store: SqliteStore) -> None:
@@ -220,7 +234,7 @@ def test_search_returns_the_frame_and_patch_that_matched(sqlite_store: SqliteSto
 
 
 def test_index_built_with_body_poses_is_refused(sqlite_store: SqliteStore) -> None:
-    sqlite_store.stream("image_siglip2_patches", PatchGrid).append(
+    sqlite_store.stream(index_stream_name_of(GIANT), PatchGrid).append(
         PatchGrid(source_id=7, rows=2, cols=2, patches=np.zeros((4, 2), dtype=np.float16)),
         ts=1.0,
         pose=PoseStamped(position=Vector3(0.0, 0.0, 0.0)),

@@ -46,6 +46,7 @@ convention and an index built any other way is refused.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -69,6 +70,20 @@ logger = setup_logger()
 # ImageNet, 1536-dim). 1.87B params = 3.74 GB in fp16, which fits an 8 GB GPU
 # with room for activations.
 SIGLIP2_MODEL_NAME = "google/siglip2-giant-opt-patch16-384"
+
+
+def index_stream_name_of(model_name: str) -> str:
+    """Name the index stream after the model that built it.
+
+    Two models' embeddings are not comparable, so they must not share a stream.
+    Naming the stream for the model lets both sit in one recording and be
+    scored against each other: ``google/siglip2-giant-opt-patch16-384`` ->
+    ``image_siglip2_giant_opt_p16_384``.
+    """
+    tail = model_name.rsplit("/", 1)[-1].replace("patch", "p")
+    slug = re.sub(r"[^a-z0-9]+", "_", tail.lower()).strip("_")
+    return f"image_{slug}"
+
 
 BACKGROUND_PROMPTS = (
     "a photo",
@@ -375,7 +390,7 @@ class VisualMemoryIndex:
         store: SqliteStore,
         pose_of: Callable[[Any], np.ndarray | None],
         image_stream_name: str = "color_image",
-        index_stream_name: str = "image_siglip2_patches",
+        index_stream_name: str = "",  # default: named after the model
         model_name: str = SIGLIP2_MODEL_NAME,
         device: str | None = None,
         dtype: torch.dtype = torch.float16,
@@ -385,7 +400,7 @@ class VisualMemoryIndex:
         self.store = store
         self.pose_of = pose_of
         self.image_stream_name = image_stream_name
-        self.index_stream_name = index_stream_name
+        self.index_stream_name = index_stream_name or index_stream_name_of(model_name)
         self.model_name = model_name
         self._device = device
         self._dtype = dtype
@@ -603,7 +618,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("store_path")
     parser.add_argument("--image-stream", default="color_image")
-    parser.add_argument("--index-stream", default="image_siglip2_patches")
+    parser.add_argument("--index-stream", default="", help="default: named after the model")
     parser.add_argument("--tf-stream", default="tf")
     parser.add_argument("--world-frame", default="world")
     parser.add_argument(
