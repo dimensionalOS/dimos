@@ -221,6 +221,22 @@ TEST_CASE("enforce_topics_match_ports names every port the coordinator never wir
     }
 }
 
+TEST_CASE("enforce_topics_match_ports rejects a misspelled coordinator topic") {
+    Notifier notifier;
+    // A misspelling is not an extra topic: the port the module asked for is now
+    // unwired, so the missing half throws and names both sides.
+    Builder builder({{"dtaa", "/d"}}, &notifier);
+    builder.input<Bytes>("data", identity_decode, [](Bytes) {});
+    try {
+        builder.enforce_topics_match_ports();
+        FAIL("expected a misspelled topic to throw");
+    } catch (const std::runtime_error& e) {
+        CHECK(std::string(e.what()) ==
+              "topics do not match module ports: missing [\"data\"], "
+              "unexpected [\"dtaa\"]");
+    }
+}
+
 // Rust rejects this.
 // TODO: add tf port type to C++ to match rust (so we can better check input)
 TEST_CASE("enforce_topics_match_ports allows a topic no port asked for") {
