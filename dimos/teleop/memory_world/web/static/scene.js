@@ -195,6 +195,9 @@ export class WorldScene {
             new THREE.PlaneGeometry(HUD_PANEL_SIZE, HUD_PANEL_SIZE),
             this._hudPanelMat,
         );
+        // Off by default: it covers the view and most of the time you want the
+        // world, not a map of it. M or the button brings it back.
+        this._hudPanel.visible = false;
         this._hudGroup.add(this._hudPanel);
         this._hudMarker = new THREE.Mesh(
             new THREE.CircleGeometry(HUD_MARKER_RADIUS, 16),
@@ -478,9 +481,9 @@ export class WorldScene {
 
     /** Hide or show the head-locked HUD: minimap and answer text together. */
     toggleHud() {
-        this._hudGroup.visible = !this._hudGroup.visible;
-        this.diag('hud_toggle', { visible: this._hudGroup.visible });
-        return this._hudGroup.visible;
+        this._hudPanel.visible = !this._hudPanel.visible;
+        this.diag('hud_toggle', { visible: this._hudPanel.visible });
+        return this._hudPanel.visible;
     }
 
     /** Phone controls: one finger looks, two fingers walk (drag) and scale (pinch). */
@@ -1470,7 +1473,7 @@ export class WorldScene {
         lines.slice(0, 4).forEach((text, i) => ctx.fillText(text, 42, 62 + i * 50));
         this._answerTexture.needsUpdate = true;
         this._answerPanel.visible = true;
-        this._hudGroup.visible = true; // a new answer is worth un-hiding the HUD for
+        this._hudGroup.visible = true; // the answer panel lives here; the minimap stays as it was
     }
 
     setTopDownMap(header, jpegArrayBuffer) {

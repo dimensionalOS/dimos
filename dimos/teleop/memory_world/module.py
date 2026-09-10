@@ -174,13 +174,18 @@ class MemoryWorldConfig(ModuleConfig):
     # scans are in the sensor frame and need their pose applied. None detects
     # this from the point cloud frame_id.
     lidar_world_frame: bool | None = None
-    # Z slab applied at load time to drop the floor/ceiling from the cloud.
-    # The user stands on the floor in VR; rendering it as points is just noise.
-    map_z_min: float = -0.2
-    map_z_max: float = 2.4
-    # Height colour ramp: floor (7th percentile of z) to floor + this. Room
-    # height, roughly; anything taller saturates to the top colour.
-    height_ramp_span_m: float = PydanticField(default=2.2, gt=0.0)
+    # Heights kept from the cloud. None means keep everything, which is the
+    # default: a recording can be multi-storey, its origin can be the sensor
+    # rather than the ground, and there is no floor to assume. An absolute
+    # slab of [-0.2, 2.4] once threw away 96% of a stairwell walkthrough.
+    # Set both to clip explicitly, in the recording's own frame.
+    map_z_min: float | None = None
+    map_z_max: float | None = None
+    # Height colour ramp, over the cloud's own range so a multi-storey
+    # recording gets a different colour per level. Percentiles, so one stray
+    # return below the building does not flatten the rest into one shade.
+    height_ramp_low_percentile: float = PydanticField(default=2.0, ge=0.0, le=100.0)
+    height_ramp_high_percentile: float = PydanticField(default=98.0, ge=0.0, le=100.0)
     # color_image stream is sampled for "Street View" capture-pose markers.
     image_stream_name: str = "color_image"
     n_image_markers: int = 200
@@ -210,8 +215,11 @@ class MemoryWorldConfig(ModuleConfig):
     # Top-down density map (GTA-style minimap + ground projection). Computed
     # from the same point cloud — Z-slab histogram into a square image.
     map_image_size: int = 512
-    map_z_min_floor: float = 0.05  # avoid floor speckle
-    map_z_max_floor: float = 1.8
+    # The top-down map is a footprint, so it takes the middle of whatever
+    # height range the cloud spans — percentiles, not metres, so it works on
+    # one storey or several.
+    map_z_low_percentile: float = PydanticField(default=10.0, ge=0.0, le=100.0)
+    map_z_high_percentile: float = PydanticField(default=90.0, ge=0.0, le=100.0)
     client_route: str = "/memory_world"
     ws_route: str = "/ws_memory_world"
     # Bind on all interfaces by default — the headset connects over Wi-Fi.
@@ -609,7 +617,16 @@ class MemoryWorldModule(Module):
                 return None
 
             z = xyz[:, 2]
-            m = (z >= self.config.map_z_min) & (z <= self.config.map_z_max)
+            low = self.config.map_z_min if self.config.map_z_min is not None else -np.inf
+            high = self.config.map_z_max if self.config.map_z_max is not None else np.inf
+            m = (z >= low) & (z <= high)
+            logger.info(
+                "cloud z spans %.2f..%.2f; keeping %d of %d voxels",
+                float(z.min()),
+                float(z.max()),
+                int(m.sum()),
+                len(z),
+            )
             xyz = xyz[m]
             if xyz.size == 0:
                 return None
@@ -641,16 +658,17 @@ class MemoryWorldModule(Module):
         for highlights, so a voxel painted by a query reads as "the answer"
         rather than "a slightly different height".
 
-        The ramp starts at the floor, taken as the 7th percentile of the
-        cloud's heights (recordings whose odometry frame is not floor-aligned
-        would clip a fixed slab to one end), and spans ``height_ramp_span_m``
-        above it. Anchoring the top to the floor rather than to the highest
-        voxel keeps ceiling fixtures and stray returns from stretching the
-        ramp until the walls all look alike. Returns N x 3 uint8 RGB.
+        The ramp spans the cloud's own height range, from the
+        ``height_ramp_low_percentile`` to the ``height_ramp_high_percentile``
+        of z, so a stairwell or a two-storey building reads as different
+        colours per level. Percentiles rather than min/max, so one stray
+        return far below the building does not flatten everything else into a
+        single shade. Returns N x 3 uint8 RGB.
         """
         zc = positions[:, 2]
-        lo = float(np.percentile(zc, 7)) if zc.size else 0.0
-        hi = lo + max(float(self.config.height_ramp_span_m), 1e-3)
+        lo = float(np.percentile(zc, self.config.height_ramp_low_percentile)) if zc.size else 0.0
+        hi = float(np.percentile(zc, self.config.height_ramp_high_percentile)) if zc.size else 1.0
+        hi = max(hi, lo + 1e-3)
         t = np.clip((zc - lo) / (hi - lo), 0.0, 1.0)
         stops = np.linspace(0.0, 1.0, len(HEIGHT_COLOR_STOPS))
         rgb = np.stack([np.interp(t, stops, HEIGHT_COLOR_STOPS[:, c]) for c in range(3)], axis=1)
@@ -761,7 +779,9 @@ class MemoryWorldModule(Module):
             return None
 
         z = xyz[:, 2]
-        m = (z >= self.config.map_z_min_floor) & (z <= self.config.map_z_max_floor)
+        low = float(np.percentile(z, self.config.map_z_low_percentile))
+        high = float(np.percentile(z, self.config.map_z_high_percentile))
+        m = (z >= low) & (z <= high)
         xy = xyz[m, :2]
         if xy.size == 0:
             xy = xyz[:, :2]
@@ -1168,8 +1188,11 @@ class MemoryWorldModule(Module):
                     stats.removed,
                     stats.seconds,
                 )
+            # The replay shows the same heights as the static map.
             self._replay = VoxelReplay(
-                store, z_min=self.config.map_z_min, z_max=self.config.map_z_max
+                store,
+                z_min=self.config.map_z_min if self.config.map_z_min is not None else -np.inf,
+                z_max=self.config.map_z_max if self.config.map_z_max is not None else np.inf,
             )
             # Listing every camera stamp is a pass over the image stream (on
             # an mcap that decompresses every chunk), so it is done here, once.
@@ -1202,8 +1225,10 @@ class MemoryWorldModule(Module):
         payload["hfov_deg"] = self._camera_hfov()
         # The viewer colours replayed voxels itself, on the static map's ramp.
         final = replay.keyframes.last().data.points_f32()
-        floor = float(np.percentile(final[:, 2], 7)) if len(final) else 0.0
-        payload["height"] = {"floor": floor, "span": float(self.config.height_ramp_span_m)}
+        z = final[:, 2] if len(final) else np.zeros(1)
+        low = float(np.percentile(z, self.config.height_ramp_low_percentile))
+        high = float(np.percentile(z, self.config.height_ramp_high_percentile))
+        payload["height"] = {"floor": low, "span": max(high - low, 1e-3)}
         payload["colors"] = (HEIGHT_COLOR_STOPS / 255.0).round(4).tolist()
         return payload
 

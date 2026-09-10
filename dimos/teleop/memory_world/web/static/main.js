@@ -484,6 +484,8 @@ const hudBtn = document.getElementById('hudBtn');
 hudBtn.addEventListener('click', () => {
     if (scene) hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
 });
+// The minimap starts hidden, so the button starts as the way to get it back.
+hudBtn.textContent = 'Show map';
 document.getElementById('answerBtn').addEventListener('click', () => window.app.jumpTo(0));
 document.getElementById('cameraBtn').addEventListener('click', () => {
     if (!scene || !scene._queryImages.length) return;

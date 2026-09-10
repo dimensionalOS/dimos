@@ -317,7 +317,7 @@ _STREAM_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 }
 
 
-def detect_streams(store: Store) -> dict[str, str | None]:
+def detect_streams(store: Store) -> dict[str, Any]:
     """Name the stream to use for each role, from the payload types in *store*.
 
     Recordings disagree about names — this rig calls its camera
@@ -335,6 +335,23 @@ def detect_streams(store: Store) -> dict[str, str | None]:
             continue
         if payload is not None:
             by_type.setdefault(payload.__name__, []).append(name)
+
+    def rank(role: str, type_name: str) -> list[str]:
+        """Candidates for a role, best-named first."""
+        preferred, disqualifying = _STREAM_HINTS[role]
+        candidates = [
+            name
+            for name in by_type.get(type_name, [])
+            if not any(word in name.lower() for word in disqualifying)
+        ]
+
+        def order(name: str) -> tuple[int, int, str]:
+            hit = next(
+                (i for i, word in enumerate(preferred) if word in name.lower()), len(preferred)
+            )
+            return (hit, len(name), name)
+
+        return sorted(candidates, key=order)
 
     def pick(role: str, type_name: str, depth_like: bool | None = None) -> str | None:
         preferred, disqualifying = _STREAM_HINTS[role]
@@ -365,6 +382,10 @@ def detect_streams(store: Store) -> dict[str, str | None]:
         "depth": pick("depth", "Image", depth_like=True),
         "camera_info": pick("camera_info", "CameraInfo"),
         "lidar": pick("lidar", "PointCloud2"),
+        # Every PointCloud2 stream, best-named first. A recording often holds
+        # several lidars and several stages of registration, and the name says
+        # nothing about which one agrees with the tf tree — the caller checks.
+        "lidar_candidates": rank("lidar", "PointCloud2"),
         "tf": pick("tf", "TFMessage"),
     }
     # Prefer the camera_info that belongs to the chosen image stream.

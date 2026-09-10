@@ -247,19 +247,33 @@ def test_route_is_generated_by_server(
 
 def test_height_colours_stay_in_the_blue_band(memory_world: MemoryWorldModule) -> None:
     """Warm colours are reserved for highlights, so no height may turn red or yellow."""
-    # A frame that is not floor-aligned (floor near -1) with a few stray
-    # returns far above the ceiling.
-    room = np.linspace(-1.0, 1.4, 24)
-    positions = np.array([[0.0, 0.0, z] for z in [*room, 9.0]])
+    # Not floor-aligned: this recording's ground sits near -1.
+    positions = np.array([[0.0, 0.0, z] for z in np.linspace(-1.0, 1.4, 25)])
     colours = memory_world._height_colors(positions).astype(int)
     assert colours.shape == (25, 3)
     assert (colours[:, 2] >= colours[:, 0]).all()  # blue never below red: cool half only
     assert (colours[:, 2] >= colours[:, 1]).all()  # blue never below green
     assert (np.diff(colours[:, 1]) >= 0).all()  # cooler and brighter going up
-    # The ramp is anchored to the floor, so the stray return does not stretch
-    # it: the top of the room already uses the bright end.
-    assert colours[0].sum() < 320
-    assert colours[23].sum() > 0.8 * colours[24].sum()
+    assert colours[0].sum() < colours[-1].sum()
+
+
+def test_height_colours_separate_the_storeys(memory_world: MemoryWorldModule) -> None:
+    """A multi-storey recording must not paint every floor the same shade."""
+    ground = np.linspace(0.0, 2.4, 50)
+    upstairs = np.linspace(4.0, 6.4, 50)
+    positions = np.array([[0.0, 0.0, z] for z in [*ground, *upstairs]])
+    colours = memory_world._height_colors(positions).astype(int)
+    # The two levels land in clearly different parts of the ramp.
+    assert colours[:50].mean(axis=0).sum() + 60 < colours[50:].mean(axis=0).sum()
+
+
+def test_a_sparse_outlier_does_not_flatten_the_ramp(memory_world: MemoryWorldModule) -> None:
+    """One stray return far above the building must not squash everything else."""
+    room = np.linspace(0.0, 2.4, 199)
+    positions = np.array([[0.0, 0.0, z] for z in [*room, 90.0]])
+    colours = memory_world._height_colors(positions).astype(int)
+    # The percentile cut ignores the stray, so the room still spans the ramp.
+    assert colours[198].sum() > 1.8 * colours[0].sum()
 
 
 def test_concurrent_clients_build_the_world_once(

@@ -174,7 +174,14 @@ export class ReplayController {
     async load() {
         const response = await fetch(`${this.baseUrl}/replay/index`);
         if (!response.ok) throw new Error(`replay index: ${response.status}`);
-        this.index = await response.json();
+        const index = await response.json();
+        // A rebuild replaces the diff stream, so an index fetched mid-build can
+        // arrive with a scan or two in it. That renders a dead 0:00 / 0:00
+        // timeline, which reads as broken; wait for the real thing instead.
+        if (!index.scans || index.scans.length < 2) {
+            throw new Error(`replay index still building (${(index.scans || []).length} scans)`);
+        }
+        this.index = index;
         this.index.keyframeScans = this.index.keyframes.map((k) => k.scan);
         this.t0 = this.index.scans[0];
         this.t1 = this.index.scans[this.index.scans.length - 1];
