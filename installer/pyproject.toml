@@ -22,3 +22,4 @@ dimup = ["templates/*"]
 [tool.pytest.ini_options]
 testpaths = ["src"]
 addopts = "--import-mode=importlib"
+norecursedirs = ["templates"]

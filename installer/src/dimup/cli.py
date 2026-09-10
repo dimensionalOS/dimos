@@ -20,6 +20,7 @@ from pathlib import Path
 import sys
 
 from dimup.process import Runner, SetupError
+from dimup.project import create
 from dimup.setup import prepare
 
 
@@ -27,10 +28,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="dimup", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("setup", help="Prepare this machine for DimOS development")
-    parser.parse_args()
+    init = commands.add_parser("init", help="Create a DimOS SDK application")
+    init.add_argument("directory", type=Path)
+    init.add_argument("--ref", default="main", help="SDK branch or commit (default: main)")
+    args = parser.parse_args()
     state = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
     try:
-        prepare(Runner(state / "dimup/setup.log"))
+        if args.command == "setup":
+            prepare(Runner(state / "dimup/setup.log"))
+        else:
+            create(args.directory, args.ref)
     except (SetupError, OSError) as error:
         print(str(error), file=sys.stderr)
         raise SystemExit(1) from error
