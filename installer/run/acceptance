@@ -118,6 +118,22 @@ def main() -> None:
             setup_log = project / ".dimos/setup.log"
             if setup_log.exists():
                 shutil.copy(setup_log, results / "setup.log")
+        transcript = log.read_text()
+        for expected in (
+            "Resolve SDK",
+            "Create project files",
+            "Install dependencies",
+            "Resolved ",
+            "Verify application",
+            "Ready · my-robot",
+            "source .dimos/activate.sh",
+            "dimos run my-robot.demo",
+            "direnv allow",
+        ):
+            if expected not in transcript:
+                raise RuntimeError(f"Missing CLI output {expected!r}; see {log}")
+        if "\x1b[" in transcript or "Read SDK dependencies" in transcript:
+            raise RuntimeError(f"Unexpected terminal decoration or metadata output; see {log}")
         activated(project, ["pytest", "-q"], log)
         activated(project, ["dimos", "doctor"], log)
         run_demo(project, "image 160x120", results / "demo.log")

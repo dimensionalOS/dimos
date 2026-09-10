@@ -20,8 +20,15 @@ wheel. Both run `dimup setup` and install only the setup CLI globally.
 Until the SDK changes merge, create an application with the tested PR revision:
 
 ```bash
-dimup init my-robot --ref f4053beb18ec9b0c87e895f2b0d6ac2c5f969f14
+dimup init my-robot --ref c747e17e7f1adcc73592d06557ae8e645a5430d3
 cd my-robot
 source .dimos/activate.sh
 dimos run my-robot.demo
 ```
+
+During creation, dimup groups SDK metadata work into one stage and streams uv's
+installation output to the terminal. Each stage finishes with its elapsed time.
+The final summary prints activation and run commands, optional direnv activation,
+and the full log path. Failures keep the project directory and log for inspection.
+Redirected output uses plain lines; terminal output adds color and a spinner.
+Set `NO_COLOR=1` to disable color.

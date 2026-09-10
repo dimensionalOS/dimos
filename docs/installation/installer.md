@@ -74,7 +74,10 @@ Source `.dimos/activate.sh` in each new Bash or Zsh terminal. `deactivate` resto
 the prior environment. For automatic activation, install direnv, configure its
 shell hook, review `.envrc`, and run `direnv allow`. Activation never installs packages.
 
-Initialization reports named stages. On failure, it prints the failed command
+Initialization shows each stage with its elapsed time and streams dependency
+installation output to the terminal. The full output is also saved in
+`.dimos/setup.log`. Redirected output uses plain lines; set `NO_COLOR=1` to disable
+terminal color. On failure, it prints the failed command
 and `.dimos/setup.log` location and keeps the project directory. Fix the reported
 problem, then remove that directory or choose another empty directory to retry.
 `dimos doctor` checks the application without modifying it.

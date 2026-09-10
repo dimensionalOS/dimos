@@ -14,11 +14,11 @@
 
 from hashlib import sha256
 import io
-import shutil
-import tarfile
 import os
 from pathlib import Path
+import shutil
 import subprocess
+import tarfile
 
 
 def bootstrap(tmp_path, valid):
@@ -88,7 +88,7 @@ def test_repository_bootstrap_installs_uv_then_dimup_from_source(tmp_path):
         '#!/bin/sh\ncase "$*" in\n'
         '*astral.sh*) cat "$TEST_UV_INSTALLER" ;;\n'
         '*) while [ "$1" != "--output" ]; do shift; done; cp "$TEST_ARCHIVE" "$2" ;;\n'
-        'esac\n'
+        "esac\n"
     )
     (bins / "curl").chmod(0o755)
     uv = tmp_path / "uv"
