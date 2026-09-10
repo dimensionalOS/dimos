@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
+from uuid import uuid4
 
 from dimos.manipulation.planning.spec.enums import (
     IKStatus,
@@ -192,6 +193,7 @@ class GeneratedPlan:
     path_length: float = 0.0
     iterations: int = 0
     message: str = ""
+    plan_id: str = field(default_factory=lambda: uuid4().hex)
 
     def is_success(self) -> bool:
         """Check if the generated plan was successful."""

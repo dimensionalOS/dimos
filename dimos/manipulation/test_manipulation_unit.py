@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pickle
 from unittest.mock import ANY, MagicMock, call
 
 import numpy as np
@@ -1024,6 +1025,30 @@ class TestPlanningDiagnostics:
 
 class TestExecute:
     """Test coordinator execution."""
+
+    def test_replaced_plan_is_not_dispatched_or_consumed(self, module_factory):
+        module = module_factory()
+        config = _one_joint_config()
+        _install_generated_plan(module, config, [0.0], [0.1])
+        original = pickle.loads(pickle.dumps(module._last_plan))
+        _install_generated_plan(module, config, [0.0], [0.2])
+        replacement = module._last_plan
+        coordinator = _control_coordinator()
+        module._control_coordinator = coordinator
+        module._initialize_execution()
+
+        result = module.execute(plan_id=original.plan_id, blocking=False)
+
+        assert result.status is ExecutionStatus.REJECTED
+        coordinator.execute_trajectory.assert_not_called()
+        assert module._last_plan is replacement
+        assert (
+            module.execute(
+                plan_id=pickle.loads(pickle.dumps(replacement)).plan_id, blocking=False
+            ).status
+            is ExecutionStatus.ACCEPTED
+        )
+        coordinator.execute_trajectory.assert_called_once()
 
     def test_execute_requires_trajectory(self, robot_config, module_factory):
         """Execute fails without planned trajectory."""

@@ -176,10 +176,10 @@ motion = arm.rpc
 planned = motion.plan_to_joints({
     arm.info.id: JointState(position=arm.joints() + 0.01),
 }, speed_scale=0.2)
-if planned.succeeded:
+if planned.succeeded and planned.plan is not None:
     print(motion.preview_plan(planned.plan))
     print(motion.get_visualization_url())
-    started = motion.execute(blocking=False)
+    started = motion.execute(blocking=False, plan_id=planned.plan.plan_id)
     if started.succeeded:
         print(motion.wait_for_execution(timeout=30.0))
 ```
@@ -189,8 +189,11 @@ but currently interprets their coordinates as world-frame values; it does not
 transform a supplied frame.
 
 Planning stores one pending plan on the Module. A new planning request replaces
-it; `execute()` consumes it. Previewing an explicit plan does not change which
-plan execution consumes. `clear_planned_path()` discards pending work without
+it. Pass `plan_id=planned.plan.plan_id` to execute only the returned plan; a
+replacement is rejected without dispatching or consuming it. SDK moves always
+pass this ID. Calling `execute()` without an ID explicitly consumes whichever
+plan is pending. Previewing a plan does not select it for execution.
+`clear_planned_path()` discards pending work without
 cancelling active execution. Use one motion-commanding client per module;
 separate `Arm` objects do not own independent plans or executions.
 

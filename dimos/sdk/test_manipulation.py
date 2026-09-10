@@ -36,8 +36,10 @@ from dimos.manipulation.manipulation_spec import (
     PlanResult,
     PlanStatus,
 )
+from dimos.manipulation.planning.spec.models import GeneratedPlan
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.porcelain.dimos import Dimos
 from dimos.sdk.manipulation import Arm, MotionError
 
@@ -68,8 +70,12 @@ def rpc(mocker):
             ),
         },
     )
-    proxy.plan_to_joints.return_value = PlanResult(PlanStatus.SUCCEEDED)
-    proxy.plan_to_poses.return_value = PlanResult(PlanStatus.SUCCEEDED)
+    proxy.plan_to_joints.return_value = PlanResult(
+        PlanStatus.SUCCEEDED, plan=GeneratedPlan(("arm",), JointTrajectory())
+    )
+    proxy.plan_to_poses.return_value = PlanResult(
+        PlanStatus.SUCCEEDED, plan=GeneratedPlan(("arm",), JointTrajectory())
+    )
     proxy.execute.return_value = ExecutionResult(ExecutionStatus.COMPLETED)
     proxy.move_linear.return_value = MoveResult(
         PlanResult(PlanStatus.SUCCEEDED),
@@ -202,7 +208,9 @@ def test_joint_inputs_plan_before_blocking_execution(arm, rpc):
     assert target.position == [0.3, 0.4]
     assert rpc.plan_to_joints.call_args.kwargs == {"speed_scale": 0.2}
     assert [call[0] for call in rpc.method_calls][-2:] == ["plan_to_joints", "execute"]
-    rpc.execute.assert_called_once_with(blocking=True, timeout=10.0)
+    rpc.execute.assert_called_once_with(
+        blocking=True, timeout=10.0, plan_id=rpc.plan_to_joints.return_value.plan.plan_id
+    )
 
 
 @pytest.mark.parametrize("positions", [[0.0], [[0.0, 0.1]], [0.0, np.nan], [np.inf, 0], [1j, 0]])
@@ -222,7 +230,9 @@ def test_pose_preserves_current_orientation(arm, rpc):
     np.testing.assert_array_equal(target.position.to_numpy(), [0.5, 0.1, 0.4])
     assert target.orientation.to_tuple() == (0.0, 1.0, 0.0, 0.0)
     assert rpc.plan_to_poses.call_args.kwargs == {"speed_scale": 0.3}
-    rpc.execute.assert_called_once_with(blocking=True, timeout=20.0)
+    rpc.execute.assert_called_once_with(
+        blocking=True, timeout=20.0, plan_id=rpc.plan_to_poses.return_value.plan.plan_id
+    )
 
 
 def test_explicit_orientation_needs_no_state_read(arm, rpc):
@@ -262,12 +272,13 @@ def test_zero_quaternion_never_plans_or_executes(arm, rpc):
 @pytest.mark.parametrize(
     "method,rpc_method", [("move_joints", "plan_to_joints"), ("move_pose", "plan_to_poses")]
 )
-def test_plan_failure_stops_sequence_and_retains_result(arm, rpc, method, rpc_method):
-    failure = PlanResult(PlanStatus.FAILED, "no solution")
+@pytest.mark.parametrize("status", [PlanStatus.FAILED, PlanStatus.SUCCEEDED])
+def test_missing_plan_never_executes(arm, rpc, method, rpc_method, status):
+    failure = PlanResult(status, "no plan snapshot")
     getattr(rpc, rpc_method).return_value = failure
     target = [0.1, 0.2] if method == "move_joints" else [0.1, 0.2, 0.3]
 
-    with pytest.raises(MotionError, match="no solution") as error:
+    with pytest.raises(MotionError, match="no plan snapshot") as error:
         getattr(arm, method)(target)
 
     assert error.value.operation == method
@@ -278,6 +289,7 @@ def test_plan_failure_stops_sequence_and_retains_result(arm, rpc, method, rpc_me
 @pytest.mark.parametrize(
     "status",
     [
+        ExecutionStatus.REJECTED,
         ExecutionStatus.ACCEPTED,
         ExecutionStatus.TIMED_OUT,
         ExecutionStatus.UNCERTAIN,
@@ -292,7 +304,9 @@ def test_noncompleted_execution_raises_without_retry_or_cancel(arm, rpc, status)
         arm.move_joints([0.2, 0.3])
 
     assert error.value.result is result
-    rpc.execute.assert_called_once_with(blocking=True, timeout=None)
+    rpc.execute.assert_called_once_with(
+        blocking=True, timeout=None, plan_id=rpc.plan_to_joints.return_value.plan.plan_id
+    )
     assert rpc.plan_to_joints.call_count == 1
     rpc.cancel.assert_not_called()
 
@@ -398,7 +412,9 @@ def test_home_uses_server_preset_and_preserves_names(arm, rpc):
     result = arm.home(speed_scale=0.2, timeout=10.0)
 
     rpc.plan_to_joints.assert_called_once_with({"arm": target}, speed_scale=0.2)
-    rpc.execute.assert_called_once_with(blocking=True, timeout=10.0)
+    rpc.execute.assert_called_once_with(
+        blocking=True, timeout=10.0, plan_id=rpc.plan_to_joints.return_value.plan.plan_id
+    )
     assert result is rpc.execute.return_value
 
 

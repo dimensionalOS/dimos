@@ -177,9 +177,9 @@ class Arm:
         return self._execute("move_pose", plan, timeout)
 
     def _execute(self, operation: str, plan: PlanResult, timeout: float | None) -> ExecutionResult:
-        if not plan.succeeded:
+        if not plan.succeeded or plan.plan is None:
             raise MotionError(operation, plan)
-        result = self.rpc.execute(blocking=True, timeout=timeout)
+        result = self.rpc.execute(blocking=True, timeout=timeout, plan_id=plan.plan.plan_id)
         if result.status is not ExecutionStatus.COMPLETED:
             raise MotionError(operation, result)
         return result

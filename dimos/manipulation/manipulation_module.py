@@ -857,7 +857,7 @@ class ManipulationModule(Module):
             plan_result = PlanResult(PlanStatus.FAILED, self._error_message or "Planning failed")
             return MoveResult(plan_result, None, delta, check_collision)
         plan_result = PlanResult(PlanStatus.SUCCEEDED, plan.message, plan)
-        execution = self.execute(blocking=blocking, timeout=timeout)
+        execution = self.execute(blocking=blocking, timeout=timeout, plan_id=plan.plan_id)
         return MoveResult(plan_result, execution, delta, check_collision)
 
     @rpc
@@ -1013,13 +1013,20 @@ class ManipulationModule(Module):
         )
 
     @rpc
-    def execute(self, blocking: bool = True, timeout: float | None = None) -> ExecutionResult:
-        """Dispatch the one pending plan, optionally waiting for completion."""
+    def execute(
+        self, blocking: bool = True, timeout: float | None = None, *, plan_id: str | None = None
+    ) -> ExecutionResult:
+        """Dispatch the pending plan, rejecting a mismatched ID without consuming it.
+
+        Omit ``plan_id`` to explicitly execute whichever plan is pending.
+        """
         with self._lock:
             target_plan = self._last_plan
-            self._last_plan = None
             if target_plan is None:
                 return ExecutionResult(ExecutionStatus.NO_PLAN, "No pending plan")
+            if plan_id is not None and target_plan.plan_id != plan_id:
+                return ExecutionResult(ExecutionStatus.REJECTED, "Pending plan was replaced")
+            self._last_plan = None
             self._state = ManipulationState.EXECUTING
         try:
             result = self._execution_manager.execute(
@@ -1061,7 +1068,7 @@ class ManipulationModule(Module):
         with self._lock:
             self._last_plan = plan
             self._state = ManipulationState.COMPLETED
-        return self.execute(blocking=False).status is ExecutionStatus.ACCEPTED
+        return self.execute(blocking=False, plan_id=plan.plan_id).status is ExecutionStatus.ACCEPTED
 
     @property
     def world_monitor(self) -> WorldMonitor | None:
