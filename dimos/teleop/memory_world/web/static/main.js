@@ -66,8 +66,12 @@ function flushPendingDiag() {
 
 diag('module_load');
 
+// The page loads this module with a ?v= stamp; the scene gets the same one so
+// the two can never come from different versions of the cache.
+const assetVersion = new URL(import.meta.url).search;
+
 try {
-    const mod = await import('/static_mw/scene.js');
+    const mod = await import(`/static_mw/scene.js${assetVersion}`);
     WorldScene = mod.WorldScene;
     diag('scene_module_loaded');
 } catch (err) {
@@ -423,7 +427,8 @@ function stickFrom(touch) {
 
 function moveStick(event) {
     event.preventDefault();
-    const touch = event.touches[0];
+    // targetTouches: another finger may be looking around on the canvas.
+    const touch = event.targetTouches[0];
     if (!touch || !scene) return;
     const { x, y } = stickFrom(touch);
     stickKnob.style.transform = `translate(${x * STICK_RADIUS_PX}px, ${y * STICK_RADIUS_PX}px)`;
@@ -440,7 +445,10 @@ stickEl.addEventListener('touchmove', moveStick, { passive: false });
 stickEl.addEventListener('touchend', releaseStick);
 stickEl.addEventListener('touchcancel', releaseStick);
 
-document.getElementById('mapBtn').addEventListener('click', () => scene && scene.toggleMinimap());
+const hudBtn = document.getElementById('hudBtn');
+hudBtn.addEventListener('click', () => {
+    if (scene) hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
+});
 document.getElementById('answerBtn').addEventListener('click', () => window.app.jumpTo(0));
 document.getElementById('cameraBtn').addEventListener('click', () => {
     if (!scene || !scene._queryImages.length) return;
@@ -505,7 +513,7 @@ window.app = {
     // Bring the i-th answer of the last result in front of the viewer (also key J).
     jumpTo: (index = 0) => scene && scene._lastResultPoints.length > index
         && !scene.viewFrom(index) && scene.focusOn(scene._lastResultPoints[index].position),
-    minimap: () => scene && scene.toggleMinimap(),
+    hud: () => scene && scene.toggleHud(),
     // Stand where the camera behind the i-th answer stood (also key P, cycling).
     viewFrom: (index = 0) => scene && scene.viewFrom(index),
     // Pin a quality level (0 = everything, 4 = least) or null for automatic.
@@ -534,8 +542,10 @@ window.addEventListener('keydown', (event) => {
 });
 
 // The flat viewer runs anywhere, so a missing headset only changes the
-// status line; Connect stays enabled.
-window.addEventListener('load', async () => {
+// status line; Connect stays enabled. Runs now rather than on `load`: the
+// top-level await above means `load` has usually fired by this point.
+(async () => {
+    if (navigator.maxTouchPoints > 0) document.body.classList.add('touch');
     const wantFlat = new URLSearchParams(window.location.search).has('flat');
     if (!navigator.xr || wantFlat) {
         setStatus(wantFlat ? 'Flat view — Connect to load the world' : 'No WebXR here — flat view on Connect');
@@ -552,4 +562,4 @@ window.addEventListener('load', async () => {
     } catch (e) {
         log(`xr check failed: ${e.message || e}`);
     }
-});
+})();

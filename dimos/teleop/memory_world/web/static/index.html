@@ -216,9 +216,11 @@
             body.desktop-view #ui { opacity: 1; }
             body.desktop-view #hints, body.desktop-view #desktopHints { display: none; }
             body.desktop-view h1 { display: none; }
-            body.desktop-view #stick { display: block; }
-            body.desktop-view #touchBar { display: flex; }
         }
+        /* body.touch is set from navigator.maxTouchPoints, which unlike the
+           hover media query is true on every phone and tablet. */
+        body.desktop-view.touch #stick { display: block; }
+        body.desktop-view.touch #touchBar { display: flex; }
     </style>
 </head>
 <body data-background-mode="__BACKGROUND_MODE__">
@@ -242,25 +244,25 @@
             <b>RIGHT A</b>  hold to ask "where did I see …"
         </div>
         <div id="desktopHints" class="hints">
-            <b>DRAG</b>  look around &nbsp; (phone: one finger looks, two fingers walk / pinch to scale)<br>
+            <b>DRAG</b>  look around &nbsp; (phone: one finger looks, the stick walks, pinch to scale)<br>
             <b>DOUBLE-CLICK</b>  free-look / capture mouse (ESC releases)<br>
             <b>W A S D</b>  walk / strafe &nbsp; <b>SHIFT</b> sprint<br>
             <b>WHEEL</b>  scale world<br>
             <b>I</b>  toggle image thumbnails &nbsp; <b>V</b>  toggle voxel cubes<br>
             <b>R</b>  reset view &nbsp; <b>J</b>  jump to the answer &nbsp; <b>P</b>  see it from the camera<br>
-            <b>M</b>  hide / show the minimap &nbsp; <b>H</b>  keep this menu<br>
+            <b>M</b>  hide / show the minimap and answer &nbsp; <b>H</b>  keep this menu<br>
             <b>HOLD TO ASK</b>  speak a question, e.g. "where did I see a chair"
         </div>
     </div>
     <div id="perf"></div>
     <div id="stick"><div id="stickKnob"></div></div>
     <div id="touchBar">
-        <button id="mapBtn">Map</button>
+        <button id="hudBtn">Hide map</button>
         <button id="answerBtn">Answer</button>
         <button id="cameraBtn">Camera</button>
     </div>
     <canvas id="canvas"></canvas>
     <pre id="log"></pre>
-    <script type="module" src="/static_mw/main.js"></script>
+    <script type="module" src="/static_mw/main.js?v=__ASSET_VERSION__"></script>
 </body>
 </html>

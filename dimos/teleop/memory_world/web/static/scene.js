@@ -145,9 +145,6 @@ export class WorldScene {
         // Containers we (re)populate on payload receive.
         this._pointsObj = null;               // THREE.InstancedMesh
         this._cloudData = null;               // {n, positions, colors, voxelSize}
-        this._imagePoseGroup = new THREE.Group();     // always-on ring markers
-        this._frameRotate.add(this._imagePoseGroup);
-        this._imageRings = null;                      // THREE.InstancedMesh
         this._imageQuadGroup = new THREE.Group();     // textured quads, toggleable
         this._imageQuadGroup.visible = false;
         this._frameRotate.add(this._imageQuadGroup);
@@ -416,7 +413,7 @@ export class WorldScene {
         if (event.code === 'KeyJ' && this._lastResultPoints.length && !this.viewFrom(0)) {
             this.focusOn(this._lastResultPoints[0].position);
         }
-        if (event.code === 'KeyM') this.toggleMinimap();
+        if (event.code === 'KeyM') this.toggleHud();
         if (event.code === 'KeyP' && this._queryImages.length) {
             this.viewFrom((this._queryImageCursor + 1) % this._queryImages.length);
         }
@@ -428,26 +425,29 @@ export class WorldScene {
         const keys = this._desktopKeys;
         // _walk() scales by stick magnitude, so sprint is just a bigger deflection.
         const gain = this._desktopSprint ? DESKTOP_SPRINT_MULTIPLIER : 1;
-        const touch = this._touchStick || { x: 0, y: 0 };
+        const drag = this._touchStick || { x: 0, y: 0 };
+        const stick = this._stickInput || { x: 0, y: 0 };
         this.applyLocomote({
-            stickX: ((keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0)) * gain + touch.x,
-            stickY: ((keys.has('KeyS') ? 1 : 0) - (keys.has('KeyW') ? 1 : 0)) * gain + touch.y,
+            stickX: ((keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0)) * gain + drag.x + stick.x,
+            stickY: ((keys.has('KeyS') ? 1 : 0) - (keys.has('KeyW') ? 1 : 0)) * gain + drag.y + stick.y,
         });
     }
 
-    /** Walk input from an on-screen stick: x right, y backward, each in [-1, 1]. */
+    /** Walk input from the on-screen stick: x right, y backward, each in [-1, 1].
+     *  Kept apart from the two-finger drag so a finger lifting off the canvas
+     *  does not stop the stick. */
     setTouchStick(x, y) {
-        this._touchStick = {
+        this._stickInput = {
             x: Math.max(-1, Math.min(1, x || 0)),
             y: Math.max(-1, Math.min(1, y || 0)),
         };
     }
 
-    /** Hide or show the top-down minimap; the answer panel stays. */
-    toggleMinimap() {
-        this._hudPanel.visible = !this._hudPanel.visible;
-        this.diag('minimap_toggle', { visible: this._hudPanel.visible });
-        return this._hudPanel.visible;
+    /** Hide or show the head-locked HUD: minimap and answer text together. */
+    toggleHud() {
+        this._hudGroup.visible = !this._hudGroup.visible;
+        this.diag('hud_toggle', { visible: this._hudGroup.visible });
+        return this._hudGroup.visible;
     }
 
     /** Phone controls: one finger looks, two fingers walk (drag) and scale (pinch). */
@@ -1019,12 +1019,6 @@ export class WorldScene {
     }
 
     setImagePoses(header, payloadArrayBuffer) {
-        if (this._imageRings) {
-            this._imagePoseGroup.remove(this._imageRings);
-            this._imageRings.geometry.dispose();
-            this._imageRings.material.dispose();
-            this._imageRings = null;
-        }
         this._releaseAllThumbnails();
         this._thumbnailBytes.clear();
         this._imagePoseMeta = [];
@@ -1041,19 +1035,6 @@ export class WorldScene {
         const faceBackward = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 2);
         const standUpright = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 2);
 
-        this._imageRings = new THREE.InstancedMesh(
-            new THREE.RingGeometry(0.10, 0.13, 24),
-            new THREE.MeshBasicMaterial({
-                color: 0xffffff,
-                transparent: true,
-                opacity: 0.7,
-                side: THREE.DoubleSide,
-            }),
-            n,
-        );
-        this._imageRings.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-        this._imagePoseGroup.add(this._imageRings);
-
         for (let i = 0; i < n; i++) {
             const quat = new THREE.Quaternion(
                 quats[i * 4 + 0], quats[i * 4 + 1], quats[i * 4 + 2], quats[i * 4 + 3],
@@ -1064,25 +1045,9 @@ export class WorldScene {
                 ry: positions[i * 3 + 1],
                 rz: positions[i * 3 + 2],
                 quadQuat: quat,
-                selected: false,
             });
-            this._writeRingInstance(i);
-            this._imageRings.setColorAt(i, new THREE.Color(0x4cd9ff));
         }
-        this._imageRings.instanceMatrix.needsUpdate = true;
-        this._imageRings.instanceColor.needsUpdate = true;
         this.diag('image_poses_loaded', { n });
-    }
-
-    /** Position/scale of one ring marker. Selected poses get a bigger ring. */
-    _writeRingInstance(index) {
-        const meta = this._imagePoseMeta[index];
-        const scale = meta.selected ? 1.8 : 1.0;
-        this._imageRings.setMatrixAt(index, new THREE.Matrix4().compose(
-            new THREE.Vector3(meta.rx, meta.ry, 0.02),
-            new THREE.Quaternion(),
-            new THREE.Vector3(scale, scale, scale),
-        ));
     }
 
     /** Thumbnails arrive once and are kept as JPEG bytes; decoding is deferred
@@ -1245,16 +1210,6 @@ export class WorldScene {
         }
 
         this._selectedImageIds = new Set(result.observation_ids || []);
-        for (let i = 0; i < this._imagePoseMeta.length; i++) {
-            const meta = this._imagePoseMeta[i];
-            meta.selected = this._selectedImageIds.has(meta.id);
-            this._writeRingInstance(i);
-            this._imageRings.setColorAt(i, new THREE.Color(meta.selected ? 0xfff06a : 0x4cd9ff));
-        }
-        if (this._imageRings) {
-            this._imageRings.instanceMatrix.needsUpdate = true;
-            this._imageRings.instanceColor.needsUpdate = true;
-        }
         if (this._selectedImageIds.size > 0) this._imageQuadGroup.visible = true;
         // The selection changes which poses deserve a texture, so rebuild now.
         this._releaseAllThumbnails();
@@ -1406,6 +1361,7 @@ export class WorldScene {
         lines.slice(0, 4).forEach((text, i) => ctx.fillText(text, 42, 62 + i * 50));
         this._answerTexture.needsUpdate = true;
         this._answerPanel.visible = true;
+        this._hudGroup.visible = true; // a new answer is worth un-hiding the HUD for
     }
 
     setTopDownMap(header, jpegArrayBuffer) {

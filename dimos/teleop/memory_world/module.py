@@ -96,6 +96,19 @@ logger = setup_logger()
 STATIC_DIR = Path(__file__).parent / "web" / "static"
 
 
+class _RevalidatedStaticFiles(StaticFiles):
+    """Static files the browser must revalidate (ETag) on every load.
+
+    Without this a phone kept a stale scene.js beside a fresh main.js for
+    hours and every new control on the page was a TypeError.
+    """
+
+    async def get_response(self, path: str, scope: Any) -> Any:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 @dataclass(eq=False)
 class _ClientConn:
     """One connected memory-world client."""
@@ -289,15 +302,20 @@ class MemoryWorldModule(Module):
         @app.get(self.config.client_route, response_class=HTMLResponse)  # type: ignore[misc]
         async def memory_world_index() -> HTMLResponse:
             index_path = STATIC_DIR / "index.html"
-            content = index_path.read_text().replace(
-                "__BACKGROUND_MODE__", self.config.background_mode
+            # The newest static file stamps the script URLs, so a reload never
+            # pairs a fresh main.js with a scene.js the browser cached earlier.
+            asset_version = max(path.stat().st_mtime_ns for path in STATIC_DIR.iterdir())
+            content = (
+                index_path.read_text()
+                .replace("__BACKGROUND_MODE__", self.config.background_mode)
+                .replace("__ASSET_VERSION__", str(asset_version))
             )
             return HTMLResponse(content=content)
 
         if STATIC_DIR.is_dir():
             app.mount(
                 "/static_mw",
-                StaticFiles(directory=str(STATIC_DIR)),
+                _RevalidatedStaticFiles(directory=str(STATIC_DIR)),
                 name="memory_world_static",
             )
 
