@@ -56,5 +56,5 @@ default = []
 # stub backends and no model download.
 siglip = ["hyperspace/siglip"]
 depth2depth = ["hyperspace/depth2depth"]
-cuda = ["hyperspace/cuda"]
-cudnn = ["hyperspace/cudnn"]
+cuda = ["siglip", "depth2depth", "hyperspace/cuda"]
+cudnn = ["cuda", "hyperspace/cudnn"]
