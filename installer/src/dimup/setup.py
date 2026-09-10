@@ -60,7 +60,7 @@ BREW_PACKAGES = (
 )
 
 
-def supported_platform() -> str:
+def supported_platform() -> str | None:
     system, machine = platform.system(), platform.machine()
     if system == "Linux" and machine == "x86_64":
         release = platform.freedesktop_os_release()
@@ -68,10 +68,7 @@ def supported_platform() -> str:
             return "ubuntu"
     if system == "Darwin" and machine == "arm64" and int(platform.mac_ver()[0].split(".")[0]) >= 14:
         return "macos"
-    raise SetupError(
-        "Supported platforms: Ubuntu 22.04/24.04 x86_64 and Apple Silicon macOS 14+. "
-        f"Detected {system} {machine}."
-    )
+    return None
 
 
 def install_script(runner: Runner, url: str, args: list[str], env: dict[str, str]) -> None:
@@ -109,6 +106,19 @@ def available(name: str) -> bool:
 
 def prepare(runner: Runner) -> None:
     target = supported_platform()
+    if target is None:
+        print(
+            f"Automatic setup is not available for {platform.system()} {platform.machine()}.\n"
+            "Prepare these prerequisites manually with your system package manager:\n"
+            "  Tools: uv, Git, Git LFS, Cargo/Rust, Nix, Deno, C/C++ compiler,\n"
+            "         CMake, Ninja, pkg-config, curl, and CA certificates.\n"
+            "  Libraries and development headers: PortAudio, libsndfile, libjpeg-turbo,\n"
+            "         FFmpeg, OpenGL/EGL, GLib, libusb, OpenSSL, and Clang/libclang.\n"
+            "Enable nix-command and flakes in Nix, and put the tools on PATH.\n"
+            "Once ready, continue with: dimup init my-robot\n"
+            "Automatic setup is available on Ubuntu 22.04/24.04 x86_64 and Apple Silicon macOS 14+."
+        )
+        return
     env = dict(os.environ)
     env["PATH"] = os.pathsep.join(
         [
