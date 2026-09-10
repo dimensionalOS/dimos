@@ -23,7 +23,8 @@ publishes the sensor mounts rooted at the lidar so odom <- base_link composes.
 Manipulation is the alfred-sim composition on real hardware: PillarConnection plus a
 ControlCoordinator for the pillar and the OpenArms (Damiao CAN when OPENARM_LEFT_CAN and
 OPENARM_RIGHT_CAN are set, mock otherwise), planned through viser on the alfred_v1 model.
-KeyboardTeleop publishes tele_cmd_vel, which MovementManager prefers over nav_cmd_vel.
+Teleop comes from the viewer (dimos-viewer keyboard through RerunWebSocketServer publishes
+tele_cmd_vel, which MovementManager prefers over nav_cmd_vel); the robot computer is headless.
 Point-LIO reads DIMOS_POINTLIO_HOST_IP; the lidar address is ALFRED.mid360_ip.
 """
 
@@ -64,7 +65,6 @@ from dimos.robot.diy.alfred.pillar_connection import (
 )
 from dimos.robot.manipulators.common.blueprints import planner
 from dimos.robot.manipulators.openarm.config import openarm_hardware
-from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 from dimos.visualization.rerun.urdf_robot import (
     UrdfRobotJointStateRerunFactory,
     UrdfRobotStaticRerunFactory,
@@ -218,7 +218,6 @@ alfred_nav = (
         ),
         DanHolonomicTC.blueprint().remappings([(DanHolonomicTC, "odom", "start_pose")]),
         MovementManager.blueprint(),
-        KeyboardTeleop.blueprint(),
         PillarConnection.blueprint(),
         planner(
             model=alfred_model_config(),
@@ -231,6 +230,5 @@ alfred_nav = (
         ),
     )
     .transports(dict(PILLAR_MOTOR_TRANSPORTS))
-    .remappings([(KeyboardTeleop, "cmd_vel", "tele_cmd_vel")])
     .global_config(n_workers=12, robot_model="alfred")
 )

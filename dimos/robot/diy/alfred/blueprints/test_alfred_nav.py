@@ -28,7 +28,6 @@ from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.robot.diy.alfred.alfred_model import (
-    ALFRED_DESCRIPTION_ROOT,
     ALFRED_LIFT_LOWER_M,
     ALFRED_LIFT_UPPER_M,
     alfred_joint_names,
@@ -45,7 +44,8 @@ from dimos.robot.diy.alfred.pillar_connection import (
     PillarConnection,
 )
 from dimos.robot.manipulators.openarm.config import OPENARM_HARDWARE_ID
-from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+from dimos.utils.data import get_project_root
+from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
 
 def _atoms(blueprint: Blueprint, module: type) -> list[Any]:
@@ -99,14 +99,11 @@ def test_lidar_rooted_mount_tree_has_one_parent_per_frame_and_reaches_base_link(
         assert frame == "mid360_link", f"{link} does not reach the odometry root"
 
 
-def test_alfred_nav_composes_nav_planner_pillar_and_teleop() -> None:
+def test_alfred_nav_composes_nav_planner_pillar_and_viewer_teleop() -> None:
     assert _atoms(alfred_nav, MovementManager)
     assert _atoms(alfred_nav, PillarConnection)
     assert _atoms(alfred_nav, ManipulationModule)
-    assert _atoms(alfred_nav, KeyboardTeleop)
-    # The operator twist must reach MovementManager's mux, never the base directly.
-    (teleop,) = _atoms(alfred_nav, KeyboardTeleop)
-    assert alfred_nav.remapping_map[(teleop.name, "cmd_vel")] == "tele_cmd_vel"
+    assert _atoms(alfred_nav, RerunWebSocketServer), "viewer teleop source missing"
 
 
 def test_alfred_nav_planner_publishes_no_world_rooted_tf() -> None:
@@ -131,7 +128,7 @@ def test_alfred_sim_still_composes() -> None:
 
 
 def _lfs_archive_available() -> bool:
-    archive = Path(ALFRED_DESCRIPTION_ROOT).parent / ".lfs" / "alfred_description.tar.gz"
+    archive = get_project_root() / "data" / ".lfs" / "alfred_description.tar.gz"
     try:
         with archive.open("rb") as f:
             return not f.read(64).startswith(b"version https://git-lfs")
