@@ -157,6 +157,7 @@ class EvalCase:
     grade: Callable[[Outcome], float]  # 0..1, called once after the agent finishes
     tags: frozenset[str] = frozenset()
     timeout_s: float = 60.0  # wall-clock is a task property; max_steps is the agent's
+    threshold: float = 1.0  # passed = score >= threshold; the case knows its own pass bar
 
 
 Suite = Sequence[EvalCase]

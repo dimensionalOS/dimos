@@ -46,7 +46,6 @@ logger = setup_logger()
 
 
 class EvalRunnerConfig(BaseConfig):
-    threshold: float = 1.0  # passed = score >= threshold
     strict: bool = False  # preflight failure aborts the whole run
     out_dir: Path = STATE_DIR / "evals"
 
@@ -106,7 +105,7 @@ class EvalRunner(Configurable):
             "source": provenance["source"],
             "selection": {"tags": sorted(tags), "limit": limit, "case_ids": ids},
             "agent": provenance["agent"],
-            "runner": {"threshold": self.config.threshold, "strict": self.config.strict},
+            "runner": {"strict": self.config.strict},
             "code": _git_record(),
         }
         with (self.run_dir / "manifest.json").open("x") as stream:
@@ -185,7 +184,7 @@ class EvalRunner(Configurable):
         result = EvalResult(
             case_id=case.id,
             score=score,
-            passed=score >= self.config.threshold and not error,
+            passed=score >= case.threshold and not error,
             duration_s=time.monotonic() - t0,
             error=error,
         )

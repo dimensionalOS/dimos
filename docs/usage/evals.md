@@ -143,7 +143,8 @@ does. Sending observations a different way means writing a new agent class.
 
 ## Scoring
 
-Scores are floats in `[0, 1]`; `passed = score >= threshold`. Scorers are
+Scores are floats in `[0, 1]`; `passed = score >= threshold`, the case's own
+pass bar (`EvalCase.threshold`, default 1.0). Scorers are
 plain functions that compose inside `grade`:
 
 ```python session=evals ansi=false

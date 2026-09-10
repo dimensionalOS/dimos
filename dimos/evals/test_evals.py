@@ -498,7 +498,7 @@ def test_runner_end_to_end_offline(dataset: str, tmp_path: Path) -> None:
     assert "agent" not in summary
     manifest = json.loads((run_dir / "manifest.json").read_text())
     assert manifest["selection"]["case_ids"] == ["disp", "unparseable", "missing_stream"]
-    assert manifest["runner"] == {"threshold": 1.0, "strict": False}
+    assert manifest["runner"] == {"strict": False}
     assert manifest["source"] == {"kind": "unavailable"}
     assert manifest["agent"] is None
     trajectory = json.loads(Path(by_id["disp"].trajectory).read_text())

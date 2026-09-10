@@ -102,7 +102,7 @@ def _ended_near(target: Vector3) -> Callable[[Outcome], float]:
         finally:
             store.stop()
         d = Vector3(p.x - target.x, p.y - target.y, 0.0).length()
-        return ramp(d, band=2.0)  # e2e parity: threshold=2 -> full credit inside 2m
+        return ramp(max(0.0, d - 2.0), band=2.0)  # full credit inside the e2e 2m threshold
 
     return grade
 
