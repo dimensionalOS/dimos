@@ -20,6 +20,7 @@ from dimos.manipulation.planning.spec.validation import validate_robot_model_con
 from dimos.robot.manipulators.xarm.config import (
     XARM_GRIPPER_COLLISION_EXCLUSIONS,
     make_dual_xarm6_model_config,
+    make_lite6_model_config,
     make_xarm6_model_config,
 )
 
@@ -80,3 +81,23 @@ def test_prefixed_xarm_model_asset_uses_coordinator_facing_names() -> None:
     model = validate_robot_model_config(config)
 
     assert [joint.name for joint in model.joints if joint.type != "fixed"] == config.joint_names
+
+
+def test_lite6_model_config_selects_lite_robot_type() -> None:
+    config = make_lite6_model_config(add_gripper=True, gripper_hardware_id="arm")
+
+    assert dict(config.model._xacro_args)["robot_type"] == "lite"
+    assert config.joint_names == [f"joint{i}" for i in range(1, 7)]
+    assert config.planning_groups[0].tip_link == "link_tcp"
+    assert config.collision_exclusion_pairs == []
+
+
+@pytest.mark.self_hosted
+def test_lite6_model_asset_has_lite_gripper() -> None:
+    config = make_lite6_model_config(add_gripper=True)
+    model = validate_robot_model_config(config)
+
+    joint_names = {joint.name for joint in model.joints}
+    assert {"joint1", "joint6", "gripper_fix", "joint_tcp"} <= joint_names
+    assert "drive_joint" not in joint_names
+    assert 'name="uflite_gripper_link"' in model.xml

@@ -93,6 +93,10 @@ class XArmAdapter(ManipulatorAdapter):
         # anywhere, and ManipulationModule already adopts wherever it is as the
         # "init" preset from the first joint state it receives.
         self._initial_positions = None if initial_positions is None else list(initial_positions)
+        self._lite6: bool = False
+        # Lite 6 gripper is open/close over tool GPIO with no feedback; echo the last command.
+        self._lite6_gripper: float = XARM_GRIPPER_MIN
+        self._lite6_gripper_sent: bool = False
 
     def connect(self) -> bool:
         """Connect to XArm via TCP/IP."""
@@ -103,6 +107,8 @@ class XArmAdapter(ManipulatorAdapter):
             if not self._arm.connected:
                 logger.error("XArm at %s not reachable (connected=False)", self._ip)
                 return False
+            # Mirrors the SDK's is_lite6, which the XArmAPI wrapper does not expose.
+            self._lite6 = self._arm.axis == 6 and self._arm.device_type == 9
 
             # Initialize to servo mode for high-frequency control
             self._arm.set_mode(_XARM_MODE_SERVO_CARTESIAN)  # Mode 1 = servo mode
@@ -128,7 +134,7 @@ class XArmAdapter(ManipulatorAdapter):
         """Get XArm information."""
         return ManipulatorInfo(
             vendor="UFACTORY",
-            model=f"xArm{self._arm_dof}",
+            model="Lite6" if self._lite6 else f"xArm{self._arm_dof}",
             dof=self._dof,
         )
 
@@ -419,6 +425,8 @@ class XArmAdapter(ManipulatorAdapter):
         """Read the gripper position in SDK units (0-850)."""
         if not self._arm:
             return 0.0
+        if self._lite6:
+            return self._lite6_gripper
 
         result = self._arm.get_gripper_position()
         code: int = result[0]
@@ -431,6 +439,18 @@ class XArmAdapter(ManipulatorAdapter):
         """Command the gripper in SDK units (0-850)."""
         if not self._arm:
             return False
+        if self._lite6:
+            opening = position > (XARM_GRIPPER_MIN + XARM_GRIPPER_MAX) / 2
+            target = XARM_GRIPPER_MAX if opening else XARM_GRIPPER_MIN
+            if target == self._lite6_gripper and self._lite6_gripper_sent:
+                return True  # tool GPIO write per tick spams the controller; send transitions only
+            lite_code: int = (
+                self._arm.open_lite6_gripper() if opening else self._arm.close_lite6_gripper()
+            )
+            if lite_code == 0:
+                self._lite6_gripper = target
+                self._lite6_gripper_sent = True
+            return lite_code == 0
 
         if not self._gripper_enabled:
             self._arm.set_gripper_enable(True)

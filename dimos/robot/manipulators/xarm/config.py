@@ -280,6 +280,7 @@ def xarm6_hardware(
 def make_xarm_model_config(
     dof: int,
     *,
+    robot_type: str = "xarm",
     prefix: str = "",
     add_gripper: bool = True,
     gripper_hardware_id: str | None = None,
@@ -290,6 +291,7 @@ def make_xarm_model_config(
 ) -> RobotModelConfig:
     xacro_args = {
         "dof": str(dof),
+        "robot_type": robot_type,
         "prefix": prefix,
         "limited": "true",
         "attach_xyz": "0 0 0",
@@ -321,7 +323,9 @@ def make_xarm_model_config(
             )
         ],
         auto_convert_meshes=True,
-        collision_exclusion_pairs=collision_exclusions if add_gripper else [],
+        collision_exclusion_pairs=(
+            collision_exclusions if add_gripper and robot_type == "xarm" else []
+        ),
         gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=[f"{prefix}{link}" for link in (tf_extra_links or [])],
         home_joints=home_joints or [0.0] * dof,
@@ -339,3 +343,31 @@ def make_xarm7_model_config(
     **kwargs: Any,
 ) -> RobotModelConfig:
     return make_xarm_model_config(7, **kwargs)
+
+
+def make_lite6_model_config(
+    **kwargs: Any,
+) -> RobotModelConfig:
+    return make_xarm_model_config(6, robot_type="lite", **kwargs)
+
+
+def lite6_hardware(
+    hw_id: str = "arm",
+    *,
+    gripper: bool = False,
+    mock_without_address: bool = False,
+    home_joints: list[float] | None = None,
+    canonical_joint_names: list[str] | None = None,
+) -> HardwareComponent:
+    """Lite 6 speaks the xArm SDK; the adapter detects the model on connect. No sim scene yet."""
+    address = global_config.lite6_ip
+    adapter_type = "mock" if mock_without_address and not address else "xarm"
+    return make_xarm_hardware(
+        hw_id,
+        6,
+        adapter_type=adapter_type,
+        address=address,
+        gripper=gripper,
+        home_joints=home_joints,
+        canonical_joint_names=canonical_joint_names,
+    )
