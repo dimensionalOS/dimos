@@ -262,7 +262,7 @@ jobs:
       # release
       - name: Install system dependencies
         env:
-          ZENOH_VERSION: 1.9.0
+          ZENOH_VERSION: 1.10.0
         run: |
           sudo apt-get update
           # lcm.pc carries `Requires: glib-2.0`, so pkg-config cannot resolve
@@ -275,8 +275,8 @@ jobs:
             "$base/zenoh-cpp/releases/download/$ZENOH_VERSION/zenohcpp-$ZENOH_VERSION-standalone.zip"
           # A release asset can be replaced in place, so the bytes are pinned too
           printf '%s  /tmp/zenoh-c.zip\n%s  /tmp/zenoh-cpp.zip\n' \
-            29f6a0dedc7ada0be007058e706df64ff26e62ae56f6efc2b098132c431c263d \
-            b11ba9107bb2035ea4b35cfc009b078e1814287d8c5241703e4e6ea417d61e9e \
+            1168b3dffa7f4f48ffabfd640a3878ec0527c0a612ce825aa6f93e2cd05762d1 \
+            7a50a74e98fd1e1e7ed8461b8490b30d67f878649f0727dea2cf0936501780af \
             | sha256sum -c -
           unzip -q /tmp/zenoh-c.zip -d /tmp/zenoh
           unzip -q /tmp/zenoh-cpp.zip -d /tmp/zenoh
