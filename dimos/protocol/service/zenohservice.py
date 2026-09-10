@@ -29,7 +29,7 @@ from dimos.core.global_config import TransportBackend, ZenohMode, global_config
 from dimos.protocol.service.spec import Service, SessionConfig
 from dimos.utils.logging_config import setup_logger
 
-zenoh.init_log_from_env_or("warn")
+zenoh.init_log_from_env_or("warn,zenoh_shm::watchdog::periodic_task=error")
 
 logger = setup_logger()
 

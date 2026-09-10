@@ -15,7 +15,7 @@
 """Large E2E tests for manipulation planning groups with a coordinator.
 
 These tests launch a real ManipulationModule + ControlCoordinator blueprint and
-exercise the public planning RPCs over LCM, matching the self-hosted large-test
+exercise the public planning RPCs, matching the self-hosted large-test
 style used by the navigation stack.
 """
 

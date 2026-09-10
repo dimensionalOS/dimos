@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pickle
 from unittest.mock import ANY, MagicMock, call
 
 import numpy as np
@@ -571,8 +572,13 @@ class TestPlanningInitialization:
         assert config.kinematics.dt == 0.02
         assert config.kinematics.posture_cost == 0.0
 
-    def test_solve_ik_rpc_calls_configured_backend(self, robot_config, module_factory):
-        """solve_ik returns the backend IKResult without path planning."""
+    @pytest.mark.parametrize(
+        "operation_state", [ManipulationState.IDLE, ManipulationState.EXECUTING]
+    )
+    def test_inverse_kinematics_uses_current_seed_without_planning(
+        self, robot_config, module_factory, operation_state
+    ):
+        """IK returns the backend result without changing operation or plan state."""
         module = module_factory()
         module.config.model = robot_config
         module._world_monitor = MagicMock()
@@ -596,11 +602,14 @@ class TestPlanningInitialization:
         module._kinematics = MagicMock()
         module._kinematics.solve_pose_targets.return_value = expected
 
-        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
-        result = module.solve_ik(pose)
+        pose = PoseStamped(
+            frame_id="world", position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion()
+        )
+        module._state = operation_state
+        result = module.inverse_kinematics({"manipulator": pose})
 
         assert result is expected
-        assert module._state == ManipulationState.COMPLETED
+        assert module._state == operation_state
         assert module._last_plan is None
         module._kinematics.solve_pose_targets.assert_called_once()
         _, kwargs = module._kinematics.solve_pose_targets.call_args
@@ -613,10 +622,11 @@ class TestPlanningInitialization:
         assert target_pose.frame_id == "world"
         assert target_pose.position.x == 0.45
 
-    def test_solve_ik_rpc_returns_failure_without_joint_state(self, robot_config, module_factory):
-        """solve_ik reports a failed IKResult when no seed state is available."""
+    def test_inverse_kinematics_returns_failure_without_joint_state(
+        self, robot_config, module_factory
+    ):
+        """IK reports failure when no seed state is available."""
         module = module_factory()
-        module.config.model = robot_config
         module.config.model = robot_config
         module._world_monitor = MagicMock()
         module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
@@ -625,18 +635,20 @@ class TestPlanningInitialization:
         )
         module._kinematics = MagicMock()
 
-        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
-        result = module.solve_ik(pose)
+        pose = PoseStamped(
+            frame_id="world", position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion()
+        )
+        result = module.inverse_kinematics({"manipulator": pose})
 
         assert result.status == IKStatus.NO_SOLUTION
         assert result.message == "No joint state"
         assert module._state == ManipulationState.IDLE
         module._kinematics.solve_pose_targets.assert_not_called()
 
-    def test_solve_ik_rpc_accepts_explicit_seed_without_current_state(
+    def test_inverse_kinematics_accepts_explicit_seed_without_current_state(
         self, robot_config, module_factory
     ):
-        """solve_ik succeeds with an explicit seed when no current state is available."""
+        """IK accepts an explicit seed without reading current telemetry."""
         module = module_factory()
         module.config.model = robot_config
         module._world_monitor = MagicMock()
@@ -645,14 +657,26 @@ class TestPlanningInitialization:
         module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = None
         explicit_seed = JointState(name=robot_config.joint_names, position=[0.2, 0.1, 0.0])
+        pending_plan = GeneratedPlan(
+            group_ids=("manipulator",),
+            trajectory=JointTrajectory(joint_names=robot_config.joint_names),
+            path=[explicit_seed],
+            status=PlanningStatus.SUCCESS,
+        )
+        module._last_plan = pending_plan
+        module._state = ManipulationState.COMPLETED
         expected = IKResult(status=IKStatus.SUCCESS, joint_state=explicit_seed)
         module._kinematics = MagicMock()
         module._kinematics.solve_pose_targets.return_value = expected
 
-        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
-        result = module.solve_ik(pose, seed=explicit_seed)
+        pose = PoseStamped(
+            frame_id="world", position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion()
+        )
+        result = module.inverse_kinematics({"manipulator": pose}, seed=explicit_seed)
 
         assert result is expected
+        assert module._last_plan is pending_plan
+        assert module._state == ManipulationState.COMPLETED
         _, kwargs = module._kinematics.solve_pose_targets.call_args
         assert kwargs["seed"] is explicit_seed
         module._world_monitor.current_model_joint_state.assert_not_called()
@@ -893,9 +917,7 @@ class TestPlanningGroupApis:
         ]
         publish.assert_called_once()
 
-    def test_pose_wrappers_fail_safely_without_unique_pose_group(
-        self, robot_config, module_factory
-    ):
+    def test_get_ee_pose_fails_safely_without_pose_group(self, robot_config, module_factory):
         no_pose_config = RobotModelConfig(
             model=robot_config.model,
             base_pose=robot_config.base_pose,
@@ -915,20 +937,9 @@ class TestPlanningGroupApis:
         module._world_monitor.planning_groups = PlanningGroupRegistry(
             no_pose_config.planning_groups
         )
-        module._world_monitor.get_ee_pose.side_effect = ValueError("no pose group")
-        module._kinematics = MagicMock()
-
-        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
-
         assert module.get_ee_pose() is None
-        assert module.plan_to_pose(pose) is False
-        result = module.inverse_kinematics_single(pose)
-        assert result.status == IKStatus.NO_SOLUTION
-        assert "no unique pose-targetable planning group" in result.message
 
-    def test_pose_wrappers_fail_safely_with_multiple_pose_groups(
-        self, robot_config, module_factory
-    ):
+    def test_get_ee_pose_fails_safely_with_multiple_pose_groups(self, robot_config, module_factory):
         multi_pose_config = RobotModelConfig(
             model=robot_config.model,
             base_pose=robot_config.base_pose,
@@ -955,18 +966,11 @@ class TestPlanningGroupApis:
         module._world_monitor.planning_groups = PlanningGroupRegistry(
             multi_pose_config.planning_groups
         )
-        module._world_monitor.get_ee_pose.side_effect = ValueError("multiple pose groups")
-        module._kinematics = MagicMock()
-
-        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
-
         assert module.get_ee_pose() is None
-        assert module.plan_to_pose(pose) is False
-        result = module.inverse_kinematics_single(pose)
-        assert result.status == IKStatus.NO_SOLUTION
-        assert "2 pose-targetable planning groups" in result.message
 
-    def test_solve_ik_preserves_backend_failure_detail(self, robot_config, module_factory):
+    def test_inverse_kinematics_preserves_backend_failure_detail(
+        self, robot_config, module_factory
+    ):
         """IK diagnostics include the backend's human-readable failure message."""
         module = module_factory()
         module.config.model = robot_config
@@ -982,10 +986,11 @@ class TestPlanningGroupApis:
             status=IKStatus.NO_SOLUTION, message="target is outside the workspace"
         )
 
-        result = module.solve_ik(Pose(position=Vector3(), orientation=Quaternion()))
+        result = module.inverse_kinematics({"manipulator": PoseStamped(frame_id="world")})
 
         assert result.status == IKStatus.NO_SOLUTION
-        assert module.get_error() == "IK failed: NO_SOLUTION: target is outside the workspace"
+        assert result.message == "target is outside the workspace"
+        assert module.get_error() == ""
         assert module._state == ManipulationState.IDLE
 
 
@@ -1020,6 +1025,30 @@ class TestPlanningDiagnostics:
 
 class TestExecute:
     """Test coordinator execution."""
+
+    def test_replaced_plan_is_not_dispatched_or_consumed(self, module_factory):
+        module = module_factory()
+        config = _one_joint_config()
+        _install_generated_plan(module, config, [0.0], [0.1])
+        original = pickle.loads(pickle.dumps(module._last_plan))
+        _install_generated_plan(module, config, [0.0], [0.2])
+        replacement = module._last_plan
+        coordinator = _control_coordinator()
+        module._control_coordinator = coordinator
+        module._initialize_execution()
+
+        result = module.execute(plan_id=original.plan_id, blocking=False)
+
+        assert result.status is ExecutionStatus.REJECTED
+        coordinator.execute_trajectory.assert_not_called()
+        assert module._last_plan is replacement
+        assert (
+            module.execute(
+                plan_id=pickle.loads(pickle.dumps(replacement)).plan_id, blocking=False
+            ).status
+            is ExecutionStatus.ACCEPTED
+        )
+        coordinator.execute_trajectory.assert_called_once()
 
     def test_execute_requires_trajectory(self, robot_config, module_factory):
         """Execute fails without planned trajectory."""

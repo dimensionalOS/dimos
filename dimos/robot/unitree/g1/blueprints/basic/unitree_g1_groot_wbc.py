@@ -283,12 +283,6 @@ if global_config.simulation == "mujoco":
     _default_ramp_seconds = 0.0
     _decimation: int | None = 1
     _n_workers = 2  # sim: keep the default worker count
-    _arm_holder = joint_trajectory_task(
-        g1_arms,
-        priority=10,
-        velocity_limits={name: 1.0 for name in g1_arms},
-        hold_position_when_idle=True,
-    )
     _mapper = VoxelGridMapper.blueprint(emit_every=1)
     _nav_stack = autoconnect(
         _mapper,
@@ -327,12 +321,6 @@ else:
     _decimation = 2  # 100 Hz tick / 2 = 50 Hz policy (training + sim rate).
     # One process per heavy module; fewer workers starve the Rerun bridge.
     _n_workers = 10
-    _arm_holder = joint_trajectory_task(
-        g1_arms,
-        priority=10,
-        velocity_limits={name: 1.0 for name in g1_arms},
-        hold_position_when_idle=True,
-    )
     # Same nav middle as unitree-g1-nav-simple, fed by Point-LIO from the
     # MID-360, executed through the coordinator's twist_command.
     _nav_stack = autoconnect(
@@ -360,6 +348,13 @@ else:
         MovementManager.blueprint(),
     )
     _nav_remappings = []
+
+
+_arm_trajectory_task = joint_trajectory_task(
+    g1_arms,
+    priority=10,
+    velocity_limits={name: 1.0 for name in g1_arms},
+)
 
 
 def _g1_groot_rerun_blueprint() -> Any:
@@ -528,7 +523,7 @@ _coordinator = _G1GrootCoordinator.blueprint(
                 "decimation": _decimation,
             },
         ),
-        _arm_holder,
+        _arm_trajectory_task,
         # Shared bimanual Quest task with G1-only model and objective tuning.
         TaskConfig(
             name="teleop_g1",
