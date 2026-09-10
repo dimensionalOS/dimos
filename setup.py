@@ -21,6 +21,11 @@ import sys
 from pybind11.setup_helpers import Pybind11Extension, build_ext
 from setuptools import find_packages, setup
 from setuptools.command.build_py import build_py as _build_py
+from setuptools.command.sdist import sdist as _sdist
+
+# PEP 517 executes this file without adding the source root to sys.path.
+sys.path.insert(0, str(Path(__file__).parent))
+from dimos_build import ensure_web_dist
 
 
 def python_is_macos_universal_binary(executable: str | None = None) -> bool:
@@ -91,6 +96,8 @@ class build_py(_build_py):
         ]
 
     def run(self):
+        if not getattr(self, "editable_mode", False):
+            ensure_web_dist(Path(__file__).parent)
         super().run()
         if not getattr(self, "editable_mode", False):
             self._copy_relay_dist()
@@ -99,27 +106,6 @@ class build_py(_build_py):
         src = Path(__file__).parent / "web"
         if not (src / "relay" / "main.ts").is_file():
             raise RuntimeError(f"relay sources missing at {src}; refusing to build the wheel")
-        missing = [
-            rel
-            for rel in ("cockpit/dist/index.html", "sdk/dist/sdk.js")
-            if not (src / rel).is_file()
-        ]
-        if missing:
-            # Wheels must carry the Cockpit and the SDK bundle: there is no
-            # fallback debug page, so a dist-less wheel's relay serves no UI
-            # (and /sdk.js only a build hint). Building a deliberate
-            # python-only wheel (e.g. where deno is unavailable) requires the
-            # explicit env-var opt-out, which covers both products.
-            if os.environ.get("DIMOS_ALLOW_MISSING_COCKPIT") != "1":
-                raise RuntimeError(
-                    f"web dist missing ({', '.join(missing)}); run `deno task build` "
-                    "in web/sdk and web/cockpit (or `dimos run --local-relay` from a "
-                    "checkout builds them), or set DIMOS_ALLOW_MISSING_COCKPIT=1 to "
-                    "build a UI-less wheel anyway"
-                )
-            self.warn(
-                f"web dist missing ({', '.join(missing)}); this wheel's relay will have no UI"
-            )
         dst = Path(self.build_lib) / RELAY_DIST_TARGET
         for name in RELAY_DIST_SOURCES:
             entry = src / name
@@ -137,6 +123,12 @@ class build_py(_build_py):
         # An over-eager exclusion filter would otherwise ship a broken wheel silently.
         if not (dst / "relay" / "main.ts").is_file():
             raise RuntimeError(f"relay copy did not produce {dst / 'relay' / 'main.ts'}")
+
+
+class sdist(_sdist):
+    def run(self):
+        ensure_web_dist(Path(__file__).parent)
+        super().run()
 
 
 extra_compile_args = [
@@ -166,5 +158,5 @@ setup(
     packages=find_packages(),
     package_dir={"": "."},
     ext_modules=ext_modules,
-    cmdclass={"build_ext": build_ext, "build_py": build_py},
+    cmdclass={"build_ext": build_ext, "build_py": build_py, "sdist": sdist},
 )

@@ -46,3 +46,5 @@ prune dimos/web/command-center-extension
 
 global-exclude test_*.py
 global-exclude conftest.py
+
+include dimos_build.py
