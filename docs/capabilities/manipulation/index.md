@@ -3,6 +3,8 @@
 Motion planning and teleoperation for robotic manipulators. RoboPlan provides
 the default world and native path planner.
 
+For typed client RPCs, see [Manipulation from Python](/docs/capabilities/manipulation/python_api.md).
+
 ## Quick Start
 
 Recent addition: the A-750 keyboard teleop blueprint is now available via:
@@ -80,18 +82,24 @@ dimos run xarm-perception-sim \
   --kinematics.backend=pink
 ```
 
-Then use the IPython client:
+Then open an attached Python shell in a second terminal:
 
-```bash
-python -m dimos.manipulation.planning.examples.manipulation_client
+```bash skip
+dimos shell
 ```
+
+Import the SDK and reuse the shell's connected `app`:
 
 ```python skip
-joints()                # Get current joints
-plan([0.1] * 7)         # Plan to target
-preview()               # Preview in Meshcat
-execute()               # Execute via coordinator
+from dimos.manipulation.sdk import Arm
+
+arm = Arm.from_app(app)
+arm.joints()
+arm.pose()
 ```
+
+The [Python guide](/docs/capabilities/manipulation/python_api.md) walks through
+joint, pose, linear, and gripper commands.
 
 ### Planning backend selection
 

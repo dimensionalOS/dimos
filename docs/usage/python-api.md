@@ -49,6 +49,12 @@ app.GO2Connection.move(Twist(linear=(0, 0, 0), angular=(0, 0, -1)), duration=0.0
 app.GO2Connection.move(Twist(linear=(1, 0, 0), angular=(0, 0, 0)), duration=0.05)
 ```
 
+## Manipulation SDK
+
+See the [manipulation Python guide](/docs/capabilities/manipulation/python_api.md)
+for arm control from scripts or `dimos shell`, including setup, motion, and
+failure handling.
+
 ## Discovering modules and RPCs
 
 Discovery works in both local and remote mode:
