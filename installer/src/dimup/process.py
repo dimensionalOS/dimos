@@ -51,6 +51,14 @@ def executable(name: str) -> str:
     raise SetupError(f"{name} is missing. Run dimup setup.")
 
 
+def tool_text(output: str) -> Text:
+    rendered = Text.from_ansi(output)
+    # Rich's ANSI decoder drops one final newline; retain tool line boundaries.
+    if output.endswith("\n"):
+        rendered.append("\n")
+    return rendered
+
+
 class Runner:
     def __init__(self, log: Path) -> None:
         self.log = log
@@ -130,7 +138,7 @@ class Runner:
                             raw_stdout, raw_stderr = process.communicate()
                             stdout = raw_stdout.decode("utf-8", errors="replace")
                             stderr = raw_stderr.decode("utf-8", errors="replace")
-                            plain = Text.from_ansi(stdout + stderr).plain
+                            plain = tool_text(stdout + stderr).plain
                             output.write(plain)
                             tail = plain[-8000:]
                         else:
@@ -138,11 +146,12 @@ class Runner:
                             decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
                             while True:
                                 chunk = os.read(process.stdout.fileno(), 65536)
-                                rendered = Text.from_ansi(decoder.decode(chunk, final=not chunk))
+                                rendered = tool_text(decoder.decode(chunk, final=not chunk))
                                 output.write(rendered.plain)
                                 output.flush()
                                 tail = (tail + rendered.plain)[-8000:]
-                                self.console.print(rendered, end="", soft_wrap=True)
+                                if rendered:
+                                    self.console.print(rendered, end="", soft_wrap=True)
                                 if not chunk:
                                     break
                             process.wait()

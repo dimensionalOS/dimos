@@ -23,7 +23,7 @@ import time
 import pytest
 from rich.console import Console
 
-from dimup.process import Runner, SetupError
+from dimup.process import Runner, SetupError, tool_text
 
 
 def test_capture_separates_data_from_diagnostics(tmp_path, capsys):
@@ -150,3 +150,12 @@ def test_interrupt_terminates_child_and_preserves_log(tmp_path):
     with pytest.raises(ProcessLookupError):
         os.kill(int(pid_file.read_text()), 0)
     assert "Interrupted" in (tmp_path / "setup.log").read_text()
+
+
+@pytest.mark.parametrize("output", ["first\n", "first\n\n", "first\nsecond\n", "partial"])
+def test_tool_output_preserves_line_boundaries(output):
+    assert tool_text(output).plain == output
+
+
+def test_tool_output_strips_color_without_losing_newlines():
+    assert tool_text("\x1b[31merror\x1b[0m\n").plain == "error\n"
