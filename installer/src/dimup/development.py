@@ -101,7 +101,8 @@ def develop(directory: Path, ref: str) -> None:
             env["UV_PROJECT_ENVIRONMENT"] = str(root / ".venv")
             root.parent.mkdir(parents=True, exist_ok=True)
             sha = clone(root, ref, runner, env)
-            runner.console.print(Text(f"  {ref} → {sha[:12]}", style="dim"))
+            if ref != sha:
+                runner.console.print(Text(f"  {ref} → {sha[:12]}", style="dim"))
             sdk = tomllib.loads((root / "pyproject.toml").read_text())
             if sdk.get("project", {}).get("name") != "dimos":
                 raise SetupError("Selected revision is not a DimOS project.")
