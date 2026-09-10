@@ -141,26 +141,9 @@ jobs:
           name: wheels-${{ matrix.os }}-${{ matrix.arch }}
           path: wheelhouse/*.whl
 
-  build-dimup:
-    needs: validate
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.0.1
-      - name: Build dimup release assets
-        env:
-          SDK_VERSION: ${{ needs.validate.outputs.version }}
-        run: python3 installer/run/package dimup-dist --release "v$SDK_VERSION"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: dimup-release
-          path: dimup-dist/
-
   publish-testpypi:
     if: ${{ inputs.dry-run }}
-    needs: [validate, build-sdist, build-wheels, build-dimup]
+    needs: [validate, build-sdist, build-wheels]
     runs-on: ubuntu-latest
     environment:
       name: testpypi
@@ -169,17 +152,11 @@ jobs:
       id-token: write      # For pypi-publish's OIDC trusted-publisher exchange (TestPyPI)
       attestations: write  # For PEP 740 attestations attached to each uploaded file
     steps:
-      - name: Download SDK wheels
+      - name: Download wheels/sdist
         uses: actions/download-artifact@v8
         with:
-          pattern: wheels-*
           path: dist
           merge-multiple: true
-      - name: Download SDK source distribution
-        uses: actions/download-artifact@v8
-        with:
-          name: sdist
-          path: dist
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
       - name: Install twine
@@ -195,7 +172,7 @@ jobs:
 
   publish-pypi:
     if: ${{ ! inputs.dry-run }}
-    needs: [validate, build-sdist, build-wheels, build-dimup]
+    needs: [validate, build-sdist, build-wheels]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -204,17 +181,11 @@ jobs:
       id-token: write      # For pypi-publish's OIDC trusted-publisher exchange (PyPI)
       attestations: write  # For PEP 740 attestations attached to each uploaded file
     steps:
-      - name: Download SDK wheels
+      - name: Download wheels/sdist
         uses: actions/download-artifact@v8
         with:
-          pattern: wheels-*
           path: dist
           merge-multiple: true
-      - name: Download SDK source distribution
-        uses: actions/download-artifact@v8
-        with:
-          name: sdist
-          path: dist
       - name: Install uv
         uses: astral-sh/setup-uv@v10.0.1
       - name: Install twine
@@ -228,7 +199,7 @@ jobs:
 
   tag-and-release:
     if: ${{ ! inputs.dry-run }}
-    needs: [validate, publish-pypi, build-dimup]
+    needs: [validate, publish-pypi]
     runs-on: ubuntu-latest
     environment: release-tag
     permissions:
@@ -275,22 +246,11 @@ jobs:
         run: |
           git tag -s -a "v$VERSION" -m "Release v$VERSION"
           git push origin "v$VERSION"
-      - name: Download SDK wheels
+      - name: Download wheels/sdist
         uses: actions/download-artifact@v8
         with:
-          pattern: wheels-*
           path: dist
           merge-multiple: true
-      - name: Download SDK source distribution
-        uses: actions/download-artifact@v8
-        with:
-          name: sdist
-          path: dist
-      - name: Download dimup assets
-        uses: actions/download-artifact@v8
-        with:
-          name: dimup-release
-          path: dist
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
