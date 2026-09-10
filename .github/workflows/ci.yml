@@ -278,16 +278,17 @@ jobs:
             1168b3dffa7f4f48ffabfd640a3878ec0527c0a612ce825aa6f93e2cd05762d1 \
             7a50a74e98fd1e1e7ed8461b8490b30d67f878649f0727dea2cf0936501780af \
             | sha256sum -c -
-          unzip -q /tmp/zenoh-c.zip -d /tmp/zenoh
-          unzip -q /tmp/zenoh-cpp.zip -d /tmp/zenoh
+          # The zips are laid out for /usr/local, where cmake and the loader
+          # already look
+          sudo unzip -q /tmp/zenoh-c.zip -d /usr/local
+          sudo unzip -q /tmp/zenoh-cpp.zip -d /usr/local
+          sudo ldconfig
       - name: Configure
-        run: |
-          cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON \
-            -DCMAKE_PREFIX_PATH=/tmp/zenoh
+        run: cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON
       - name: Build
         run: cmake --build build/native-cpp -j
       - name: Test
-        run: LD_LIBRARY_PATH=/tmp/zenoh/lib ctest --test-dir build/native-cpp --output-on-failure
+        run: ctest --test-dir build/native-cpp --output-on-failure
 
       - name: Find C++ native modules
         id: find-modules
