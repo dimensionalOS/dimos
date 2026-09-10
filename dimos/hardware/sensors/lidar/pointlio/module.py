@@ -25,8 +25,9 @@ Usage::
         SomeConsumer.blueprint(),
     )).loop()
 
-Point-LIO tuning lives on PointLioConfig and is sent to the C++ binary as
-stdin JSON.
+Point-LIO tuning lives on PointLioTuning and is sent to the binary as stdin
+JSON. PointLio embeds the Livox SDK (C++); PointLioRust consumes the Rust
+Mid360 driver's PointCloud2/Imu messages instead.
 """
 
 from __future__ import annotations
@@ -34,12 +35,13 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 from reactivex.disposable import Disposable
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.hardware.sensors.lidar.livox.net import resolve_host_ip
 from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_CMD_DATA_PORT,
@@ -57,6 +59,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.spec import perception
@@ -67,21 +70,11 @@ from dimos.spec import perception
 IvoxNearbyType = Literal["center", "nearby6", "nearby18", "nearby26"]
 
 
-class PointLioConfig(NativeModuleConfig):
-    cwd: str | None = "cpp"
-    executable: str = "result/bin/pointlio_native"
-    build_command: str | None = "nix build -L .#pointlio_native"
-    stdin_config: bool = True
-    base_fields: frozenset[str] = frozenset({"frame_id"})
-    # lidar_ip required; host_ip optional (auto-derived from lidar_ip's subnet).
-    # Both fall back to DIMOS_POINTLIO_LIDAR_IP / DIMOS_POINTLIO_HOST_IP.
-    host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_HOST_IP"))
-    lidar_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_LIDAR_IP"))
-    frequency: float = 10.0
+class PointLioTuning(BaseModel):
+    """Estimator tuning shared by the C++ and Rust modules (sent as stdin JSON)."""
 
     # Odometry is published as frame_id (fixed) -> sensor_frame_id (moving sensor),
     # and also broadcast on TF. The point cloud is stamped with sensor_frame_id
-    frame_id: str = "odom"
     sensor_frame_id: str = "mid360_link"
 
     # Point-LIO internal processing rates (Hz)
@@ -91,9 +84,7 @@ class PointLioConfig(NativeModuleConfig):
     pointcloud_freq: float = 10.0
     odom_freq: float = 30.0
 
-    debug: bool = False
-
-    # Point-LIO tuning (read in main.cpp).
+    # Point-LIO tuning (read in main.cpp / rust/src/module.rs).
     # common
     con_frame: bool = False
     con_frame_num: int = 1
@@ -147,6 +138,21 @@ class PointLioConfig(NativeModuleConfig):
     # odometry
     publish_odometry_without_downsample: bool = False
     odom_only: bool = False
+
+
+class PointLioConfig(NativeModuleConfig, PointLioTuning):
+    stdin_config: bool = True
+    frame_id: str = "odom"
+    base_fields: frozenset[str] = frozenset({"frame_id"})
+    cwd: str | None = "cpp"
+    executable: str = "result/bin/pointlio_native"
+    build_command: str | None = "nix build -L .#pointlio_native"
+    # lidar_ip required; host_ip optional (auto-derived from lidar_ip's subnet).
+    # Both fall back to DIMOS_POINTLIO_LIDAR_IP / DIMOS_POINTLIO_HOST_IP.
+    host_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_HOST_IP"))
+    lidar_ip: str | None = Field(default_factory=lambda: os.environ.get("DIMOS_POINTLIO_LIDAR_IP"))
+    frequency: float = 10.0
+    debug: bool = False
 
     # SDK port configuration (see livox/ports.py for defaults)
     cmd_data_port: int = SDK_CMD_DATA_PORT
@@ -207,6 +213,38 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
         self.config.host_ip = resolve_host_ip(lidar_ip, self.config.host_ip, label="PointLio")
 
 
+class PointLioRustConfig(NativeModuleConfig, PointLioTuning):
+    stdin_config: bool = True
+    frame_id: str = "odom"
+    base_fields: frozenset[str] = frozenset({"frame_id"})
+    cwd: str | None = "rust"
+    # The crate is a workspace member, so cargo builds into the repo-root target dir.
+    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "pointlio_native")
+    build_command: str | None = "cargo build --release"
+
+
+class PointLioRust(NativeModule, perception.Lidar, perception.Odometry):
+    """Rust Point-LIO fed by the Mid360 driver's messages; publishes tf itself."""
+
+    config: PointLioRustConfig
+
+    lidar_raw: In[PointCloud2]
+    imu: In[Imu]
+
+    lidar: Out[PointCloud2]
+    odometry: Out[Odometry]
+    tf: Out[TFMessage]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
+
 # Verify protocol port compliance (mypy will flag missing ports)
 if TYPE_CHECKING:
     PointLio()
+    PointLioRust()
