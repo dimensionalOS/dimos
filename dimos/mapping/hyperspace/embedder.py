@@ -1,0 +1,114 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""SigLIP2 with a text-aligned embedding per patch, not just per image.
+
+SigLIP's raw patch tokens are not aligned with its text tower; only the
+attention-pooled image vector is. Running every patch token through that
+pooling head as its own length-1 sequence (the MaskCLIP trick) gives 576
+vectors per 384x384 image that *are* text-aligned, and those are what
+hyperspace stores and scores.
+"""
+
+from __future__ import annotations
+
+from functools import cached_property
+from typing import TYPE_CHECKING
+
+import numpy as np
+import torch
+from torch.nn import functional
+
+from dimos.models.embedding.siglip import SigLIPModel, SigLIPModelConfig
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+    from dimos.msgs.sensor_msgs.Image import Image
+
+# Fixed-resolution SigLIP2: 384 / 16 = 24 patches per side = 576 patches, 1152-d.
+SIGLIP2_MODEL_NAME = "google/siglip2-so400m-patch16-384"
+
+
+class SigLIP2PatchesConfig(SigLIPModelConfig):
+    model_name: str = SIGLIP2_MODEL_NAME
+    # Skip the vision tower's weights when only text is needed (the query side).
+    text_only: bool = False
+
+
+class SigLIP2Patches(SigLIPModel):
+    """SigLIP2 that also returns one text-aligned embedding per image patch."""
+
+    config: SigLIP2PatchesConfig
+
+    @cached_property
+    def patches_per_side(self) -> int:
+        vision = self._model.config.vision_config
+        return int(vision.image_size // vision.patch_size)
+
+    @cached_property
+    def dim(self) -> int:
+        return int(self._model.config.vision_config.hidden_size)
+
+    def start(self) -> None:
+        super().start()
+        if self.config.text_only:
+            # Free ~half the weights; embed_patches() is then an error by design.
+            self._model.vision_model = None  # type: ignore[assignment]
+
+    def embed_patches(self, *images: Image) -> list[NDArray[np.float32]]:
+        """Per-patch L2-normalized embeddings, one ``[patches, dim]`` array per image."""
+        if self._model.vision_model is None:
+            raise RuntimeError("SigLIP2Patches was started text_only; it cannot embed images")
+        from PIL import Image as PILImage
+
+        pil_images = [PILImage.fromarray(img.to_rgb().data) for img in images]
+        with torch.inference_mode():
+            inputs = self._processor(images=pil_images, return_tensors="pt").to(self.config.device)
+            return self.patches_from_pixels(inputs["pixel_values"])
+
+    def patches_from_pixels(self, pixel_values: torch.Tensor) -> list[NDArray[np.float32]]:
+        """Same as :meth:`embed_patches` from an already preprocessed ``[B,3,S,S]`` tensor."""
+        vision = self._model.vision_model
+        if vision is None:
+            raise RuntimeError("SigLIP2Patches was started text_only; it cannot embed images")
+        with torch.inference_mode():
+            pixel_values = pixel_values.to(
+                self.config.device, dtype=next(vision.parameters()).dtype
+            )
+            hidden = vision(pixel_values=pixel_values).last_hidden_state
+            batch, patches, dim = hidden.shape
+            # MaskCLIP: each patch token pooled alone, so it lands in the text-aligned space.
+            per_patch = vision.head(hidden.reshape(batch * patches, 1, dim)).reshape(
+                batch, patches, dim
+            )
+            per_patch = functional.normalize(per_patch.float(), dim=-1).cpu().numpy()
+        return [np.ascontiguousarray(grid, dtype=np.float32) for grid in per_patch]
+
+    # SigLIP2 was trained on 64-token, max-length padded text; its tokenizer
+    # snapshot does not always carry that length, so pass it.
+    TEXT_LENGTH = 64
+
+    def embed_text_array(self, *texts: str) -> NDArray[np.float32]:
+        """L2-normalized text embeddings as a ``[len(texts), dim]`` array."""
+        with torch.inference_mode():
+            inputs = self._processor(
+                text=list(texts),
+                return_tensors="pt",
+                padding="max_length",
+                max_length=self.TEXT_LENGTH,
+                truncation=True,
+            ).to(self.config.device)
+            features = functional.normalize(self._model.get_text_features(**inputs).float(), dim=-1)
+        return np.ascontiguousarray(features.cpu().numpy(), dtype=np.float32)

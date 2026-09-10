@@ -12,195 +12,305 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Hyperspace as two memory modules.
+
+``HyperspacePatches`` watches colour + depth + tf, keeps the frames worth
+keeping, and writes each kept frame's 576 text-aligned patch embeddings into
+the recording's memory store (one vector per patch, so the store's own vector
+search finds them). ``Hyperspace`` answers questions against that store: text
+in, scored voxels out, placing every keyframe through the recorded tf at query
+time so a loop closure that rewrites old transforms also moves old answers.
+"""
 
 from __future__ import annotations
 
-import itertools
+import asyncio
 import json
 import threading
+import time
 from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
-from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.core.native_module import NativeModule, NativeModuleConfig
+from dimos.core.core import rpc
 from dimos.core.stream import In, Out
+from dimos.mapping.hyperspace import patches as hs
+from dimos.mapping.hyperspace.embedder import SIGLIP2_MODEL_NAME, SigLIP2Patches
+from dimos.mapping.hyperspace.ingest import IngestConfig, PatchIngestor, transform_to_matrix
+from dimos.mapping.hyperspace.query import HyperspaceQuery
+from dimos.memory.module import MemoryModule, MemoryModuleConfig
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.String import String
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.utils.logging_config import setup_logger
 
-# A colour frame pairs with the depth frame nearest it in time; a RealSense
-# publishes both within a frame period of each other.
-DEPTH_MAX_DT_S = 0.05
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
-# Scoring every stored patch is seconds on a full map; an agent waiting longer
-# than this is better off hearing "timed out" than hanging.
-FIND_TIMEOUT_S = 30.0
+    from numpy.typing import NDArray
 
-
-def parse_answer(data: str) -> dict[str, Any]:
-    """One `query_answer` message: id, text, frame, voxel count, best voxels."""
-    answer = json.loads(data)
-    return {
-        "id": int(answer["id"]),
-        "text": str(answer.get("text", "")),
-        "frame": str(answer.get("frame", "")),
-        "voxels": int(answer.get("voxels", 0)),
-        "best": [
-            {
-                "xyz": [round(float(v), 3) for v in item["xyz"]],
-                "score": round(float(item["score"]), 3),
-            }
-            for item in answer.get("best", [])
-        ],
-    }
+logger = setup_logger()
 
 
-class HyperspaceConfig(NativeModuleConfig):
-    cwd: str | None = "rust"
-    # The crate is a workspace member, so cargo builds into the repo-root target dir.
-    executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "hyperspace")
-    build_command: str | None = "cargo build --release"
-    stdin_config: bool = True
+def pick_device(device: str) -> str:
+    if device != "auto":
+        return device
+    import torch
 
-    # Voxel edge length of the answer raster, in meters.
-    voxel_size: float = 0.10
-    # Frame queries are answered in unless a request names another.
-    world_frame: str = "odom"
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+class HyperspacePatchesConfig(MemoryModuleConfig):
+    # SigLIP2 snapshot: a Hugging Face id, or a local directory.
+    model_name: str = SIGLIP2_MODEL_NAME
+    # "auto" picks cuda, then mps, then cpu.
+    device: str = "auto"
     # Frame the quality gate measures camera motion against.
     motion_reference_frame: str = "odom"
+    # Never embed frames closer together than this (s). 0.2 = 5 Hz.
+    min_frame_interval_s: float = 0.2
 
-    # SigLIP2 snapshot directory (config.json, tokenizer.json, *.safetensors).
-    # Empty runs a stub embedder: the pipeline works end to end, the answers do
-    # not mean anything. Needs a binary built with the `siglip` cargo feature.
-    model_dir: str = ""
-    # depth2depth weights directory (dinov2_vits14 + da2_head_vits safetensors).
-    # Empty uses the raw sensor depth. Needs the `depth2depth` cargo feature.
-    depth_weights_dir: str = ""
-    # Run the models on CUDA. Needs the `cuda` cargo feature.
-    cuda: bool = False
-
-    # Frames held before the middle one is judged, against the 5 before and 5
-    # after it. Odd; 11 at 5 Hz is about 2 seconds.
+    # Keyframe gate. Negative turns a gate off.
     buffer_len: int = 11
-    # Mean per-patch (1 - cosine) against the last kept keyframe to keep one.
     novelty_threshold: float = 0.05
-    # Single-patch change that keeps a frame even when the view barely moved,
-    # which is how a new object entering a static view is caught. Negative disables.
     patch_novelty_threshold: float = 0.5
-    # Motion-blur gate: drop frames whose camera turns faster than this (rad/s).
-    # Negative disables it, which is right for a global-shutter camera.
     max_angular_velocity: float = 1.5
-    # Drop frames whose camera moves faster than this (m/s). Negative disables.
     max_linear_velocity: float = -1.0
-    # Drop frames with more than this fraction of near-black pixels. Negative disables.
     max_dark_fraction: float = 0.6
-    # Drop frames with more than this fraction of near-white pixels. Negative disables.
     max_bright_fraction: float = -1.0
-    # Never keep two keyframes closer together than this (s). Negative disables.
     min_keyframe_interval: float = 0.1
 
-    # Depth readings beyond this many meters are treated as holes. RealSense
-    # frames carry 65535 mm "no reading" sentinels and occasional 20-40 m glitches.
+    # Depth readings beyond this (m) are holes: RealSense frames carry 65535 mm
+    # "no reading" sentinels and occasional 20-40 m glitches.
     max_depth_m: float = 10.0
     # A colour frame pairs with the depth frame within this many seconds of it.
-    depth_max_dt: float = DEPTH_MAX_DT_S
-    # Depth frames buffered per sensor while waiting for their colour frame.
+    depth_max_dt: float = 0.05
     depth_history: int = 64
-    # Stride of the depth thumbnail kept per keyframe and rendered as scene_map.
-    # Zero keeps none, and then scene_map stays empty.
+    # Stride of the depth thumbnail kept per keyframe, for scene rendering.
     depth_thumbnail_stride: int = 4
 
-    # Patch score (query minus best background prompt) needed to be "hot".
-    hot_threshold: float = 0.02
-    # Ceiling on hot patches per query; the highest scoring ones win.
-    max_hot_patches: int = 6000
-    # Each hot patch's pyramid is cut at these fractions of its fused depth.
-    cap_near: float = 0.9
-    cap_far: float = 1.1
-    # Prompts contrasted against the query, comma separated. Empty uses the
-    # crate's indoor defaults.
-    background_prompts: str = ""
 
-    # Publish scene_map every Nth kept keyframe. Zero never publishes it.
-    scene_emit_every: int = 10
-    # Depth samples a voxel needs before it appears in scene_map.
-    scene_min_samples: int = 3
+def _optional(value: float) -> float | None:
+    return None if value < 0 else value
 
 
-class Hyperspace(NativeModule):
-    """Open-vocabulary 3D querying: ask for "a chair", get the voxels back.
+class HyperspacePatches(MemoryModule):
+    """Keeps the frames worth keeping and writes their patch embeddings to memory."""
 
-    Colour, depth and tf go in continuously. A query arrives on ``query`` as
-    JSON (``{"id": 7, "text": "a chair"}``) or as bare text, and the answer
-    comes back on ``query_result`` as a scored voxel cloud whose ``header.seq``
-    is the request's id. That id is what pairs an answer with its request, so
-    querying is plain pub/sub with no RPC and no blocking call.
-    """
-
-    config: HyperspaceConfig
+    config: HyperspacePatchesConfig
 
     color_image: In[Image]
     depth_image: In[Image]
     camera_info: In[CameraInfo]
     depth_camera_info: In[CameraInfo]
     tf: In[TFMessage]
-    # {"id": 7, "text": "a chair", "frame": "odom"}, or bare text for id 0.
-    query: In[String]
 
-    # Voxel centers with an `intensity` (score) field, `header.seq` = the id that asked.
+    @rpc
+    def start(self) -> None:
+        super().start()
+        device = pick_device(self.config.device)
+        self.model = self.register_disposable(
+            SigLIP2Patches(model_name=self.config.model_name, device=device)
+        )
+        self.model.start()
+        gate = hs.KeyframeGateConfig(
+            buffer_len=self.config.buffer_len,
+            novelty_threshold=self.config.novelty_threshold,
+            patch_novelty_threshold=_optional(self.config.patch_novelty_threshold),
+            max_angular_velocity=_optional(self.config.max_angular_velocity),
+            max_linear_velocity=_optional(self.config.max_linear_velocity),
+            max_dark_fraction=_optional(self.config.max_dark_fraction),
+            max_bright_fraction=_optional(self.config.max_bright_fraction),
+            min_interval=_optional(self.config.min_keyframe_interval),
+        )
+        self.ingestor = PatchIngestor(
+            self.store,
+            self.model,
+            IngestConfig(
+                gate=gate,
+                motion_reference_frame=self.config.motion_reference_frame,
+                min_frame_interval_s=self.config.min_frame_interval_s,
+                max_depth_m=self.config.max_depth_m,
+                depth_max_dt=self.config.depth_max_dt,
+                depth_history=self.config.depth_history,
+                depth_thumbnail_stride=self.config.depth_thumbnail_stride,
+            ),
+            lookup=self._lookup,
+        )
+        logger.info(
+            f"hyperspace patches: {self.config.model_name} on {device}, db {self.config.db_path}"
+        )
+
+    def _lookup(self, target: str, source: str, ts: float) -> NDArray[np.float64] | None:
+        try:
+            transform = self.tfbuffer.get(target, source, ts, warn=False)
+        except (TypeError, RuntimeError):
+            return None
+        return None if transform is None else transform_to_matrix(transform)
+
+    async def handle_camera_info(self, info: CameraInfo) -> None:
+        self.ingestor.add_camera_info(info)
+
+    async def handle_depth_camera_info(self, info: CameraInfo) -> None:
+        self.ingestor.add_camera_info(info)
+
+    async def handle_tf(self, msg: TFMessage) -> None:
+        self.ingestor.add_tf(msg)
+
+    async def handle_depth_image(self, image: Image) -> None:
+        self.ingestor.add_depth(image)
+
+    async def handle_color_image(self, image: Image) -> None:
+        # Embedding blocks for ~50 ms on a GPU and ~1 s on a CPU; the handler's
+        # latest-only dispatch drops the frames that arrive meanwhile.
+        await asyncio.get_running_loop().run_in_executor(None, self.ingestor.add_image, image)
+
+    @rpc
+    def flush(self) -> int:
+        """End of stream: judge what is still buffered. Returns keyframes added."""
+        return self.ingestor.flush()
+
+    @rpc
+    def ingest_stats(self) -> dict[str, int]:
+        return dict(self.ingestor.stats)
+
+
+class HyperspaceConfig(MemoryModuleConfig):
+    model_name: str = SIGLIP2_MODEL_NAME
+    device: str = "auto"
+    # Frame answers are given in unless a request names another.
+    world_frame: str = "odom"
+    voxel_size: float = 0.10
+    hot_threshold: float = 0.02
+    max_hot_patches: int = 6000
+    cap_near: float = 0.9
+    cap_far: float = 1.1
+    # Comma separated; empty uses the indoor defaults.
+    background_prompts: str = ""
+    # Depth samples a voxel needs to appear in scene_map.
+    scene_min_samples: int = 3
+    # Demo: after this many seconds, run demo_queries and publish the answers,
+    # then repeat every demo_every_s. 0 disables.
+    demo_after_s: float = 0.0
+    demo_every_s: float = 30.0
+    demo_queries: list[str] = ["a chair"]
+
+
+class Hyperspace(MemoryModule):
+    """Ask the map where something is; get scored voxels back.
+
+    Queries arrive on ``query`` as JSON (``{"id": 7, "text": "a chair"}``) or
+    bare text, or through the ``find`` skill. Answers go out on
+    ``query_result`` (voxel centers with an ``intensity`` score, for viewers)
+    and ``query_answer`` (JSON: the request id, the text, the voxel count and
+    the best voxels). A caller pairs answers to requests by the id in
+    ``query_answer``; there is no RPC and no blocking call.
+    """
+
+    config: HyperspaceConfig
+
+    query: In[String]
     query_result: Out[PointCloud2]
-    # The same answer as JSON (id, text, voxel count, best voxels), for callers
-    # that cannot read the cloud's header. The `find` skill pairs on this.
     query_answer: Out[String]
-    # Occupied voxels from the kept keyframes' depth, for context in a viewer.
     scene_map: Out[PointCloud2]
 
-    _query_ids = itertools.count(1)
+    @rpc
+    def start(self) -> None:
+        super().start()
+        device = pick_device(self.config.device)
+        self.model = self.register_disposable(
+            SigLIP2Patches(model_name=self.config.model_name, device=device, text_only=True)
+        )
+        self.model.start()
+        query_config = hs.QueryConfig(
+            hot_threshold=self.config.hot_threshold,
+            max_hot_patches=self.config.max_hot_patches,
+            cap_near=self.config.cap_near,
+            cap_far=self.config.cap_far,
+        )
+        prompts = [p.strip() for p in self.config.background_prompts.split(",") if p.strip()]
+        if prompts:
+            query_config.background_prompts = prompts
+        self.engine = HyperspaceQuery(
+            self.store,
+            lambda text: self.model.embed_text_array(text)[0],
+            query_config,
+            world_frame=self.config.world_frame,
+            voxel_size=self.config.voxel_size,
+        )
+        self._lock = threading.Lock()
+        self._ids = iter(range(1, 1 << 30))
+        logger.info(
+            f"hyperspace query: {self.config.model_name} text tower on {device}, "
+            f"db {self.config.db_path}"
+        )
+
+    def answer(
+        self, text: str, request_id: int | None = None, frame: str | None = None
+    ) -> dict[str, Any]:
+        """Run one query and publish it on both outputs. Returns the JSON answer."""
+        with self._lock:
+            request_id = next(self._ids) if request_id is None else request_id
+            started = time.monotonic()
+            answer = self.engine.answer(text, request_id, frame)
+            result: hs.Heatmap = answer.pop("heatmap")
+            cloud = PointCloud2.from_numpy(
+                result.centres().astype(np.float32),
+                frame_id=result.frame,
+                timestamp=time.time(),
+                intensities=result.scores().astype(np.float32),
+            )
+            self.query_result.publish(cloud)
+            answer["ms"] = round((time.monotonic() - started) * 1000)
+            self.query_answer.publish(String(json.dumps(answer)))
+            logger.info(
+                f"hyperspace {text!r}: {answer['voxels']} voxels in {answer['ms']} ms {result.stats}"
+            )
+            return answer
+
+    async def handle_query(self, msg: String) -> None:
+        payload = msg.data.strip()
+        request_id, text, frame = None, payload, None
+        if payload.startswith("{"):
+            try:
+                parsed = json.loads(payload)
+                request_id = int(parsed.get("id", 0))
+                text = str(parsed.get("text", "")).strip()
+                frame = parsed.get("frame") or None
+            except (ValueError, TypeError, AttributeError) as error:
+                logger.warning(f"hyperspace ignored a query: {error}: {payload!r}")
+                return
+        if not text:
+            return
+        await asyncio.get_running_loop().run_in_executor(None, self.answer, text, request_id, frame)
 
     @skill
-    def find(self, text: str, timeout_s: float = FIND_TIMEOUT_S, top: int = 10) -> SkillResult:
+    def find(self, text: str, top: int = 10) -> SkillResult:
         """Where in the map is `text`? E.g. "a traffic cone", "the red chair".
 
-        Publishes a query with a fresh id and waits for the `query_answer` that
-        carries that id back, so several callers can be in flight at once.
-        Returns the best-scoring voxel centers (meters, in the module's world
-        frame) and how many voxels answered in total.
+        Returns the best-scoring voxel centers (meters, in the world frame) and
+        how many voxels answered. Also publishes the full answer on
+        ``query_result`` / ``query_answer`` for anything listening.
         """
         text = text.strip()
         if not text:
             return SkillResult.fail("INVALID_INPUT", "text must not be empty")
-        request_id = next(self._query_ids)
-        got = threading.Event()
-        answer: dict[str, Any] = {}
-
-        def on_answer(msg: String) -> None:
-            try:
-                parsed = parse_answer(msg.data)
-            except (ValueError, KeyError, TypeError):
-                return
-            if parsed["id"] == request_id:
-                answer.update(parsed)
-                got.set()
-
-        unsubscribe = self.query_answer.subscribe(on_answer)
-        try:
-            self.query.transport.publish(String(json.dumps({"id": request_id, "text": text})))
-            if not got.wait(timeout_s):
-                return SkillResult.fail(
-                    "TIMEOUT", f"no answer to {text!r} (id {request_id}) within {timeout_s:.0f}s"
-                )
-        finally:
-            unsubscribe()
+        answer = self.answer(text)
         best = answer["best"][:top]
         if not best:
             return SkillResult.ok(
                 f"nothing in the map looks like {text!r}",
                 query=text,
-                frame=answer["frame"],
                 voxels=0,
+                stats=answer["stats"],
             )
         return SkillResult.ok(
             f"{text!r}: {answer['voxels']} voxels, best at {best[0]['xyz']} (score {best[0]['score']})",
@@ -208,8 +318,40 @@ class Hyperspace(NativeModule):
             frame=answer["frame"],
             voxels=answer["voxels"],
             best=best,
+            stats=answer["stats"],
         )
 
+    def publish_scene(self, frame: str | None = None) -> int:
+        """Occupied voxels from the keyframes' depth thumbnails, for viewers."""
+        voxels = self.engine.scene_voxels(frame, self.config.scene_min_samples)
+        if not voxels:
+            return 0
+        size = self.config.voxel_size
+        centres = (np.asarray([i for i, _ in voxels], dtype=np.float32) + 0.5) * size
+        most = max(n for _, n in voxels)
+        self.scene_map.publish(
+            PointCloud2.from_numpy(
+                centres,
+                frame_id=frame or self.config.world_frame,
+                timestamp=time.time(),
+                intensities=np.asarray([n / most for _, n in voxels], dtype=np.float32),
+            )
+        )
+        return len(voxels)
 
-if TYPE_CHECKING:
-    Hyperspace()
+    async def main(self) -> AsyncIterator[None]:
+        if self.config.demo_after_s <= 0 or not self.config.demo_queries:
+            yield
+            return
+        loop = asyncio.get_running_loop()
+        await asyncio.sleep(self.config.demo_after_s)
+        while True:
+            scene = await loop.run_in_executor(None, self.publish_scene)
+            logger.info(f"hyperspace demo: scene_map {scene} voxels")
+            for text in self.config.demo_queries:
+                answer = await loop.run_in_executor(None, self.answer, text)
+                logger.info(
+                    f"hyperspace demo {text!r}: {answer['voxels']} voxels, best {answer['best'][:1]}"
+                )
+            yield
+            await asyncio.sleep(self.config.demo_every_s)

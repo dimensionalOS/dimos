@@ -14,30 +14,38 @@
 
 """Ask a recording a question and get an rrd back.
 
-Reads a memory2 ``.db`` or an ``.mcap``, runs the same pipeline the module runs
-over its colour + depth + tf, then writes an rrd holding the scene voxels and,
-per query, the voxels that answer it.
+    dimos map query RECORDING -q "a traffic cone" [-q "a chair"] [-o out.rrd]
 
-    uv run python -m dimos.mapping.hyperspace.cli RECORDING -q "a chair" -o out.rrd
-
-Without ``--model-dir`` the embedder is a stub: the rrd is structurally real but
-the highlighted voxels are meaningless. Point it at a SigLIP2 snapshot (and
-build the binary with the `siglip` feature) for answers that mean something.
+Reads a memory2 ``.db`` or an ``.mcap``, runs the same ingest the live module
+runs over its colour + depth + tf (keyframe gate, SigLIP2 patches, depth
+pairing) into a memory db next to the recording, answers each query against
+that db, and writes an rrd with the scene in grey and the answer highlighted.
+Without ``-o`` the rrd goes to a temp file and opens in Rerun. The memory db
+is kept, so a second run with new questions skips the embedding.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
+import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import typer
 
-from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.mapping.hyperspace import patches as hs
+from dimos.mapping.hyperspace.embedder import SIGLIP2_MODEL_NAME, SigLIP2Patches
+from dimos.mapping.hyperspace.ingest import (
+    KEYFRAME_STREAM,
+    IngestConfig,
+    PatchIngestor,
+    transform_to_matrix,
+)
+from dimos.mapping.hyperspace.query import HyperspaceQuery
+from dimos.memory.tf import StreamTF
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -46,16 +54,12 @@ if TYPE_CHECKING:
 
 app = typer.Typer(add_completion=False, help=__doc__)
 
-# Where `cargo build --release` puts the offline driver.
-OFFLINE_BIN = DIMOS_PROJECT_ROOT / "target" / "release" / "hyperspace_offline"
-
 TIMELINE = "ts"
-# Scene voxels are context, the answer is the subject: keep the scene quiet.
 SCENE_COLOR = (110, 120, 135)
 SCENE_ALPHA_MIN = 40
 
 
-def open_store(path: Path) -> Store:
+def open_store(path: Path, *, must_exist: bool = True) -> Store:
     """Open a recording, picking the store from the file extension."""
     if path.suffix == ".mcap":
         from dimos.memory.store.mcap import McapStore
@@ -64,7 +68,7 @@ def open_store(path: Path) -> Store:
     elif path.suffix == ".db":
         from dimos.memory.store.sqlite import SqliteStore
 
-        store = SqliteStore(path=str(path), must_exist=True)
+        store = SqliteStore(path=str(path), must_exist=must_exist)
     else:
         raise typer.BadParameter(
             f"expected a .db or .mcap recording, got {path.suffix or path.name!r}"
@@ -89,9 +93,22 @@ def pick_stream(store: Store, wanted: str | None, *keywords: str) -> str:
     return min(matches, key=len)
 
 
-def export_frames(
-    store: Store,
-    out_dir: Path,
+def pick_device(device: str) -> str:
+    if device != "auto":
+        return device
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def ingest(
+    recording: Store,
+    memory: Store,
+    model: SigLIP2Patches,
     *,
     color_stream: str,
     depth_stream: str,
@@ -100,151 +117,61 @@ def export_frames(
     tf_stream: str,
     hz: float,
     max_seconds: float,
-) -> int:
-    """Write the frame directory the offline driver reads. Returns frame count."""
-    import cv2
+    config: IngestConfig,
+) -> dict[str, int]:
+    """Run the live module's ingest over a recording. Returns its stats."""
+    recorded_tf = StreamTF.from_store(recording, tf_stream)
 
-    (out_dir / "color").mkdir(parents=True, exist_ok=True)
-    (out_dir / "depth").mkdir(parents=True, exist_ok=True)
+    def lookup(target: str, source: str, ts: float) -> NDArray[np.float64] | None:
+        if recorded_tf is None:
+            return None
+        transform = recorded_tf.get(target, source, ts, warn=False)
+        return None if transform is None else transform_to_matrix(transform)
 
-    def camera_info(stream_name: str) -> dict[str, Any]:
-        info = next(iter(store.streams[stream_name].order_by(TIMELINE))).data
-        matrix = np.asarray(info.get_K_matrix(), dtype=float).reshape(3, 3)
-        return {
-            "frame_id": info.frame_id,
-            "width": int(info.width),
-            "height": int(info.height),
-            "fx": float(matrix[0, 0]),
-            "fy": float(matrix[1, 1]),
-            "cx": float(matrix[0, 2]),
-            "cy": float(matrix[1, 2]),
-            "distortion_model": info.distortion_model or "plumb_bob",
-            "distortion": [float(value) for value in np.asarray(info.get_D_coeffs()).ravel()],
-        }
-
-    (out_dir / "intrinsics.json").write_text(
-        json.dumps(
-            {"color": camera_info(color_info_stream), "depth": camera_info(depth_info_stream)},
-            indent=1,
-        )
-    )
-
+    ingestor = PatchIngestor(memory, model, config, lookup=lookup)
+    for name in (color_info_stream, depth_info_stream):
+        first = next(iter(recording.streams[name].order_by(TIMELINE)), None)
+        if first is None:
+            raise typer.BadParameter(f"stream {name!r} is empty")
+        ingestor.add_camera_info(first.data)
+    colors = recording.streams[color_stream].order_by(TIMELINE)
+    depths = recording.streams[depth_stream].order_by(TIMELINE)
+    start_ts = float(colors.first().ts)
+    # Only the tf the slice can use; a whole recording's tf is hundreds of
+    # thousands of messages the query side would otherwise decode.
     transforms = 0
-    with (out_dir / "tf.jsonl").open("w") as handle:
-        for observation in store.streams[tf_stream].order_by(TIMELINE):
-            for stamped in observation.data.transforms:
-                translation = stamped.translation
-                rotation = stamped.rotation
-                handle.write(
-                    json.dumps(
-                        {
-                            "parent": stamped.frame_id,
-                            "child": stamped.child_frame_id,
-                            "ts": float(stamped.ts),
-                            "t": [float(translation.x), float(translation.y), float(translation.z)],
-                            "q": [
-                                float(rotation.x),
-                                float(rotation.y),
-                                float(rotation.z),
-                                float(rotation.w),
-                            ],
-                        }
-                    )
-                    + "\n"
-                )
-                transforms += 1
-    typer.echo(f"tf: {transforms} transforms")
+    for observation in recording.streams[tf_stream].order_by(TIMELINE):
+        stamp = float(observation.ts)
+        if stamp < start_ts - 5.0 or stamp > start_ts + max_seconds + 5.0:
+            continue
+        ingestor.add_tf(observation.data, ts=stamp)
+        transforms += 1
+    typer.echo(f"tf: {transforms} messages")
 
-    index: list[dict[str, Any]] = []
     min_interval = 1.0 / hz if hz > 0 else 0.0
-    last_kept = -np.inf
+    ingestor.config.min_frame_interval_s = max(min_interval, config.min_frame_interval_s)
     first_ts: float | None = None
-    colors = store.streams[color_stream].order_by(TIMELINE)
-    depths = store.streams[depth_stream].order_by(TIMELINE)
-    for pair in colors.align(depths, tolerance=0.05):
+    started = time.monotonic()
+    for pair in colors.align(depths, tolerance=config.depth_max_dt):
         color_obs, depth_obs = pair.data[0], pair.data[1]
         stamp = float(color_obs.ts)
         if first_ts is None:
             first_ts = stamp
         if stamp - first_ts > max_seconds:
             break
-        if stamp - last_kept < min_interval:
-            continue
-        last_kept = stamp
-        color = color_obs.data
-        depth = depth_obs.data
-        rgb = np.asarray(color.as_numpy()).reshape(color.height, color.width, -1)[:, :, :3]
-        name = f"{len(index):05d}"
-        cv2.imwrite(
-            str(out_dir / "color" / f"{name}.jpg"), rgb[:, :, ::-1], [cv2.IMWRITE_JPEG_QUALITY, 92]
-        )
-        millimetres = np.asarray(depth.as_numpy()).reshape(depth.height, depth.width)
-        millimetres = millimetres.astype("<u2", copy=False)
-        (out_dir / "depth" / f"{name}.u16").write_bytes(millimetres.tobytes())
-        index.append(
-            {
-                "name": name,
-                "ts": stamp,
-                "depth_ts": float(depth_obs.ts),
-                "color_frame": color.frame_id,
-                "depth_frame": depth.frame_id,
-                "width": int(color.width),
-                "height": int(color.height),
-            }
-        )
-        if len(index) % 100 == 0:
-            typer.echo(f"exported {len(index)} frames ({stamp - first_ts:.0f}s)")
-    (out_dir / "index.json").write_text(json.dumps(index, indent=1))
-    return len(index)
-
-
-def run_offline(
-    export_dir: Path,
-    queries: list[str],
-    *,
-    frame: str,
-    voxel_size: float,
-    model_dir: str,
-    depth_weights: str,
-    cuda: bool,
-    max_depth: float,
-) -> dict[str, Any]:
-    """Ingest the export and score the queries. Returns the driver's JSON."""
-    if not OFFLINE_BIN.exists():
-        raise typer.BadParameter(
-            f"{OFFLINE_BIN} is missing; build it with\n"
-            f"    cd {DIMOS_PROJECT_ROOT / 'dimos/mapping/hyperspace/rust'} && cargo build --release"
-        )
-    command = [
-        str(OFFLINE_BIN),
-        "--export",
-        str(export_dir),
-        "--frame",
-        frame,
-        "--voxel-size",
-        str(voxel_size),
-        "--max-depth",
-        str(max_depth),
-    ]
-    for query in queries:
-        command += ["--query", query]
-    if model_dir:
-        command += ["--model-dir", model_dir]
-    if depth_weights:
-        command += ["--depth-weights", depth_weights]
-    if cuda:
-        command.append("--cuda")
-    typer.echo(" ".join(command))
-    finished = subprocess.run(command, capture_output=True, text=True, check=False)
-    if finished.returncode != 0:
-        typer.echo(finished.stderr, err=True)
-        raise typer.Exit(finished.returncode)
-    typer.echo(finished.stderr.strip())
-    return json.loads(finished.stdout)
+        ingestor.add_depth(depth_obs.data)
+        ingestor.add_image(color_obs.data)
+        if ingestor.stats["images"] % 200 == 0:
+            typer.echo(
+                f"{stamp - first_ts:.0f}s: {ingestor.stats['embedded']} embedded, "
+                f"{ingestor.stats['kept']} kept ({time.monotonic() - started:.0f}s)"
+            )
+    ingestor.flush()
+    return dict(ingestor.stats)
 
 
 def heat_colors(scores: NDArray[np.float64]) -> NDArray[np.uint8]:
-    """Dark red at the threshold through orange to white at the peak."""
+    """Dark red at the cutoff through orange to white at the peak."""
     ramp = np.array(
         [[120, 20, 0], [230, 90, 10], [255, 190, 60], [255, 255, 245]], dtype=np.float64
     )
@@ -255,69 +182,90 @@ def heat_colors(scores: NDArray[np.float64]) -> NDArray[np.uint8]:
     return (ramp[low] * (1 - blend) + ramp[high] * blend).astype(np.uint8)
 
 
-def write_rrd(result: dict[str, Any], out: Path, *, recording: Path, cutoff: float) -> None:
-    """One rrd: the scene once, then a query's voxels on their own entity."""
+def write_rrd(
+    engine: HyperspaceQuery,
+    answers: list[dict[str, Any]],
+    out: Path,
+    *,
+    recording: Path,
+    cutoff: float,
+    ingest_stats: dict[str, int],
+) -> None:
+    """One rrd: the scene once, the camera path, then each query on its own entity."""
     import rerun as rr
 
     from dimos.visualization.rerun.init import rerun_init
 
-    voxel_size = float(result["voxel_size"])
-    half = voxel_size * 0.5
+    size = engine.voxel_size
+    half = size * 0.5
     rerun_init("hyperspace")
 
-    scene = np.asarray(result["scene"], dtype=np.float64).reshape(-1, 4)
-    if len(scene):
-        centers = (scene[:, :3] + 0.5) * voxel_size
-        counts = scene[:, 3]
+    scene = engine.scene_voxels()
+    if scene:
+        centres = (np.asarray([i for i, _ in scene], dtype=np.float64) + 0.5) * size
+        counts = np.asarray([n for _, n in scene], dtype=np.float64)
         alpha = (SCENE_ALPHA_MIN + 160 * counts / max(counts.max(), 1.0)).astype(np.uint8)
         colors = np.column_stack([np.tile(SCENE_COLOR, (len(scene), 1)).astype(np.uint8), alpha])
         rr.log(
             "world/scene",
             rr.Boxes3D(
-                centers=centers, half_sizes=np.full((len(scene), 3), half * 0.9), colors=colors
+                centers=centres, half_sizes=np.full((len(scene), 3), half * 0.9), colors=colors
             ),
             static=True,
         )
 
-    poses = result.get("keyframes", [])
-    if poses:
-        path = np.asarray([pose["t"] for pose in poses], dtype=np.float64)
+    place = engine.placer(engine.world_frame)
+    path = []
+    for obs in engine.store.stream(KEYFRAME_STREAM, dict).order_by(TIMELINE):
+        payload = obs.data
+        pose = place(
+            hs.Keyframe(
+                id=obs.id,
+                camera_frame=payload["camera_frame"],
+                ts=float(payload["ts"]),
+                rows=1,
+                cols=1,
+                intrinsics=hs.Intrinsics(**payload["intrinsics"]),
+                patch_depth=np.zeros(0, np.float32),
+            )
+        )
+        if pose is not None:
+            path.append(pose[:3, 3])
+    if path:
         rr.log(
             "world/keyframes",
-            rr.LineStrips3D([path], colors=[(94, 160, 255)], radii=0.02),
+            rr.LineStrips3D([np.asarray(path)], colors=[(94, 160, 255)], radii=0.02),
             static=True,
         )
         rr.log(
             "world/keyframes/positions",
-            rr.Points3D(positions=path, colors=[(94, 160, 255)], radii=0.05),
+            rr.Points3D(positions=np.asarray(path), colors=[(94, 160, 255)], radii=0.05),
             static=True,
         )
 
-    for answer in result["queries"]:
-        voxels = np.asarray(answer["voxels"], dtype=np.float64).reshape(-1, 4)
-        keep = voxels[:, 3] >= cutoff if len(voxels) else np.zeros(0, dtype=bool)
-        voxels = voxels[keep]
-        # Rerun entity paths take no whitespace; keep the query readable anyway.
-        slug = "".join(char if char.isalnum() else "_" for char in answer["text"]).strip("_")
+    for answer in answers:
+        result: hs.Heatmap = answer["heatmap"]
+        centres = result.centres()
+        scores = result.scores()
+        keep = scores >= cutoff
+        slug = "".join(c if c.isalnum() else "_" for c in answer["text"]).strip("_")
         entity = f"world/query/{slug or answer['id']}"
-        if not len(voxels):
+        if not keep.any():
             typer.echo(f"{answer['text']!r}: nothing above {cutoff}")
             continue
-        centers = (voxels[:, :3] + 0.5) * voxel_size
-        scores = voxels[:, 3]
-        # Size with the score too, so the peak reads as the peak from any angle.
+        centres, scores = centres[keep], scores[keep]
         sizes = np.repeat(half * (0.55 + 0.45 * scores)[:, None], 3, axis=1)
         rr.log(
             entity,
             rr.Boxes3D(
-                centers=centers,
+                centers=centres,
                 half_sizes=sizes,
                 colors=heat_colors(scores),
                 fill_mode=rr.components.FillMode.Solid,
             ),
             static=True,
         )
-        best = centers[int(np.argmax(scores))]
+        best = centres[int(np.argmax(scores))]
         rr.log(
             f"{entity}/best",
             rr.Points3D(
@@ -326,7 +274,7 @@ def write_rrd(result: dict[str, Any], out: Path, *, recording: Path, cutoff: flo
             static=True,
         )
         typer.echo(
-            f"{answer['text']!r}: {len(voxels)} voxels above {cutoff}, "
+            f"{answer['text']!r}: {int(keep.sum())} voxels above {cutoff}, "
             f"best at ({best[0]:.2f}, {best[1]:.2f}, {best[2]:.2f})"
         )
 
@@ -334,14 +282,11 @@ def write_rrd(result: dict[str, Any], out: Path, *, recording: Path, cutoff: flo
         "meta",
         rr.TextDocument(
             f"recording: {recording}\n"
-            f"frame: {result['frame']}\n"
-            f"voxel size: {voxel_size} m\n"
-            f"keyframes: {len(poses)}\n"
-            f"ingest: {json.dumps(result.get('ingest', {}))}\n"
-            + "\n".join(
-                f"query {answer['text']!r}: {json.dumps(answer['stats'])}"
-                for answer in result["queries"]
-            )
+            f"frame: {engine.world_frame}\n"
+            f"voxel size: {size} m\n"
+            f"keyframes: {len(path)}\n"
+            f"ingest: {json.dumps(ingest_stats)}\n"
+            + "\n".join(f"query {a['text']!r}: {json.dumps(a['stats'])}" for a in answers)
         ),
         static=True,
     )
@@ -355,41 +300,49 @@ def main(
     out: Path | None = typer.Option(
         None, "--out", "-o", help="Where to write the rrd; omitted = a temp file, opened in rerun"
     ),
-    hz: float = typer.Option(5.0, help="Colour frames per second to ingest"),
+    memory_db: Path | None = typer.Option(
+        None, help="Memory db for keyframes + patches (default: <recording>.hyperspace.db)"
+    ),
+    reuse: bool = typer.Option(True, help="Reuse an existing memory db instead of re-embedding"),
+    hz: float = typer.Option(5.0, help="Colour frames per second to consider"),
     max_seconds: float = typer.Option(1e9, help="Stop after this much of the recording"),
     frame: str = typer.Option("odom", help="Frame to answer in"),
     voxel_size: float = typer.Option(0.1, help="Voxel edge length, meters"),
     cutoff: float = typer.Option(0.3, help="Hide answer voxels scoring below this"),
-    model_dir: str = typer.Option(
-        "", help="SigLIP2 snapshot directory; empty uses the stub embedder"
+    model_name: str = typer.Option(
+        SIGLIP2_MODEL_NAME, help="SigLIP2 snapshot: HF id or local directory"
     ),
-    depth_weights: str = typer.Option(
-        "", help="depth2depth weights directory; empty uses raw depth"
-    ),
-    cuda: bool = typer.Option(False, help="Run the models on CUDA"),
+    device: str = typer.Option("auto", help="cuda, mps, cpu, or auto"),
     max_depth: float = typer.Option(10.0, help="Depth readings beyond this many meters are holes"),
     color_stream: str = typer.Option("", help="Colour image stream (auto-detected by name)"),
     depth_stream: str = typer.Option("", help="Depth image stream (auto-detected by name)"),
     color_info_stream: str = typer.Option("", help="Colour camera_info stream"),
     depth_info_stream: str = typer.Option("", help="Depth camera_info stream"),
     tf_stream: str = typer.Option("tf", help="Transform stream"),
-    keep_export: bool = typer.Option(False, help="Keep the intermediate frame directory"),
 ) -> None:
     """Query a recording and write an rrd with the answer highlighted."""
-    store = open_store(recording)
-    color = pick_stream(store, color_stream or None, "color", "image")
-    depth = pick_stream(store, depth_stream or None, "depth", "image")
-    color_info = pick_stream(store, color_info_stream or None, "camera_info")
-    depth_info = pick_stream(store, depth_info_stream or None, "depth", "camera_info")
+    source = open_store(recording)
+    color = pick_stream(source, color_stream or None, "color", "image")
+    depth = pick_stream(source, depth_stream or None, "depth", "image")
+    color_info = pick_stream(source, color_info_stream or None, "camera_info")
+    depth_info = pick_stream(source, depth_info_stream or None, "depth", "camera_info")
     typer.echo(
         f"streams: color={color} depth={depth} info={color_info}/{depth_info} tf={tf_stream}"
     )
 
-    export_dir = Path(tempfile.mkdtemp(prefix="hyperspace_export_"))
-    try:
-        frames = export_frames(
-            store,
-            export_dir,
+    memory_path = memory_db or recording.with_suffix(".hyperspace.db")
+    fresh = not (reuse and memory_path.exists())
+    memory = open_store(memory_path, must_exist=False)
+    device = pick_device(device)
+    stats: dict[str, int] = {}
+    if fresh:
+        model = SigLIP2Patches(model_name=model_name, device=device)
+        model.start()
+        typer.echo(f"embedding with {model_name} on {device} -> {memory_path}")
+        stats = ingest(
+            source,
+            memory,
+            model,
             color_stream=color,
             depth_stream=depth,
             color_info_stream=color_info,
@@ -397,40 +350,45 @@ def main(
             tf_stream=tf_stream,
             hz=hz,
             max_seconds=max_seconds,
+            config=IngestConfig(
+                gate=hs.KeyframeGateConfig(max_angular_velocity=None),
+                max_depth_m=max_depth,
+            ),
         )
-        if frames == 0:
-            raise typer.BadParameter(
-                "no colour frames paired with a depth frame; check --color-stream/--depth-stream"
-            )
-        typer.echo(f"exported {frames} frames to {export_dir}")
-        result = run_offline(
-            export_dir,
-            list(query),
-            frame=frame,
-            voxel_size=voxel_size,
-            model_dir=model_dir,
-            depth_weights=depth_weights,
-            cuda=cuda,
-            max_depth=max_depth,
+        typer.echo(f"ingest: {stats}")
+        model.stop()
+    else:
+        typer.echo(f"reusing {memory_path} (pass --no-reuse to re-embed)")
+    text_model = SigLIP2Patches(model_name=model_name, device=device, text_only=True)
+    text_model.start()
+    engine = HyperspaceQuery(
+        memory,
+        lambda text: text_model.embed_text_array(text)[0],
+        hs.QueryConfig(),
+        world_frame=frame,
+        voxel_size=voxel_size,
+    )
+    answers = []
+    for index, text in enumerate(query, start=1):
+        started = time.monotonic()
+        answer = engine.answer(text, index)
+        typer.echo(
+            f"{text!r}: {answer['voxels']} voxels in {(time.monotonic() - started) * 1000:.0f} ms "
+            f"{answer['stats']}"
         )
-        open_after = out is None
-        if out is None:
-            slug = "_".join("".join(c if c.isalnum() else "_" for c in q).strip("_") for q in query)
-            out = Path(tempfile.gettempdir()) / f"hyperspace_{recording.stem}_{slug[:60]}.rrd"
-        write_rrd(result, out, recording=recording, cutoff=cutoff)
-        typer.echo(f"wrote {out}")
-        if open_after:
-            # Detached: the viewer outlives this command. If a viewer is already
-            # up on rerun's default port the file streams into it instead.
-            subprocess.Popen(
-                ["rerun", str(out)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            typer.echo("opened in rerun")
-    finally:
-        if keep_export:
-            typer.echo(f"kept {export_dir}")
-        else:
-            shutil.rmtree(export_dir, ignore_errors=True)
+        answers.append(answer)
+
+    open_after = out is None
+    if out is None:
+        slug = "_".join("".join(c if c.isalnum() else "_" for c in q).strip("_") for q in query)
+        out = Path(tempfile.gettempdir()) / f"hyperspace_{recording.stem}_{slug[:60]}.rrd"
+    write_rrd(engine, answers, out, recording=recording, cutoff=cutoff, ingest_stats=stats)
+    typer.echo(f"wrote {out}")
+    if open_after:
+        # Detached: the viewer outlives this command. If a viewer is already
+        # up on rerun's default port the file streams into it instead.
+        subprocess.Popen(["rerun", str(out)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        typer.echo("opened in rerun")
 
 
 if __name__ == "__main__":
