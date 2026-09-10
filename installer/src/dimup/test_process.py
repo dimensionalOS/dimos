@@ -160,3 +160,15 @@ def test_tool_output_preserves_line_boundaries(output):
 
 def test_tool_output_strips_color_without_losing_newlines():
     assert tool_text("\x1b[31merror\x1b[0m\n").plain == "error\n"
+
+
+def test_command_keeps_authenticated_session_and_owns_process_group(tmp_path):
+    output = Runner(tmp_path / "setup.log").run(
+        "Check authenticated session",
+        [sys.executable, "-c", "import os; print(os.getsid(0), os.getpgrp(), os.getpid())"],
+        capture=True,
+    )
+    session, group, pid = map(int, output.split())
+    assert session == os.getsid(0)
+    assert group == pid
+    assert group != os.getpgrp()
