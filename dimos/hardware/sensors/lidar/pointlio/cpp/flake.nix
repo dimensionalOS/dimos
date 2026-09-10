@@ -32,41 +32,32 @@
   outputs = { self, nixpkgs, flake-utils, livox-sdk, dimos-lcm, pfr, fast-lio, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        # Overlay fixes for darwin-broken nixpkgs recipes in our transitive
-        # dep chain (pcl → vtk → pdal → tiledb → libpqxx).  Each of these
-        # should go upstream; kept here so we can build in the meantime.
-        #
-        # Gated on isDarwin so Linux keeps binary-cache hits for the stock
-        # libpqxx / tiledb / pdal / vtk / pcl derivations.  Applying the
-        # override on Linux would change their input hashes and force a
-        # from-source rebuild of the whole chain for no benefit.
-        darwinDepFixes = final: prev:
-          if !prev.stdenv.isDarwin then { } else {
-            # libpqxx: postgresqlTestHook is in nativeCheckInputs
-            # unconditionally and that package is marked broken on darwin.
-            # The list is eagerly evaluated, so simply referencing it aborts
-            # eval.  Upstream fix is to wrap the list in
-            # `lib.optionals (meta.availableOn ...)`.
-            libpqxx = prev.libpqxx.overrideAttrs (_old: {
-              nativeCheckInputs = [ ];
-              doCheck = false;
-            });
-            # tiledb: darwin-only patch `generate_embedded_data_header.patch`
-            # targets a file that doesn't exist in tiledb 2.30.0 (the
-            # upstream code path was reworked and `file(ARCHIVE_CREATE ...)`
-            # is no longer used anywhere in the source).  Filter out only
-            # that patch — don't drop everything, in case nixpkgs adds an
-            # unrelated security patch in a future bump.
-            tiledb = prev.tiledb.overrideAttrs (old: {
-              patches = builtins.filter
-                (p: !(prev.lib.hasSuffix "generate_embedded_data_header.patch" (toString p)))
-                (old.patches or [ ]);
-            });
-          };
-        pkgs = import nixpkgs {
-          inherit system;
-          overlays = [ darwinDepFixes ];
-        };
+        pkgs = import nixpkgs { inherit system; };
+        # Point-LIO uses common/filters and includes PCL I/O headers.
+        # Avoid VTK's large, uncached Darwin dependency tree entirely.
+        pcl = pkgs.pcl.overrideAttrs (old: {
+          nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
+          buildInputs = [ pkgs.eigen pkgs.boost pkgs.flann pkgs.qhull pkgs.zlib pkgs.cjson ]
+            ++ pkgs.lib.optionals pkgs.stdenv.cc.isClang [ pkgs.llvmPackages.openmp ];
+          propagatedBuildInputs = [ pkgs.boost pkgs.flann ];
+          cmakeFlags = (old.cmakeFlags or [ ]) ++ [
+            "-DWITH_VTK=OFF"
+            "-DWITH_QT=OFF"
+            "-DWITH_OPENGL=OFF"
+            "-DBUILD_features=OFF"
+            "-DBUILD_ml=OFF"
+            "-DBUILD_segmentation=OFF"
+            "-DBUILD_surface=OFF"
+            "-DBUILD_registration=OFF"
+            "-DBUILD_keypoints=OFF"
+            "-DBUILD_tracking=OFF"
+            "-DBUILD_visualization=OFF"
+            "-DBUILD_tools=OFF"
+            "-DBUILD_apps=OFF"
+            "-DBUILD_examples=OFF"
+            "-DBUILD_global_tests=OFF"
+          ];
+        });
         livox-sdk2 = livox-sdk.packages.${system}.livox-sdk2;
         lcm = lcm-extended.packages.${system}.lcm;
 
@@ -94,7 +85,7 @@
             lcm
             pkgs.glib
             pkgs.eigen
-            pkgs.pcl
+            pcl
             pkgs.glog
             pkgs.boost
             pkgs.llvmPackages.openmp
