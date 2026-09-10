@@ -58,32 +58,19 @@ def test_heat_colors_run_dark_to_light() -> None:
     assert brightness[0] < brightness[1] < brightness[2]
 
 
-def test_summarize_answer_orders_by_score() -> None:
-    from dimos.mapping.hyperspace.module import summarize_answer
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+def test_parse_answer_reads_the_json_the_module_publishes() -> None:
+    from dimos.mapping.hyperspace.module import parse_answer
 
-    cloud = PointCloud2.from_numpy(
-        np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=np.float32),
-        frame_id="odom",
-        timestamp=1.0,
-        intensities=np.array([0.2, 1.0, 0.5], dtype=np.float32),
+    data = (
+        '{"id": 9, "text": "a cone", "frame": "odom", "voxel_size": 0.1, "voxels": 2, '
+        '"best": [{"xyz": [0.15, 0.25, 0.35], "score": 1.0}, {"xyz": [0.45, 0.55, 0.65], "score": 0.25}], '
+        '"stats": {}}'
     )
-    cloud.seq = 7
-    decoded = PointCloud2.lcm_decode(cloud.lcm_encode())
-    assert decoded.seq == 7, "the query id must survive the wire"
-    summary = summarize_answer(decoded, top=2)
-    assert summary["frame"] == "odom"
-    assert summary["voxels"] == 3
-    assert [b["xyz"][0] for b in summary["best"]] == [1.0, 2.0]
-    assert summary["best"][0]["score"] == 1.0
-
-
-def test_summarize_answer_handles_an_empty_cloud() -> None:
-    from dimos.mapping.hyperspace.module import summarize_answer
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-    empty = PointCloud2.lcm_decode(PointCloud2(frame_id="odom", ts=1.0).lcm_encode())
-    assert summarize_answer(empty) == {"frame": "odom", "voxels": 0, "best": []}
+    answer = parse_answer(data)
+    assert answer["id"] == 9
+    assert answer["frame"] == "odom"
+    assert answer["voxels"] == 2
+    assert answer["best"][0] == {"xyz": [0.15, 0.25, 0.35], "score": 1.0}
 
 
 def test_find_is_an_instant_skill() -> None:

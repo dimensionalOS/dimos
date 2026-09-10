@@ -27,6 +27,9 @@ use crate::config::{build_backends, Config};
 use crate::convert;
 use crate::query_request::QueryRequest;
 
+/// Best voxels listed in the JSON answer.
+const ANSWER_TOP: usize = 10;
+
 /// Wall time, used only to stamp answers.
 fn now_secs() -> f64 {
     std::time::SystemTime::now()
@@ -64,6 +67,11 @@ pub struct Hyperspace {
     // pair with requests without an RPC.
     #[output(encode = PointCloud2::encode)]
     query_result: Output<PointCloud2>,
+
+    // The same answer as JSON: id, text, voxel count, best voxels. For callers
+    // (the Python `find` skill) that cannot see the cloud's header.
+    #[output(encode = StringMsg::encode, msg = "String")]
+    query_answer: Output<StringMsg>,
 
     // Occupied voxels from the kept keyframes' depth, for context in a viewer.
     #[output(encode = PointCloud2::encode)]
@@ -247,5 +255,9 @@ impl Hyperspace {
         );
         let cloud = convert::heatmap_cloud(&heatmap, request.id, convert::secs_to_time(now_secs()));
         self.query_result.publish(&cloud).await.ok();
+        let answer = StringMsg {
+            data: convert::answer_json(&heatmap, request.id, &request.text, ANSWER_TOP),
+        };
+        self.query_answer.publish(&answer).await.ok();
     }
 }

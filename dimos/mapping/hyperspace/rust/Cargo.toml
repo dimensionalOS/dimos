@@ -36,6 +36,7 @@ query = "std_msgs.String"
 
 [package.metadata.dimos.module.hyperspace.outputs]
 query_result = "sensor_msgs.PointCloud2"
+query_answer = "std_msgs.String"
 scene_map = "sensor_msgs.PointCloud2"
 
 [dependencies]

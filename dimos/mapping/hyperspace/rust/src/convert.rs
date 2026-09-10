@@ -202,6 +202,31 @@ pub fn heatmap_cloud(heatmap: &VoxelHeatmap, seq: i32, stamp: Time) -> PointClou
     scored_cloud(points, &heatmap.frame, seq, stamp)
 }
 
+/// Compact JSON answer for callers that cannot read a PointCloud2's header
+/// (dimos's Python wrapper drops `seq`): the id, the query, how many voxels
+/// answered, and the `top` best voxel centres with their scores.
+pub fn answer_json(heatmap: &VoxelHeatmap, id: i32, text: &str, top: usize) -> String {
+    let best: Vec<serde_json::Value> = heatmap
+        .voxels
+        .iter()
+        .take(top)
+        .map(|(index, score)| {
+            let centre = |axis: usize| (index[axis] as f64 + 0.5) * heatmap.voxel_size;
+            serde_json::json!({"xyz": [centre(0), centre(1), centre(2)], "score": score})
+        })
+        .collect();
+    serde_json::json!({
+        "id": id,
+        "text": text,
+        "frame": heatmap.frame,
+        "voxel_size": heatmap.voxel_size,
+        "voxels": heatmap.voxels.len(),
+        "best": best,
+        "stats": heatmap.stats,
+    })
+    .to_string()
+}
+
 /// Occupied scene voxels as an xyz + score cloud, score = normalized sample count.
 pub fn scene_cloud(
     voxels: &[([i32; 3], u32)],
@@ -315,6 +340,24 @@ mod tests {
         let data = vec![0xFF, 0xFF, 0xE0, 0x2E, 0xE8, 0x03];
         let depth = depth_frame(&image("16UC1", 3, 1, data), 10.0).unwrap();
         assert_eq!(depth.depth_m, vec![0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn answer_json_carries_id_and_best_voxels() {
+        let heatmap = VoxelHeatmap {
+            frame: "odom".into(),
+            voxel_size: 0.1,
+            voxels: vec![([1, 2, 3], 1.0), ([4, 5, 6], 0.25)],
+            stats: QueryStats::default(),
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(&answer_json(&heatmap, 9, "a cone", 1)).unwrap();
+        assert_eq!(parsed["id"], 9);
+        assert_eq!(parsed["text"], "a cone");
+        assert_eq!(parsed["voxels"], 2);
+        assert_eq!(parsed["best"].as_array().unwrap().len(), 1);
+        assert!((parsed["best"][0]["xyz"][0].as_f64().unwrap() - 0.15).abs() < 1e-9);
+        assert_eq!(parsed["best"][0]["score"], 1.0);
     }
 
     #[test]

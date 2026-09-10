@@ -20,8 +20,6 @@ import json
 import threading
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 from dimos.agents.annotation import skill
 from dimos.agents.skill_result import SkillResult
 from dimos.constants import DIMOS_PROJECT_ROOT
@@ -42,24 +40,22 @@ DEPTH_MAX_DT_S = 0.05
 FIND_TIMEOUT_S = 30.0
 
 
-def summarize_answer(cloud: PointCloud2, top: int = 10) -> dict[str, Any]:
-    """The voxels an answer cloud carries, best first.
-
-    Scores ride in the cloud's ``intensity`` field (missing on an empty answer).
-    """
-    points, _ = cloud.as_numpy()
-    points = np.asarray(points, dtype=float).reshape(-1, 3)
-    tensor = getattr(cloud, "_pcd_tensor", None)
-    if tensor is not None and "intensities" in tensor.point:
-        scores = np.asarray(tensor.point["intensities"].numpy(), dtype=float).ravel()
-    else:
-        scores = np.ones(len(points))
-    order = np.argsort(-scores) if len(scores) == len(points) else np.arange(len(points))
-    best = [
-        {"xyz": [round(float(v), 3) for v in points[i]], "score": round(float(scores[i]), 3)}
-        for i in order[:top]
-    ]
-    return {"frame": cloud.frame_id, "voxels": len(points), "best": best}
+def parse_answer(data: str) -> dict[str, Any]:
+    """One `query_answer` message: id, text, frame, voxel count, best voxels."""
+    answer = json.loads(data)
+    return {
+        "id": int(answer["id"]),
+        "text": str(answer.get("text", "")),
+        "frame": str(answer.get("frame", "")),
+        "voxels": int(answer.get("voxels", 0)),
+        "best": [
+            {
+                "xyz": [round(float(v), 3) for v in item["xyz"]],
+                "score": round(float(item["score"]), 3),
+            }
+            for item in answer.get("best", [])
+        ],
+    }
 
 
 class HyperspaceConfig(NativeModuleConfig):
@@ -156,6 +152,9 @@ class Hyperspace(NativeModule):
 
     # Voxel centers with an `intensity` (score) field, `header.seq` = the id that asked.
     query_result: Out[PointCloud2]
+    # The same answer as JSON (id, text, voxel count, best voxels), for callers
+    # that cannot read the cloud's header. The `find` skill pairs on this.
+    query_answer: Out[String]
     # Occupied voxels from the kept keyframes' depth, for context in a viewer.
     scene_map: Out[PointCloud2]
 
@@ -165,24 +164,28 @@ class Hyperspace(NativeModule):
     def find(self, text: str, timeout_s: float = FIND_TIMEOUT_S, top: int = 10) -> SkillResult:
         """Where in the map is `text`? E.g. "a traffic cone", "the red chair".
 
-        Publishes a query with a fresh id and waits for the answer that carries
-        that id back on ``query_result.header.seq``, so several callers can be
-        in flight at once. Returns the best-scoring voxel centers (meters, in
-        the module's world frame) and how many voxels answered in total.
+        Publishes a query with a fresh id and waits for the `query_answer` that
+        carries that id back, so several callers can be in flight at once.
+        Returns the best-scoring voxel centers (meters, in the module's world
+        frame) and how many voxels answered in total.
         """
         text = text.strip()
         if not text:
             return SkillResult.fail("INVALID_INPUT", "text must not be empty")
         request_id = next(self._query_ids)
         got = threading.Event()
-        answer: dict[str, PointCloud2] = {}
+        answer: dict[str, Any] = {}
 
-        def on_result(cloud: PointCloud2) -> None:
-            if getattr(cloud, "seq", None) == request_id:
-                answer["cloud"] = cloud
+        def on_answer(msg: String) -> None:
+            try:
+                parsed = parse_answer(msg.data)
+            except (ValueError, KeyError, TypeError):
+                return
+            if parsed["id"] == request_id:
+                answer.update(parsed)
                 got.set()
 
-        unsubscribe = self.query_result.subscribe(on_result)
+        unsubscribe = self.query_answer.subscribe(on_answer)
         try:
             self.query.transport.publish(String(json.dumps({"id": request_id, "text": text})))
             if not got.wait(timeout_s):
@@ -191,14 +194,20 @@ class Hyperspace(NativeModule):
                 )
         finally:
             unsubscribe()
-        summary = summarize_answer(answer["cloud"], top=top)
-        if not summary["best"]:
-            return SkillResult.ok(f"nothing in the map looks like {text!r}", query=text, **summary)
-        best = summary["best"][0]
+        best = answer["best"][:top]
+        if not best:
+            return SkillResult.ok(
+                f"nothing in the map looks like {text!r}",
+                query=text,
+                frame=answer["frame"],
+                voxels=0,
+            )
         return SkillResult.ok(
-            f"{text!r}: {summary['voxels']} voxels, best at {best['xyz']} (score {best['score']})",
+            f"{text!r}: {answer['voxels']} voxels, best at {best[0]['xyz']} (score {best[0]['score']})",
             query=text,
-            **summary,
+            frame=answer["frame"],
+            voxels=answer["voxels"],
+            best=best,
         )
 
 
