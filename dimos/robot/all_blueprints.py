@@ -116,7 +116,7 @@ all_blueprints = {
     "teleop-quest-a1z": "dimos.teleop.quest.blueprints:teleop_quest_a1z",
     "teleop-quest-dual": "dimos.teleop.quest.blueprints:teleop_quest_dual",
     "teleop-quest-dual-openyam": "dimos.robot.manipulators.dual_openyam.blueprints.teleop:teleop_quest_dual_openyam",
-    "teleop-quest-go2": "dimos.teleop.quest.blueprints:teleop_quest_go2",
+    "teleop-quest-go2": "dimos.robot.unitree.go2.blueprints.teleop_quest:teleop_quest_go2",
     "teleop-quest-hand-xarm7": "dimos.teleop.quest.blueprints:teleop_quest_hand_xarm7",
     "teleop-quest-openarm": "dimos.robot.manipulators.openarm.blueprints.teleop:teleop_quest_openarm",
     "teleop-quest-openyam": "dimos.robot.manipulators.openyam.blueprints.teleop:teleop_quest_openyam",
