@@ -32,8 +32,7 @@ from dimos.robot.diy.alfred.pillar_connection import (
     pillar_hardware,
 )
 
-# Streamed joint_command positions are consumed by the canonical trajectory task (#3610
-# removed the servo task); the lift is velocity-bounded on the way to each new target.
+# Streamed joint_command targets go through the canonical trajectory task (#3610).
 PILLAR_TASK_NAME = JOINT_TRAJECTORY_TASK_NAME
 PILLAR_LIFT_VELOCITY_LIMIT_M_S = 0.1
 

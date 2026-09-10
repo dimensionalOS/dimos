@@ -12,20 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Body twist -> powered-caster steer/drive joint targets (visualisation / mock hardware).
+"""Body twist to powered-caster steer and drive joint targets, for display only.
 
-The FlowBase is four powered casters. Its own controller does this kinematics on the Pi and
-never reports caster state to dimos, so this module reproduces the *geometry* of it from the
-commanded ``cmd_vel`` so that a URDF with caster joints (alfred_v2) can show the wheels
-steering and spinning. It is not a controller: outputs go to a servo task on mock hardware.
-
-Per caster ``i`` with kingpin at ``(h_x, h_y)`` in ``base_link`` (i2rt: +x forward, +y left):
-
-    v_i = (vx - wz*h_y,  vy + wz*h_x)      # kingpin velocity in the body frame
-    steer_i = atan2(v_iy, v_ix)            # wheel heading follows the kingpin velocity
-    drive_i += |v_i| / r * dt              # wheel angle, wrapped to (-pi, pi]
-
-Steer 0 = heading +X (wheel trailing behind the kingpin), matching the URDF joint zeros.
+The FlowBase controller does this on the Pi and reports no caster state, so this
+reproduces the geometry from the commanded cmd_vel for a URDF with caster joints.
+Per caster with kingpin (hx, hy) in base_link: v = (vx - wz*hy, vy + wz*hx),
+steer = atan2(vy, vx), drive += |v| / r * dt. Steer zero is heading +X.
 """
 
 from __future__ import annotations
@@ -44,7 +36,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 
 CASTER_HARDWARE_ID = "casters"
 CASTER_CORNERS = ("front_left", "front_right", "rear_left", "rear_right")
-# kingpin positions in base_link (m): i2rt hips ±0.2; y from the Flow Base CAD (±0.1985)
+# kingpins in base_link (m): i2rt hips +/-0.2 in x, +/-0.1985 in y from the Flow Base CAD
 CASTER_HIPS = {
     "front_left": (0.200, 0.1985),
     "front_right": (0.200, -0.1985),

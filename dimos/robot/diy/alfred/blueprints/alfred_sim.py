@@ -45,10 +45,7 @@ from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 _base_joints = make_twist_base_joints("base")
 
 
-# lift_joint follows the pillar firmware: 0 = top limit switch, range [-0.5, -0.002] m.
-# With the lift at its bottom stop (-0.5) and the arms hanging straight down, the right gripper
-# overlaps the lidar/ZED module box on the base (CAD: ~3 cm). Start the sim lift raised so
-# the home configuration is collision-free; the planner refuses to plan into that zone.
+# Raised so the all-zero arm pose is collision-free (see ALFRED_LIFT_SAFE_MIN_M).
 SIM_LIFT_START_M = -0.25
 CASTER_STREAM_VELOCITY_LIMIT = 100.0  # rad/s; display joints, not a controller
 ARM_VELOCITY_LIMIT = 1.0  # rad/s, the trajectory task's own default
@@ -88,7 +85,6 @@ alfred_sim = (
         ),
         ControlCoordinator.blueprint(
             instance_name="ControlCoordinator",
-            # openarm_hardware() is the mock whole-body adapter unless both CAN ports are set.
             hardware=[
                 _mock_twist_base(),
                 mock_pillar_hardware(),
@@ -103,12 +99,9 @@ alfred_sim = (
                     priority=10,
                     params={"timeout": 0.2, "zero_on_timeout": True},
                 ),
-                # One canonical trajectory task: planner executions (arms + lift) and the
-                # streamed caster joint_command from CasterKinematics both land here. Casters
-                # get a high velocity bound so the drive angle's ±π wrap is a one-tick jump.
+                # Casters stream through the same task; the bound lets the drive wrap in one tick.
                 joint_trajectory_task(
                     [*OPENARM_ARM_JOINTS, PILLAR_LIFT_JOINT, *caster_coordinator_joints()],
-                    # The task wants a limit for every joint once any is given.
                     velocity_limits={
                         **dict.fromkeys(OPENARM_ARM_JOINTS, ARM_VELOCITY_LIMIT),
                         PILLAR_LIFT_JOINT: PILLAR_LIFT_VELOCITY_LIMIT_M_S,
@@ -117,8 +110,8 @@ alfred_sim = (
                 ),
             ],
         ),
-        KeyboardTeleop.blueprint(),  # WASD pygame window -> cmd_vel -> vel_base task
-        CasterKinematics.blueprint(),  # cmd_vel -> caster steer/drive joint_command -> trajectory task (viser wheels)
+        KeyboardTeleop.blueprint(),
+        CasterKinematics.blueprint(),
     )
     .remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
     .global_config(n_workers=4)

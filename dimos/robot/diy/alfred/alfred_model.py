@@ -12,21 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Alfred whole-robot planning model: FlowBase + pillar lift + bimanual OpenArm v2.0 + sensors.
+"""Alfred whole-robot planning model: FlowBase, pillar lift, bimanual OpenArm v2.0, sensors.
 
-The URDFs live in the LFS archive ``data/.lfs/alfred_description.tar.gz`` (built from the
-Onshape CAD by ``alfred_description/build_alfred_urdf.py``). ``base_link`` is the FlowBase
-odometry origin (centre of the four caster kingpins, on the floor, +X forward, +Y left).
-
-Joint conventions (canonical names are the ControlCoordinator hardware names):
-
-* ``pillar/lift`` (URDF ``lift_joint``): prismatic +Z. The pillar Nano firmware zeroes on the
-  TOP limit switch with positive = up, so every reachable position is negative,
-  ``[-0.500, -0.002]`` m. The URDF uses the same convention: q = 0 is the top stop (carriage
-  top = underside of the pillar-fixed front-camera mount), q = -0.5 the bottom stop.
-* ``openarm_{side}_joint{1..7}``: identical in the URDF and on the OpenArm hardware.
-* ``casters/<corner>_steer`` / ``casters/<corner>_drive`` (``alfred_v2`` only): state-only
-  display joints driven by :class:`~dimos.robot.diy.alfred.caster_kinematics.CasterKinematics`.
+The URDFs come from the LFS archive alfred_description (built from the Onshape CAD by the
+bundled build_alfred_urdf.py). base_link is the FlowBase odometry origin on the floor,
++X forward. Canonical joint names are the coordinator names: pillar/lift is zero at the top
+limit switch with positive up, so its range is -0.500..-0.002 m, matching the pillar
+firmware; openarm_{side}_joint{1..7} are the same on the arms; casters/* (alfred_v2 only)
+are display joints driven by CasterKinematics.
 """
 
 from __future__ import annotations
@@ -86,9 +79,7 @@ ALFRED_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("base_link", "mid360_link"),
 ]
 
-# With the lift at its bottom stop and the arms hanging straight down, the right gripper
-# overlaps the lidar/ZED module box on the base (CAD: ~3 cm); the planner refuses that zone.
-# Collision-free for lift >= this value in the all-zero arm pose.
+# Below this, with the arms hanging straight down, the right gripper enters the lidar module.
 ALFRED_LIFT_SAFE_MIN_M = -0.35
 
 
@@ -103,8 +94,7 @@ def alfred_joint_names(wheels: bool = False) -> list[str]:
 
 
 def alfred_planning_groups() -> list[PlanningGroupDefinition]:
-    """``lift`` (metres) and one group per arm (radians), kept separate on purpose: a mixed
-    group would weight a 0.1 m lift move like a 0.1 rad wrist move in path length and timing."""
+    """Lift (metres) and one group per arm (radians); mixing units in one group misweights paths."""
     return [
         PlanningGroupDefinition(
             name="lift",
@@ -129,11 +119,10 @@ def alfred_model_config(
     wheels: bool = False,
     tf_extra_links: list[str] | None = None,
 ) -> RobotModelConfig:
-    """One planning robot (lift + both arms, + 8 state-only caster joints with ``wheels``) so
-    collision exclusions can span them.
+    """One planning robot so collision exclusions can span lift and arms.
 
-    ``tf_extra_links`` defaults to none: the ManipulationModule publishes them under a fixed
-    ``world`` frame, which would plant a second tf root next to a navigation ``map`` tree.
+    tf_extra_links defaults to none: the ManipulationModule publishes them under a fixed
+    world frame, a second tf root next to a navigation tree.
     """
     joint_names = alfred_joint_names(wheels)
     return RobotModelConfig(
@@ -151,13 +140,7 @@ def alfred_model_config(
 
 
 def alfred_rerun_urdf(wheels: bool = False) -> Path:
-    """A materialized copy of the model for Rerun's URDF loaders (yourdfpy, rerun.urdf).
-
-    Those load a file straight from disk and cannot resolve ``package://`` URIs, so this
-    writes ``RobotModel.load().xml`` (absolute mesh paths, coordinator joint names) next to
-    the source URDF and returns its path. Rewritten on every call: cheap, and always in
-    step with the archive.
-    """
+    """Materialize the model for Rerun's URDF loaders, which cannot resolve package:// URIs."""
     loaded = (ALFRED_V2_MODEL if wheels else ALFRED_V1_MODEL).load()
     out = Path(loaded.source_path).with_name(".rerun") / Path(loaded.source_path).name
     out.parent.mkdir(exist_ok=True)
@@ -166,7 +149,7 @@ def alfred_rerun_urdf(wheels: bool = False) -> Path:
 
 
 def alfred_sim_model_config(wheels: bool = False) -> RobotModelConfig:
-    """The sim/viser flavour: also publishes the sensor links on tf (no nav tree to clash with)."""
+    """The sim flavour also publishes the sensor links on tf; there is no nav tree to clash with."""
     return alfred_model_config(
         wheels=wheels,
         tf_extra_links=[
