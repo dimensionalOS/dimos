@@ -1,0 +1,41 @@
+[package]
+name = "dimos-pointlio"
+version = "0.1.0"
+edition = "2021"
+description = "Point-LIO native module for dimos (PointCloud2 + Imu in, odometry + body cloud out)"
+license = "Apache-2.0"
+
+[lib]
+
+[[bin]]
+name = "pointlio_replay"
+path = "src/bin/replay.rs"
+
+[[bin]]
+name = "pointlio_native"
+path = "src/bin/native.rs"
+
+# Bake registry entry, cross-checked at compile time by the module macro.
+[package.metadata.dimos.module.pointlio]
+path = "dimos_pointlio::module::PointLioModule"
+python = "dimos.hardware.sensors.lidar.pointlio.module:PointLioRust"
+
+[package.metadata.dimos.module.pointlio.inputs]
+lidar_raw = "sensor_msgs.PointCloud2"
+imu = "sensor_msgs.Imu"
+tf = "tf2_msgs.TFMessage"
+
+[package.metadata.dimos.module.pointlio.outputs]
+lidar = "sensor_msgs.PointCloud2"
+odometry = "nav_msgs.Odometry"
+
+[dependencies]
+dimos-livox = { path = "../../livox/rust" }
+pointlio-core = { path = "core" }
+dimos-module = { path = "../../../../../../native/rust/dimos-module" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+validator = { version = "0.21", features = ["derive"] }

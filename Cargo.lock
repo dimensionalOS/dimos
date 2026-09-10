@@ -766,6 +766,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "dimos-pointlio"
+version = "0.1.0"
+dependencies = [
+ "dimos-livox",
+ "dimos-module",
+ "lcm-msgs",
+ "pointlio-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "validator",
+]
+
+[[package]]
 name = "dimos-virtual-mid360"
 version = "0.1.0"
 dependencies = [
@@ -2276,6 +2291,15 @@ checksum = "7d4643d3d4db6b08741050c2f3afa9a892c4244c085a72fcda93c9c2c9a00f4b"
 dependencies = [
  "libc",
  "winapi",
+]
+
+[[package]]
+name = "pointlio-core"
+version = "0.1.0"
+dependencies = [
+ "nalgebra",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
