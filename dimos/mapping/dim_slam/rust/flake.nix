@@ -78,12 +78,14 @@
         # hardware and names the variant on the build command.
         packages = nixpkgs.lib.genAttrs variants packageFor;
 
-        # Entered by the cargo-clippy pre-commit hook and by hand. The rust toolchain comes
-        # from the enclosing dimos shell. The hook below picks the SDK the way
-        # dimos/utils/nvidia_env.py's sdk_variant() does; it can, because unlike the
-        # package set it runs on the host. The .drv paths are referenced without string
-        # context so entering the shell realises only the variant this machine needs.
-        devShells.default = pkgs.mkShell {
+        # Entered by the cargo-clippy pre-commit hook and by hand. The rust toolchain and C
+        # compiler come from the enclosing environment: a nix cc here links proc-macro
+        # dylibs against nix's glibc, which a host rustc then cannot load (E0463 on Ubuntu
+        # 22.04). The hook below picks the SDK the way dimos/utils/nvidia_env.py's
+        # sdk_variant() does; it can, because unlike the package set it runs on the host.
+        # The .drv paths are referenced without string context so entering the shell
+        # realises only the variant this machine needs.
+        devShells.default = pkgs.mkShellNoCC {
           shellHook = ''
             if [ -z "''${CUVSLAM_SDK_DIR:-}" ]; then
               case "$(uname -s)-$(uname -m)" in
