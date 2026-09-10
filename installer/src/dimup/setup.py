@@ -22,6 +22,7 @@ import sys
 import tempfile
 
 from dimup.process import Runner, SetupError, executable
+from dimup.shell import configure_lfs
 
 APT_PACKAGES = (
     "build-essential",
@@ -106,6 +107,7 @@ def available(name: str) -> bool:
 
 def prepare(runner: Runner) -> None:
     runner.console.print("\n  dimup · Prepare machine\n", style="bold cyan")
+    configure_lfs(runner)
     target = supported_platform()
     if target is None:
         print(

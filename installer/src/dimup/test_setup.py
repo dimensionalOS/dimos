@@ -40,6 +40,8 @@ def test_intel_mac_needs_manual_setup(monkeypatch):
 def test_arch_setup_prints_manual_instructions_without_running_commands(
     monkeypatch, tmp_path, capsys
 ):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SHELL", "/bin/bash")
     monkeypatch.setattr("platform.system", lambda: "Linux")
     monkeypatch.setattr("platform.machine", lambda: "x86_64")
     monkeypatch.setattr("platform.freedesktop_os_release", lambda: {"ID": "arch"})
@@ -54,6 +56,7 @@ def test_arch_setup_prints_manual_instructions_without_running_commands(
     assert "Cargo/Rust, Nix, Deno" in output
     assert "dimup init my-robot" in output
     assert "Machine setup complete" not in output
+    assert "export GIT_LFS_SKIP_SMUDGE=1" in (tmp_path / ".bashrc").read_text()
     assert not (tmp_path / "setup.log").exists()
 
 

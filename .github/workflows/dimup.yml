@@ -29,6 +29,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.1
+      - name: Install shells for configuration tests
+        run: sudo apt-get update && sudo apt-get install -y zsh fish
       - name: Installer tests
         env:
           PYTHONPATH: .
@@ -36,4 +38,4 @@ jobs:
       - name: Type check dimup
         env:
           MYPYPATH: installer/src
-        run: uv run --project installer --with mypy mypy --strict --follow-imports=silent installer/src/dimup/cli.py installer/src/dimup/process.py installer/src/dimup/setup.py
+        run: uv run --project installer --with mypy mypy --strict --follow-imports=silent installer/src/dimup/cli.py installer/src/dimup/process.py installer/src/dimup/setup.py installer/src/dimup/shell.py
