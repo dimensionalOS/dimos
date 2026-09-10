@@ -17,12 +17,17 @@ add_executable(dimos_native_tests
   test_config.cpp
   test_module.cpp
   test_lcm_codec.cpp
+  test_zenoh_transport.cpp
 )
 target_link_libraries(dimos_native_tests PRIVATE
   dimos_native
   doctest::doctest
 )
 target_compile_options(dimos_native_tests PRIVATE -Wall -Wextra -Werror)
+# Session-settings goldens shared with the Rust module and Python.
+target_compile_definitions(dimos_native_tests PRIVATE
+  DIMOS_RUST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../rust/dimos-module/tests/fixtures"
+)
 
 # LcmTransport needs liblcm, which isn't always present (system pkg-config often
 # lacks it, it comes in via nix). Compile-check the adapter only when LCM is

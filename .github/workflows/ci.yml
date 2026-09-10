@@ -264,11 +264,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      # need liblcm installed for testing transport
+      # liblcm and zenoh-c back the SDK's two transports. zenoh-c has no apt
+      # package, so it comes from the upstream release (same 1.10 line the
+      # Rust module and the nix flakes pin).
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y liblcm-dev nlohmann-json3-dev
+          curl -fsSLo /tmp/zenohc.zip https://github.com/eclipse-zenoh/zenoh-c/releases/download/1.10.0/libzenohc-1.10.0-x86_64-unknown-linux-gnu-debian.zip
+          unzip -o /tmp/zenohc.zip -d /tmp/zenohc
+          sudo apt-get install -y /tmp/zenohc/libzenohc_1.10.0_amd64.deb /tmp/zenohc/libzenohc-dev_1.10.0_amd64.deb
       - name: Configure
         run: cmake -S native/cpp -B build/native-cpp -DDIMOS_NATIVE_BUILD_TESTS=ON
       - name: Build

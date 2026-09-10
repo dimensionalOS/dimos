@@ -132,6 +132,22 @@
         "type": "github"
       }
     },
+    "nixpkgs-zenoh": {
+      "locked": {
+        "lastModified": 1789012029,
+        "narHash": "sha256-1CBkBf+Nhggykzlx0jvXrj5rk20btl+tK8Fa8Ml/BL4=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "d5dfd8e6716dde34398bc14bc87c10dece9c8c68",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "d5dfd8e6716dde34398bc14bc87c10dece9c8c68",
+        "type": "github"
+      }
+    },
     "pfr": {
       "flake": false,
       "locked": {
@@ -174,6 +190,7 @@
         "lcm-extended": "lcm-extended",
         "livox-sdk": "livox-sdk",
         "nixpkgs": "nixpkgs",
+        "nixpkgs-zenoh": "nixpkgs-zenoh",
         "pfr": "pfr_2"
       }
     },
