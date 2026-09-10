@@ -17,7 +17,9 @@
 import argparse
 import os
 from pathlib import Path
-import sys
+
+from rich.console import Console
+from rich.text import Text
 
 from dimup.process import Runner, SetupError
 from dimup.setup import prepare
@@ -32,8 +34,11 @@ def main() -> None:
     try:
         prepare(Runner(state / "dimup/setup.log"))
     except (SetupError, OSError) as error:
-        print(str(error), file=sys.stderr)
+        Console(stderr=True).print(Text(str(error), style="red"))
         raise SystemExit(1) from error
+    except KeyboardInterrupt:
+        Console(stderr=True).print("Interrupted. Installation files and logs have been kept.")
+        raise SystemExit(130) from None
 
 
 if __name__ == "__main__":
