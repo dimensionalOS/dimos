@@ -299,3 +299,76 @@ def open_recording(path: str | Path) -> Store:
             open_ros2_mcap(text), SqliteStore(path=str(derived_db_path(text)))
         )
     return SqliteStore(path=text, must_exist=True)
+
+
+# ---- naming a recording's streams -------------------------------------------
+
+# Streams this module writes itself; never candidates for the recording's own.
+DERIVED_STREAMS = frozenset({"voxel_diff", "voxel_keyframe", "image_siglip2_patches"})
+# Words that rank a candidate up or out, for each role.
+_STREAM_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    #  role: (preferred words, disqualifying words)
+    "image": (("color", "rgb", "camera"), ("depth", "infra", "ir_", "_ir", "mask")),
+    "depth": (("depth",), ("color", "rgb", "infra")),
+    "camera_info": (("color", "rgb"), ("depth", "infra")),
+    "lidar": (("lidar", "cloud", "points", "scan"), ("costmap", "map")),
+    "tf": (("tf",), ()),
+}
+
+
+def detect_streams(store: Store) -> dict[str, str | None]:
+    """Name the stream to use for each role, from the payload types in *store*.
+
+    Recordings disagree about names — this rig calls its camera
+    ``realsense_color_image`` where a Go2 recording says ``color_image`` — so
+    each role is filled by payload type first and by the name only to break
+    ties. Roles with no candidate come back as None.
+    """
+    by_type: dict[str, list[str]] = {}
+    for name in store.list_streams():
+        if name in DERIVED_STREAMS:
+            continue
+        try:
+            payload = store.stream(name).data_type
+        except Exception:  # a stream this build cannot open is not a candidate
+            continue
+        if payload is not None:
+            by_type.setdefault(payload.__name__, []).append(name)
+
+    def pick(role: str, type_name: str, depth_like: bool | None = None) -> str | None:
+        preferred, disqualifying = _STREAM_HINTS[role]
+        candidates = [
+            name
+            for name in by_type.get(type_name, [])
+            if not any(word in name.lower() for word in disqualifying)
+        ]
+        if depth_like is not None:
+            candidates = [name for name in candidates if ("depth" in name.lower()) == depth_like]
+        if not candidates:
+            return None
+
+        def rank(name: str) -> tuple[int, int, str]:
+            # Earlier words in `preferred` win: a recording with both
+            # `pointlio_lidar` and `rtab_cloud` should give the lidar, since
+            # "cloud" also fits a cloud some other stage derived.
+            hit = next(
+                (i for i, word in enumerate(preferred) if word in name.lower()), len(preferred)
+            )
+            return (hit, len(name), name)
+
+        return min(candidates, key=rank)
+
+    image = pick("image", "Image", depth_like=False)
+    detected = {
+        "image": image,
+        "depth": pick("depth", "Image", depth_like=True),
+        "camera_info": pick("camera_info", "CameraInfo"),
+        "lidar": pick("lidar", "PointCloud2"),
+        "tf": pick("tf", "TFMessage"),
+    }
+    # Prefer the camera_info that belongs to the chosen image stream.
+    if image is not None:
+        paired = f"{image}_camera_info"
+        if paired in by_type.get("CameraInfo", []):
+            detected["camera_info"] = paired
+    return detected

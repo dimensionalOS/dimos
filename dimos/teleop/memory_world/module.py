@@ -76,7 +76,7 @@ from dimos.teleop.memory_world.query import (
     HighlightPoint,
     MemoryQueryResult,
 )
-from dimos.teleop.memory_world.recording import open_recording
+from dimos.teleop.memory_world.recording import detect_streams, open_recording
 from dimos.teleop.memory_world.replay import VoxelReplay, build_replay_streams
 from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix
 from dimos.teleop.memory_world.visual_search import (
@@ -469,7 +469,34 @@ class MemoryWorldModule(Module):
         if self._store is None:
             self._store = open_recording(self.config.store_path)
             logger.info("opened memory store at %s", self.config.store_path)
+            self._name_streams(self._store)
         return self._store
+
+    def _name_streams(self, store: Store) -> None:
+        """Fill in stream names the recording does not actually have.
+
+        The defaults suit a Go2 recording (``color_image``, ``lidar``); this
+        rig says ``realsense_color_image`` and ``pointlio_lidar``, and someone
+        else's robot says something else again. A name given on the command
+        line is kept as-is — only names that are missing get detected, so a
+        recording with two cameras can still be pointed at one of them.
+        """
+        present = set(store.list_streams())
+        detected = detect_streams(store)
+        for role, setting in (
+            ("image", "image_stream_name"),
+            ("lidar", "lidar_stream_name"),
+            ("depth", "depth_stream_name"),
+            ("camera_info", "camera_info_stream_name"),
+            ("tf", "tf_stream_name"),
+        ):
+            configured = getattr(self.config, setting)
+            if configured in present or detected[role] is None:
+                continue
+            setattr(self.config, setting, detected[role])
+            logger.info(
+                "%s: using %r (no %r in the recording)", setting, detected[role], configured
+            )
 
     def _ensure_world_cache(self) -> None:
         """Build the cloud, top-down map, markers and trail once, whoever asks first."""
