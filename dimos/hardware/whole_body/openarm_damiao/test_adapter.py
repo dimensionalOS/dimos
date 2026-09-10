@@ -30,7 +30,11 @@ from dimos.robot.manipulators.openarm.config import OPENARM_DOF, OPENARM_JOINTS
 
 @pytest.fixture
 def openarm_adapter(mocker: MockerFixture) -> Iterator[OpenArmDamiaoAdapter]:
-    mocker.patch.object(can_motor_control, "SocketCanBus", can_motor_control.MockCanBus)
+    mocker.patch.object(
+        OpenArmDamiaoAdapter,
+        "_make_can_bus",
+        side_effect=lambda name: can_motor_control.MockCanBus(name),
+    )
     adapter = OpenArmDamiaoAdapter(
         runtime_config=DamiaoRuntimeConfig(gravity_comp=False),
     )
