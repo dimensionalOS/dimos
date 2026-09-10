@@ -1,7 +1,7 @@
 # Visual Question Answering
 
-The VQA tools generate deterministic questions from recorded images and evaluate them through the
-shared dimOS evaluation runner.
+The VQA tools author questions from recorded images, derive deterministic answers from visual and
+geometric evidence, and evaluate them through the shared dimOS evaluation runner.
 
 ## Generate a Dataset
 
@@ -43,6 +43,33 @@ projects valid points into the image, keeps the nearest camera-depth point per p
 inside each object mask, and derives robust range statistics. Keeping dataset access and calibration
 preparation outside the primitive lets range estimation operate only on explicit geometry.
 
+## Create or Edit a Dataset
+
+Open the local editor with a calibrated recording and a new or existing VQA dataset directory:
+
+```bash skip
+dimos evals vqa edit /path/to/calibrated-recording.db /path/to/vqa-dataset
+```
+
+The interface runs on `http://127.0.0.1:8765` by default; use `--port` to select another local port.
+Frame navigation displays raw recorded images. Generating a single frame or a `start`, `stop`,
+`stride` range applies the normal rectification and image/point-cloud question pipelines only to the
+selected frames. Range generation advances the editor as each frame completes and reports progress
+without waiting for the full range to finish.
+
+Recordings with world-frame LiDAR and odometry also display a cached global top-down LiDAR map. The
+editor builds the map once at startup, then crops it around the selected frame's synchronized robot
+pose. The map panel remains available as an empty status panel when a frame has no synchronized
+odometry; incompatible or missing optional map streams do not prevent normal editing.
+
+Questions, choices, and ground-truth answers can be edited, added, or removed. Navigation retains
+drafts in the editor process but does not modify dataset files. A nonexistent output directory is
+created as a blank workspace; an empty directory is also accepted. **Submit dataset** creates or
+updates `cases.jsonl` and `labels.jsonl`, writes rectified assets for edited frames, and preserves all
+untouched cases and assets when editing an existing dataset. Partially initialized or nonempty
+non-dataset directories are rejected rather than overwritten. An output directory can be open in
+only one editor process at a time, preventing concurrent submissions from overwriting each other.
+
 ## Question Families
 
 The image-only question author selects object names and applicable families. It does not produce
@@ -59,8 +86,9 @@ answers. Every proposal uses `object_names`; single-object families require one 
 | `object_distance` | under 1 m, 1 to under 2 m, 2 to under 3 m, 3 m or more | Median LiDAR range inside an EdgeTAM mask |
 | `closest_object` | Two to five authored object references | Select the smallest unambiguous LiDAR range |
 
-Proposals without sufficient evidence are rejected and retained in the private audit. If no proposal
-can be answered, generation fails without publishing a dataset.
+Proposals without sufficient evidence are rejected and retained in the private audit. Standalone
+generation fails without publishing a dataset only when no selected frame produces an answerable
+question. In the editor, an empty generation result preserves that frame's existing questions.
 
 Distance questions require one Moondream detection, one EdgeTAM mask, and at least five projected
 LiDAR points. Evidence whose range quartiles cross an answer boundary is rejected.

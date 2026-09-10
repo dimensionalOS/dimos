@@ -66,12 +66,14 @@ class VqaEvalCase(EvalCase):
 def load_suite(dataset: Path) -> Suite:
     """Load public cases, private labels, and images from a generated dataset."""
     root = dataset.resolve()
+    cases: list[PublicCase] = []
     case_ids: set[str] = set()
     duplicate_cases = False
     for row in _read_jsonl(root / "cases.jsonl"):
         case = PublicCase.model_validate(row)
         duplicate_cases |= case.id in case_ids
         case_ids.add(case.id)
+        cases.append(case)
 
     label_by_id: dict[str, PrivateLabel] = {}
     duplicate_labels = False
@@ -94,10 +96,8 @@ def load_suite(dataset: Path) -> Suite:
             f"missing_cases={missing_cases}"
         )
 
-    case_ids.clear()
     suite: list[VqaEvalCase] = []
-    for row in _read_jsonl(root / "cases.jsonl"):
-        case = PublicCase.model_validate(row)
+    for case in cases:
         label = label_by_id.pop(case.id)
         if label.answer not in case.choices:
             raise ValueError(f"VQA label for {case.id!r} is not one of its choices")

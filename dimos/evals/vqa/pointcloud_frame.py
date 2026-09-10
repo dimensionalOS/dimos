@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, cast
@@ -26,6 +27,7 @@ import numpy as np
 from dimos.memory.cli.dataset import open_dataset
 from dimos.memory.store.base import Store
 from dimos.memory.tf import StreamTF
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -55,6 +57,24 @@ class PointCloudFrame:
         return abs(self.image_observation_timestamp - self.pointcloud_observation_timestamp)
 
 
+@dataclass(frozen=True)
+class GlobalLidarMap:
+    """Cached world-frame occupancy evidence accumulated from a recording."""
+
+    hits: np.ndarray
+    origin_x: float
+    origin_y: float
+    resolution: float
+
+
+@dataclass(frozen=True)
+class TopDownFrame:
+    """Cached global LiDAR map and synchronized robot pose for one image."""
+
+    lidar_map: GlobalLidarMap
+    pose: PoseStamped
+
+
 class PointCloudFrameUnavailableError(ValueError):
     """A selected image lacks the recorded evidence needed for metric geometry."""
 
@@ -80,8 +100,10 @@ class PointCloudFrameLoader:
         self._store: Store | None = None
         self._images: Stream[Image] | None = None
         self._lidar: Stream[PointCloud2] | None = None
+        self._odom: Stream[PoseStamped] | None = None
         self._recorded_camera_info: Stream[CameraInfo] | None = None
         self._recorded_tf: TFLookup | None = None
+        self._global_lidar_map: GlobalLidarMap | None = None
         self._rectifier = _ImageRectifier()
 
     def __enter__(self) -> PointCloudFrameLoader:
@@ -145,7 +167,15 @@ class PointCloudFrameLoader:
                 break
             if self._lidar is None:
                 raise ValueError("required pointlio_lidar/lidar stream is empty")
+            if "odom" in streams:
+                self._odom = store.stream("odom", PoseStamped).order_by("ts")
             self._store = store
+            if self._odom is not None:
+                try:
+                    self._global_lidar_map = self._build_global_lidar_map()
+                except Exception:
+                    # Optional visualization must not prevent recorded-frame editing.
+                    self._global_lidar_map = None
         except BaseException:
             store.stop()
             self._clear_state()
@@ -167,12 +197,19 @@ class PointCloudFrameLoader:
             )
         return self._images.count()
 
+    @property
+    def topdown_available(self) -> bool:
+        """Whether this recording has the odometry needed for a top-down scan."""
+        return self._global_lidar_map is not None
+
     def _clear_state(self) -> None:
         self._store = None
         self._images = None
         self._lidar = None
+        self._odom = None
         self._recorded_camera_info = None
         self._recorded_tf = None
+        self._global_lidar_map = None
 
     def load(self, frame_index: int) -> PointCloudFrame:
         """Load the indexed image and its nearest image-aligned point cloud."""
@@ -226,6 +263,15 @@ class PointCloudFrameLoader:
 
     def load_image(self, frame_index: int) -> Image:
         """Load a rectified image when synchronized point-cloud evidence is unavailable."""
+        image = self.load_raw_image(frame_index)
+        recorded_camera_info = self._recorded_camera_info
+        if recorded_camera_info is None:
+            raise RuntimeError("camera calibration was not initialized")
+        camera_info = _camera_info_at(recorded_camera_info, image.ts)
+        return self._rectifier.rectify(image, camera_info)[0]
+
+    def load_raw_image(self, frame_index: int) -> Image:
+        """Load an indexed source image without rectification."""
         if frame_index < 0:
             raise ValueError("frame_index must be non-negative")
         if self._images is None:
@@ -233,11 +279,78 @@ class PointCloudFrameLoader:
         observation = self._images.offset(frame_index).limit(1).first()
         image = observation.data.copy()
         image.ts = observation.ts
-        recorded_camera_info = self._recorded_camera_info
-        if recorded_camera_info is None:
-            raise RuntimeError("camera calibration was not initialized")
-        camera_info = _camera_info_at(recorded_camera_info, observation.ts)
-        return self._rectifier.rectify(image, camera_info)[0]
+        return image
+
+    def load_topdown(self, frame_index: int) -> TopDownFrame:
+        """Load LiDAR and odometry nearest to an indexed image."""
+        if frame_index < 0:
+            raise ValueError("frame_index must be non-negative")
+        if self._images is None:
+            raise RuntimeError("frame preprocessor must be started before loading frames")
+        if self._odom is None or self._global_lidar_map is None:
+            raise PointCloudFrameUnavailableError("recording has no 'odom' stream")
+
+        image_query = self._images.offset(frame_index).limit(1)
+        try:
+            odom_obs = _align_one(image_query, self._odom, self._tolerance_s)
+        except SynchronizedPointCloudNotFoundError as exc:
+            raise PointCloudFrameUnavailableError(
+                "recording has no synchronized odometry within tolerance"
+            ) from exc
+        if odom_obs.data.frame_id != "world":
+            raise PointCloudFrameUnavailableError(
+                "top-down view requires world-frame LiDAR and odometry"
+            )
+        return TopDownFrame(lidar_map=self._global_lidar_map, pose=odom_obs.data)
+
+    def _build_global_lidar_map(self, resolution: float = 0.05) -> GlobalLidarMap:
+        """Rasterize the recording's world-frame scans once without retaining points."""
+        if self._odom is None or self._lidar is None:
+            raise PointCloudFrameUnavailableError("global LiDAR map requires odometry and LiDAR")
+        poses = [
+            observation.data
+            for observation in self._odom
+            if np.isfinite([observation.data.x, observation.data.y, observation.data.z]).all()
+        ]
+        if not poses:
+            raise PointCloudFrameUnavailableError("recording has no finite odometry observations")
+
+        x_positions = np.array([pose.x for pose in poses])
+        y_positions = np.array([pose.y for pose in poses])
+        robot_z = float(np.median([pose.z for pose in poses]))
+        origin_x = math.floor((float(x_positions.min()) - 6.0) / resolution) * resolution
+        origin_y = math.floor((float(y_positions.min()) - 3.0) / resolution) * resolution
+        maximum_x = math.ceil((float(x_positions.max()) + 6.0) / resolution) * resolution
+        maximum_y = math.ceil((float(y_positions.max()) + 3.0) / resolution) * resolution
+        width = max(1, math.ceil((maximum_x - origin_x) / resolution))
+        height = max(1, math.ceil((maximum_y - origin_y) / resolution))
+        if width * height > 20_000_000:
+            raise PointCloudFrameUnavailableError("global LiDAR map exceeds the safe grid size")
+        hits = np.zeros((height, width), dtype=np.uint32)
+
+        for observation in self._lidar:
+            cloud = observation.data
+            if cloud.frame_id != "world":
+                raise PointCloudFrameUnavailableError(
+                    "global LiDAR map requires world-frame LiDAR and odometry"
+                )
+            points = cloud.points_f32()
+            if not points.size:
+                continue
+            valid = (
+                np.isfinite(points[:, :3]).all(axis=1)
+                & (points[:, 2] >= robot_z - 0.15)
+                & (points[:, 2] <= robot_z + 1.5)
+            )
+            selected = points[valid]
+            x_indices = ((selected[:, 0] - origin_x) / resolution).astype(int)
+            y_indices = ((selected[:, 1] - origin_y) / resolution).astype(int)
+            inside = (
+                (x_indices >= 0) & (x_indices < width) & (y_indices >= 0) & (y_indices < height)
+            )
+            np.add.at(hits, (y_indices[inside], x_indices[inside]), 1)
+
+        return GlobalLidarMap(hits, origin_x, origin_y, resolution)
 
 
 class _ImageRectifier:
