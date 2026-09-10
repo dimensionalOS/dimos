@@ -18,7 +18,7 @@ import sys
 import pytest
 
 from dimup.process import Runner, SetupError
-from dimup.setup import supported_platform
+from dimup.setup import prepare, supported_platform
 
 
 @pytest.mark.parametrize("version", ["22.04", "24.04"])
@@ -31,11 +31,28 @@ def test_ubuntu_versions(monkeypatch, version):
     assert supported_platform() == "ubuntu"
 
 
-def test_rejects_intel_mac(monkeypatch):
+def test_intel_mac_needs_manual_setup(monkeypatch):
     monkeypatch.setattr("platform.system", lambda: "Darwin")
     monkeypatch.setattr("platform.machine", lambda: "x86_64")
-    with pytest.raises(SetupError, match="Supported platforms"):
-        supported_platform()
+    assert supported_platform() is None
+
+
+def test_arch_setup_prints_manual_instructions_without_running_commands(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr("platform.system", lambda: "Linux")
+    monkeypatch.setattr("platform.machine", lambda: "x86_64")
+    monkeypatch.setattr("platform.freedesktop_os_release", lambda: {"ID": "arch"})
+
+    def unexpected_command(*args, **kwargs):
+        pytest.fail("Manual setup must not install packages or request sudo")
+
+    monkeypatch.setattr("subprocess.run", unexpected_command)
+    prepare(Runner(tmp_path / "setup.log"))
+    output = capsys.readouterr().out
+    assert "manually" in output
+    assert "Cargo/Rust, Nix, Deno" in output
+    assert "dimup init my-robot" in output
+    assert "Machine setup complete" not in output
+    assert not (tmp_path / "setup.log").exists()
 
 
 def test_apple_silicon(monkeypatch):
