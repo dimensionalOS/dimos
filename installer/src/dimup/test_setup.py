@@ -37,7 +37,9 @@ def test_intel_mac_needs_manual_setup(monkeypatch):
     assert supported_platform() is None
 
 
-def test_arch_setup_prints_manual_instructions_without_running_commands(monkeypatch, tmp_path, capsys):
+def test_arch_setup_prints_manual_instructions_without_running_commands(
+    monkeypatch, tmp_path, capsys
+):
     monkeypatch.setattr("platform.system", lambda: "Linux")
     monkeypatch.setattr("platform.machine", lambda: "x86_64")
     monkeypatch.setattr("platform.freedesktop_os_release", lambda: {"ID": "arch"})
@@ -76,6 +78,7 @@ def test_runner_uses_argument_boundaries(tmp_path):
     output = Runner(tmp_path / "setup.log").run(
         "echo",
         [sys.executable, "-c", "import sys; print(sys.argv[1])", "hello; $(false)"],
+        capture=True,
     )
     assert output == "hello; $(false)"
 
