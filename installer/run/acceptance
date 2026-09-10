@@ -112,7 +112,12 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="dimup-acceptance-") as temporary:
         parent = Path(temporary)
         project = parent / "my-robot"
-        run(parent, ["dimup", "init", str(project), "--ref", args.ref], log)
+        try:
+            run(parent, ["dimup", "init", str(project), "--ref", args.ref], log)
+        finally:
+            setup_log = project / ".dimos/setup.log"
+            if setup_log.exists():
+                shutil.copy(setup_log, results / "setup.log")
         activated(project, ["pytest", "-q"], log)
         activated(project, ["dimos", "doctor"], log)
         run_demo(project, "image 160x120", results / "demo.log")
@@ -146,7 +151,6 @@ def main() -> None:
         activated(clone, ["pytest", "-q"], log)
         activated(clone, ["dimos", "doctor"], log)
         run_demo(clone, "image 192x120", results / "clone-demo.log")
-        shutil.copy(project / ".dimos/setup.log", results / "setup.log")
         if args.native:
             script = Path(__file__).with_name("native_acceptance.py")
             activated(clone, ["python", str(script), str(results)], results / "native.log")

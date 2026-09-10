@@ -71,4 +71,6 @@ jobs:
         if: always()
         with:
           name: dimup-${{ matrix.os }}
-          path: ${{ runner.temp }}/dimup-results/
+          path: |
+            ${{ runner.temp }}/dimup-results/
+            ~/.local/state/dimup/setup.log
