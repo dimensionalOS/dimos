@@ -75,7 +75,7 @@ def open_store(path: Path) -> Store:
 
 def pick_stream(store: Store, wanted: str | None, *keywords: str) -> str:
     """Name the stream to use: the one asked for, else the best keyword match."""
-    names = list(store.streams.keys())
+    names = store.list_streams()
     if wanted:
         if wanted not in names:
             raise typer.BadParameter(f"no stream {wanted!r} in the recording; have {sorted(names)}")
@@ -109,9 +109,9 @@ def export_frames(
 
     def camera_info(stream_name: str) -> dict[str, Any]:
         info = next(iter(store.streams[stream_name].order_by(TIMELINE))).data
-        matrix = np.asarray(info.K, dtype=float).reshape(3, 3)
+        matrix = np.asarray(info.get_K_matrix(), dtype=float).reshape(3, 3)
         return {
-            "frame_id": info.header.frame_id,
+            "frame_id": info.frame_id,
             "width": int(info.width),
             "height": int(info.height),
             "fx": float(matrix[0, 0]),
@@ -119,7 +119,7 @@ def export_frames(
             "cx": float(matrix[0, 2]),
             "cy": float(matrix[1, 2]),
             "distortion_model": info.distortion_model or "plumb_bob",
-            "distortion": [float(value) for value in (info.D or [])],
+            "distortion": [float(value) for value in np.asarray(info.get_D_coeffs()).ravel()],
         }
 
     (out_dir / "intrinsics.json").write_text(
@@ -133,15 +133,14 @@ def export_frames(
     with (out_dir / "tf.jsonl").open("w") as handle:
         for observation in store.streams[tf_stream].order_by(TIMELINE):
             for stamped in observation.data.transforms:
-                stamp = stamped.header.stamp
-                translation = stamped.transform.translation
-                rotation = stamped.transform.rotation
+                translation = stamped.translation
+                rotation = stamped.rotation
                 handle.write(
                     json.dumps(
                         {
-                            "parent": stamped.header.frame_id,
+                            "parent": stamped.frame_id,
                             "child": stamped.child_frame_id,
-                            "ts": float(stamp.sec) + float(stamp.nsec) * 1e-9,
+                            "ts": float(stamped.ts),
                             "t": [float(translation.x), float(translation.y), float(translation.z)],
                             "q": [
                                 float(rotation.x),
@@ -174,22 +173,21 @@ def export_frames(
         last_kept = stamp
         color = color_obs.data
         depth = depth_obs.data
-        rgb = color.to_numpy() if hasattr(color, "to_numpy") else np.asarray(color.data)
-        rgb = np.asarray(rgb).reshape(color.height, color.width, -1)[:, :, :3]
+        rgb = np.asarray(color.as_numpy()).reshape(color.height, color.width, -1)[:, :, :3]
         name = f"{len(index):05d}"
         cv2.imwrite(
             str(out_dir / "color" / f"{name}.jpg"), rgb[:, :, ::-1], [cv2.IMWRITE_JPEG_QUALITY, 92]
         )
-        millimetres = np.asarray(depth.to_numpy() if hasattr(depth, "to_numpy") else depth.data)
-        millimetres = millimetres.reshape(depth.height, depth.width).astype("<u2", copy=False)
+        millimetres = np.asarray(depth.as_numpy()).reshape(depth.height, depth.width)
+        millimetres = millimetres.astype("<u2", copy=False)
         (out_dir / "depth" / f"{name}.u16").write_bytes(millimetres.tobytes())
         index.append(
             {
                 "name": name,
                 "ts": stamp,
                 "depth_ts": float(depth_obs.ts),
-                "color_frame": color.header.frame_id,
-                "depth_frame": depth.header.frame_id,
+                "color_frame": color.frame_id,
+                "depth_frame": depth.frame_id,
                 "width": int(color.width),
                 "height": int(color.height),
             }
@@ -296,7 +294,9 @@ def write_rrd(result: dict[str, Any], out: Path, *, recording: Path, cutoff: flo
         voxels = np.asarray(answer["voxels"], dtype=np.float64).reshape(-1, 4)
         keep = voxels[:, 3] >= cutoff if len(voxels) else np.zeros(0, dtype=bool)
         voxels = voxels[keep]
-        entity = f"world/query/{answer['text'].replace('/', ' ')}"
+        # Rerun entity paths take no whitespace; keep the query readable anyway.
+        slug = "".join(char if char.isalnum() else "_" for char in answer["text"]).strip("_")
+        entity = f"world/query/{slug or answer['id']}"
         if not len(voxels):
             typer.echo(f"{answer['text']!r}: nothing above {cutoff}")
             continue

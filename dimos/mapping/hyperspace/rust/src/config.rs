@@ -18,8 +18,9 @@
 //! sentinel: a negative limit is "off", an empty path is "no model".
 
 use dimos_module::native_config;
-use hyperspace::embedder::{HashEmbedder, TableTextEmbedder};
+use hyperspace::embedder::HashEmbedder;
 use hyperspace::keyframe::KeyframeConfig;
+use hyperspace::patch::normalize;
 use hyperspace::query::QueryConfig;
 use hyperspace::{DepthFuser, Embedder, PassthroughDepthFuser, TextEmbedder};
 
@@ -92,6 +93,34 @@ pub struct Config {
     /// Depth samples a voxel needs before it appears in `scene_map`.
     #[validate(range(min = 1))]
     pub scene_min_samples: u32,
+}
+
+/// Text side of [`HashEmbedder`]: hashes the words into the same space so the
+/// no-model path runs end to end. The scores are meaningless by construction —
+/// this exists so a pipeline can be exercised without 4 GB of weights, not so a
+/// robot can answer questions.
+#[derive(Default)]
+pub struct HashTextEmbedder {
+    pub dim: usize,
+}
+
+impl hyperspace::TextEmbedder for HashTextEmbedder {
+    fn embed_text(&mut self, text: &str) -> Result<Vec<f32>, String> {
+        let mut seed: u64 = 0xcbf29ce484222325;
+        for byte in text.as_bytes() {
+            seed = (seed ^ u64::from(*byte)).wrapping_mul(0x100000001b3);
+        }
+        let mut vector: Vec<f32> = (0..self.dim.max(1))
+            .map(|index| {
+                seed = seed
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407 + index as u64);
+                ((seed >> 33) as f32 / (1u64 << 31) as f32) - 0.5
+            })
+            .collect();
+        normalize(&mut vector);
+        Ok(vector)
+    }
 }
 
 /// Negative means "gate off".
@@ -167,10 +196,9 @@ type Backends = (
 pub fn build_backends(config: &Config) -> Result<Backends, String> {
     let (embedder, text_embedder): (Box<dyn Embedder>, Box<dyn TextEmbedder>) =
         if config.model_dir.is_empty() {
-            (
-                Box::new(HashEmbedder::default()),
-                Box::new(TableTextEmbedder::default()),
-            )
+            let stub = HashEmbedder::default();
+            let dim = stub.dim;
+            (Box::new(stub), Box::new(HashTextEmbedder { dim }))
         } else {
             #[cfg(feature = "siglip")]
             {
@@ -211,7 +239,7 @@ fn load_siglip(
     model_dir: &str,
     cuda: bool,
 ) -> Result<hyperspace::backends::siglip::SigLip2, String> {
-    use hyperspace::backends::siglip::candle::{DType, Device};
+    use hyperspace::backends::candle::{DType, Device};
     let device = if cuda {
         Device::new_cuda(0).map_err(|e| format!("cuda device: {e}"))?
     } else {
@@ -226,7 +254,7 @@ fn load_depth2depth(
     weights_dir: &str,
     cuda: bool,
 ) -> Result<hyperspace::backends::depth2depth::Depth2DepthFuser, String> {
-    use hyperspace::backends::siglip::candle::{DType, Device};
+    use hyperspace::backends::candle::{DType, Device};
     let device = if cuda {
         Device::new_cuda(0).map_err(|e| format!("cuda device: {e}"))?
     } else {
@@ -301,6 +329,21 @@ mod tests {
     #[test]
     fn no_model_dir_builds_stub_backends() {
         assert!(build_backends(&config()).is_ok());
+    }
+
+    #[test]
+    fn the_stub_text_embedder_answers_any_text() {
+        use hyperspace::TextEmbedder;
+        let mut embedder = HashTextEmbedder { dim: 32 };
+        let chair = embedder
+            .embed_text("a chair")
+            .expect("stub answers anything");
+        assert_eq!(chair.len(), 32);
+        let norm: f32 = chair.iter().map(|value| value * value).sum();
+        assert!((norm - 1.0).abs() < 1e-4, "not normalized: {norm}");
+        // Same text, same vector; different text, different vector.
+        assert_eq!(chair, embedder.embed_text("a chair").unwrap());
+        assert_ne!(chair, embedder.embed_text("a door").unwrap());
     }
 
     #[cfg(not(feature = "siglip"))]
