@@ -3,7 +3,7 @@
 set -euo pipefail
 wheel_url='@DIMUP_WHEEL_URL@'
 wheel_sha='@DIMUP_WHEEL_SHA@'
-source_ref='c747e17e7f1adcc73592d06557ae8e645a5430d3'
+source_ref='f5ac2458232fc59cbaedfff4c0cbe26fac0bb79b'
 if ! command -v uv >/dev/null 2>&1; then
     curl --fail --show-error --location --proto '=https' --tlsv1.2 \
         https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
