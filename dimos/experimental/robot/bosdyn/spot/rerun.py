@@ -92,14 +92,30 @@ def _tf_to_rerun(tf_message: TFMessage) -> RerunData:
 
 
 def _camera_info_pinhole(camera_info: CameraInfo, origin: Callable[[str], str]) -> RerunData | None:
-    """Re-emit a shared CameraInfo onto its camera's image entity as a Pinhole."""
+    """Re-emit a shared CameraInfo onto its camera's image entity as a Pinhole.
+
+    The Pinhole names no ``parent_frame``: the camera entity takes its pose
+    from the entity above it, which :class:`_ImageBakedIntoAnchor` sets to the
+    camera's pose at capture time. A named parent frame would override that
+    and hang the pixels off the live tf instead.
+    """
     suffix = _OPTICAL_FRAME_TO_SUFFIX.get(camera_info.frame_id)
     if suffix is None:
         return None
-    return camera_info.to_rerun(
-        image_plane_distance=_FRUSTUM_PLANE_DISTANCE,
-        image_topic=_camera_entity(origin(suffix)),
-    )
+    import rerun as rr
+
+    return [
+        (
+            _camera_entity(origin(suffix)),
+            rr.Pinhole(
+                focal_length=[camera_info.K[0], camera_info.K[4]],
+                principal_point=[camera_info.K[2], camera_info.K[5]],
+                width=camera_info.width,
+                height=camera_info.height,
+                image_plane_distance=_FRUSTUM_PLANE_DISTANCE,
+            ),
+        )
+    ]
 
 
 # Module-level (not closures) so the RerunBridgeModule config stays picklable
