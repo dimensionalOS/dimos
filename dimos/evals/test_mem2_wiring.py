@@ -206,3 +206,71 @@ def test_interactive_scores_live_store_while_writing(tmp_path: Path) -> None:
     assert scores[-1] >= 0.99, "last sample sees the robot arrive (live data flowed)"
     assert r.score >= 0.99  # aggregate=final
     assert scores == sorted(scores), "monotonic approach must be visible in the series"
+
+
+def test_interactive_two_arg_score_samples_gt_store(tmp_path: Path) -> None:
+    """A two-arg score receives the case's GT store alongside the live store,
+    and sees fresh GT observations as the (stubbed) recorder writes them."""
+    from dimos.evals.predicates import GT_STREAM, lifted
+
+    live_db = tmp_path / "live.db"
+    gt_db = tmp_path / "case.gt.db"
+    live_store = _open_store(live_db)
+    live_store.stream("odom", PoseStamped).append(_pose(0.0, 0.0), ts=time.time())
+    gt_store = _open_store(gt_db)
+    gt_stream = gt_store.stream(GT_STREAM, PoseStamped)
+    roles = {"cup": "cup"}
+    stop = threading.Event()
+
+    def writer() -> None:
+        # the cup rises off the table mid-episode
+        for i in range(1, 26):
+            if stop.is_set():
+                return
+            pose = PoseStamped(
+                position=make_vector3(0.5, 0.0, 0.02 * i),
+                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="cup",
+            )
+            gt_stream.append(pose, ts=time.time())
+            time.sleep(0.15)
+
+    thread = threading.Thread(target=writer)
+
+    class NoEnvRunner(EvalRunner):
+        def check_env(self, case: InteractiveEval) -> None:
+            pass
+
+        def setup_env(self, case: InteractiveEval) -> None:
+            self._gt_db = gt_db  # normally the GT recorder's db_path
+            thread.start()
+
+        def instruct(self, text: str) -> None:
+            pass
+
+    case = InteractiveEval(
+        id="gt_wiring",
+        inputs="pick up the cup",
+        score=lambda s, gt: lifted(gt, roles, "cup", min_delta=0.10),
+        aggregate=final,
+        ground_truth=True,
+        interval_s=0.1,
+        timeout_s=10.0,
+        simulator="",
+    )
+
+    runner = NoEnvRunner(live_db=str(live_db), out_dir=tmp_path / "evals")
+    try:
+        results = runner.run([case])
+    finally:
+        stop.set()
+        if thread.ident is not None:
+            thread.join(timeout=5.0)
+        live_store.stop()
+        gt_store.stop()
+
+    r = results[0]
+    assert not r.error, r.error
+    assert r.score == 1.0, "sampler must observe the cup crossing the lift threshold"
+    scores = [s for _, s in r.series]
+    assert 0.0 in scores, "early samples see the cup still on the table (GT data flowed)"

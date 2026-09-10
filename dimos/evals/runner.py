@@ -22,23 +22,33 @@ lifecycle: preflight, timing, error isolation, artifacts.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
 import subprocess
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from dimos.constants import STATE_DIR
 from dimos.core.resource import CompositeResource
-from dimos.evals.types import EvalCase, EvalResult, InteractiveEval, ResponseT, Suite
+from dimos.evals.types import (
+    EvalCase,
+    EvalResult,
+    GTScore,
+    InteractiveEval,
+    ResponseT,
+    Score,
+    Suite,
+    uses_gt_store,
+)
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
 
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.e2e_tests.dim_sim_client import DimSimClient
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
     from dimos.memory.store.base import Store
@@ -104,6 +114,8 @@ class EvalRunner(Configurable, CompositeResource):
         self._proc: DimosCliCall | None = None
         self._sim: DimSimClient | None = None
         self._run_dir: Path | None = None
+        self._gt_db: Path | None = None  # current case's GT db, when ground_truth
+        self._gt_coordinator: ModuleCoordinator | None = None
 
     # -- run lifecycle -----------------------------------------------------------
 
@@ -205,6 +217,14 @@ class EvalRunner(Configurable, CompositeResource):
         from dimos.memory.store.sqlite import SqliteStore
 
         return SqliteStore(path=self.config.live_db, must_exist=True)
+
+    def gt_store(self) -> Store:
+        """Store over the per-case GT db the GT recorder writes (ground_truth cases)."""
+        from dimos.memory.store.sqlite import SqliteStore
+
+        if self._gt_db is None:
+            raise RuntimeError("gt_store() needs a case with ground_truth=True under run()")
+        return SqliteStore(path=str(self._gt_db), must_exist=True)
 
     def encode(self, stream: Stream[Any, Any]) -> list[dict[str, Any]]:
         """mem2 Stream -> model-legible content blocks (the surface under test).
@@ -345,10 +365,17 @@ class EvalRunner(Configurable, CompositeResource):
 
             proc = DimosCliCall()
             proc.simulator = case.simulator
-            proc.global_args = ["--dimsim-scene", case.scene]
+            # --dimsim-scene only exists for the dimsim launcher; mujoco sims
+            # name their scene in the blueprint itself.
+            if case.simulator == "dimsim":
+                proc.global_args = ["--dimsim-scene", case.scene]
+            if case.ground_truth:
+                proc.global_args.append("--mujoco-publish-ground-truth")
             proc.demo_args = ["run", *case.blueprint.split()]
             proc.start()
             self._proc = proc
+        if case.ground_truth:
+            self._start_gt_recorder(case)
         if not self._wait_mcp(self.config.launch_timeout_s):
             raise RuntimeError(f"MCP at {self.mcp_url} not ready — is dimos up?")
         if case.setup is not _no_setup:
@@ -359,6 +386,29 @@ class EvalRunner(Configurable, CompositeResource):
             self._sim = sim
             case.setup(sim)
 
+    def _start_gt_recorder(self, case: InteractiveEval) -> None:
+        """Run a GT recorder blueprint in-process: subscribe the sim's GT
+        stream over LCM, record it to <run_dir>/<case_id>.gt.db.
+
+        The blueprint has no local Out for the recorder's In port — the
+        coordinator gives unmatched ports their ``/<name>`` LCM topic, which
+        is exactly what the sim publishes on.
+        """
+        from dimos.core.coordination.blueprints import autoconnect
+        from dimos.core.coordination.module_coordinator import ModuleCoordinator
+        from dimos.evals.gt_recorder import GTRecorder
+        from dimos.evals.predicates import GT_STREAM
+
+        self._gt_db = self.run_dir / f"{case.id}.gt.db"
+        blueprint = autoconnect(
+            GTRecorder.blueprint(
+                db_path=self._gt_db,
+                record_tf=False,
+                poseless_streams=[GT_STREAM],
+            )
+        )
+        self._gt_coordinator = ModuleCoordinator.build(blueprint)
+
     def teardown_env(self) -> None:
         """Per-case cleanup — the runner owns env lifecycle, cases just declare it."""
         if self._sim is not None:
@@ -367,6 +417,10 @@ class EvalRunner(Configurable, CompositeResource):
         if self._proc is not None:
             self._proc.stop()
             self._proc = None
+        if self._gt_coordinator is not None:
+            self._gt_coordinator.stop()
+            self._gt_coordinator = None
+        self._gt_db = None
 
     def check_env(self, case: InteractiveEval) -> None:
         if self.config.attach or not case.simulator:
@@ -396,18 +450,28 @@ class EvalRunner(Configurable, CompositeResource):
             transport.stop()
 
     def sample(
-        self, score: Callable[[Store], float], interval_s: float, timeout_s: float
+        self, score: Score | GTScore, interval_s: float, timeout_s: float
     ) -> list[tuple[float, float]]:
         """Score the live Recorder store on an interval — the mem2 analogue of
-        lcm_spy.wait_until_odom_position, but it returns a graded series."""
+        lcm_spy.wait_until_odom_position, but it returns a graded series.
+
+        Two-arg scores additionally receive the GT store (the case declared
+        ``ground_truth=True``, so ``_start_gt_recorder`` ran in setup_env).
+        """
         deadline = time.monotonic() + timeout_s
         t0 = time.monotonic()
         series: list[tuple[float, float]] = []
         store = self._wait_live_store(deadline)
+        gt: Store | None = None
         try:
+            if uses_gt_store(score):
+                gt = self._wait_gt_store(deadline)
             while time.monotonic() < deadline:
                 try:
-                    value = score(store)
+                    if gt is not None:
+                        value = cast("GTScore", score)(store, gt)
+                    else:
+                        value = cast("Score", score)(store)
                 except LookupError:
                     value = None  # stream not written yet — keep waiting
                 if value is not None:
@@ -417,6 +481,8 @@ class EvalRunner(Configurable, CompositeResource):
                 time.sleep(interval_s)
         finally:
             store.stop()
+            if gt is not None:
+                gt.stop()
         return series
 
     def _wait_live_store(self, deadline: float) -> Store:
@@ -424,6 +490,13 @@ class EvalRunner(Configurable, CompositeResource):
         while not path.exists() and time.monotonic() < deadline:
             time.sleep(1.0)
         return self.live_store()
+
+    def _wait_gt_store(self, deadline: float) -> Store:
+        """GT db appears once the GT recorder module starts — poll like the live db."""
+        assert self._gt_db is not None, "two-arg score but no GT recorder — ground_truth=True?"
+        while not self._gt_db.exists() and time.monotonic() < deadline:
+            time.sleep(1.0)
+        return self.gt_store()
 
 
 def _git_sha() -> str:

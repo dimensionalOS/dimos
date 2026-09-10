@@ -244,6 +244,7 @@ all_modules = {
     "grasp-gen-x-module": "dimos.manipulation.grasping.grasp_gen_x.GraspGenXModule",
     "grasping-module": "dimos.manipulation.grasping.grasping.GraspingModule",
     "gstreamer-camera-module": "dimos.hardware.sensors.camera.gstreamer.gstreamer_camera.GstreamerCameraModule",
+    "gt-recorder": "dimos.evals.gt_recorder.GTRecorder",
     "hand-teleop-module": "dimos.teleop.quest.quest_extensions.HandTeleopModule",
     "heuristic-grasp-module": "dimos.manipulation.grasping.heuristic_grasp.HeuristicGraspModule",
     "hosted-stats-module": "dimos.teleop.hosted.hosted_stats.HostedStatsModule",
