@@ -221,6 +221,51 @@
            hover media query is true on every phone and tablet. */
         body.desktop-view.touch #stick { display: block; }
         body.desktop-view.touch #touchBar { display: flex; }
+        /* Timeline: scrub the recording. Sits above the touch controls on a phone. */
+        #timeline {
+            position: absolute;
+            left: 50%;
+            bottom: 14px;
+            transform: translateX(-50%);
+            width: min(760px, calc(100% - 24px));
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            background: rgba(6, 9, 15, 0.72);
+            border: 1px solid var(--accent-soft);
+            z-index: 120;
+            touch-action: none;
+        }
+        body:not(.desktop-view) #timeline { display: none; }
+        body.desktop-view.touch #timeline { bottom: 172px; }
+        #timeline button {
+            padding: 8px 14px;
+            font-size: 14px;
+            letter-spacing: 0;
+            background: rgba(6, 9, 15, 0.7);
+            color: var(--accent);
+            border: 1px solid var(--accent-soft);
+            clip-path: none;
+        }
+        #timeline:not(.replaying) #exitReplayBtn { visibility: hidden; }
+        #timeLabel { font-size: 12px; color: var(--accent); white-space: nowrap; min-width: 84px; text-align: right; }
+        #scrub {
+            flex: 1;
+            height: 32px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+            touch-action: none;
+        }
+        #scrub::-webkit-slider-runnable-track { height: 6px; background: #2a3140; border-radius: 3px; }
+        #scrub::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 28px; height: 28px; margin-top: -11px;
+            border-radius: 50%; background: var(--accent); border: 2px solid var(--bg);
+        }
+        #scrub::-moz-range-track { height: 6px; background: #2a3140; border-radius: 3px; }
+        #scrub::-moz-range-thumb { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); }
     </style>
 </head>
 <body data-background-mode="__BACKGROUND_MODE__">
@@ -251,6 +296,7 @@
             <b>I</b>  toggle image thumbnails &nbsp; <b>V</b>  toggle voxel cubes<br>
             <b>R</b>  reset view &nbsp; <b>J</b>  jump to the answer &nbsp; <b>P</b>  see it from the camera<br>
             <b>M</b>  hide / show the minimap and answer &nbsp; <b>H</b>  keep this menu<br>
+            <b>TIMELINE</b>  drag to scrub the recording, ▶ plays it back, ✕ returns to the full map<br>
             <b>HOLD TO ASK</b>  speak a question, e.g. "where did I see a chair"
         </div>
     </div>
@@ -260,6 +306,12 @@
         <button id="hudBtn">Hide map</button>
         <button id="answerBtn">Answer</button>
         <button id="cameraBtn">Camera</button>
+    </div>
+    <div id="timeline" hidden>
+        <button id="playBtn" title="Play / pause">▶</button>
+        <input id="scrub" type="range" min="0" max="1" step="1" value="0" aria-label="Timeline">
+        <span id="timeLabel">0:00 / 0:00</span>
+        <button id="exitReplayBtn" title="Back to the full map">✕</button>
     </div>
     <canvas id="canvas"></canvas>
     <pre id="log"></pre>

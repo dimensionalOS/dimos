@@ -57,6 +57,8 @@ const HUD_OFFSET_LEFT = 0.32;
 const HUD_FOLLOW_LERP = 0.18;         // damping per frame
 const ANSWER_PANEL_W = 0.62;          // metres; the canvas behind it is 4:1
 const ANSWER_PANEL_H = 0.155;
+const CAMERA_PANEL_W = 0.40;          // replay camera frame, 16:9, above the answer
+const CAMERA_FRUSTUM_M = 0.5;         // how far the drawn frustum reaches from the camera
 // Image-thumbnail quads at capture poses.
 const IMAGE_QUAD_W = 0.60;
 const IMAGE_QUAD_H = 0.34;            // 16:9-ish
@@ -229,6 +231,34 @@ export class WorldScene {
         this._answerPanel.visible = false;
         this._hudGroup.add(this._answerPanel);
 
+        // Replay: the camera frame at the scrubbed time, head-locked above the
+        // answer, and a frustum in the world where that frame was taken.
+        this._cameraPanel = new THREE.Mesh(
+            new THREE.PlaneGeometry(CAMERA_PANEL_W, CAMERA_PANEL_W * 9 / 16),
+            new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, side: THREE.DoubleSide }),
+        );
+        this._cameraPanel.position.set(0, 0.2 + ANSWER_PANEL_H / 2 + CAMERA_PANEL_W * 9 / 32 + 0.02, 0.002);
+        this._cameraPanel.visible = false;
+        this._hudGroup.add(this._cameraPanel);
+        // Accent green so it reads against the orange trail and the blue map.
+        this._cameraFrustum = new THREE.LineSegments(
+            new THREE.BufferGeometry().setFromPoints(new Array(16).fill(new THREE.Vector3())),
+            new THREE.LineBasicMaterial({ color: 0x7af0a8 }),
+        );
+        this._cameraFrustum.visible = false;
+        this._cameraFrustum.frustumCulled = false;
+        this._cameraFrustum.add(new THREE.Mesh(
+            new THREE.SphereGeometry(0.06, 12, 8),
+            new THREE.MeshBasicMaterial({ color: 0x7af0a8 }),
+        ));
+        this._frameRotate.add(this._cameraFrustum);
+        this._replayGroup = new THREE.Group();
+        this._replayGroup.visible = false;
+        this._frameRotate.add(this._replayGroup);
+        this._replayLayer = null;
+        this._replayHfov = 70;
+        this.onTick = null;
+
         // Teleport-aim visualisation.
         this._teleportArc = null;
         this._teleportTarget = new THREE.Vector3();
@@ -299,6 +329,7 @@ export class WorldScene {
             cloud_visible: Boolean(this._pointsObj && this._pointsObj.visible),
             quality: this._quality,
             quality_auto: this._qualityAuto,
+            replay_voxels: this._replayLayer && this._replayGroup.visible ? this._replayLayer.drawn : 0,
             voxels_drawn: this._pointsObj ? this._pointsObj.count : 0,
             voxels_total: this._cloudData ? this._cloudData.n : 0,
         };
@@ -518,6 +549,58 @@ export class WorldScene {
 
         this._updateImageLod(dt);
         this._updateHud();
+        if (this.onTick) this.onTick(dt);
+    }
+
+    // ---- timeline replay ---------------------------------------------------
+
+    /** Hang the replay voxel layer in the world; it draws instead of the static map while active. */
+    attachReplay(layer, hfovDeg) {
+        if (this._replayLayer) this._replayGroup.remove(this._replayLayer);
+        this._replayLayer = layer;
+        this._replayHfov = hfovDeg || 70;
+        layer.fraction = QUALITY_LEVELS[this._quality].voxel_fraction;
+        this._replayGroup.add(layer);
+    }
+
+    setReplayActive(active) {
+        this._replayGroup.visible = active;
+        if (this._pointsObj) this._pointsObj.visible = !active;
+        this._cameraPanel.visible = active && Boolean(this._cameraPanel.material.map);
+        this._cameraFrustum.visible = active && this._cameraFrustum.userData.posed === true;
+    }
+
+    /** Show a camera frame on the HUD and draw its frustum where it was taken. */
+    setCameraFrame(bitmap, meta) {
+        const material = this._cameraPanel.material;
+        if (material.map) material.map.dispose();
+        const texture = new THREE.Texture(bitmap);
+        texture.flipY = false;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.generateMipmaps = false;
+        texture.minFilter = THREE.LinearFilter;
+        texture.needsUpdate = true;
+        material.map = texture;
+        material.needsUpdate = true;
+        this._cameraPanel.visible = this._replayGroup.visible;
+        if (meta && meta.position && meta.forward && meta.up) {
+            const eye = new THREE.Vector3(...meta.position);
+            const forward = new THREE.Vector3(...meta.forward).normalize();
+            const up = new THREE.Vector3(...meta.up).normalize();
+            const right = new THREE.Vector3().crossVectors(forward, up).normalize();
+            const width = 2 * CAMERA_FRUSTUM_M * Math.tan(THREE.MathUtils.degToRad(meta.hfov_deg || this._replayHfov) / 2);
+            const height = width * bitmap.height / bitmap.width;
+            const centre = eye.clone().addScaledVector(forward, CAMERA_FRUSTUM_M);
+            const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) =>
+                centre.clone().addScaledVector(right, sx * width / 2).addScaledVector(up, sy * height / 2));
+            const points = [];
+            for (const corner of corners) points.push(eye, corner);
+            for (let i = 0; i < 4; i++) points.push(corners[i], corners[(i + 1) % 4]);
+            this._cameraFrustum.geometry.setFromPoints(points);
+            this._cameraFrustum.children[0].position.copy(eye);
+            this._cameraFrustum.userData.posed = true;
+            this._cameraFrustum.visible = this._replayGroup.visible;
+        }
     }
 
     _updateHud() {
@@ -555,8 +638,10 @@ export class WorldScene {
             // A portrait phone is narrower than the panel itself: shrink it to fit.
             const fit = Math.min(1, (2 * halfWidth - 0.08) / ANSWER_PANEL_W);
             this._answerPanel.scale.setScalar(fit);
+            this._cameraPanel.scale.setScalar(fit);
         } else if (this._answerPanel.scale.x !== 1) {
             this._answerPanel.scale.setScalar(1);
+            this._cameraPanel.scale.setScalar(1);
         }
         const target = new THREE.Vector3()
             .copy(headPos)
@@ -960,6 +1045,10 @@ export class WorldScene {
             this._resizeDesktopCamera();
         }
         this._compactCloud();
+        if (this._replayLayer) {
+            this._replayLayer.fraction = q.voxel_fraction;
+            if (this.onQualityChange) this.onQualityChange(level);
+        }
         this._imageLodAccumS = IMAGE_LOD_INTERVAL_S; // re-budget thumbnails now
         this.diag('quality', { level, median_ms: Number((medianMs || 0).toFixed(1)), auto: this._qualityAuto });
     }

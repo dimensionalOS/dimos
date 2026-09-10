@@ -30,6 +30,7 @@ the server is a one-shot data push plus diagnostics.
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from dataclasses import dataclass, field
 import io
 import json
@@ -42,8 +43,9 @@ from typing import Annotated, Any, Literal
 import uuid
 
 import cv2
-from fastapi import HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 import numpy as np
 from pydantic import Field as PydanticField
@@ -74,6 +76,7 @@ from dimos.teleop.memory_world.query import (
     HighlightPoint,
     MemoryQueryResult,
 )
+from dimos.teleop.memory_world.replay import VoxelReplay, build_replay_streams
 from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix
 from dimos.teleop.memory_world.visual_search import (
     SIGLIP2_MODEL_NAME,
@@ -241,6 +244,15 @@ class MemoryWorldConfig(ModuleConfig):
     # hits must land to be the same object.
     locate_frames: int = PydanticField(default=12, ge=1)
     object_radius_m: float = PydanticField(default=0.75, gt=0.0)
+    # ---- timeline replay ------------------------------------------------------
+    # Keyframe and per-scan diff streams written into the recording once (see
+    # replay.py); the viewer scrubs by fetching one keyframe's segment at a
+    # time. A longer interval means fewer, larger segments.
+    replay_keyframe_interval_s: float = PydanticField(default=5.0, gt=0.0)
+    build_replay_on_start: bool = True
+    # The camera frame shown while scrubbing, fetched one at a time.
+    replay_frame_max_size: int = 480
+    replay_frame_jpeg_quality: int = 60
 
 
 class MemoryWorldModule(Module):
@@ -274,6 +286,14 @@ class MemoryWorldModule(Module):
         self._whisper: Any = None
         self._tf_tree_cache: TfTree | None = None
         self._tf_missing = False
+        self._replay: VoxelReplay | None = None
+        self._replay_lock = threading.Lock()
+        # The store's sqlite connection is not safe to read from two threads
+        # at once, and a scrubbing viewer fetches segments and frames together.
+        self._replay_read_lock = threading.Lock()
+        self._replay_progress = "not started"
+        self._replay_frames: OrderedDict[int, tuple[bytes, dict[str, Any]]] = OrderedDict()
+        self._camera_hfov_deg: float | None = None
         self._active_query_result: dict[str, Any] | None = None
         self._active_query_images: list[tuple[dict[str, Any], bytes]] = []
         self._query_revision = 0
@@ -322,6 +342,53 @@ class MemoryWorldModule(Module):
         @app.websocket(self.config.ws_route)  # type: ignore[misc]
         async def ws_world(ws: WebSocket) -> None:
             await self._handle_ws(ws)
+
+        # Replay segments are int16 grids and uint32 slots: they halve under gzip.
+        app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+        @app.get(f"{self.config.client_route}/replay/index")  # type: ignore[misc]
+        async def memory_world_replay_index() -> dict[str, Any]:
+            """Scan and keyframe stamps: everything the viewer needs to seek."""
+            try:
+                return await asyncio.to_thread(self._replay_read, self._replay_index_json)
+            except Exception as error:
+                raise HTTPException(
+                    status_code=503, detail=f"replay {self._replay_progress}"
+                ) from error
+
+        @app.get(f"{self.config.client_route}/replay/segment/{{number}}")  # type: ignore[misc]
+        async def memory_world_replay_segment(number: int, request: Request) -> Response:
+            """One keyframe plus the diffs up to the next, see VoxelReplay.segment.
+
+            Segments are gzipped once when first built: compressing a megabyte
+            per request cost more than sending it.
+            """
+            replay = await asyncio.to_thread(self._ensure_replay)
+            if not 0 <= number < len(replay.index.keyframe_scan):
+                raise HTTPException(status_code=404, detail="no such segment")
+            raw, gzipped = await asyncio.to_thread(
+                self._replay_read, replay.encoded_segment, number
+            )
+            headers = {"Cache-Control": "max-age=3600"}
+            if "gzip" in request.headers.get("accept-encoding", ""):
+                headers["Content-Encoding"] = "gzip"
+                return Response(
+                    content=gzipped, media_type="application/octet-stream", headers=headers
+                )
+            return Response(content=raw, media_type="application/octet-stream", headers=headers)
+
+        @app.get(f"{self.config.client_route}/replay/frame")  # type: ignore[misc]
+        async def memory_world_replay_frame(t: float) -> Response:
+            """The camera frame nearest *t* as JPEG; its pose rides in a header."""
+            found = await asyncio.to_thread(self._replay_read, self._replay_frame, t)
+            if found is None:
+                raise HTTPException(status_code=404, detail="no frame near that time")
+            jpeg, meta = found
+            return Response(
+                content=jpeg,
+                media_type="image/jpeg",
+                headers={"X-Camera-Pose": json.dumps(meta), "Cache-Control": "max-age=3600"},
+            )
 
         @app.post(f"{self.config.client_route}/voice")  # type: ignore[misc]
         async def memory_world_voice(audio: UploadFile) -> dict[str, Any]:
@@ -470,7 +537,6 @@ class MemoryWorldModule(Module):
         """
         from dimos.mapping.voxels.module import VoxelMapTransformer
         from dimos.memory.transform import FnTransformer
-        from dimos.msgs.geometry_msgs.Transform import Transform
 
         try:
             store = self._ensure_store()
@@ -494,15 +560,8 @@ class MemoryWorldModule(Module):
                 # a pose again double-transforms them into scattered noise.
                 if lidar_world_frame:
                     return obs
-                scan_frame = str(getattr(obs.data, "frame_id", "") or "").lstrip("/")
-                matrix = self._frame_pose_at(scan_frame, float(obs.ts))
-                if matrix is None:
-                    pose = getattr(obs, "pose_tuple", None)  # no tf tree: the stamped pose
-                    if pose is None or self._tf_tree() is not None:
-                        return None
-                    matrix = pose_matrix(tuple(pose[:3]), tuple(pose[3:7]))
-                tf = Transform.from_matrix(matrix)
-                return obs.derive(data=obs.data.transform(tf))
+                cloud = self._scan_to_world(obs)
+                return None if cloud is None else obs.derive(data=cloud)
 
             # emit_every=0 → only yield the final accumulated map on exhaustion.
             # Throttle to n_scans unless use_all (then feed every frame).
@@ -948,10 +1007,7 @@ class MemoryWorldModule(Module):
         """
         store = self._ensure_store()
         images = store.streams[self.config.image_stream_name]
-        hfov_deg = 70.0
-        if self.config.camera_info_stream_name is not None:
-            info = store.streams[self.config.camera_info_stream_name].first().data
-            hfov_deg = float(np.degrees(2.0 * np.arctan2(info.width / 2.0, info.K[0])))
+        hfov_deg = self._camera_hfov()
 
         sent: list[tuple[dict[str, Any], bytes]] = []
         for index, place in enumerate(places):
@@ -1006,6 +1062,125 @@ class MemoryWorldModule(Module):
             return self.config.camera_optical_frame
         first = self._ensure_store().streams[self.config.image_stream_name].first()
         return str(getattr(first.data, "frame_id", "") or "").lstrip("/")
+
+    def _scan_to_world(self, obs: Any) -> Any:
+        """A sensor-frame lidar scan moved into the world frame, or None.
+
+        The pose is a tf lookup at the scan's stamp; only a recording without
+        any tf stream falls back to the pose stamped on the observation.
+        """
+        from dimos.msgs.geometry_msgs.Transform import Transform
+
+        scan_frame = str(getattr(obs.data, "frame_id", "") or "").lstrip("/")
+        matrix = self._frame_pose_at(scan_frame, float(obs.ts))
+        if matrix is None:
+            pose = getattr(obs, "pose_tuple", None)
+            if pose is None or self._tf_tree() is not None:
+                return None
+            matrix = pose_matrix(tuple(pose[:3]), tuple(pose[3:7]))
+        return obs.data.transform(Transform.from_matrix(matrix))
+
+    def _camera_hfov(self) -> float:
+        """Horizontal field of view of the image stream, from camera_info when present."""
+        if self._camera_hfov_deg is None:
+            self._camera_hfov_deg = 70.0
+            if self.config.camera_info_stream_name is not None:
+                store = self._ensure_store()
+                info = store.streams[self.config.camera_info_stream_name].first().data
+                self._camera_hfov_deg = float(
+                    np.degrees(2.0 * np.arctan2(info.width / 2.0, info.K[0]))
+                )
+        return self._camera_hfov_deg
+
+    # ---- timeline replay -----------------------------------------------------
+
+    def _ensure_replay(self) -> VoxelReplay:
+        """The recording's replay streams, built on first use if missing."""
+        with self._replay_lock:
+            if self._replay is not None:
+                return self._replay
+            store = self._ensure_store()
+            if not VoxelReplay.available(
+                store,
+                voxel_size=self.config.voxel_size,
+                lidar_stream_name=self.config.lidar_stream_name,
+            ):
+                self._replay_progress = "building"
+                logger.info("building the voxel replay streams into %s", self.config.store_path)
+                stats = build_replay_streams(
+                    store,
+                    lidar_stream_name=self.config.lidar_stream_name,
+                    to_world=self._scan_to_world,
+                    voxel_size=self.config.voxel_size,
+                    keyframe_interval_s=self.config.replay_keyframe_interval_s,
+                )
+                logger.info(
+                    "voxel replay built: %d scans, %d keyframes, +%d/-%d edits in %.1f s",
+                    stats.scans,
+                    stats.keyframes,
+                    stats.added,
+                    stats.removed,
+                    stats.seconds,
+                )
+            self._replay = VoxelReplay(
+                store, z_min=self.config.map_z_min, z_max=self.config.map_z_max
+            )
+            self._replay_progress = "ready"
+            return self._replay
+
+    def _replay_read(self, fn: Any, *args: Any) -> Any:
+        """Run one store-reading replay call at a time."""
+        with self._replay_read_lock:
+            return fn(*args)
+
+    def _build_replay(self) -> None:
+        try:
+            self._ensure_replay()
+        except Exception as error:
+            self._replay_progress = f"failed: {error}"
+            logger.exception("voxel replay build failed")
+
+    def _replay_index_json(self) -> dict[str, Any]:
+        replay = self._ensure_replay()
+        images = self._ensure_store().streams[self.config.image_stream_name]
+        payload = replay.index.to_json()
+        # Frame stamps let the viewer ask for exact frames, so its cache hits.
+        payload["frames"] = [round(float(obs.ts), 4) for obs in images]
+        payload["hfov_deg"] = self._camera_hfov()
+        # The viewer colours replayed voxels itself, on the static map's ramp.
+        final = replay.keyframes.last().data.points_f32()
+        floor = float(np.percentile(final[:, 2], 7)) if len(final) else 0.0
+        payload["height"] = {"floor": floor, "span": float(self.config.height_ramp_span_m)}
+        payload["colors"] = (HEIGHT_COLOR_STOPS / 255.0).round(4).tolist()
+        return payload
+
+    def _replay_frame(self, ts: float) -> tuple[bytes, dict[str, Any]] | None:
+        """JPEG and camera pose of the image nearest *ts*, kept in a small LRU."""
+        images = self._ensure_store().streams[self.config.image_stream_name]
+        candidates = list(images.at(ts, tolerance=0.25))
+        if not candidates:
+            return None
+        obs = min(candidates, key=lambda o: abs(float(o.ts) - ts))
+        key = int(obs.id)
+        cached = self._replay_frames.get(key)
+        if cached is not None:
+            self._replay_frames.move_to_end(key)
+            return cached
+        jpeg = self._encode_jpeg(
+            obs.data, self.config.replay_frame_max_size, self.config.replay_frame_jpeg_quality
+        )
+        meta: dict[str, Any] = {"ts": round(float(obs.ts), 4), "hfov_deg": self._camera_hfov()}
+        camera = self._camera_pose_of(obs)
+        if camera is not None:
+            meta.update(
+                position=[float(v) for v in camera[:3, 3]],
+                forward=[float(v) for v in camera[:3, 2]],
+                up=[float(v) for v in -camera[:3, 1]],
+            )
+        self._replay_frames[key] = (jpeg, meta)
+        while len(self._replay_frames) > 600:
+            self._replay_frames.popitem(last=False)
+        return jpeg, meta
 
     def _frame_pose_at(self, frame: str, ts: float) -> np.ndarray | None:
         """world_T_frame at *ts* from tf, or None."""
@@ -1220,6 +1395,12 @@ class MemoryWorldModule(Module):
                 target=self._build_visual_index,
                 daemon=True,
                 name="MemoryWorldVisualIndex",
+            ).start()
+        if self.config.build_replay_on_start:
+            threading.Thread(
+                target=self._build_replay,
+                daemon=True,
+                name="MemoryWorldReplay",
             ).start()
 
     @rpc
