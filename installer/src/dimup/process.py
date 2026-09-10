@@ -14,12 +14,20 @@
 
 """Run installation steps with a readable console and a detailed log."""
 
-from collections.abc import Sequence
+import codecs
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager, nullcontext, suppress
 import os
 from pathlib import Path
 import shlex
 import shutil
+import signal
 import subprocess
+import time
+
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.text import Text
 
 
 class SetupError(RuntimeError):
@@ -46,6 +54,37 @@ def executable(name: str) -> str:
 class Runner:
     def __init__(self, log: Path) -> None:
         self.log = log
+        self.console = Console(
+            highlight=False, force_terminal=False if os.environ.get("CI") else None
+        )
+        self._in_stage = False
+
+    @contextmanager
+    def stage(self, title: str) -> Iterator[None]:
+        started = time.monotonic()
+        self.console.print(Text(f"\n  {title}", style="bold cyan"))
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("{task.description}", style="cyan", markup=False),
+            TimeElapsedColumn(),
+            console=self.console,
+            transient=True,
+        )
+        progress.add_task(title, total=None)
+        status = progress if self.console.is_terminal else nullcontext()
+        self._in_stage = True
+        try:
+            with status:
+                yield
+        except (Exception, KeyboardInterrupt):
+            self.console.print(Text(f"✗ {title}", style="bold red"))
+            raise
+        else:
+            line = Text(f"✓ {title}", style="green")
+            line.append(f"  {time.monotonic() - started:.1f}s", style="dim")
+            self.console.print(line)
+        finally:
+            self._in_stage = False
 
     def run(
         self,
@@ -54,27 +93,80 @@ class Runner:
         *,
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
+        capture: bool = False,
     ) -> str:
-        print(f"{stage}...", flush=True)
+        context = nullcontext() if self._in_stage else self.stage(stage)
+        with context:
+            return self._run(stage, command, cwd=cwd, env=env, capture=capture)
+
+    def _run(
+        self,
+        stage: str,
+        command: Sequence[str],
+        *,
+        cwd: Path | None,
+        env: dict[str, str] | None,
+        capture: bool,
+    ) -> str:
         self.log.parent.mkdir(parents=True, exist_ok=True)
-        with self.log.open("a") as output:
+        tail = ""
+        stdout = ""
+        with self.log.open("a", encoding="utf-8") as output:
             output.write(f"\n{stage}\n$ {shlex.join(command)}\n")
             output.flush()
             try:
-                result = subprocess.run(
+                # Pipes keep tool output append-only; dimup owns terminal animation.
+                child_env = {**(os.environ if env is None else env), "NO_COLOR": "1"}
+                with subprocess.Popen(
                     command,
                     cwd=cwd,
-                    env=env,
+                    env=child_env,
                     stdout=subprocess.PIPE,
-                    stderr=output,
-                    text=True,
-                    check=False,
-                )
+                    stderr=subprocess.PIPE if capture else subprocess.STDOUT,
+                    start_new_session=True,
+                ) as process:
+                    try:
+                        if capture:
+                            raw_stdout, raw_stderr = process.communicate()
+                            stdout = raw_stdout.decode("utf-8", errors="replace")
+                            stderr = raw_stderr.decode("utf-8", errors="replace")
+                            plain = Text.from_ansi(stdout + stderr).plain
+                            output.write(plain)
+                            tail = plain[-8000:]
+                        else:
+                            assert process.stdout is not None
+                            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+                            while True:
+                                chunk = os.read(process.stdout.fileno(), 65536)
+                                rendered = Text.from_ansi(decoder.decode(chunk, final=not chunk))
+                                output.write(rendered.plain)
+                                output.flush()
+                                tail = (tail + rendered.plain)[-8000:]
+                                self.console.print(rendered, end="", soft_wrap=True)
+                                if not chunk:
+                                    break
+                            process.wait()
+                    except KeyboardInterrupt:
+                        with suppress(ProcessLookupError):
+                            os.killpg(process.pid, signal.SIGTERM)
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            os.killpg(process.pid, signal.SIGKILL)
+                            process.wait()
+                        output.write("\nInterrupted.\n")
+                        raise
+                    returncode = process.returncode
             except OSError as error:
                 raise SetupError(
                     f"Failed: {stage}\nCommand: {shlex.join(command)}\nLog: {self.log}\n{error}"
                 ) from error
-            output.write(result.stdout)
-        if result.returncode:
-            raise SetupError(f"Failed: {stage}\nCommand: {shlex.join(command)}\nLog: {self.log}")
-        return result.stdout.strip()
+        if not capture and tail and not tail.endswith("\n"):
+            self.console.print()
+        if returncode:
+            detail = "\n" + "\n".join(tail.splitlines()[-12:]) if capture else ""
+            raise SetupError(
+                f"Failed: {stage} (exit {returncode})\nCommand: {shlex.join(command)}"
+                f"{detail}\nLog: {self.log}"
+            )
+        return stdout.strip()
