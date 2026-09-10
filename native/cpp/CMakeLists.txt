@@ -52,8 +52,19 @@ target_link_libraries(dimos_native INTERFACE
 # exists, and hard-errors when no backend does, so zenoh-c goes first.
 # Older zenoh-c spells the locality enum ZC_LOCALITY_*, so accepting one trades
 # this version message for a page of compiler errors.
+# pkg-config before the CMake config: nixpkgs splits zenoh-c into out/dev and its
+# zenohcConfig.cmake points the library at the dev output, which has none, while
+# its .pc is right. The upstream release zips ship only the CMake config.
 set(zenoh_min_version 1.9.0)
-find_package(zenohc ${zenoh_min_version} REQUIRED)
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+  pkg_check_modules(ZENOHC QUIET IMPORTED_TARGET zenohc>=${zenoh_min_version})
+endif()
+if(ZENOHC_FOUND)
+  add_library(zenohc::lib ALIAS PkgConfig::ZENOHC)
+else()
+  find_package(zenohc ${zenoh_min_version} REQUIRED)
+endif()
 find_package(zenohcxx ${zenoh_min_version} REQUIRED)
 
 # Off in an upstream source build and on in every published binary, so it is
