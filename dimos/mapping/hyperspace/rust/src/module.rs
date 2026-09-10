@@ -131,7 +131,7 @@ impl Hyperspace {
     }
 
     async fn on_depth(&mut self, msg: Image) {
-        match convert::depth_frame(&msg) {
+        match convert::depth_frame(&msg, self.config.max_depth_m) {
             Ok(depth) => self
                 .state()
                 .lock()

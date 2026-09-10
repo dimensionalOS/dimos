@@ -74,6 +74,7 @@ struct Args {
     cuda: bool,
     max_frames: usize,
     scene_min_samples: u32,
+    max_depth_m: f32,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -87,6 +88,7 @@ fn parse_args() -> Result<Args, String> {
         cuda: false,
         max_frames: usize::MAX,
         scene_min_samples: 3,
+        max_depth_m: 10.0,
     };
     let mut raw = std::env::args().skip(1);
     while let Some(flag) = raw.next() {
@@ -108,6 +110,9 @@ fn parse_args() -> Result<Args, String> {
                     .parse()
                     .map_err(|e| format!("--scene-min-samples: {e}"))?
             }
+            "--max-depth" => {
+                args.max_depth_m = value()?.parse().map_err(|e| format!("--max-depth: {e}"))?
+            }
             "--cuda" => args.cuda = true,
             "--help" | "-h" => {
                 eprintln!("{}", USAGE);
@@ -124,7 +129,7 @@ fn parse_args() -> Result<Args, String> {
 
 const USAGE: &str = "hyperspace_offline --export DIR --query TEXT [--query TEXT ...] \
 [--frame odom] [--voxel-size 0.1] [--model-dir DIR] [--depth-weights DIR] [--cuda] \
-[--max-frames N] [--scene-min-samples N]";
+[--max-frames N] [--scene-min-samples N] [--max-depth 10.0]";
 
 fn intrinsics(export: &ExportIntrinsics) -> CameraIntrinsics {
     CameraIntrinsics {
@@ -165,6 +170,7 @@ fn load_depth(
     timestamp: f64,
     width: u32,
     height: u32,
+    max_depth_m: f32,
 ) -> Result<DepthImage, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let expected = (width * height * 2) as usize;
@@ -180,6 +186,14 @@ fn load_depth(
         .0
         .iter()
         .map(|pair| u16::from_le_bytes(*pair))
+        // Past the sensor's range (or the 65535 "no reading" sentinel) = a hole.
+        .map(|mm| {
+            if mm as f32 * 0.001 > max_depth_m {
+                0
+            } else {
+                mm
+            }
+        })
         .collect();
     Ok(DepthImage::from_millimeters(
         camera_frame,
@@ -214,6 +228,7 @@ fn run() -> Result<(), String> {
         max_dark_fraction: 0.6,
         max_bright_fraction: -1.0,
         min_keyframe_interval: -1.0,
+        max_depth_m: args.max_depth_m,
         depth_max_dt: 0.05,
         depth_history: 64,
         depth_thumbnail_stride: 4,
@@ -262,6 +277,7 @@ fn run() -> Result<(), String> {
             frame.depth_ts,
             frame.width,
             frame.height,
+            args.max_depth_m,
         )?);
         let color_path = args
             .export

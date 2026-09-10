@@ -75,6 +75,9 @@ class HyperspaceConfig(NativeModuleConfig):
     # Never keep two keyframes closer together than this (s). Negative disables.
     min_keyframe_interval: float = 0.1
 
+    # Depth readings beyond this many meters are treated as holes. RealSense
+    # frames carry 65535 mm "no reading" sentinels and occasional 20-40 m glitches.
+    max_depth_m: float = 10.0
     # A colour frame pairs with the depth frame within this many seconds of it.
     depth_max_dt: float = DEPTH_MAX_DT_S
     # Depth frames buffered per sensor while waiting for their colour frame.

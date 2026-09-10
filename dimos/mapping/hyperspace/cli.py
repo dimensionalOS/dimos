@@ -364,6 +364,7 @@ def main(
         "", help="depth2depth weights directory; empty uses raw depth"
     ),
     cuda: bool = typer.Option(False, help="Run the models on CUDA"),
+    max_depth: float = typer.Option(10.0, help="Depth readings beyond this many meters are holes"),
     color_stream: str = typer.Option("", help="Colour image stream (auto-detected by name)"),
     depth_stream: str = typer.Option("", help="Depth image stream (auto-detected by name)"),
     color_info_stream: str = typer.Option("", help="Colour camera_info stream"),
@@ -407,6 +408,7 @@ def main(
             model_dir=model_dir,
             depth_weights=depth_weights,
             cuda=cuda,
+            max_depth=max_depth,
         )
         open_after = out is None
         if out is None:

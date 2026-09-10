@@ -65,6 +65,10 @@ pub struct Config {
     /// Never keep two keyframes closer together than this (s). Negative disables.
     pub min_keyframe_interval: f64,
 
+    /// Depth readings beyond this (metres) are treated as holes. RealSense frames
+    /// carry 65535 mm sentinels and occasional 20-40 m glitches.
+    #[validate(range(exclusive_min = 0.0))]
+    pub max_depth_m: f32,
     /// A colour frame pairs with the depth frame within this many seconds of it.
     #[validate(range(min = 0.0))]
     pub depth_max_dt: f64,
@@ -289,6 +293,7 @@ mod tests {
             max_dark_fraction: 0.6,
             max_bright_fraction: -1.0,
             min_keyframe_interval: 0.1,
+            max_depth_m: 10.0,
             depth_max_dt: 0.05,
             depth_history: 64,
             depth_thumbnail_stride: 4,

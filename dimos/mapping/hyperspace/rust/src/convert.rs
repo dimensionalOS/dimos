@@ -135,7 +135,11 @@ pub fn color_frame(msg: &Image) -> Result<ImageFrame, String> {
 }
 
 /// Depth image to metres. Accepts 16UC1 (millimetres) and 32FC1 (metres).
-pub fn depth_frame(msg: &Image) -> Result<DepthImage, String> {
+///
+/// Readings beyond `max_depth_m` become holes: RealSense frames carry 65535 mm
+/// sentinels and the odd 20-40 m glitch, and one of those in a patch's median
+/// would put its pyramid tens of metres outside the map.
+pub fn depth_frame(msg: &Image, max_depth_m: f32) -> Result<DepthImage, String> {
     let (width, height) = (msg.width as u32, msg.height as u32);
     let pixels = (width as usize) * (height as usize);
     let depth_m = match msg.encoding.as_str() {
@@ -146,6 +150,7 @@ pub fn depth_frame(msg: &Image) -> Result<DepthImage, String> {
                 .0
                 .iter()
                 .map(|pair| u16::from_le_bytes(*pair) as f32 * 0.001)
+                .map(|metres| if metres > max_depth_m { 0.0 } else { metres })
                 .collect()
         }
         "32FC1" => {
@@ -155,6 +160,13 @@ pub fn depth_frame(msg: &Image) -> Result<DepthImage, String> {
                 .0
                 .iter()
                 .map(|quad| f32::from_le_bytes(*quad))
+                .map(|metres| {
+                    if metres > max_depth_m || !metres.is_finite() {
+                        0.0
+                    } else {
+                        metres
+                    }
+                })
                 .collect()
         }
         other => return Err(format!("unsupported depth encoding {other:?}")),
@@ -286,13 +298,21 @@ mod tests {
     fn short_buffers_and_unknown_encodings_are_errors() {
         assert!(color_frame(&image("rgb8", 4, 4, vec![0; 3])).is_err());
         assert!(color_frame(&image("yuv422", 1, 1, vec![0; 3])).is_err());
-        assert!(depth_frame(&image("rgb8", 1, 1, vec![0; 3])).is_err());
+        assert!(depth_frame(&image("rgb8", 1, 1, vec![0; 3]), 10.0).is_err());
     }
 
     #[test]
     fn depth_16uc1_is_millimetres() {
-        let depth = depth_frame(&image("16UC1", 2, 1, vec![0xE8, 0x03, 0x00, 0x00])).unwrap();
+        let depth = depth_frame(&image("16UC1", 2, 1, vec![0xE8, 0x03, 0x00, 0x00]), 10.0).unwrap();
         assert_eq!(depth.depth_m, vec![1.0, 0.0]);
+    }
+
+    #[test]
+    fn depth_beyond_max_range_becomes_a_hole() {
+        // 65535 mm is the RealSense "no reading" sentinel; 12 m is past a 10 m range.
+        let data = vec![0xFF, 0xFF, 0xE0, 0x2E, 0xE8, 0x03];
+        let depth = depth_frame(&image("16UC1", 3, 1, data), 10.0).unwrap();
+        assert_eq!(depth.depth_m, vec![0.0, 0.0, 1.0]);
     }
 
     #[test]
