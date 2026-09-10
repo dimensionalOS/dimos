@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Read-only diagnostics for a DimOS SDK application."""
+"""Read-only diagnostics for a DimOS application or contributor checkout."""
 
 import argparse
 import json
@@ -33,17 +33,19 @@ def project_root(path: Path) -> Path:
         manifest = root / "pyproject.toml"
         if manifest.is_file():
             config = tomllib.loads(manifest.read_text())
-            if "dimos" in config.get("tool", {}).get("uv", {}).get("sources", {}):
+            if "dimos" in config.get("tool", {}).get("uv", {}).get("sources", {}) or (
+                config.get("project", {}).get("name") == "dimos" and (root / "dimos").is_dir()
+            ):
                 return root
     raise ValueError(
-        "No DimOS application found. Run this command inside an application created by dimup init."
+        "No DimOS project found. Run inside an application created by dimup init or a checkout prepared by dimup dev."
     )
 
 
 def probe(python: Path, script: str, *args: str, cwd: Path) -> tuple[bool, str]:
     try:
         result = subprocess.run(
-            [str(python), "-c", script, *args],
+            [str(python), "-I", "-c", script, *args],
             capture_output=True,
             text=True,
             timeout=45,
@@ -66,6 +68,7 @@ print(json.dumps({
     "sdk": json.loads(sdk.read_text("direct_url.json") or "{}"),
     "entries": [e.name for e in app.entry_points if e.group == "dimos.blueprints"],
     "version": sdk.version,
+    "source": str(Path(__import__("dimos").__file__).resolve()),
 }))
 """
 LIBRARY_CHECK = """import ctypes
@@ -98,13 +101,13 @@ assert codec.decode(codec.encode(image)).shape == image.shape
 def diagnose(root: Path) -> list[tuple[bool, str, str]]:
     manifest = tomllib.loads((root / "pyproject.toml").read_text())
     name = manifest["project"]["name"]
-    expected = manifest["tool"]["uv"]["sources"]["dimos"]["rev"]
+    contributor = name == "dimos"
     python = root / ".venv/bin/python"
     results = [
         (
             Path(sys.prefix).resolve() == (root / ".venv").resolve(),
             "Active environment",
-            "source .dimos/activate.sh selects this application's interpreter",
+            "source .dimos/activate.sh selects this project's interpreter",
         )
     ]
     if not python.is_file():
@@ -114,34 +117,45 @@ def diagnose(root: Path) -> list[tuple[bool, str, str]]:
         metadata: dict[str, Any] = json.loads(detail)
         app = metadata["editable"]
         editable = app.get("dir_info", {}).get("editable") and app.get("url") == root.as_uri()
-        results.append(
-            (
-                bool(editable),
-                "Editable application",
-                "Run uv sync --locked to install this application",
+        if contributor:
+            source = metadata.get("source")
+            results.append(
+                (
+                    bool(editable) and source == str(root / "dimos/__init__.py"),
+                    "Editable DimOS checkout",
+                    f"Expected {root}; imported {source}. Run uv sync --locked if they differ",
+                )
             )
-        )
-        results.append(
-            (
-                bool(metadata["entries"]),
-                "Blueprint registration",
-                ", ".join(metadata["entries"]) or "Run uv sync to refresh entry points",
+        else:
+            results.append(
+                (
+                    bool(editable),
+                    "Editable application",
+                    "Run uv sync --locked to install this application",
+                )
             )
-        )
-        commit = metadata["sdk"].get("vcs_info", {}).get("commit_id")
-        results.append(
-            (
-                commit == expected,
-                "SDK revision",
-                f"Expected {expected}; installed {commit}. Run uv sync --locked if they differ",
+            results.append(
+                (
+                    bool(metadata["entries"]),
+                    "Blueprint registration",
+                    ", ".join(metadata["entries"]) or "Run uv sync to refresh entry points",
+                )
             )
-        )
+            expected = manifest["tool"]["uv"]["sources"]["dimos"]["rev"]
+            commit = metadata["sdk"].get("vcs_info", {}).get("commit_id")
+            results.append(
+                (
+                    commit == expected,
+                    "SDK revision",
+                    f"Expected {expected}; installed {commit}. Run uv sync --locked if they differ",
+                )
+            )
     else:
         results.append((False, "Installed metadata", f"{detail}\nRun uv sync --locked"))
     for tool in ("uv", "cargo", "nix", "deno", "git"):
         found = shutil.which(tool)
         results.append(
-            (found is not None, tool, found or "Run dimup setup, then activate the application")
+            (found is not None, tool, found or "Run dimup setup, then activate the project")
         )
     ok, detail = probe(python, LIBRARY_CHECK, cwd=root)
     results.append((ok, "Native libraries and image codec", detail or "Image round trip passed"))

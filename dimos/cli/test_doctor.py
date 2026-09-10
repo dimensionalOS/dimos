@@ -132,3 +132,25 @@ def test_probe_reports_timeout(tmp_path, monkeypatch):
     ok, detail = probe(Path(sys.executable), "", cwd=tmp_path)
     assert not ok
     assert "45" in detail
+
+
+@pytest.mark.parametrize("correct_source", [True, False])
+def test_doctor_checks_editable_contributor_source(application, monkeypatch, correct_source):
+    (application / "pyproject.toml").write_text('[project]\nname="dimos"\n')
+    (application / "dimos").mkdir()
+    expected = application / "dimos/__init__.py"
+    metadata = {
+        "editable": {"dir_info": {"editable": True}, "url": application.as_uri()},
+        "sdk": {},
+        "entries": [],
+        "source": str(expected if correct_source else Path("/elsewhere/dimos/__init__.py")),
+    }
+    monkeypatch.setattr(
+        "dimos.cli.doctor.probe",
+        lambda python, script, *args, cwd: (True, json.dumps(metadata) if args else ""),
+    )
+    assert project_root(application / "dimos") == application
+    results = {label: ok for ok, label, detail in diagnose(application)}
+    assert results["Editable DimOS checkout"] is correct_source
+    assert "SDK revision" not in results
+    assert "Blueprint registration" not in results

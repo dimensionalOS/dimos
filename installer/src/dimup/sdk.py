@@ -22,10 +22,15 @@ from dimup.process import SetupError
 SDK_URL = "https://github.com/dimensionalOS/dimos.git"
 
 
-def consumer_policy(manifest: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+def desktop_extras(manifest: dict[str, Any]) -> list[str]:
     extras = sorted(set(manifest["project"]["optional-dependencies"]) - {"dds", "unitree-dds"})
     if not extras:
         raise SetupError("Selected SDK has no desktop extras.")
+    return extras
+
+
+def consumer_policy(manifest: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+    extras = desktop_extras(manifest)
     upstream = manifest.get("tool", {}).get("uv", {})
     policy = {
         key: deepcopy(upstream[key])

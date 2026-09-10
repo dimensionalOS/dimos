@@ -25,6 +25,55 @@ import tempfile
 import threading
 
 
+def contributor_journey(parent: Path, ref: str, results: Path) -> None:
+    root = parent / "dimos"
+    log = results / "contributor.log"
+    try:
+        run(parent, ["dimup", "dev", str(root), "--ref", ref], log)
+    finally:
+        setup_log = root / ".dimos/setup.log"
+        if setup_log.exists():
+            shutil.copy(setup_log, results / "contributor-setup.log")
+    activated(root, ["dimos", "doctor"], log)
+    activated(
+        root,
+        ["pytest", "--noconftest", "-o", "addopts=", "dimos/utils/test_sequential_ids.py"],
+        log,
+    )
+    for hook in ("pre-commit", "commit-msg"):
+        if not os.access(root / ".git/hooks" / hook, os.X_OK):
+            raise RuntimeError(f"Missing executable contributor hook: {hook}")
+    source = root / "dimos/__init__.py"
+    original = source.read_text()
+    source.write_text(original + '\nDIMUP_ACCEPTANCE_MARKER = "source edit is live"\n')
+    try:
+        activated(
+            root,
+            [
+                "python",
+                "-I",
+                "-c",
+                'import dimos; assert dimos.DIMUP_ACCEPTANCE_MARKER == "source edit is live"',
+            ],
+            log,
+        )
+    finally:
+        source.write_text(original)
+    status = subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True)
+    if status:
+        raise RuntimeError(f"Contributor setup changed repository files:\n{status}")
+    transcript = log.read_text()
+    for expected in (
+        "Clone DimOS",
+        "Install development dependencies",
+        "Install commit hooks",
+        "Verify contributor checkout",
+        "Ready · dimos",
+    ):
+        if expected not in transcript:
+            raise RuntimeError(f"Missing contributor CLI output {expected!r}; see {log}")
+
+
 def run(root: Path, command: list[str], log: Path) -> None:
     with log.open("a") as output:
         subprocess.run(
@@ -105,6 +154,7 @@ def main() -> None:
     parser.add_argument("--ref", required=True)
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--native", action="store_true")
+    parser.add_argument("--contributor", action="store_true")
     args = parser.parse_args()
     results = args.results.resolve()
     results.mkdir(parents=True, exist_ok=True)
@@ -167,6 +217,8 @@ def main() -> None:
         activated(clone, ["pytest", "-q"], log)
         activated(clone, ["dimos", "doctor"], log)
         run_demo(clone, "image 192x120", results / "clone-demo.log")
+        if args.contributor:
+            contributor_journey(parent, args.ref, results)
         if args.native:
             script = Path(__file__).with_name("native_acceptance.py")
             activated(

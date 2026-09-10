@@ -51,7 +51,7 @@ We want people to use Dimensional, learn it, and help us build it. You do not ne
 Browse [open issues labeled](https://github.com/dimensionalOS/dimos/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) `good first issue`. These are scoped tasks that maintainers have marked as approachable for newcomers. Pick one, read the description, and comment if you want to work on it or need clarification. Maintainers are happy to point you in the right direction.
 
 **Get set up.**
-Follow [AGENTS.md](AGENTS.md) for install (`uv sync --extra all`), running blueprints in simulation or replay, and the test workflow (`uv run pytest`). Most changes can be developed and validated without a physical robot.
+Follow the [contributor setup guide](docs/installation/installer.md#work-on-dimos-itself): prepare your machine with the curl bootstrap, then run `dimup dev dimos --ref feat/dimup-release` while testing this PR. It clones dimOS, installs the editable environment and development tools, and installs commit hooks. See [AGENTS.md](AGENTS.md) for running blueprints and the test workflow. Most changes can be developed and validated without a physical robot.
 
 **This still applies to you.**
 The [critical rule](#the-critical-rule) and [AI policy](AI_POLICY.md) apply to every outside contribution, including yours. Use AI tools if they help you learn the codebase, but understand what you submit. Link your PR to the issue you are working on.

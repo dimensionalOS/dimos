@@ -22,13 +22,12 @@ import shlex
 import tempfile
 from typing import Any
 
+from dimup.process import Runner, SetupError, executable
+from dimup.sdk import SDK_URL, consumer_policy
 from rich.table import Table
 from rich.text import Text
 import tomli_w
 import tomllib
-
-from dimup.process import Runner, SetupError, executable
-from dimup.sdk import SDK_URL, consumer_policy
 
 
 def package_name(directory: Path) -> str:
@@ -95,19 +94,27 @@ def manifest(name: str, sha: str, sdk: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def write_activation(root: Path) -> None:
+    (root / ".dimos").mkdir(exist_ok=True)
+    templates = files("dimup") / "templates"
+    for template, destination in (
+        ("activate.sh", root / ".dimos/activate.sh"),
+        ("environment.py", root / ".dimos/environment.py"),
+        ("envrc", root / ".envrc"),
+    ):
+        destination.write_text((templates / template).read_text())
+
+
 def write_project(root: Path, name: str, sha: str, sdk: dict[str, Any]) -> None:
     module = name.replace("-", "_")
     source = root / "src" / module
     source.mkdir(parents=True)
     (root / "tests").mkdir()
-    (root / ".dimos").mkdir(exist_ok=True)
+    write_activation(root)
     (root / "pyproject.toml").write_text(tomli_w.dumps(manifest(name, sha, sdk)))
     templates = files("dimup") / "templates"
     for template, destination in (
         ("demo.py", source / "demo.py"),
-        ("activate.sh", root / ".dimos/activate.sh"),
-        ("environment.py", root / ".dimos/environment.py"),
-        ("envrc", root / ".envrc"),
         ("test_demo.py", root / "tests/test_demo.py"),
         ("README.md", root / "README.md"),
     ):

@@ -160,6 +160,19 @@ Edit `src/my_robot/demo.py`, run `pytest`, and rerun the blueprint.
 See the [installation guide](docs/installation/installer.md) for machine setup,
 SDK revision selection, cloning applications, diagnostics, and optional direnv.
 
+To work on dimOS itself after the bootstrap:
+
+```bash
+dimup dev dimos --ref feat/dimup-release
+cd dimos
+source .dimos/activate.sh
+dimos doctor
+git switch -c feat/my-change
+```
+
+This prepares an editable contributor checkout with test/lint tools and commit
+hooks. See the [contributor setup procedure](docs/installation/installer.md#work-on-dimos-itself).
+
 # Featured Runfiles
 
 | Run command | What it does |

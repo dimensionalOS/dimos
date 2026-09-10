@@ -38,7 +38,7 @@ jobs:
       - name: Type check dimup
         env:
           MYPYPATH: installer/src
-        run: uv run --project installer --with mypy mypy --strict --follow-imports=silent installer/src/dimup/cli.py installer/src/dimup/project.py installer/src/dimup/process.py installer/src/dimup/setup.py installer/src/dimup/sdk.py installer/src/dimup/shell.py
+        run: uv run --project installer --with mypy mypy --strict --follow-imports=silent installer/src/dimup/cli.py installer/src/dimup/project.py installer/src/dimup/process.py installer/src/dimup/setup.py installer/src/dimup/sdk.py installer/src/dimup/shell.py installer/src/dimup/development.py
   journey:
     needs: unit
     strategy:
@@ -60,10 +60,10 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           dimup setup
-      - name: Create, edit, clone, and run
+      - name: Create applications, prepare contributors, and run
         env:
           SDK_REF: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: python3 installer/run/acceptance --ref "$SDK_REF" --results "$RUNNER_TEMP/dimup-results" --native
+        run: python3 installer/run/acceptance --ref "$SDK_REF" --results "$RUNNER_TEMP/dimup-results" --contributor --native
       - uses: actions/upload-artifact@v7
         if: always()
         with:

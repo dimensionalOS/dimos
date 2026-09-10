@@ -6,7 +6,7 @@ else
 fi
 _dimos_root=$(cd "$(dirname "$_dimos_source")/.." && pwd -P) || return
 if [ ! -x "$_dimos_root/.venv/bin/python" ]; then
-    echo 'Application environment is missing. Run uv sync --locked first.' >&2
+    echo 'Python environment is missing. Run uv sync --locked first.' >&2
     unset _dimos_source _dimos_root
     return 1
 fi
