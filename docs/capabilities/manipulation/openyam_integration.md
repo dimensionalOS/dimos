@@ -63,15 +63,15 @@ Select a macOS adapter by USB serial number:
 dimos --can-port <USB-SERIAL> run coordinator-openyam
 ```
 
-The dual-arm Quest blueprint is identical on both operating systems; only the
+The dual-arm WebXR blueprint is identical on both operating systems; only the
 selector values differ:
 
 ```bash
 # Linux
-dimos run teleop-quest-dual-openyam --left-can-port can0 --right-can-port can1
+dimos run teleop-webxr-dual-openyam --left-can-port can0 --right-can-port can1
 
 # macOS
-dimos run teleop-quest-dual-openyam \
+dimos run teleop-webxr-dual-openyam \
   --left-can-port <LEFT-USB-SERIAL> \
   --right-can-port <RIGHT-USB-SERIAL>
 ```
