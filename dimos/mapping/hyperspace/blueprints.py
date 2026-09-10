@@ -31,6 +31,7 @@ from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.hyperspace.module import Hyperspace, HyperspacePatches
 from dimos.mapping.hyperspace.replay import HyperspaceReplay
+from dimos.mapping.hyperspace.segments_module import HyperspaceSegments
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
@@ -45,6 +46,17 @@ demo_hyperspace = autoconnect(
         demo_every_s=30.0,
         demo_queries=["a traffic cone", "a chair"],
     ),
+    RerunBridgeModule.blueprint(
+        pubsubs=[LCM()],
+        rerun_open=global_config.rerun_open,
+        rerun_web=global_config.rerun_web,
+    ),
+)
+
+# The segmenter alone: overlay, flat mask and labelled points of each frame in Rerun.
+demo_hyperspace_segments = autoconnect(
+    HyperspaceReplay.blueprint(),
+    HyperspaceSegments.blueprint(db_path=HYPERSPACE_DB),
     RerunBridgeModule.blueprint(
         pubsubs=[LCM()],
         rerun_open=global_config.rerun_open,
