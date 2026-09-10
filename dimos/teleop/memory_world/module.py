@@ -223,7 +223,8 @@ class MemoryWorldConfig(ModuleConfig):
     # part and happens once per recording, in the background, into the
     # recording itself (~1.7 MB per indexed frame at fp16).
     siglip_model_name: str = SIGLIP2_MODEL_NAME
-    image_index_stream_name: str = "image_siglip2_patches"
+    # Empty means "named after siglip_model_name", so two models never share one.
+    image_index_stream_name: str = ""
     # Every Nth frame. The recording is ~15fps, so 3 keeps sub-metre coverage
     # at a third of the embedding cost.
     image_index_stride: int = PydanticField(default=3, ge=1)

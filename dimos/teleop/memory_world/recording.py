@@ -304,7 +304,8 @@ def open_recording(path: str | Path) -> Store:
 # ---- naming a recording's streams -------------------------------------------
 
 # Streams this module writes itself; never candidates for the recording's own.
-DERIVED_STREAMS = frozenset({"voxel_diff", "voxel_keyframe", "image_siglip2_patches"})
+# The SigLIP index needs no entry — its payload type matches no sensor role.
+DERIVED_STREAMS = frozenset({"voxel_diff", "voxel_keyframe"})
 # Words that rank a candidate up or out, for each role.
 _STREAM_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     #  role: (preferred words, disqualifying words)
