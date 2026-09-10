@@ -206,9 +206,16 @@ pub fn build_backends(config: &Config) -> Result<Backends, String> {
         } else {
             #[cfg(feature = "siglip")]
             {
-                let model = load_siglip(&config.model_dir, config.cuda)?;
-                let text = load_siglip(&config.model_dir, config.cuda)?;
-                (Box::new(model), Box::new(text))
+                // One copy of the weights serves both towers; loading twice
+                // doubled GPU memory and ran an 8 GB card out of it.
+                let shared = std::sync::Arc::new(std::sync::Mutex::new(load_siglip(
+                    &config.model_dir,
+                    config.cuda,
+                )?));
+                (
+                    Box::new(SharedSigLip(shared.clone())),
+                    Box::new(SharedSigLip(shared)),
+                )
             }
             #[cfg(not(feature = "siglip"))]
             {
@@ -236,6 +243,30 @@ pub fn build_backends(config: &Config) -> Result<Backends, String> {
     };
 
     Ok((embedder, text_embedder, depth_fuser))
+}
+
+/// Both trait objects hand out the same loaded model.
+#[cfg(feature = "siglip")]
+struct SharedSigLip(std::sync::Arc<std::sync::Mutex<hyperspace::backends::siglip::SigLip2>>);
+
+#[cfg(feature = "siglip")]
+impl Embedder for SharedSigLip {
+    fn embed(&mut self, frame: &hyperspace::ImageFrame) -> Result<hyperspace::PatchGrid, String> {
+        self.0.lock().expect("siglip lock").embed(frame)
+    }
+    fn grid_shape(&self) -> (usize, usize) {
+        self.0.lock().expect("siglip lock").grid_shape()
+    }
+    fn dim(&self) -> usize {
+        self.0.lock().expect("siglip lock").dim()
+    }
+}
+
+#[cfg(feature = "siglip")]
+impl TextEmbedder for SharedSigLip {
+    fn embed_text(&mut self, text: &str) -> Result<Vec<f32>, String> {
+        self.0.lock().expect("siglip lock").embed_text(text)
+    }
 }
 
 #[cfg(feature = "siglip")]
