@@ -63,13 +63,15 @@ from dimos.experimental.robot.bosdyn.spot.config import (
     STAND_TIMEOUT_S,
 )
 from dimos.experimental.robot.bosdyn.spot.utils import (
+    QUARTER_TURN,
     camera_info_from_response,
     camera_mount_transforms,
     clamp,
     decode_image,
     roll_optical_frame,
-    rotate_camera_info_quarter_turns,
-    rotate_image_quarter_turns,
+    rotate_camera_info,
+    rotate_image,
+    upright_roll,
 )
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -168,13 +170,14 @@ class SpotHighLevel(StaticTfPublisher):
         # never reaches a half-initialised SDK.
         self._ready = asyncio.Event()
 
-    def transforms(self) -> list[Transform]:
-        """Static base_link -> camera-optical extrinsics parsed from the URDF.
+    def _sensor_mounts(self) -> list[Transform]:
+        """URDF base_link -> camera-optical extrinsics, rolled to match the quarter-turned pixels.
 
-        `StaticTfPublisher` republishes these on a fixed interval; the moving
-        odom->base_link edge stays live (see `_publish_odom`). The front optical
-        frames are rolled to match the upright-rotated front images so recorded
-        tf, intrinsics, and pixels stay mutually consistent for depth reprojection.
+        The front cameras deliver their frames sideways; `_poll_images` turns them
+        a quarter turn, so their optical frames get the same roll here. Where the
+        pixels then still lean (Spot's front mounts sit 12.3° off a clean quarter
+        turn) `upright_roll` measures the leftover, and both the pixels and the
+        frame are rolled by it.
         """
         mounts = camera_mount_transforms(
             SPOT_URDF_PATH,
@@ -194,9 +197,23 @@ class SpotHighLevel(StaticTfPublisher):
             ),
         }
         return [
-            roll_optical_frame(mount, front_frame_rolls.get(mount.child_frame_id, 0))
+            roll_optical_frame(mount, front_frame_rolls.get(mount.child_frame_id, 0) * QUARTER_TURN)
             for mount in mounts
         ]
+
+    def _level_rolls(self) -> dict[str, float]:
+        """Per optical frame, the roll that levels its pixels (zero for the side/back cameras)."""
+        return {mount.child_frame_id: upright_roll(mount) for mount in self._sensor_mounts()}
+
+    def transforms(self) -> list[Transform]:
+        """Static base_link -> camera-optical extrinsics, levelled like the published images.
+
+        `StaticTfPublisher` republishes these on a fixed interval; the moving
+        odom->base_link edge stays live (see `_publish_odom`). Each optical frame
+        carries the same roll as its pixels so recorded tf, intrinsics, and images
+        stay mutually consistent for depth reprojection.
+        """
+        return [roll_optical_frame(mount, upright_roll(mount)) for mount in self._sensor_mounts()]
 
     async def main(self) -> AsyncIterator[None]:
         username, password = self.config.username, self.config.password
@@ -384,6 +401,7 @@ class SpotHighLevel(StaticTfPublisher):
             ),
         }
         sources = list(routing)
+        level_rolls = self._level_rolls()
         # Sensor capture time of the last frame published per source. Polling above
         # the sensor's frame rate re-returns the same frame; matching acquisition
         # time means it's a repeat, so skip it and never publish a frame twice.
@@ -414,10 +432,10 @@ class SpotHighLevel(StaticTfPublisher):
                     continue
                 last_published_ts[source_name] = image.ts
                 camera_info = camera_info_from_response(response, frame_id, image.ts)
-                if quarter_turns:
-                    image = rotate_image_quarter_turns(image, quarter_turns)
-                    if camera_info is not None:
-                        camera_info = rotate_camera_info_quarter_turns(camera_info, quarter_turns)
+                roll = quarter_turns * QUARTER_TURN + level_rolls.get(frame_id, 0.0)
+                image = rotate_image(image, roll)
+                if camera_info is not None:
+                    camera_info = rotate_camera_info(camera_info, roll)
                 out.publish(image)
                 if camera_info is not None:
                     info_out.publish(camera_info)

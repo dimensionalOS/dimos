@@ -118,23 +118,106 @@ def camera_mount_transforms(
     return transforms
 
 
-def roll_optical_frame(transform: Transform, quarter_turns: int) -> Transform:
-    """Roll a camera's optical frame `quarter_turns` * 90° about its viewing (z) axis.
+QUARTER_TURN = math.pi / 2
+# Rolls closer than this to a multiple of 90° are treated as exact quarter turns.
+_ROLL_EPSILON = 1e-9
 
-    Pairs with `rotate_image_quarter_turns`: rotating the image alone leaves the 3D
-    frame at its raw mount orientation, so frustums and depth back-projection land
-    rotated. Rolling the frame by the same amount realigns 3D with the upright image.
+
+def roll_optical_frame(transform: Transform, roll: float) -> Transform:
+    """Roll a camera's optical frame by `roll` radians about its viewing (z) axis.
+
+    Pairs with `rotate_image` / `rotate_camera_info`: rotating the pixels alone
+    leaves the 3D frame at its raw mount orientation, so frustums and depth
+    back-projection land rotated. Rolling the frame by the same amount keeps 3D
+    in step with the rotated image.
     """
-    if not quarter_turns:
+    if abs(roll) < _ROLL_EPSILON:
         return transform
-    roll = Quaternion.from_euler(Vector3(0.0, 0.0, quarter_turns * math.pi / 2))
+    rotation = Quaternion.from_euler(Vector3(0.0, 0.0, roll))
     return Transform(
         translation=transform.translation,
-        rotation=transform.rotation * roll,
+        rotation=transform.rotation * rotation,
         frame_id=transform.frame_id,
         child_frame_id=transform.child_frame_id,
         ts=transform.ts,
     )
+
+
+def upright_roll(transform: Transform) -> float:
+    """The roll (radians) that levels the camera whose optical frame is `transform`.
+
+    A camera mounted twisted delivers pixels whose "down" is not its parent
+    frame's down (Spot's front cameras sit rolled 77.7°, not a clean 90°).
+    Returns the roll about the viewing axis that turns the frame's +y (image
+    down) onto the parent's -z as seen in the image plane; apply it with
+    `roll_optical_frame` and the pixels/intrinsics with `rotate_image` /
+    `rotate_camera_info`. Zero for a camera that is already level.
+    """
+    parent_down = np.array([0.0, 0.0, -1.0])
+    down_x, down_y, _ = transform.rotation.to_rotation_matrix().T @ parent_down
+    return math.atan2(-down_x, down_y)
+
+
+def _split_quarter_turns(roll: float) -> tuple[int, float]:
+    """Split a roll into exact quarter turns (lossless np.rot90) and the leftover."""
+    quarter_turns = round(roll / QUARTER_TURN)
+    residual = roll - quarter_turns * QUARTER_TURN
+    return quarter_turns, (0.0 if abs(residual) < _ROLL_EPSILON else residual)
+
+
+def _fit_rotation(angle: float, width: int, height: int) -> tuple[np.ndarray, int, int]:
+    """Affine that turns a width x height pixel grid CCW by `angle` onto a canvas that fits it."""
+    import cv2
+
+    matrix = cv2.getRotationMatrix2D(((width - 1) / 2, (height - 1) / 2), math.degrees(angle), 1.0)
+    cos, sin = abs(math.cos(angle)), abs(math.sin(angle))
+    fitted_width = math.ceil(width * cos + height * sin)
+    fitted_height = math.ceil(width * sin + height * cos)
+    matrix[0, 2] += (fitted_width - width) / 2
+    matrix[1, 2] += (fitted_height - height) / 2
+    return matrix, fitted_width, fitted_height
+
+
+def rotate_image(image: Image, roll: float) -> Image:
+    """Rotate pixels to follow an optical frame rolled by `roll` radians.
+
+    Rolling the frame by +roll turns the pixel content counter-clockwise on
+    screen by the same angle. Exact quarter turns are lossless; anything else
+    is resampled onto a canvas grown to fit, leaving blank (zero) corners.
+    """
+    quarter_turns, residual = _split_quarter_turns(roll)
+    if quarter_turns:
+        image = rotate_image_quarter_turns(image, quarter_turns)
+    if not residual:
+        return image
+    import cv2
+
+    matrix, width, height = _fit_rotation(residual, image.width, image.height)
+    interpolation = (
+        cv2.INTER_NEAREST
+        if image.format in (ImageFormat.DEPTH, ImageFormat.DEPTH16, ImageFormat.GRAY16)
+        else cv2.INTER_LINEAR
+    )
+    rotated = cv2.warpAffine(image.data, matrix, (width, height), flags=interpolation)
+    return Image.from_numpy(rotated, format=image.format, frame_id=image.frame_id, ts=image.ts)
+
+
+def rotate_camera_info(info: CameraInfo, roll: float) -> CameraInfo:
+    """Rotate a pinhole CameraInfo to match `rotate_image`.
+
+    A rotation about the image centre moves the principal point with the
+    pixels; the focal lengths ride along unchanged (they swap on quarter turns).
+    """
+    quarter_turns, residual = _split_quarter_turns(roll)
+    if quarter_turns:
+        info = rotate_camera_info_quarter_turns(info, quarter_turns)
+    if not residual:
+        return info
+    matrix, width, height = _fit_rotation(residual, info.width, info.height)
+    cx, cy = matrix @ np.array([info.K[2], info.K[5], 1.0])
+    return CameraInfo.from_intrinsics(
+        fx=info.K[0], fy=info.K[4], cx=cx, cy=cy, width=width, height=height, frame_id=info.frame_id
+    ).with_ts(info.ts)
 
 
 def rotate_image_quarter_turns(image: Image, quarter_turns: int) -> Image:

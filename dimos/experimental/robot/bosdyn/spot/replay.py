@@ -27,6 +27,7 @@ which accumulates it and is equally happy on a live robot.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from functools import partial
 import math
 from pathlib import Path
 
@@ -37,11 +38,16 @@ from dimos.experimental.robot.bosdyn.spot.config import (
     CAMERA_STREAM_SUFFIXES,
     FRONT_CAMERA_ROTATE_UPRIGHT,
 )
-from dimos.memory.replay import resolve_db_path
+from dimos.experimental.robot.bosdyn.spot.utils import (
+    QUARTER_TURN,
+    roll_optical_frame,
+    rotate_camera_info,
+    rotate_image,
+    upright_roll,
+)
+from dimos.memory.replay import Replay, resolve_db_path
 from dimos.memory.store.sqlite import SqliteStore
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -54,18 +60,22 @@ logger = setup_logger()
 _IMAGE_STREAMS = [
     f"{kind}_image_{suffix}" for kind in ("grayscale", "depth") for suffix in CAMERA_STREAM_SUFFIXES
 ]
-_PLAYBACK_STREAMS = [*_IMAGE_STREAMS, "grayscale_info", "depth_info", "odometry"]
+_INFO_STREAMS = ["grayscale_info", "depth_info"]
+_PLAYBACK_STREAMS = [*_IMAGE_STREAMS, *_INFO_STREAMS, "odometry"]
 
-# SpotHighLevel rights the sideways front camera images but leaves their optical
-# tf frames at the raw mount orientation, so the 3D frustum + depth
-# back-projection land rotated. Roll each front optical frame about its viewing
-# (z) axis to bring it back upright. The two front cameras mount mirror-imaged,
-# so frontright sits a half turn (2 quarter turns) past frontleft.
+# Old recordings hold front images turned a quarter turn upright while their
+# optical tf frames still sit at the raw sideways mount. Roll those frames to
+# match (`roll_front_frames`). The two front cameras mount mirror-imaged, so
+# frontright sits a half turn (2 quarter turns) past frontleft.
 _HALF_TURN_QUARTERS = 2
 _OPTICAL_FRAME_ROLL_TURNS = {
     "frontleft_camera_optical": FRONT_CAMERA_ROTATE_UPRIGHT,
     "frontright_camera_optical": FRONT_CAMERA_ROTATE_UPRIGHT + _HALF_TURN_QUARTERS,
 }
+# How far into the recording to look for the static camera mounts in ``tf``.
+_MOUNT_SCAN_SECONDS = 5.0
+# Leans smaller than this (radians) are the side cameras' float noise, not a tilt.
+_LEVEL_ROLL_EPSILON = 1e-6
 
 
 class SpotReplayConfig(ModuleConfig):
@@ -111,6 +121,9 @@ class SpotReplay(Module):
     odometry: Out[Odometry]
     tf: Out[TFMessage]
 
+    # Optical frame -> roll that levels its recorded pixels; filled in by `main`.
+    _rolls: dict[str, float]
+
     def _resolve_db_path(self) -> Path:
         if self.config.db_path:
             return resolve_db_path(Path(self.config.db_path).expanduser())
@@ -120,25 +133,64 @@ class SpotReplay(Module):
             raise FileNotFoundError(f"No .db recordings found in {directory}")
         return recordings[-1]
 
-    def _republish_tf(self, message: TFMessage) -> None:
-        self.tf.publish(
-            TFMessage(*(self._roll_optical_frame(transform) for transform in message.transforms))
-        )
-
-    def _roll_optical_frame(self, transform: Transform) -> Transform:
+    def _legacy_roll(self, transform: Transform) -> Transform:
+        """Roll a raw sideways front frame a quarter turn upright (old recordings only)."""
         if not self.config.roll_front_frames:
             return transform
-        turns = _OPTICAL_FRAME_ROLL_TURNS.get(transform.child_frame_id)
-        if not turns:
-            return transform
-        roll = Quaternion.from_euler(Vector3(0.0, 0.0, turns * math.pi / 2))
-        return Transform(
-            translation=transform.translation,
-            rotation=transform.rotation * roll,
-            frame_id=transform.frame_id,
-            child_frame_id=transform.child_frame_id,
-            ts=transform.ts,
+        turns = _OPTICAL_FRAME_ROLL_TURNS.get(transform.child_frame_id, 0)
+        return roll_optical_frame(transform, turns * QUARTER_TURN)
+
+    def _level_rolls(self, replay: Replay, available: set[str]) -> dict[str, float]:
+        """Per optical frame, the roll that levels the recorded pixels.
+
+        Recorded front images lean by whatever the mount is off a clean quarter
+        turn (12.3° on Spot). The mounts sit in the first seconds of ``tf``, so
+        read them ahead of playback and measure the lean per camera frame.
+        """
+        tf_stream = replay.stream("tf")
+        first_ts = tf_stream.first_ts() if "tf" in available else None
+        if first_ts is None:
+            return {}
+        camera_frames = {
+            image.frame_id
+            for name in _IMAGE_STREAMS
+            if name in available and (image := replay.stream(name).first()) is not None
+        }
+        deadline = first_ts + _MOUNT_SCAN_SECONDS
+        rolls: dict[str, float] = {}
+        for ts, message in tf_stream.iterate_ts():
+            for transform in message.transforms:
+                if (
+                    transform.child_frame_id in camera_frames
+                    and transform.child_frame_id not in rolls
+                ):
+                    rolls[transform.child_frame_id] = upright_roll(self._legacy_roll(transform))
+            if ts > deadline or len(rolls) == len(camera_frames):
+                break
+        for frame_id in camera_frames - set(rolls):
+            logger.warning(
+                f"Spot replay: no tf mount for {frame_id!r}; its images stay as recorded"
+            )
+        return rolls
+
+    def _republish_tf(self, message: TFMessage) -> None:
+        self.tf.publish(
+            TFMessage(
+                *(
+                    roll_optical_frame(
+                        self._legacy_roll(transform),
+                        self._rolls.get(transform.child_frame_id, 0.0),
+                    )
+                    for transform in message.transforms
+                )
+            )
         )
+
+    def _publish_image(self, name: str, image: Image) -> None:
+        getattr(self, name).publish(rotate_image(image, self._rolls.get(image.frame_id, 0.0)))
+
+    def _publish_info(self, name: str, info: CameraInfo) -> None:
+        getattr(self, name).publish(rotate_camera_info(info, self._rolls.get(info.frame_id, 0.0)))
 
     async def main(self) -> AsyncIterator[None]:
         db_path = self._resolve_db_path()
@@ -155,14 +207,25 @@ class SpotReplay(Module):
             duration=self.config.duration,
         )
         available = set(replay.list_streams())
+        self._rolls = {
+            frame_id: roll
+            for frame_id, roll in self._level_rolls(replay, available).items()
+            if abs(roll) > _LEVEL_ROLL_EPSILON
+        }
+        for frame_id, roll in self._rolls.items():
+            logger.info(f"Spot replay: levelling {frame_id} by {math.degrees(roll):.1f} deg")
 
         for name in _PLAYBACK_STREAMS:
             if name not in available:
                 logger.warning(f"Spot replay: stream {name!r} missing from recording; skipping")
                 continue
-            self.register_disposable(
-                replay.stream(name).observable().subscribe(getattr(self, name).publish)
-            )
+            if name in _IMAGE_STREAMS:
+                publish = partial(self._publish_image, name)
+            elif name in _INFO_STREAMS:
+                publish = partial(self._publish_info, name)
+            else:
+                publish = getattr(self, name).publish
+            self.register_disposable(replay.stream(name).observable().subscribe(publish))
 
         if "tf" in available:
             self.register_disposable(replay.stream("tf").observable().subscribe(self._republish_tf))
