@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import type { SessionStatus } from "@dimos/sdk";
 import styles from "./StatusBar.module.css";
 
+/** What the page shows below the header: the panel layout, or the raw channel table. */
+export type View = "panels" | "channels";
+
+const VIEWS: readonly View[] = ["panels", "channels"];
+
 /** Wall clock ticking at `periodMs` while `active`; frozen otherwise. */
 function useNowWhile(active: boolean, periodMs: number): number {
   const [now, setNow] = useState(() => Date.now());
@@ -21,7 +26,11 @@ const PHASE_LABEL: Record<string, string> = {
   failed: "failed",
 };
 
-export function StatusBar({ status }: { status: SessionStatus }) {
+export function StatusBar({ status, view, onViewChange }: {
+  status: SessionStatus;
+  view: View;
+  onViewChange: (view: View) => void;
+}) {
   const transport = status.transport;
   const now = useNowWhile(transport.phase === "reconnecting", 250);
 
@@ -37,6 +46,21 @@ export function StatusBar({ status }: { status: SessionStatus }) {
   return (
     <header className={styles.bar}>
       <span className={styles.title}>DimOS Cockpit</span>
+      <div role="tablist" className={styles.views}>
+        {VIEWS.map((v) => (
+          <button
+            key={v}
+            type="button"
+            role="tab"
+            aria-selected={view === v}
+            className={view === v ? styles.viewActive : styles.view}
+            data-testid={`view-${v}`}
+            onClick={() => onViewChange(v)}
+          >
+            {v}
+          </button>
+        ))}
+      </div>
       <span className={styles.pill} data-testid="status" data-phase={transport.phase}>
         {PHASE_LABEL[transport.phase]}
       </span>

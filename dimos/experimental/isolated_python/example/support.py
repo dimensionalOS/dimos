@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,21 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
+"""Host-side support module for the isolated Python example."""
 
-from typing import TypedDict
-
-from dimos.msgs.geometry_msgs.Pose import Pose
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.core.core import rpc
+from dimos.core.module import Module
 
 
-class TargetEvaluation(TypedDict, total=False):
-    success: bool
-    status: str
-    message: str
-    collision_free: bool
-    joint_state: JointState | None
-    ee_pose: PoseStamped | Pose | None
-    position_error: float
-    orientation_error: float
+class Offset(Module):
+    @rpc
+    def get_offset(self) -> int:
+        return 10

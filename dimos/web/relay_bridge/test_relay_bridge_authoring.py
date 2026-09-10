@@ -19,12 +19,15 @@ no-network harness as test_relay_bridge_module.py (see module_test_support).
 
 from __future__ import annotations
 
+import asyncio
+import base64
 from dataclasses import replace
 import json
 import pickle
 import struct
 from typing import Any
 
+from langchain_core.messages import AIMessage
 import numpy as np
 import pytest
 
@@ -36,9 +39,10 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.web.cockpit import Channel, Video, cockpit
+from dimos.web.cockpit import Channel, Chat, Video, cockpit
 from dimos.web.codecs import EncodedPayload, PublishContext, web_decoder, web_encoder
 from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
+from dimos.web.relay_bridge.audio_codec import AudioChunk
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.module_test_support import (
     FakeClient,
@@ -456,6 +460,109 @@ def test_publish_frame_decodes_publishes_then_acks(monkeypatch) -> None:
         push(module, clients[0], _pub_frame(json.dumps("salut β").encode(), seq=2))
         assert wait_until(lambda: len(clients[0].control_frames) == 2)
         assert [value for value, _ in seen] == ["salut β", "salut β"]
+    finally:
+        stop_module(module)
+
+
+def test_paced_sender_spaces_frames_in_order_and_bounds_its_queue() -> None:
+    async def run() -> None:
+        loop = asyncio.get_running_loop()
+        sent: list[tuple[bytes, float]] = []
+        pacer = relay_bridge_module._PacedSender(
+            loop, 0.02, lambda payload, meta, ts: sent.append((payload, loop.time()))
+        )
+        for i in range(3):
+            pacer(bytes([i]), None, None)
+        assert [p for p, _ in sent] == [b"\x00"]  # the first goes now, the rest wait
+        await asyncio.sleep(0.1)
+        assert [p for p, _ in sent] == [b"\x00", b"\x01", b"\x02"]
+        assert sent[2][1] - sent[0][1] >= 0.04 - 0.005
+        # One goes out immediately; the queue keeps the newest of the rest.
+        for i in range(relay_bridge_module._PACED_QUEUE_MAX + 10):
+            pacer(bytes([i % 256]), None, None)
+        assert pacer.dropped == 9
+        pacer.close()
+        await asyncio.sleep(0.05)
+        assert len(sent) == 4  # closed: nothing queued goes out
+
+    asyncio.run(run())
+
+
+def test_chat_panel_forwards_every_message(monkeypatch) -> None:
+    # Chat channels are paced, not sampled: back-to-back agent messages all
+    # cross, in order, and the idle flag's False/True pair both reach the
+    # mailbox.
+    module, clients = start_authored(
+        monkeypatch, cockpit(layout=Chat()), wire=("agent", "agent_idle")
+    )
+    try:
+        agent, idle = transport_of(module, "agent"), transport_of(module, "agent_idle")
+        push(module, clients[0], Subs(chs=["agent", "agent_idle"], n=1))
+        assert wait_until(lambda: agent.subscribers and idle.subscribers)
+        for text in ("one", "two", "three"):
+            agent.publish(AIMessage(text))
+        idle.publish(False)
+        idle.publish(True)
+        assert wait_until(lambda: len(clients[0].frames) == 3)
+        assert [(ch, delivery) for ch, _, delivery, _ in clients[0].frames] == [
+            ("agent", "reliable")
+        ] * 3
+        lines = [json.loads(payload) for _, payload, _, _ in clients[0].frames]
+        assert [[line["text"] for line in frame] for frame in lines] == [
+            ["one"],
+            ["two"],
+            ["three"],
+        ]
+        assert all(line["ts"] > 0 for frame in lines for line in frame)
+        assert wait_until(lambda: len(clients[0].writers["agent_idle"].offers) == 2)
+        assert [json.loads(p) for p, _ in clients[0].writers["agent_idle"].offers] == [False, True]
+
+        # The tx leg: a browser publish lands on the bridge's human_input port.
+        seen: list[str] = []
+        module.human_input.subscribe(seen.append)
+        push(module, clients[0], _pub_frame(json.dumps("walk forward").encode()))
+        assert wait_until(lambda: clients[0].control_frames)
+        assert seen == ["walk forward"]
+        assert isinstance(clients[0].control_frames[0], PubAck)
+    finally:
+        stop_module(module)
+
+
+def test_voice_chunk_frame_decodes_publishes_then_acks(monkeypatch) -> None:
+    # The chat panel's mic leg: audio frames land on the generated audio_in
+    # Out port (VoiceInput's feed), independent of the text input.
+    module, clients = start_authored(
+        monkeypatch, cockpit(layout=Chat()), wire=("agent", "agent_idle")
+    )
+    try:
+        seen: list[AudioChunk] = []
+        module.audio_in.subscribe(seen.append)
+        frame = {
+            "sid": "u1",
+            "seq": 0,
+            "mime": "audio/webm;codecs=opus",
+            "data": base64.b64encode(b"\x1aE\xdf\xa3 opus").decode(),
+            "final": False,
+        }
+        push(module, clients[0], _pub_frame(json.dumps(frame).encode(), ch="audio_in"))
+        assert wait_until(lambda: clients[0].control_frames)
+        (chunk,) = seen
+        assert chunk == AudioChunk(
+            sid="u1", seq=0, mime="audio/webm;codecs=opus", data=b"\x1aE\xdf\xa3 opus", final=False
+        )
+        assert isinstance(clients[0].control_frames[0], PubAck)
+        # Bad base64 nacks as a decode failure and publishes nothing.
+        push(
+            module,
+            clients[0],
+            _pub_frame(
+                json.dumps({**frame, "seq": 1, "data": "!!"}).encode(), ch="audio_in", seq=2
+            ),
+        )
+        assert wait_until(lambda: len(clients[0].control_frames) == 2)
+        nack = clients[0].control_frames[1]
+        assert isinstance(nack, PubNack) and nack.code == "decode_failed"
+        assert len(seen) == 1
     finally:
         stop_module(module)
 
