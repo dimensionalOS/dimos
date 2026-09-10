@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from hashlib import sha256
 import io
 import os
 from pathlib import Path
@@ -20,60 +19,10 @@ import shutil
 import subprocess
 import tarfile
 
-
-def bootstrap(tmp_path, valid):
-    template = Path(__file__).resolve().parents[2] / "bootstrap.sh"
-    bins = tmp_path / "bin"
-    bins.mkdir()
-    (bins / "curl").write_text(
-        '#!/bin/sh\nwhile [ "$1" != "--output" ]; do shift; done\nprintf wheel > "$2"\n'
-    )
-    (bins / "uv").write_text(
-        '#!/bin/sh\nif [ "$1 $2" = "tool dir" ]; then echo "$TEST_BIN"; else echo "$*" >> "$TEST_LOG"; fi\n'
-    )
-    (bins / "dimup").write_text('#!/bin/sh\necho "dimup $*" >> "$TEST_LOG"\n')
-    for path in bins.iterdir():
-        path.chmod(0o755)
-    script = tmp_path / "bootstrap.sh"
-    digest = sha256(b"wheel").hexdigest() if valid else "0" * 64
-    script.write_text(
-        template.read_text()
-        .replace("@DIMUP_WHEEL_URL@", "https://example.com/dimup-0.1.0-py3-none-any.whl")
-        .replace("@DIMUP_WHEEL_SHA@", digest)
-    )
-    log = tmp_path / "commands"
-    env = {
-        **os.environ,
-        "PATH": f"{bins}:/usr/bin:/bin",
-        "TEST_BIN": str(bins),
-        "TEST_LOG": str(log),
-    }
-    result = subprocess.run(
-        ["bash", str(script)],
-        env=env,
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return result, log
+import pytest
 
 
-def test_bootstrap_installs_verified_wheel_and_runs_setup(tmp_path):
-    result, log = bootstrap(tmp_path, True)
-    assert result.returncode == 0, result.stderr
-    assert "tool install --force --python 3.12" in log.read_text()
-    assert "dimup setup" in log.read_text()
-
-
-def test_bootstrap_rejects_wrong_checksum_before_installing(tmp_path):
-    result, log = bootstrap(tmp_path, False)
-    assert result.returncode != 0
-    assert "checksum mismatch" in result.stderr
-    assert not log.exists()
-
-
-def test_repository_bootstrap_installs_uv_then_dimup_from_source(tmp_path):
+def bootstrap(tmp_path, *, ref=None, uv_present=False, failure=""):
     bins = tmp_path / "bin"
     bins.mkdir()
     for name in ("bash", "sh", "env", "cat", "cp", "mkdir", "mktemp", "rm", "tar", "gzip"):
@@ -84,10 +33,13 @@ def test_repository_bootstrap_installs_uv_then_dimup_from_source(tmp_path):
         info = tarfile.TarInfo("dimos-source/installer/pyproject.toml")
         info.size = len(content)
         source.addfile(info, io.BytesIO(content))
+    if failure == "extract":
+        archive.write_bytes(b"invalid archive")
     (bins / "curl").write_text(
         '#!/bin/sh\ncase "$*" in\n'
         '*astral.sh*) cat "$TEST_UV_INSTALLER" ;;\n'
-        '*) while [ "$1" != "--output" ]; do shift; done; cp "$TEST_ARCHIVE" "$2" ;;\n'
+        '*) echo "$*" >> "$TEST_URLS"; [ "$TEST_FAILURE" != download ] || exit 9; '
+        'while [ "$1" != "--output" ]; do shift; done; cp "$TEST_ARCHIVE" "$2" ;;\n'
         "esac\n"
     )
     (bins / "curl").chmod(0o755)
@@ -95,12 +47,20 @@ def test_repository_bootstrap_installs_uv_then_dimup_from_source(tmp_path):
     uv.write_text(
         '#!/bin/sh\nif [ "$1 $2" = "tool dir" ]; then echo "$HOME/.local/bin"; '
         'else for arg do last=$arg; done; test -f "$last/pyproject.toml" || exit 1; '
-        'echo "install dimup" >> "$TEST_LOG"; fi\n'
+        'echo "install dimup" >> "$TEST_LOG"; '
+        '[ "$TEST_FAILURE" != install ] || exit 10; fi\n'
     )
     uv.chmod(0o755)
     dimup = tmp_path / "dimup"
-    dimup.write_text('#!/bin/sh\necho "dimup $*" >> "$TEST_LOG"\n')
+    dimup.write_text(
+        '#!/bin/sh\necho "dimup $*" >> "$TEST_LOG"\n[ "$TEST_FAILURE" != setup ] || exit 11\n'
+    )
     dimup.chmod(0o755)
+    home_bin = tmp_path / "home/.local/bin"
+    home_bin.mkdir(parents=True)
+    shutil.copy(dimup, home_bin / "dimup")
+    if uv_present:
+        shutil.copy(uv, bins / "uv")
     installer = tmp_path / "uv-install.sh"
     installer.write_text(
         'mkdir -p "$HOME/.local/bin"\n'
@@ -108,22 +68,56 @@ def test_repository_bootstrap_installs_uv_then_dimup_from_source(tmp_path):
         'echo "install uv" >> "$TEST_LOG"\n'
     )
     log = tmp_path / "commands"
+    env = {
+        **os.environ,
+        "PATH": str(bins),
+        "HOME": str(tmp_path / "home"),
+        "TMPDIR": str(tmp_path),
+        "TEST_UV_INSTALLER": str(installer),
+        "TEST_ARCHIVE": str(archive),
+        "TEST_UV": str(uv),
+        "TEST_DIMUP": str(dimup),
+        "TEST_LOG": str(log),
+        "TEST_URLS": str(tmp_path / "urls"),
+        "TEST_FAILURE": failure,
+    }
+    env.pop("DIMUP_REF", None)
+    if ref is not None:
+        env["DIMUP_REF"] = ref
     result = subprocess.run(
         [str(bins / "bash"), str(Path(__file__).resolve().parents[2] / "bootstrap.sh")],
-        env={
-            **os.environ,
-            "PATH": str(bins),
-            "HOME": str(tmp_path / "home"),
-            "TEST_UV_INSTALLER": str(installer),
-            "TEST_ARCHIVE": str(archive),
-            "TEST_UV": str(uv),
-            "TEST_DIMUP": str(dimup),
-            "TEST_LOG": str(log),
-        },
+        env=env,
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         check=False,
     )
+    commands = log.read_text().splitlines() if log.exists() else []
+    assert list(tmp_path.glob("tmp.*")) == []
+    return result, commands, (tmp_path / "urls").read_text()
+
+
+@pytest.mark.parametrize("ref", [None, "feat/test-installer", "a" * 40])
+@pytest.mark.parametrize("uv_present", [False, True])
+def test_source_bootstrap_selects_ref_and_prepares_machine(tmp_path, ref, uv_present):
+    result, commands, urls = bootstrap(tmp_path, ref=ref, uv_present=uv_present)
     assert result.returncode == 0, result.stderr
-    assert log.read_text().splitlines() == ["install uv", "install dimup", "dimup setup"]
+    assert commands == ([] if uv_present else ["install uv"]) + ["install dimup", "dimup setup"]
+    assert f"https://codeload.github.com/dimensionalOS/dimos/tar.gz/{ref or 'main'}" in urls
+    assert "Installed dimup" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("failure", "commands"),
+    [
+        ("download", []),
+        ("extract", []),
+        ("install", ["install dimup"]),
+        ("setup", ["install dimup", "dimup setup"]),
+    ],
+)
+def test_bootstrap_stops_at_failure(tmp_path, failure, commands):
+    result, actual, _ = bootstrap(tmp_path, uv_present=True, failure=failure)
+    assert result.returncode != 0
+    assert actual == commands
+    assert "Installed dimup" not in result.stdout

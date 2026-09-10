@@ -3,7 +3,8 @@
 Install uv and dimup, then prepare your machine from this PR branch:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/feat/dimup-setup/installer/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/feat/dimup-setup/installer/bootstrap.sh \
+  | DIMUP_REF=feat/dimup-setup bash
 ```
 
 The bootstrap installs the standalone dimup tool and runs `dimup setup`. Follow
@@ -20,6 +21,7 @@ Setup installs apt/Homebrew dependencies and prepares Cargo, Nix, and Deno.
 It is safe to rerun. Tool output streams to the terminal and is saved in the
 setup log; each stage reports its elapsed time. `NO_COLOR=1` disables color.
 
-The repository bootstrap uses a pinned source archive. Release packaging creates
-a standalone wheel, a checksum file, and a bootstrap that verifies the wheel.
-These are GitHub release assets; SDK PyPI uploads remain separate.
+The bootstrap downloads the dimOS repository from GitHub and installs its
+`installer/` directory with uv. The default source is `main`; set `DIMUP_REF` to a
+branch, tag, or commit when testing another version. No separate package release
+is required. dimup remains an independent Python package inside this repository.
