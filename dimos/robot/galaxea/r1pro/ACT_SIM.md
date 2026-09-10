@@ -12,7 +12,9 @@ workstation. They do not establish general household manipulation.
 
 ## Run the completed house demo
 
-On the current GPU machine:
+On the current GPU machine, first close any completed R1Pro demo window or
+stop that demo with Ctrl-C in its launch terminal. A window kept open with
+`--stay-open` still has a running simulator and messaging connections.
 
 ```bash
 cd /home/mustafa/dimos-wt/r1pro-act-sim
@@ -32,14 +34,16 @@ python -m dimos.robot.galaxea.r1pro.demo_pick_place_stack \
 This opens the full native MuJoCo window, waits for observations and CUDA ACT
 inference to become ready, runs the learned manipulation, checks the physical
 result, stops ACT, and transports the loaded tray. The route first backs away
-from the table, then moves across the room. The viewer stays open afterward;
-Ctrl-C in this terminal shuts down this stack. Rerun for a fresh episode.
+from the table, then moves across the room. The viewer stays open afterward.
+Close the MuJoCo window after completion, or press Ctrl-C in this terminal,
+to shut down this stack. Rerun for a fresh episode.
 `result.json` is written in the output directory before waiting in the viewer.
 
 Use a fresh output directory for each run. Concurrent instances need distinct
-output paths and multicast addresses. This address is separate from the existing
-OpenYAM run. No OpenAI API key, language model, MCP server, or real robot
-connection is needed. The demonstration is started by this command, not by
+output paths and multicast addresses. The launcher reserves both resources until
+its workers shut down. A duplicate exits before building a scene and reports the
+existing process PID. This address is separate from the existing OpenYAM run.
+No OpenAI API key, language model, MCP server, or real robot connection is needed. The demonstration is started by this command, not by
 `dimos agent-send`.
 
 Keep the existing host environment. LeRobot runs in its separate locked Python
@@ -60,6 +64,19 @@ dimos imitation run r1pro-sim-lerobot \
 
 Space starts/stops ACT; Q closes the stack. This checkpoint learns one task;
 changing the task text does not teach it another task.
+
+## If a replay reports camera synchronization errors
+
+Two R1Pro launches on the same messaging address can mix head images, wrist
+images, joint state and RPC responses. This caused the reported startup and
+mid-rollout failures at 142.6 ms / 388.7 ms image skew while another completed
+demo's viewer was still open. The policy correctly stopped at its 20 ms limit.
+
+The launcher now rejects overlapping use of either the messaging address or
+output directory, and closing a completed viewer shuts down its stack. Wait for
+that process to exit, then run the command again. The ACT checkpoint and camera
+skew threshold are unchanged. Resource-tracker messages printed during cleanup
+are separate from the original synchronization failure.
 
 ## What is loaded
 

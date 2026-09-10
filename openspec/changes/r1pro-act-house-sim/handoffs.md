@@ -5,6 +5,61 @@ Branch: `feat/r1pro-act-sim`
 Worktree: `/home/mustafa/dimos-wt/r1pro-act-sim`
 Base: `hackmit/t7-resume` at `0b816edf49`; initial diagnostic commit `eb2efd8d03`.
 
+## User replay failure and launcher fix (2026-09-10)
+
+The user saw the assistant's visual run succeed, then copied the README command
+while the assistant-launched R1Pro process (PID 1176767) was still alive under
+`--stay-open`. Both used `224.0.0.224:19467`. The first user attempt failed at
+startup with 142.6 ms camera skew; the next stopped after one ACT chunk with
+388.7 ms wrist/head skew, above the unchanged 20 ms limit. Evidence is the user's
+pasted terminal output and `recordings/r1pro-act-task/my-house-run/result.json`.
+This is a launch/resource conflict, not evidence that training resumed or that
+the successful learned task was a scripted placeholder.
+
+Stopped only the old assistant-launched R1Pro after checking its exact command
+and output path; OpenYAM PID 3599494 was preserved. `sim_session.py` now reserves
+the messaging address and resolved output path with OS-backed FileLocks before
+scene creation. A duplicate receives the owning PID and a clear exit status 2;
+its own scene is never created. Locks remain held through worker teardown and
+are released on failure too. The path lock protects motor shared memory even if
+a second launch uses a different messaging address. Closing the native viewer
+after `--stay-open` now exits the demo and shuts down its workers.
+
+An original isolated ACT process also survived the overlapping starts: uv PID
+1177509 and Python PID 1177573, instance
+`__isolated_python__/PolicyRolloutModule/70UNBqecM78StV88DL`. The old viewer log
+shows later start/stop RPCs from the user's new launches reaching the old stack,
+including another native child being started. Terminated only that verified
+original orphan process group. The launcher also now treats an active/error
+status returned by `stop_rollout` as a failure instead of printing that ACT
+stopped and entering the viewer wait.
+
+Final verification passed in the detached job
+`recordings/r1pro-act-task/jobs/launch-fix/` (`verification-exit-code` is 0):
+
+- Four focused reservation tests and mypy on three affected production files.
+- First native house pick/load/carry: success, eight accepted chunks, 11.45 cm
+  lift, ACT stop 4.29 ms.
+- Real duplicate CLI launch: exit 2, identifies the original PID, creates no
+  second scene/output, and leaves the running demo intact.
+- Closing the R1Pro window through its window-manager close protocol caused
+  clean worker shutdown and process exit 0; OpenYAM was preserved.
+- Immediate restart on the same address AND output: complete house task
+  succeeded again, eight chunks, 11.81 cm lift, stop 158.52 ms, exit 0.
+
+The diagnostic allowed 90 seconds to capture a potential stall; both successful
+manipulations finished in about 12 seconds, within the README's unchanged
+25-second default. No checkpoint, camera skew tolerance, or physics setting was
+changed. Two earlier verification attempts stalled on the second motion RPC;
+their evidence is retained in `before-orphan-cleanup/` and
+`after-orphan-cleanup-stall/`. No separate core RPC fix is claimed. If that stall
+recurs without overlapping/orphaned processes, capture the runtime/coordinator
+thread stacks before its stop timeout and investigate the transport separately.
+
+The runbook now explains how to stop a completed demo before replaying it.
+Final verification closed its own R1Pro viewers; the user's next launch owns the
+screen and messaging address.
+
 ## Current outcome
 
 **Actual trained ACT manipulation and native house transport have passed.** The

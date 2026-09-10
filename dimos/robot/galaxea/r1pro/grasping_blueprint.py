@@ -54,6 +54,12 @@ class R1ProGraspingSim(MujocoSimModule):
         self._transport_planner: PlanarTransport | None = None
 
     @rpc
+    def is_simulation_running(self) -> bool:
+        """Return false after the native viewer closes and its physics loop exits."""
+        engine = self._engine
+        return bool(engine and engine._sim_thread and engine._sim_thread.is_alive())
+
+    @rpc
     def task_state(self) -> dict[str, Any]:
         """Score physics without feeding object coordinates into the ACT policy.
 

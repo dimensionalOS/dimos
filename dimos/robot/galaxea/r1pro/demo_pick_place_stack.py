@@ -38,9 +38,15 @@ from dimos.robot.galaxea.r1pro.grasping_sim import (
     VIRTUAL_BASE_JOINTS,
     prepare_grasping_scene,
 )
+from dimos.robot.galaxea.r1pro.sim_session import DemoSessionInUseError, reserve_demo_session
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
+    with reserve_demo_session(args.zenoh_scout_addr, args.output):
+        return _run(args)
+
+
+def _run(args: argparse.Namespace) -> dict[str, Any]:
     args.output.mkdir(parents=True, exist_ok=True)
     scene = prepare_grasping_scene(
         args.output / "scene.xml",
@@ -107,6 +113,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         started = time.monotonic()
         report["stopped"] = policy.stop_rollout()
         report["stop_seconds"] = time.monotonic() - started
+        if report["stopped"]["active"] or report["stopped"]["last_error"]:
+            raise RuntimeError(f"Policy did not stop cleanly: {report['stopped']}")
         report["final"] = sim.task_state()
         report["history"] = history
         report["manipulation_success"] = report["success"]
@@ -181,10 +189,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         (args.output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
         if args.stay_open:
             print(
-                "Policy stopped. Viewer remains open; press Ctrl-C here to close this stack.",
+                "Policy stopped. Close the MuJoCo window or press Ctrl-C here to close this stack.",
                 flush=True,
             )
-            while True:
+            while sim.is_simulation_running():
                 time.sleep(0.25)
         return report
     except Exception as error:
@@ -218,7 +226,10 @@ def main() -> None:
         parser.error("Specify both transport coordinates")
     if args.transport_x is not None and not args.mobile:
         parser.error("Transport requires --mobile")
-    report = run(args)
+    try:
+        report = run(args)
+    except DemoSessionInUseError as error:
+        parser.exit(2, f"{error}\n")
     if not report["success"]:
         raise SystemExit(1)
 
