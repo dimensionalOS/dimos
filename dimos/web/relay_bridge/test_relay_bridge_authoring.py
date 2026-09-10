@@ -20,6 +20,7 @@ no-network harness as test_relay_bridge_module.py (see module_test_support).
 from __future__ import annotations
 
 import asyncio
+import base64
 from dataclasses import replace
 import json
 import pickle
@@ -41,6 +42,7 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.web.cockpit import Channel, Chat, Video, cockpit
 from dimos.web.codecs import EncodedPayload, PublishContext, web_decoder, web_encoder
 from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
+from dimos.web.relay_bridge.audio_codec import AudioChunk
 from dimos.web.relay_bridge.e2e_support import stop_module
 from dimos.web.relay_bridge.module_test_support import (
     FakeClient,
@@ -522,6 +524,45 @@ def test_chat_panel_forwards_every_message(monkeypatch) -> None:
         assert wait_until(lambda: clients[0].control_frames)
         assert seen == ["walk forward"]
         assert isinstance(clients[0].control_frames[0], PubAck)
+    finally:
+        stop_module(module)
+
+
+def test_voice_chunk_frame_decodes_publishes_then_acks(monkeypatch) -> None:
+    # The chat panel's mic leg: audio frames land on the generated audio_in
+    # Out port (VoiceInput's feed), independent of the text input.
+    module, clients = start_authored(
+        monkeypatch, cockpit(layout=Chat()), wire=("agent", "agent_idle")
+    )
+    try:
+        seen: list[AudioChunk] = []
+        module.audio_in.subscribe(seen.append)
+        frame = {
+            "sid": "u1",
+            "seq": 0,
+            "mime": "audio/webm;codecs=opus",
+            "data": base64.b64encode(b"\x1aE\xdf\xa3 opus").decode(),
+            "final": False,
+        }
+        push(module, clients[0], _pub_frame(json.dumps(frame).encode(), ch="audio_in"))
+        assert wait_until(lambda: clients[0].control_frames)
+        (chunk,) = seen
+        assert chunk == AudioChunk(
+            sid="u1", seq=0, mime="audio/webm;codecs=opus", data=b"\x1aE\xdf\xa3 opus", final=False
+        )
+        assert isinstance(clients[0].control_frames[0], PubAck)
+        # Bad base64 nacks as a decode failure and publishes nothing.
+        push(
+            module,
+            clients[0],
+            _pub_frame(
+                json.dumps({**frame, "seq": 1, "data": "!!"}).encode(), ch="audio_in", seq=2
+            ),
+        )
+        assert wait_until(lambda: len(clients[0].control_frames) == 2)
+        nack = clients[0].control_frames[1]
+        assert isinstance(nack, PubNack) and nack.code == "decode_failed"
+        assert len(seen) == 1
     finally:
         stop_module(module)
 
