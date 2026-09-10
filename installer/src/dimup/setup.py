@@ -57,7 +57,6 @@ BREW_PACKAGES = (
     "ffmpeg",
     "libusb",
     "openssl@3",
-    "deno",
 )
 
 
@@ -113,7 +112,7 @@ def prepare(runner: Runner) -> None:
         print(
             f"Automatic setup is not available for {platform.system()} {platform.machine()}.\n"
             "Prepare these prerequisites manually with your system package manager:\n"
-            "  Tools: uv, Git, Git LFS, Cargo/Rust, Nix, Deno, C/C++ compiler,\n"
+            "  Tools: uv, Git, Git LFS, Cargo/Rust, Nix, C/C++ compiler,\n"
             "         CMake, Ninja, pkg-config, curl, and CA certificates.\n"
             "  Libraries and development headers: PortAudio, libsndfile, libjpeg-turbo,\n"
             "         FFmpeg, OpenGL/EGL, GLib, libusb, OpenSSL, and Clang/libclang.\n"
@@ -165,16 +164,9 @@ def prepare(runner: Runner) -> None:
         install_script(
             runner, "https://sh.rustup.rs", ["-y", "--no-modify-path", "--profile", "minimal"], env
         )
-    if not available("deno"):
-        install_script(
-            runner,
-            "https://deno.land/install.sh",
-            ["-y", "--no-modify-path"],
-            {**env, "DENO_INSTALL": str(Path.home() / ".local")},
-        )
     if not available("nix"):
         install_script(runner, "https://nixos.org/nix/install", ["--daemon", "--yes"], env)
-    for name in ("uv", "cargo", "deno", "git", "cmake", "pkg-config"):
+    for name in ("uv", "cargo", "git", "cmake", "pkg-config"):
         runner.run(f"Check {name}", [executable(name), "--version"])
     runner.run(
         "Check Nix store",
