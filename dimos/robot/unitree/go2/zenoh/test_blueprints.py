@@ -46,6 +46,7 @@ def _mount(blueprint: Blueprint) -> tuple[float, float, float]:
         ("go2_zenoh_htc", "SF"),
         ("go2_zenoh_motion", "ATHENS"),
         ("go2_zenoh_motion_local", "ATHENS"),
+        ("go2_zenoh_motion_pointlio", "ATHENS"),
     ],
 )
 def test_the_stack_runs_the_mount_it_declares(name: str, preset: str) -> None:

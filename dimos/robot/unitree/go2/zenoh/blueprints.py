@@ -33,6 +33,8 @@ so a failure can be bisected by dropping down a level:
   the required precision off the path stamps.
 - ``go2-zenoh-motion-local`` — ``go2-zenoh-motion`` with planner, follower and mux
   lifted onto the robot as one ``dimos bake`` host.
+- ``go2-zenoh-motion-pointlio`` — ``go2-zenoh-motion`` running its own ``PointLio``,
+  for when the MID-360 hangs off this box rather than the robot.
 """
 
 from typing import Any
@@ -40,6 +42,7 @@ from typing import Any
 from dimos.core.baked_host import baked_host
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap, RayTracingVoxelMapConfig
 from dimos.navigation.basic_path_follower.module import BasicPathFollower
 from dimos.navigation.dannav.holonomic_tc.module import DanHolonomicTC
@@ -391,3 +394,37 @@ go2_zenoh_motion_local = autoconnect(
     _mls_planner_motion.remappings([(MLSPlannerNative, "path", "planner_path")]),
     MovementManager.blueprint(),
 ).global_config(transport="zenoh", n_workers=6, robot_model="unitree_go2")
+
+
+# `go2-zenoh-motion` with Point-LIO running HERE instead of read off the bridge.
+#
+# The MID-360 moved off the Go2's network port onto the Jetson, so the robot's onboard
+# Point-LIO is blind and the three ports GO2Zenoh relays from it -- odometry, lidar,
+# pointlio_map -- never arrive. Running our own restores them from the lidar's new home.
+#
+# Only the producer changes, not the frames: GO2Zenoh's static mount tree is already
+# rooted at mid360_link "because Point-LIO owns that frame" (see its transforms()), and
+# odom -> mid360_link is the same edge either way. So the mount stays the bridge's job and
+# the moving edge becomes PointLio's -- GO2Zenoh derives that edge from its own odometry
+# port, which is remapped into the void here, so it simply stops publishing it rather than
+# fighting for base_link at 35 Hz.
+#
+# The lidar's address is NOT hardcoded: set DIMOS_POINTLIO_LIDAR_IP, and on this rig also
+# DIMOS_POINTLIO_HOST_IP. host_ip normally auto-derives from the lidar's subnet, which is
+# wrong here -- the Jetson carries 192.168.123.5/32 for the lidar AND 192.168.123.222/24
+# for the Go2 link, so deriving picks the Go2 link and Point-LIO never hears a point.
+go2_zenoh_motion_pointlio = autoconnect(
+    _go2_zenoh_motion_base,
+    TrajectoryFollower.blueprint(),
+    # Last duplicate wins (`_eliminate_duplicates`), so this is the GO2Zenoh that runs:
+    # cmd_vel, video, camera_info, commands and the mount tree stay; the three LIO ports
+    # go nowhere, leaving PointLio the only producer of each.
+    GO2Zenoh.blueprint(mid360_mount=MOTION_MID360_MOUNT).remappings(
+        [
+            (GO2Zenoh, "odometry", "go2_odometry_unused"),
+            (GO2Zenoh, "lidar", "go2_lidar_unused"),
+            (GO2Zenoh, "pointlio_map", "go2_pointlio_map_unused"),
+        ]
+    ),
+    PointLio.blueprint(),
+).global_config(transport="zenoh", n_workers=10, robot_model="unitree_go2")
