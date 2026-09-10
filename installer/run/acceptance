@@ -153,7 +153,11 @@ def main() -> None:
         run_demo(clone, "image 192x120", results / "clone-demo.log")
         if args.native:
             script = Path(__file__).with_name("native_acceptance.py")
-            activated(clone, ["python", str(script), str(results)], results / "native.log")
+            activated(
+                clone,
+                ["env", "DIMOS_TRANSPORT=lcm", "python", str(script), str(results)],
+                results / "native.log",
+            )
     print(f"Application journey passed. Results: {results}")
 
 

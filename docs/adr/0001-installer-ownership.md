@@ -1,7 +1,7 @@
-# DimOS setup and runtime ownership
+# dimOS setup and runtime ownership
 
 `dimup` is the persistent Python bootstrap and application creator. Its installation
-logic is maintained in the DimOS repository, derived from DIOS. `dimos` belongs to
+logic is maintained in the dimOS repository, derived from DIOS. `dimos` belongs to
 each SDK application's Python environment and owns runtime commands and diagnostics.
 
 uv owns Python and application lockfiles. apt/Homebrew install host libraries and

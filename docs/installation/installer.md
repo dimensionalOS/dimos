@@ -1,4 +1,4 @@
-# Create a DimOS application
+# Create a dimOS application
 
 Automatic machine setup covers Ubuntu 22.04/24.04 x86_64 and Apple Silicon
 macOS 14+ and uses administrator access to prepare host prerequisites. On other
@@ -49,7 +49,7 @@ dimos doctor
 
 Each application installs its own `dimos`. `dimup` does not install a competing
 global runtime. The generated application includes the full desktop SDK extras
-except `dds` and `unitree-dds`; it does not include DimOS's repository development groups.
+except `dds` and `unitree-dds`; it does not include dimOS's repository development groups.
 
 ## Clone an application
 
