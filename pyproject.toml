@@ -270,6 +270,11 @@ unitree-dds = [
     "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2 dds store)
 ]
 
+booster = [
+    "dimos[base]",
+    "booster-rpc>=0.0.10",
+]
+
 # Coordinators, arm hardware adapters, and keyboard/Cartesian control.
 control = [
     "piper-sdk",
