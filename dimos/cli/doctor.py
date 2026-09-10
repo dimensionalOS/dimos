@@ -71,8 +71,19 @@ print(json.dumps({
 LIBRARY_CHECK = """import ctypes
 from ctypes.util import find_library
 import numpy as np
+import sqlite3, sqlite_vec
 from turbojpeg import TurboJPEG
 import zenoh, lcm
+with sqlite3.connect(":memory:") as connection:
+    if not hasattr(connection, "enable_load_extension"):
+        raise RuntimeError(
+            "Python lacks SQLite extension loading. Recreate .venv with uv-managed Python: "
+            "uv venv --clear --managed-python --python 3.12 && uv sync --locked"
+        )
+    connection.enable_load_extension(True)
+    sqlite_vec.load(connection)
+    connection.enable_load_extension(False)
+    connection.execute("SELECT vec_version()").fetchone()
 for name in ("portaudio", "sndfile"):
     path = find_library(name)
     if not path:
