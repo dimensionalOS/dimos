@@ -1,0 +1,39 @@
+name: DimOS SDK onboarding
+on:
+  pull_request:
+    paths:
+      - 'installer/**'
+      - 'dimos_build.py'
+      - 'setup.py'
+      - 'MANIFEST.in'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'dimos/core/native*'
+      - 'dimos/cli/doctor.py'
+      - 'dimos/cli/entrypoint.py'
+      - 'native/**'
+      - '.github/workflows/dimup.yml'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - name: Installer tests
+        env:
+          PYTHONPATH: .
+        run: uv run --project installer --with pytest pytest --noconftest -c installer/pyproject.toml installer/src
+      - name: Type check dimup
+        env:
+          MYPYPATH: installer/src
+        run: uv run --project installer --with mypy mypy --strict --follow-imports=silent installer/src/dimup/cli.py installer/src/dimup/process.py installer/src/dimup/setup.py
+      - name: Build release artifacts
+        run: python3 installer/run/package "$RUNNER_TEMP/dimup-dist" --release test
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dimup-candidate
+          path: ${{ runner.temp }}/dimup-dist/
