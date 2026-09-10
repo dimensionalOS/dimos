@@ -25,3 +25,6 @@ pytest
 For automatic activation, install direnv, configure its shell hook, review
 `.envrc`, and run `direnv allow`. Leaving the directory restores the previous
 environment. Manual activation can be undone with `deactivate`.
+
+If something fails, run `dimos doctor` from the activated application. It checks
+the interpreter, SDK revision, registered blueprints, and native libraries.
