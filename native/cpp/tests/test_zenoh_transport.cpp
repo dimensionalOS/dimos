@@ -191,17 +191,26 @@ TEST_CASE("waiting on an endpoint that never links gives up at the timeout") {
     CHECK(waited < std::chrono::seconds(5));
 }
 
-TEST_CASE("a published payload reaches a subscriber unchanged") {
+TEST_CASE("a published payload reaches its own channel's subscriber unchanged") {
     std::unique_ptr<Transport> transport =
         ZenohTransport::from_launch(nlohmann::json::parse(ISOLATED_LAUNCH));
+    // The publisher is declared with this qos, so a value zenoh rejects fails here.
+    transport->set_publisher_qos(nlohmann::json::parse(R"({
+      "/dimos_test/round_trip": {"reliability": "reliable", "congestion_control": "block"}
+    })"));
 
     std::mutex received_mu;
     std::vector<uint8_t> received;
+    bool other_channel_hit = false;
     transport->subscribe("/dimos_test/round_trip",
                          [&](const uint8_t* data, std::size_t len) {
                              std::lock_guard<std::mutex> lock(received_mu);
                              received.assign(data, data + len);
                          });
+    transport->subscribe("/dimos_test/other", [&](const uint8_t*, std::size_t) {
+        std::lock_guard<std::mutex> lock(received_mu);
+        other_channel_hit = true;
+    });
 
     // Declaring a subscriber is not immediate, so republish until it lands.
     const std::vector<uint8_t> payload = {0, 1, 2, 250, 251, 252};
@@ -214,6 +223,8 @@ TEST_CASE("a published payload reaches a subscriber unchanged") {
         got = received;
     }
     CHECK(got == payload);
+    std::lock_guard<std::mutex> lock(received_mu);
+    CHECK_FALSE(other_channel_hit);
 }
 
 TEST_CASE("a publish zenoh rejects is logged rather than thrown") {
