@@ -53,7 +53,8 @@ def test_arch_setup_prints_manual_instructions_without_running_commands(
     prepare(Runner(tmp_path / "setup.log"))
     output = capsys.readouterr().out
     assert "manually" in output
-    assert "Cargo/Rust, Nix, Deno" in output
+    assert "Cargo/Rust, Nix" in output
+    assert "Deno" not in output
     assert "dimup init my-robot" in output
     assert "Machine setup complete" not in output
     assert "export GIT_LFS_SKIP_SMUDGE=1" in (tmp_path / ".bashrc").read_text()
