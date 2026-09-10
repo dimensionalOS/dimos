@@ -673,10 +673,10 @@ jobs:
                 - /var/cache/dimos-nix:/nix
             markers: "self_hosted or skipif_no_ros"
             experimental: false
-#          - os: macOS
-#            container: null  # run on host — `container:` is Linux-only
-#            markers: "self_hosted"
-#            experimental: true
+          - os: macOS
+            container: null  # run on host — `container:` is Linux-only
+            markers: "self_hosted"
+            experimental: true
     runs-on:
       - self-hosted
       - ${{ matrix.os }}
