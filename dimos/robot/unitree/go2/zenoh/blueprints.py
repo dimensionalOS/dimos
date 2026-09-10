@@ -331,7 +331,16 @@ _go2_zenoh_motion_base = autoconnect(
     # z origin -- which on a LIO stack is base height -- has to be guessed
     # (motion/obstacles.py).
     MotionPlanner.blueprint(body_dilate_m=MOTION_BODY_DILATE_M),
-    MovementManager.blueprint(),
+    # Kept for the click relay alone (clicked_point -> goal/way_point). Its cmd_vel and
+    # stop_movement are CmdVelMux's job on this rig, and a second publisher of each is not
+    # redundancy -- both would drive GO2Zenoh's cmd_vel, and the two disagree on Bool
+    # (dimos_lcm's vs dimos.msgs'), which is what the stream-conflict check trips on.
+    MovementManager.blueprint().remappings(
+        [
+            (MovementManager, "cmd_vel", "movement_manager_cmd_vel_unused"),
+            (MovementManager, "stop_movement", "movement_manager_stop_unused"),
+        ]
+    ),
     # Teleop preempts nav on cmd_vel and a watchdog zeros it when the follower dies.
     # MovementManager keeps the click relay; both see tele_cmd_vel.
     CmdVelMux.blueprint(),
