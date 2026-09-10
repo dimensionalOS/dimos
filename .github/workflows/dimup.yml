@@ -17,6 +17,13 @@ on:
 permissions:
   contents: read
 jobs:
+  macos-runner:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+      - name: Installer process tests
+        run: uv run --project installer --with pytest pytest --noconftest -c installer/pyproject.toml installer/src/dimup/test_process.py
   unit:
     runs-on: ubuntu-24.04
     steps:

@@ -131,7 +131,8 @@ class Runner:
                     env=child_env,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE if capture else subprocess.STDOUT,
-                    start_new_session=True,
+                    # Keep the terminal session's sudo ticket while allowing group cancellation.
+                    process_group=0,
                 ) as process:
                     try:
                         if capture:
