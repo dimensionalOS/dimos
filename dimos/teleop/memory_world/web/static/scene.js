@@ -46,7 +46,7 @@ const DESKTOP_LOOK_SENSITIVITY = 0.0022;      // radians per pixel of mouse trav
 const DESKTOP_PITCH_LIMIT = 1.45;             // just under 90deg, avoids gimbal flip
 const DESKTOP_SPRINT_MULTIPLIER = 3.0;
 const DESKTOP_SCALE_STEP = 1.08;              // per wheel notch
-const DESKTOP_MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD']);
+const DESKTOP_MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE']);
 const TOUCH_LOOK_SENSITIVITY = 0.006;         // radians per CSS pixel of one-finger drag
 const TOUCH_WALK_GAIN = 40;                   // two-finger drag: a screen-height sweep = full stick x40
 // GTA-style HUD minimap — head-locked, sits at lower-left of view.
@@ -463,6 +463,7 @@ export class WorldScene {
         this.applyLocomote({
             stickX: ((keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0)) * gain + drag.x + stick.x,
             stickY: ((keys.has('KeyS') ? 1 : 0) - (keys.has('KeyW') ? 1 : 0)) * gain + drag.y + stick.y,
+            up: ((keys.has('KeyE') ? 1 : 0) - (keys.has('KeyQ') ? 1 : 0)) * gain,
         });
     }
 
@@ -541,8 +542,8 @@ export class WorldScene {
         this._updateVoxelCull(dt);
 
         const loc = this._pendingLocomote;
-        if (loc && dt > 0 && (Math.abs(loc.stickX) > 0.1 || Math.abs(loc.stickY) > 0.1)) {
-            this._walk(loc.stickX, loc.stickY, dt);
+        if (loc && dt > 0 && (Math.abs(loc.stickX) > 0.1 || Math.abs(loc.stickY) > 0.1 || Math.abs(loc.up) > 0.1)) {
+            this._walk(loc.stickX, loc.stickY, loc.up, dt);
         }
 
         if (dt > 0 && Math.abs(this._pendingYawRate) > 1e-3) {
@@ -706,8 +707,9 @@ export class WorldScene {
         return [Math.max(0, Math.min(1, u)), Math.max(0, Math.min(1, v))];
     }
 
-    _walk(stickX, stickY, dt) {
+    _walk(stickX, stickY, up, dt) {
         // Quest left stick: forward push = stickY < 0, right push = stickX > 0.
+        // up > 0 lifts the viewer (desktop Q/E only).
         const fwd = this.getCameraForwardXZ();           // unit, world XZ
         // right = cross(forward, up) in three.js right-handed Y-up coords.
         const right = [-fwd[1], fwd[0]];
@@ -718,12 +720,13 @@ export class WorldScene {
         const speed = WALK_SPEED_M_PER_S;
         this._worldGroup.position.x -= camDx * speed * dt;
         this._worldGroup.position.z -= camDz * speed * dt;
+        this._worldGroup.position.y -= up * speed * dt;
     }
 
     // ---- public locomotion API -------------------------------------------
 
     applyLocomote(g) {
-        this._pendingLocomote = { stickX: g.stickX || 0, stickY: g.stickY || 0 };
+        this._pendingLocomote = { stickX: g.stickX || 0, stickY: g.stickY || 0, up: g.up || 0 };
     }
 
     applyYaw(g) {
