@@ -1026,6 +1026,16 @@ class ManipulationModule(Module):
                 return ExecutionResult(ExecutionStatus.NO_PLAN, "No pending plan")
             if plan_id is not None and target_plan.plan_id != plan_id:
                 return ExecutionResult(ExecutionStatus.REJECTED, "Pending plan was replaced")
+            planar_base = self.config.model.model.planar_base
+            if planar_base is not None and set(planar_base.joint_names) & set(
+                target_plan.trajectory.joint_names
+            ):
+                message = (
+                    "Planar-base trajectories support planning and preview only; "
+                    "a feedback base controller is required for execution"
+                )
+                self._error_message = message
+                return ExecutionResult(ExecutionStatus.REJECTED, message)
             self._last_plan = None
             self._state = ManipulationState.EXECUTING
         try:
