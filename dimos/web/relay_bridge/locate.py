@@ -87,25 +87,29 @@ def relay_run_cmd(
     cockpit_dir: Path | None = None,
     sdk_dir: Path | None = None,
     serve_dir: Path | None = None,
+    cert: Path | None = None,
+    key: Path | None = None,
 ) -> list[str]:
     """Build the argv that runs the relay with the pinned config and least permissions."""
     # Canonical paths: the relay realpath-checks served files against its
     # roots, so a symlinked --allow-read scope (macOS /tmp -> /private/tmp)
     # would deny every read.
     web_dir = web_dir.resolve()
-    dirs = [
+    paths = [
         (flag, path.resolve())
         for flag, path in (
             ("--cockpit-dir", cockpit_dir),
             ("--sdk-dir", sdk_dir),
             ("--serve-dir", serve_dir),
+            ("--cert", cert),
+            ("--key", key),
         )
         if path is not None
     ]
     # --node-modules-dir=none: the workspace root deno.json says "auto" (for
     # the cockpit build tooling), which would make this run materialize
     # node_modules next to the config -- inside site-packages under a wheel.
-    allow_read = ",".join([str(web_dir), *(str(path) for _, path in dirs)])
+    allow_read = ",".join([str(web_dir), *(str(path) for _, path in paths)])
     cmd = [
         deno,
         "run",
@@ -117,7 +121,7 @@ def relay_run_cmd(
         str(web_dir / "deno.json"),
         str(web_dir / "relay" / "main.ts"),
     ]
-    for flag, path in dirs:
+    for flag, path in paths:
         cmd += [flag, str(path)]
     return [*cmd, *args]
 

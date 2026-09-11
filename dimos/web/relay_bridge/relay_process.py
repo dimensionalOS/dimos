@@ -271,7 +271,8 @@ def _swap_dist(package: Path, new_dist: Path) -> None:
 class RelayReadyInfo:
     http_port: int
     wt_url: str
-    cert_hash: str
+    # None when the relay serves a real (--cert/--key) certificate.
+    cert_hash: str | None
     v: int
     # True when the relay serves a built Cockpit at /; set by RelayProcess.
     cockpit: bool = False
@@ -280,7 +281,8 @@ class RelayReadyInfo:
     def open_url(self) -> str:
         """What a browser should open (without a cockpit dist the relay
         answers it with a 404 build hint)."""
-        return f"http://127.0.0.1:{self.http_port}/"
+        scheme = "http" if self.cert_hash is not None else "https"
+        return f"{scheme}://127.0.0.1:{self.http_port}/"
 
 
 class RelayProcess:
@@ -295,6 +297,8 @@ class RelayProcess:
         cockpit_dir: Path | None = None,
         sdk_dir: Path | None = None,
         serve_dir: Path | None = None,
+        cert: Path | None = None,
+        key: Path | None = None,
         timeout: float = 20.0,
     ) -> None:
         self._port = port
@@ -303,6 +307,8 @@ class RelayProcess:
         self._cockpit_dir = cockpit_dir
         self._sdk_dir = sdk_dir
         self._serve_dir = serve_dir
+        self._cert = cert
+        self._key = key
         self._timeout = timeout
         self._process: subprocess.Popen[str] | None = None
         self._threads: list[threading.Thread] = []
@@ -328,6 +334,8 @@ class RelayProcess:
             cockpit_dir=cockpit_dir,
             sdk_dir=sdk_dir,
             serve_dir=self._serve_dir,
+            cert=self._cert,
+            key=self._key,
         )
         logger.info(f"starting relay: {' '.join(cmd)}")
         env = os.environ | {"NO_COLOR": "1"}
@@ -417,7 +425,7 @@ class RelayProcess:
                         RelayReadyInfo(
                             http_port=int(data["httpPort"]),
                             wt_url=str(data["wtUrl"]),
-                            cert_hash=str(data["certHash"]),
+                            cert_hash=data.get("certHash"),
                             v=int(data["v"]),
                         )
                     )

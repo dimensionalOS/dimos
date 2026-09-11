@@ -19,6 +19,7 @@ import {
   type RobotInfo,
   type RobotManifest,
 } from "@dimos/shared";
+import { makeEphemeralCert } from "./cert.ts";
 import { startRelay } from "./server.ts";
 
 const ROBOT: RobotInfo = { id: "deno-bot", name: "Deno Bot", model: "test" };
@@ -42,7 +43,8 @@ const MANIFEST: RobotManifest = {
   layout: "color_image",
 };
 
-function certOpts(hashB64: string): WebTransportOptions {
+function certOpts(hashB64: string | undefined): WebTransportOptions {
+  if (hashB64 === undefined) throw new Error("the relay advertises no certificate hash");
   return {
     serverCertificateHashes: [{
       algorithm: "sha-256",
@@ -1225,4 +1227,53 @@ Deno.test("startRelay rejects a bad served dir with a labeled error", async () =
     Error,
     "sdkDir does not exist: /no/such/dir",
   );
+});
+
+Deno.test("startRelay refuses a certificate without its key (and vice versa)", async () => {
+  const cert = await makeEphemeralCert();
+  await assertRejects(
+    () => startRelay({ port: 0, cert: cert.certPem }),
+    Error,
+    "--cert and --key must be given together",
+  );
+  await assertRejects(
+    () => startRelay({ port: 0, key: cert.keyPem }),
+    Error,
+    "--cert and --key must be given together",
+  );
+});
+
+Deno.test({
+  name: "a relay with --cert/--key serves HTTPS and QUIC on one port and advertises no hash",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  // The ephemeral generator stands in for a CA-issued certificate: the relay
+  // serves whatever PEM it is given, and the client trusts it as a root.
+  const cert = await makeEphemeralCert();
+  const relay = await startRelay({ port: 0, cert: cert.certPem, key: cert.keyPem });
+  // h2 on purpose: over TLS Deno.serve negotiates HTTP/2, where the request
+  // host comes from :authority rather than a Host header.
+  const client = Deno.createHttpClient({ caCerts: [cert.certPem], http1: false, http2: true });
+  try {
+    assertEquals(relay.certHash, undefined);
+    assertEquals(relay.quicPort, relay.httpPort);
+    const res = await fetch(`https://127.0.0.1:${relay.httpPort}/api/info`, { client });
+    const info = await res.json();
+    assertEquals(info, { wtUrl: `https://127.0.0.1:${relay.httpPort}`, v: PROTOCOL_VERSION });
+
+    // The QUIC listener serves the given certificate: pin its locally
+    // computed hash (the relay never advertised one) and complete a hello.
+    const viewer = new WebTransport(`${info.wtUrl}/viewer`, certOpts(cert.certHashB64));
+    await within(viewer.ready, "viewer connect");
+    const control = await within(viewer.createBidirectionalStream(), "control stream");
+    const writer = control.writable.getWriter();
+    const nextControl = controlQueue(control.readable);
+    await writer.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
+    assertEquals(await within(nextControl(), "welcome"), { t: "welcome", v: PROTOCOL_VERSION });
+    viewer.close();
+  } finally {
+    client.close();
+    await relay.shutdown();
+  }
 });

@@ -249,6 +249,10 @@ class RelayBridgeConfig(ModuleConfig):
     """HTTP URL of a relay started elsewhere (e.g. http://localhost:7780); its
     WebTransport endpoint is discovered through /api/info on every connect.
     None: spawn a local one."""
+    relay_ca: str | None = None
+    """PEM CA bundle that signed the relay_url relay's certificate (mkcert, a
+    private CA). It replaces the default trust stores for both the /api/info
+    fetch and QUIC, so leave it unset for a relay with a public certificate."""
     local_port: int = 7780
     """HTTP port of the spawned local relay; 0 picks an ephemeral port (tests)."""
     open_browser: bool = True
@@ -553,6 +557,7 @@ class RelayBridgeModule(Module):
         self._build_cancel: threading.Event | None = None
         self._session: _Session | None = None
         self._url: str | None = None
+        self._ca: str | None = None
         # Last /api/info discovery (for logs and tests).
         self._relay_info: RelayInfo | None = None
         # Resolved config.serve_dir, kept for relay-child respawns.
@@ -669,6 +674,9 @@ class RelayBridgeModule(Module):
                     )
             self._manifest = manifest.model_dump()
             self._url = self.config.relay_url or self.config.g.relay_url
+            self._ca = (
+                (self.config.relay_ca or self.config.g.relay_ca) if self._url is not None else None
+            )
             if self._url is not None and self.config.serve_dir is not None:
                 raise RuntimeError(
                     "serve_dir requires the spawned local relay (--local-relay); "
@@ -967,10 +975,10 @@ class RelayBridgeModule(Module):
         assert self._url is not None and self._robot_info is not None and self._manifest is not None
         # Discovery on every connect: a restarted relay has a new QUIC port
         # and certificate behind the same HTTP URL.
-        info = await fetch_relay_info(self._url)
+        info = await fetch_relay_info(self._url, cafile=self._ca)
         self._relay_info = info
         client = await RelayClient.connect(
-            info.wt_url, "robot", insecure=info.cert_hash is not None
+            info.wt_url, "robot", insecure=info.cert_hash is not None, cafile=self._ca
         )
         try:
             await client.hello(robot=self._robot_info, manifest=self._manifest)
