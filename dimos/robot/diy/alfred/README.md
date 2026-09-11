@@ -61,35 +61,36 @@ commands so the most recent target runs after the active move completes.
 It is not an emergency stop. A future firmware e-stop should stop step pulses,
 engage the SSR brake, abort homing, and invalidate the position reference.
 
-## Whole-robot URDF, sim, and navigation + manipulation
+## Whole-robot URDF, sim, and navigation
 
-The full robot description (FlowBase + pillar lift + bimanual OpenArm v2.0 + Mid-360 + front
-D455 + rear D435) lives in the LFS archive `data/.lfs/alfred_description.tar.gz`
-(`alfred_v1.urdf`: casters welded; `alfred_v2.urdf`: eight steer/drive caster joints). It is
-built from the Onshape CAD by `alfred_description/build_alfred_urdf.py` inside the archive;
-`alfred_description/README.md` has the frame table. `alfred_model.py` wraps it as a
-`RobotModelConfig` with the ControlCoordinator joint names (`pillar/lift`, `openarm_*_joint*`,
-`casters/*`).
-
-Lift convention (URDF and hardware agree): `pillar/lift` is zero at the TOP limit switch,
-positive is up, so every reachable position is negative, `-0.500 .. -0.002` m.
+The robot description (FlowBase, pillar lift, bimanual OpenArm v2.0, Mid-360, D455, D435)
+is the LFS archive `alfred_description`: `alfred_v1.urdf` (casters welded) and
+`alfred_v2.urdf` (eight steer/drive caster joints), built from the Onshape CAD by the
+bundled `build_alfred_urdf.py`; its README has the frame table. `alfred_model.py` wraps it
+with the coordinator joint names. `pillar/lift` is zero at the top limit switch, positive
+up, range -0.500 .. -0.002 m, the same convention as the firmware.
 
 ```bash
-# Simulation: viser planner (http://127.0.0.1:8095) on alfred_v2 with mock lift, arms and
-# casters; pygame WASD/QE window drives the base, CasterKinematics animates the wheels.
+uv sync --extra misc --extra alfred --extra manipulation
+
+# Simulation: viser planner on alfred_v2 with mock lift, arms and casters.
 dimos run alfred-sim
 
-# Robot: lidar click-and-go (Point-LIO on the Mid-360 -> RayTracingVoxelMap -> MLS planner ->
-# dannav holonomic follower -> MovementManager, the same chain as the Go2) plus the pillar and
-# both arms on a ControlCoordinator, planned from viser; WASD overrides navigation.
-# Real arms only when both CAN ports are set, mock otherwise. Needs `uv sync --extra misc --extra alfred`.
-DIMOS_POINTLIO_HOST_IP=192.168.1.100 OPENARM_LEFT_CAN=can0 OPENARM_RIGHT_CAN=can1 dimos run alfred-nav
+# Robot. Point-LIO reads the host address on the lidar link; arms are real only with both
+# CAN ports (Alfred: left can2, right can3, `dimos hardware can setup <if>` first).
+export DIMOS_POINTLIO_HOST_IP=192.168.1.100
+OPENARM_LEFT_CAN=can2 OPENARM_RIGHT_CAN=can3 dimos --rerun-host 0.0.0.0 run alfred-nav \
+    --pillarconnection.device-path /dev/serial/by-id/<nano>
+
+# Laptop viewer (click to navigate, keyboard teleop) and viser through a tunnel.
+dimos-viewer --connect rerun+http://<robot>:9877/proxy --ws-url ws://<robot>:3030/ws
+ssh -L 8095:127.0.0.1:8095 <robot>
+
+# Tools that attach from another terminal must use the blueprint's transport.
+DIMOS_TRANSPORT=lcm dimos shell     # app.PillarConnection.home() before planning the lift
 ```
 
-`alfred-nav` deliberately keeps the base out of the coordinator: `AlfredHighLevel` is the only
-FlowBase writer (Portal RPC + wheel odometry for dimSLAM) and `MovementManager` muxes
-teleop over navigation. The planner publishes no tf (it would root at `world`, beside the
-navigation `odom` tree). Rerun shows the full `alfred_v1` model on `base_link`, lift and arms animated from the
-coordinator joint state. Sensor mounts on tf come from `AlfredLidarMountTf`, Jeff's `alfred.urdf` mount
-tree re-rooted at `mid360_link` because Point-LIO owns the lidar's parent edge. Jeff's dimSLAM vision
-variants (`alfred-mls-nav`, `alfred-mls-nav-lidar`) are untouched.
+`alfred-nav` keeps the base out of the coordinator: `AlfredHighLevel` is the only FlowBase
+writer and `MovementManager` muxes teleop over navigation. `AlfredLidarMountTf` publishes
+the mount tree rooted at `mid360_link` because Point-LIO owns the lidar's parent edge. The
+planner publishes no tf. Jeff's dimSLAM blueprints (`alfred-mls-nav*`) are untouched.

@@ -14,19 +14,14 @@
 
 """Alfred: lidar click-and-go navigation plus the pillar and both arms planned from viser.
 
-    dimos run alfred-nav
+    dimos --rerun-host 0.0.0.0 run alfred-nav
 
-Navigation is the Go2 pattern on lidar odometry: PointLio (odom -> mid360_link) into
-RayTracingVoxelMap, MLSPlannerNative, StartRelay, DanLocalPlanner, DanHolonomicTC and
-MovementManager, with AlfredHighLevel as the only FlowBase writer. AlfredLidarMountTf
-publishes the sensor mounts rooted at the lidar so odom <- base_link composes.
-Manipulation is the alfred-sim composition on real hardware: PillarConnection plus a
-ControlCoordinator for the pillar and the OpenArms (Damiao CAN when OPENARM_LEFT_CAN and
-OPENARM_RIGHT_CAN are set, mock otherwise), planned through viser on the alfred_v1 model.
-Teleop comes from the viewer (dimos-viewer keyboard through RerunWebSocketServer publishes
-tele_cmd_vel, which MovementManager prefers over nav_cmd_vel); the robot computer is headless.
-Point-LIO reads DIMOS_POINTLIO_HOST_IP; the lidar address is ALFRED.mid360_ip. The transport
-is pinned to LCM because the Point-LIO C++ native does not speak zenoh.
+Navigation is the Go2 pattern on Point-LIO odometry (voxel map, MLS planner, dannav
+holonomic follower, MovementManager) with AlfredHighLevel as the only FlowBase writer and
+the sensor mounts published rooted at the lidar. The pillar and the OpenArms sit on a
+ControlCoordinator and are planned through viser on the alfred_v1 model; the arms are real
+when OPENARM_LEFT_CAN and OPENARM_RIGHT_CAN are set, mock otherwise. Teleop comes from the
+viewer. Transport is pinned to LCM because the Point-LIO C++ native does not speak zenoh.
 """
 
 from __future__ import annotations

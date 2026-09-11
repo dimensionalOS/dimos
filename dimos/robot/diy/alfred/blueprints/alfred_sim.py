@@ -14,12 +14,10 @@
 
 """Alfred whole-robot planner on mock hardware, visualised in viser.
 
-Same composition as ``alfred`` (base + pillar + both arms under one coordinator, planner with
-viser) but every hardware component is in-memory, and the lift joins the trajectory task so
-``plan_to_joints`` can drive lift + arms together against the full Alfred URDF (alfred_v2, with
-caster joints animated from cmd_vel by CasterKinematics).
+    dimos run alfred-sim    # viser at http://127.0.0.1:8095, WASD in the pygame window
 
-    dimos run alfred-sim          # viser at http://127.0.0.1:8095, WASD in the pygame window drives the base
+Lift and both arms share one coordinator and one trajectory task against the full alfred_v2
+URDF; the caster joints are animated from cmd_vel by CasterKinematics.
 """
 
 from __future__ import annotations
