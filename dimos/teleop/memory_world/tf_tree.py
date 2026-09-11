@@ -302,12 +302,12 @@ def level_camera_roll(world_T_optical: np.ndarray) -> np.ndarray:
     if length < 1e-9:  # no view direction to keep
         return levelled
     forward = forward / length  # a tf quaternion need not be normalised
-    levelled[:3, 2] = forward
     down = np.array([0.0, 0.0, -1.0])
     y = down - float(down @ forward) * forward
     norm = float(np.linalg.norm(y))
     if norm < 1e-3:  # looking along the world's own up: every roll is as good
-        return levelled
+        return levelled  # untouched, scale and all
+    levelled[:3, 2] = forward
     y /= norm
     levelled[:3, 1] = y
     levelled[:3, 0] = np.cross(y, forward)

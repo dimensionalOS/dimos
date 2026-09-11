@@ -556,7 +556,13 @@ class VisualMemoryIndex:
         from dimos.msgs.geometry_msgs.Quaternion import Quaternion
         from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
-        target = self.index_stream
+        try:
+            target = self.index_stream
+        except ValueError as mismatch:  # another model, camera or pose convention
+            logger.warning("dropping %r and rebuilding: %s", self.index_stream_name, mismatch)
+            self.store.delete_stream(self.index_stream_name)
+            self._index_stream = None
+            target = self.index_stream
         already_indexed = {obs.data.source_id for obs in target}
         wanted = (
             (obs, pose)

@@ -34,6 +34,7 @@ import heapq
 import logging
 import os
 from pathlib import Path
+import signal
 import sys
 import time
 from typing import Any
@@ -76,6 +77,45 @@ def ingest_command(
     ]
 
 
+def _owner_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)  # signal 0 only asks
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # someone else's process, but a live one
+        return True
+    return True
+
+
+def _claim(lock_path: Path, recording: Path) -> Path:
+    """Claim this recording's ingest, or say who holds it.
+
+    The claim carries the holder's pid: a run that was killed outright (the module
+    stops its ingest with SIGTERM) cannot release it, and without this every later
+    ingest of that recording would be refused for ever.
+    """
+    for attempt in (1, 2):
+        try:
+            handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                owner = lock_path.read_text().strip()
+            except OSError:  # it went away between the open and the read
+                continue
+            if attempt == 1 and not (owner.isdigit() and _owner_alive(int(owner))):
+                logger.warning("taking over the ingest claim of pid %s, which is gone", owner)
+                lock_path.unlink(missing_ok=True)
+                continue
+            raise SystemExit(
+                f"another ingest of {recording.name} is running (pid {owner or 'unknown'},"
+                f" {lock_path}); wait for it, or delete that file"
+            ) from None
+        os.write(handle, str(os.getpid()).encode())
+        os.close(handle)
+        return lock_path
+    raise SystemExit(f"could not claim the ingest of {recording.name} ({lock_path})")
+
+
 def ingest_recording(
     recording: str | Path,
     *,
@@ -104,15 +144,7 @@ def ingest_recording(
     memory_path = memory_db_for(recording)
     # Two runs would share the staging db below and publish each other's half of it,
     # so the second one is turned away before either touches it.
-    lock_path = memory_path.with_name(memory_path.name + ".building.lock")
-    try:
-        os.close(os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-    except FileExistsError:
-        raise SystemExit(
-            f"another ingest of {recording.name} is running ({lock_path} exists);"
-            " wait for it, or delete that file if it is stale"
-        ) from None
-    held_lock = lock_path
+    held_lock = _claim(memory_path.with_name(memory_path.name + ".building.lock"), recording)
     try:
         try:
             store = open_recording(recording)
@@ -349,6 +381,9 @@ def main(argv: list[str] | None = None) -> None:
     for role in ("image", "depth", "camera_info", "tf"):
         parser.add_argument(f"--{role}", default=None, help=f"the {role} stream (default: detect)")
     args = parser.parse_args(argv)
+    # The module stops this process with SIGTERM; without a handler Python exits
+    # without unwinding and the ingest's finally never drops its claim or its db.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(1))
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     ingest_recording(
         args.recording,
