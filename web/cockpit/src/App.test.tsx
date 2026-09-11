@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ChannelStore, type Session, StatusStore } from "@dimos/sdk";
@@ -12,6 +12,7 @@ import type { View } from "./ui/StatusBar.tsx";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ROBOT = { id: "a", name: "A", model: "go2" };
+const ROBOT_B = { id: "b", name: "B", model: "go2" };
 
 const ODOM: ChannelSpec = {
   ch: "odom",
@@ -38,12 +39,21 @@ function mf(channels: ChannelSpec[], panels: PanelSpec[] = []): Manifest {
   return { version: 1, channels, panels, layout: null, pages: [] };
 }
 
+const CAM: PanelSpec = {
+  id: "cam",
+  kind: "video",
+  title: "",
+  channels: ["color_image"],
+  params: {},
+};
+
 describe("App session states", () => {
   let container: HTMLElement;
   let root: Root;
   let status: StatusStore;
   let channels: ChannelStore;
   let session: Session;
+  let watch: Session["watch"];
 
   beforeEach(() => {
     container = document.createElement("div");
@@ -51,10 +61,11 @@ describe("App session states", () => {
     root = createRoot(container);
     status = new StatusStore();
     channels = new ChannelStore();
+    watch = vi.fn((_id: string) => new Promise<Manifest>(() => {}));
     session = {
       status,
       store: channels,
-      watch: () => new Promise(() => {}),
+      watch,
       subscribe: () => () => {},
       publish: () => new Promise(() => {}),
       close: () => {},
@@ -76,6 +87,13 @@ describe("App session states", () => {
   const view = (v: View) => {
     act(() => container.querySelector<HTMLElement>(`[data-testid="view-${v}"]`)!.click());
   };
+  const picker = () => container.querySelector('[data-testid="robot-picker"]');
+  const pickEntries = () => container.querySelectorAll('[data-testid^="robot-pick-"]');
+  const pick = (id: string) => {
+    act(() => container.querySelector<HTMLElement>(`[data-testid="robot-pick-${id}"]`)!.click());
+  };
+  const switchButton = () => container.querySelector<HTMLElement>('[data-testid="switch-robot"]');
+  const panel = () => container.querySelector('[data-testid="panel-cam"]');
 
   it("waits for a robot, shows its channels, and clears them when it leaves", () => {
     expect(container.textContent).toContain("Waiting for a robot");
@@ -216,7 +234,8 @@ describe("App session states", () => {
       );
     };
     const tab = (id: string) => {
-      act(() => container.querySelector<HTMLElement>(`[data-testid="tab-${id}"]`)!.click());
+      const testId = id === "overview" ? "tab-overview" : `tab-page-${id}`;
+      act(() => container.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!.click());
     };
     act(() => {
       status.update({
@@ -252,13 +271,15 @@ describe("App session states", () => {
     act(() => {
       status.update({ watchedRobot: ROBOT, robots: [ROBOT], manifest: mf([ODOM, IMAGE], [cam]) });
     });
-    const panel = () => container.querySelector('[data-testid="panel-cam"]');
     const row = () => container.querySelector('[data-testid="ch-odom-seq"]');
     const selected = (v: View) =>
       container.querySelector(`[data-testid="view-${v}"]`)!.getAttribute("aria-selected");
     expect(panel()).not.toBeNull();
     expect(row()).toBeNull();
     expect(selected("panels")).toBe("true");
+    // A lone robot is auto-watched: nothing to pick or switch to.
+    expect(picker()).toBeNull();
+    expect(switchButton()).toBeNull();
 
     view("channels");
     expect(selected("channels")).toBe("true");
@@ -275,9 +296,132 @@ describe("App session states", () => {
     expect(container.textContent).toContain("no panels");
   });
 
-  it("shows the multi-robot notice instead of channels", () => {
-    act(() => status.update({ robots: [ROBOT, { id: "b", name: "B", model: "go2" }] }));
-    expect(container.textContent).toContain("2 robots connected");
+  it("keeps the open page across a manifest epoch and drops it when it vanishes", () => {
+    const cam: PanelSpec = {
+      id: "cam",
+      kind: "video",
+      title: "Front camera",
+      channels: ["color_image"],
+      params: {},
+    };
+    const withPage: Manifest = { ...mf([ODOM, IMAGE], [cam]), pages: ["cam"] };
+    const tab = (id: string) => {
+      const testId = id === "overview" ? "tab-overview" : `tab-page-${id}`;
+      return container.querySelector(`[data-testid="${testId}"]`);
+    };
+    act(() => status.update({ watchedRobot: ROBOT, robots: [ROBOT], manifest: withPage }));
+    expect(tab("overview")!.getAttribute("aria-selected")).toBe("true");
+    act(() => (tab("cam") as HTMLElement).click());
+    expect(tab("cam")!.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector('[data-testid="panel-cam"]')).not.toBeNull();
+
+    // A robot restart (same manifest, new epoch) keeps the operator on the page.
+    act(() => status.update({ manifest: { ...withPage }, epoch: 1 }));
+    expect(tab("cam")!.getAttribute("aria-selected")).toBe("true");
+
+    // The page is gone from the new manifest: back to the grid, no strip.
+    act(() => status.update({ manifest: mf([ODOM, IMAGE], [cam]), epoch: 2 }));
+    expect(tab("cam")).toBeNull();
+    expect(container.querySelector('[data-testid="panel-cam"]')).not.toBeNull();
+
+    // Reintroducing the page does not resurrect the discarded selection.
+    act(() => status.update({ manifest: withPage, epoch: 3 }));
+    expect(tab("overview")!.getAttribute("aria-selected")).toBe("true");
+    expect(tab("cam")!.getAttribute("aria-selected")).toBe("false");
+    expect(container.querySelector('[data-testid="panel-cam"]')).toBeNull();
+  });
+
+  it("leaves the channels view when a page tab is picked", () => {
+    const cam: PanelSpec = {
+      id: "cam",
+      kind: "video",
+      title: "",
+      channels: ["color_image"],
+      params: {},
+    };
+    const selected = (id: string) =>
+      container.querySelector(`[data-testid="${id}"]`)!.getAttribute("aria-selected");
+    act(() => {
+      status.update({
+        watchedRobot: ROBOT,
+        robots: [ROBOT],
+        manifest: { ...mf([ODOM, IMAGE], [cam]), pages: ["cam"] },
+      });
+    });
+    view("channels");
+    expect(selected("tab-overview")).toBe("false");
+    expect(container.querySelector('[data-testid="ch-odom-seq"]')).not.toBeNull();
+
+    act(() => container.querySelector<HTMLElement>('[data-testid="tab-page-cam"]')!.click());
+    expect(selected("view-panels")).toBe("true");
+    expect(selected("tab-page-cam")).toBe("true");
+    expect(container.querySelector('[data-testid="ch-odom-seq"]')).toBeNull();
+    expect(container.querySelector('[data-testid="panel-cam"]')).not.toBeNull();
+  });
+
+  it("watches the operator's pick and waits if that robot disappears", () => {
+    act(() => status.update({ robots: [ROBOT, ROBOT_B] }));
+    expect(picker()).not.toBeNull();
+    expect(pickEntries()).toHaveLength(2);
+    expect(switchButton()).toBeNull();
+    expect(container.textContent).not.toContain("Waiting for a robot");
+
+    pick("b");
+    expect(watch).toHaveBeenCalledWith("b");
+    act(() => status.update({ watchedRobot: ROBOT_B }));
+    expect(picker()).toBeNull();
+    expect(container.textContent).toContain("Waiting for a robot");
+    expect(switchButton()).not.toBeNull();
+
+    act(() => status.update({ manifest: mf([ODOM, IMAGE], [CAM]) }));
+    expect(panel()).not.toBeNull();
+
+    act(() => {
+      status.update({ watchedRobot: null, robots: [ROBOT], manifest: null, epoch: 1 });
+    });
+    expect(picker()).toBeNull();
+    expect(switchButton()).toBeNull();
+    expect(container.textContent).toContain("Waiting for a robot");
+  });
+
+  it("reopens the picker on 'switch robot' with the watched robot marked", () => {
+    act(() => {
+      status.update({ watchedRobot: ROBOT, robots: [ROBOT, ROBOT_B], manifest: mf([ODOM], [CAM]) });
+    });
+    expect(picker()).toBeNull();
+    act(() => switchButton()!.click());
+    expect(picker()).not.toBeNull();
+    expect(panel()).toBeNull();
+    expect(switchButton()).toBeNull();
+    const current = (id: string) =>
+      container.querySelector(`[data-testid="robot-pick-${id}"]`)!.getAttribute("aria-current");
+    expect(current("a")).toBe("true");
+    expect(current("b")).toBe("false");
+
+    // The other robot: the old producer is dropped until its manifest lands.
+    pick("b");
+    expect(watch).toHaveBeenCalledWith("b");
+    act(() => status.update({ watchedRobot: ROBOT_B, manifest: null, epoch: 1 }));
+    expect(picker()).toBeNull();
+    expect(container.textContent).toContain("Waiting for a robot");
+    act(() => status.update({ manifest: mf([ODOM, IMAGE], [CAM]) }));
+    expect(panel()).not.toBeNull();
+    expect(switchButton()).not.toBeNull();
+  });
+
+  it("drops a stale switch request when the other robot leaves", () => {
+    act(() => {
+      status.update({ watchedRobot: ROBOT, robots: [ROBOT, ROBOT_B], manifest: mf([ODOM], [CAM]) });
+    });
+    act(() => switchButton()!.click());
+    expect(picker()).not.toBeNull();
+    act(() => status.update({ robots: [ROBOT] }));
+    expect(picker()).toBeNull();
+    expect(panel()).not.toBeNull();
+    // The other robot returning must not pop the picker over the layout.
+    act(() => status.update({ robots: [ROBOT, ROBOT_B] }));
+    expect(picker()).toBeNull();
+    expect(switchButton()).not.toBeNull();
   });
 
   it("shows the polite notice on an unsupported manifest version", () => {

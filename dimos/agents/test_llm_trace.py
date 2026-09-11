@@ -18,8 +18,15 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from pytest_mock import MockerFixture
 
-from dimos.agents.llm_trace import request_path, response_path, tracing_http_client
+from dimos.agents.llm_trace import (
+    latest_pair,
+    list_llm_trace_pairs,
+    request_path,
+    response_path,
+    tracing_http_client,
+)
 
 
 def _client(trace_dir: Path, handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
@@ -31,17 +38,23 @@ def _read(path: Path) -> dict[str, Any]:
     return record
 
 
-def test_records_request_response_pair(tmp_path: Path) -> None:
+def test_records_request_response_pair(tmp_path: Path, mocker: MockerFixture) -> None:
+    clock = mocker.patch("dimos.agents.llm_trace.time")
+    clock.time.return_value = 1_700_000_000.0
+    clock.monotonic.side_effect = [0.0, 0.25]
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"pong": 1}, headers={"x-model": "gpt"})
 
-    _client(tmp_path, handler).post(
-        "https://api.test/v1/chat/completions",
-        json={"ping": 1},
-        headers={"authorization": "Bearer secret", "x-run": "7"},
-    )
+    with _client(tmp_path, handler) as client:
+        client.post(
+            "https://api.test/v1/chat/completions",
+            json={"ping": 1},
+            headers={"authorization": "Bearer secret", "x-run": "7"},
+        )
 
     request = _read(request_path(tmp_path, 0))
+    assert request["started_at"] == 1_700_000_000.0
     assert request["method"] == "POST"
     assert request["url"] == "https://api.test/v1/chat/completions"
     assert request["body"] == {"ping": 1}
@@ -52,7 +65,7 @@ def test_records_request_response_pair(tmp_path: Path) -> None:
     assert response["status"] == 200
     assert response["body"] == {"pong": 1}
     assert response["headers"]["x-model"] == "gpt"
-    assert response["latency_s"] >= 0
+    assert response["latency_s"] == 0.25
 
 
 def test_non_json_bodies_fall_back_to_text(tmp_path: Path) -> None:
@@ -72,3 +85,21 @@ def test_successive_calls_get_increasing_seq(tmp_path: Path) -> None:
 
     assert _read(request_path(tmp_path, 1))["url"] == "https://api.test/b"
     assert _read(response_path(tmp_path, 1))["status"] == 200
+
+
+def test_trace_discovery_orders_complete_calls_and_respects_sequence_boundary(
+    tmp_path: Path,
+) -> None:
+    for seq in (1000, 999):
+        request_path(tmp_path, seq).write_text("{}")
+        response_path(tmp_path, seq).write_text("{}")
+    request_path(tmp_path, 1001).write_text("{}")  # still in flight
+    (tmp_path / "unrelated-request.json").write_text("{}")
+    (tmp_path / "unrelated-response.json").write_text("{}")
+
+    expected = [
+        (seq, request_path(tmp_path, seq), response_path(tmp_path, seq)) for seq in (999, 1000)
+    ]
+    assert list_llm_trace_pairs(tmp_path) == expected
+    assert latest_pair(tmp_path, after=1000) == expected[-1]
+    assert latest_pair(tmp_path, after=1001) is None

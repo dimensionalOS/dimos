@@ -75,7 +75,7 @@ def test_protocol_version():
     # v5: the robot hello rides an @control data frame on a one-shot bidi
     # stream instead of a datagram, and @-prefixed channel ids are reserved;
     # a v4 peer must fail the handshake.
-    assert PROTOCOL_VERSION == 5
+    assert PROTOCOL_VERSION == 6
 
 
 def test_control_hello_payload_is_the_datagram_encoding():
