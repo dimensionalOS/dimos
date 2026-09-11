@@ -34,7 +34,7 @@ must already hold ``hyperspace_keyframes`` and ``hyperspace_patches``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import sqlite3
 import threading
@@ -352,6 +352,7 @@ class HyperspaceSearch:
         self._config = config
         self._scene: NDArray[np.int64] | None = None
         self._scene_keys: NDArray[np.int64] | None = None
+        self._sparse_support = False  # set once "support" has emptied an answer on this recording
         if scene is not None:
             self.set_scene(scene)
         self._lock = threading.Lock()
@@ -535,7 +536,16 @@ class HyperspaceSearch:
             scene = [tuple(int(v) for v in ijk) for ijk in near]
         elif "occupancy" in config.methods:
             scene = list(self._engine.scene_indices(self.world_frame))
+        if self._sparse_support and config.min_frames > 1:
+            config = replace(config, min_frames=1)
         refined = rf.refine(heat, config, scene=scene, text=text)
+        if (not refined.voxels or not refined.clusters) and config.min_frames > 1:
+            # A sparse ingest (one keyframe per voxel) gives "support" nothing to count;
+            # the rest of the chain (occupancy, size prior, merge) still shapes the answer.
+            # Remembered, so later questions run the chain once.
+            self._sparse_support = True
+            refined = rf.refine(heat, replace(config, min_frames=1), scene=scene, text=text)
+        refined.stats["min_frames"] = config.min_frames if not self._sparse_support else 1
         if not refined.voxels or not refined.clusters:
             return None
         ranked = sorted(refined.clusters, key=lambda c: c.rank)
