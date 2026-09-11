@@ -345,7 +345,15 @@ def write_static_mount(store: Any, mount: str, child: str, matrix: np.ndarray, t
     )
     if name in store.list_streams():
         store.delete_stream(name)  # rewritten whole: one sample of an edge, held for all time
-    store.stream(name, TFMessage).append(TFMessage(*kept, corrected), ts=ts)
+    try:
+        store.stream(name, TFMessage).append(TFMessage(*kept, corrected), ts=ts)
+    except BaseException:
+        # Between the delete and the append the recording has no static tf at all, and the
+        # only copy of the other edges is `kept`. A full disk or a Ctrl-C there would take
+        # the lidar mount, the imu and everything else with it, permanently and silently.
+        if kept:
+            store.stream(name, TFMessage).append(TFMessage(*kept), ts=ts)
+        raise
     return name
 
 

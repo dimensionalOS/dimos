@@ -447,7 +447,7 @@ class HyperspaceAnswers:
                     len(voxels),
                 )
                 path = np.asarray(
-                    self._orbit_positions_for(self.config.orbit_frame).get("positions") or [],
+                    self._orbit_positions_for(self._effective_orbit_frame()).get("positions") or [],
                     dtype=np.float64,
                 ).reshape(-1, 3)
                 self._route_planner = RoutePlanner.from_voxels(voxels, path, voxel_size=voxel_size)

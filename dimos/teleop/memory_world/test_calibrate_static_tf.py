@@ -343,3 +343,60 @@ def test_writing_a_mount_removes_only_what_it_invalidated(tmp_path) -> None:  # 
         assert drop_what_the_mount_invalidates(store, str(recording)) == []  # nothing left to do
     finally:
         store.stop()
+
+
+def test_a_failed_write_puts_the_other_static_edges_back(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Between the delete and the append the recording has no static tf at all.
+
+    A full disk or a Ctrl-C in that window would take the lidar mount, the imu and
+    everything else with it, permanently and with only a traceback to say so.
+    """
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.calibrate_static_tf import write_static_mount
+
+    def edge(parent: str, child: str, x: float) -> Transform:
+        return Transform(
+            translation=Vector3(x, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id=parent,
+            child_frame_id=child,
+            ts=1.0,
+        )
+
+    store = SqliteStore(path=str(tmp_path / "rec.db"), must_exist=False)
+    store.start()
+    try:
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(
+                edge("mount", "cam", 9.0), edge("mount", "imu", 4.0), edge("mount", "gps", 2.0)
+            ),
+            ts=1.0,
+        )
+        real_stream = store.stream
+
+        def dying_stream(name: str, *args, **kwargs):  # type: ignore[no-untyped-def]
+            # Only the WRITE call names a payload type; reads do not. Dying on the first
+            # read would be a different, harmless failure: this has to die in the window
+            # between the delete and the append, which is the one that loses data.
+            if name == "tf_static" and args and not getattr(dying_stream, "fired", False):
+                dying_stream.fired = True  # type: ignore[attr-defined]
+                raise OSError(28, "No space left on device")
+            return real_stream(name, *args, **kwargs)
+
+        store.stream = dying_stream  # type: ignore[assignment]
+        with pytest.raises(OSError):
+            write_static_mount(store, "mount", "cam", np.eye(4), 1.0)
+        store.stream = real_stream  # type: ignore[assignment]
+
+        surviving = {
+            (str(t.frame_id), str(t.child_frame_id))
+            for obs in store.streams["tf_static"]
+            for t in obs.data.transforms
+        }
+        assert ("mount", "imu") in surviving and ("mount", "gps") in surviving
+    finally:
+        store.stop()
