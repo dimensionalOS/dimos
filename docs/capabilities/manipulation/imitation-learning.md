@@ -1,165 +1,146 @@
 # Imitation Learning for Manipulation
 
-DimOS provides one CLI workflow for collecting robot demonstrations, preparing a
-LeRobot dataset, training a policy, and running the checkpoint. The preview
-supports OpenYAM with a 640×480, 30 FPS wrist RGB camera.
+Use `dimos run` to launch and configure a collection blueprint. The imitation
+TUI attaches to its episode-control interface; it does not own the robot.
+
+## Collect demonstrations
+
+| Blueprint | Cameras | State and action |
+| --- | --- | --- |
+| `openyam-teach-collection` | Wrist RGB | Measured 7-D joints for both |
+| `openyam-quest-collection` | Wrist RGB | Measured state, accepted commands |
+
+```bash
+dimos --can-port follower_l run openyam-teach-collection --daemon \
+  --recorder.recording recordings/session-001 \
+  --recorder.format mcap \
+  --episodes.task "pick up the cube" \
+  --wrist.hardware.camera-index /dev/video0
+
+dimos imitation collect
+```
+
+These are ordinary module-config flags. Use `dimos run BLUEPRINT --help` to see
+all options, including camera hardware settings. JSON config and environment
+overrides use the same matching rules as other DimOS blueprints.
+
+Space starts or saves an episode; D discards it. Q detaches. During an active
+episode, Q asks for confirmation: **recording and the robot continue after the
+TUI exits**. Use `dimos stop` separately to stop the stack; stopping real
+hardware may de-torque the arms, so support them first.
+
+## Recording directories
 
 ```text
-collect ──▶ recording ──▶ prepare ──▶ dataset ──▶ train ──▶ checkpoint ──▶ run
-                .mcap                    LeRobot
+recordings/session-001/
+├── schema.json
+└── recording.mcap
 ```
 
-An **Imitation Workflow** is a built-in binding between three robot-specific
-pieces: a collection Blueprint, a DataPrep Profile, and a rollout Blueprint. It
-does not replace a Blueprint, store session state, or configure LeRobot
-training. Choose the workflow explicitly at each robot-facing step.
+Choose `--recorder.format sqlite` for `recording.db` instead. A new directory
+is required; existing directories are never overwritten or resumed. Copy or move
+the whole directory.
 
-## Choose a workflow
+The collection layer writes the schema before capture. It contains the relative
+payload filename, profile identity, dataset features, joint ordering, episode
+extraction, synchronization, and quality settings. No Python classes or absolute
+dataset paths are serialized. An interrupted session remains available for
+inspection; incomplete and discarded episodes are not exported.
 
-```bash
-dimos imitation list
+## Profiles and external robot packages
+
+One `CollectionProfile` declares the typed source streams and their dataset
+interpretation. A `CollectionFeature` adds a Python `message_type` to the
+dataprep feature fields: `stream`, `field`, `dtype`, `shape`, and `names`.
+Several features can project different fields or joint subsets from one source;
+the recorder captures that source once.
+
+```python skip
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
+from dimos.imitation.collection.native_recorder import collection_recorder
+
+# MY_PROFILE, my_robot, and my_cameras are defined in your robot package.
+collect = autoconnect(
+    my_robot,
+    *my_cameras,
+    collection_recorder(profile=MY_PROFILE, instance_name="recorder"),
+    EpisodeMonitorModule.blueprint(instance_name="episodes"),
+)
 ```
 
-| Workflow | Demonstration control | Required hardware |
-| --- | --- | --- |
-| `openyam-teach` | Hand guidance with gravity compensation | OpenYAM, wrist camera |
-| `openyam-quest` | Quest teleoperation | OpenYAM, wrist camera, Quest |
+The factory returns an ordinary blueprint with typed inputs before autoconnect.
+It accepts optional `recording=Path(...)` and `format="mcap" | "sqlite"`
+blueprint defaults. The output directory can instead be supplied through run
+configuration. No recorder subclass is needed.
 
-Quest is optional. The main path uses `openyam-teach`; policy rollout also runs
-without Quest unless you pass `--quest-control`.
+The Python graph chooses camera producers, devices, and transports. An image
+feature does **not** construct a webcam. Add any number of camera features and
+matching producers, using normal blueprint remappings when names differ.
+Source names must be nonreserved Python identifiers, and message classes must
+be importable and support native LCM encoding. The recorder also requires the
+reserved `status: In[EpisodeStatus]` input.
 
-## 1. Collect demonstrations
+Export the blueprint using an installed package entry point:
 
-Support the arm before starting. Collection activates hardware, and stopping
-the command de-torques the arm.
-
-```bash
-dimos --can-port follower_l imitation collect openyam-teach \
-  --task "pick up the red block" \
-  --camera-device 0
+```toml
+# pyproject.toml, for a distribution named vendor-robot
+[project.entry-points."dimos.blueprints"]
+collect = "vendor_robot.collection:collect"
 ```
 
-The command starts the collection stack, opens its terminal controls, and stops
-the complete stack when you exit. It prints a unique recording path under the
-DimOS state directory. Pass `--recording PATH` to choose another new path; the
-command refuses to overwrite an existing artifact.
-
-| Key | Action |
-| --- | --- |
-| Space | Start an episode; press again to save it |
-| D | Discard the current episode |
-| Q | Stop while idle; press twice to confirm de-torque |
-| Ctrl-C | Emergency best-effort shutdown |
-
-Normal exit is blocked during a take. Save or discard first. An interruption
-during a take leaves it incomplete, so DataPrep can report and exclude it.
-
-To collect through Quest instead, select the other workflow:
-
 ```bash
-dimos --can-port follower_l imitation collect openyam-quest \
-  --task "pick up the red block"
+dimos run vendor-robot.collect --daemon \
+  --recorder.recording recordings/session-001 \
+  --episodes.task "pick up the cup"
+dimos imitation collect
 ```
 
-The CLI refuses to start collection or rollout while another DimOS coordinator
-is active.
+No imitation workflow registration is needed. The TUI uses
+`Dimos.connect().find_module_by_spec(EpisodeControlSpec)`. External controllers
+can implement the same typed RPCs instead of subclassing our episode monitor.
+Exactly one implementation must match; missing or ambiguous matches are errors.
+The controller class must be importable in the client.
 
-## 2. Prepare and inspect the dataset
-
-Use the recording path printed by `collect`:
-
-```bash
-dimos imitation inspect RECORDING.mcap --workflow openyam-teach
-dimos imitation prepare openyam-teach RECORDING.mcap
-```
-
-`prepare` selects the workflow's fixed DataPrep Profile and applies strict
-episode validation. It writes a unique default directory under the DimOS state
-directory and prints the resolved source and destination. Use `--output DIR` to
-choose another new directory.
-
-Inspect either the recording or prepared dataset:
+## Prepare and train
 
 ```bash
-dimos imitation inspect RECORDING.mcap --workflow openyam-teach
-dimos imitation inspect DATASET_DIR
-```
-
-The prepared LeRobot dataset contains these fixed features:
-
-| Feature | Shape | Source |
-| --- | --- | --- |
-| `observation.images.wrist` | RGB, 480×640×3 | Wrist camera |
-| `observation.state` | 7 values | Six OpenYAM joints and gripper |
-| `action` | 7 values | Measured teach state or accepted Quest command |
-
-## 3. Train with LeRobot
-
-`dimos imitation train` is a transparent pass-through to `lerobot-train` in
-the pinned LeRobot environment. DimOS adds no training defaults and does not
-rewrite arguments, output, or exit codes.
-
-```bash
+dimos imitation inspect recordings/session-001
+dimos imitation prepare recordings/session-001 --output datasets/session-001
 dimos imitation train \
-  --dataset.repo_id=local/openyam-wrist \
-  --dataset.root=DATASET_DIR \
+  --dataset.repo_id=local/openyam-teach \
+  --dataset.root=datasets/session-001 \
   --policy.type=act \
   --output_dir=outputs/openyam-act
 ```
 
-Run `dimos imitation train --help` for the installed LeRobot options.
+Preparation reads the saved schema, not the current robot blueprint. Python
+callers can use `RecordingSchema.read(directory).dataprep_config(directory, output)`
+from `dimos.imitation.collection.recording`, then call
+`run_lerobot_dataprep(config)` or `run_dataprep(config)` for HDF5 output.
 
-## 4. Run the checkpoint
+Native recordings describe their message types and codecs. Preparation imports
+those types: only prepare trusted recordings, and install custom message
+packages in the conversion environment.
 
-The normal rollout requires no Quest headset:
-
-```bash
-dimos --can-port follower_l imitation run openyam-teach CHECKPOINT_DIR \
-  --task "pick up the red block" \
-  --camera-device 0 \
-  --device cuda
-```
-
-Before enabling the terminal's start control, DimOS performs a non-moving
-preflight. It loads the checkpoint and processors and checks:
-
-- required feature keys and image, state, and action dimensions;
-- finite checkpoint action bounds and an available inference device;
-- fresh 640×480 RGB observations and all configured live joints;
-- the configured policy trajectory task in the control coordinator.
-
-Preflight never sends a trajectory. After it passes, Space starts or stops the
-policy. Stop the policy before exiting the stack.
-
-Add Quest only when an operator wants teleoperation takeover:
+## Existing policy rollout
 
 ```bash
-dimos --can-port follower_l imitation run openyam-teach CHECKPOINT_DIR \
-  --task "pick up the red block" \
-  --quest-control
+dimos --can-port follower_l run openyam-lerobot-rollout --daemon \
+  --policy.policy-path CHECKPOINT_DIR \
+  --policy.task "pick up the red block" \
+  --policy.device cuda \
+  --wristcamera.hardware.camera-index 0
+dimos imitation rollout
 ```
 
-Quest tasks have higher control priority than policy trajectories. Quest input
-cannot bypass policy preflight.
+Use `openyam-lerobot-quest-rollout` for the graph with Quest takeover.
+The optional rollout panel discovers `RolloutControlSpec`; Space explicitly
+starts/stops policy execution. A start request checks preflight readiness.
+Quitting only detaches, even while the policy is active. Neither UI is a
+deadman switch: lost connectivity does not guarantee stopping motion.
 
-## Compatibility boundary
-
-DimOS can detect feature keys, tensor dimensions, action bounds, device
-availability, image shape, and live joint availability. Matching dimensions do
-not prove that a checkpoint was trained for the same robot or joint order.
-Because training is a transparent pass-through and checkpoints carry no DimOS
-workflow lineage, the operator must pair the checkpoint with the correct
-workflow and task.
-
-## Maintainer notes
-
-Built-in workflow bindings live in `dimos.imitation.workflows`. A binding keeps
-the public CLI small while the collection and rollout implementations remain
-ordinary Blueprints and DataPrep remains an offline profile-driven transform.
-External workflow discovery is outside this preview.
-
-The merge gate is automated: registry and CLI tests, lifecycle tests, Blueprint
-composition tests, DataPrep tests, isolated runtime preflight tests, formatting,
-and type checks. Release still requires an OpenYAM hardware smoke test covering
-one saved teach episode, dataset preparation, non-moving preflight, policy
-start/stop, Ctrl-C cleanup, and optional Quest takeover.
+See the [LeRobot module contract](/dimos/imitation/policy/lerobot/README.md)
+for checkpoint and control requirements. This refactor retains its existing
+single-camera contract. ABC integration, dual-arm policy rollout, and policy
+backend generalization are deferred.

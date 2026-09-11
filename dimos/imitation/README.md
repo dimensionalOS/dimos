@@ -1,77 +1,16 @@
 # Imitation learning
 
-Collection uses ordinary DimOS Blueprints. The graph owns robot hardware,
-cameras, transports, and runtime lifecycle. A `CollectionProfile` declares
-typed inputs and dataset projections; `collection_recorder(profile=...)`
-creates matching recorder ports before autoconnect.
+See [Imitation Learning for Manipulation](../../docs/capabilities/manipulation/imitation-learning.md)
+for collection, custom profiles, dataset preparation, and existing LeRobot rollout.
 
-## OpenYAM Quest collection
+- `collection/profile.py`: typed source streams and dataset feature projections.
+- `collection/native_recorder.py`: profile-to-Blueprint recorder factory.
+- `collection/recording.py`: portable recording directory and saved schema.
+- `dataprep/`: MCAP and SQLite preparation for LeRobot or HDF5.
+- `tui.py`: attached episode and rollout controls, discovered through typed Specs.
+- `policy/lerobot/`: isolated single-camera policy runtime.
 
-```bash
-dimos run openyam-quest-collection \
-  --recorder.recording recordings/session-001 \
-  --episodes.task "pick up the cube"
-```
-
-Configure camera and hardware options through `dimos run BLUEPRINT --help`.
-Quest B starts/saves an episode; Y discards it. Python clients can use
-`Dimos.connect().find_module_by_spec(EpisodeControlSpec)` and its
-`get_status()` and `command(event)` RPCs instead.
-
-The recording is a new directory containing `schema.json` and
-`recording.mcap`, or `recording.db` with `--recorder.format sqlite`.
-Existing directories are rejected. Copy or move the complete directory.
-Stopping the runtime leaves an active episode incomplete; export excludes
-incomplete and discarded episodes. Support the arms before shutdown.
-
-## Prepare a recording
-
-```python
-from pathlib import Path
-
-from dimos.imitation.collection.recording import RecordingSchema
-from dimos.imitation.dataprep.core import OutputConfig
-from dimos.imitation.dataprep.lerobot import run_lerobot_dataprep
-
-directory = Path("recordings/session-001")
-config = RecordingSchema.read(directory).dataprep_config(
-    directory, OutputConfig(format="lerobot", path=Path("datasets/session-001"))
-)
-run_lerobot_dataprep(config)
-```
-
-Preparation uses the saved schema, not a current robot profile. Only prepare
-trusted recordings; custom message classes must be installed in the reader
-environment. Generic `run_dataprep(config)` supports HDF5 output.
-
-## Policy execution
-
-The [LeRobot module](policy/lerobot/README.md) provides isolated checkpoint
-loading, preflight, and controlled trajectory execution. Collection profiles
-do not define arbitrary policy-backend compatibility.
-
-## OpenYAM rollout
-
-```bash
-dimos --can-port follower_l run openyam-lerobot-rollout --daemon \
-  --policy.policy-path CHECKPOINT_DIR \
-  --policy.task "pick up the cube"
-```
-
-Use `openyam-lerobot-quest-rollout` for optional Quest takeover. The Blueprint
-uses the existing single-arm, single-camera LeRobot contract. Configure devices
-through standard module options. Python clients discover `RolloutControlSpec`
-and explicitly call preflight/start/stop; disconnecting is not a stop request.
-
-## OpenYAM hand-guided collection
-
-```bash
-dimos --can-port follower_l run openyam-teach-collection \
-  --recorder.recording recordings/teach-001 \
-  --episodes.task "pick up the cube"
-```
-
-Guide the arm and gripper by hand. This Blueprint uses gravity compensation,
-zero position stiffness, joint damping, and a passive gripper. State and action
-both project the measured joint positions. Use `EpisodeControlSpec` to start,
-save, or discard episodes; support the arm before stopping the runtime.
+The recorder declares ports before autoconnect. Robot Blueprints construct the
+hardware, cameras, and transports; profiles can declare any number of cameras.
+Use ordinary `dimos run` configuration and external Blueprint entry points.
+The imitation CLI does not maintain a separate workflow registry.

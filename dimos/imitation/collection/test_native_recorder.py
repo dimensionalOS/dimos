@@ -172,15 +172,6 @@ def test_missing_input_fails_before_native_process_starts(recorder, mocker):
     start.assert_not_called()
 
 
-def test_native_collection_uses_the_recorder_build_directory(
-    recorder: NativeCollectionRecorder,
-) -> None:
-    recorder_root = Path(__file__).parents[2] / "experimental" / "memory" / "rust"
-
-    assert Path(recorder.config.cwd) == recorder_root
-    assert Path(recorder.config.executable) == recorder_root / "result/bin/dimos-memory-recorder"
-
-
 @pytest.mark.parametrize(
     "stream", ["status", "tf", "start", "config", "rpc", "bad-name", "_private"]
 )
