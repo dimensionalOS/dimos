@@ -257,7 +257,7 @@ def test_height_colours_run_from_purple_to_light_green(memory_world: MemoryWorld
     assert b[8] > 180 and g[8] < 160, "then blue"
     assert g[16] > 180 and b[16] > 180 and r[16] < 120, "cyan"
     assert g[-1] > 220 and r[-1] < 170 and b[-1] < 170 and g[-1] > r[-1], "light green at the top"
-    assert (r <= g + 60).all(), "never warmer than green"
+    assert (r[12:] <= g[12:]).all(), "the upper half never turns yellow or orange"
 
 
 def test_height_colours_separate_the_storeys(memory_world: MemoryWorldModule) -> None:
