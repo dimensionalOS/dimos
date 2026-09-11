@@ -173,7 +173,18 @@ class RayTracedGrid:
             self.keys = self.keys[keep]
             self._centres = self._centres[keep]
         if len(added):
+            # `near` is a float32 cylinder test over this class's own centres while `now`
+            # comes from the mapper's test over its own, so a voxel on the boundary can be
+            # in `now` and absent from `before` while already being held. Inserting it
+            # twice breaks the uniqueness `removed` relies on, and the duplicate then
+            # survives every later clear: a ghost voxel in the map and in the VR scene.
             at = np.searchsorted(self.keys, added)
+            held = at < len(self.keys)
+            if held.any():
+                fresh = np.ones(len(added), dtype=bool)
+                fresh[held] = self.keys[at[held]] != added[held]
+                added, at = added[fresh], at[fresh]
+        if len(added):
             self.keys = np.insert(self.keys, at, added)
             self._centres = np.insert(
                 self._centres, at, unpack_centres(added, self.voxel_size), axis=0
@@ -346,29 +357,41 @@ def frame_positions(
 ) -> list[list[float]]:
     """A frame's position at each stamp, from *pose_at* (world_T_frame or None).
 
-    Gaps repeat the previous position, so a viewer following the robot along
-    the timeline never jumps to the origin.
+    A gap repeats the previous position, so a viewer following the robot never
+    jumps. A gap BEFORE the first known position is back-filled with that first
+    position rather than the origin: the same array is the path a route is planned
+    over, and a run of origins there is a straight line through unmapped space that
+    is indistinguishable from somewhere the robot actually went.
     """
-    positions: list[list[float]] = []
-    last = [0.0, 0.0, 0.0]
-    for ts in stamps:
-        matrix = pose_at(float(ts))
-        if matrix is not None:
-            last = [round(float(v), 3) for v in matrix[:3, 3]]
-        positions.append(last)
-    return positions
+    return _held_through_gaps(
+        None if (matrix := pose_at(float(ts))) is None else [float(v) for v in matrix[:3, 3]]
+        for ts in stamps
+    )
 
 
 def stamped_positions(observations: Iterable[Any]) -> list[list[float]]:
-    """The pose stamped on each observation, gaps repeating the previous one."""
-    positions: list[list[float]] = []
-    last = [0.0, 0.0, 0.0]
-    for obs in observations:
-        pose = getattr(obs, "pose_tuple", None)
-        if pose is not None:
-            last = [round(float(v), 3) for v in pose[:3]]
-        positions.append(last)
-    return positions
+    """The pose stamped on each observation, gaps repeating the nearest known one."""
+    return _held_through_gaps(
+        None if (pose := getattr(obs, "pose_tuple", None)) is None else [float(v) for v in pose[:3]]
+        for obs in observations
+    )
+
+
+def _held_through_gaps(known: Iterable[list[float] | None]) -> list[list[float]]:
+    """Each position, with a gap holding the last known one and a leading gap the first.
+
+    Nothing is invented: an unknown position is reported as the nearest known one, so
+    a consumer that reads this as a path never sees a place the robot was not.
+    """
+    positions = list(known)
+    first = next((p for p in positions if p is not None), [0.0, 0.0, 0.0])
+    held: list[list[float]] = []
+    last = first
+    for position in positions:
+        if position is not None:
+            last = position
+        held.append([round(v, 3) for v in last])
+    return held
 
 
 # ---- reading ---------------------------------------------------------------

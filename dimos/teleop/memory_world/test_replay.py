@@ -15,6 +15,7 @@
 import json
 from pathlib import Path
 import struct
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -348,3 +349,63 @@ def test_keyframes_are_found_by_scan_index_when_stamps_repeat(tmp_path: Path) ->
         assert header["keyframe"]["scan"] == 2
     finally:
         store.stop()
+
+
+def test_a_gap_before_the_first_known_position_is_not_the_world_origin() -> None:
+    """The same array is the path a route is planned over, so an invented pose is a route.
+
+    Reporting the origin for stamps before the first successful lookup puts the robot
+    somewhere it has never been, indistinguishable from somewhere it has, and the
+    costmap planner then treats that straight line through unmapped space as passable.
+    """
+    from dimos.teleop.memory_world.replay import frame_positions, stamped_positions
+
+    def pose_at(ts: float) -> np.ndarray | None:
+        if ts < 3.0:
+            return None  # tf cannot place the frame yet
+        matrix = np.eye(4)
+        matrix[:3, 3] = [10.0 + ts, 20.0, 0.0]
+        return matrix
+
+    positions = frame_positions([0.0, 1.0, 2.0, 3.0, 4.0], pose_at)
+    assert positions[0] == positions[1] == positions[2] == [13.0, 20.0, 0.0]  # the first known
+    assert positions[3] == [13.0, 20.0, 0.0] and positions[4] == [14.0, 20.0, 0.0]
+    assert [0.0, 0.0, 0.0] not in positions  # never a place the robot was not
+
+    # A gap AFTER a known position still holds that one, and the same rule applies to
+    # the poses stamped on observations.
+    held = frame_positions([3.0, 9.9, 4.0], lambda ts: None if ts > 9 else pose_at(ts))
+    assert held == [[13.0, 20.0, 0.0], [13.0, 20.0, 0.0], [14.0, 20.0, 0.0]]
+    stamped = stamped_positions(
+        [
+            SimpleNamespace(pose_tuple=None),
+            SimpleNamespace(pose_tuple=(5.0, 6.0, 7.0)),
+            SimpleNamespace(pose_tuple=None),
+        ]
+    )
+    assert stamped == [[5.0, 6.0, 7.0]] * 3
+
+
+def test_a_voxel_already_held_is_never_inserted_twice() -> None:
+    """A duplicate key survives every later clear: a ghost voxel nothing can remove.
+
+    The "is it near?" test here and the mapper's own test run over different float32
+    centres, so a voxel on the boundary can be reported as newly seen while already
+    being held. Two copies then break the uniqueness the removal path relies on.
+    """
+    from dimos.teleop.memory_world.replay import RayTracedGrid
+
+    grid = RayTracedGrid.__new__(RayTracedGrid)  # the key bookkeeping only, no mapper
+    grid.voxel_size = 0.1
+    grid.keys = np.array([10, 20, 30], dtype=np.int64)
+    grid._centres = np.zeros((3, 3), dtype=np.float32)
+
+    added = np.array([20, 40], dtype=np.int64)  # 20 is already held: the boundary case
+    at = np.searchsorted(grid.keys, added)
+    held = at < len(grid.keys)
+    fresh = np.ones(len(added), dtype=bool)
+    fresh[held] = grid.keys[at[held]] != added[held]
+    assert fresh.tolist() == [False, True]  # only 40 is new
+
+    keys = np.insert(grid.keys, at[fresh], added[fresh])
+    assert keys.tolist() == sorted(set(keys.tolist()))  # unique, which removal relies on

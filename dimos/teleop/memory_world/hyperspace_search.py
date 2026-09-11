@@ -538,8 +538,12 @@ class HyperspaceSearch:
         )
         if config is None or not keep.any():
             return None
-        # Occupancy was applied above on sparse keys; the dense version is skipped.
-        config = replace(config, methods=[m for m in config.methods if m != "occupancy"])
+        # Occupancy is applied on sparse keys in _query, but only when there IS a scene:
+        # the world cache can fail and Hyperspace still loads. Stripping the dense method
+        # unconditionally would then ground the answer nowhere at all, and a blob floating
+        # metres out in free space becomes a cluster the user is invited to walk to.
+        if self._scene_keys is not None:
+            config = replace(config, methods=[m for m in config.methods if m != "occupancy"])
         if int(keep.sum()) > REFINE_MAX_VOXELS:
             ranked = np.flatnonzero(keep)
             ranked = ranked[np.argsort(-result.score[ranked])[:REFINE_MAX_VOXELS]]

@@ -122,13 +122,11 @@ class MemoryWorldConfig(ModuleConfig):
     # Cap on the static cloud sent to a viewer. A building is about a million
     # voxels; the viewer's quality governor thins what it cannot draw.
     max_points: int = 1_500_000
-    # Which lidar stream to accumulate and how many scans to sample. <= 0 means
-    # use every lidar frame (densest map, slowest build).
-    # The output cloud is deduped by voxel_size, so more scans improves the
-    # map without growing the wire payload — only build time goes up.
-    # Empty picks the point-cloud stream whose poses agree with the tf tree
-    # (see recording.pick_lidar); a default name would silently win whenever
-    # a recording happens to contain it, as "lidar" did on a rig with ten.
+    # Which lidar stream to accumulate, and how many scans (<= 0 uses every frame).
+    # The cloud is deduped by voxel_size, so more scans only costs build time.
+    # Empty picks the stream whose poses agree with tf (recording.pick_lidar); a
+    # default name would win whenever a recording has it, as "lidar" did on a rig
+    # with ten.
     lidar_stream_name: str = ""
     n_voxel_scans: int = 150
     # True: the scans are already registered in the world frame (e.g. SLAM output),
@@ -136,10 +134,9 @@ class MemoryWorldConfig(ModuleConfig):
     # to world_frame, or a stitched *corrected* frame, counts as aligned; any other
     # frame is placed through tf; map/odom/world count as aligned when tf cannot place them.
     lidar_world_frame: bool | None = None
-    # Heights kept from the cloud. None means keep everything, which is the
-    # default: a recording can be multi-storey, its origin can be the sensor
-    # rather than the ground, and there is no floor to assume. An absolute
-    # slab of [-0.2, 2.4] once threw away 96% of a stairwell walkthrough.
+    # Heights kept from the cloud. None keeps everything, the default: a recording
+    # can be multi-storey and its origin can be the sensor, so there is no floor to
+    # assume. A [-0.2, 2.4] slab once threw away 96% of a stairwell walkthrough.
     # Set both to clip explicitly, in the recording's own frame.
     map_z_min: float | None = None
     map_z_max: float | None = None
@@ -1015,12 +1012,14 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         ids are almost never among them. Snapping here means the wire carries one id
         space and the viewer needs no rule for telling them apart.
         """
-        cached = self._cached_image_poses
         # The engine says which space its ids are in; the two overlap numerically (marker
         # 1 and observation 1 are both small integers), so guessing from the values would
         # quietly highlight the wrong photo rather than fail.
-        if result.engine != "agent" or not result.observation_ids or cached is None:
+        if result.engine != "agent" or not result.observation_ids:
             return list(result.observation_ids or [])
+        cached = self._cached_image_poses
+        if cached is None:  # no markers were published, so no id of ours can name one
+            return []
         header, _ = cached
         sources = {
             source: marker
@@ -1032,7 +1031,12 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         snapped = [sources[i] for i in result.observation_ids if i in sources]
         if snapped:
             return snapped
-        return self._markers_near([tuple(point.position) for point in result.points])
+        # focus_point too: an answer can carry one and no points, and dropping it there
+        # would lose every photograph rather than show the nearest.
+        near = [tuple(point.position) for point in result.points]
+        if result.focus_point is not None:
+            near.append(tuple(result.focus_point))
+        return self._markers_near(near)
 
     # ---- spoken visual search ---------------------------------------------
 
