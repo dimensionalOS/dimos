@@ -137,6 +137,18 @@ def test_alfred_model_uses_pillar_joint_convention() -> None:
     assert set(groups) == {"lift", "left_manipulator", "right_manipulator"}
 
 
+def test_home_pose_is_inside_every_joint_limit() -> None:
+    """The lift's zero is the top switch, above its reachable range; Home must not send it."""
+    for wheels in (False, True):
+        config = alfred_model_config(wheels=wheels)
+        limits = {j.name: j for j in config.model.load().joints}
+        assert config.home_joints is not None
+        for name, value in zip(config.joint_names, config.home_joints, strict=True):
+            joint = limits[name]
+            if joint.lower is not None and joint.upper is not None:
+                assert joint.lower <= value <= joint.upper, f"{name}: home {value} outside limits"
+
+
 def test_alfred_sim_still_composes() -> None:
     hardware_ids = {hw.hardware_id for hw in _coordinator_kwargs(alfred_sim)["hardware"]}
     assert {PILLAR_HARDWARE_ID, OPENARM_HARDWARE_ID, "casters"} <= hardware_ids

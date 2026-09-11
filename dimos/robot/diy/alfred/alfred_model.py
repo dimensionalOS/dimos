@@ -31,6 +31,7 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
 from dimos.robot.diy.alfred.caster_kinematics import caster_coordinator_joints, caster_urdf_joints
 from dimos.robot.diy.alfred.pillar_connection import (
+    PILLAR_HOME_POSITION_M,
     PILLAR_LIFT_JOINT,
     PILLAR_MAX_POSITION_M,
     PILLAR_MIN_POSITION_M,
@@ -131,6 +132,8 @@ def alfred_model_config(
     world frame, a second tf root next to a navigation tree.
     """
     joint_names = alfred_joint_names(wheels)
+    home_joints = [0.0] * len(joint_names)
+    home_joints[joint_names.index(PILLAR_LIFT_JOINT)] = PILLAR_HOME_POSITION_M
     return RobotModelConfig(
         model=ALFRED_V2_MODEL if wheels else ALFRED_V1_MODEL,
         joint_names=joint_names,
@@ -139,7 +142,7 @@ def alfred_model_config(
         collision_exclusion_pairs=ALFRED_COLLISION_EXCLUSIONS,
         auto_convert_meshes=True,
         tf_extra_links=list(tf_extra_links or []),
-        home_joints=[0.0] * len(joint_names),
+        home_joints=home_joints,
     )
 
 
