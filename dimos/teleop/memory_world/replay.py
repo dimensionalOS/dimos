@@ -214,7 +214,8 @@ def build_replay_streams(
     ``to_scan`` turns a lidar observation into a :class:`SensorScan` (or None
     to skip it). Existing streams of the same names are replaced. ``dry_run``
     only gathers the statistics. A build that ``cancelled`` cuts short lacks
-    the keyframe tagged ``last`` and is rebuilt next time.
+    the keyframe tagged ``last`` and is rebuilt next time. ``world_frame`` is
+    recorded in the tags so a later build in another frame replaces it.
     """
     started = time.monotonic()
     stream_tags = {

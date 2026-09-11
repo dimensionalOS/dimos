@@ -184,6 +184,7 @@ export class Tour {
                 },
             },
             {
+                hands_on: true,  // the controls come back: this station asks the user to use them
                 title: 'Your turn',
                 body: () => `Type a question in the bar at the top, or hold the microphone button and ask.
                     <ul><li><b>← →</b> places · <b>N</b> route · <b>O</b> orbit the robot · <b>P</b> see through the camera</li>
@@ -389,6 +390,7 @@ export class Tour {
                 heat: this.heatmap ? this.heatmap.visible : true,
                 pyramids: this.pyramids ? this.pyramids.visible : false,
                 photos: this.scene._imageQuadGroup.visible,
+                voxels: this.scene._cloudWanted,
             };
             document.body.classList.add('touring');
             if (this.ui && this.ui.panel) this.ui.panel.classList.add('open');
@@ -397,6 +399,7 @@ export class Tour {
             this._saved.quality = this.scene._qualityAuto ? null : this.scene._quality;
             this._saved.hud = this.scene._hudGroup.visible;
             this.scene._hudGroup.visible = false;   // minimap + answer panel: the card carries the words
+            this.scene._hudGroupPinnedOff = true;   // an answer must not bring it back mid-tour
             this.scene.setQuality(0);
             this._buildPlacards();
             this.diag('tour_start', { station });
@@ -410,7 +413,8 @@ export class Tour {
         if (current && current.leave) current.leave();
         this.active = false;
         this.index = -1;
-        document.body.classList.remove('touring');
+        document.body.classList.remove('touring', 'touring-hands-on');
+        this.scene._hudGroupPinnedOff = false;
         if (this.ui && this.ui.panel) this.ui.panel.classList.remove('open');
         this._placards.visible = false;
         this._clearPlacards();
@@ -420,6 +424,7 @@ export class Tour {
             if (this.pyramids) this.pyramids.setVisible(this._saved.pyramids);
             // The photos too, through the toggle so the layer box follows.
             if (this.scene._imageQuadGroup.visible !== this._saved.photos) this.scene.toggleImages();
+            if (this.scene._cloudWanted !== this._saved.voxels) this.scene.toggleCloud();
             for (const [id, on] of [['layerHeat', this._saved.heat], ['layerPyramids', this._saved.pyramids]]) {
                 const box = document.getElementById(id);
                 if (box) box.checked = on;
@@ -445,6 +450,7 @@ export class Tour {
         if (previous && previous.leave && this.index !== index) previous.leave();
         this.index = index;
         const station = this.stations[index];
+        document.body.classList.toggle('touring-hands-on', Boolean(station.hands_on));
         this._refresh();
         const result = station.enter();
         if (result && typeof result.then === 'function') {

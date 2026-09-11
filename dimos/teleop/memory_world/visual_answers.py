@@ -76,7 +76,8 @@ class VisualAnswers:
 
         Slow and one-shot; runs off the request path. A recording with no
         vectors and no build configured is left for the viewer's "Add
-        embeddings" button.
+        embeddings" button. An index the recording holds for another model,
+        camera, pose convention or world frame is reported, not used.
         """
         with self._store_lock:
             missing = self.config.image_stream_name not in self._ensure_store().list_streams()
@@ -89,7 +90,7 @@ class VisualAnswers:
             index = self._ensure_visual_index()
             try:
                 existing = index.count()
-            except Exception as error:  # built for another model, camera or frame
+            except Exception as error:  # another model, camera, pose convention or frame
                 self._index_progress = f"failed: {error}"
                 logger.exception("visual index unusable")
                 return
@@ -100,21 +101,20 @@ class VisualAnswers:
             self._index_progress = f"building (had {existing} frames)"
             try:
                 added = index.build(stride=self.config.image_index_stride)
-            except Exception as error:
-                self._index_progress = f"failed: {error}"
-                logger.exception("visual index build failed")
-                return
-            self._index_progress = f"ready ({index.count()} frames)"
-            logger.info("visual index ready: %d frames (+%d new)", index.count(), added)
-            # Warm the model loads and the index here, off the request path: cold
-            # they add ~18s (and, for precomputed vectors, the pooling-head pass)
-            # to whichever query comes first, which is the one being demoed. Still under both
-            # locks: an embedding adoption would stop this index meanwhile.
-            if index.count() > 0:
-                self._index_progress = f"loading ({index.count()} frames)"
-                index.load()
+                logger.info("visual index built: %d frames (+%d new)", index.count(), added)
+                # Warm the model loads and the index here, off the request path: cold
+                # they add ~18s (and, for precomputed vectors, the pooling-head pass)
+                # to whichever query comes first, which is the one being demoed. Still
+                # under both locks: an embedding adoption would stop this index meanwhile.
+                if index.count() > 0:
+                    self._index_progress = f"loading ({index.count()} frames)"
+                    index.load()
+                index.model.embed_text("warmup")  # this index's own model
                 self._index_progress = f"ready ({index.count()} frames)"
-            index.model.embed_text("warmup")  # this index's own model
+            except Exception as error:  # building, loading or warming: one status line
+                self._index_progress = f"failed: {error}"
+                logger.exception("visual index unusable")
+                return
         _ = self.whisper  # needs neither the store nor the index
         logger.info("voice query path warm")
 

@@ -788,7 +788,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                     if found:
                         yield found[0]
 
-            for obs in sampled():
+            for k, obs in enumerate(sampled()):
                 optical = self._camera_pose_of(obs)
                 if optical is None:
                     continue
@@ -796,7 +796,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 positions.append(tuple(float(v) for v in optical[:3, 3]))  # type: ignore[arg-type]
                 quats.append(body_style_quaternion(optical))
                 timestamps.append(float(obs.ts))
-                ids.append(int(getattr(obs, "id", 0)))
+                ids.append(k)  # unique per marker: an mcap's observation ids are window-local
 
                 try:
                     thumbnails.append(self._encode_jpeg(obs.data, max_size, quality))
@@ -1090,6 +1090,14 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         if self._hyperspace_ready():
             return self._find_with_hyperspace(phrase, started)
 
+        try:
+            return self._find_with_siglip(phrase, started)
+        except Exception as error:  # an index built for another model, camera or frame
+            logger.exception("visual index query failed")
+            return SkillResult.fail("QUERY_FAILED", f"The SigLIP index cannot answer: {error}")
+
+    def _find_with_siglip(self, phrase: str, started: float) -> SkillResult:
+        """The fallback answer: SigLIP frame search, placed by depth when it can be."""
         with self._store_lock:  # resolved and counted together: a reopen swaps the store
             indexed = self._ensure_visual_index().count()
         if indexed == 0:
@@ -1291,7 +1299,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
 
     def _ensure_replay(self) -> VoxelReplay:
         """The recording's replay streams, built on first use if missing. Needs the image
-        stream too: the index lists its frame stamps.
+        stream too: the index lists its frame stamps. A build that places no scan is
+        deleted again and raises; the failure is remembered until a reopen.
 
         Lock order everywhere: planner, world cache, replay, store, index. The
         build runs under the replay lock alone: the lidar and derived streams

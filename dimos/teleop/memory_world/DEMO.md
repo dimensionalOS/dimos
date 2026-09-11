@@ -10,7 +10,9 @@ memworld ~/datasets/lite_recorder/grocery.mcap   # or bike.mcap / park.mcap / an
 ```
 
 - First start on a new recording builds the ray-traced replay (minutes on a
-  long one); later starts take seconds.
+  long one); later starts take seconds. A build that places no scan (tf cannot
+  reach the lidar frame, or everything is out of range) is thrown away and the
+  timeline says "build failed"; the static map falls back to plain accumulation.
 - Search needs `<recording>.hyperspace.db` (SigLIP2 so400m keyframes +
   patches). Without it the ☰ menu shows **Prepare search** which runs the
   ingest in the background (≈ real time on the Mac's GPU), or run it ahead:

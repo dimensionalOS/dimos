@@ -259,6 +259,30 @@ def test_index_built_with_body_poses_is_refused(sqlite_store: SqliteStore) -> No
         _ = VisualMemoryIndex(sqlite_store, pose_of=lambda obs: None, model_name=GIANT).index_stream
 
 
+def test_index_with_a_frame_on_one_side_only_is_accepted(sqlite_store: SqliteStore) -> None:
+    """An untagged (older) index fits any frame; a tagged one fits a caller with no preference."""
+    _seed_index(sqlite_store, GIANT)  # no world_frame tag
+    assert (
+        VisualMemoryIndex(
+            sqlite_store, pose_of=lambda obs: None, model_name=GIANT, world_frame="map"
+        ).count()
+        == 1
+    )
+    tagged = index_stream_name_of(GIANT, "color_image") + "_tagged"
+    sqlite_store.stream(tagged, PatchGrid).append(
+        PatchGrid(source_id=7, rows=2, cols=2, patches=np.zeros((4, 2), dtype=np.float16)),
+        ts=1.0,
+        pose=PoseStamped(position=Vector3(0.0, 0.0, 0.0)),
+        tags={"model": GIANT, "world_frame": "odom", "pose_frame": POSE_FRAME_TAG},
+    )
+    assert (
+        VisualMemoryIndex(
+            sqlite_store, pose_of=lambda obs: None, index_stream_name=tagged, model_name=GIANT
+        ).count()
+        == 1
+    )
+
+
 def test_index_built_in_another_world_frame_is_refused(sqlite_store: SqliteStore) -> None:
     sqlite_store.stream(index_stream_name_of(GIANT, "color_image"), PatchGrid).append(
         PatchGrid(source_id=7, rows=2, cols=2, patches=np.zeros((4, 2), dtype=np.float16)),

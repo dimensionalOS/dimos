@@ -1535,7 +1535,7 @@ export class WorldScene {
         lines.slice(0, 4).forEach((text, i) => ctx.fillText(text, 42, 62 + i * 50));
         this._answerTexture.needsUpdate = true;
         this._answerPanel.visible = true;
-        this._hudGroup.visible = true;  // the answer panel lives here
+        if (!this._hudGroupPinnedOff) this._hudGroup.visible = true;  // the answer panel lives here
     }
 
     setTopDownMap(header, jpegArrayBuffer) {

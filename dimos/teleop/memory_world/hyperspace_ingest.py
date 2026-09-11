@@ -157,6 +157,13 @@ def ingest_recording(
                 obj.stop()
             except Exception:
                 logger.exception("stopping %s", type(obj).__name__)
+    if not stats.get("kept"):  # nothing indexed: whatever search db was there stays
+        for suffix in ("", "-wal", "-shm"):
+            building.with_name(building.name + suffix).unlink(missing_ok=True)
+        raise SystemExit(
+            f"no keyframe was kept from {stats.get('images', 0)} images (stamps never matched"
+            " depth, or tf placed none); the search db is unchanged"
+        )
     for suffix in ("-wal", "-shm"):
         memory_path.with_name(memory_path.name + suffix).unlink(missing_ok=True)
     building.replace(memory_path)

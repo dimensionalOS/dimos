@@ -405,6 +405,8 @@
         #tourDots i { width: 7px; height: 7px; border-radius: 50%; background: #2a3140; display: block; }
         #tourDots i.on { background: var(--accent); }
         body.touring #ui, body.touring #results, body.touring #askBar, body.touring #timeline { opacity: 0; pointer-events: none; }
+        /* The last station tells the user to type a question or hold the mic. */
+        body.touring.touring-hands-on #ui, body.touring.touring-hands-on #askBar { opacity: 1; pointer-events: auto; }
     </style>
 </head>
 <body data-background-mode="__BACKGROUND_MODE__">
