@@ -557,10 +557,11 @@ class HyperspaceSearch:
         if self._sparse_support and config.min_frames > 1:
             config = replace(config, min_frames=1)
         refined = rf.refine(heat, config, scene=scene, text=text)
-        if (not refined.voxels or not refined.clusters) and config.min_frames > 1:
-            # A sparse ingest (one keyframe per voxel) gives "support" nothing to count;
-            # the rest of the chain (occupancy, size prior, merge) still shapes the answer.
-            # Remembered, so later questions run the chain once.
+        if len(refined.clusters) < 2 and config.min_frames > 1:
+            # A sparse ingest (one keyframe per voxel) gives "support" nothing to count and
+            # the answer collapses to nothing or a single blob; the rest of the chain
+            # (occupancy, size prior, merge) still shapes the places. Remembered, so
+            # later questions run the chain once and every answer is judged the same way.
             self._sparse_support = True
             refined = rf.refine(heat, replace(config, min_frames=1), scene=scene, text=text)
         refined.stats["min_frames"] = config.min_frames if not self._sparse_support else 1
