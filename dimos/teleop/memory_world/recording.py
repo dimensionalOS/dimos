@@ -406,9 +406,55 @@ _STREAM_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "image": (("color", "rgb", "camera"), ("depth", "infra", "ir_", "_ir", "mask")),
     "depth": (("depth",), ("color", "rgb", "infra")),
     "camera_info": (("color", "rgb"), ("depth", "infra")),
-    "lidar": (("lidar", "cloud", "points", "scan"), ("costmap", "map")),
+    # An icp-stitched recording carries `<lidar>_corrected` beside the raw scans: loop
+    # closures applied, so it wins.
+    "lidar": (("corrected", "lidar", "cloud", "points", "scan"), ("costmap", "map", "accumulated")),
     "tf": (("tf",), ()),
 }
+
+
+def corrected_odometry_stream(store: Store) -> str | None:
+    """The loop-closed odometry an icp stitch writes (``*_odometry_corrected``), if any."""
+    for name in sorted(store.list_streams()):
+        if name.endswith("_corrected") and "odom" in name.lower():
+            try:
+                if store.stream(name).data_type is Odometry:
+                    return name
+            except Exception:  # a stream this build cannot open
+                continue
+    return None
+
+
+def build_tf_tree(
+    store: Store, tf_stream: str, world_frame: str | None = None, base_frame: str = "base_link"
+) -> TfTree:
+    """The recording's tf tree, with ``world -> base_link`` replaced by the corrected
+    odometry when the recording carries one: everything the tree places (cameras,
+    scans, the path) then lands in the loop-closed world the corrected map is in."""
+    from dimos.teleop.memory_world.tf_tree import TfTree, _Edge
+
+    tree = TfTree.from_stream(store.streams[tf_stream])
+    corrected = corrected_odometry_stream(store)
+    if corrected is None:
+        return tree
+    world = world_frame if world_frame in tree.frames else tf_root(tree)
+    if world is None or (world, base_frame) not in tree._edges:
+        return tree
+    edge = _Edge()
+    n = 0
+    for obs in store.streams[corrected].order_by("ts"):
+        pose = obs.data.pose
+        p, q = pose.position, pose.orientation
+        edge.add(
+            float(obs.ts),
+            (float(p.x), float(p.y), float(p.z)),
+            (float(q.x), float(q.y), float(q.z), float(q.w)),
+        )
+        n += 1
+    if n:
+        tree._edges[(world, base_frame)] = edge
+        logger.info("tf: %s -> %s from %r (%d corrected poses)", world, base_frame, corrected, n)
+    return tree
 
 
 def tf_root(tree: Any) -> str | None:

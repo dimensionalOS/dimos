@@ -381,3 +381,57 @@ def test_tf_root_is_the_frame_with_no_parent() -> None:
     tree.add("map2", "other", 1.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
     assert tf_root(tree) is None, "two roots: nothing to pick"
     assert tf_root(TfTree()) is None
+
+
+def test_build_tf_tree_takes_the_corrected_odometry_for_the_base(tmp_path) -> None:
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Pose import Pose
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.nav_msgs.Odometry import Odometry
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree, corrected_odometry_stream
+
+    store = SqliteStore(path=str(tmp_path / "stitched.db"), must_exist=False)
+    store.start()
+    tf = store.stream("tf", TFMessage)
+    odom = store.stream("pointlio_odometry_corrected", Odometry)
+    for ts in (1.0, 2.0, 3.0):
+        tf.append(
+            TFMessage(
+                *[
+                    Transform(
+                        translation=Vector3(ts, 0.0, 0.0),
+                        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                        frame_id="odom",
+                        child_frame_id="base_link",
+                        ts=ts,
+                    ),
+                    Transform(
+                        translation=Vector3(0.0, 0.0, 0.5),
+                        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                        frame_id="base_link",
+                        child_frame_id="cam",
+                        ts=ts,
+                    ),
+                ]
+            ),
+            ts=ts,
+        )
+        # The loop closure moved every pose a metre in y.
+        odom.append(
+            Odometry(
+                frame_id="odom",
+                child_frame_id="corrected_odom",
+                pose=Pose(Vector3(ts, 1.0, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
+                ts=ts,
+            ),
+            ts=ts,
+        )
+    assert corrected_odometry_stream(store) == "pointlio_odometry_corrected"
+    tree = build_tf_tree(store, "tf", "odom")
+    cam = tree.lookup("odom", "cam", 2.0, 0.1)
+    assert cam is not None
+    assert [round(float(v), 3) for v in cam[:3, 3]] == [2.0, 1.0, 0.5]
+    store.stop()

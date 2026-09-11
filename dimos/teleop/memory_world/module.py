@@ -76,7 +76,13 @@ from dimos.teleop.memory_world.query import (
     HighlightPoint,
     MemoryQueryResult,
 )
-from dimos.teleop.memory_world.recording import detect_streams, open_recording, pick_lidar, tf_root
+from dimos.teleop.memory_world.recording import (
+    build_tf_tree,
+    detect_streams,
+    open_recording,
+    pick_lidar,
+    tf_root,
+)
 from dimos.teleop.memory_world.replay import (
     SensorScan,
     VoxelReplay,
@@ -1227,7 +1233,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
                     self.config.tf_stream_name,
                 )
                 return None
-            tree = TfTree.from_stream(store.streams[self.config.tf_stream_name])
+            tree = build_tf_tree(store, self.config.tf_stream_name, self.config.world_frame)
             logger.info("tf tree: %d transforms over %d frames", len(tree), len(tree.frames))
             self._tf_tree_cache = tree
         return self._tf_tree_cache
@@ -1245,7 +1251,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
             if aligned is None:
                 first = self._ensure_store().streams[self.config.lidar_stream_name].first()
                 frame_id = str(getattr(first.data, "frame_id", "")).lower().lstrip("/")
-                aligned = frame_id in {"map", "odom", "world"}
+                aligned = frame_id in {"map", "odom", "world"} or "corrected" in frame_id
                 logger.info(
                     "lidar frame %r detected as %s",
                     frame_id,
@@ -1268,13 +1274,18 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
     def _scan_frame(self, obs: Any) -> SensorScan | None:
         """A lidar scan in its sensor frame with the sensor's pose, for ray casting.
 
-        The pose is a tf lookup at the scan's stamp. A stream stored already in
-        the world frame names no sensor, so its rays start at the camera, the
-        nearest frame tf knows; a recording without tf falls back to the pose
-        stamped on the scan.
+        The pose is a tf lookup at the scan's stamp. A world-aligned stream uses
+        the pose stamped on the scan, else the camera, the nearest frame tf knows.
         """
         world_aligned = self._lidar_world_aligned()
         scan_frame = str(getattr(obs.data, "frame_id", "") or "").lstrip("/")
+        stamped = getattr(obs, "pose_tuple", None)
+        if world_aligned and stamped is not None:  # stitched scans carry the sensor pose
+            return sensor_scan(
+                obs.data.points_f32(),
+                pose_matrix(tuple(stamped[:3]), tuple(stamped[3:7])),
+                in_world=True,
+            )
         pose_frame = self._camera_frame() if world_aligned else scan_frame
         matrix = self._frame_pose_at(pose_frame, float(obs.ts))
         if matrix is None:

@@ -34,6 +34,8 @@ import sys
 import time
 from typing import Any
 
+import numpy as np
+
 from dimos.teleop.memory_world.hyperspace_search import memory_db_for
 
 logger = logging.getLogger(__name__)
@@ -82,7 +84,7 @@ def ingest_recording(
 ) -> dict[str, Any]:
     """Embed *recording*'s keyframes into its Hyperspace memory db. Returns the ingest stats."""
     from dimos.mapping.hyperspace import patches as hs
-    from dimos.mapping.hyperspace.cli import ingest, pick_device
+    from dimos.mapping.hyperspace.cli import pick_device
     from dimos.mapping.hyperspace.embedder import SigLIP2Patches
     from dimos.mapping.hyperspace.ingest import IngestConfig
     from dimos.memory.store.sqlite import SqliteStore
@@ -112,19 +114,14 @@ def ingest_recording(
     model.start()
     started = time.monotonic()
     try:
-        stats = ingest(
+        stats = _ingest(
             store,
             memory,
             model,
-            color_stream=detected["image"],
-            depth_stream=detected["depth"],
-            color_info_stream=detected["camera_info"],
-            depth_info_stream=depth_info,
-            tf_stream=detected["tf"],
+            streams=detected,
+            depth_info=depth_info,
             hz=hz,
             max_seconds=max_seconds,
-            # A lower novelty threshold than Hyperspace's 0.05 keeps consecutive keyframes,
-            # which its "support" refinement needs (two keyframes agreeing on a voxel).
             config=IngestConfig(
                 gate=hs.KeyframeGateConfig(novelty_threshold=novelty), max_depth_m=max_depth_m
             ),
@@ -138,6 +135,120 @@ def ingest_recording(
     summary: dict[str, Any] = {**stats, "seconds": round(time.monotonic() - started, 1)}
     print(f"done: {summary}", flush=True)
     return summary
+
+
+TF_TOLERANCE_S = 0.1
+
+
+def _ingest(
+    store: Any,
+    memory: Any,
+    model: Any,
+    *,
+    streams: dict[str, Any],
+    depth_info: str,
+    hz: float,
+    max_seconds: float,
+    config: Any,
+) -> dict[str, int]:
+    """Hyperspace's ingest loop (``dimos.mapping.hyperspace.cli.ingest``), with two
+    changes for stitched recordings: keyframes are placed through the corrected tf
+    tree (:func:`build_tf_tree`), and that corrected ``world -> base_link`` is what
+    goes into the memory db's tf, so query-time placement matches the map."""
+    from dimos.mapping.hyperspace.ingest import PatchIngestor
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import (
+        build_tf_tree,
+        corrected_odometry_stream,
+        tf_root,
+    )
+
+    tree = build_tf_tree(store, streams["tf"])
+    world = tf_root(tree) or "odom"
+    corrected = corrected_odometry_stream(store)
+
+    def lookup(target: str, source: str, ts: float) -> Any:
+        matrix = tree.lookup(target, source, ts, TF_TOLERANCE_S)
+        return None if matrix is None else np.asarray(matrix, dtype=np.float64)
+
+    ingestor = PatchIngestor(memory, model, config, lookup=lookup)
+    for name in (streams["camera_info"], depth_info):
+        first = next(iter(store.streams[name].order_by("ts")), None)
+        if first is None:
+            raise SystemExit(f"stream {name!r} is empty")
+        ingestor.add_camera_info(first.data)
+
+    colors = store.streams[streams["image"]].order_by("ts")
+    depths = store.streams[streams["depth"]].order_by("ts")
+    start_ts = float(colors.first().ts)
+    # Only the tf the slice can use; a whole recording's tf is hundreds of
+    # thousands of messages the query side would otherwise decode.
+    transforms = 0
+    for observation in store.streams[streams["tf"]].order_by("ts"):
+        stamp = float(observation.ts)
+        if stamp < start_ts - 5.0 or stamp > start_ts + max_seconds + 5.0:
+            continue
+        message = observation.data
+        if corrected is not None:
+            kept = [
+                t
+                for t in message.transforms
+                if not (t.frame_id == world and t.child_frame_id == "base_link")
+            ]
+            if not kept:
+                continue
+            message = TFMessage(*kept)
+        ingestor.add_tf(message, ts=stamp)
+        transforms += 1
+    if corrected is not None:
+        for observation in store.streams[corrected].order_by("ts"):
+            stamp = float(observation.ts)
+            if stamp < start_ts - 5.0 or stamp > start_ts + max_seconds + 5.0:
+                continue
+            pose = observation.data.pose
+            p, q = pose.position, pose.orientation
+            ingestor.add_tf(
+                TFMessage(
+                    Transform(
+                        translation=Vector3(float(p.x), float(p.y), float(p.z)),
+                        rotation=Quaternion(float(q.x), float(q.y), float(q.z), float(q.w)),
+                        frame_id=world,
+                        child_frame_id="base_link",
+                        ts=stamp,
+                    )
+                ),
+                ts=stamp,
+            )
+            transforms += 1
+    print(
+        f"tf: {transforms} messages{' (corrected base poses from ' + corrected + ')' if corrected else ''}",
+        flush=True,
+    )
+
+    min_interval = 1.0 / hz if hz > 0 else 0.0
+    ingestor.config.min_frame_interval_s = max(min_interval, config.min_frame_interval_s)
+    first_ts: float | None = None
+    started = time.monotonic()
+    for pair in colors.align(depths, tolerance=config.depth_max_dt):
+        color_obs, depth_obs = pair.data[0], pair.data[1]
+        stamp = float(color_obs.ts)
+        if first_ts is None:
+            first_ts = stamp
+        if stamp - first_ts > max_seconds:
+            break
+        ingestor.add_depth(depth_obs.data)
+        ingestor.add_image(color_obs.data)
+        if ingestor.stats["images"] % 200 == 0:
+            print(
+                f"{stamp - first_ts:.0f}s: {ingestor.stats['embedded']} embedded, "
+                f"{ingestor.stats['kept']} kept ({time.monotonic() - started:.0f}s)",
+                flush=True,
+            )
+    ingestor.flush()
+    return dict(ingestor.stats)
 
 
 def main(argv: list[str] | None = None) -> None:
