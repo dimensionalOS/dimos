@@ -996,11 +996,13 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             self._store_lock,
             self._index_lock,
         ):
-            old = self._store
-            self._store = open_recording(self.config.store_path)
+            # Replay bookkeeping first: the open below is slow, and a viewer polling
+            # /replay/index meanwhile must not read a stale "build failed".
             self._replay = None
             self._replay_error = None
             self._replay_progress = "not started"
+            old = self._store
+            self._store = open_recording(self.config.store_path)
             self._replay_index = None
             self._replay_frames.clear()
             self._drop_visual_index()
@@ -1238,15 +1240,15 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             return self._replay
         if self._replay_error is not None:
             raise RuntimeError(self._replay_error)
-        with self._store_lock:
-            store = self._ensure_store()
-            available = VoxelReplay.available(
-                store,
-                voxel_size=self.config.voxel_size,
-                lidar_stream_name=self.config.lidar_stream_name,
-                max_range=self.config.replay_max_range_m,
-            )
         try:
+            with self._store_lock:
+                store = self._ensure_store()
+                available = VoxelReplay.available(
+                    store,
+                    voxel_size=self.config.voxel_size,
+                    lidar_stream_name=self.config.lidar_stream_name,
+                    max_range=self.config.replay_max_range_m,
+                )
             if not available:
                 self._replay_progress = "building"
                 logger.info("building the voxel replay streams into %s", self.config.store_path)
@@ -1276,6 +1278,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                     z_min=self.config.map_z_min if self.config.map_z_min is not None else -np.inf,
                     z_max=self.config.map_z_max if self.config.map_z_max is not None else np.inf,
                 )
+                if len(replay.index.scan_ts) < 2:  # nothing to seek: the viewer would poll forever
+                    raise RuntimeError("fewer than two scans")
                 # Listing every camera stamp is a pass over the image stream (on
                 # an mcap that decompresses every chunk), so it is done here, once.
                 self._replay_index = self._build_replay_index_json(replay)

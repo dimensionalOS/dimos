@@ -660,8 +660,6 @@ def structural_mask(patches: PatchBank, segments: SegmentBank, config: Any) -> N
         ts = float(frames.ts[f])
         position = int(np.searchsorted(stamps, ts))
         candidates = [i for i in (position - 1, position) if 0 <= i < len(stamps)]
-        if not candidates:
-            continue
         nearest = min(candidates, key=lambda i: abs(stamps[i] - ts))
         if abs(stamps[nearest] - ts) > max_dt or not cell_sets[nearest]:
             continue

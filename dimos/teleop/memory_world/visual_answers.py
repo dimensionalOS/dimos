@@ -206,7 +206,6 @@ class VisualAnswers:
             return []
         with self._store_lock:
             store = self._ensure_store()
-            depth_stream = store.streams[self.config.depth_stream_name]
             info = depth_info_stream_for(
                 set(store.list_streams()),
                 self.config.depth_stream_name,
@@ -222,7 +221,8 @@ class VisualAnswers:
             )
         for frame in frames:
             try:
-                with self._store_lock:
+                with self._store_lock:  # resolved and read together: a reopen swaps the store
+                    depth_stream = self._ensure_store().streams[self.config.depth_stream_name]
                     depth = depth_stream.at(
                         frame.ts, tolerance=self.config.depth_tolerance_s
                     ).first()
