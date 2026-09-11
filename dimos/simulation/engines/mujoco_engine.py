@@ -225,6 +225,7 @@ class MujocoEngine(SimulationEngine):
         viewer_track_body: str | None = None,
         viewer_lookat: tuple[float, float, float] | None = None,
         viewer_distance: float | None = None,
+        background_camera_rendering: bool = False,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
         self._on_before_step: StepHook | None = on_before_step
@@ -237,6 +238,7 @@ class MujocoEngine(SimulationEngine):
         self._viewer_track_body = viewer_track_body
         self._viewer_lookat = viewer_lookat
         self._viewer_distance = viewer_distance
+        self._background_camera_rendering = background_camera_rendering
 
         model_path = self._resolve_model_path(config_path)
         binary_model = model_path.suffix.lower() == ".mjb"
@@ -287,6 +289,7 @@ class MujocoEngine(SimulationEngine):
         self._reset_done_events: list[threading.Event] = []
         self._stop_event = threading.Event()
         self._sim_thread: threading.Thread | None = None
+        self._camera_thread: threading.Thread | None = None
 
         self._joint_positions = [0.0] * self._num_joints
         self._joint_velocities = [0.0] * self._num_joints
@@ -411,6 +414,14 @@ class MujocoEngine(SimulationEngine):
         try:
             logger.info("connect()", cls=self.__class__.__name__)
             with self._lock:
+                if any(
+                    thread is not None and thread.is_alive()
+                    for thread in (self._sim_thread, self._camera_thread)
+                ):
+                    if self._stop_event.is_set():
+                        logger.error("Cannot reconnect while simulation threads are stopping")
+                        return False
+                    return self._connected
                 self._connected = True
                 self._stop_event.clear()
 
@@ -429,12 +440,20 @@ class MujocoEngine(SimulationEngine):
     def disconnect(self) -> bool:
         try:
             logger.info("disconnect()", cls=self.__class__.__name__)
+            self._stop_event.set()
             with self._lock:
                 self._connected = False
-            self._stop_event.set()
-            if self._sim_thread and self._sim_thread.is_alive():
-                self._sim_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            for thread in (self._sim_thread, self._camera_thread):
+                if thread is not None and thread is not threading.current_thread():
+                    thread.join(timeout=2 * DEFAULT_THREAD_JOIN_TIMEOUT)
+            if any(
+                thread is not None and thread.is_alive()
+                for thread in (self._sim_thread, self._camera_thread)
+            ):
+                logger.error("Simulation threads have not stopped; retaining ownership")
+                return False
             self._sim_thread = None
+            self._camera_thread = None
             return True
         except Exception as e:
             logger.error("disconnect() failed", cls=self.__class__.__name__, error=str(e))
@@ -530,9 +549,17 @@ class MujocoEngine(SimulationEngine):
         with self._lock:
             self._camera_streaming_enabled = enabled
 
-    def _render_cameras(self, now: float, cam_renderers: dict[str, _CameraRendererState]) -> None:
-        """Render all due cameras and store frames. Must be called from sim thread."""
-        if not self._camera_streaming_enabled:
+    def _render_cameras(
+        self,
+        now: float,
+        cam_renderers: dict[str, _CameraRendererState],
+        data: mujoco.MjData | None = None,
+    ) -> None:
+        """Render from live data or a snapshot on the renderer's owning thread."""
+        data = self._data if data is None else data
+        with self._lock:
+            streaming = self._camera_streaming_enabled
+        if not streaming:
             return
         for state in cam_renderers.values():
             if now - state.last_render_time < state.interval:
@@ -547,13 +574,13 @@ class MujocoEngine(SimulationEngine):
                 state.last_render_time += periods * state.interval
 
             state.rgb_renderer.update_scene(
-                self._data, camera=state.cam_id, scene_option=state.scene_option
+                data, camera=state.cam_id, scene_option=state.scene_option
             )
             rgb = state.rgb_renderer.render().copy()
 
             if state.depth_renderer is not None:
                 state.depth_renderer.update_scene(
-                    self._data, camera=state.cam_id, scene_option=state.scene_option
+                    data, camera=state.cam_id, scene_option=state.scene_option
                 )
                 depth = state.depth_renderer.render().copy().astype(np.float32)
             else:
@@ -562,23 +589,56 @@ class MujocoEngine(SimulationEngine):
             frame = CameraFrame(
                 rgb=rgb,
                 depth=depth,
-                cam_pos=self._data.cam_xpos[state.cam_id].copy(),
-                cam_mat=self._data.cam_xmat[state.cam_id].copy(),
+                cam_pos=data.cam_xpos[state.cam_id].copy(),
+                cam_mat=data.cam_xmat[state.cam_id].copy(),
                 fovy=float(self._model.cam_fovy[state.cam_id]),
                 timestamp=now,
                 base_pos=(
-                    self._data.xpos[state.base_body_id].copy()
-                    if state.base_body_id is not None
-                    else None
+                    data.xpos[state.base_body_id].copy() if state.base_body_id is not None else None
                 ),
                 base_mat=(
-                    self._data.xmat[state.base_body_id].copy().reshape(3, 3)
+                    data.xmat[state.base_body_id].copy().reshape(3, 3)
                     if state.base_body_id is not None
                     else None
                 ),
             )
             with self._camera_lock:
                 self._camera_frames[state.cfg.name] = frame
+
+    def _camera_loop(self, ready: threading.Event | None = None) -> None:
+        """Render timestamped snapshots while physics continues on its own data.
+
+        Enable only when the model is fixed after startup. Physics state is
+        copied under the engine lock; OpenGL and forward kinematics run outside
+        it. Both cameras use the same snapshot and capture timestamp.
+        """
+        renderers: dict[str, _CameraRendererState] = {}
+        try:
+            renderers = self._init_cameras()
+            if ready is not None:
+                ready.set()
+            data = mujoco.MjData(self._model)
+            spec = mujoco.mjtState.mjSTATE_INTEGRATION
+            state = np.empty(mujoco.mj_stateSize(self._model, spec))
+            period = 1.0 / max(
+                (camera.fps for camera in self._camera_configs if camera.fps > 0), default=1.0
+            )
+            while not self._stop_event.is_set():
+                started = time.monotonic()
+                with self._lock:
+                    stamp = time.time()
+                    mujoco.mj_getState(self._model, self._data, state, spec)
+                mujoco.mj_setState(self._model, data, state, spec)
+                mujoco.mj_forward(self._model, data)
+                self._render_cameras(stamp, renderers, data)
+                self._stop_event.wait(max(0.0, period - (time.monotonic() - started)))
+        except Exception:
+            logger.exception("Camera snapshot rendering failed")
+            self._stop_event.set()
+        finally:
+            if ready is not None:
+                ready.set()
+            self._close_cam_renderers(renderers)
 
     def _raycast_lidars(
         self,
@@ -703,61 +763,81 @@ class MujocoEngine(SimulationEngine):
 
     def _sim_loop(self) -> None:
         logger.info("sim loop started", cls=self.__class__.__name__)
-        dt = 1.0 / self._control_frequency
+        cam_renderers: dict[str, _CameraRendererState] = {}
+        try:
+            dt = 1.0 / self._control_frequency
 
-        # Camera renderers: created once in the sim thread
-        cam_renderers = self._init_cameras()
-        lidar_states = self._init_raycast_lidars()
-
-        next_step = time.monotonic()
-        next_viewer_sync = 0.0
-
-        def _step_physics() -> None:
-            reset_done_events: list[threading.Event] = []
-            with self._lock:
-                if self._reset_requested:
-                    self._reset_requested = False
-                    self._reset_unlocked()
-                    reset_done_events = self._reset_done_events
-                    self._reset_done_events = []
-            for reset_done_event in reset_done_events:
-                reset_done_event.set()
-            if self._on_before_step is not None:
-                try:
-                    self._on_before_step(self)
-                except Exception as exc:
-                    logger.error("on_before_step failed", error=str(exc))
-            with self._lock:
-                self._apply_control()
-                mujoco.mj_step(self._model, self._data)
-                self._update_joint_state()
-            if self._on_after_step is not None:
-                try:
-                    self._on_after_step(self)
-                except Exception as exc:
-                    logger.error("on_after_step failed", error=str(exc))
-
-        def _step_once(sync_viewer: bool) -> None:
-            nonlocal next_step, next_viewer_sync
-            steps, next_step = _physics_steps_due(time.monotonic(), next_step, dt)
-            for _ in range(steps):
+            # Each OpenGL renderer is created and closed by its owning thread.
+            cam_renderers = {} if self._background_camera_rendering else self._init_cameras()
+            if self._background_camera_rendering and self._camera_configs:
+                camera_ready = threading.Event()
+                self._camera_thread = threading.Thread(
+                    target=self._camera_loop,
+                    args=(camera_ready,),
+                    name="mujoco-cameras",
+                    daemon=True,
+                )
+                self._camera_thread.start()
+                # GLFW's X11 window creation uses a process-global error handler.
+                # Finish sensor context creation before the viewer creates its window.
+                deadline = time.monotonic() + 30.0
+                while not camera_ready.wait(timeout=0.1):
+                    if self._stop_event.is_set():
+                        return
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("Camera renderer initialization did not complete")
                 if self._stop_event.is_set():
                     return
-                _step_physics()
-            now = time.monotonic()
-            # Viewer updates are display work, not part of every 500 Hz motor
-            # tick. Camera/lidar publishers already enforce their own cadence.
-            if sync_viewer and now >= next_viewer_sync:
-                with self._lock:
-                    m_viewer.sync()
-                next_viewer_sync = now + 1.0 / 60.0
-            with self._lock:
-                stamp = time.time()
-                self._render_cameras(stamp, cam_renderers)
-                self._raycast_lidars(stamp, lidar_states)
-            self._stop_event.wait(max(0.0, next_step - time.monotonic()))
+            lidar_states = self._init_raycast_lidars()
 
-        try:
+            next_step = time.monotonic()
+            next_viewer_sync = 0.0
+
+            def _step_physics() -> None:
+                reset_done_events: list[threading.Event] = []
+                with self._lock:
+                    if self._reset_requested:
+                        self._reset_requested = False
+                        self._reset_unlocked()
+                        reset_done_events = self._reset_done_events
+                        self._reset_done_events = []
+                for reset_done_event in reset_done_events:
+                    reset_done_event.set()
+                if self._on_before_step is not None:
+                    try:
+                        self._on_before_step(self)
+                    except Exception as exc:
+                        logger.error("on_before_step failed", error=str(exc))
+                with self._lock:
+                    self._apply_control()
+                    mujoco.mj_step(self._model, self._data)
+                    self._update_joint_state()
+                if self._on_after_step is not None:
+                    try:
+                        self._on_after_step(self)
+                    except Exception as exc:
+                        logger.error("on_after_step failed", error=str(exc))
+
+            def _step_once(sync_viewer: bool) -> None:
+                nonlocal next_step, next_viewer_sync
+                steps, next_step = _physics_steps_due(time.monotonic(), next_step, dt)
+                for _ in range(steps):
+                    if self._stop_event.is_set():
+                        return
+                    _step_physics()
+                now = time.monotonic()
+                # Viewer updates are display work, not part of every 500 Hz motor
+                # tick. Camera/lidar publishers already enforce their own cadence.
+                if sync_viewer and now >= next_viewer_sync:
+                    with self._lock:
+                        m_viewer.sync()
+                    next_viewer_sync = now + 1.0 / 60.0
+                with self._lock:
+                    stamp = time.time()
+                    self._render_cameras(stamp, cam_renderers)
+                    self._raycast_lidars(stamp, lidar_states)
+                self._stop_event.wait(max(0.0, next_step - time.monotonic()))
+
             if self._headless:
                 while not self._stop_event.is_set():
                     _step_once(sync_viewer=False)
@@ -776,7 +856,14 @@ class MujocoEngine(SimulationEngine):
                     while m_viewer.is_running() and not self._stop_event.is_set():
                         _step_once(sync_viewer=True)
         finally:
+            self._stop_event.set()
+            if self._camera_thread is not None:
+                self._camera_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+                if self._camera_thread.is_alive():
+                    logger.error("Camera render thread has not stopped; retaining ownership")
             self._close_cam_renderers(cam_renderers)
+            with self._lock:
+                self._connected = False
         logger.info("sim loop stopped", cls=self.__class__.__name__)
 
     @property

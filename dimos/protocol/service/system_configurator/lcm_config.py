@@ -14,6 +14,7 @@
 
 """Platform-appropriate LCM system configurators."""
 
+import os
 import platform
 
 from dimos.protocol.service.system_configurator.base import SystemConfigurator
@@ -32,7 +33,9 @@ def lcm_configurators() -> list[SystemConfigurator]:
     system = platform.system()
     if system == "Linux":
         return [
-            MulticastConfiguratorLinux(loopback_interface="lo"),
+            MulticastConfiguratorLinux(
+                loopback_interface="lo", local_url=os.environ.get("LCM_DEFAULT_URL")
+            ),
             BufferConfiguratorLinux(),
         ]
     elif system == "Darwin":

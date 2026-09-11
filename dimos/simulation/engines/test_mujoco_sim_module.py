@@ -21,11 +21,13 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
+import mujoco
 import numpy as np
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
+from dimos.simulation.engines.mujoco_engine import CameraConfig, CameraFrame, MujocoEngine
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
 
 
@@ -564,3 +566,170 @@ def test_publish_loop_pacing_is_independent_of_frame_timestamp_magnitude(base_ts
         assert elapsed >= (len(frame_ts) - 1) / fps
     finally:
         module.stop()
+
+
+@pytest.mark.parametrize(
+    ("depth", "pointcloud", "raycast", "expected"),
+    [
+        (False, False, False, False),
+        (True, False, False, True),
+        (False, True, False, True),
+        (False, True, True, False),
+    ],
+)
+def test_primary_camera_renders_depth_only_for_enabled_consumers(
+    mocker: MockerFixture,
+    tmp_path: Path,
+    depth: bool,
+    pointcloud: bool,
+    raycast: bool,
+    expected: bool,
+) -> None:
+    mocker.patch("dimos.simulation.engines.mujoco_sim_module.ManipShmWriter", autospec=True)
+    engine = mocker.patch(
+        "dimos.simulation.engines.mujoco_sim_module.MujocoEngine",
+        side_effect=RuntimeError("captured engine configuration"),
+    )
+    module = MujocoSimModule(
+        address=tmp_path / "scene.xml",
+        enable_color=True,
+        enable_depth=depth,
+        enable_pointcloud=pointcloud,
+        enable_mujoco_lidar=raycast,
+    )
+    try:
+        with pytest.raises(RuntimeError, match="captured engine configuration"):
+            module.start()
+        cameras = engine.call_args.kwargs["cameras"]
+        assert len(cameras) == 1
+        assert cameras[0].render_depth is expected
+    finally:
+        module.stop()
+
+
+@pytest.mark.mujoco
+def test_camera_snapshot_rendering_does_not_hold_physics_lock(
+    freejoint_engine: MujocoEngine, mocker: MockerFixture
+) -> None:
+    engine = freejoint_engine
+    rendering = threading.Event()
+    release = threading.Event()
+    snapshots = []
+    initializing = threading.Event()
+    allow_init = threading.Event()
+    ready = threading.Event()
+
+    def initialize() -> dict[str, Any]:
+        initializing.set()
+        assert allow_init.wait(timeout=5)
+        return {}
+
+    mocker.patch.object(engine, "_init_cameras", side_effect=initialize)
+
+    def render(stamp: float, renderers: dict[str, Any], data: mujoco.MjData | None = None) -> None:
+        if data is None:
+            return
+        snapshots.append((stamp, data, data.qpos.copy()))
+        rendering.set()
+        assert release.wait(timeout=5)
+
+    mocker.patch.object(engine, "_render_cameras", side_effect=render)
+    thread = threading.Thread(target=engine._camera_loop, args=(ready,))
+    thread.start()
+    try:
+        assert initializing.wait(timeout=5)
+        assert not ready.is_set()
+        allow_init.set()
+        assert ready.wait(timeout=5)
+        assert rendering.wait(timeout=5)
+        assert engine._lock.acquire(timeout=1), "Rendering blocked motor physics"
+        try:
+            engine.data.qpos[0] += 1.0
+            stamp, snapshot, captured_qpos = snapshots[0]
+            assert stamp <= time.time()
+            assert snapshot is not engine.data
+            np.testing.assert_array_equal(snapshot.qpos, captured_qpos)
+            assert snapshot.qpos[0] != engine.data.qpos[0]
+        finally:
+            engine._lock.release()
+    finally:
+        engine._stop_event.set()
+        allow_init.set()
+        release.set()
+        thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+@pytest.fixture
+def initializing_camera_engine(
+    tmp_path: Path, mocker: MockerFixture
+) -> Iterator[tuple[MujocoEngine, threading.Event]]:
+    robot_xml = tmp_path / "camera-lifecycle.xml"
+    _write_freejoint_xml(robot_xml)
+    engine = MujocoEngine(
+        config_path=robot_xml,
+        headless=True,
+        cameras=[CameraConfig(name="test")],
+        background_camera_rendering=True,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+
+    def initialize() -> dict[str, Any]:
+        entered.set()
+        release.wait()
+        return {}
+
+    mocker.patch.object(engine, "_init_cameras", side_effect=initialize)
+    try:
+        assert engine.connect()
+        assert entered.wait(timeout=5)
+        yield engine, release
+    finally:
+        release.set()
+        engine.disconnect()
+
+
+@pytest.mark.mujoco
+def test_camera_shutdown_timeout_retains_thread_and_rejects_reconnect(
+    initializing_camera_engine: tuple[MujocoEngine, threading.Event],
+    mocker: MockerFixture,
+) -> None:
+    engine, release = initializing_camera_engine
+    mocker.patch("dimos.simulation.engines.mujoco_engine.DEFAULT_THREAD_JOIN_TIMEOUT", 0.05)
+    camera_thread = engine._camera_thread
+    assert camera_thread is not None
+
+    assert not engine.disconnect()
+    assert engine._camera_thread is camera_thread
+    assert camera_thread.is_alive()
+    assert not engine.connected
+    assert not engine.connect()
+    assert engine._stop_event.is_set()
+
+    release.set()
+    camera_thread.join(timeout=5)
+    assert not camera_thread.is_alive()
+    assert engine.disconnect()
+    assert engine._camera_thread is None
+    assert engine._sim_thread is None
+
+
+@pytest.mark.mujoco
+def test_camera_initialization_failure_stops_engine(tmp_path: Path, mocker: MockerFixture) -> None:
+    robot_xml = tmp_path / "failed-camera.xml"
+    _write_freejoint_xml(robot_xml)
+    engine = MujocoEngine(
+        config_path=robot_xml,
+        headless=True,
+        cameras=[CameraConfig(name="test")],
+        background_camera_rendering=True,
+    )
+    mocker.patch.object(engine, "_init_cameras", side_effect=RuntimeError("camera init failed"))
+    # Run synchronously: the sim owns and joins its camera thread on this failure path.
+    engine._sim_loop()
+    assert engine._stop_event.is_set()
+    assert not engine.connected
+    assert engine._camera_thread is not None
+    assert not engine._camera_thread.is_alive()
+    assert engine.disconnect()

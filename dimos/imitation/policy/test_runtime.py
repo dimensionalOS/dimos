@@ -373,6 +373,8 @@ def test_new_pick_discards_old_observations_without_reloading_the_backend(runtim
     # A delayed pre-clear packet must not make the old goal usable again.
     _provide(module, top_ts=now, other_ts=now)
     assert not module.rollout_status()["observations_ready"]
+    waiting = module.preflight_rollout()
+    assert waiting["policy_ready"] and not waiting["observations_ready"]
     _provide(module, top_ts=now + 0.01, other_ts=now + 0.01)
     assert module.preflight_rollout()["observations_ready"]
     assert module._backend.load_count == 1
@@ -424,3 +426,23 @@ def test_stop_interrupts_waiting_for_a_camera(runtime, mocker):
         module.stop_rollout()
         assert result.result(timeout=1) is None
     control.execute_trajectory.assert_not_called()
+
+
+def test_sensors_expiring_during_load_do_not_reload_the_model(runtime, mocker):
+    module, _control = runtime
+    clock = mocker.patch("dimos.imitation.policy.runtime.time.time", return_value=1000.0)
+    _provide(module, top_ts=1000.0, other_ts=1000.0)
+    original_load = module._backend.load
+
+    def slow_load(profile):
+        info = original_load(profile)
+        clock.return_value = 1001.0
+        return info
+
+    mocker.patch.object(module._backend, "load", side_effect=slow_load)
+    status = module.preflight_rollout()
+    assert status["policy_ready"] and not status["observations_ready"]
+    assert "stale" in status["last_error"]
+    _provide(module, top_ts=1001.0, other_ts=1001.0)
+    assert module.preflight_rollout()["observations_ready"]
+    assert module._backend.load_count == 1

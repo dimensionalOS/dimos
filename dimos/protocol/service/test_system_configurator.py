@@ -20,6 +20,7 @@ import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pytest_mock import MockerFixture
 
 from dimos.protocol.service.system_configurator.base import (
     SystemConfigurator,
@@ -35,6 +36,7 @@ from dimos.protocol.service.system_configurator.lcm import (
     MaxFileConfiguratorMacOS,
     MulticastConfiguratorLinux,
     MulticastConfiguratorMacOS,
+    local_multicast_works,
 )
 from dimos.utils import prompt
 
@@ -731,3 +733,35 @@ class TestClockSyncConfigurator:
             with patch("time.time", return_value=1700000000.0):
                 with pytest.raises(ValueError, match="too short"):
                     ClockSyncConfigurator._ntp_offset()
+
+
+def test_verified_local_lcm_delivery_needs_no_loopback_changes(mocker: MockerFixture) -> None:
+    probe = mocker.patch(
+        "dimos.protocol.service.system_configurator.lcm.local_multicast_works", return_value=True
+    )
+    commands = mocker.patch("subprocess.run")
+    url = "udpm://224.0.0.224:19479?ttl=0"
+    configurator = MulticastConfiguratorLinux(local_url=url)
+    assert configurator.check()
+    assert configurator.explanation() is None
+    probe.assert_called_once_with(url)
+    commands.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "url", ["udpm://224.0.0.224:19479?ttl=1", "udpm://224.0.0.224:19479", "memq://"]
+)
+def test_local_delivery_probe_never_sends_nonlocal_traffic(mocker: MockerFixture, url: str) -> None:
+    transport = mocker.patch("dimos.protocol.service.system_configurator.lcm.lcm_mod.LCM")
+    assert not local_multicast_works(url)
+    transport.assert_not_called()
+
+
+def test_failed_local_probe_preserves_required_network_checks(mocker: MockerFixture) -> None:
+    mocker.patch(
+        "dimos.protocol.service.system_configurator.lcm.local_multicast_works", return_value=False
+    )
+    mocker.patch("subprocess.run", side_effect=FileNotFoundError)
+    configurator = MulticastConfiguratorLinux(local_url="udpm://224.0.0.224:19479?ttl=0")
+    assert not configurator.check()
+    assert "ip link set lo multicast on" in configurator.explanation()

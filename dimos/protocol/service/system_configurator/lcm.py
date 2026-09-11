@@ -18,6 +18,11 @@ import json
 import re
 import resource
 import subprocess
+import time
+from urllib.parse import parse_qs, urlsplit
+from uuid import uuid4
+
+import lcm as lcm_mod
 
 from dimos.constants import STATE_DIR
 from dimos.protocol.service.system_configurator.base import (
@@ -45,12 +50,48 @@ def _save_sysctl_conf(data: dict[str, int]) -> None:
 # specific checks: multicast
 
 
+def local_multicast_works(url: str) -> bool:
+    """Check fragmented local LCM delivery without modifying host networking.
+
+    An explicit zero-TTL URL cannot send the probe beyond this host. A working
+    multicast interface need not be the loopback interface, so a missing route
+    or flag on ``lo`` alone does not prove local LCM is broken.
+    """
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+    if parsed.scheme != "udpm" or parse_qs(parsed.query).get("ttl") != ["0"]:
+        return False
+    try:
+        sender, receiver = lcm_mod.LCM(url), lcm_mod.LCM(url)
+        received: list[bytes] = []
+        topic = f"DIMOS_LOCAL_PROBE_{uuid4().hex}"
+        subscription = receiver.subscribe(topic, lambda _channel, data: received.append(data))
+        try:
+            for index in range(3):
+                payload = bytes([index]) * 76800
+                sender.publish(topic, payload)
+                deadline = time.monotonic() + 0.5
+                while len(received) <= index and time.monotonic() < deadline:
+                    receiver.handle_timeout(25)
+                if len(received) <= index or received[index] != payload:
+                    return False
+            return True
+        finally:
+            receiver.unsubscribe(subscription)
+    except (RuntimeError, OSError):
+        return False
+
+
 class MulticastConfiguratorLinux(SystemConfigurator):
     critical = True
     MULTICAST_PREFIX = "224.0.0.0/4"
 
-    def __init__(self, loopback_interface: str = "lo") -> None:
+    def __init__(self, loopback_interface: str = "lo", local_url: str | None = None) -> None:
         self.loopback_interface = loopback_interface
+        self.local_url = local_url
+        self.local_delivery_ok = False
 
         self.loopback_ok: bool | None = None
         self.route_ok: bool | None = None
@@ -73,6 +114,9 @@ class MulticastConfiguratorLinux(SystemConfigurator):
         ]
 
     def check(self) -> bool:
+        self.local_delivery_ok = bool(self.local_url and local_multicast_works(self.local_url))
+        if self.local_delivery_ok:
+            return True
         # Verify `ip` exists (iproute2)
         try:
             subprocess.run(["ip", "-V"], capture_output=True, text=True, check=False)
@@ -134,6 +178,8 @@ class MulticastConfiguratorLinux(SystemConfigurator):
         return bool(self.loopback_ok and self.route_ok)
 
     def explanation(self) -> str | None:
+        if self.local_delivery_ok:
+            return None
         output = ""
         if not self.loopback_ok:
             output += f"- Multicast: sudo {' '.join(self.enable_multicast_cmd)}\n"

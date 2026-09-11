@@ -300,6 +300,8 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     viewer_track_body: str | None = None
     viewer_lookat: tuple[float, float, float] | None = None
     viewer_distance: float | None = Field(default=None, gt=0)
+    # Render sensor snapshots separately so GPU waits do not block motor physics.
+    background_camera_rendering: bool = False
     dof: int = 7
 
     # Camera config (matches former MujocoCameraConfig).
@@ -506,6 +508,8 @@ class MujocoSimModule(
                 width=self.config.width,
                 height=self.config.height,
                 fps=float(self.config.fps),
+                render_depth=self.config.enable_depth
+                or (self.config.enable_pointcloud and not self.config.enable_mujoco_lidar),
                 max_geom=max_geom,
                 geom_groups=groups,
                 base_body_name=self.config.base_frame_id,
@@ -568,6 +572,7 @@ class MujocoSimModule(
             viewer_track_body=self.config.viewer_track_body,
             viewer_lookat=self.config.viewer_lookat,
             viewer_distance=self.config.viewer_distance,
+            background_camera_rendering=self.config.background_camera_rendering,
         )
         if self.config.robot_mjcf is not None:
             engine_kwargs["config_path"] = Path(self.config.robot_mjcf)
@@ -1097,8 +1102,8 @@ class MujocoSimModule(
     def _extra_publish_loop(self) -> None:
         """Publish each extra camera's newest frame on its own port.
 
-        One loop for all of them: rendering happens on the sim thread, so this
-        side only forwards whatever the engine has already produced.
+        One loop for all of them: this side only forwards the completed frames
+        from the engine, whether rendered with physics or from snapshots.
         """
         engine = self._engine
         if engine is None:

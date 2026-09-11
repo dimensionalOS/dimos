@@ -114,7 +114,7 @@ class _PolicyRuntimeMixin:
             try:
                 self._snapshot_observation(time.time())
             except Exception as exc:
-                self._backend_info = None
+                # Sensor readiness does not invalidate an already loaded model.
                 self._last_error = str(exc)
                 return self._status_locked()
 
@@ -129,8 +129,13 @@ class _PolicyRuntimeMixin:
             self._validate_backend_info(backend_info)
             with self._lock:
                 self._backend_info = backend_info
-                self._snapshot_observation(time.time())
-                self._last_error = None
+                try:
+                    self._snapshot_observation(time.time())
+                    self._last_error = None
+                except RuntimeError as exc:
+                    # Loading can outlast a camera frame. Wait for fresh inputs
+                    # on the next preflight without allocating the model again.
+                    self._last_error = str(exc)
                 return self._status_locked()
         except Exception as exc:
             with self._lock:
