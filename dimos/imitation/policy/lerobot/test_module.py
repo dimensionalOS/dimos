@@ -27,6 +27,7 @@ from dimos.imitation.policy.lerobot.module import (
 def test_contract_imports_without_runtime_dependencies() -> None:
     assert LeRobotPolicyModule.implementation == "dimos_lerobot.runtime:LeRobotPolicyRuntime"
     assert contract_rpc_names(LeRobotPolicyModule) == {
+        "preflight_rollout",
         "rollout_status",
         "start_rollout",
         "stop_rollout",
@@ -36,6 +37,7 @@ def test_contract_imports_without_runtime_dependencies() -> None:
 def test_contract_resolves_sibling_runtime_project() -> None:
     module = LeRobotPolicyModule(
         policy_path="unused",
+        task="test task",
         joint_names=["joint"],
     )
     try:
@@ -50,6 +52,7 @@ def test_contract_resolves_sibling_runtime_project() -> None:
         (
             {
                 "policy_path": "checkpoint",
+                "task": "test task",
                 "joint_names": ["joint1", "joint1"],
             },
             "joint_names must not contain duplicates",
@@ -57,6 +60,7 @@ def test_contract_resolves_sibling_runtime_project() -> None:
         (
             {
                 "policy_path": " ",
+                "task": "test task",
                 "joint_names": ["joint1"],
             },
             "policy_path must not be blank",
@@ -64,10 +68,11 @@ def test_contract_resolves_sibling_runtime_project() -> None:
         (
             {
                 "policy_path": "checkpoint",
+                "task": "test task",
                 "joint_names": ["joint1"],
-                "gripper_joint_name": "gripper",
+                "rollout_button": "NOPE",
             },
-            "gripper_joint_name must be present in joint_names",
+            "unknown Quest button",
         ),
     ],
 )
@@ -85,6 +90,7 @@ def test_existing_relative_checkpoint_is_resolved_before_isolation(
 
     config = LeRobotPolicyModuleConfig(
         policy_path="checkpoint",
+        task="test task",
         joint_names=["joint1"],
     )
 

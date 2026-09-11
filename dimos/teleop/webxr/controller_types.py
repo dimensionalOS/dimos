@@ -129,6 +129,7 @@ class Buttons(UInt32):
         "right_secondary": 13,
         "right_menu": 14,
     }
+    DIGITAL_MASK: ClassVar[int] = sum(1 << bit for bit in BITS.values())
 
     # Analog trigger packing constants
     _LEFT_TRIGGER_SHIFT: int = 16
