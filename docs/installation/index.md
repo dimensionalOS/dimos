@@ -1,6 +1,6 @@
 # Installation
 
-`scripts/install.sh` is the official installation entry point. Run it from a terminal:
+The recommended way to install dimOS is the guided `install.sh` script. It installs system dependencies, uv, Python, and dimOS into a project virtual environment (or a source checkout for contributors). Recent clean Ubuntu CI installs took about 2–4 minutes (allow longer on a laptop, slower connection, or first Homebrew/Nix setup). Run it from a terminal:
 
 ```sh skip
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
@@ -18,7 +18,7 @@ Linux ARM64 excludes `scene` because `usd-core` has no wheel. CUDA extras requir
 
 ## Choose a mode
 
-- **Library** installs the published package in a project virtual environment.
+- **Library (recommended)** installs the published package in a project virtual environment.
 - **Developer** clones `main` and installs the checkout with test and lint dependencies. An existing checkout is reused without pulling or switching branches.
 
 Install a CPU library environment without prompts or replay:
@@ -29,28 +29,15 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
   --non-interactive --no-nix --no-cuda --no-sysctl --skip-tests
 cd dimos-app
 source .venv/bin/activate
-dimos --help
+uv run dimos --help
 ```
 
-Use `--mode dev --project-dir ./dimos` for a source checkout. Use `--extras base,unitree` to select capabilities; the default is `all` with platform exclusions. See [dependency tiers](/docs/requirements.md#dependency-tiers).
+Use `--mode dev --project-dir ./dimos` for a source checkout. Use `--extras base,unitree` to select capabilities (developer mode defaults to `all` with platform exclusions). See [dependency tiers](/docs/requirements.md#dependency-tiers).
 
-`--skip-tests` skips replay only; installation verification still runs. `--no-sysctl` skips network tuning. These commands can install system packages on your host.
+`--skip-tests` skips replay only (installation verification still runs). `--no-sysctl` skips network tuning. These commands can install system packages on your host.
 
 For all options:
 
 ```sh skip
 curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --help
 ```
-
-## Test a checkout locally
-
-From the repository, run either mode in a fresh temporary directory:
-
-```sh skip
-INSTALL_TEST_ROOT="$(mktemp -d)" bash scripts/test-install.sh library
-INSTALL_TEST_ROOT="$(mktemp -d)" bash scripts/test-install.sh dev
-```
-
-Library mode tests this checkout's installer against the published package. Developer mode clones the current commit; commit local changes first to include them. Logs are saved in `logs/install.log` under each temporary directory.
-
-These checks disable GPU access and skip replay and sysctl changes. The temporary directory isolates the project and Python environment; apt or Homebrew packages are installed on the host. Use a disposable Ubuntu container for isolation. On macOS, these commands test Homebrew setup. On Arch, they require manually installed system dependencies because the test helper disables Nix.

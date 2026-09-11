@@ -71,7 +71,7 @@ pytest -m self_hosted dimos/path/to/test_something.py
 
 ## Testing on a fresh Ubuntu install
 
-Installation CI runs `scripts/test-install.sh` in fresh Ubuntu 22.04/24.04 containers on x86_64 and ARM64. It verifies one library or developer installation per job without starting blueprints. See [local installation checks](/docs/installation/index.md#test-a-checkout-locally).
+Installation CI runs `scripts/test-install.sh` in fresh Ubuntu 22.04/24.04 containers on x86_64 and ARM64. It verifies one library or developer installation per job without starting blueprints. See [local installation checks](#test-a-checkout-locally).
 
 The application test suite uses pre-built images and cached dependencies. For additional application tests, the
 [misc/fresh-ubuntu-tests/](/misc/fresh-ubuntu-tests/) harness runs its install and test flow inside a fresh, official,
@@ -190,3 +190,16 @@ If a test needs to be skipped for some reason, please use on of these markers, o
 * `skipif_in_ci`: tests which cannot run in GitHub Actions
 * `skipif_no_openai`: tests which require an `OPENAI_API_KEY` key in the env
 * `skipif_no_alibaba`: tests which require an `ALIBABA_API_KEY` key in the env
+
+## Test a checkout locally
+
+From the repository, run either mode in a fresh temporary directory:
+
+```sh skip
+INSTALL_TEST_ROOT="$(mktemp -d)" bash scripts/test-install.sh library
+INSTALL_TEST_ROOT="$(mktemp -d)" bash scripts/test-install.sh dev
+```
+
+Library mode tests this checkout's installer against the published package. Developer mode clones the current commit (commit local changes first to include them). Logs are saved in `logs/install.log` under each temporary directory.
+
+These checks disable GPU access and skip replay and sysctl changes. The temporary directory isolates the project and Python environment; apt or Homebrew packages are installed on the host. Use a disposable Ubuntu container for isolation. On macOS, these commands test Homebrew setup. On Arch, they require manually installed system dependencies because the test helper disables Nix.

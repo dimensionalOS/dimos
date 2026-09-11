@@ -137,6 +137,8 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 # Installation
 
+## Guided installation (recommended)
+
 Use the official installer to set up system dependencies, Python 3.12, and dimOS:
 
 ```sh skip
@@ -145,13 +147,17 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 
 > See [`scripts/install.sh --help`](scripts/install.sh) for non-interactive and advanced options.
 
-See [installer options and local testing](docs/installation/index.md), or platform notes:
+See [installer options](docs/installation/index.md), or platform notes:
 
 - 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
 - [NixOS / General Linux (not CI-tested)](docs/installation/nix.md)
 - 🟧 [macOS](docs/installation/osx.md)
 
 > Full system requirements, tested configs, and dependency tiers: [docs/requirements.md](docs/requirements.md)
+
+## Manual installation
+
+If you need to install without the script, follow the system-package and Python steps for [Ubuntu](docs/installation/ubuntu.md#manual-installation), [macOS](docs/installation/osx.md#manual-installation), or [Nix](docs/installation/nix.md#manual-installation).
 
 ## Quickstart
 

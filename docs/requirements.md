@@ -10,7 +10,7 @@ Install dimOS with the [official installer](/docs/installation/index.md). It pro
 | CPU | 8-core Intel / AMD | 12+ cores |
 | RAM | 16 GB | 32 GB+ |
 | Disk | 10 GB SSD | 25 GB+ SSD |
-| OS | Ubuntu 22.04, macOS 12.6+ | Ubuntu 24.04 |
+| OS | Ubuntu 22.04, macOS 14+ | Ubuntu 24.04 |
 
 > GPU is optional for basic robot control. Required for perception, VLMs, and AI features.
 
@@ -46,8 +46,8 @@ curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/in
 | `drone` | DJI Tello / MAVLink drones | pymavlink | No |
 | `manipulation` | Arm planning + control | Drake, piper-sdk, xarm-sdk | No |
 | `mapping` | GTSAM-backed pose graph optimization (relocalization) | gtsam-extended | No |
-| `cuda` | GPU acceleration | cupy, onnxruntime-gpu | **Yes** |
-| `cpu` | CPU inference backends | onnxruntime | No |
+| `cuda` | CUDA PyTorch and GPU acceleration | torch, torchvision, cupy, onnxruntime-gpu | **Yes** |
+| `cpu` | CPU PyTorch and inference backends | torch, torchvision, onnxruntime | No |
 | `misc` | Extra models, embeddings, hardware SDKs | edgetam, timm, torchreid, xarm-sdk | Varies |
 | `base` | Standard stack (agents + web + viz) | langchain, fastapi, rerun-sdk | No |
 | `dds` | DDS transport (CycloneDDS) | cyclonedds | No |

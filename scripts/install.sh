@@ -39,6 +39,7 @@ SKIP_TESTS="${DIMOS_SKIP_TESTS:-0}"
 HAS_NIX=0
 SETUP_METHOD=""
 INSTALL_DIR=""
+INSTALL_PYTHON="3.12"
 GUM=""
 INSTALL_DEPS=1
 DEV_TOOLS=0
@@ -512,7 +513,10 @@ prompt_setup_method() {
 
 verify_nix_develop() {
     info "verifying nix develop environment..."
-    project_cmd sh -c 'command -v python3 && command -v gcc' || die "nix develop verification failed"
+    if [[ "$DRY_RUN" == 1 ]]; then return; fi
+    # A shell hook may print setup messages before the command's final line.
+    INSTALL_PYTHON=$(project_cmd sh -c 'command -v gcc >/dev/null && python3 -c "import sys; print(sys.executable)"' | tail -n 1) || die "nix develop verification failed"
+    [[ "$INSTALL_PYTHON" == /nix/store/* ]] || die "Nix setup must provide its own Python"
 }
 
 # ─── system dependencies ─────────────────────────────────────────────────────
@@ -534,8 +538,7 @@ install_system_deps() {
             fi
             info "need to install: ${needed[*]}"
             if ! prompt_confirm "Install these packages via apt?" "yes"; then
-                warn "skipping system dependencies — some features may not work"
-                return
+                die "required system packages were declined; install them before continuing: ${needed[*]}"
             fi
             run_cmd "${privilege[@]}" apt-get update
             run_cmd "${privilege[@]}" /usr/bin/env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y "${needed[@]}"
@@ -572,8 +575,7 @@ install_system_deps() {
             fi
             info "need to install via brew: ${needed[*]}"
             if ! prompt_confirm "Install these packages via brew?" "yes"; then
-                warn "skipping system dependencies — some features may not work"
-                return
+                die "required system packages were declined; install them before continuing: ${needed[*]}"
             fi
             run_cmd brew install "${needed[@]}"
             ;;
@@ -742,12 +744,12 @@ do_install_library() {
     fi
     if [[ -d "$dir/.venv" && "$DRY_RUN" != 1 ]]; then
         if prompt_confirm "Replace existing virtual environment?" no; then
-            project_cmd /usr/bin/env UV_VENV_CLEAR=1 uv venv --python 3.12
+            project_cmd /usr/bin/env UV_VENV_CLEAR=1 uv venv --python "$INSTALL_PYTHON"
         else
             info "keeping existing .venv"
         fi
     else
-        project_cmd uv venv --python 3.12
+        project_cmd uv venv --python "$INSTALL_PYTHON"
     fi
     local backend=cpu
     if [[ ",$EXTRAS," == *,cuda,* ]]; then backend=cu128; fi
@@ -769,14 +771,14 @@ do_install_dev() {
     else
         run_cmd /usr/bin/env GIT_LFS_SKIP_SMUDGE=1 git clone -b "$GIT_BRANCH" https://github.com/dimensionalOS/dimos.git "$dir"
     fi
-    local -a sync_args=(--locked --python 3.12 --group tests --group lint)
+    if [[ "$USE_NIX" == 1 ]]; then verify_nix_develop; fi
+    local -a sync_args=(--locked --python "$INSTALL_PYTHON" --group tests --group lint)
     local -a extras=()
     local extra
     IFS=',' read -r -a extras <<< "$EXTRAS"
     for extra in "${extras[@]}"; do sync_args+=(--extra "$extra"); done
     dim "will run: uv sync ${sync_args[*]}"
     if ! prompt_confirm "Install dependencies now?" yes; then INSTALL_DEPS=0; return; fi
-    if [[ "$USE_NIX" == 1 ]]; then verify_nix_develop; fi
     project_cmd uv sync "${sync_args[@]}"
     ok "developer environment ready in $dir"
 }
@@ -820,6 +822,7 @@ configure_system() {
 # Python's timeout works on macOS too. Each command owns a process group so
 # timeout and interruption also stop workers started by a blueprint.
 run_bounded() {
+    info "checking (timeout ${1}s): ${*:2}"
     project_cmd .venv/bin/python - "$@" <<'PYTHON' &
 import os
 import signal
@@ -870,7 +873,7 @@ verify_install() {
     run_bounded 60 .venv/bin/python -c 'import sqlite3, cv2, open3d; from turbojpeg import TurboJPEG; TurboJPEG()'
     if [[ ",$EXTRAS," == *,cuda,* ]]; then
         run_bounded 60 .venv/bin/python -c 'import torch; assert torch.cuda.is_available(); assert (torch.ones(1, device="cuda") + 1).item() == 2'
-    elif [[ "$NO_CUDA" == 1 ]]; then
+    elif [[ "$NO_CUDA" == 1 ]] && project_cmd .venv/bin/python -c 'import importlib.util; raise SystemExit(importlib.util.find_spec("torch") is None)'; then
         run_bounded 60 .venv/bin/python -c 'import torch; assert (torch.ones(1, device="cpu") + 1).item() == 2'
     fi
     ok "installation verified"
@@ -909,7 +912,7 @@ print_quickstart() {
         printf "    %s# MuJoCo simulation%s\n    dimos --simulation run unitree-go2\n\n" "$DIM" "$RESET"
     fi
     if [[ "$INSTALL_MODE" == "dev" ]]; then
-        printf "    %s# tests%s\n    uv run pytest dimos\n\n    %s# type check%s\n    uv run mypy dimos\n\n" "$DIM" "$RESET" "$DIM" "$RESET"
+        printf "    %s# tests%s\n    uv run --no-sync pytest dimos\n\n    %s# type check%s\n    uv run --no-sync mypy dimos\n\n" "$DIM" "$RESET" "$DIM" "$RESET"
     fi
     if [[ "$USE_NIX" == "1" ]]; then
         printf "  %s⚠%s open a %snew terminal%s first, then run 'nix develop' before working with DimOS\n" "$YELLOW" "$RESET" "$BOLD" "$RESET"
@@ -938,7 +941,6 @@ main() {
     if [[ "$NON_INTERACTIVE" != 1 ]] && ! (true </dev/tty) 2>/dev/null; then
         die "no terminal available; use --non-interactive"
     fi
-    export UV_PYTHON_PREFERENCE=only-managed
 
     if [[ "$NON_INTERACTIVE" != "1" ]]; then
         if install_gum 2>/dev/null; then
@@ -960,12 +962,17 @@ main() {
     fi
     if [[ "$DETECTED_OS" == "macos" ]]; then
         local mac_major; mac_major="$(echo "$DETECTED_OS_VERSION" | cut -d. -f1)"
-        if [[ "$mac_major" =~ ^[0-9]+$ ]] && [[ "$mac_major" -lt 12 ]]; then
-            die "macOS ${DETECTED_OS_VERSION} too old — 12.6+ required"
+        if [[ "$mac_major" =~ ^[0-9]+$ ]] && [[ "$mac_major" -lt 14 ]]; then
+            die "macOS ${DETECTED_OS_VERSION} too old — 14+ required by current dependencies"
         fi
     fi
 
     prompt_setup_method
+    if [[ "$USE_NIX" == 1 ]]; then
+        export UV_PYTHON_PREFERENCE=only-system UV_PYTHON_DOWNLOADS=never
+    else
+        export UV_PYTHON_PREFERENCE=only-managed
+    fi
     if [[ "$SETUP_METHOD" != "nix" ]]; then install_system_deps; fi
     install_uv
 

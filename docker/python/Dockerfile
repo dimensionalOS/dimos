@@ -4,7 +4,13 @@ FROM ${FROM_IMAGE}
 # Install basic requirements
 RUN apt-get update && apt-get install -y \
     python-is-python3 \
+    ca-certificates \
     curl \
+    libegl1 \
+    libglib2.0-0 \
+    libsndfile1 \
+    pkg-config \
+    ffmpeg \
     gnupg2 \
     lsb-release \
     python3-pip \
