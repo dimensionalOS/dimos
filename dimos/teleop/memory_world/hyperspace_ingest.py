@@ -267,21 +267,37 @@ def _ingest(
     def in_window(observation: Any) -> bool:
         return start_ts - 5.0 <= float(observation.ts) <= start_ts + max_seconds + 5.0
 
+    measured = (
+        [t for obs in store.streams[CORRECTED_STATIC_STREAM] for t in obs.data.transforms]
+        if CORRECTED_STATIC_STREAM in store.list_streams()
+        else []
+    )
+    # Whatever a measured edge names, the recording's own samples of it are dropped: a
+    # stitched recording republishes its static edges inside the moving tf stream
+    # hundreds of times, and Hyperspace keeps the last sample of an edge, so one early
+    # correction would simply be overwritten. Same reason the corrected base poses
+    # displace the recorded world -> base_link below.
+    superseded = {(str(t.frame_id), str(t.child_frame_id)) for t in measured}
+    if corrected is not None:
+        superseded.add((world, "base_link"))
+
+    def kept_of(message: TFMessage) -> TFMessage | None:
+        if not superseded:
+            return message
+        kept = [
+            t
+            for t in message.transforms
+            if (str(t.frame_id), str(t.child_frame_id)) not in superseded
+        ]
+        return TFMessage(*kept) if kept else None
+
     def originals() -> Iterator[tuple[float, TFMessage]]:
         for observation in store.streams[streams["tf"]].order_by("ts"):
             if not in_window(observation):
                 continue
-            message = observation.data
-            if corrected is not None:
-                kept = [
-                    t
-                    for t in message.transforms
-                    if not (t.frame_id == world and t.child_frame_id == "base_link")
-                ]
-                if not kept:
-                    continue
-                message = TFMessage(*kept)
-            yield float(observation.ts), message
+            message = kept_of(observation.data)
+            if message is not None:
+                yield float(observation.ts), message
 
     def corrected_poses() -> Iterator[tuple[float, TFMessage]]:
         if corrected is None:
@@ -308,26 +324,22 @@ def _ingest(
             )
 
     def statics() -> Iterator[tuple[float, TFMessage]]:
-        """The recording's static edges, with a measured mount replacing the recorded one.
+        """The static edges, with a measured mount replacing whatever the recording said.
 
         The memory db is what places keyframes at query time, so it has to agree with
         the tree the module places markers and pictures with. Without this the search
         evidence would sit where the recording claims the camera was and the map would
         show where it actually was, disagreeing by the whole correction.
         """
-        if streams.get("tf_static") is None:
-            return
-        held = [t for obs in store.streams[streams["tf_static"]] for t in obs.data.transforms]
-        measured = (
-            [t for obs in store.streams[CORRECTED_STATIC_STREAM] for t in obs.data.transforms]
-            if CORRECTED_STATIC_STREAM in store.list_streams()
-            else []
+        static_stream = streams.get("tf_static")
+        held = (
+            [t for obs in store.streams[static_stream] for t in obs.data.transforms]
+            if static_stream
+            else []  # a stitched recording keeps its static edges in the moving stream
         )
+        held = [t for t in held if (str(t.frame_id), str(t.child_frame_id)) not in superseded]
+        held += measured
         if measured:
-            replaced = {(str(t.frame_id), str(t.child_frame_id)) for t in measured}
-            held = [
-                t for t in held if (str(t.frame_id), str(t.child_frame_id)) not in replaced
-            ] + measured
             print(
                 f"tf: {len(measured)} measured static edge(s) replace the recorded ones", flush=True
             )
