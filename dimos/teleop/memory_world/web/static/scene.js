@@ -21,8 +21,7 @@ const TELEPORT_ARC_SEGMENTS = 24;
 const TELEPORT_MAX_DISTANCE = 8.0;            // metres along ray
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 10.0;
-// Desktop (non-XR) fallback. WebXR normally supplies the head pose; without a
-// headset we drive `camera` ourselves from mouse-look at a fixed standing height.
+// Desktop fallback: without a headset, mouse-look drives `camera` at standing height.
 const EYE_HEIGHT_M = 1.6;
 const DESKTOP_LOOK_SENSITIVITY = 0.0022;      // radians per pixel of mouse travel
 const DESKTOP_PITCH_LIMIT = 1.45;             // just under 90deg, avoids gimbal flip
@@ -1368,7 +1367,10 @@ export class WorldScene {
 
         this.clusterFilter = -1;
         this._selectedImageIds = new Set(result.observation_ids || []);
-        if (this._selectedImageIds.size > 0) this._imageQuadGroup.visible = true;
+        if (this._selectedImageIds.size > 0 && !this._imageQuadGroup.visible) {
+            this._imageQuadGroup.visible = true;
+            if (this.onLayerChange) this.onLayerChange();  // the photos box follows
+        }
         // The selection changes which poses deserve a texture, so rebuild now.
         this._releaseAllThumbnails();
         this._imageLodAccumS = IMAGE_LOD_INTERVAL_S;

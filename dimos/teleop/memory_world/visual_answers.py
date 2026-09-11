@@ -87,7 +87,12 @@ class VisualAnswers:
             return
         with self._store_lock, self._index_lock:  # the build reads every image
             index = self._ensure_visual_index()
-            existing = index.count()
+            try:
+                existing = index.count()
+            except Exception as error:  # built for another model, camera or frame
+                self._index_progress = f"failed: {error}"
+                logger.exception("visual index unusable")
+                return
             if existing == 0 and not self.config.build_image_index_on_start:
                 self._index_progress = "no embeddings; add them from the viewer"
                 logger.info("visual index: %s", self._index_progress)

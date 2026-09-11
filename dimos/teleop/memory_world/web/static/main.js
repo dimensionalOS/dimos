@@ -726,12 +726,15 @@ function syncBoxesFromScene() {
 
 /** Apply the boxes to the current scene: they keep their state across a reconnect, the scene does not. */
 function syncLayerBoxes() {
-    if (heatmap) heatmap.setVisible(layerBoxes.heat.checked);
-    if (pyramids) pyramids.setVisible(layerBoxes.pyramids.checked);
+    const wanted = { heat: layerBoxes.heat.checked, pyramids: layerBoxes.pyramids.checked,
+        voxels: layerBoxes.voxels.checked, photos: layerBoxes.photos.checked, hud: layerBoxes.hud.checked };
+    if (heatmap) heatmap.setVisible(wanted.heat);
+    if (pyramids) pyramids.setVisible(wanted.pyramids);
     if (!scene) return;
-    if (scene._cloudWanted !== layerBoxes.voxels.checked) scene.toggleCloud();
-    if (scene._imageQuadGroup && scene._imageQuadGroup.visible !== layerBoxes.photos.checked) scene.toggleImages();
-    if (scene._hudPanel && scene._hudPanel.visible !== layerBoxes.hud.checked) {
+    // Each toggle writes the boxes back; the snapshot keeps the later ones honest.
+    if (scene._cloudWanted !== wanted.voxels) scene.toggleCloud();
+    if (scene._imageQuadGroup && scene._imageQuadGroup.visible !== wanted.photos) scene.toggleImages();
+    if (scene._hudPanel && scene._hudPanel.visible !== wanted.hud) {
         hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
     }
 }
