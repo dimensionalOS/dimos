@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-import threading
 
 import numpy as np
 import pytest
@@ -32,7 +31,6 @@ from dimos.mapping.hyperspace.ingest import (
     IngestConfig,
     PatchIngestor,
 )
-from dimos.mapping.hyperspace.module import Hyperspace
 from dimos.mapping.hyperspace.query import HyperspaceQuery, TfCache
 from dimos.mapping.hyperspace.segments import SEGMENT_STREAM
 from dimos.memory.store.sqlite import SqliteStore
@@ -282,16 +280,13 @@ def test_tf_is_read_once_not_on_every_query(store: SqliteStore) -> None:
         store.stream = original  # type: ignore[method-assign]
 
 
-def test_live_catch_up_takes_in_transforms_between_queries(store: SqliteStore) -> None:
-    ingestor = fill(store, ring(3, 2.5))
+def test_live_transforms_land_in_the_buffer_the_answers_read(store: SqliteStore) -> None:
+    fill(store, ring(3, 2.5))
     engine = HyperspaceQuery(store, StubModel.embed_text, hs.QueryConfig(), WORLD, 0.1)
-    # The module's loop, without the module's runtime: same lock, same engine.
-    module = Hyperspace.__new__(Hyperspace)
-    module._lock = threading.Lock()
-    module.engine = engine
-    module.catch_up_tf()
+    engine.placer(WORLD)  # reads what the store holds
     placed = len(engine.tf.latest)
-    ingestor.add_tf(
+    # What Hyperspace.handle_tf does with a transform published while running.
+    engine.tf.receive(
         TFMessage(
             Transform(
                 translation=Vector3(9.0, 0.0, 0.0),
@@ -300,10 +295,8 @@ def test_live_catch_up_takes_in_transforms_between_queries(store: SqliteStore) -
                 child_frame_id="extra",
                 ts=99.0,
             )
-        ),
-        ts=99.0,
+        )
     )
-    module.catch_up_tf()
     assert len(engine.tf.latest) == placed + 1
     assert engine.tf.get(WORLD, "extra", 99.0) is not None
 

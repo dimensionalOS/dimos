@@ -278,10 +278,6 @@ class HyperspaceConfig(MemoryModuleConfig):
     refine_min_frames: int = 1
     # Depth samples a voxel needs to appear in scene_map.
     scene_min_samples: int = 3
-    # Live: how often the transform buffer catches up with what the recorder
-    # has written, so a query never waits on a backlog of transforms. 0 leaves
-    # the catch-up to the queries themselves.
-    tf_poll_s: float = 0.5
     # Demo: after this many seconds, run demo_queries and publish the answers,
     # then repeat every demo_every_s. 0 disables.
     demo_after_s: float = 0.0
@@ -303,6 +299,7 @@ class Hyperspace(MemoryModule):
     config: HyperspaceConfig
 
     query: In[String]
+    tf: In[TFMessage]
     query_result: Out[PointCloud2]
     query_answer: Out[String]
     scene_map: Out[PointCloud2]
@@ -374,6 +371,11 @@ class Hyperspace(MemoryModule):
             )
             return answer
 
+    async def handle_tf(self, msg: TFMessage) -> None:
+        # Live transforms land in the same buffer the answers read; the store
+        # is still read at query time for whatever was written before start.
+        self.engine.tf.receive(msg)
+
     async def handle_query(self, msg: String) -> None:
         payload = msg.data.strip()
         request_id, text, frame = None, payload, None
@@ -438,32 +440,15 @@ class Hyperspace(MemoryModule):
         return len(voxels)
 
     async def main(self) -> AsyncIterator[None]:
-        # Code before the first yield is startup; the loops must not block it.
+        # Code before the first yield is startup; the demo loop must not block it.
         demo = None
         if self.config.demo_after_s > 0 and self.config.demo_queries:
             demo = asyncio.create_task(self._demo_loop())
-        tf = asyncio.create_task(self._tf_loop()) if self.config.tf_poll_s > 0 else None
         try:
             yield
         finally:
-            for task in (demo, tf):
-                if task is not None:
-                    task.cancel()
-
-    def catch_up_tf(self) -> None:
-        """Take in the transforms written since the last pass. Runs on the
-        query lock: the buffer is the one the answers read."""
-        with self._lock:
-            self.engine.tf.update()
-
-    async def _tf_loop(self) -> None:
-        """Keep the transform buffer level with the recorder while driving.
-        Queries update it too, but a robot that is not being asked anything
-        still writes tf, and none of it should land on the next question."""
-        loop = asyncio.get_running_loop()
-        while True:
-            await loop.run_in_executor(None, self.catch_up_tf)
-            await asyncio.sleep(self.config.tf_poll_s)
+            if demo is not None:
+                demo.cancel()
 
     async def _demo_loop(self) -> None:
         loop = asyncio.get_running_loop()

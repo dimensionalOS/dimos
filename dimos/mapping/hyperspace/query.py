@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 import sqlite3
+import threading
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -66,6 +67,7 @@ class TfCache:
         self.buffer = MultiTBuffer(buffer_size=math.inf)
         self.latest: dict[tuple[str, str, float], Any] = {}
         self.last_id = -1
+        self.lock = threading.Lock()  # live transforms arrive while a query reads
 
     def update(self) -> None:
         if self.stream_name not in self.store.list_streams():
@@ -88,20 +90,30 @@ class TfCache:
             if not tail:
                 return
             batch = sorted(tail, key=lambda o: o.ts)
-        fresh, replaced = [], False
+        transforms = []
         for obs in batch:
             self.last_id = max(self.last_id, obs.id)
-            for transform in obs.data.transforms:
+            transforms.extend(obs.data.transforms)
+        self.take(transforms)
+
+    def receive(self, message: TFMessage) -> None:
+        """Transforms as they are published, so a live map needs no re-read."""
+        self.take(message.transforms)
+
+    def take(self, transforms: Iterable[Any]) -> None:
+        with self.lock:
+            fresh, replaced = [], False
+            for transform in transforms:
                 key = (transform.frame_id, transform.child_frame_id, float(transform.ts))
                 if key in self.latest:
                     replaced = True
                 self.latest[key] = transform
                 fresh.append(transform)
-        if replaced:
-            self.buffer = MultiTBuffer(buffer_size=math.inf)
-            self.buffer.receive_transform(*self.latest.values())
-        elif fresh:
-            self.buffer.receive_transform(*fresh)
+            if replaced:
+                self.buffer = MultiTBuffer(buffer_size=math.inf)
+                self.buffer.receive_transform(*self.latest.values())
+            elif fresh:
+                self.buffer.receive_transform(*fresh)
 
     def get(self, target: str, source: str, ts: float) -> NDArray[np.float64] | None:
         transform = self.buffer.get(target, source, ts, warn=False)
