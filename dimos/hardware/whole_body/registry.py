@@ -12,75 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""WholeBodyAdapter registry with auto-discovery.
+"""WholeBodyAdapter registry with lazy manifest discovery.
 
-Mirrors the TwistBaseAdapterRegistry pattern: each subpackage provides a
-``register(registry)`` function in its ``adapter.py`` module.
+Adapter packages declare factories in ``_registry.py`` manifests
+(see ``dimos.hardware.adapter_registry``). Two roots are scanned:
+
+* ``dimos/hardware/whole_body/`` — real-hardware adapters (Unitree DDS,
+  transport-LCM bridge). Subpackages are either flat ``<kind>/`` or
+  nested ``<vendor>/<robot>/``.
+* ``dimos/simulation/adapters/whole_body/`` — sim adapters (``g1.py``,
+  etc.), declared in a single root-level manifest. Sim engines live
+  under ``dimos/simulation/`` so their adapter glue lives there too.
 
 Usage:
     from dimos.hardware.whole_body.registry import whole_body_adapter_registry
 
-    adapter = whole_body_adapter_registry.create("unitree_go2")
-    print(whole_body_adapter_registry.available())  # ["unitree_go2"]
+    adapter = whole_body_adapter_registry.create("sim_mujoco_g1")
+    print(whole_body_adapter_registry.available())  # ["sim_mujoco_g1", ...]
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-import importlib
-import os
-from typing import TYPE_CHECKING, Any
-
-from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.hardware.whole_body.spec import WholeBodyAdapter
-
-logger = setup_logger()
+from dimos.hardware.adapter_registry import LazyAdapterRegistry
+from dimos.hardware.whole_body.spec import WholeBodyAdapter
 
 
-class WholeBodyAdapterRegistry:
-    """Registry for whole-body motor adapters with auto-discovery."""
+class WholeBodyAdapterRegistry(LazyAdapterRegistry[WholeBodyAdapter]):
+    """Registry for whole-body motor adapters."""
 
-    def __init__(self) -> None:
-        # Factory may be a class or any other callable (e.g. functools.partial
-        # binding transport_cls). Store as Callable so `register("transport_lcm",
-        # partial(TransportWholeBodyAdapter, ...))` typechecks.
-        self._adapters: dict[str, Callable[..., WholeBodyAdapter]] = {}
-
-    def register(self, name: str, cls: Callable[..., WholeBodyAdapter]) -> None:
-        """Register an adapter factory (class or callable)."""
-        self._adapters[name.lower()] = cls
-
-    def create(self, name: str, **kwargs: Any) -> WholeBodyAdapter:
-        """Create an adapter instance by name."""
-        key = name.lower()
-        if key not in self._adapters:
-            raise KeyError(f"Unknown whole-body adapter: {name}. Available: {self.available()}")
-        return self._adapters[key](**kwargs)
-
-    def available(self) -> list[str]:
-        """List available adapter names."""
-        return sorted(self._adapters.keys())
-
-    def discover(self) -> None:
-        """Discover and register adapters from subpackages."""
-        import dimos.hardware.whole_body as pkg
-
-        pkg_dir = pkg.__path__[0]
-        for entry in sorted(os.listdir(pkg_dir)):
-            entry_path = os.path.join(pkg_dir, entry)
-            if not os.path.isdir(entry_path) or entry.startswith(("_", ".")):
-                continue
-            try:
-                mod = importlib.import_module(f"dimos.hardware.whole_body.{entry}.adapter")
-                if hasattr(mod, "register"):
-                    mod.register(self)
-            except ImportError as e:
-                logger.warning(f"Skipping whole-body adapter {entry}: {e}")
+    kind = "whole-body adapter"
+    manifest_roots = (
+        ("dimos.hardware.whole_body", 2),
+        ("dimos.simulation.adapters.whole_body", 1),
+    )
 
 
 whole_body_adapter_registry = WholeBodyAdapterRegistry()
-whole_body_adapter_registry.discover()
-
-__all__ = ["WholeBodyAdapterRegistry", "whole_body_adapter_registry"]

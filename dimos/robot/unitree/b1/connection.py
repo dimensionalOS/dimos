@@ -64,6 +64,8 @@ class B1ConnectionModule(Module):
     internally converts to B1Command format, and sends UDP packets at 50Hz.
     """
 
+    dedicated_worker = True
+
     config: B1ConnectionConfig
 
     # LCM ports (inter-module communication)
@@ -72,6 +74,7 @@ class B1ConnectionModule(Module):
     odom_in: In[Odometry]
 
     odom_pose: Out[PoseStamped]
+    tf: Out[TFMessage]
 
     # ROS In ports (receiving from ROS via ROSTransport)
     ros_cmd_vel: In[TwistStamped]
@@ -315,7 +318,7 @@ class B1ConnectionModule(Module):
 
     def _on_ros_tf(self, msg: TFMessage) -> None:
         """Forward ROS TF messages to the module's TF tree."""
-        self.tf.publish(*msg.transforms)
+        self.tf.publish(msg)
 
     def _watchdog_loop(self) -> None:
         """Single watchdog thread that monitors command freshness."""

@@ -22,9 +22,9 @@ from reactivex.disposable import CompositeDisposable
 # from dimos_lcm.std_msgs import Time as ROSTime
 from reactivex.observable import Observable
 
-from dimos.memory.timeseries.inmemory import InMemoryStore
 from dimos.types.weaklist import WeakList
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.timeseries.inmemory import InMemoryStore
 
 logger = setup_logger()
 

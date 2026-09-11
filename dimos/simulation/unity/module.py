@@ -43,7 +43,6 @@ import threading
 import time
 from typing import Any
 
-import cv2
 import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
@@ -61,6 +60,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.ros1 import (
@@ -248,6 +248,7 @@ class UnityBridgeModule(Module):
     color_image: Out[Image]
     semantic_image: Out[Image]
     camera_info: Out[CameraInfo]
+    tf: Out[TFMessage]
 
     @staticmethod
     def rerun_blueprint() -> Any:
@@ -663,6 +664,8 @@ class UnityBridgeModule(Module):
             self._send_queue.put(("__raw__", frame))
 
     def _handle_unity_message(self, topic: str, data: bytes) -> None:
+        import cv2
+
         if topic == "/registered_scan":
             pc_result = deserialize_pointcloud2(data)
             if pc_result is not None:
@@ -695,17 +698,15 @@ class UnityBridgeModule(Module):
         # Use the same intrinsics as rerun_static_pinhole (120° HFOV pinhole
         # approximation of the cylindrical panorama).
         self.camera_info.publish(
-            CameraInfo(
-                height=height,
+            CameraInfo.from_intrinsics(
+                fx=_CAM_FX,
+                fy=_CAM_FY,
+                cx=_CAM_CX,
+                cy=_CAM_CY,
                 width=width,
-                distortion_model="plumb_bob",
-                D=[0.0, 0.0, 0.0, 0.0, 0.0],
-                K=[_CAM_FX, 0.0, _CAM_CX, 0.0, _CAM_FY, _CAM_CY, 0.0, 0.0, 1.0],
-                R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-                P=[_CAM_FX, 0.0, _CAM_CX, 0.0, 0.0, _CAM_FY, _CAM_CY, 0.0, 0.0, 0.0, 1.0, 0.0],
+                height=height,
                 frame_id="camera",
-                ts=ts,
-            )
+            ).with_ts(ts)
         )
 
     def _send_to_unity(self, topic: str, data: bytes) -> None:
@@ -784,20 +785,22 @@ class UnityBridgeModule(Module):
         )
 
         self.tf.publish(
-            Transform(
-                translation=Vector3(x, y, z),
-                rotation=quat,
-                frame_id="map",
-                child_frame_id="sensor",
-                ts=now,
-            ),
-            Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="map",
-                child_frame_id="world",
-                ts=now,
-            ),
+            TFMessage(
+                Transform(
+                    translation=Vector3(x, y, z),
+                    rotation=quat,
+                    frame_id="map",
+                    child_frame_id="sensor",
+                    ts=now,
+                ),
+                Transform(
+                    translation=Vector3(0.0, 0.0, 0.0),
+                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    frame_id="map",
+                    child_frame_id="world",
+                    ts=now,
+                ),
+            )
         )
 
         with self._state_lock:

@@ -17,11 +17,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    CircleAnnotation,
-    TextAnnotation,
-)
-from dimos_lcm.foxglove_msgs.Point2 import Point2
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D as ROSDetection2D,
@@ -31,11 +26,8 @@ from dimos_lcm.vision_msgs import (
     Pose2D,
 )
 
-from dimos.msgs.foxglove_msgs.Color import Color
-from dimos.msgs.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos.msgs.std_msgs.Header import Header
 from dimos.perception.detection.type.detection2d.base import Detection2D
-from dimos.types.timestamped import to_ros_stamp
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.Image import Image
@@ -80,76 +72,6 @@ class Detection2DPoint(Detection2D):
             2 * padding,
         )
 
-    @property
-    def diameter(self) -> float:
-        return self.image.width / 40
-
-    def to_circle_annotation(self) -> list[CircleAnnotation]:
-        """Return circle annotations for visualization."""
-        return [
-            CircleAnnotation(
-                timestamp=to_ros_stamp(self.ts),
-                position=Point2(x=self.x, y=self.y),
-                diameter=self.diameter,
-                thickness=1.0,
-                fill_color=Color.from_string(self.name, alpha=0.3),
-                outline_color=Color.from_string(self.name, alpha=1.0, brightness=1.25),
-            )
-        ]
-
-    def to_text_annotation(self) -> list[TextAnnotation]:
-        """Return text annotations for visualization."""
-        font_size = self.image.width / 80
-
-        # Build label text
-        if self.class_id == -1:
-            if self.track_id == -1:
-                label_text = self.name
-            else:
-                label_text = f"{self.name}_{self.track_id}"
-        else:
-            label_text = f"{self.name}_{self.class_id}_{self.track_id}"
-
-        annotations = [
-            TextAnnotation(
-                timestamp=to_ros_stamp(self.ts),
-                position=Point2(x=self.x + self.diameter / 2, y=self.y + self.diameter / 2),
-                text=label_text,
-                font_size=font_size,
-                text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
-                background_color=Color(r=0, g=0, b=0, a=1),
-            ),
-        ]
-
-        # Only show confidence if it's not 1.0
-        if self.confidence != 1.0:
-            annotations.append(
-                TextAnnotation(
-                    timestamp=to_ros_stamp(self.ts),
-                    position=Point2(x=self.x + self.diameter / 2 + 2, y=self.y + font_size + 2),
-                    text=f"{self.confidence:.2f}",
-                    font_size=font_size,
-                    text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
-                    background_color=Color(r=0, g=0, b=0, a=1),
-                )
-            )
-
-        return annotations
-
-    def to_image_annotations(self) -> ImageAnnotations:
-        """Convert detection to Foxglove ImageAnnotations for visualization."""
-        texts = self.to_text_annotation()
-        circles = self.to_circle_annotation()
-
-        return ImageAnnotations(
-            texts=texts,
-            texts_length=len(texts),
-            points=[],
-            points_length=0,
-            circles=circles,
-            circles_length=len(circles),
-        )
-
     def to_ros_detection2d(self) -> ROSDetection2D:
         """Convert point to ROS Detection2D message (as zero-size bbox at point)."""
         return ROSDetection2D(
@@ -179,6 +101,3 @@ class Detection2DPoint(Detection2D):
             h, w = self.image.shape[:2]
             return bool(0 <= self.x <= w and 0 <= self.y <= h)
         return True
-
-    def lcm_encode(self):  # type: ignore[no-untyped-def]
-        return self.to_image_annotations().lcm_encode()

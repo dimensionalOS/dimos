@@ -34,7 +34,6 @@ def test_guess_projection(get_moment_2d, publish_moment) -> None:
     # detection3d = Detection3D.from_2d(detection2d, 1.5, camera_info, transform)
     # print(detection3d)
 
-    # foxglove bridge needs 2 messages per topic to pass to foxglove
     publish_moment(moment)
     time.sleep(0.1)
     publish_moment(moment)

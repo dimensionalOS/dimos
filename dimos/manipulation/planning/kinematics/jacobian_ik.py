@@ -24,12 +24,17 @@ For full nonlinear optimization IK with Drake, use DrakeOptimizationIK.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
 
+from dimos.manipulation.planning.groups.models import PlanningGroup
+from dimos.manipulation.planning.kinematics.utils import (
+    resolve_single_pose_target_request as _resolve_single_pose_target_request,
+)
 from dimos.manipulation.planning.spec.enums import IKStatus
-from dimos.manipulation.planning.spec.models import IKResult, WorldRobotID
+from dimos.manipulation.planning.spec.models import IKResult
 from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import (
     check_singularity,
@@ -68,7 +73,7 @@ class JacobianIK:
     Example:
         ik = JacobianIK(damping=0.01)
         result = ik.solve_iterative(
-            world, robot_id,
+            world,
             target_pose=target,
             seed=current_joints,
         )
@@ -96,7 +101,6 @@ class JacobianIK:
     def solve(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         target_pose: PoseStamped,
         seed: JointState | None = None,
         position_tolerance: float = 0.001,
@@ -111,7 +115,6 @@ class JacobianIK:
 
         Args:
             world: World for FK/collision checking
-            robot_id: Robot to solve IK for
             target_pose: Target end-effector pose
             seed: Initial guess (uses current state if None)
             position_tolerance: Required position accuracy (meters)
@@ -125,12 +128,12 @@ class JacobianIK:
         if not world.is_finalized:
             return _create_failure_result(IKStatus.NO_SOLUTION, "World must be finalized before IK")
 
-        lower_limits, upper_limits = world.get_joint_limits(robot_id)
+        lower_limits, upper_limits = world.get_joint_limits()
 
         # Get seed from current state if not provided
         if seed is None:
             with world.scratch_context() as ctx:
-                seed = world.get_joint_state(ctx, robot_id)
+                seed = world.get_joint_state(ctx)
 
         # Extract joint names for creating random seeds
         joint_names = seed.name
@@ -145,12 +148,13 @@ class JacobianIK:
             else:
                 # Random seed within joint limits
                 random_positions = np.random.uniform(lower_limits, upper_limits)
-                current_seed = JointState(name=joint_names, position=random_positions.tolist())
+                current_seed = JointState(
+                    {"name": joint_names, "position": random_positions.tolist()}
+                )
 
             # Solve iterative IK
             result = self.solve_iterative(
                 world=world,
-                robot_id=robot_id,
                 target_pose=target_pose,
                 seed=current_seed,
                 max_iterations=self._max_iterations,
@@ -161,7 +165,7 @@ class JacobianIK:
             if result.is_success() and result.joint_state is not None:
                 # Check collision if requested
                 if check_collision:
-                    if not world.check_config_collision_free(robot_id, result.joint_state):
+                    if not world.check_config_collision_free(result.joint_state):
                         continue  # Try another seed
 
                 # Check error
@@ -185,15 +189,70 @@ class JacobianIK:
             f"IK failed after {max_attempts} attempts",
         )
 
+    def solve_pose_targets(
+        self,
+        world: WorldSpec,
+        pose_targets: Mapping[PlanningGroup, PoseStamped],
+        auxiliary_groups: Sequence[PlanningGroup] = (),
+        seed: JointState | None = None,
+        position_tolerance: float = 0.001,
+        orientation_tolerance: float = 0.01,
+        check_collision: bool = True,
+        max_attempts: int = 10,
+    ) -> IKResult:
+        """Solve a planning-group pose target using group FK/Jacobian."""
+        if not world.is_finalized:
+            return _create_failure_result(IKStatus.NO_SOLUTION, "World must be finalized before IK")
+        request, request_error = _resolve_single_pose_target_request(
+            world,
+            pose_targets,
+            auxiliary_groups,
+            seed,
+            "JacobianIK",
+        )
+        if request_error is not None:
+            return request_error
+        if request is None:
+            return _create_failure_result(IKStatus.NO_SOLUTION, "Invalid pose target request")
+
+        full_seed = JointState(
+            {"name": request.joint_names, "position": request.seed_positions.tolist()}
+        )
+        result = self.solve_iterative(
+            world=world,
+            target_pose=request.target_pose,
+            seed=full_seed,
+            max_iterations=self._max_iterations * max(1, max_attempts),
+            position_tolerance=position_tolerance,
+            orientation_tolerance=orientation_tolerance,
+            group=request.group,
+            active_joint_indices=request.group_indices,
+        )
+        if not result.is_success() or result.joint_state is None:
+            return result
+
+        if check_collision:
+            full_positions = request.seed_positions.copy()
+            full_positions[request.group_indices] = np.asarray(
+                result.joint_state.position, dtype=np.float64
+            )
+            full_state = JointState(
+                {"name": request.joint_names, "position": full_positions.tolist()}
+            )
+            if not world.check_config_collision_free(full_state):
+                return _create_failure_result(IKStatus.COLLISION, "IK solution is in collision")
+        return result
+
     def solve_iterative(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         target_pose: PoseStamped,
         seed: JointState,
         max_iterations: int = 100,
         position_tolerance: float = 0.001,
         orientation_tolerance: float = 0.01,
+        group: PlanningGroup | None = None,
+        active_joint_indices: list[int] | None = None,
     ) -> IKResult:
         """Iterative Jacobian-based IK until convergence.
 
@@ -202,7 +261,6 @@ class JacobianIK:
 
         Args:
             world: World for FK/Jacobian computation
-            robot_id: Robot to solve IK for
             target_pose: Target end-effector pose
             seed: Initial joint configuration
             max_iterations: Maximum iterations before giving up
@@ -219,18 +277,24 @@ class JacobianIK:
         ).to_matrix()
         current_joints = np.array(seed.position, dtype=np.float64)
         joint_names = seed.name
+        active_joint_indices = active_joint_indices or list(range(len(joint_names)))
+        result_joint_names = list(group.joint_names) if group is not None else joint_names
 
         max_iterations = max_iterations or self._max_iterations
-        lower_limits, upper_limits = world.get_joint_limits(robot_id)
+        lower_limits, upper_limits = world.get_joint_limits()
 
         for iteration in range(max_iterations):
             with world.scratch_context() as ctx:
                 # Set current position (convert to JointState for API)
-                current_state = JointState(name=joint_names, position=current_joints.tolist())
-                world.set_joint_state(ctx, robot_id, current_state)
+                current_state = JointState(
+                    {"name": joint_names, "position": current_joints.tolist()}
+                )
+                world.set_joint_state(ctx, current_state)
 
-                # Get current pose (as matrix for error computation)
-                current_pose = pose_to_matrix(world.get_ee_pose(ctx, robot_id))
+                if group is None:
+                    current_pose = pose_to_matrix(world.get_ee_pose(ctx))
+                else:
+                    current_pose = pose_to_matrix(world.get_group_ee_pose(ctx, group.id))
 
                 # Compute error
                 pos_error, ori_error = compute_pose_error(current_pose, target_matrix)
@@ -238,28 +302,30 @@ class JacobianIK:
                 # Check convergence
                 if pos_error <= position_tolerance and ori_error <= orientation_tolerance:
                     return _create_success_result(
-                        joint_names=joint_names,
-                        joint_positions=current_joints,
+                        joint_names=result_joint_names,
+                        joint_positions=current_joints[active_joint_indices],
                         position_error=pos_error,
                         orientation_error=ori_error,
                         iterations=iteration + 1,
                     )
 
+                if group is None:
+                    jacobian = world.get_jacobian(ctx)
+                else:
+                    jacobian = world.get_group_jacobian(ctx, group.id)
+
                 # Compute twist to reduce error
                 twist = compute_error_twist(current_pose, target_matrix, gain=0.5)
 
-                # Get Jacobian
-                J = world.get_jacobian(ctx, robot_id)
-
             # Adaptive damping near singularities
-            if check_singularity(J, threshold=self._singularity_threshold):
+            if check_singularity(jacobian, threshold=self._singularity_threshold):
                 # Increase damping near singularity instead of failing
                 effective_damping = self._damping * 10.0
             else:
                 effective_damping = self._damping
 
             # Compute joint velocities
-            J_pinv = damped_pseudoinverse(J, effective_damping)
+            J_pinv = damped_pseudoinverse(jacobian, effective_damping)
             q_dot = J_pinv @ twist
 
             # Clamp maximum joint change per iteration (like reference implementations)
@@ -268,16 +334,23 @@ class JacobianIK:
             if max_change > max_delta:
                 q_dot = q_dot * (max_delta / max_change)
 
-            current_joints = current_joints + q_dot
+            current_joints[active_joint_indices] = current_joints[active_joint_indices] + q_dot
 
             # Clip to limits
-            current_joints = np.clip(current_joints, lower_limits, upper_limits)
+            current_joints[active_joint_indices] = np.clip(
+                current_joints[active_joint_indices],
+                lower_limits[active_joint_indices],
+                upper_limits[active_joint_indices],
+            )
 
         # Compute final error
         with world.scratch_context() as ctx:
-            final_state = JointState(name=joint_names, position=current_joints.tolist())
-            world.set_joint_state(ctx, robot_id, final_state)
-            final_pose = pose_to_matrix(world.get_ee_pose(ctx, robot_id))
+            final_state = JointState({"name": joint_names, "position": current_joints.tolist()})
+            world.set_joint_state(ctx, final_state)
+            if group is None:
+                final_pose = pose_to_matrix(world.get_ee_pose(ctx))
+            else:
+                final_pose = pose_to_matrix(world.get_group_ee_pose(ctx, group.id))
             pos_error, ori_error = compute_pose_error(final_pose, target_matrix)
 
         return _create_failure_result(
@@ -289,7 +362,6 @@ class JacobianIK:
     def solve_differential(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         current_joints: JointState,
         twist: Twist,
         dt: float,
@@ -301,7 +373,6 @@ class JacobianIK:
 
         Args:
             world: World for Jacobian computation
-            robot_id: Robot to compute for
             current_joints: Current joint configuration
             twist: Desired end-effector twist (linear + angular velocity)
             dt: Time step (not used, but kept for interface compatibility)
@@ -324,8 +395,8 @@ class JacobianIK:
 
         joint_names = current_joints.name
         with world.scratch_context() as ctx:
-            world.set_joint_state(ctx, robot_id, current_joints)
-            J = world.get_jacobian(ctx, robot_id)
+            world.set_joint_state(ctx, current_joints)
+            J = world.get_jacobian(ctx)
 
         # Check for singularity
         if check_singularity(J, threshold=self._singularity_threshold):
@@ -339,7 +410,7 @@ class JacobianIK:
         q_dot = J_pinv @ twist_array
 
         # Apply velocity limits if available
-        config = world.get_robot_config(robot_id)
+        config = world.get_model_config()
         if config.velocity_limits is not None:
             velocity_limits = np.array(config.velocity_limits)
             # Only consider joints with non-zero velocity limits
@@ -349,12 +420,11 @@ class JacobianIK:
                 if max_ratio > 1.0:
                     q_dot = q_dot / max_ratio
 
-        return JointState(name=joint_names, velocity=q_dot.tolist())
+        return JointState({"name": joint_names, "velocity": q_dot.tolist()})
 
     def solve_differential_position_only(
         self,
         world: WorldSpec,
-        robot_id: WorldRobotID,
         current_joints: JointState,
         linear_velocity: Vector3,
     ) -> JointState | None:
@@ -365,7 +435,6 @@ class JacobianIK:
 
         Args:
             world: World for Jacobian computation
-            robot_id: Robot to compute for
             current_joints: Current joint configuration
             linear_velocity: Desired linear velocity
 
@@ -379,8 +448,8 @@ class JacobianIK:
 
         joint_names = current_joints.name
         with world.scratch_context() as ctx:
-            world.set_joint_state(ctx, robot_id, current_joints)
-            J = world.get_jacobian(ctx, robot_id)
+            world.set_joint_state(ctx, current_joints)
+            J = world.get_jacobian(ctx)
 
         # Extract linear part (first 3 rows)
         J_linear = J[:3, :]
@@ -397,7 +466,7 @@ class JacobianIK:
 
         # Compute joint velocities
         q_dot = J_pinv @ vel_array
-        return JointState(name=joint_names, velocity=q_dot.tolist())
+        return JointState({"name": joint_names, "velocity": q_dot.tolist()})
 
 
 # Result Helpers
@@ -413,7 +482,7 @@ def _create_success_result(
     """Create a successful IK result."""
     return IKResult(
         status=IKStatus.SUCCESS,
-        joint_state=JointState(name=joint_names, position=joint_positions.tolist()),
+        joint_state=JointState({"name": joint_names, "position": joint_positions.tolist()}),
         position_error=position_error,
         orientation_error=orientation_error,
         iterations=iterations,

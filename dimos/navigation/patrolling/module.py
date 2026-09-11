@@ -19,6 +19,7 @@ from collections.abc import AsyncGenerator
 from dimos_lcm.std_msgs import Bool
 
 from dimos.agents.annotation import skill
+from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
@@ -69,9 +70,12 @@ class PatrollingModule(Module):
     async def handle_goal_reached(self, _msg: Bool) -> None:
         self._goal_reached_event.set()
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT], lifecycle="background")
     async def start_patrol(self) -> str:
         """Start patrolling the known area. The robot will continuously pick patrol goals from the router and navigate to them until `stop_patrol` is called."""
+        # Open (or re-stamp, on a same-tool takeover) the tool-stream before any
+        # early return so the movement hold is always carried by a live stream.
+        self.start_tool("start_patrol")
         if self._patrol_task is not None and not self._patrol_task.done():
             return "Patrol is already running. Use `stop_patrol` to stop."
 
@@ -103,6 +107,9 @@ class PatrollingModule(Module):
         self._patrol_task = None
         self._planner_spec.set_replanning_enabled(True)
         self._planner_spec.reset_safe_goal_clearance()
+        # Closes the tool-stream and releases the `movement` capability via
+        # the dimos/tool_stopped frame consumed by McpServer.
+        self.stop_tool("start_patrol")
         if self._latest_pose is not None:
             self.goal_request.publish(self._latest_pose)
 

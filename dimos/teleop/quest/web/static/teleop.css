@@ -1,0 +1,93 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #fff;
+    color: #333;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    overflow: hidden;
+}
+
+#ui {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+h1 {
+    font-size: 42px;
+    font-weight: 600;
+    margin-bottom: 40px;
+    color: #28283b;
+}
+
+#status {
+    font-size: 28px;
+    font-weight: 500;
+    color: #0077b6;
+    padding: 16px 32px;
+    background-color: #fff;
+    border: 2px solid #0077b6;
+    border-radius: 12px;
+    margin-bottom: 24px;
+    min-width: 300px;
+    text-align: center;
+}
+
+button {
+    padding: 20px 48px;
+    font-size: 24px;
+    font-weight: 600;
+    color: white;
+    background-color: #0077b6;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+button:hover {
+    background-color: #005f8a;
+}
+
+button:disabled {
+    background-color: #adb5bd;
+    cursor: not-allowed;
+}
+
+button.disconnect {
+    background-color: #6c757d;
+    margin-top: 16px;
+}
+
+button.disconnect:hover {
+    background-color: #545b62;
+}
+
+#canvas {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.hidden {
+    display: none !important;
+}

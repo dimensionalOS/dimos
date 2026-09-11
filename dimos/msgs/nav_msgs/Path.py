@@ -48,13 +48,13 @@ class Path(Timestamped):
 
     def __init__(  # type: ignore[no-untyped-def]
         self,
-        ts: float = 0.0,
+        ts: float | None = None,
         frame_id: str = "world",
         poses: list[PoseStamped] | None = None,
         **kwargs,
     ) -> None:
         self.frame_id = frame_id
-        self.ts = ts if ts != 0 else time.time()
+        self.ts = time.time() if ts is None else ts
         self.poses = poses if poses is not None else []
 
     def __len__(self) -> int:

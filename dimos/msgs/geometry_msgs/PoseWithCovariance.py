@@ -20,7 +20,6 @@ from dimos_lcm.geometry_msgs import (
     PoseWithCovariance as LCMPoseWithCovariance,
 )
 import numpy as np
-from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Pose import Pose, PoseConvertable
 
@@ -35,58 +34,63 @@ PoseWithCovarianceConvertable: TypeAlias = (
     | dict[str, PoseConvertable | list[float] | np.ndarray]
 )
 
+COVARIANCE_SIZE = 36
+
+
+def _is_value_covariance_pair(value: Any) -> bool:
+    """True for a 2-element (value, covariance) pair, where covariance is 36 long."""
+    if not isinstance(value, tuple | list) or len(value) != 2:
+        return False
+    covariance = value[1]
+    return isinstance(covariance, list | np.ndarray) and np.size(covariance) == COVARIANCE_SIZE
+
 
 class PoseWithCovariance(LCMPoseWithCovariance):  # type: ignore[misc]
     pose: Pose
     covariance: np.ndarray[tuple[int], np.dtype[np.floating[Any]]]
     msg_name = "geometry_msgs.PoseWithCovariance"
 
-    @dispatch
-    def __init__(self) -> None:
-        """Initialize with default pose and zero covariance."""
-        self.pose = Pose()
-        self.covariance = np.zeros(36)
-
-    @dispatch  # type: ignore[no-redef]
     def __init__(
         self,
-        pose: Pose | PoseConvertable,
+        pose: Pose | PoseConvertable | PoseWithCovarianceConvertable | None = None,
         covariance: list[float] | np.ndarray | None = None,
     ) -> None:
-        """Initialize with pose and optional covariance."""
-        self.pose = Pose(pose) if not isinstance(pose, Pose) else pose
-        if covariance is None:
-            self.covariance = np.zeros(36)
-        else:
-            self.covariance = np.array(covariance, dtype=float).reshape(36)
+        """Initialize a pose with covariance.
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, pose_with_cov: PoseWithCovariance) -> None:
-        """Initialize from another PoseWithCovariance (copy constructor)."""
-        self.pose = Pose(pose_with_cov.pose)
-        self.covariance = np.array(pose_with_cov.covariance).copy()
+        Supported forms:
+            PoseWithCovariance()                        # origin, zero covariance
+            PoseWithCovariance(pose)
+            PoseWithCovariance(pose, covariance)
+            PoseWithCovariance(pose=..., covariance=...)
+            PoseWithCovariance((pose, covariance))      # pair
+            PoseWithCovariance({"pose": ..., "covariance": ...})
+            PoseWithCovariance(other)                   # copy constructor
+            PoseWithCovariance(lcm_pose_with_cov)       # from LCM message
+        """
+        source: Any = pose
+        cov: Any = covariance
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, lcm_pose_with_cov: LCMPoseWithCovariance) -> None:
-        """Initialize from an LCM PoseWithCovariance."""
-        self.pose = Pose(lcm_pose_with_cov.pose)
-        self.covariance = np.array(lcm_pose_with_cov.covariance)
+        # PoseWithCovariance before LCMPoseWithCovariance (it is a subclass).
+        if isinstance(source, PoseWithCovariance):
+            if cov is None:
+                cov = np.array(source.covariance).copy()
+            source = Pose(source.pose)  # copy constructor: don't alias the source pose
+        elif isinstance(source, LCMPoseWithCovariance):
+            if cov is None:
+                cov = np.array(source.covariance)
+            source = source.pose
+        elif isinstance(source, dict) and "pose" in source:
+            cov = source.get("covariance", cov)
+            source = source["pose"]
+        elif _is_value_covariance_pair(source):
+            source, cov = source
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, pose_dict: dict[str, PoseConvertable | list[float] | np.ndarray]) -> None:
-        """Initialize from a dictionary with 'pose' and 'covariance' keys."""
-        self.pose = Pose(pose_dict["pose"])
-        covariance = pose_dict.get("covariance")
-        if covariance is None:
-            self.covariance = np.zeros(36)
-        else:
-            self.covariance = np.array(covariance, dtype=float).reshape(36)
-
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, pose_tuple: tuple[PoseConvertable, list[float] | np.ndarray]) -> None:
-        """Initialize from a tuple of (pose, covariance)."""
-        self.pose = Pose(pose_tuple[0])
-        self.covariance = np.array(pose_tuple[1], dtype=float).reshape(36)
+        self.pose = source if isinstance(source, Pose) else Pose(source)
+        self.covariance = (
+            np.zeros(COVARIANCE_SIZE)
+            if cov is None
+            else np.array(cov, dtype=float).reshape(COVARIANCE_SIZE)
+        )
 
     def __getattribute__(self, name: str):  # type: ignore[no-untyped-def]
         """Override to ensure covariance is always returned as numpy array."""

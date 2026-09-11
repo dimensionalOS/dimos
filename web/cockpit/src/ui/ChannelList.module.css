@@ -1,0 +1,45 @@
+.table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.table th {
+  border-bottom: 1px solid #30363d;
+  color: #8b949e;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 0.3rem 0.75rem;
+  text-align: left;
+}
+
+.table td {
+  border-bottom: 1px solid #21262d;
+  padding: 0.3rem 0.75rem;
+  vertical-align: top;
+}
+
+.ch {
+  font-weight: 600;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.muted {
+  color: #8b949e;
+}
+
+.value {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.error {
+  color: #f85149;
+  font-size: 12px;
+  margin-right: 0.5rem;
+}

@@ -19,6 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from dimos.hardware.spec import JointLimits
+
 # Unitree SDK sentinels meaning "no command" for that DOF.
 POS_STOP: float = 2.146e9
 VEL_STOP: float = 16000.0
@@ -26,10 +28,14 @@ VEL_STOP: float = 16000.0
 
 @dataclass(frozen=True)
 class MotorCommand:
-    """Command for a single motor."""
+    """Command for one joint in that joint's declared coordinate system.
 
-    q: float = POS_STOP  # target position (rad)
-    dq: float = VEL_STOP  # target velocity (rad/s)
+    Angular joints use radians/radians per second/Nm. Other joints may define
+    another coordinate; for example, a gripper may use normalized opening.
+    """
+
+    q: float = POS_STOP  # target position in the joint's coordinate
+    dq: float = VEL_STOP  # target velocity in the joint's coordinate per second
     kp: float = 0.0  # position gain
     kd: float = 0.0  # velocity gain
     tau: float = 0.0  # feedforward torque (Nm)
@@ -37,10 +43,10 @@ class MotorCommand:
 
 @dataclass(frozen=True)
 class MotorState:
-    """Feedback from a single motor."""
+    """Feedback for one joint in that joint's declared coordinate system."""
 
-    q: float = 0.0  # position (rad)
-    dq: float = 0.0  # velocity (rad/s)
+    q: float = 0.0  # position in the joint's coordinate
+    dq: float = 0.0  # velocity in the joint's coordinate per second
     tau: float = 0.0  # estimated torque (Nm)
 
 
@@ -54,9 +60,28 @@ class IMUState:
     rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
+@dataclass(frozen=True)
+class WholeBodyConfig:
+    """Whole-body-specific component config.
+
+    Lives on ``HardwareComponent.wb_config`` for components of type WHOLE_BODY.
+    Keeps PD gains (and any future whole-body-only knobs) off the generic
+    HardwareComponent shared by all hardware kinds.
+
+    Attributes:
+        kp: Per-joint position gains used by ConnectedWholeBody when
+            translating position commands to MotorCommand. Length must
+            match the component's ``joints`` list when set.
+        kd: Per-joint velocity gains. Same length constraint.
+    """
+
+    kp: tuple[float, ...] | None = None
+    kd: tuple[float, ...] | None = None
+
+
 @runtime_checkable
 class WholeBodyAdapter(Protocol):
-    """Joint-level whole-body motor IO. SI units (rad, rad/s, Nm)."""
+    """Joint-level whole-body IO using each joint's declared coordinate."""
 
     def connect(self) -> bool: ...
     def disconnect(self) -> None: ...
@@ -64,14 +89,6 @@ class WholeBodyAdapter(Protocol):
     def read_motor_states(self) -> list[MotorState]: ...
     def has_motor_states(self) -> bool: ...
     def read_imu(self) -> IMUState: ...
+    def get_limits(self) -> JointLimits | None: ...
+
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool: ...
-
-
-__all__ = [
-    "POS_STOP",
-    "VEL_STOP",
-    "IMUState",
-    "MotorCommand",
-    "MotorState",
-    "WholeBodyAdapter",
-]

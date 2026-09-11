@@ -23,5 +23,3 @@ unitree_g1_agentic = autoconnect(
     unitree_g1,
     _agentic_skills,
 )
-
-__all__ = ["unitree_g1_agentic"]

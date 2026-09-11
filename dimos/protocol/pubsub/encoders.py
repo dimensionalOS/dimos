@@ -104,6 +104,17 @@ class LCMTopicProto(Protocol):
 class LCMEncoderMixin(PubSubEncoderMixin[LCMTopicProto, DimosMsg, bytes]):
     """Encoder mixin for DimosMsg using LCM binary encoding."""
 
+    def subscribe(
+        self, topic: LCMTopicProto, callback: Callable[[DimosMsg, LCMTopicProto], None]
+    ) -> Callable[[], None]:
+        # Import the type's heavy decode dependencies now, on the subscriber's
+        # thread. Left to the first decode, the import would run on the LCM
+        # handler thread and block it for seconds, dropping messages meanwhile.
+        warmup = getattr(topic.lcm_type, "lcm_warmup", None)
+        if warmup is not None:
+            warmup()
+        return super().subscribe(topic, callback)
+
     def encode(self, msg: DimosMsg | bytes, _: LCMTopicProto) -> bytes:
         if isinstance(msg, bytes):
             return msg

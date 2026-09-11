@@ -79,7 +79,9 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         """
         self.audio_observable = audio_observable  # type: ignore[assignment]
 
-        # Create and start the output stream
+        # Try to create and start the output stream. If no audio device is
+        # available (e.g. in CI / headless), log and continue — audio events
+        # will still be drained from the observable and silently dropped.
         try:
             self._stream = sd.OutputStream(
                 device=self.device_index,
@@ -91,14 +93,11 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
             self._stream.start()  # type: ignore[attr-defined]
             self._running.set()
 
-            logger.info(
-                f"Started audio output: {self.sample_rate}Hz, "
-                f"{self.channels} channels, {self.block_size} samples per frame"
-            )
-
         except Exception as e:
-            logger.error(f"Error starting audio output stream: {e}")
-            raise e
+            self._stream = None
+            logger.warning(
+                f"No audio output device available ({e}); audio events will be consumed and dropped"
+            )
 
         # Subscribe to the observable
         self._subscription = audio_observable.subscribe(  # type: ignore[assignment]
@@ -123,7 +122,6 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
 
     def stop(self) -> None:
         """Stop audio output and clean up resources."""
-        logger.info("Stopping audio output")
         self._running.clear()
 
         if self._subscription:

@@ -214,7 +214,7 @@ class FakeDJIVideoStream(DJIDroneVideoStream):
         """
         from reactivex import operators as ops
 
-        from dimos.memory.timeseries.legacy import LegacyPickleStore
+        from dimos.utils.testing.legacy_pickle import LegacyPickleStore
 
         def _fix_format(img: Image) -> Image:
             if img.format == ImageFormat.BGR:

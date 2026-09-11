@@ -23,11 +23,11 @@ import json
 import os
 from typing import Any
 
-import cv2
 import numpy as np
 from pydantic import Field
 
 from dimos.models.qwen.video_query import query_single_frame
+from dimos.models.vl.qwen import DEFAULT_QWEN_VL_MODEL
 from dimos.skills.skills import AbstractRobotSkill
 from dimos.utils.logging_config import setup_logger
 
@@ -92,6 +92,8 @@ def save_debug_image_with_points(
     Returns:
         Path to the saved image
     """
+    import cv2
+
     # Create a copy to avoid modifying original
     debug_image = image.copy()
 
@@ -202,7 +204,7 @@ class PickAndPlace(AbstractRobotSkill):
     )
 
     model_name: str = Field(
-        "qwen2.5-vl-72b-instruct", description="Qwen model to use for visual queries"
+        DEFAULT_QWEN_VL_MODEL, description="Qwen model to use for visual queries"
     )
 
     def __init__(self, robot=None, **data) -> None:  # type: ignore[no-untyped-def]
@@ -327,6 +329,8 @@ class PickAndPlace(AbstractRobotSkill):
         Returns:
             Dictionary with operation results
         """
+        import cv2
+
         super().__call__()  # type: ignore[no-untyped-call]
 
         if not self._robot:

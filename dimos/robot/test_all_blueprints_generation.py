@@ -32,7 +32,17 @@ IGNORED_FILES: set[str] = {
     "dimos/core/blueprints.py",
     "dimos/core/test_blueprints.py",
 }
-BLUEPRINT_METHODS = {"transports", "global_config", "remappings", "requirements", "configurators"}
+# Terminal builder methods that mark a top-level blueprint expression. "blueprint"
+# is included so a bare single-module `X.blueprint(...)` (no transports/remappings
+# override needed) is still discovered as a runnable blueprint.
+BLUEPRINT_METHODS = {
+    "blueprint",
+    "transports",
+    "global_config",
+    "remappings",
+    "requirements",
+    "configurators",
+}
 _EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase", "StreamModule"}
 
 
@@ -133,18 +143,37 @@ def _is_production_module_file(file_path: Path, root: Path) -> bool:
 
     Excludes test helpers, deprecated code, and framework base classes in core/.
     """
-    rel = str(file_path.relative_to(root))
+    relative_path = file_path.relative_to(root)
+    rel = str(relative_path)
     stem = file_path.stem
     return not (
         stem.startswith("test_")
         or "_test_" in stem
         or stem.endswith("_test")
+        or stem.startswith("tool_")
         or stem.startswith("fake_")
         or stem.startswith("mock_")
         or "deprecated" in rel
         or "/testing/" in rel
+        or "example" in relative_path.parts
+        or relative_path == Path("experimental/isolated_python/module.py")
         or rel.startswith("core/")
     )
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "experimental/isolated_python/example/contract.py",
+        "experimental/isolated_python/example/support.py",
+        "experimental/isolated_python/module.py",
+    ],
+)
+def test_isolated_python_framework_is_not_a_production_module(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    assert _is_production_module_file(tmp_path / relative_path, tmp_path) is False
 
 
 def _scan_for_blueprints(root: Path) -> tuple[dict[str, str], dict[str, str]]:

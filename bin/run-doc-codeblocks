@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Execute md-babel-py on Markdown documentation (see docs/agents/docs/codeblocks.md).
+# Execute md-babel-py on Markdown documentation (see docs/coding-agents/docs/codeblocks.md).
 # CI uses --ci (python, shell, Node only) so native diagram toolchains are not required on runners.
 set -euo pipefail
 
@@ -22,13 +22,13 @@ Usage: bin/run-doc-codeblocks [options] [path ...]
 
 On macOS this script does nothing and exits 0 (md-babel is intended for Linux/CI).
 To run md-babel on a Mac anyway, set RUN_DOC_CODEBLOCKS_FORCE=1 or invoke
-"uv run md-babel-py" yourself (see docs/agents/docs/codeblocks.md).
+"uv run md-babel-py" yourself (see docs/coding-agents/docs/codeblocks.md).
 
 With no paths: runs on ./docs (recursive) and ./README.md when present.
 
 Examples:
   bin/run-doc-codeblocks --ci
-  bin/run-doc-codeblocks --all-langs docs/agents/docs/index.md
+  bin/run-doc-codeblocks --all-langs docs/coding-agents/docs/index.md
 EOF
 }
 

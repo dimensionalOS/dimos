@@ -24,11 +24,6 @@ if TYPE_CHECKING:
 
     from dimos.msgs.sensor_msgs.Image import Image
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    PointsAnnotation,
-    TextAnnotation,
-)
-from dimos_lcm.foxglove_msgs.Point2 import Point2
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D as ROSDetection2D,
@@ -40,11 +35,9 @@ from dimos_lcm.vision_msgs import (
 from rich.console import Console
 from rich.text import Text
 
-from dimos.msgs.foxglove_msgs.Color import Color
-from dimos.msgs.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos.msgs.std_msgs.Header import Header
 from dimos.perception.detection.type.detection2d.base import Detection2D
-from dimos.types.timestamped import to_ros_stamp, to_timestamp
+from dimos.types.timestamped import to_timestamp
 from dimos.utils.decorators.decorators import simple_mcache
 
 Bbox = tuple[float, float, float, float]
@@ -283,85 +276,6 @@ class Detection2DBBox(Detection2D):
             ),
             size_x=width,
             size_y=height,
-        )
-
-    def lcm_encode(self):  # type: ignore[no-untyped-def]
-        return self.to_image_annotations().lcm_encode()
-
-    def to_text_annotation(self) -> list[TextAnnotation]:
-        x1, y1, _x2, y2 = self.bbox
-
-        font_size = self.image.width / 80
-
-        # Build label text - exclude class_id if it's -1 (VLM detection)
-        if self.class_id == -1:
-            label_text = f"{self.name}_{self.track_id}"
-        else:
-            label_text = f"{self.name}_{self.class_id}_{self.track_id}"
-
-        annotations = [
-            TextAnnotation(
-                timestamp=to_ros_stamp(self.ts),
-                position=Point2(x=x1, y=y1),
-                text=label_text,
-                font_size=font_size,
-                text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
-                background_color=Color(r=0, g=0, b=0, a=1),
-            ),
-        ]
-
-        # Only show confidence if it's not 1.0
-        if self.confidence != 1.0:
-            annotations.append(
-                TextAnnotation(
-                    timestamp=to_ros_stamp(self.ts),
-                    position=Point2(x=x1, y=y2 + font_size),
-                    text=f"confidence: {self.confidence:.3f}",
-                    font_size=font_size,
-                    text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
-                    background_color=Color(r=0, g=0, b=0, a=1),
-                )
-            )
-
-        return annotations
-
-    def to_points_annotation(self) -> list[PointsAnnotation]:
-        x1, y1, x2, y2 = self.bbox
-
-        thickness = 1
-
-        # Use consistent color based on object name, brighter for outline
-        outline_color = Color.from_string(self.name, alpha=1.0, brightness=1.25)
-
-        return [
-            PointsAnnotation(
-                timestamp=to_ros_stamp(self.ts),
-                outline_color=outline_color,
-                fill_color=Color.from_string(self.name, alpha=0.2),
-                thickness=thickness,
-                points_length=4,
-                points=[
-                    Point2(x1, y1),
-                    Point2(x1, y2),
-                    Point2(x2, y2),
-                    Point2(x2, y1),
-                ],
-                type=PointsAnnotation.LINE_LOOP,
-            )
-        ]
-
-    # this is almost never called directly since this is a single detection
-    # and ImageAnnotations message normally contains multiple detections annotations
-    # so ImageDetections2D and ImageDetections3D normally implements this for whole image
-    def to_image_annotations(self) -> ImageAnnotations:
-        points = self.to_points_annotation()
-        texts = self.to_text_annotation()
-
-        return ImageAnnotations(
-            texts=texts,
-            texts_length=len(texts),
-            points=points,
-            points_length=len(points),
         )
 
     @classmethod

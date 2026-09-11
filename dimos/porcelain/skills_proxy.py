@@ -63,7 +63,7 @@ class SkillsProxy:
         errors: dict[str, BaseException] = {}
         for name in names:
             try:
-                module_proxy = self._source.get_rpyc_module(name)
+                module_proxy = self._source.get_module(name)
                 skills = list(module_proxy.get_skills())
             except Exception as e:
                 logger.warning("Failed to enumerate skills for module %s", name, exc_info=True)

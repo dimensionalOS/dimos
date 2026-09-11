@@ -1,0 +1,40 @@
+{
+  "workspace": [
+    "./relay",
+    "./shared",
+    "./sdk",
+    "./cockpit"
+  ],
+  "unstable": [
+    "net"
+  ],
+  "nodeModulesDir": "auto",
+  "imports": {
+    "@std/assert": "jsr:@std/assert@^1",
+    "@std/cli": "jsr:@std/cli@^1"
+  },
+  "tasks": {
+    "dev": "deno run --allow-net --allow-read relay/main.ts",
+    "test": "deno test --allow-net --allow-read relay shared",
+    "check": "deno check relay shared"
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "exclude": [
+      "shared/fixtures/*.json",
+      "cockpit/dist/",
+      "sdk/dist/"
+    ]
+  },
+  "lint": {
+    "exclude": [
+      "cockpit/dist/",
+      "sdk/dist/"
+    ],
+    "rules": {
+      "tags": [
+        "recommended"
+      ]
+    }
+  }
+}

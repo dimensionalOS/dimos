@@ -42,6 +42,15 @@ class ParamInfo:
     name: str
     type_name: str | None = None
     default: str | None = None
+    kind: str | None = None
+
+    def __repr__(self) -> str:
+        value = self.name
+        if self.type_name is not None:
+            value += f": {self.type_name}"
+        if self.default is not None:
+            value += f" = {self.default}"
+        return value
 
 
 @dataclass
@@ -51,6 +60,15 @@ class RpcInfo:
     name: str
     params: list[ParamInfo] = field(default_factory=list)
     return_type: str | None = None
+    module_name: str | None = None
+    documentation: str | None = None
+    signature: str | None = None
+
+    def __repr__(self) -> str:
+        prefix = f"{self.module_name}." if self.module_name else ""
+        parameters = ", ".join(repr(param) for param in self.params)
+        returns = f" -> {self.return_type}" if self.return_type is not None else ""
+        return f"<RPC {prefix}{self.name}({parameters}){returns}>"
 
 
 @dataclass
@@ -72,6 +90,15 @@ class ModuleInfo:
     outputs: list[StreamInfo] = field(default_factory=list)
     rpcs: list[RpcInfo] = field(default_factory=list)
     skills: list[SkillInfo] = field(default_factory=list)
+    instance_name: str | None = None
+    class_name: str | None = None
+    qualified_path: str | None = None
+    documentation: str | None = None
+
+    def __repr__(self) -> str:
+        instance_name = self.instance_name or self.name
+        class_name = self.class_name or self.name
+        return f"<Module {instance_name} ({class_name}), rpcs={len(self.rpcs)}>"
 
 
 def extract_rpc_info(fn: Callable) -> RpcInfo:  # type: ignore[type-arg]
@@ -88,13 +115,26 @@ def extract_rpc_info(fn: Callable) -> RpcInfo:  # type: ignore[type-arg]
         default = None
         if p.default != inspect.Parameter.empty:
             default = str(p.default)
-        params.append(ParamInfo(name=pname, type_name=type_name, default=default))
+        params.append(
+            ParamInfo(
+                name=pname,
+                type_name=type_name,
+                default=default,
+                kind=p.kind.name,
+            )
+        )
 
     return_type = None
     if sig.return_annotation != inspect.Signature.empty:
         return_type = getattr(sig.return_annotation, "__name__", str(sig.return_annotation))
 
-    return RpcInfo(name=fn.__name__, params=params, return_type=return_type)
+    return RpcInfo(
+        name=fn.__name__,
+        params=params,
+        return_type=return_type,
+        documentation=inspect.getdoc(fn),
+        signature=str(sig),
+    )
 
 
 def extract_skill_info(fn: Callable) -> SkillInfo:  # type: ignore[type-arg]

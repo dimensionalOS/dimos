@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 import json
 import os
 from pathlib import Path
@@ -44,8 +44,6 @@ class RunEntry:
     log_dir: str
     cli_args: list[str] = field(default_factory=list)
     config_overrides: dict[str, object] = field(default_factory=dict)
-    grpc_port: int = 9877
-    rpyc_port: int = 0
     original_argv: list[str] = field(default_factory=list)
 
     @property
@@ -63,9 +61,12 @@ class RunEntry:
 
     @classmethod
     def load(cls, path: Path) -> RunEntry:
-        """Load a RunEntry from a JSON file."""
+        """Load a RunEntry from a JSON file. Unknown keys are dropped so
+        registry files written by older dimos versions still load.
+        """
         data = json.loads(path.read_text())
-        return cls(**data)
+        valid = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in valid})
 
 
 def generate_run_id(blueprint: str) -> str:
@@ -141,14 +142,6 @@ def cleanup_stale() -> int:
     return removed
 
 
-def check_port_conflicts(grpc_port: int = 9877) -> RunEntry | None:
-    """Check if any alive run is using the gRPC port. Returns conflicting entry or None."""
-    for entry in list_runs(alive_only=True):
-        if entry.grpc_port == grpc_port:
-            return entry
-    return None
-
-
 def get_most_recent(alive_only: bool = True) -> RunEntry | None:
     """Return the most recently created run entry, or None."""
     runs = list_runs(alive_only=alive_only)
@@ -189,25 +182,3 @@ def stop_entry(entry: RunEntry, force: bool = False) -> tuple[str, bool]:
 
     entry.remove()
     return (f"Stopped with {sig_name}", True)
-
-
-def get_most_recent_rpyc_port(run_id: str | None = None) -> int:
-    entry: RunEntry
-
-    if run_id is not None:
-        entries = [e for e in list_runs(alive_only=True) if e.run_id == run_id]
-        if not entries:
-            raise RuntimeError(f"No running DimOS instance with run_id={run_id!r}")
-        entry = entries[0]
-    else:
-        most_recent = get_most_recent(alive_only=True)
-        if most_recent is None:
-            raise RuntimeError("No running DimOS instance. Start one with `dimos run <blueprint>`.")
-        entry = most_recent
-
-    if not entry.rpyc_port:
-        raise RuntimeError(
-            f"Run {entry.run_id} has no rpyc_port. Was it started with an older version of dimos?"
-        )
-
-    return entry.rpyc_port

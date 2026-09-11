@@ -30,6 +30,7 @@ import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
+from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -764,6 +765,19 @@ class WavefrontFrontierExplorer(Module):
         return self.exploration_active
 
     def _exploration_loop(self) -> None:
+        """Run the exploration loop and release the movement hold on exit.
+
+        Exploration can end several ways: explicit `end_exploration`, no-gain or
+        consecutive-failure self-termination, or an unexpected error. Closing the
+        tool-stream in `finally` releases the `movement` capability in every case
+        (`end_exploration`'s own `stop_tool` is then a safe no-op).
+        """
+        try:
+            self._run_exploration_loop()
+        finally:
+            self.stop_tool("begin_exploration")
+
+    def _run_exploration_loop(self) -> None:
         """Main exploration loop running in separate thread."""
         # Track number of goals published
         goals_published = 0
@@ -833,21 +847,26 @@ class WavefrontFrontierExplorer(Module):
                     )
                     threading.Event().wait(2.0)
 
-    @skill
+    @skill(uses=[CAP_MOVEMENT], lifecycle="background")
     def begin_exploration(self) -> str:
         """Command the robot to move around and explore the area. Cancelled with end_exploration."""
+        # Open (or re-stamp, on a same-tool takeover) the tool-stream before the
+        # loop starts, so the movement hold is always carried by a live stream
+        # and gets released whether exploration ends via `end_exploration` or
+        # self-terminates (see `_exploration_loop`'s finally). Opening it first
+        # also avoids a race where a fast-failing loop could `stop_tool` before
+        # the stream exists.
+        self.start_tool("begin_exploration")
         started = self.explore()
         if not started:
             return "Exploration skill is already active. Use end_exploration to stop before starting again."
-        return (
-            "Started exploration skill. The robot is now moving. Use end_exploration "
-            "to stop. You also need to cancel before starting a new movement tool."
-        )
+        return "Started exploration skill. The robot is now moving. Use end_exploration to stop."
 
     @skill
     def end_exploration(self) -> str:
         """Cancel the exploration. The robot will stop moving and remain where it is."""
         stopped = self.stop_exploration()
+        self.stop_tool("begin_exploration")
         if stopped:
             return "Stopped exploration. The robot has stopped moving."
         else:

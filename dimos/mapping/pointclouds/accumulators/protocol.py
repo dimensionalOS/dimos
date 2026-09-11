@@ -13,9 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Protocol
+from __future__ import annotations
 
-from open3d.geometry import PointCloud  # type: ignore[import-untyped]
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from open3d.geometry import PointCloud  # type: ignore[import-untyped]
 
 
 class PointCloudAccumulator(Protocol):

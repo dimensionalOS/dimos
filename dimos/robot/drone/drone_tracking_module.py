@@ -20,7 +20,6 @@ import threading
 import time
 from typing import Any
 
-import cv2
 from dimos_lcm.std_msgs import String
 import numpy as np
 from numpy.typing import NDArray
@@ -64,6 +63,7 @@ class DroneTrackingModule(Module):
         x_pid_params: PIDParams | None = None,
         y_pid_params: PIDParams | None = None,
         z_pid_params: PIDParams | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the drone tracking module.
 
@@ -76,7 +76,7 @@ class DroneTrackingModule(Module):
                           If None, uses preset based on outdoor flag.
             z_pid_params: Optional PID parameters for altitude control.
         """
-        super().__init__()
+        super().__init__(**kwargs)
 
         default_params = OUTDOOR_PID_PARAMS if outdoor else INDOOR_PID_PARAMS
         x_pid_params = x_pid_params if x_pid_params is not None else default_params
@@ -147,6 +147,8 @@ class DroneTrackingModule(Module):
         Returns:
             String status message
         """
+        import cv2
+
         if self._tracking_active:
             return "Already tracking an object"
 
@@ -170,11 +172,8 @@ class DroneTrackingModule(Module):
 
             logger.info(f"Object detected at bbox: {bbox}")
 
-            # Initialize CSRT tracker (use legacy for OpenCV 4)
-            try:
-                tracker = cv2.legacy.TrackerCSRT_create()  # type: ignore[attr-defined]
-            except AttributeError:
-                tracker = cv2.TrackerCSRT_create()  # type: ignore[attr-defined]
+            # Initialize CSRT tracker
+            tracker = cv2.legacy.TrackerCSRT_create()  # type: ignore[attr-defined]
 
             # Convert bbox format from [x1, y1, x2, y2] to [x, y, w, h]
             x1, y1, x2, y2 = bbox
@@ -327,6 +326,8 @@ class DroneTrackingModule(Module):
         Returns:
             Frame with overlay drawn
         """
+        import cv2
+
         overlay: NDArray[np.uint8] = frame.copy()
         x, y, w, h = bbox
 

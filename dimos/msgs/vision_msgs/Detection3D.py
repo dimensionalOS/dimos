@@ -25,3 +25,7 @@ class Detection3D(LCMDetection3D):  # type: ignore[misc]
     @property
     def ts(self) -> float:
         return to_timestamp(self.header.stamp)
+
+    @property
+    def frame_id(self) -> str:
+        return str(self.header.frame_id)

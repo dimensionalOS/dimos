@@ -19,20 +19,29 @@ try:
     # Not a dependency, just the best way to get config path if available.
     from gi.repository import GLib  # type: ignore[import-untyped,import-not-found]
 except ImportError:
-    CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "dimos"
     STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "dimos"
+    CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "dimos"
 else:
-    CONFIG_DIR = Path(GLib.get_user_config_dir())
+    CONFIG_DIR = Path(GLib.get_user_config_dir()) / "dimos"
     STATE_DIR = Path(GLib.get_user_state_dir()) / "dimos"
+    CACHE_DIR = Path(GLib.get_user_cache_dir()) / "dimos"
 
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
 
 if (DIMOS_PROJECT_ROOT / ".git").exists():
     # Running from Git repository
     LOG_DIR = DIMOS_PROJECT_ROOT / "logs"
+    RECORDINGS_DIR = DIMOS_PROJECT_ROOT / "recordings"
+    DOWNLOADS_DIR = DIMOS_PROJECT_ROOT / "downloads"
 else:
     # Running from an installed package - use XDG_STATE_HOME
     LOG_DIR = STATE_DIR / "logs"
+    RECORDINGS_DIR = STATE_DIR / "recordings"
+    DOWNLOADS_DIR = STATE_DIR / "downloads"
+
+CREDENTIALS_PATH = CONFIG_DIR / "credentials"
+
 
 """
 Constants for shared memory
@@ -41,10 +50,13 @@ and frozen *before* the first frame is received.
 Therefore, a maximum capacity for color image and depth image transfer should be defined
 ahead of time.
 """
+# Headroom for pickle/encoding framing on top of raw pixels (~263 B observed),
+# so a full frame doesn't overflow the frozen SHM buffer.
+_SHM_ENCODING_OVERHEAD = 4096
 # Default color image size: 1920x1080 frame x 3 (RGB) x uint8
-DEFAULT_CAPACITY_COLOR_IMAGE = 1920 * 1080 * 3
+DEFAULT_CAPACITY_COLOR_IMAGE = 1920 * 1080 * 3 + _SHM_ENCODING_OVERHEAD
 # Default depth image size: 1280x720 frame * 4 (float32 size)
-DEFAULT_CAPACITY_DEPTH_IMAGE = 1280 * 720 * 4
+DEFAULT_CAPACITY_DEPTH_IMAGE = 1280 * 720 * 4 + _SHM_ENCODING_OVERHEAD
 
 # From https://github.com/lcm-proj/lcm.git
 LCM_MAX_CHANNEL_NAME_LENGTH = 63
@@ -53,3 +65,11 @@ LCM_MAX_CHANNEL_NAME_LENGTH = 63
 DEFAULT_THREAD_JOIN_TIMEOUT = 2.0
 
 DEFAULT_BUILD_NATIVE = False
+
+# streaming compression libraries sharing the open(path, mode) API: id -> (module, suffix)
+CODEC_LIBS = {
+    "lz4": ("lz4.frame", ".lz4"),
+    "gzip": ("gzip", ".gz"),
+    "bz2": ("bz2", ".bz2"),
+    "xz": ("lzma", ".xz"),
+}

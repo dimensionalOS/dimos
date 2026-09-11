@@ -15,8 +15,8 @@
 
 import numpy as np
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.msgs.sensor_msgs.CameraInfo import CalibrationProvider, CameraInfo
-from dimos.utils.path_utils import get_project_root
 
 
 def test_lcm_encode_decode() -> None:
@@ -217,7 +217,7 @@ def test_camera_info_from_yaml() -> None:
 
     # Get path to the single webcam YAML file
     yaml_path = (
-        get_project_root()
+        DIMOS_PROJECT_ROOT
         / "dimos"
         / "hardware"
         / "sensors"
@@ -259,7 +259,7 @@ def test_camera_info_from_yaml() -> None:
 def test_calibration_provider() -> None:
     """Test CalibrationProvider lazy loading of YAML files."""
     # Get the directory containing calibration files (not the file itself)
-    calibration_dir = get_project_root() / "dimos" / "hardware" / "sensors" / "camera" / "zed"
+    calibration_dir = DIMOS_PROJECT_ROOT / "dimos" / "hardware" / "sensors" / "camera" / "zed"
 
     # Create CalibrationProvider instance
     Calibrations = CalibrationProvider(calibration_dir)

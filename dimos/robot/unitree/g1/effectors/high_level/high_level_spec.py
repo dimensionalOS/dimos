@@ -35,6 +35,3 @@ class HighLevelG1Spec(Spec, Protocol):
     def stand_up(self) -> bool: ...
 
     def lie_down(self) -> bool: ...
-
-
-__all__ = ["HighLevelG1Spec"]

@@ -1,6 +1,6 @@
 # LCM Messages
 
-DimOS uses [LCM (Lightweight Communications and Marshalling)](https://github.com/lcm-proj/lcm) for inter-process communication on a local machine (similar to how ROS uses DDS). LCM is a simple [UDP multicast](https://lcm-proj.github.io/lcm/content/udp-multicast-protocol.html#lcm-udp-multicast-protocol-description) pubsub protocol with a straightforward [message definition language](https://lcm-proj.github.io/lcm/content/lcm-type-ref.html#lcm-type-specification-language).
+dimOS uses [LCM (Lightweight Communications and Marshalling)](https://github.com/lcm-proj/lcm) for inter-process communication on a local machine (similar to how ROS uses DDS). LCM is a simple [UDP multicast](https://lcm-proj.github.io/lcm/content/udp-multicast-protocol.html#lcm-udp-multicast-protocol-description) pubsub protocol with a straightforward [message definition language](https://lcm-proj.github.io/lcm/content/lcm-type-ref.html#lcm-type-specification-language).
 
 The LCM project provides pubsub clients and code generators for many languages. For us the power of LCM is its message definition format, multi-language classes that encode themselves to a compact binary format. This means LCM messages can be sent over any transport (WebSocket, SSH, shared memory, etc.) between differnt programming languages.
 
@@ -19,7 +19,7 @@ Apart from python, we have examples of LCM integrations for:
 In our [/examples/language-interop/](/examples/language-interop/) dir
 
 Types generated (but no examples yet) for:
-[**C#**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/csharp) and [**Java**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/java)
+[**C#**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/cs_lcm_msgs) and [**Java**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/java_lcm_msgs)
 
 ### Native Modules
 
@@ -45,8 +45,7 @@ decoded = LCMVector3.lcm_decode(binary)
 print(f"Decoded: x={decoded.x}, y={decoded.y}, z={decoded.z}")
 ```
 
-<!--Result:-->
-```
+```results
 Encoded to 32 bytes: ae7e5fba5eeca11e3ff000000000000040000000000000004008000000000000
 Decoded: x=1.0, y=2.0, z=3.0
 ```
@@ -78,8 +77,7 @@ binary = v1.lcm_encode()
 print(f"LCM encoded: {len(binary)} bytes")
 ```
 
-<!--Result:-->
-```
+```results
 v1 + v2 = (5.0, 7.0, 9.0)
 v1 dot v2 = 32.0
 v1 x v2 = (-3.0, 6.0, -3.0)
@@ -117,10 +115,9 @@ pc2 = PointCloud2.lcm_decode(binary)
 print(f"Decoded: {len(pc2)} points")
 ```
 
-<!--Result:-->
-```
+```results
 PointCloud: 100 points, frame=camera
-Center: ↘ Vector Vector([0.47497518 0.49878164 0.43788878])
+Center: ↘ Vector Vector([0.53349355 0.53453599 0.50321151])
 Open3D type: PointCloud
 LCM encoded: 1725 bytes
 Decoded: 100 points
@@ -151,8 +148,7 @@ decoded = Vector3.lcm_decode(binary)
 print(f"Raw binary transport: decoded {decoded}")
 ```
 
-<!--Result:-->
-```
+```results
 Memory transport: received ↘ Vector Vector([1. 2. 3.])
 Raw binary transport: decoded ↘ Vector Vector([1. 2. 3.])
 ```

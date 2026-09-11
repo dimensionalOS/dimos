@@ -35,6 +35,19 @@ class MjData:
     def __getattr__(self, name: str) -> Any: ...
     def __init__(self, model: MjModel) -> None: ...
 
+class MjSpec:
+    meshdir: str
+    worldbody: Any
+    # The MjSpec editing API is large (add_mesh, add_body, attach, …); rare
+    # accesses are Any, same approach as MjModel.
+    def __getattr__(self, name: str) -> Any: ...
+    def __init__(self) -> None: ...
+    @classmethod
+    def from_file(cls, path: str) -> MjSpec: ...
+    @classmethod
+    def from_string(cls, xml: str) -> MjSpec: ...
+    def compile(self) -> MjModel: ...
+
 class MjvOption:
     def __init__(self) -> None: ...
 
@@ -57,6 +70,7 @@ def mj_step(model: MjModel, data: MjData, nstep: int = ...) -> None: ...
 def mj_resetDataKeyframe(model: MjModel, data: MjData, key: int) -> None: ...
 def mj_name2id(model: MjModel, type: int, name: str | None) -> int: ...
 def mj_id2name(model: MjModel, type: int, id: int) -> str | None: ...
+def mj_saveModel(model: MjModel, filename: str, buffer: Any = ...) -> None: ...
 def set_mjcb_control(
     cb: Callable[[MjModel, MjData], None] | None,
 ) -> None: ...
@@ -67,8 +81,19 @@ class mjtObj:
     mjOBJ_ACTUATOR: int
     mjOBJ_BODY: int
     mjOBJ_CAMERA: int
+    mjOBJ_GEOM: int
     mjOBJ_JOINT: int
+    mjOBJ_MESH: int
+    mjOBJ_SITE: int
     mjOBJ_TENDON: int
+
+class mjtGeom:
+    mjGEOM_PLANE: int
+    mjGEOM_SPHERE: int
+    mjGEOM_CAPSULE: int
+    mjGEOM_CYLINDER: int
+    mjGEOM_BOX: int
+    mjGEOM_MESH: int
 
 class mjtJoint:
     mjJNT_HINGE: int

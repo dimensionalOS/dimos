@@ -156,6 +156,8 @@ class LocalPlanner(Resource):
             self.cmd_vel.on_next(Twist())
 
     def _change_state(self, new_state: PlannerState) -> None:
+        if new_state == self._state:
+            return
         self._state = new_state
         self._state_unique_id += 1
         logger.info("changed state", state=new_state)

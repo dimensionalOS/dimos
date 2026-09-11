@@ -1,8 +1,0 @@
-<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 269.211 55.728">
-<path d="M9.66,53.568L105.505,53.568A7.5 7.5 0 0 0 113.005 46.068L113.005,9.66A7.5 7.5 0 0 0 105.505 2.16L9.66,2.16A7.5 7.5 0 0 0 2.16 9.66L2.16,46.068A7.5 7.5 0 0 0 9.66 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
-<text x="57.5827" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Step 1</text>
-<polygon points="156.205,27.864 144.685,32.184 144.685,23.544" style="fill:rgb(255,255,255)"/>
-<path d="M113.005,27.864L150.445,27.864"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
-<path d="M163.705,53.568L259.551,53.568A7.5 7.5 0 0 0 267.051 46.068L267.051,9.66A7.5 7.5 0 0 0 259.551 2.16L163.705,2.16A7.5 7.5 0 0 0 156.205 9.66L156.205,46.068A7.5 7.5 0 0 0 163.705 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
-<text x="211.628" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Step 2</text>
-</svg>

@@ -12,24 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
-    TextAnnotation,
-)
-from dimos_lcm.foxglove_msgs.Point2 import Point2
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In, Out
-from dimos.msgs.foxglove_msgs.Color import Color
+from dimos.core.stream import In
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
 from dimos.perception.detection.reid.type import IDSystem
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.types.timestamped import align_timestamped, to_ros_stamp
+from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
 
 
@@ -41,7 +35,6 @@ class ReidModule(Module):
     config: Config
     detections: In[Detection2DArray]
     image: In[Image]
-    annotations: Out[ImageAnnotations]
 
     def __init__(self, idsystem: IDSystem | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
@@ -78,36 +71,5 @@ class ReidModule(Module):
         super().stop()
 
     def ingress(self, imageDetections: ImageDetections2D) -> None:
-        text_annotations = []
-
         for detection in imageDetections:
-            # Register detection and get long-term ID
-            long_term_id = self.idsystem.register_detection(detection)
-
-            # Skip annotation if not ready yet (long_term_id == -1)
-            if long_term_id == -1:
-                continue
-
-            # Create text annotation for long_term_id above the detection
-            x1, y1, _, _ = detection.bbox
-            font_size = imageDetections.image.width / 60
-
-            text_annotations.append(
-                TextAnnotation(
-                    timestamp=to_ros_stamp(detection.ts),
-                    position=Point2(x=x1, y=y1 - font_size * 1.5),
-                    text=f"PERSON: {long_term_id}",
-                    font_size=font_size,
-                    text_color=Color(r=0.0, g=1.0, b=1.0, a=1.0),  # Cyan
-                    background_color=Color(r=0.0, g=0.0, b=0.0, a=0.8),
-                )
-            )
-
-        # Publish annotations (even if empty to clear previous annotations)
-        annotations = ImageAnnotations(
-            texts=text_annotations,
-            texts_length=len(text_annotations),
-            points=[],
-            points_length=0,
-        )
-        self.annotations.publish(annotations)
+            self.idsystem.register_detection(detection)

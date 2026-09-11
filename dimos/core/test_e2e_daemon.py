@@ -23,6 +23,7 @@ import time
 import pytest
 from typer.testing import CliRunner
 
+from dimos.cli.dimos import main
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.coordination.worker_manager_python import WorkerManagerPython
@@ -36,7 +37,6 @@ from dimos.core.run_registry import (
     list_runs,
 )
 from dimos.core.stream import Out
-from dimos.robot.cli.dimos import main
 
 
 class PingModule(Module):

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
@@ -46,6 +47,18 @@ class SimpleModule(Module):
     def get_counter(self) -> int:
         return self.counter
 
+    @rpc
+    def read_global_robot_ip(self) -> str | None:
+        return global_config.robot_ip
+
+    @rpc
+    def unpicklable(self) -> threading.Lock:
+        return threading.Lock()
+
+    @rpc
+    def make_lock(self) -> None:
+        self.lock = threading.Lock()
+
 
 class AnotherModule(Module):
     value: int = 100
@@ -79,6 +92,22 @@ class ThirdModule(Module):
     @rpc
     def get_multiplier(self) -> int:
         return self.multiplier
+
+
+class HeavyModule(Module):
+    dedicated_worker = True
+
+    @rpc
+    def start(self) -> None:
+        pass
+
+
+class AnotherHeavyModule(Module):
+    dedicated_worker = True
+
+    @rpc
+    def start(self) -> None:
+        pass
 
 
 @pytest.fixture
@@ -117,6 +146,50 @@ def test_worker_manager_basic(create_worker_manager):
 
 
 @pytest.mark.skipif_macos_bug
+def test_unpicklable_rpc_result_raises_without_killing_the_worker(create_worker_manager):
+    """An RPC result that cannot pickle comes back as the error, not a dead worker."""
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(SimpleModule, global_config, {})
+    module.start()
+
+    with pytest.raises(TypeError, match="cannot pickle"):
+        module.unpicklable()
+
+    assert module.increment() == 1
+
+    module.stop()
+
+
+@pytest.mark.skipif_macos_bug
+def test_unpicklable_pipe_response_raises_without_killing_the_worker(create_worker_manager):
+    """A response the worker pipe cannot pickle errors out; the worker lives on."""
+    worker_manager = create_worker_manager(n_workers=1)
+    module = worker_manager.deploy(SimpleModule, global_config, {})
+    module.start()
+    module.make_lock()
+
+    # Attribute access rides the pipe, unlike rpc calls, which ride the transport.
+    with pytest.raises(RuntimeError, match="(?i)pickle"):
+        module.actor_instance.lock  # noqa: B018
+
+    assert module.increment() == 1
+
+    module.stop()
+
+
+@pytest.mark.skipif_macos_bug
+def test_worker_inherits_host_global_config(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=1)
+    host_config = GlobalConfig(robot_ip="10.11.12.13")
+    module = worker_manager.deploy(SimpleModule, host_config, {})
+    module.start()
+
+    assert module.read_global_robot_ip() == "10.11.12.13"
+
+    module.stop()
+
+
+@pytest.mark.skipif_macos_bug
 def test_worker_manager_multiple_different_modules(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
     module1 = worker_manager.deploy(SimpleModule, global_config, {})
@@ -141,16 +214,17 @@ def test_worker_manager_multiple_different_modules(create_worker_manager):
 @pytest.mark.skipif_macos_bug
 def test_worker_manager_parallel_deployment(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
+    simple_kwargs = {}
     modules = worker_manager.deploy_parallel(
         [
-            (SimpleModule, global_config, {}),
+            (SimpleModule, global_config, simple_kwargs),
             (AnotherModule, global_config, {}),
             (ThirdModule, global_config, {}),
         ],
-        {},
     )
 
     assert len(modules) == 3
+    assert simple_kwargs == {}
     module1, module2, module3 = modules
 
     # Start all modules
@@ -189,6 +263,9 @@ def test_collect_stats(create_worker_manager):
     class CapturingLogger:
         def log_stats(self, coordinator, workers):
             captured.append(workers)
+
+        def stop(self):
+            pass
 
     monitor = StatsMonitor(manager, resource_logger=CapturingLogger(), interval=0.5)
     monitor.start()
@@ -301,3 +378,39 @@ def test_load_balancing_distributes_modules(manager_and_modules):
     # Each worker should have 2 modules (even distribution)
     counts = [w.module_count for w in manager._workers]
     assert counts == [2, 2]
+
+
+@pytest.mark.skipif_macos_bug
+def test_dedicated_worker_gets_own_process(manager_and_modules):
+    manager, modules = manager_and_modules(n_workers=2)
+
+    heavy = manager.deploy(HeavyModule, global_config, {})
+    modules.append(heavy)
+    heavy.start()
+
+    for _ in range(3):
+        m = manager.deploy(SimpleModule, global_config, {})
+        modules.append(m)
+        m.start()
+
+    counts = sorted(w.module_count for w in manager._workers)
+    # One worker hosts only the dedicated module; the other hosts the 3 light ones.
+    assert counts == [1, 3]
+    assert sum(1 for w in manager._workers if w.dedicated) == 1
+
+
+@pytest.mark.skipif_macos_bug
+def test_dedicated_workers_trigger_autoscale(manager_and_modules):
+    manager, modules = manager_and_modules(n_workers=2)
+
+    heavy1 = manager.deploy(HeavyModule, global_config, {})
+    modules.append(heavy1)
+    heavy1.start()
+    heavy2 = manager.deploy(AnotherHeavyModule, global_config, {})
+    modules.append(heavy2)
+    heavy2.start()
+
+    # 2 dedicated modules require >= 4 total workers so non-dedicated workers
+    # at least match the dedicated count.
+    assert len(manager._workers) == 4
+    assert sum(1 for w in manager._workers if w.dedicated) == 2

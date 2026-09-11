@@ -97,7 +97,14 @@ class PubSub(PubSubBaseMixin[TopicT, MsgT], ABC):
     def subscribe(
         self, topic: TopicT, callback: Callable[[MsgT, TopicT], None]
     ) -> Callable[[], None]:
-        """Subscribe to a topic with a callback. returns unsubscribe function"""
+        """Subscribe to a topic with a callback. returns unsubscribe function
+
+        The unsubscribe function must not block waiting for an in-flight
+        callback (callers may hold an event loop the backend needs for
+        progress), must be callable from within the callback itself, and once
+        it returns no further deliveries start (a callback already executing
+        may still complete).
+        """
         ...
 
 

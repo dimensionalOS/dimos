@@ -14,11 +14,10 @@
 
 from __future__ import annotations
 
-from dimos_lcm.geometry_msgs import Twist as LCMTwist
-from plum import dispatch
+from typing import Any, overload
 
-# Import Quaternion at runtime for beartype compatibility
-# (beartype needs to resolve forward references at runtime)
+from dimos_lcm.geometry_msgs import Twist as LCMTwist
+
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
 
@@ -28,44 +27,59 @@ class Twist(LCMTwist):  # type: ignore[misc]
     angular: Vector3
     msg_name = "geometry_msgs.Twist"
 
-    @dispatch
-    def __init__(self) -> None:
-        """Initialize a zero twist (no linear or angular velocity)."""
-        self.linear = Vector3()
-        self.angular = Vector3()
+    @overload
+    def __init__(self) -> None: ...
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, linear: VectorLike, angular: VectorLike) -> None:
-        """Initialize a twist from linear and angular velocities."""
+    @overload
+    def __init__(
+        self,
+        linear: VectorLike | None = ...,
+        angular: VectorLike | Quaternion | None = ...,
+    ) -> None: ...
 
-        self.linear = Vector3(linear)
-        self.angular = Vector3(angular)
+    @overload
+    def __init__(self, twist: Twist | LCMTwist, /) -> None: ...
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, linear: VectorLike, angular: Quaternion) -> None:
-        """Initialize a twist from linear velocity and angular as quaternion (converted to euler)."""
-        self.linear = Vector3(linear)
-        self.angular = angular.to_euler()
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize a twist.
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, twist: Twist) -> None:
-        """Initialize from another Twist (copy constructor)."""
-        self.linear = Vector3(twist.linear)
-        self.angular = Vector3(twist.angular)
+        Supported forms:
+            Twist()                                 # zero twist
+            Twist(linear, angular)
+            Twist(linear=..., angular=...)          # keyword args, either optional
+            Twist(linear, quaternion)               # angular converted to euler
+            Twist(other_twist)                      # copy constructor
+            Twist(lcm_twist)                        # from LCM message
+        """
+        linear: Any = None
+        angular: Any = None
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, lcm_twist: LCMTwist) -> None:
-        """Initialize from an LCM Twist."""
-        self.linear = Vector3(lcm_twist.linear)
-        self.angular = Vector3(lcm_twist.angular)
+        if len(args) == 2:
+            linear, angular = args
+        elif len(args) == 1:
+            value = args[0]
+            # Twist before LCMTwist (it is a subclass); anything else is a
+            # linear velocity, same as the `linear=` keyword.
+            if isinstance(value, Twist | LCMTwist):
+                linear, angular = value.linear, value.angular
+            else:
+                linear = value
+        elif args:
+            raise TypeError(f"Twist takes 1 or 2 positional arguments ({len(args)} given)")
 
-    @dispatch  # type: ignore[no-redef]
-    def __init__(self, **kwargs) -> None:
-        """Handle keyword arguments for LCM compatibility."""
-        linear = kwargs.get("linear", Vector3())
-        angular = kwargs.get("angular", Vector3())
+        if kwargs:
+            linear = kwargs.pop("linear", linear)
+            angular = kwargs.pop("angular", angular)
+            if kwargs:
+                raise TypeError(f"Twist got unexpected keyword arguments {sorted(kwargs)}")
 
-        self.__init__(linear, angular)
+        self.linear = Vector3() if linear is None else Vector3(linear)
+        if angular is None:
+            self.angular = Vector3()
+        elif isinstance(angular, Quaternion):
+            self.angular = angular.to_euler()
+        else:
+            self.angular = Vector3(angular)
 
     def __repr__(self) -> str:
         return f"Twist(linear={self.linear!r}, angular={self.angular!r})"
@@ -116,6 +130,3 @@ class Twist(LCMTwist):  # type: ignore[misc]
             False if twist is zero, True otherwise
         """
         return not self.is_zero()
-
-
-__all__ = ["Quaternion", "Twist"]

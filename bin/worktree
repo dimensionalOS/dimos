@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# Manage ready-to-work git worktrees for parallel/agent development.
+#
+# Usage:
+#   bin/worktree new <branch> [base-ref]  # create/checkout <branch>, fork base-ref if new
+#   bin/worktree new --dir ../path <branch>   # override the worktree directory
+#   bin/worktree ls                       # list worktrees (branch = value for rm)
+#   bin/worktree rm <branch|dir> [-b]     # remove a worktree (-b also deletes the branch)
+#
+# `new` (aka create/add) provisions the worktree so mypy/pytest/pre-commit work
+# out of the box (uv venv + `uv sync --all-groups`, `.envrc` symlink, direnv allow).
+#
+# Examples:
+#   bin/worktree new feat/ivan/foo        # new branch off current HEAD -> ../dimos-foo
+#   bin/worktree new feat/ivan/foo origin/main
+#   bin/worktree new existing-branch      # check out a branch that already exists
+#   bin/worktree rm feat/ivan/foo         # remove that worktree (keep the branch)
+#   bin/worktree rm feat/ivan/foo -b      # remove worktree and delete the branch
+set -euo pipefail
+
+REPO_ROOT=$(git rev-parse --path-format=absolute --git-common-dir)
+REPO_ROOT=$(cd "$(dirname "$REPO_ROOT")" && pwd)   # main worktree root
+
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# Default worktree dir for a branch: ../dimos-<last path component>, sanitized.
+default_dir() {
+    local slug
+    slug=$(printf '%s' "${1##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's#[^a-z0-9_.-]+#-#g; s#^-+|-+$##g')
+    printf '%s' "$(dirname "$REPO_ROOT")/$(basename "$REPO_ROOT")-$slug"
+}
+
+cmd_ls() {
+    # List worktrees with the branch name to pass to `rm` and the dir.
+    # The main worktree is marked (main) and can't be removed.
+    printf '%-40s %s\n' "BRANCH (rm target)" "DIRECTORY"
+    git worktree list --porcelain | awk -v root="$REPO_ROOT" '
+        function flush() {
+            if (w=="") return
+            printf "%-40s %s%s\n", (det ? "(detached)" : b), w, (w==root ? "  (main)" : "")
+            w=""
+        }
+        /^worktree /{flush(); w=$2; b=""; det=0}
+        /^branch /{b=$2; sub(/^refs\/heads\//, "", b)}
+        /^detached/{det=1}
+        END{flush()}'
+}
+
+cmd_rm() {
+    local target="" del_branch="" force=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -b|--branch) del_branch=1; shift ;;
+            -f|--force) force=1; shift ;;
+            -*) echo "unknown flag: $1" >&2; exit 1 ;;
+            *) target="$1"; shift ;;
+        esac
+    done
+    [[ -n "$target" ]] || { echo "usage: bin/worktree rm <branch|dir> [-b]" >&2; exit 1; }
+
+    # Resolve target (a path or a branch name) to its worktree directory + branch.
+    local dir branch
+    if [[ -d "$target" ]]; then
+        dir=$(realpath "$target")
+        branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+    else
+        dir=$(default_dir "$target")
+        branch="$target"
+        # If the default dir isn't where the branch lives, find it in the list.
+        if [[ ! -d "$dir" ]]; then
+            dir=$(git worktree list --porcelain \
+                | awk -v b="refs/heads/$branch" '
+                    /^worktree /{w=$2} /^branch /{if($2==b) print w}' | head -1)
+        fi
+    fi
+    [[ -n "$dir" && -d "$dir" ]] || { echo "no worktree found for '$target'" >&2; exit 1; }
+    [[ "$dir" != "$REPO_ROOT" ]] || { echo "refusing to remove the main worktree" >&2; exit 1; }
+
+    echo ">>> removing worktree: $dir  (branch: ${branch:-?})"
+    git worktree remove ${force:+--force} "$dir" || {
+        echo ">>> 'git worktree remove' refused (uncommitted/untracked files); retry with -f to force" >&2
+        exit 1
+    }
+
+    if [[ -n "$del_branch" && -n "$branch" ]]; then
+        echo ">>> deleting branch: $branch"
+        git branch -D "$branch"
+    fi
+    echo ">>> done"
+}
+
+cmd_add() {
+    local DIR="" BRANCH="" BASE="" resolved=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -d|--dir) [[ $# -ge 2 ]] || { echo "$1 requires a value" >&2; usage >&2; exit 1; }; DIR="$2"; shift 2 ;;
+            -*) echo "unknown flag: $1" >&2; exit 1 ;;
+            *) if [[ -z "$BRANCH" ]]; then BRANCH="$1"; elif [[ -z "$BASE" ]]; then BASE="$1"; else
+                   echo "unexpected arg: $1" >&2; exit 1; fi; shift ;;
+        esac
+    done
+    [[ -n "$BRANCH" ]] || { usage >&2; exit 1; }
+
+    [[ -n "$DIR" ]] || DIR=$(default_dir "$BRANCH")
+    # realpath -m (resolve non-existent paths) is GNU-only; fall back for BSD/macOS
+    # realpath. Resolve into a temp first: `DIR=$(...)` clobbers DIR to "" on failure,
+    # which would break the fallback's dirname/basename of the original path.
+    if resolved=$(realpath -m "$DIR" 2>/dev/null); then
+        DIR=$resolved
+    else
+        DIR=$(cd "$(dirname "$DIR")" && echo "$PWD/$(basename "$DIR")")
+    fi
+
+    echo ">>> worktree: $DIR  (branch: $BRANCH)"
+
+    # Skip LFS smudge: code worktrees don't need the multi-GB data/ blobs (those
+    # are fetched on demand via get_data). Saves a large checkout.
+    if [[ -d "$DIR" ]]; then
+        echo ">>> $DIR already exists, skipping 'git worktree add'"
+    elif git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+        GIT_LFS_SKIP_SMUDGE=1 git worktree add "$DIR" "$BRANCH"
+    elif git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+        GIT_LFS_SKIP_SMUDGE=1 git worktree add --track -b "$BRANCH" "$DIR" "origin/$BRANCH"
+    else
+        GIT_LFS_SKIP_SMUDGE=1 git worktree add -b "$BRANCH" "$DIR" "${BASE:-HEAD}"
+    fi
+
+    cd "$DIR"
+
+    # Per-worktree env (.envrc is gitignored, so each worktree needs its own).
+    # Mirror whichever variant the main repo points at: .envrc.nix (nix flake)
+    # or .envrc.venv (plain venv, no nix).
+    local envrc; envrc=$(readlink "$REPO_ROOT/.envrc" 2>/dev/null || echo .envrc.nix)
+    [[ "$envrc" == .envrc.nix || "$envrc" == .envrc.venv ]] || envrc=.envrc.nix
+    [[ -e .envrc ]] || ln -s "$envrc" .envrc
+
+    # Python env. The nix variant runs the sync inside `nix develop` so build
+    # deps see the shell's CFLAGS/CYCLONEDDS_HOME/etc.; the venv variant uses
+    # the system toolchain directly.
+    echo ">>> uv venv + sync via $envrc (may take a few min on first run)"
+    if [[ "$envrc" == .envrc.nix ]]; then
+        nix develop --command bash -c 'uv venv --python 3.12 && uv sync --all-groups'
+    else
+        uv venv --python 3.12 && uv sync --all-groups
+    fi
+
+    # Let direnv auto-activate it next time you cd in.
+    if command -v direnv >/dev/null 2>&1; then
+        direnv allow . || true
+    fi
+
+    echo
+    echo ">>> ready: $DIR"
+    echo "    interactive:  cd $DIR        # direnv loads the nix shell + .venv"
+    echo "    non-interactive / agents:    direnv exec $DIR python -m pytest dimos"
+    echo "                                 direnv exec $DIR python -m mypy dimos"
+}
+
+case "${1:-}" in
+    -h|--help|"") usage; [[ -n "${1:-}" ]] && exit 0 || exit 1 ;;
+    ls|list) shift; cmd_ls "$@" ;;
+    rm|remove) shift; cmd_rm "$@" ;;
+    new|create|add) shift; cmd_add "$@" ;;
+    *) echo "unknown command: $1 (did you mean 'new'?)" >&2; echo >&2; usage >&2; exit 1 ;;
+esac

@@ -23,7 +23,7 @@ import pytest
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.core.transport import pLCMTransport
+from dimos.core.transport_factory import make_transport
 
 
 class BurstModule(Module):
@@ -40,7 +40,7 @@ class BurstModule(Module):
 
 
 @pytest.fixture
-def start_burst_module():
+def start_burst_module(each_transport):
     blueprint = BurstModule.blueprint()
     coordinator = ModuleCoordinator.build(blueprint)
     yield
@@ -48,16 +48,16 @@ def start_burst_module():
 
 
 @pytest.fixture
-def burst_a_transport():
-    tr = pLCMTransport("/a")
+def burst_a_transport(each_transport):
+    tr = make_transport("/a")
     tr.start()
     yield tr
     tr.stop()
 
 
 @pytest.fixture
-def burst_record_transport():
-    tr = pLCMTransport("/record")
+def burst_record_transport(each_transport):
+    tr = make_transport("/record")
     tr.start()
     yield tr
     tr.stop()
@@ -121,7 +121,7 @@ class InterleaveModule(Module):
 
 
 @pytest.fixture
-def start_interleave_module():
+def start_interleave_module(each_transport):
     blueprint = InterleaveModule.blueprint()
     coordinator = ModuleCoordinator.build(blueprint)
     yield
@@ -129,16 +129,16 @@ def start_interleave_module():
 
 
 @pytest.fixture
-def interleave_a_transport():
-    tr = pLCMTransport("/a")
+def interleave_a_transport(each_transport):
+    tr = make_transport("/a")
     tr.start()
     yield tr
     tr.stop()
 
 
 @pytest.fixture
-def interleave_record_transport():
-    tr = pLCMTransport("/record")
+def interleave_record_transport(each_transport):
+    tr = make_transport("/record")
     tr.start()
     yield tr
     tr.stop()
@@ -167,31 +167,44 @@ def test_handler_does_not_interleave_across_awaits(
 
 
 class CleanupModule(Module):
-    """Handler that sleeps for a long time so we can stop the coordinator
-    while the handler is mid-await."""
+    """Handler that announces itself and then sleeps for a long time so we can
+    stop the coordinator while the handler is mid-await."""
 
     a: In[int]
+    started: Out[dict]
 
     async def handle_a(self, value: int) -> None:
-        await asyncio.sleep(5.0)
+        self.started.publish({"value": value})
+        await asyncio.sleep(30.0)
 
 
 @pytest.fixture
-def cleanup_a_transport():
-    tr = pLCMTransport("/a")
+def cleanup_a_transport(each_transport):
+    tr = make_transport("/a")
     tr.start()
     yield tr
     tr.stop()
 
 
-def test_stop_cancels_in_flight_handler(cleanup_a_transport):
+@pytest.fixture
+def cleanup_started_transport(each_transport):
+    tr = make_transport("/started")
+    tr.start()
+    yield tr
+    tr.stop()
+
+
+def test_stop_cancels_in_flight_handler(cleanup_a_transport, cleanup_started_transport):
     """Stopping the coordinator while a handler is awaiting must complete
     quickly. The dispatcher cancels the handler instead of waiting for it."""
+    queue: Queue = Queue()
+    cleanup_started_transport.subscribe(queue.put)
     blueprint = CleanupModule.blueprint()
     coordinator = ModuleCoordinator.build(blueprint)
     try:
         cleanup_a_transport.publish(1)
-        time.sleep(0.1)  # let the handler enter its sleep
+        # Wait until the handler is running (it publishes just before sleeping).
+        queue.get(timeout=15.0)
         start = time.monotonic()
         coordinator.stop()
         elapsed = time.monotonic() - start
@@ -199,6 +212,8 @@ def test_stop_cancels_in_flight_handler(cleanup_a_transport):
         coordinator.stop()
         raise
 
-    # Without cancellation, stop() would either hang or be bounded only by the
-    # 5s asyncio.sleep. The dispatcher cancels the task synchronously.
-    assert elapsed < 3.0, f"stop() took {elapsed:.2f}s (handler not cancelled)"
+    # Without cancellation, stop() would hang or be bounded only by the 30s
+    # asyncio.sleep. The 10s bound leaves room for CI runner stalls (4.6s was
+    # observed on a healthy run) while still catching a stop() that waits for
+    # the handler.
+    assert elapsed < 10.0, f"stop() took {elapsed:.2f}s (handler not cancelled)"

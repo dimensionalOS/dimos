@@ -16,8 +16,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
-
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.detection.type.imageDetections import ImageDetections
 
@@ -25,6 +23,7 @@ if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
 
     from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.sensor_msgs.Image import Image
     from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
     from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
     from dimos.perception.detection.type.detection3d.pointcloud_filters import PointCloudFilter
@@ -59,23 +58,28 @@ class ImageDetections3DPC(ImageDetections[Detection3DPC]):
         ]
         return cls(image=detections_2d.image, detections=detections_3d)
 
-    def to_foxglove_scene_update(self) -> SceneUpdate:
-        """Convert all detections to a Foxglove SceneUpdate message.
-
-        Returns:
-            SceneUpdate containing SceneEntity objects for all detections
-        """
-
-        # Create SceneUpdate message with all detections
-        scene_update = SceneUpdate()
-        scene_update.deletions_length = 0
-        scene_update.deletions = []
-        scene_update.entities = []
-
-        # Process each detection
-        for i, detection in enumerate(self.detections):
-            entity = detection.to_foxglove_scene_entity(entity_id=f"detection_{detection.name}_{i}")
-            scene_update.entities.append(entity)
-
-        scene_update.entities_length = len(scene_update.entities)
-        return scene_update
+    @classmethod
+    def from_depth(
+        cls,
+        detections_2d: ImageDetections2D,
+        depth: Image,
+        camera_info: CameraInfo,
+        world_to_optical_transform: Transform,
+        filters: list[PointCloudFilter] | None = None,
+    ) -> ImageDetections3DPC:
+        """Unproject every detection's depth pixels into 3D, dropping empty results."""
+        detections_3d = [
+            d3d
+            for det in detections_2d
+            if (
+                d3d := Detection3DPC.from_depth(
+                    det,
+                    depth,
+                    camera_info,
+                    world_to_optical_transform,
+                    filters,
+                )
+            )
+            is not None
+        ]
+        return cls(image=detections_2d.image, detections=detections_3d)

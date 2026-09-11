@@ -2,12 +2,36 @@ global-exclude *.pyc
 global-exclude __pycache__
 global-exclude .DS_Store
 
+# --- Runtime data shipped inside the package ---
+# include-package-data=true maps everything matched here into the wheel too.
+# Scoped by extension on purpose: docs (*.md), native build files (*.nix,
+# *.lock, *.patch, CMakeLists.txt, Dockerfile) and .gitignore are NOT Python
+# runtime data and must stay out. Add a new extension here when code starts
+# loading a new data type — never go back to per-package globs.
+recursive-include dimos *.yaml *.yml *.json *.urdf *.html *.css *.js *.svg *.tcss
+
+# --- Exclusions (must come after the includes above so they win) ---
+# Test fixtures must never ship.
+recursive-exclude dimos/agents/fixtures *
+recursive-exclude dimos/agents/mcp/fixtures *
+recursive-exclude dimos/mapping/google_maps/fixtures *
+# Native (C++/nix) build tree — built separately, mid360.json is not Python data.
+recursive-exclude dimos/hardware/sensors/lidar/fastlio2/cpp *.json
+
 # Exclude web development directories
 recursive-exclude dimos/web/command-center-extension *
 recursive-exclude dimos/web/websocket_vis/node_modules *
-recursive-exclude dimos/agents/fixtures *
-recursive-exclude dimos/mapping/google_maps/fixtures *
 recursive-exclude dimos/web/dimos_interface *
+recursive-include dimos/web/dimos_interface/api *.py *.html
+
+# Deno relay sources (repo-root web/): shipped inside the wheel by the
+# build_py hook in setup.py (copied to dimos/web/relay_bridge/_relay_dist).
+# The graft keeps them in the sdist so sdist->wheel builds (uv build, pip)
+# can reproduce that copy.
+graft web
+prune web/node_modules
+prune web/cockpit/node_modules
+prune web/sdk/node_modules
 
 # Exclude development files
 exclude .gitignore
@@ -19,3 +43,6 @@ prune .pytest_cache
 prune .ruff_cache
 prune .vscode
 prune dimos/web/command-center-extension
+
+global-exclude test_*.py
+global-exclude conftest.py

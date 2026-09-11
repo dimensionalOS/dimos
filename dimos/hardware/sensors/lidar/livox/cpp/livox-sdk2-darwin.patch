@@ -22,3 +22,26 @@
      servaddr.sin_addr.s_addr = INADDR_ANY;
    } else {
      if(!multicast_ip.empty()){
+--- a/sdk_core/device_manager.cpp
++++ b/sdk_core/device_manager.cpp
+@@ -259,7 +259,10 @@
+ }
+ 
+ bool DeviceManager::CreateDetectionChannel() {
+-#ifdef WIN32
++#if defined(WIN32) || defined(__APPLE__)
++  // macOS: no working broadcast on loopback; the fake-lidar consumer reaches us
++  // by unicast to the host detection socket. Skipping this INADDR_ANY socket
++  // also frees :56000 so the in-process replayer can bind lidar_ip:56000.
+ #else
+   detection_broadcast_socket_ = util::CreateSocket(kDetectionPort, true, true, true, "255.255.255.255", "");
+   if (detection_broadcast_socket_ < 0) {
+@@ -324,7 +327,7 @@
+     }
+   }
+ 
+-#ifdef WIN32
++#if defined(WIN32) || defined(__APPLE__)
+ #else
+   if (dev_type == kLivoxLidarTypeMid360) {
+     socket_t broadcast_socket = util::CreateSocket(host_net_info.push_msg_port, true, true, true, "255.255.255.255", "");

@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.global_config import GlobalConfig
@@ -40,11 +40,7 @@ class WorkerManager(Protocol):
         kwargs: dict[str, Any],
     ) -> ModuleProxyProtocol: ...
 
-    def deploy_parallel(
-        self,
-        specs: Sequence[ModuleSpec],
-        blueprint_args: Mapping[str, Mapping[str, Any]],
-    ) -> list[ModuleProxyProtocol]: ...
+    def deploy_parallel(self, specs: Sequence[ModuleSpec]) -> list[ModuleProxyProtocol]: ...
 
     def stop(self) -> None: ...
 

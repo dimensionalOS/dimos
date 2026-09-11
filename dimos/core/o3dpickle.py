@@ -15,7 +15,6 @@
 import copyreg
 
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
 
 
 def reduce_external(obj):  # type: ignore[no-untyped-def]
@@ -26,6 +25,8 @@ def reduce_external(obj):  # type: ignore[no-untyped-def]
 
 def reconstruct_pointcloud(points_array):  # type: ignore[no-untyped-def]
     # Create new PointCloud and assign the points
+    import open3d as o3d  # type: ignore[import-untyped]
+
     pc = o3d.geometry.PointCloud()
     pc.points = o3d.utility.Vector3dVector(points_array)
     return pc
@@ -34,5 +35,7 @@ def reconstruct_pointcloud(points_array):  # type: ignore[no-untyped-def]
 def register_picklers() -> None:
     # Register for the actual PointCloud class that gets instantiated
     # We need to create a dummy PointCloud to get its actual class
+    import open3d as o3d  # type: ignore[import-untyped]
+
     _dummy_pc = o3d.geometry.PointCloud()
     copyreg.pickle(_dummy_pc.__class__, reduce_external)

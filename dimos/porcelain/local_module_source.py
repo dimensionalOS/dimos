@@ -14,16 +14,15 @@
 
 from __future__ import annotations
 
-import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-import rpyc
-
+from dimos.core.rpc_client import ModuleProxyProtocol
+from dimos.porcelain.module_handle import ModuleHandle
 from dimos.porcelain.module_source import ModuleSource
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator, ModuleDescriptor
 
 logger = setup_logger()
 
@@ -31,49 +30,44 @@ logger = setup_logger()
 class LocalModuleSource(ModuleSource):
     """Module source backed by an in-process `ModuleCoordinator`.
 
-    Uses per-worker RPyC servers for both attribute access and skill calls,
-    so the wire path is identical to `RemoteModuleSource`.
+    Returns the per-module `RPCClient` proxies the coordinator already
+    maintains for inter-module calls. Method calls flow over the same LCM
+    bus the modules use to talk to each other.
     """
 
     is_remote = False
 
     def __init__(self, coordinator: ModuleCoordinator) -> None:
         self._coordinator = coordinator
-        self._cache: dict[str, tuple[rpyc.Connection, Any]] = {}
-        self._lock = threading.RLock()
 
     def list_module_names(self) -> list[str]:
         return self._coordinator.list_module_names()
 
-    def get_rpyc_module(self, name: str) -> Any:
-        with self._lock:
-            cached = self._cache.get(name)
-            if cached is not None and not cached[0].closed:
-                return cached[1]
+    def list_module_descriptors(self) -> list[ModuleDescriptor]:
+        return self._coordinator.list_modules()
 
-            host, port, module_id = self._coordinator.get_module_endpoint(name)
+    def get_module(self, name: str) -> ModuleHandle:
+        if name in self._coordinator._deployed_modules:
+            return self._coordinator._deployed_modules[name]
 
-            conn = rpyc.connect(
-                host, port, config={"sync_request_timeout": 30, "allow_pickle": True}
+        matches: list[tuple[str, ModuleProxyProtocol]] = []
+        for instance_key, proxy in self._coordinator._deployed_modules.items():
+            cls = self._coordinator._instance_classes[instance_key]
+            if cls.__name__ == name:
+                matches.append((instance_key, proxy))
+
+        if len(matches) == 1:
+            return matches[0][1]
+        if len(matches) > 1:
+            instance_names = ", ".join(sorted(instance_key for instance_key, _ in matches))
+            raise ValueError(
+                f"Multiple instances of {name!r} are deployed "
+                f"({instance_names}); use the instance name."
             )
-            module = conn.root.get_module(module_id)
-            self._cache[name] = (conn, module)
-            return module
+        raise KeyError(name)
 
     def invalidate(self, name: str) -> None:
-        with self._lock:
-            entry = self._cache.pop(name, None)
-        if entry is not None:
-            try:
-                entry[0].close()
-            except Exception:
-                logger.warning("Failed to close RPyC connection for module %s", name, exc_info=True)
+        return None
 
     def close(self) -> None:
-        with self._lock:
-            for conn, _ in self._cache.values():
-                try:
-                    conn.close()
-                except Exception:
-                    logger.warning("Failed to close RPyC connection during shutdown", exc_info=True)
-            self._cache.clear()
+        return None

@@ -1,0 +1,11 @@
+.canvas {
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
+.waiting {
+  color: #8b949e;
+  position: absolute;
+}

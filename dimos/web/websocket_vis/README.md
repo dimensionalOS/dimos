@@ -1,6 +1,6 @@
 # WebSocket Visualization Module
 
-The `WebsocketVisModule` provides a real-time data for visualization and control of the robot in Foxglove (see `dimos/web/command-center-extension/README.md`).
+The `WebsocketVisModule` provides real-time data for visualization and control of the robot.
 
 ## Overview
 
@@ -44,14 +44,14 @@ from dimos.core.transport import LCMTransport, pLCMTransport
 # Deploy the WebSocket visualization module
 websocket_vis = dimos.deploy(WebsocketVisModule, port=7779)
 
-# Receive control from the Foxglove plugin.
+# Receive control commands.
 websocket_vis.click_goal.transport = LCMTransport("/goal_request", PoseStamped)
 websocket_vis.explore_cmd.transport = LCMTransport("/explore_cmd", Bool)
 websocket_vis.stop_explore_cmd.transport = LCMTransport("/stop_explore_cmd", Bool)
 websocket_vis.movecmd.transport = LCMTransport("/cmd_vel", Twist)
 websocket_vis.gps_goal.transport = pLCMTransport("/gps_goal")
 
-# Send visualization data to the Foxglove plugin.
+# Send visualization data.
 websocket_vis.robot_pose.connect(connection.odom)
 websocket_vis.path.connect(global_planner.path)
 websocket_vis.global_costmap.connect(mapper.global_costmap)
@@ -63,4 +63,4 @@ websocket_vis.start()
 
 ### Accessing the Interface
 
-See `dimos/web/command-center-extension/README.md` for how to add the command-center plugin in Foxglove.
+Open the web visualization at the configured port (default: 7779).

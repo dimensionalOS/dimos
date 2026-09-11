@@ -14,30 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import platform
 from typing import Any
 
-from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.transport import pSHMTransport
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.vis_module import vis_module
-
-# Mac has some issue with high bandwidth UDP, so we use pSHMTransport for color_image
-# actually we can use pSHMTransport for all platforms, and for all streams
-# TODO need a global transport toggle on blueprints/global config
-_mac_transports: dict[tuple[str, type], pSHMTransport[Image]] = {
-    ("color_image", Image): pSHMTransport(
-        "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-    ),
-}
-
-_transports_base = (
-    autoconnect() if platform.system() == "Linux" else autoconnect().transports(_mac_transports)
-)
 
 
 def _convert_camera_info(camera_info: Any) -> Any:
@@ -60,7 +42,7 @@ def _convert_navigation_costmap(grid: Any) -> Any:
     )
 
 
-def _static_base_link(rr: Any) -> list[Any]:
+def _static_robot_body(rr: Any) -> list[Any]:
     return [
         rr.Boxes3D(
             half_sizes=[0.35, 0.155, 0.2],
@@ -96,7 +78,7 @@ def _go2_rerun_blueprint() -> Any:
     )
 
 
-rerun_config = {
+rerun_config: dict[str, Any] = {
     "blueprint": _go2_rerun_blueprint,
     # Custom converters for specific rerun entity paths
     # Normally all these would be specified in their respectative modules
@@ -106,25 +88,26 @@ rerun_config = {
     "visual_override": {
         "world/camera_info": _convert_camera_info,
         "world/global_map": _convert_global_map,
+        "world/merged_map": _convert_global_map,
         "world/navigation_costmap": _convert_navigation_costmap,
     },
     "max_hz": {
         "world/global_map": 0,  # publishes at ~7.8 Hz
         "world/color_image": 0,  # publishes at ~14 Hz
         "world/global_costmap": 0,  # publishes at ~7.6 Hz
+        "world/lidar": 1,  # publishes at ~7.7 Hz; hidden by default in the blueprint
     },
-    # slapping a go2 shaped box on top of tf/base_link
+    "tf_axes": 0.5,
+    # slapping a go2 shaped box on the base_link frame
     "static": {
-        "world/tf/base_link": _static_base_link,
+        "world/robot_body": _static_robot_body,
     },
 }
 
 _with_vis = autoconnect(
-    _transports_base,
     vis_module(
         viewer_backend=global_config.viewer,
         rerun_config=rerun_config,
-        foxglove_config={"shm_channels": ["/color_image#sensor_msgs.Image"]},
     ),
 )
 
@@ -133,11 +116,11 @@ unitree_go2_basic = (
     autoconnect(
         _with_vis,
         GO2Connection.blueprint(),
-    )
-    .global_config(n_workers=4, robot_model="unitree_go2")
-    .configurators(ClockSyncConfigurator())
+    ).global_config(n_workers=4, robot_model="unitree_go2")
+    # we temporarily disabled sensor timestamps
+    # and are derriving all timestmaps upon reception
+    # this is because image webrtc stream doesn't have timestamps,
+    # so it's difficult to corelate the streams otherwise
+    #
+    #    .configurators(ClockSyncConfigurator())
 )
-
-__all__ = [
-    "unitree_go2_basic",
-]

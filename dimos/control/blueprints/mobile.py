@@ -15,8 +15,10 @@
 """Mobile manipulation coordinator blueprints.
 
 Usage:
-    dimos run coordinator-mock-twist-base      # Mock holonomic base
-    dimos run coordinator-mobile-manip-mock    # Mock arm + base
+    dimos run coordinator-mock-twist-base                # Mock holonomic base
+    dimos run coordinator-mobile-manip-mock              # Mock arm + base
+    dimos run coordinator-flowbase                       # FlowBase holonomic base (Portal RPC)
+    dimos run coordinator-flowbase-keyboard-teleop       # FlowBase + WASD pygame teleop
 """
 
 from __future__ import annotations
@@ -24,13 +26,13 @@ from __future__ import annotations
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
+    make_joints,
     make_twist_base_joints,
 )
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.catalog.ufactory import xarm7 as _catalog_xarm7
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
 _base_joints = make_twist_base_joints("base")
 
@@ -45,6 +47,23 @@ def _mock_twist_base(hw_id: str = "base") -> HardwareComponent:
     )
 
 
+def _flowbase_twist_base(
+    hw_id: str = "base",
+    address: str | None = None,
+) -> HardwareComponent:
+    """FlowBase holonomic platform via Portal RPC (3-DOF: vx, vy, wz).
+
+    Address defaults to ``FlowBaseAdapter.DEFAULT_ADDRESS`` when ``None``.
+    """
+    return HardwareComponent(
+        hardware_id=hw_id,
+        hardware_type=HardwareType.BASE,
+        joints=make_twist_base_joints(hw_id),
+        adapter_type="flowbase",
+        address=address,
+    )
+
+
 # Mock holonomic twist base (3-DOF: vx, vy, wz)
 coordinator_mock_twist_base = ControlCoordinator.blueprint(
     hardware=[_mock_twist_base()],
@@ -56,20 +75,12 @@ coordinator_mock_twist_base = ControlCoordinator.blueprint(
             priority=10,
         ),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
-    }
-)
+).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
 
-# Mock arm (7-DOF) + mock holonomic base (3-DOF)
-_mock_arm_cfg = _catalog_xarm7(name="arm")
-
-coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
-    hardware=[_mock_arm_cfg.to_hardware_component(), _mock_twist_base()],
+# FlowBase holonomic twist base (3-DOF: vx, vy, wz) over Portal RPC
+coordinator_flowbase = ControlCoordinator.blueprint(
+    hardware=[_flowbase_twist_base()],
     tasks=[
-        _mock_arm_cfg.to_task_config(task_name="traj_arm"),
         TaskConfig(
             name="vel_base",
             type="velocity",
@@ -77,15 +88,41 @@ coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
             priority=10,
         ),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
-    }
+).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
+
+# FlowBase + WASD pygame keyboard teleop in a single blueprint
+coordinator_flowbase_keyboard_teleop = autoconnect(
+    ControlCoordinator.blueprint(
+        hardware=[_flowbase_twist_base()],
+        tasks=[
+            TaskConfig(
+                name="vel_base",
+                type="velocity",
+                joint_names=_base_joints,
+                priority=10,
+            ),
+        ],
+    ),
+    KeyboardTeleop.blueprint(),
+).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
+
+# Mock arm (7-DOF) + mock holonomic base (3-DOF)
+_mock_arm_hw = HardwareComponent(
+    hardware_id="arm",
+    hardware_type=HardwareType.MANIPULATOR,
+    joints=make_joints("arm", 7),
+    adapter_type="mock",
 )
 
-
-__all__ = [
-    "coordinator_mobile_manip_mock",
-    "coordinator_mock_twist_base",
-]
+coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
+    hardware=[_mock_arm_hw, _mock_twist_base()],
+    tasks=[
+        joint_trajectory_task(_mock_arm_hw.joints),
+        TaskConfig(
+            name="vel_base",
+            type="velocity",
+            joint_names=_base_joints,
+            priority=10,
+        ),
+    ],
+).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])

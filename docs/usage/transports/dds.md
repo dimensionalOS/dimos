@@ -45,13 +45,10 @@ sudo ln -sf /usr/lib/x86_64-linux-gnu/libcycloneddsidl.so* /opt/cyclonedds/lib/
 sudo ln -sf /usr/bin/idlc /opt/cyclonedds/bin/
 sudo ln -sf /usr/bin/ddsperf /opt/cyclonedds/bin/
 sudo ln -sf /usr/include/dds /opt/cyclonedds/include/
-
-# Install with the dds extra
-CYCLONEDDS_HOME=/opt/cyclonedds uv pip install -e '.[dds]'
 ```
 
 To install all extras including DDS:
 
 ```bash
-CYCLONEDDS_HOME=/opt/cyclonedds uv sync --extra dds
+CYCLONEDDS_HOME=/opt/cyclonedds uv sync --all-extras --all-groups
 ```

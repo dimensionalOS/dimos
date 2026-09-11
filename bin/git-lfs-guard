@@ -1,0 +1,89 @@
+#!/bin/bash
+# Wrapper around git-lfs that caps per-invocation download size in CI.
+#
+# Installed at /usr/bin/git-lfs (real binary moved to /usr/bin/git-lfs.orig)
+# by the regular `tests:` job in .github/workflows/ci.yml. Refuses any
+# pull/fetch/checkout/smudge that would download more than
+# DIMOS_LFS_GUARD_LIMIT_BYTES (default 1 MiB) so tests can't pull big LFS
+# data on the standard runner. Tests that legitimately need the data should
+# be marked self_hosted (see dimos/conftest.py).
+#
+# Env vars:
+#   DIMOS_LFS_GUARD_REAL          path to real git-lfs (default /usr/bin/git-lfs.orig)
+#   DIMOS_LFS_GUARD_LIMIT_BYTES   per-invocation cap (default 1048576)
+
+REAL="${DIMOS_LFS_GUARD_REAL:-/usr/bin/git-lfs.orig}"
+LIMIT="${DIMOS_LFS_GUARD_LIMIT_BYTES:-$((1024*1024))}"
+
+die() {
+    cat >&2 <<EOF
+git-lfs-guard: $1
+Cap is $LIMIT bytes per git-lfs invocation in the regular tests CI job.
+If this test needs the data, mark it self_hosted so it only runs on the
+self-hosted runner:
+
+    pytestmark = pytest.mark.self_hosted   # module scope
+    @pytest.mark.self_hosted               # single test
+EOF
+    exit 1
+}
+
+case "${1:-}" in
+    smudge)
+        tmp=$(mktemp)
+        cat > "$tmp"
+        size=$(awk '/^size [0-9]+$/ {print $2; exit}' "$tmp")
+        if [[ -z "$size" ]]; then
+            rm -f "$tmp"
+            die "could not parse size from LFS pointer — refusing smudge"
+        fi
+        if [[ "$size" -gt "$LIMIT" ]]; then
+            rm -f "$tmp"
+            die "blocked smudge of ${size}-byte LFS object"
+        fi
+        "$REAL" "$@" < "$tmp"
+        rc=$?
+        rm -f "$tmp"
+        exit "$rc"
+        ;;
+    filter-process)
+        die "filter-process is disabled; the CI step unsets filter.lfs.process so git falls back to smudge"
+        ;;
+    pull|fetch|checkout)
+        sub="$1"; shift
+        orig_args=( "$@" )
+        ls_args=( --json --size )
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -I|--include|-X|--exclude)
+                    if [[ $# -ge 2 ]]; then
+                        ls_args+=( "$1" "$2" )
+                        shift 2
+                    else
+                        shift
+                    fi
+                    ;;
+                --include=*|--exclude=*)
+                    ls_args+=( "$1" )
+                    shift
+                    ;;
+                *)
+                    shift
+                    ;;
+            esac
+        done
+        total=$("$REAL" ls-files "${ls_args[@]}" 2>/dev/null \
+                | jq '[.files[] | select(.downloaded == false) | .size] | add // 0' 2>/dev/null)
+        if [[ $? -ne 0 || -z "$total" ]]; then
+            echo "git-lfs-guard: warning: could not determine LFS download size; allowing $sub" >&2
+            total=0
+        fi
+        if (( total > LIMIT )); then
+            die "blocked $sub of ${total} bytes (args: ${orig_args[*]:-<none>})"
+        fi
+        exec "$REAL" "$sub" "${orig_args[@]}"
+        ;;
+    *)
+        exec "$REAL" "$@"
+        ;;
+esac

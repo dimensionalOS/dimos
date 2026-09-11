@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""Pre-commit hook: no em dashes in the docs."""
+
+import sys
+
+EM_DASH = "—"
+
+
+def main(paths: list[str]) -> int:
+    hits = 0
+    for path in paths:
+        try:
+            lines = open(path, encoding="utf-8").read().split("\n")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for number, line in enumerate(lines, 1):
+            if EM_DASH not in line:
+                continue
+            hits += line.count(EM_DASH)
+            stripped = line.lstrip()
+            print(f"{path}:{number}: {stripped}")
+            caret = "".join("^" if c == EM_DASH else " " for c in stripped)
+            print(f"{' ' * (len(path) + len(str(number)) + 3)}{caret.rstrip()}")
+
+    if hits:
+        print(f"\n{hits} em dash{'es' if hits > 1 else ''}. Reread those sentences.")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,32 @@
+.root {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.row {
+  display: flex;
+  flex: 1;
+  gap: 1rem;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.col {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.cell {
+  display: flex;
+  flex-basis: 0;
+  min-height: 0;
+  min-width: 0;
+}

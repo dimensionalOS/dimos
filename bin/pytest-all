@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+bin/build-test-natives
+
+. .venv/bin/activate
+exec pytest "$@" -m '' --error-for-skips dimos

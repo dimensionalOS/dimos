@@ -1,4 +1,4 @@
-ARG FROM_IMAGE=ubuntu:22.04
+ARG FROM_IMAGE=ubuntu:24.04
 FROM ${FROM_IMAGE}
 
 # Avoid prompts from apt
@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y locales && \
 ENV LANG=en_US.UTF-8
 
 # Set ROS distro
-ENV ROS_DISTRO=humble
+ENV ROS_DISTRO=jazzy
 
 # Install basic requirements
 RUN apt-get update && apt-get install -y \
@@ -68,9 +68,6 @@ RUN apt-get update && apt-get install -y \
     ros-${ROS_DISTRO}-slam-toolbox \
     ros-${ROS_DISTRO}-foxglove-bridge \
     python3-rosdep \
-    python3-rosinstall \
-    python3-rosinstall-generator \
-    python3-wstool \
     python3-colcon-common-extensions \
     python3-vcstool \
     build-essential \

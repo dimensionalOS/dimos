@@ -26,7 +26,6 @@ from threading import Lock
 import time
 
 # Third-party imports
-import cv2
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import CompositeDisposable
@@ -126,6 +125,8 @@ class VideoProvider(AbstractVideoProvider):
         Raises:
             VideoSourceError: If the video source cannot be opened.
         """
+        import cv2
+
         if self.cap is None or not self.cap.isOpened():
             # Release previous capture if it exists but is closed
             if self.cap:
@@ -159,6 +160,7 @@ class VideoProvider(AbstractVideoProvider):
             VideoSourceError: If the video source cannot be opened.
             VideoFrameError: If frames cannot be read properly.
         """
+        import cv2
 
         def emit_frames(observer, scheduler) -> None:  # type: ignore[no-untyped-def]
             try:

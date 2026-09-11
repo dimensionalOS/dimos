@@ -77,6 +77,9 @@ class RPCClient(Protocol):
 
         unsub_fn = self.call(name, arguments, receive_value)
         if not event.wait(rpc_timeout):
+            # Retries register new callbacks. Remove this expired callback so
+            # repeated timeouts do not accumulate entries in the shared response map.
+            unsub_fn()
             raise TimeoutError(f"RPC call to '{name}' timed out after {rpc_timeout} seconds")
 
         # Check if the result is an exception and raise it
@@ -87,18 +90,14 @@ class RPCClient(Protocol):
         return result, unsub_fn
 
     async def call_async(self, name: str, arguments: Args) -> Any:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future = loop.create_future()
 
         def receive_value(val) -> None:  # type: ignore[no-untyped-def]
-            try:
-                # Check if the value is an exception
-                if isinstance(val, BaseException):
-                    loop.call_soon_threadsafe(future.set_exception, val)
-                else:
-                    loop.call_soon_threadsafe(future.set_result, val)
-            except Exception as e:
-                loop.call_soon_threadsafe(future.set_exception, e)
+            if isinstance(val, BaseException):
+                loop.call_soon_threadsafe(future.set_exception, val)
+            else:
+                loop.call_soon_threadsafe(future.set_result, val)
 
         self.call(name, arguments, receive_value)
 
@@ -121,4 +120,10 @@ class RPCServer(Protocol):
 
 
 class RPCSpec(RPCServer, RPCClient):
-    pass
+    def start(self) -> None:
+        if hasattr(super(), "start"):
+            super().start()  # type: ignore[misc]
+
+    def stop(self) -> None:
+        if hasattr(super(), "stop"):
+            super().stop()  # type: ignore[misc]

@@ -12,25 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pickle
+
 import pytest
 
 
 @pytest.mark.skipif_in_ci
 @pytest.mark.self_hosted
 @pytest.mark.skipif_no_openai
-def test_dimos_skills(lcm_spy, start_blueprint, human_input, mcp_port) -> None:
+def test_dimos_skills(lcm_spy, start_blueprint, wait_for_system_ready, human_input) -> None:
     lcm_spy.save_topic("/agent")
-    lcm_spy.save_topic("/rpc/McpClient/on_system_modules/res")
-    lcm_spy.save_topic("/rpc/DemoCalculatorSkill/sum_numbers/req")
-    lcm_spy.save_topic("/rpc/DemoCalculatorSkill/sum_numbers/res")
 
-    start_blueprint("run", "demo-skill", mcp_port=mcp_port)
+    start_blueprint("run", "demo-skill")
 
-    lcm_spy.wait_for_saved_topic("/rpc/McpClient/on_system_modules/res")
+    wait_for_system_ready()
 
     human_input("what is 52983 + 587237")
 
     lcm_spy.wait_for_saved_topic_content("/agent", b"640220")
 
-    assert "/rpc/DemoCalculatorSkill/sum_numbers/req" in lcm_spy.messages
-    assert "/rpc/DemoCalculatorSkill/sum_numbers/res" in lcm_spy.messages
+    # Zenoh RPC is a query, not a bus message, so the spy never sees the skill
+    # call. The agent's tool result is what shows it ran.
+    agent_messages = [pickle.loads(msg) for msg in lcm_spy.messages["/agent"]]
+    assert any(m.name == "sum_numbers" and "640220" in m.content for m in agent_messages)

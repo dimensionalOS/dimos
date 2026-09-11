@@ -3,10 +3,13 @@ description: Suggest a new feature or improvement for DimOS
 labels: ["feature"]
 body:
   - type: textarea
-    id: description
+    id: request
     attributes:
-      label: Description
-      description: What do you want and why?
+      label: What do you want, and why?
+      placeholder: |
+        The problem or motivation — what you're trying to do and what gets in the way.
 
+        Optional: a proposed approach if you have one in mind, and whether you'd
+        like to implement it yourself, test/review it, or just file the request.
     validations:
       required: true

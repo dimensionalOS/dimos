@@ -27,23 +27,84 @@ A transport is responsible for the mechanics of delivery (IPC, sockets, Redis, R
 
 So: treat the API as uniform, but pick a backend whose semantics match the task.
 
----
+## Choosing a backend
+
+* `zenoh`: is our default. Reliable delivery and the same typed message model through `LCM` binary encoding of messages
+* `lcm`: the legacy path, opt-in. Fast and simple, but UDP multicast is best-effort.
+
+At the CLI level, you can select the stream transport globally with:
+
+```bash
+dimos --transport=lcm run unitree-go2
+dimos --transport=zenoh run unitree-go2
+```
+
+Generally LCM is legacy and we suggest using zenoh (the default) going forward
+
+## Zenoh
+
+### What the default talks to
+
+A stock zenoh session is pinned to localhost. It listens on `tcp/127.0.0.1:0` and
+scouts for peers over loopback only, so sibling dimOS processes on this machine
+find each other and nothing on the LAN can link to them.
+
+Peers on this machine carry their data through shared memory, not the socket.
+Zenoh negotiates it per link at handshake, a remote peer keeps getting the
+payload over TCP.
+
+Reaching off the machine is opt-in
+
+| You want                                    | Pass                          |
+|---------------------------------------------|-------------------------------|
+| A robot, dialed directly                    | `--robot-ip 192.168.1.42`     |
+| Any other peer or a router, dialed directly | `ZENOH_CONNECT=tcp/host:7447` |
+| Peers discovered across the LAN             | `ZENOH_SCOUTING=1`            |
+| Scouting on one named interface             | `ZENOH_INTERFACE=wlan0`       |
+
+Every one of these unpins the listener back to zenoh's all-interfaces default.
+
+**Two ways to override for one run or for your shell:**
+
+1. **CLI:** `dimos --transport=zenoh ...` or `dimos --transport=lcm ...` (see [CLI](/docs/usage/cli.md) for precedence with `.env` and blueprints).
+2. **Environment:** `DIMOS_TRANSPORT=zenoh` or `DIMOS_TRANSPORT=lcm`.
+
+
+Architecture notes (Rerun bridge) live under [Zenoh](#zenoh) in PubSub transports below.
+
+### Per-topic QoS
+
+Zenoh publisher QoS lives on the Zenoh `Topic` object (see [`zenohpubsub.py`](/dimos/protocol/pubsub/impl/zenohpubsub.py#L27)):
+
+```python skip
+from dimos.core.transport import ZenohTransport
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic, ZenohQoS
+
+blueprint = blueprint.transports(
+    {("image", CameraModule): ZenohTransport(Topic("dimos/image", Image, qos=ZenohQoS(reliability="best_effort", congestion_control="drop")))}
+)
+```
+
+When the factory builds transports from the global switch, it applies defaults (`default_zenoh_qos` in [`transport_factory.py`](/dimos/core/transport_factory.py#L65)):
+
+* The agent channels (`human_input`, `agent`, `agent_idle`): reliable, block under congestion (never drop).
+* `Image`/`PointCloud2` streams: best-effort, drop under congestion (latest wins).
+* Everything else: zenoh defaults (reliable, drop under congestion).
 
 ## Benchmarks
 
 Quick view on performance of our pubsub backends:
 
 ```sh skip
-python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_benchmark.py
+python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
 ```
 
 ![Benchmark results](../assets/pubsub_benchmark.png)
 
----
-
 ## Abstraction layers
 
-<details><summary>Pikchr</summary>
+<details>
+<summary>Pikchr</summary>
 
 ```pikchr output=../assets/abstraction_layers.svg fold
 color = white
@@ -70,12 +131,9 @@ text "pub/sub API" at P.s + (0, -0.2in)
 
 </details>
 
-<!--Result:-->
 ![output](../assets/abstraction_layers.svg)
 
 We’ll go through these layers top-down.
-
----
 
 ## Using transports with blueprints
 
@@ -104,8 +162,6 @@ ros = nav.transports(
 )
 ```
 
----
-
 ## Using transports with modules
 
 Each **stream** on a module can use a different transport. Set `.transport` on the stream **before starting** modules.
@@ -125,10 +181,8 @@ from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
-
 class TickerCameraConfig(ModuleConfig):
     frequency_hz: float = 2.0
-
 
 class TickerCameraModule(Module):
     """Publish synthetic frames so this example runs without a webcam."""
@@ -151,13 +205,11 @@ class TickerCameraModule(Module):
         period = 1.0 / max(self.config.frequency_hz, 0.1)
         self.register_disposable(rx.interval(period).subscribe(emit))
 
-
 class ImageListener(Module):
     image: In[Image]
 
     async def handle_image(self, img: Image) -> None:
         print(f"Received: {img.shape}")
-
 
 if __name__ == "__main__":
     # Start local cluster and deploy modules to separate processes
@@ -179,35 +231,41 @@ if __name__ == "__main__":
     dimos.stop()
 ```
 
-<!--Result:-->
-```
-02:57:31.428 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
-02:57:31.761 [inf][/coordination/python_worker.py] Deployed module. module=TickerCameraModule module_id=0 worker_id=0
-02:57:31.768 [inf][/coordination/python_worker.py] Deployed module. module=ImageListener module_id=1 worker_id=1
-02:57:33.778 [inf][dination/module_coordinator.py] Stopping module... module=ImageListener
-02:57:33.793 [inf][dination/module_coordinator.py] Module stopped. module=ImageListener
-02:57:33.793 [inf][dination/module_coordinator.py] Stopping module... module=TickerCameraModule
-02:57:33.802 [inf][dination/module_coordinator.py] Module stopped. module=TickerCameraModule
-02:57:33.802 [inf][ation/worker_manager_python.py] Shutting down all workers...
+```results
+12:36:05.648 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
+12:36:06.053 [inf][/coordination/python_worker.py] Deployed module. module=TickerCameraModule module_id=0 worker_id=0
+12:36:06.159 [inf][/coordination/python_worker.py] Deployed module. module=ImageListener module_id=1 worker_id=1
+12:36:08.283 [inf][dination/module_coordinator.py] Stopping module... module=imagelistener
+12:36:08.284 [inf][dination/module_coordinator.py] Module stopped. module=imagelistener
+12:36:08.285 [inf][dination/module_coordinator.py] Stopping module... module=tickercameramodule
+12:36:08.334 [inf][dination/module_coordinator.py] Module stopped. module=tickercameramodule
+12:36:08.335 [inf][ation/worker_manager_python.py] Shutting down all workers...
 Received: (480, 640, 3)
 Received: (480, 640, 3)
 Received: (480, 640, 3)
-02:57:33.803 [inf][/coordination/python_worker.py] Worker stopping module... module=ImageListener module_id=1 worker_id=1
-02:57:33.803 [inf][/coordination/python_worker.py] Worker module stopped. module=ImageListener module_id=1 worker_id=1
-02:57:33.861 [inf][/coordination/python_worker.py] Worker stopping module... module=TickerCameraModule module_id=0 worker_id=0
-02:57:33.862 [inf][/coordination/python_worker.py] Worker module stopped. module=TickerCameraModule module_id=0 worker_id=0
-02:57:33.892 [inf][ation/worker_manager_python.py] All workers shut down
+Received: (480, 640, 3)
+12:36:08.336 [inf][/coordination/python_worker.py] Worker stopping module... module=ImageListener module_id=1 worker_id=1
+12:36:08.336 [inf][/coordination/python_worker.py] Worker module stopped. module=ImageListener module_id=1 worker_id=1
+12:36:08.388 [inf][/coordination/python_worker.py] Worker stopping module... module=TickerCameraModule module_id=0 worker_id=0
+12:36:08.388 [inf][/coordination/python_worker.py] Worker module stopped. module=TickerCameraModule module_id=0 worker_id=0
+12:36:08.394 [inf][ation/worker_manager_python.py] All workers shut down
 ```
 
 See [Modules](/docs/usage/modules.md) for more on module architecture.
 
----
+## Inspecting traffic (CLI)
 
-## Inspecting LCM traffic (CLI)
+`dimos spy` is the universal transport spy: one live view of every topic moving on every
+dimOS pubsub transport (names, message rates, bandwidth, sizes, and liveness), whether the
+system runs on LCM, Zenoh, or both.
 
-`lcmspy` shows topic frequency/bandwidth stats:
+```bash
+dimos spy                     # everything, all transports
+dimos spy --transport zenoh   # filter to one transport (repeatable flag)
+dimos lcmspy                  # deprecated alias for: dimos spy --transport lcm
+```
 
-![lcmspy](../assets/lcmspy.png)
+![dimos spy](../assets/lcmspy.png)
 
 `dimos topic echo /topic` listens on typed channels like `/topic#pkg.Msg` and decodes automatically:
 
@@ -215,8 +273,6 @@ See [Modules](/docs/usage/modules.md) for more on module architecture.
 Listening on /camera/rgb (inferring from typed LCM channels like '/camera/rgb#pkg.Msg')... (Ctrl+C to stop)
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2026-01-24 20:28:59)
 ```
-
----
 
 ## Implementing a transport
 
@@ -238,8 +294,6 @@ Encoding is an implementation detail, but we encourage using LCM-compatible mess
 
 Many of our message types provide `lcm_encode` / `lcm_decode` for compact, language-agnostic binary encoding (often faster than pickle). For details, see [LCM](/docs/usage/lcm.md).
 
----
-
 ## PubSub transports
 
 Even though transport can be anything (TCP connection, unix socket) for now all our transport backends implement the `PubSub` interface.
@@ -255,8 +309,7 @@ print(inspect.getsource(PubSub.publish))
 print(inspect.getsource(PubSub.subscribe))
 ```
 
-<!--Result:-->
-```
+```results
     @abstractmethod
     def publish(self, topic: TopicT, message: MsgT) -> None:
         """Publish a message to a topic."""
@@ -266,7 +319,14 @@ print(inspect.getsource(PubSub.subscribe))
     def subscribe(
         self, topic: TopicT, callback: Callable[[MsgT, TopicT], None]
     ) -> Callable[[], None]:
-        """Subscribe to a topic with a callback. returns unsubscribe function"""
+        """Subscribe to a topic with a callback. returns unsubscribe function
+
+        The unsubscribe function must not block waiting for an in-flight
+        callback (callers may hold an event loop the backend needs for
+        progress), must be callable from within the callback itself, and once
+        it returns no further deliveries start (a callback already executing
+        may still complete).
+        """
         ...
 ```
 
@@ -297,10 +357,11 @@ print(f"Received velocity: x={received[0].x}, y={received[0].y}, z={received[0].
 lcm.stop()
 ```
 
-<!--Result:-->
-```
+```results
 Received velocity: x=1.0, y=0.0, z=0.5
 ```
+
+### Zenoh
 
 ### Shared memory (IPC)
 
@@ -323,8 +384,7 @@ print(f"Received: {received}")
 shm.stop()
 ```
 
-<!--Result:-->
-```
+```results
 Received: [{'data': [1, 2, 3]}]
 ```
 
@@ -358,12 +418,9 @@ print(f"Received: {received}")
 dds.stop()
 ```
 
-<!--Result:-->
-```
+```results
 Received: [SensorReading(value=22.5)]
 ```
----
-
 ## A minimal transport: `Memory`
 
 The simplest toy backend is `Memory` (single process). Start from there when implementing a new pubsub backend.
@@ -386,16 +443,13 @@ for msg in received:
 unsubscribe()
 ```
 
-<!--Result:-->
-```
+```results
 Received 2 messages:
   {'temperature': 22.5}
   {'temperature': 23.0}
 ```
 
 See [`pubsub/impl/memory.py`](/dimos/protocol/pubsub/impl/memory.py) for the complete source.
-
----
 
 ## Encode/decode mixins
 
@@ -420,7 +474,6 @@ import json
 
 from dimos.protocol.pubsub.encoders import PubSubEncoderMixin
 
-
 class JsonEncoderMixin(PubSubEncoderMixin[str, dict, bytes]):
     def encode(self, msg: dict, topic: str) -> bytes:
         return json.dumps(msg).encode("utf-8")
@@ -434,7 +487,6 @@ Combine with a pubsub implementation via multiple inheritance:
 ```python session=jsonencoder no-result
 from dimos.protocol.pubsub.impl.memory import Memory
 
-
 class MyJsonPubSub(JsonEncoderMixin, Memory):
     pass
 ```
@@ -445,12 +497,9 @@ Swap serialization by changing the mixin:
 from dimos.protocol.pubsub.encoders import PickleEncoderMixin
 from dimos.protocol.pubsub.impl.memory import Memory
 
-
 class MyPicklePubSub(PickleEncoderMixin, Memory):
     pass
 ```
-
----
 
 ## Testing and benchmarks
 
@@ -463,18 +512,17 @@ See [`pubsub/test_spec.py`](/dimos/protocol/pubsub/test_spec.py) for the grid te
 Add your backend to benchmarks to compare in context:
 
 ```sh skip
-python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_benchmark.py
+python -m pytest -sv -k "not bytes" dimos/protocol/pubsub/benchmark/tool_benchmark.py
 ```
 
----
-
-# Available transports
+## Available transports
 
 | Transport      | Use case                            | Cross-process | Network | Notes                                |
 |----------------|-------------------------------------|---------------|---------|--------------------------------------|
 | `Memory`       | Testing only, single process        | No            | No      | Minimal reference impl               |
 | `SharedMemory` | Multi-process on same machine       | Yes           | No      | Highest throughput (IPC)             |
 | `LCM`          | Robot LAN broadcast (UDP multicast) | Yes           | Yes     | Best-effort; can drop packets on LAN |
+| `Zenoh`        | Reliable network stream transport   | Yes           | Yes     | Recommended on macOS for heavy replay |
 | `Redis`        | Network pubsub via Redis server     | Yes           | Yes     | Central broker; adds hop             |
 | `ROS`          | ROS 2 topic communication           | Yes           | Yes     | Integrates with RViz/ROS tools       |
 | `DDS`          | Cyclone DDS without ROS (WIP)       | Yes           | Yes     | WIP                                  |

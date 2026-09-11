@@ -1,0 +1,140 @@
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import os
+from pathlib import Path
+import subprocess
+import threading
+from typing import IO
+
+from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.core.global_config import GlobalConfig
+from dimos.simulation.dimsim.deno_utils import ensure_playwright_chromium
+from dimos.utils.deno import ensure_deno
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+_VIDEO_RATE = 50
+_LIDAR_RATE = 100
+_DIMSIM_DIR = DIMOS_PROJECT_ROOT / "misc" / "DimSim"
+
+
+class DimSimProcess:
+    def __init__(self, global_config: GlobalConfig) -> None:
+        self.global_config = global_config
+        self.process: subprocess.Popen[bytes] | None = None
+
+    def start(self) -> None:
+        scene = self.global_config.dimsim_scene
+        _check_lfs_stubs(scene)
+
+        deno_path = ensure_deno()
+        base_cmd = _deno_cmd(deno_path, _DIMSIM_DIR)
+
+        port = self.global_config.dimsim_port
+        headless = self.global_config.dimsim_headless
+
+        if headless:
+            ensure_playwright_chromium(deno_path)
+
+        render = os.environ.get("DIMSIM_RENDER", "").strip()
+        if not render:
+            render = "cpu" if os.environ.get("CI") else "gpu"
+
+        cmd = [
+            *base_cmd,
+            "dev",
+            "--scene",
+            scene,
+            "--port",
+            str(port),
+            "--no-depth",
+            *(("--headless",) if headless else ()),
+            "--render",
+            render,
+            "--image-rate",
+            str(_VIDEO_RATE),
+            "--lidar-rate",
+            str(_LIDAR_RATE),
+        ]
+
+        if not headless:
+            logger.info(
+                f"Open http://localhost:{port} in your browser; sensors won't publish until that tab is loaded."
+            )
+
+        self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        self._start_log_reader()
+
+    def stop(self) -> None:
+        if self.process:
+            if self.process.stderr:
+                self.process.stderr.close()
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                logger.warning("DimSim process did not stop gracefully, killing")
+                self.process.kill()
+                self.process.wait(timeout=2)
+            except Exception as e:
+                logger.error(f"Error stopping DimSim process: {e}")
+            self.process = None
+
+    def _start_log_reader(self) -> None:
+        assert self.process is not None
+
+        def _reader(stream: IO[bytes] | None, label: str) -> None:
+            if stream is None:
+                return
+            for raw in stream:
+                line = raw.decode("utf-8", errors="replace").rstrip()
+                if line:
+                    logger.info(f"[dimsim {label}] {line}")
+
+        for stream, label in [
+            (self.process.stdout, "out"),
+            (self.process.stderr, "err"),
+        ]:
+            t = threading.Thread(target=_reader, args=(stream, label), daemon=True)
+            t.start()
+
+
+def _deno_cmd(deno_path: str, repo_dir: Path) -> list[str]:
+    cli_ts = repo_dir / "cli" / "cli.ts"
+    return [deno_path, "run", "--allow-all", "--unstable-net", str(cli_ts)]
+
+
+_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
+
+
+def _check_lfs_stubs(scene: str) -> None:
+    """Fail fast when DimSim assets are un-fetched Git LFS pointer stubs."""
+    stubs = []
+    for asset_dir in (_DIMSIM_DIR / "scenes" / scene, _DIMSIM_DIR / "public" / "embodiment"):
+        for pattern in ("*.glb", "*.gltf"):
+            for path in sorted(asset_dir.rglob(pattern)):
+                with open(path, "rb") as f:
+                    if f.read(len(_LFS_POINTER_PREFIX)) == _LFS_POINTER_PREFIX:
+                        stubs.append(path)
+    if stubs:
+        shown = "\n".join(f"  {p.relative_to(DIMOS_PROJECT_ROOT)}" for p in stubs[:5])
+        more = f"\n  ... and {len(stubs) - 5} more" if len(stubs) > 5 else ""
+        raise RuntimeError(
+            f"{len(stubs)} DimSim asset file(s) are Git LFS pointer stubs, not real content:\n"
+            f"{shown}{more}\n"
+            'Fetch them with: git lfs pull --include="misc/DimSim/**"'
+        )

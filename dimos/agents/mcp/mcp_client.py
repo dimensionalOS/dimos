@@ -13,20 +13,32 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
 import time
 from typing import Any
 import uuid
+import warnings
 
-import httpx
+from langchain_core._api.deprecation import LangChainPendingDeprecationWarning
+
+# Importing langchain_core un-mutes its pending-deprecation warnings, so this ignore
+# must be registered after that import to take precedence. It silences the noisy
+# `allowed_objects` warning emitted when langchain.agents pulls in langgraph.checkpoint.
+warnings.filterwarnings("ignore", category=LangChainPendingDeprecationWarning)
+
 from langchain.agents import create_agent
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
 from langchain_core.tools import StructuredTool
+from langchain_openai import ChatOpenAI
 from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
+import requests
 
+from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp import tool_stream
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
@@ -40,12 +52,37 @@ from dimos.utils.sequential_ids import SequentialIds
 
 logger = setup_logger()
 
+_RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+
+def _init_model(model_name: str, trace_dir: Path | None = None) -> Any:
+    """Initialize a model while preserving LangChain provider resolution.
+
+    With *trace_dir*, every request/response body goes to disk whole
+    (:mod:`dimos.agents.llm_trace`). Only OpenAI-backed models take the
+    ``http_client``; other providers keep working, untraced at the wire.
+    """
+    client = None if trace_dir is None else tracing_http_client(trace_dir)
+    if ":" in model_name or not model_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES):
+        model = init_chat_model(model=model_name)
+        if client is not None and isinstance(model, ChatOpenAI):
+            return init_chat_model(model=model_name, http_client=client)
+        return model
+
+    return ChatOpenAI(
+        model=model_name,
+        use_responses_api=True,
+        reasoning={"effort": "medium", "summary": "auto"},
+        http_client=client,
+    )
+
 
 class McpClientConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
-    model: str = "gpt-4o"
+    model: str = "gpt-5.6-luna"
     model_fixture: str | None = None
     mcp_server_url: str = "http://localhost:9990/mcp"
+    trace_dir: Path | None = None
 
 
 class McpClient(Module):
@@ -61,7 +98,7 @@ class McpClient(Module):
     _history: list[BaseMessage]
     _thread: Thread
     _stop_event: Event
-    _http_client: httpx.Client
+    _http_client: requests.Session
     _seq_ids: SequentialIds
     _tool_stream_cleanup: Callable[[], None] | None
 
@@ -78,7 +115,7 @@ class McpClient(Module):
             daemon=True,
         )
         self._stop_event = Event()
-        self._http_client = httpx.Client(timeout=120.0)
+        self._http_client = requests.Session()
         self._seq_ids = SequentialIds()
         self._tool_stream_cleanup = None
 
@@ -94,7 +131,7 @@ class McpClient(Module):
         if params is not None:
             body["params"] = params
 
-        resp = self._http_client.post(self.config.mcp_server_url, json=body)
+        resp = self._http_client.post(self.config.mcp_server_url, json=body, timeout=120.0)
         resp.raise_for_status()
         data = resp.json()
 
@@ -156,7 +193,7 @@ class McpClient(Module):
             try:
                 self._mcp_request("initialize")
                 break
-            except (httpx.ConnectError, httpx.RemoteProtocolError):
+            except requests.ConnectionError:
                 if time.monotonic() >= deadline:
                     return None
                 time.sleep(interval)
@@ -212,11 +249,12 @@ class McpClient(Module):
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
         tools = self._fetch_tools()
 
-        model: str | Any = self.config.model
         if self.config.model_fixture is not None:
-            from dimos.agents.testing import MockModel
+            from dimos.agents.testing.mock_model import MockModel
 
             model = MockModel(json_path=self.config.model_fixture)
+        else:
+            model = _init_model(self.config.model, trace_dir=self.trace_dir())
 
         with self._lock:
             self._state_graph = create_agent(
@@ -239,6 +277,11 @@ class McpClient(Module):
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         self._http_client.close()
         super().stop()
+
+    @rpc
+    def trace_dir(self) -> Path | None:
+        """Where raw LLM request/response bodies go; ``None`` when tracing is off."""
+        return self.config.trace_dir
 
     @rpc
     def add_message(self, message: BaseMessage) -> None:
