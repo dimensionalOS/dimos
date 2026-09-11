@@ -22,7 +22,6 @@ const EYE_HEIGHT_M = 1.6;
 const DESKTOP_LOOK_SENSITIVITY = 0.0022;      // radians per pixel of mouse travel
 const DESKTOP_PITCH_LIMIT = 1.45;             // just under 90deg, avoids gimbal flip
 const DESKTOP_SPRINT_MULTIPLIER = 3.0;
-const DESKTOP_SCALE_STEP = 1.08;              // per wheel notch
 const DESKTOP_MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE']);
 const TOUCH_LOOK_SENSITIVITY = 0.006;         // radians per CSS pixel of one-finger drag
 const TOUCH_WALK_GAIN = 40;                   // two-finger drag: a screen-height sweep = full stick x40
@@ -385,13 +384,11 @@ export class WorldScene {
             if (document.pointerLockElement !== dom) dom.requestPointerLock();
         });
         dom.addEventListener('wheel', (event) => {
+            // Only while orbiting: the wheel moves the eye in and out. Walking around,
+            // it used to scale the world, which reads as the speed changing under you.
+            if (!this._orbit.active) return;
             event.preventDefault();
-            if (this._orbit.active) {
-                // Orbiting, the wheel moves the eye in and out instead of scaling the world.
-                this._orbit.zoom(event.deltaY, this);
-                return;
-            }
-            this.applyScale({ factor: event.deltaY < 0 ? DESKTOP_SCALE_STEP : 1 / DESKTOP_SCALE_STEP });
+            this._orbit.zoom(event.deltaY, this);
         }, { passive: false });
 
         document.addEventListener('pointerlockchange', () => {
