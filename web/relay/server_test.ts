@@ -18,6 +18,8 @@ import {
   PROTOCOL_VERSION,
   type RobotInfo,
   type RobotManifest,
+  type RtcOfferMsg,
+  TRACK_ENCODING,
 } from "@dimos/shared";
 import { parseAuthFile } from "./auth.ts";
 import { makeEphemeralCert } from "./cert.ts";
@@ -1445,4 +1447,313 @@ Deno.test("--serve-dir is refused on a non-loopback host, unsafe override or not
     Error,
     "--serve-dir is refused on non-loopback host 0.0.0.0",
   );
+});
+
+// ---------- WebRTC video through the Cloudflare SFU (protocol v7) ----------
+
+const TRACK_MANIFEST: RobotManifest = {
+  version: 1,
+  channels: [
+    { ch: "color_image", encoding: TRACK_ENCODING, delivery: "latest", maxHz: 15.5 },
+    { ch: "odom", encoding: "pose.json.v1", delivery: "reliable", maxHz: 20.5 },
+  ],
+  panels: [{ id: "cam", kind: "video", channels: ["color_image"] }],
+  layout: "cam",
+};
+const RTC_CONFIG = { appId: "app-test", appSecret: "secret-0123456789abcdef" };
+
+/** A fake Cloudflare Realtime API behind the relay's fetch. */
+function fakeCloudflare(): {
+  fetchFn: typeof fetch;
+  calls: { method: string; path: string; body: Record<string, unknown> }[];
+} {
+  const calls: { method: string; path: string; body: Record<string, unknown> }[] = [];
+  let sessions = 0;
+  let mids = 10;
+  const fetchFn = ((input: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname;
+    const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+    calls.push({ method: init?.method ?? "GET", path, body });
+    const json = (data: unknown, status = 200) =>
+      Promise.resolve(new Response(JSON.stringify(data), { status }));
+    if (path.endsWith("/sessions/new")) {
+      return json(
+        {
+          sessionId: `cf-${++sessions}`,
+          sessionDescription: { type: "answer", sdp: `v=0\r\nanswer-${sessions}\r\n` },
+        },
+        201,
+      );
+    }
+    if (path.endsWith("/tracks/new")) {
+      const tracks = body.tracks as { location: string; mid?: string; trackName: string }[];
+      if (tracks[0].location === "local") {
+        return json({ tracks: tracks.map((t) => ({ mid: t.mid, trackName: t.trackName })) });
+      }
+      return json({
+        requiresImmediateRenegotiation: true,
+        tracks: tracks.map((t) => ({ trackName: t.trackName, mid: `${++mids}` })),
+        sessionDescription: { type: "offer", sdp: "v=0\r\npull-offer\r\n" },
+      });
+    }
+    return json({});
+  }) as typeof fetch;
+  return { fetchFn, calls };
+}
+
+Deno.test({
+  name:
+    "Cloudflare configured: rtc_ice on both legs, robot/viewer sessions, pull on sub, close on unsub",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const cf = fakeCloudflare();
+  const relay = await startRelay({ port: 0, rtc: RTC_CONFIG, rtcFetch: cf.fetchFn });
+  const clients: WebTransport[] = [];
+  try {
+    const info = await (await fetch(`http://127.0.0.1:${relay.httpPort}/api/info`)).json();
+    assertEquals(info.rtc, true);
+
+    // Robot: hello -> welcome (datagram); carrier: baseline subs, then rtc_ice.
+    const robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    clients.push(robot);
+    await within(robot.ready, "robot connect");
+    const robotDatagrams = datagramQueue(robot.datagrams.readable);
+    const carrier = robotControl(robot);
+    await sendRobotHello(robot, {
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: ROBOT,
+      manifest: TRACK_MANIFEST,
+    });
+    assertEquals((await within(robotDatagrams(), "welcome")).t, "welcome");
+    assertEquals(await within(carrier(), "baseline subs"), { t: "subs", chs: [], n: 1 });
+    assertEquals(await within(carrier(), "robot rtc_ice"), {
+      t: "rtc_ice",
+      iceServers: [{ urls: ["stun:stun.cloudflare.com:3478"] }],
+    });
+    // The robot's offer (an @control frame) is answered on the carrier.
+    await sendRobotFrame(
+      robot,
+      { ch: CONTROL_CHANNEL, seq: 1, ts: 0.5, delivery: "reliable" },
+      encodeDatagram({
+        t: "rtc_offer",
+        sdp: "v=0\r\nrobot-offer\r\n",
+        tracks: [{ ch: "color_image", mid: "0" }],
+      }),
+    );
+    assertEquals(await within(carrier(), "robot rtc_answer"), {
+      t: "rtc_answer",
+      sdp: "v=0\r\nanswer-1\r\n",
+    });
+
+    // Viewer: hello -> welcome, robots, rtc_ice; watch -> manifest; offer -> answer.
+    const viewer = new WebTransport(`${relay.wtUrl}/viewer`, certOpts(relay.certHash));
+    clients.push(viewer);
+    await within(viewer.ready, "viewer connect");
+    const control = await viewer.createBidirectionalStream();
+    const writer = control.writable.getWriter();
+    const next = controlQueue(control.readable);
+    await writer.write(encodeControlFrame({ t: "hello", v: PROTOCOL_VERSION, role: "viewer" }));
+    assertEquals((await within(next(), "welcome")).t, "welcome");
+    assertEquals((await within(next(), "robots")).t, "robots");
+    assertEquals((await within(next(), "viewer rtc_ice")).t, "rtc_ice");
+    await writer.write(encodeControlFrame({ t: "watch", robotId: ROBOT.id }));
+    assertEquals((await within(next(), "manifest")).t, "manifest");
+    await writer.write(encodeControlFrame({ t: "rtc_offer", sdp: "v=0\r\nviewer-offer\r\n" }));
+    assertEquals(await within(next(), "viewer rtc_answer"), {
+      t: "rtc_answer",
+      sdp: "v=0\r\nanswer-2\r\n",
+    });
+
+    // sub -> the robot's subs snapshot (lazy encoding) AND a pull: the SFU's
+    // offer reaches the viewer with the pulled track's mid.
+    await writer.write(encodeControlFrame({ t: "sub", ch: "color_image" }));
+    assertEquals(await within(carrier(), "subs with the track"), {
+      t: "subs",
+      chs: ["color_image"],
+      n: 2,
+    });
+    const offer = await within(next(), "pull offer") as RtcOfferMsg;
+    assertEquals(offer, {
+      t: "rtc_offer",
+      sdp: "v=0\r\npull-offer\r\n",
+      robotId: ROBOT.id,
+      tracks: [{ ch: "color_image", mid: "11" }],
+    });
+    await writer.write(encodeControlFrame({ t: "rtc_answer", sdp: "v=0\r\nviewer-answer\r\n" }));
+    // Renegotiated at the SFU; stats show the pull.
+    for (let i = 0; i < 50 && !cf.calls.some((c) => c.path.endsWith("/renegotiate")); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assertEquals(
+      cf.calls.map((c) => [c.method, c.path.replace(/\/apps\/app-test/, "")]),
+      [
+        ["POST", "/v1/sessions/new"],
+        ["POST", "/v1/sessions/new"],
+        ["POST", "/v1/sessions/cf-1/tracks/new"], // publish the robot's track
+        ["POST", "/v1/sessions/cf-2/tracks/new"], // pull it onto the viewer
+        ["PUT", "/v1/sessions/cf-2/renegotiate"],
+      ],
+    );
+    const stats = await (await fetch(`http://127.0.0.1:${relay.httpPort}/api/stats`)).json();
+    assertEquals(stats.rtc.pulls, 1);
+
+    // A frame the bridge sends on the track channel anyway is dropped and counted.
+    await sendRobotFrame(
+      robot,
+      { ch: "color_image", seq: 1, ts: 0.5, delivery: "latest" },
+      new Uint8Array([1, 2, 3]),
+    );
+    // unsub -> force close at the SFU.
+    await writer.write(encodeControlFrame({ t: "unsub", ch: "color_image" }));
+    for (let i = 0; i < 50 && !cf.calls.some((c) => c.path.endsWith("/tracks/close")); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const close = cf.calls.find((c) => c.path.endsWith("/tracks/close"))!;
+    assertEquals(close.path, "/v1/apps/app-test/sessions/cf-2/tracks/close");
+    assertEquals(close.body, { tracks: [{ mid: "11" }], force: true });
+    const after = await (await fetch(`http://127.0.0.1:${relay.httpPort}/api/stats`)).json();
+    assertEquals(after.rtc.pulls, 0);
+    assertEquals(after.rtc.framesOnTrack, 1);
+  } finally {
+    for (const wt of clients) {
+      try {
+        wt.close();
+      } catch {
+        // already gone
+      }
+    }
+    await relay.shutdown();
+  }
+});
+
+Deno.test({
+  name:
+    "HTTP is not served until startup finished (no half-started /api/stats during the TURN mint)",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  // A port known before startRelay resolves: bind and release it (test files
+  // run serially, so nothing takes it in between).
+  const probe = Deno.listen({ port: 0 });
+  const port = (probe.addr as Deno.NetAddr).port;
+  probe.close();
+  let mintStarted!: () => void;
+  let releaseMint!: () => void;
+  const started = new Promise<void>((resolve) => {
+    mintStarted = resolve;
+  });
+  const minted = new Promise<void>((resolve) => {
+    releaseMint = resolve;
+  });
+  const rtcFetch = (async (input: string | URL | Request) => {
+    if (!String(input).endsWith("/credentials/generate-ice-servers")) {
+      throw new Error(`unexpected call ${String(input)}`);
+    }
+    mintStarted();
+    await minted;
+    return new Response(JSON.stringify({
+      iceServers: [{
+        urls: ["turn:turn.cloudflare.com:3478?transport=udp"],
+        username: "u",
+        credential: "c",
+      }],
+    }));
+  }) as typeof fetch;
+  const starting = startRelay({
+    port,
+    rtc: { ...RTC_CONFIG, turnKeyId: "turn-key", turnToken: "turn-token-0123456789" },
+    rtcFetch,
+  });
+  await started;
+  // Mid-mint: nothing listens yet (a bound listener would answer 500 here).
+  await assertRejects(() => fetch(`http://127.0.0.1:${port}/api/stats`));
+  releaseMint();
+  const relay = await starting;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/stats`);
+    const stats = await res.json();
+    assertEquals(res.status, 200);
+    assertEquals(stats.rtc.pulls, 0);
+  } finally {
+    await relay.shutdown();
+  }
+});
+
+// Default sanitizers on purpose in the two bind-failure tests: a TURN refresh
+// interval or an HTTP listener left behind by the failed start fails the
+// test as a leak.
+Deno.test("an HTTP bind failure disposes the RTC hub started ahead of it", async () => {
+  const taken = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const cf = fakeCloudflare();
+  try {
+    await assertRejects(
+      () =>
+        startRelay({
+          port: (taken.addr as Deno.NetAddr).port,
+          rtc: RTC_CONFIG,
+          rtcFetch: cf.fetchFn,
+        }),
+      Deno.errors.AddrInUse,
+    );
+  } finally {
+    taken.close();
+  }
+});
+
+Deno.test("a QUIC bind failure shuts the HTTP listener and disposes the RTC hub", async () => {
+  // With --cert/--key QUIC shares --port, so a UDP socket there fails only
+  // the QUIC bind, after HTTP is already listening.
+  const cert = await makeEphemeralCert();
+  const taken = Deno.listenDatagram({ hostname: "127.0.0.1", port: 0, transport: "udp" });
+  const cf = fakeCloudflare();
+  try {
+    await assertRejects(
+      () =>
+        startRelay({
+          port: (taken.addr as Deno.NetAddr).port,
+          cert: cert.certPem,
+          key: cert.keyPem,
+          rtc: RTC_CONFIG,
+          rtcFetch: cf.fetchFn,
+        }),
+      Error,
+      "QUIC cannot bind UDP port",
+    );
+  } finally {
+    taken.close();
+  }
+});
+
+Deno.test({
+  name: "without Cloudflare: a robot declaring a track channel is rejected with rtc_unavailable",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const relay = await startRelay({ port: 0 });
+  let robot: WebTransport | null = null;
+  try {
+    robot = new WebTransport(`${relay.wtUrl}/robot`, certOpts(relay.certHash));
+    await within(robot.ready, "robot connect");
+    const robotDatagrams = datagramQueue(robot.datagrams.readable);
+    await sendRobotHello(robot, {
+      t: "hello",
+      v: PROTOCOL_VERSION,
+      role: "robot",
+      robot: ROBOT,
+      manifest: TRACK_MANIFEST,
+    });
+    const reply = await within(robotDatagrams(), "rejection");
+    assertEquals(reply.t, "error");
+    assertEquals((reply as { code: string }).code, "rtc_unavailable");
+  } finally {
+    try {
+      robot?.close();
+    } catch {
+      // already gone
+    }
+    await relay.shutdown();
+  }
 });

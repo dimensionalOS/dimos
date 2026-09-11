@@ -8,6 +8,7 @@
 // mutate one another's decoder tables.
 
 import type { ChannelSpec, FrameHeader } from "@dimos/shared";
+import { TRACK_ENCODING } from "@dimos/shared/manifest";
 import { costmapDecoder } from "./costmap.ts";
 import { jpegDecoder } from "./jpeg.ts";
 import { jsonDecoder } from "./json.ts";
@@ -60,11 +61,18 @@ export class DecoderRegistry {
   }
 }
 
+/** A track channel has no payload; the decoder exists so resolve() marks the
+ * channel as usable and a stray frame surfaces as decodeFailing. */
+export const trackDecoder: Decoder = () => {
+  throw new Error(`frames never flow on a ${TRACK_ENCODING} channel (the track rides the SFU)`);
+};
+
 /** A fresh registry preloaded with the built-in codecs. */
 export function createDecoderRegistry(): DecoderRegistry {
   const registry = new DecoderRegistry();
   registry.register("jpeg.v1", jpegDecoder);
   registry.register("costmap.zlib.v1", costmapDecoder);
   registry.register("json.v1", jsonDecoder);
+  registry.register(TRACK_ENCODING, trackDecoder);
   return registry;
 }

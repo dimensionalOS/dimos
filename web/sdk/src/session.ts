@@ -11,19 +11,29 @@ import {
   DataFrameStreamReader,
   encodeControlFrame,
   encodeDatagram,
+  type IceServer,
   type JsonValue,
   MAX_PUB_DATA_BYTES,
+  MAX_SDP_LEN,
   MAX_TOKEN_LEN,
   type Msg,
   PROTOCOL_VERSION,
   type RobotInfo,
+  type RtcOfferMsg,
 } from "@dimos/shared";
-import { type Manifest, ManifestError, parseManifest } from "@dimos/shared/manifest";
+import {
+  type Manifest,
+  ManifestError,
+  parseManifest,
+  TRACK_ENCODING,
+} from "@dimos/shared/manifest";
 import { createDecoderRegistry, type DecoderRegistry } from "./decoders/index.ts";
 import { PublishError, WatchRejectedError } from "./errors.ts";
 import { registerTeleopHooks, type TeleopHooks } from "./internal/teleopMachine.ts";
+import { createPeerConnection, type PeerConnectionFactory, ViewerRtc } from "./rtc.ts";
 import { type ChannelSnapshot, ChannelStore, StatusStore } from "./store.ts";
 import {
+  backoffDelayMs,
   fetchRelayInfo,
   ReconnectingTransport,
   resolveInfoUrl,
@@ -288,6 +298,23 @@ class SessionImpl implements Session {
   #teleopControl: ((msg: Msg) => void) | null = null;
   #teleopDatagram: ((msg: Msg) => void) | null = null;
   #teleopCbs = new Set<(msg: Msg) => void>();
+
+  // WebRTC: one PeerConnection per connection run, created on the first track
+  // sub. A pulled track is ingested with a rising seq (the store drops seq <=
+  // the slot's).
+  readonly #createPeerConnection: PeerConnectionFactory;
+  #iceServers: IceServer[] | null = null;
+  #rtc: ViewerRtc | null = null;
+  #rtcSeq = 0;
+  #rtcRetry: ReturnType<typeof setTimeout> | null = null;
+  #rtcFailures = 0;
+  // Channel -> the track the relay pulled, for the robot it watches for us.
+  // The store is reset whenever the producer is unconfirmed (an ambiguous
+  // robot list, a switch) while the relay keeps the watch and its pulls, so
+  // re-adopting the manifest restores them from here rather than waiting for
+  // an offer that never comes. Lives with the PeerConnection.
+  #pulled = new Map<string, { robotId: string; track: MediaStreamTrack }>();
+
   // Off the public Session on purpose (W1 is read-only): the cockpit reaches
   // these through teleopHooks() on the internal teleop entry until W9.
   readonly #teleop: TeleopHooks = {
@@ -305,6 +332,7 @@ class SessionImpl implements Session {
     this.#registry = options.decoders ?? createDecoderRegistry();
     this.#token = options.token;
     this.#pinned = options.robot ?? null;
+    this.#createPeerConnection = deps.createPeerConnection ?? createPeerConnection;
     const infoUrl = resolveInfoUrl(options.url);
     this.transport = new ReconnectingTransport(
       {
@@ -329,6 +357,7 @@ class SessionImpl implements Session {
     // A publish already sent may have been delivered; close cannot know.
     this.#sweepPendingPublishes(null, "closed", "the session was closed");
     clearInterval(this.#ticker);
+    this.#clearRtcRetry();
     this.transport.stop();
   }
 
@@ -367,10 +396,14 @@ class SessionImpl implements Session {
       return;
     }
     this.#desired.delete(ch);
-    if (this.#wire.has(ch)) {
-      this.#wire.delete(ch);
-      this.#send?.({ t: "unsub", ch });
-    }
+    if (this.#wire.has(ch)) this.#unsub(ch);
+  }
+
+  /** Drop the relay-side interest (and its pull, for a track channel). */
+  #unsub(ch: string): void {
+    this.#wire.delete(ch);
+    this.#pulled.delete(ch);
+    this.#send?.({ t: "unsub", ch });
   }
 
   publish(ch: string, value: JsonValue, options?: PublishOptions): Promise<PublishReceipt> {
@@ -487,11 +520,117 @@ class SessionImpl implements Session {
     }
     this.#wire.add(ch);
     this.#send?.({ t: "sub", ch });
+    if (this.#isTrack(ch)) this.#ensureRtc();
   }
 
   #channelIsRx(ch: string): boolean {
     const spec = this.#manifest?.channels.find((c) => c.ch === ch);
     return spec !== undefined && spec.dir === "rx";
+  }
+
+  #isTrack(ch: string): boolean {
+    return this.#manifest?.channels.find((c) => c.ch === ch)?.encoding === TRACK_ENCODING;
+  }
+
+  /** Created by whichever of the first track sub and rtc_ice comes second; a
+   * pending re-offer backoff owns the next one. */
+  #ensureRtc(): void {
+    if (
+      this.#rtc !== null || this.#rtcRetry !== null || this.#iceServers === null ||
+      this.#send === null
+    ) {
+      return;
+    }
+    const runId = this.#runId;
+    const rtc: ViewerRtc = new ViewerRtc(
+      this.#createPeerConnection({ iceServers: this.#iceServers }),
+      () => this.#rtcFailed(runId, rtc, "WebRTC connection failed"),
+    );
+    this.#rtc = rtc;
+    rtc.offer()
+      .then((sdp) => {
+        if (runId !== this.#runId || this.#rtc !== rtc) return;
+        if (sdp.length > MAX_SDP_LEN) {
+          throw new Error(`offer SDP is ${sdp.length} chars (limit ${MAX_SDP_LEN})`);
+        }
+        this.#send?.({ t: "rtc_offer", sdp });
+      })
+      .catch((e) => this.#rtcFailed(runId, rtc, "WebRTC offer failed", e));
+  }
+
+  async #onRtcOffer(msg: RtcOfferMsg, runId: number): Promise<void> {
+    const rtc = this.#rtc;
+    if (rtc === null) return; // stray: no PeerConnection on this run
+    try {
+      const answer = await rtc.renegotiate(msg.sdp);
+      if (runId !== this.#runId || this.#rtc !== rtc) return;
+      if (answer.length > MAX_SDP_LEN) {
+        throw new Error(`answer SDP is ${answer.length} chars (limit ${MAX_SDP_LEN})`);
+      }
+      this.#send?.({ t: "rtc_answer", sdp: answer });
+      // Answered either way (an SFU offer must be), but a pull that lands after
+      // a watch switch names the previous robot, whose channel names collide
+      // with the new one's; the relay closes it. Pulls for the robot the relay
+      // watches for us are kept, and shown under its adopted manifest.
+      if (msg.robotId === undefined || msg.robotId !== this.#watchSentFor) return;
+      for (const { ch, mid } of msg.tracks ?? []) {
+        const track = rtc.trackFor(mid);
+        if (track === null) {
+          this.#rtcError(`no transceiver for mid ${mid} (channel ${ch})`);
+          continue;
+        }
+        this.#pulled.set(ch, { robotId: msg.robotId, track });
+      }
+      this.#restoreTracks(msg.robotId);
+    } catch (e) {
+      this.#rtcFailed(runId, rtc, "WebRTC renegotiation failed", e);
+    }
+  }
+
+  /** Put the tracks pulled for `robotId` into the store: after a pull, and
+   * after its manifest is adopted again following a store reset (an
+   * ambiguous robot list clears the producer while the relay keeps the
+   * pulls, so no new offer comes). */
+  #restoreTracks(robotId: string): void {
+    if (this.#manifest === null || this.status.get().watchedRobot?.id !== robotId) return;
+    const ts = Date.now() / 1000;
+    for (const [ch, pull] of this.#pulled) {
+      if (pull.robotId !== robotId || !this.#isTrack(ch)) continue;
+      if (this.store.get(ch)?.value === pull.track) continue;
+      this.store.ingest(ch, { ch, seq: ++this.#rtcSeq, ts, delivery: "latest" }, pull.track, true);
+    }
+  }
+
+  #rtcError(context: string, e?: unknown): void {
+    const detail = e === undefined ? "" : `: ${(e as Error)?.message ?? String(e)}`;
+    this.status.update({ lastError: { code: "rtc_failed", message: `${context}${detail}` } });
+  }
+
+  /** Drop the peer and offer again after a backoff. `rtc` null means
+   * whichever peer is current (a relay report names no local one). */
+  #rtcFailed(runId: number, rtc: ViewerRtc | null, context: string, e?: unknown): void {
+    if (runId !== this.#runId || (rtc !== null && rtc !== this.#rtc)) return; // superseded
+    this.#rtcError(context, e);
+    this.#dropRtc();
+    if (this.#rtcRetry !== null) return;
+    this.#rtcRetry = setTimeout(() => {
+      this.#rtcRetry = null;
+      if (runId === this.#runId && [...this.#wire].some((ch) => this.#isTrack(ch))) {
+        this.#ensureRtc();
+      }
+    }, backoffDelayMs(++this.#rtcFailures));
+  }
+
+  #clearRtcRetry(): void {
+    if (this.#rtcRetry !== null) clearTimeout(this.#rtcRetry);
+    this.#rtcRetry = null;
+  }
+
+  /** Close the peer; the relay's pulls on its SFU session die with it. */
+  #dropRtc(): void {
+    this.#rtc?.close();
+    this.#rtc = null;
+    this.#pulled.clear();
   }
 
   #syncDesired(): void {
@@ -500,10 +639,7 @@ class SessionImpl implements Session {
     // so the validation below surfaces unknown_channel and a later manifest
     // can re-subscribe them.
     for (const ch of [...this.#wire]) {
-      if (!this.#channelIsRx(ch)) {
-        this.#wire.delete(ch);
-        this.#send?.({ t: "unsub", ch });
-      }
+      if (!this.#channelIsRx(ch)) this.#unsub(ch);
     }
     for (const ch of this.#desired.keys()) this.#syncChannel(ch);
   }
@@ -536,10 +672,11 @@ class SessionImpl implements Session {
 
   #sendWatch(id: string): void {
     if (this.#watchSentFor !== null && this.#watchSentFor !== id) {
-      // The relay drops this viewer's subscriptions on a watch for a
-      // different robot; mirror that so the next adoption re-subscribes the
-      // desired set.
+      // The relay drops this viewer's subscriptions (and the pulls behind
+      // them) on a watch for a different robot; mirror that so the next
+      // adoption re-subscribes the desired set.
       this.#wire.clear();
+      this.#pulled.clear();
     }
     this.#watchSentFor = id;
     this.#send?.({ t: "watch", robotId: id });
@@ -549,6 +686,9 @@ class SessionImpl implements Session {
     const runId = ++this.#runId;
     this.#wire.clear();
     this.#watchSentFor = null;
+    this.#iceServers = null;
+    this.#rtcSeq = 0;
+    this.#rtcFailures = 0;
     const control = await wt.createBidirectionalStream();
     const writer = control.writable.getWriter();
     const send = async (msg: Msg) => {
@@ -627,6 +767,7 @@ class SessionImpl implements Session {
               this.#applyManifest(manifest);
               this.#wireRunId = runId;
               this.#syncDesired();
+              this.#restoreTracks(msg.robotId);
               if (this.#watchWaiter !== null && this.#watchWaiter.id === msg.robotId) {
                 const waiter = this.#watchWaiter;
                 this.#watchWaiter = null;
@@ -636,6 +777,24 @@ class SessionImpl implements Session {
             }
             case "teleop_started":
               for (const cb of this.#teleopCbs) cb(msg);
+              break;
+            case "rtc_ice":
+              this.#iceServers = msg.iceServers;
+              // A track sub may have beaten it.
+              if ([...this.#wire].some((ch) => this.#isTrack(ch))) this.#ensureRtc();
+              break;
+            case "rtc_answer": {
+              const rtc = this.#rtc;
+              rtc?.accept(msg.sdp).then(
+                () => {
+                  if (rtc === this.#rtc) this.#rtcFailures = 0;
+                },
+                (e) => this.#rtcFailed(runId, rtc, "WebRTC answer rejected", e),
+              );
+              break;
+            }
+            case "rtc_offer":
+              void this.#onRtcOffer(msg, runId);
               break;
             case "pub_ack":
               this.#settlePub(msg.id)?.resolve({
@@ -665,6 +824,12 @@ class SessionImpl implements Session {
                 // A refused lease is the teleop panel's state, not a
                 // session-level error banner.
                 for (const cb of this.#teleopCbs) cb(msg);
+              } else if (msg.code === "rtc_session_gone") {
+                // Only a fresh offer brings a new SFU session; the relay
+                // retries everything else itself.
+                this.#rtcFailed(runId, null, "WebRTC session lost", msg.message);
+              } else if (msg.code === "rtc_failed") {
+                this.status.update({ lastError: { code: "rtc_failed", message: msg.message } });
               } else {
                 this.status.update({
                   lastError: { code: "relay_error", message: `${msg.code}: ${msg.message}` },
@@ -685,6 +850,9 @@ class SessionImpl implements Session {
       // have been delivered before it died, so the outcome is unknown and
       // nothing is ever resent.
       this.#sweepPendingPublishes(runId, "connection_lost", "the relay connection died");
+      // The SFU session dies with the relay session; the next run offers again.
+      this.#clearRtcRetry();
+      this.#dropRtc();
     }
   }
 

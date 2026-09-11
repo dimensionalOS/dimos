@@ -84,6 +84,9 @@ class RelayInfo:
     """SHA-256 of the relay's ephemeral certificate; None once a relay serves
     a real certificate."""
     v: int
+    rtc: bool = False
+    """True when the relay brokers video.webrtc.v1 track channels through
+    its Cloudflare Realtime SFU (protocol v7)."""
 
 
 def resolve_info_url(base_url: str) -> str:
@@ -119,16 +122,18 @@ async def fetch_relay_info(
     if not isinstance(data, dict):
         raise ProtocolError(f"{url} returned an unexpected shape")
     wt_url, cert_hash, v = data.get("wtUrl"), data.get("certHash"), data.get("v")
+    rtc = data.get("rtc", False)
     if (
         not isinstance(wt_url, str)
         or not (cert_hash is None or isinstance(cert_hash, str))
         or not isinstance(v, int)
         or isinstance(v, bool)
+        or not isinstance(rtc, bool)
     ):
         raise ProtocolError(f"{url} returned an unexpected shape")
     if v != PROTOCOL_VERSION:
         raise ProtocolError(f"relay speaks protocol v{v}, this bridge speaks v{PROTOCOL_VERSION}")
-    return RelayInfo(wt_url=wt_url, cert_hash=cert_hash, v=v)
+    return RelayInfo(wt_url=wt_url, cert_hash=cert_hash, v=v, rtc=rtc)
 
 
 class RelayClient:

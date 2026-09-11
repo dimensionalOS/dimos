@@ -9,6 +9,7 @@ import {
   MAX_COSTMAP_DIM,
   MAX_COSTMAP_PAYLOAD_BYTES,
 } from "./costmap.ts";
+import { TRACK_ENCODING } from "@dimos/shared/manifest";
 import { createDecoderRegistry, type Decoder } from "./index.ts";
 import { MAX_JPEG_DIM, MAX_JPEG_PAYLOAD_BYTES } from "./jpeg.ts";
 import { JSON_PREVIEW_MAX_CHARS, MAX_JSON_PAYLOAD_BYTES } from "./json.ts";
@@ -278,5 +279,14 @@ describe("costmap decoder", () => {
     const payload = b64ToBytes(vec.payload_b64).slice(0, 6);
     const value = decode(payload, header(vec.meta)).value as CostmapValue;
     await expect(inflateCostmap(value)).rejects.toThrow();
+  });
+});
+
+describe("track channels", () => {
+  it("resolve a marker decoder that rejects every frame", () => {
+    const trackSpec = spec({ ch: "cam", encoding: TRACK_ENCODING, delivery: "latest" });
+    const decoder = registry.resolve(trackSpec);
+    expect(decoder).toBeDefined();
+    expect(() => decoder!(new Uint8Array([1]), HEADER)).toThrow("never flow");
   });
 });

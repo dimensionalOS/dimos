@@ -8,17 +8,23 @@ function ChannelRow(
 ) {
   const { slot, stats } = useStoreChannel(store, spec.ch);
   const supported = cockpitDecoders.resolve(spec) !== undefined;
-  const subscribed = channelSubscribable(spec, panels);
+  const usable = channelSubscribable(spec, panels);
+  // This table replaces the panels, so a bound panel-only channel is off
+  // screen and released while it shows; only the channels held whatever is
+  // on screen are live.
+  const held = channelSubscribable(spec, []);
 
   let value;
   if (!supported) {
     // Not an error: this build has no decoder for the encoding (binary
     // decoders arrive with their panels), so the channel is not subscribed.
     value = <span className={styles.muted}>not subscribed (no decoder for {spec.encoding})</span>;
-  } else if (!subscribed) {
+  } else if (!usable) {
     // Decodable, but a panel-only encoding with no renderable panel binding
     // it: the session skipped the sub to save encode CPU and bandwidth.
     value = <span className={styles.muted}>not subscribed (no panel binds it)</span>;
+  } else if (!held) {
+    value = <span className={styles.muted}>not subscribed (its panel is off screen)</span>;
   } else if (slot === null) {
     value = <span className={styles.muted}>waiting for data...</span>;
   } else if (slot.preview !== undefined) {

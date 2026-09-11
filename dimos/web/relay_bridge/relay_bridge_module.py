@@ -37,16 +37,18 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Collection
+from collections.abc import AsyncIterator, Callable, Collection, Sequence
+import copy
 from dataclasses import dataclass, field, replace
 import functools
+import importlib.util
 import json
 import math
 from pathlib import Path
 import socket
 import threading
 import time
-from typing import Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 import webbrowser
 
 from pydantic import Field
@@ -81,17 +83,23 @@ from dimos.web.codecs import EncodedPayload, PublishContext, encoder_definition
 # the codec registry wherever this module runs (parent and worker).
 from dimos.web.relay_bridge import builtin_codecs  # noqa: F401
 from dimos.web.relay_bridge.locate import find_web_dir
-from dimos.web.relay_bridge.manifest import Dir, parse_manifest
+from dimos.web.relay_bridge.manifest import TRACK_ENCODING, Dir, parse_manifest
 from dimos.web.relay_bridge.protocol import (
     MAX_REQUEST_ID_LEN,
+    MAX_RTC_TRACKS,
     ChannelSpec,
     DataFrame,
     Delivery,
+    IceServer,
     Msg,
     PubAck,
     PubNack,
     RobotInfo,
     RobotManifest,
+    RtcAnswer,
+    RtcIce,
+    RtcOffer,
+    RtcStalled,
     Stop as WireStop,
     Subs,
     TeleopStart as WireTeleopStart,
@@ -106,7 +114,14 @@ from dimos.web.relay_bridge.wt_client import (
     fetch_relay_info,
 )
 
+if TYPE_CHECKING:
+    from dimos.web.relay_bridge.rtc_publisher import RtcPublisher
+
 logger = setup_logger()
+
+# aiortc is optional and slow to import (~150 ms): detected without importing,
+# imported lazily once a relay advertises WebRTC video.
+RTC_AVAILABLE = importlib.util.find_spec("aiortc") is not None
 
 _T = TypeVar("_T")
 _FrameMeta = dict[str, Any] | None
@@ -137,6 +152,13 @@ _TELEOP_POLL_S = 0.05
 # Per-channel floor between "encoder failed" logs (a broken encoder on a
 # 30 Hz stream must not flood the log).
 _ENCODE_ERROR_LOG_S = 5.0
+
+# The relay's Cloudflare call for our WebRTC offer can fail without anything
+# reaching a robot (relay errors to robots are handshake-only), so an offer
+# the relay never answers is rebuilt and re-sent with backoff.
+_RTC_ANSWER_TIMEOUT_S = 15.0
+_RTC_RETRY_BASE_S = 2.0
+_RTC_RETRY_MAX_S = 30.0
 
 
 @dataclass(frozen=True)
@@ -258,6 +280,15 @@ class RelayBridgeConfig(ModuleConfig):
     """Robot key for a relay_url relay started with --auth-file (bound to
     robot_id there), sent in hello. Falls back to GlobalConfig.relay_key
     (RELAY_KEY)."""
+    rtc: bool = True
+    """Deliver jpeg.v1 video channels as WebRTC tracks (video.webrtc.v1)
+    through the relay's Cloudflare SFU when the relay advertises it and
+    aiortc (the webrtc extra) is installed; False keeps JPEG frames through
+    the relay."""
+    rtc_file: str | None = None
+    """Cloudflare configuration for the spawned local relay (its --rtc-file:
+    {"appId", "appSecret", "turnKeyId"?, "turnToken"?}). Local relay only:
+    an external relay (relay_url) carries its own."""
     local_port: int = 7780
     """HTTP port of the spawned local relay; 0 picks an ephemeral port (tests)."""
     open_browser: bool = True
@@ -385,6 +416,19 @@ class _Session:
     last_n: int | float = 0
     unsubs: dict[str, Callable[[], None]] = field(default_factory=dict)
     retired: threading.Event = field(default_factory=threading.Event)
+    rtc_channels: frozenset[str] = frozenset()
+    # The latest rtc_ice: the relay re-mints TURN credentials hourly.
+    ice_servers: list[IceServer] = field(default_factory=list)
+    rtc: RtcPublisher | None = None
+    rtc_task: asyncio.Task[None] | None = None
+    rtc_answer: asyncio.Future[str] | None = None
+
+
+def _make_rtc_publisher(channels: Sequence[str]) -> RtcPublisher:
+    """Test seam. Lazy import: aiortc is optional (see RTC_AVAILABLE)."""
+    from dimos.web.relay_bridge.rtc_publisher import RtcPublisher
+
+    return RtcPublisher(channels)
 
 
 # A producer sustaining more than maxHz for this many frames is pathological
@@ -604,6 +648,7 @@ class RelayBridgeModule(Module):
         # Publish frames dropped for an unusable meta shape (no correlatable
         # request id to nack with); a compliant relay never produces one.
         self._pub_invalid = 0
+        self._rtc_unavailable_logged = False
 
     async def main(self) -> AsyncIterator[None]:
         supervisor: asyncio.Task[None] | None = None
@@ -693,6 +738,14 @@ class RelayBridgeModule(Module):
                     "serve_dir requires the spawned local relay (--local-relay); "
                     "an external relay (--relay-url) cannot serve local files"
                 )
+            if self.config.rtc_file is not None:
+                if self._url is not None:
+                    raise RuntimeError(
+                        "rtc_file requires the spawned local relay (--local-relay); "
+                        "an external relay (--relay-url) carries its own Cloudflare configuration"
+                    )
+                if not Path(self.config.rtc_file).is_file():
+                    raise RuntimeError(f"rtc_file does not exist: {self.config.rtc_file}")
             if self._url is None:
                 # Probe before the (expensive) build: a start that will lose
                 # the port must not rewrite the dist a running relay serves.
@@ -945,7 +998,11 @@ class RelayBridgeModule(Module):
         """Start a fresh local relay child (blocking; run via to_thread) and
         return its HTTP base URL."""
         _probe_local_port(self.config.local_port)
-        self._relay = RelayProcess(port=self.config.local_port, serve_dir=serve_dir)
+        self._relay = RelayProcess(
+            port=self.config.local_port,
+            serve_dir=serve_dir,
+            rtc_file=None if self.config.rtc_file is None else Path(self.config.rtc_file),
+        )
         info = self._relay.start()
         logger.info(f"local relay ready: {info.open_url}")
         if open_browser:
@@ -988,23 +1045,60 @@ class RelayBridgeModule(Module):
         # and certificate behind the same HTTP URL.
         info = await fetch_relay_info(self._url, cafile=self._ca)
         self._relay_info = info
+        manifest, rtc_channels = self._wire_manifest(info)
         client = await RelayClient.connect(
             info.wt_url, "robot", insecure=info.cert_hash is not None, cafile=self._ca
         )
         try:
-            await client.hello(robot=self._robot_info, manifest=self._manifest, token=self._key)
-            senders = self._build_senders(client)
+            await client.hello(robot=self._robot_info, manifest=manifest, token=self._key)
+            senders = self._build_senders(client, rtc_channels)
         except BaseException:
             try:
                 await client.close()
             except Exception:
                 logger.exception("relay bridge: closing a failed relay session failed")
             raise
-        return _Session(client, senders)
+        return _Session(client, senders, rtc_channels=rtc_channels)
 
-    def _build_senders(self, client: RelayClient) -> dict[str, _Sender]:
+    def _wire_manifest(self, info: RelayInfo) -> tuple[RobotManifest, frozenset[str]]:
+        """The manifest to register and the channels advertised as tracks.
+
+        Only this wire copy changes: the runtime specs keep their JPEG encoder,
+        which is never run for a track channel. Decided per connect, since a
+        relay restart can change it.
+        """
+        assert self._manifest is not None
+        track_chs = frozenset(s.ch for s in self._channel_specs if s.encoding == "jpeg.v1")
+        if not (info.rtc and self.config.rtc and track_chs):
+            return self._manifest, frozenset()
+        if not RTC_AVAILABLE:
+            if not self._rtc_unavailable_logged:
+                self._rtc_unavailable_logged = True
+                logger.warning(
+                    "relay bridge: the relay offers WebRTC video but aiortc is not installed "
+                    "(pip install 'dimos[webrtc]'); staying on JPEG"
+                )
+            return self._manifest, frozenset()
+        if len(track_chs) > MAX_RTC_TRACKS:
+            logger.warning(
+                f"relay bridge: {len(track_chs)} video channels exceed the {MAX_RTC_TRACKS} "
+                "WebRTC tracks per robot; staying on JPEG"
+            )
+            return self._manifest, frozenset()
+        manifest = copy.deepcopy(self._manifest)
+        for channel in manifest["channels"]:
+            if channel["ch"] in track_chs:
+                channel["encoding"] = TRACK_ENCODING
+                channel["params"] = {}  # jpeg quality means nothing to a track
+        return manifest, track_chs
+
+    def _build_senders(
+        self, client: RelayClient, rtc_channels: frozenset[str]
+    ) -> dict[str, _Sender]:
         senders: dict[str, _Sender] = {}
         for spec in self._channel_specs:
+            if spec.ch in rtc_channels:
+                continue  # a track channel sends nothing through the relay
             sender: _Sender
             if spec.delivery == "latest":
                 sender = client.latest_writer(spec.ch).offer
@@ -1055,6 +1149,10 @@ class RelayBridgeModule(Module):
                             self._on_wire_teleop_start(msg)
                         elif isinstance(msg, WireTeleopStop):
                             self._on_wire_teleop_stop(msg)
+                        elif isinstance(msg, RtcIce):
+                            self._on_rtc_ice(session, msg)
+                        elif isinstance(msg, RtcAnswer):
+                            self._on_rtc_answer(session, msg)
                     # The iterator only ends when the session closed.
                 except Exception:
                     # An unguarded error here would silently end supervision while
@@ -1076,6 +1174,56 @@ class RelayBridgeModule(Module):
             await _cancel_task(deadman, "teleop watchdog")
             await _cancel_task(watchdog, "watchdog")
             await self._disconnect(session)
+
+    def _on_rtc_ice(self, session: _Session, msg: RtcIce) -> None:
+        # The first rtc_ice starts the peer; every later one (a TURN credential
+        # refresh) is the set the next connect attempt uses.
+        session.ice_servers = list(msg.iceServers)
+        if session.rtc_channels and session.rtc_task is None:
+            session.rtc_task = asyncio.create_task(self._rtc_connect(session))
+
+    def _on_rtc_answer(self, session: _Session, msg: RtcAnswer) -> None:
+        waiter = session.rtc_answer
+        if waiter is None or waiter.done():
+            logger.warning("relay bridge: dropping an rtc_answer nobody is waiting for")
+            return
+        waiter.set_result(msg.sdp)
+
+    async def _rtc_connect(self, session: _Session) -> None:
+        """Build the SFU peer, offer through the relay, apply the answer and
+        watch the connection; any failure tears the peer down and re-offers
+        with backoff, with the latest ICE servers (a TURN allocation dies with
+        its credentials; the relay refreshes them hourly). An unanswered offer
+        is a failure too: relay errors never reach a robot. Off the supervisor
+        loop: ICE gathering must not delay teleop handling."""
+        attempt = 0
+        while not session.retired.is_set():
+            publisher = _make_rtc_publisher(sorted(session.rtc_channels))
+            try:
+                sdp, tracks = await publisher.start(session.ice_servers)
+                session.rtc_answer = asyncio.get_running_loop().create_future()
+                session.client.send_control_frame(RtcOffer(sdp=sdp, tracks=tracks))
+                answer = await asyncio.wait_for(session.rtc_answer, _RTC_ANSWER_TIMEOUT_S)
+                await publisher.accept(answer)
+                session.rtc = publisher
+                attempt = 0
+                logger.info(f"relay bridge: WebRTC video up for {sorted(session.rtc_channels)}")
+                state = await publisher.wait_lost()
+                raise RuntimeError(f"PeerConnection {state}")
+            except asyncio.CancelledError:
+                session.rtc = None
+                await publisher.close()
+                raise
+            except Exception as e:
+                session.rtc = None
+                await publisher.close()
+                session.rtc_answer = None
+                delay = min(_RTC_RETRY_BASE_S * 2**attempt, _RTC_RETRY_MAX_S)
+                attempt += 1
+                logger.warning(
+                    f"relay bridge: WebRTC video failed ({e!r}); re-offering in {delay:.0f} s"
+                )
+                await asyncio.sleep(delay)
 
     def _on_pub_frame(self, session: _Session, frame: DataFrame) -> None:
         """One forwarded viewer publish from the carrier: decode the JSON
@@ -1339,7 +1487,7 @@ class RelayBridgeModule(Module):
                     # subscribe; the panel shows "waiting for data".
                     continue
                 cached = self._last_msg.get(spec.ch)
-                if cached is not None:
+                if cached is not None and spec.ch not in session.rtc_channels:
                     # Replay precedes the subscribe: this offer runs
                     # synchronously on the loop, so a live frame - possible
                     # only once subscribed - always queues behind it and wins
@@ -1354,7 +1502,7 @@ class RelayBridgeModule(Module):
                         # arrival ts keeps a stale replay honest about its age.
                         self._offer(session, session.senders[spec.ch], *encoded, recv_ts)
                 session.unsubs[spec.ch] = self.inputs[spec.ch].subscribe(
-                    functools.partial(self._on_input, session, spec, session.senders[spec.ch])
+                    functools.partial(self._on_input, session, spec, session.senders.get(spec.ch))
                 )
                 logger.info(f"relay bridge: viewer subscribed to {spec.ch}; encoding started")
             elif active and not should:
@@ -1367,7 +1515,7 @@ class RelayBridgeModule(Module):
             logger.debug(f"relay bridge: ignoring unknown channels {sorted(unknown)}")
 
     def _on_input(
-        self, session: _Session, spec: RuntimeChannelSpec, sender: _Sender, msg: Any
+        self, session: _Session, spec: RuntimeChannelSpec, sender: _Sender | None, msg: Any
     ) -> None:
         """Transport-thread callback: maxHz gate, encode, hand to the loop."""
         if session.retired.is_set():
@@ -1377,6 +1525,17 @@ class RelayBridgeModule(Module):
             self._last_input, spec.ch, now, self._min_interval[spec.ch]
         ):
             return
+        if spec.ch in session.rtc_channels:
+            # The raw image feeds the SFU peer; nothing rides the relay.
+            publisher = session.rtc
+            if publisher is not None:
+                if publisher.feed(spec.ch, msg):
+                    loop = self._loop
+                    if loop is not None and loop.is_running():
+                        loop.call_soon_threadsafe(self._report_stall, session, spec.ch)
+                self.encoded[spec.ch] += 1
+            return
+        assert sender is not None
         encoded = self._run_encoder(spec, msg)
         if encoded is None:
             return
@@ -1385,6 +1544,21 @@ class RelayBridgeModule(Module):
         loop = self._loop
         if loop is not None and loop.is_running():
             loop.call_soon_threadsafe(self._offer, session, sender, payload, meta)
+
+    def _report_stall(self, session: _Session, ch: str) -> None:
+        """Loop callback: the track went unfed past the SFU's track lifetime
+        and flows again, so the relay must declare and pull it afresh."""
+        if session.retired.is_set() or self._session is not session:
+            return
+        logger.warning(
+            f"relay bridge: {ch} carried no video for the SFU's track lifetime; "
+            "asking the relay to pull it again"
+        )
+        try:
+            session.client.send_control_frame(RtcStalled(ch=ch))
+        except Exception:
+            # Session mid-teardown: the reconnect offers everything afresh.
+            return
 
     def _cache_input(self, spec: RuntimeChannelSpec, msg: Any) -> None:
         """Transport-thread callback: remember the newest raw message so a
@@ -1431,6 +1605,10 @@ class RelayBridgeModule(Module):
                 logger.exception(f"relay bridge: unsubscribing {ch} failed")
             finally:
                 target.unsubs.pop(ch, None)
+        # The connect task owns the SFU peer and closes it when cancelled.
+        await _cancel_task(target.rtc_task, "WebRTC connect")
+        target.rtc_task = None
+        target.rtc = None
         try:
             await target.client.close()
         except Exception:

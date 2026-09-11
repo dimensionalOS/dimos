@@ -610,6 +610,18 @@ async def test_fetch_relay_info_cert_hash_is_optional(info_server: str) -> None:
     assert (await fetch_relay_info(info_server)).cert_hash is None
 
 
+async def test_fetch_relay_info_rtc_flag(info_server: str) -> None:
+    # v7: a relay with Cloudflare configured advertises rtc: true; absent is
+    # false, anything but a boolean is a shape error.
+    _serve(GOOD_INFO)
+    assert (await fetch_relay_info(info_server)).rtc is False
+    _serve({**GOOD_INFO, "rtc": True})
+    assert (await fetch_relay_info(info_server)).rtc is True
+    _serve({**GOOD_INFO, "rtc": "yes"})
+    with pytest.raises(ProtocolError, match="unexpected shape"):
+        await fetch_relay_info(info_server)
+
+
 @pytest.mark.parametrize(
     "body",
     [

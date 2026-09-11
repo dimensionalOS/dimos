@@ -194,7 +194,7 @@ unknown stream 'front_cam'; this robot bridge supports: color_image, global_cost
 
 `Video(stream="color_image", *, max_hz=30.0, quality=75, title="")`
 
-One `Image` stream as JPEG frames. `max_hz` caps the frame rate and `quality` is the JPEG quality (0 to 100).
+One `Image` stream as JPEG frames. `max_hz` caps the frame rate and `quality` is the JPEG quality (0 to 100). Behind a relay with Cloudflare video ([Relay hosting](/docs/web/relay_hosting.md#video-through-cloudflare)) the panel plays the channel's WebRTC track in a `<video>` element instead.
 
 ### Map2D
 
@@ -273,11 +273,11 @@ The mechanism on the bridge side (generation numbers, clamps, why zeros are sent
 
 ## Which channels the page reads
 
-The page subscribes to every channel it can use as soon as it loads, whatever tab or panel is visible, and keeps those subscriptions until the manifest changes. The bridge encodes a channel only while at least one viewer is subscribed, so an open page keeps the robot encoding its cheap channels.
+The page subscribes to every cheap channel as soon as it loads, whatever tab or panel is visible, and keeps those subscriptions until the manifest changes. An expensive channel is subscribed only while a panel that binds it is on screen: in the grid, or as the open page tab. Switching to another page or to the channels tab releases it, and the channels tab lists it as `not subscribed (its panel is off screen)`. The bridge encodes a channel only while at least one viewer is subscribed, so an open page keeps the robot encoding its cheap channels, and a video panel nobody is looking at costs nothing.
 
-Cheap means channels with a JSON encoding, and LCM encodings whose message has no variable-length array. They are read for the channels tab whether or not a panel shows them. Video frames, costmaps and LCM messages with variable-length arrays (point clouds, scans, paths) are read only when a panel binds them or a [web SDK](/docs/web/web_sdk.md) page subscribes. A channel whose encoding the cockpit cannot decode is listed with `no decoder` and left alone.
+Cheap means channels with a JSON encoding, and LCM encodings whose message has no variable-length array. They are read for the channels tab whether or not a panel shows them. Expensive means video frames, costmaps and LCM messages with variable-length arrays (point clouds, scans, paths). A [web SDK](/docs/web/web_sdk.md) page subscribes to whatever it asks for. A channel whose encoding the cockpit cannot decode is listed with `no decoder` and left alone.
 
-The reason to have this distinction (cheap/expensive) is because you normally want everything present even if you're not focused on it. But some messages are espensive, so only those are excluded.
+The reason to have this distinction (cheap/expensive) is because you normally want everything present even if you're not focused on it. But some messages are expensive, so only those are excluded.
 
 ## Ready-made blueprints
 
