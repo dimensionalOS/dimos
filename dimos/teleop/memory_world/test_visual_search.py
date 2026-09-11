@@ -284,6 +284,15 @@ def test_index_with_a_frame_on_one_side_only_is_accepted(sqlite_store: SqliteSto
     )
 
 
+def test_index_built_under_the_roll_workaround_is_refused(sqlite_store: SqliteStore) -> None:
+    """Poses are stored, not recomputed, so the two conventions must not mix."""
+    _seed_index(sqlite_store, GIANT)  # plain camera_optical poses
+    with pytest.raises(ValueError, match="level_roll"):
+        _ = VisualMemoryIndex(
+            sqlite_store, pose_of=lambda obs: None, model_name=GIANT, level_roll=True
+        ).index_stream
+
+
 def test_index_built_in_another_world_frame_is_refused(sqlite_store: SqliteStore) -> None:
     sqlite_store.stream(index_stream_name_of(GIANT, "color_image"), PatchGrid).append(
         PatchGrid(source_id=7, rows=2, cols=2, patches=np.zeros((4, 2), dtype=np.float16)),

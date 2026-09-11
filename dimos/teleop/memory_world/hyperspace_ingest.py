@@ -97,76 +97,85 @@ def ingest_recording(
 
     recording = Path(recording)
     opened: list[Any] = []  # stopped in reverse, however far the setup got
+    building: Path | None = None  # the db under construction, dropped unless published
+    published = False
     try:
-        store = open_recording(recording)
-        store.start()
-        opened.append(store)
-        chosen = {role: name for role, name in (streams or {}).items() if name}
-        detected = detect_streams(store, image=chosen.get("image"))
-        detected.update(chosen)
-        present = set(store.list_streams())
-        missing = [
-            role
-            for role in ("image", "depth", "camera_info", "tf")
-            if not detected.get(role) or detected[role] not in present  # a given name, too
-        ]
-        if missing:
-            raise SystemExit(f"{recording.name} has no {', '.join(missing)} stream; cannot ingest")
-        streams = set(store.list_streams())
-        depth_info = depth_info_stream_for(streams, detected["depth"], detected["camera_info"])
-        print(
-            f"streams: color={detected['image']} depth={detected['depth']} "
-            f"info={detected['camera_info']}/{depth_info} tf={detected['tf']}",
-            flush=True,
-        )
+        try:
+            store = open_recording(recording)
+            store.start()
+            opened.append(store)
+            chosen = {role: name for role, name in (streams or {}).items() if name}
+            detected = detect_streams(store, image=chosen.get("image"))
+            detected.update(chosen)
+            present = set(store.list_streams())
+            missing = [
+                role
+                for role in ("image", "depth", "camera_info", "tf")
+                if not detected.get(role) or detected[role] not in present  # a given name, too
+            ]
+            if missing:
+                raise SystemExit(
+                    f"{recording.name} has no {', '.join(missing)} stream; cannot ingest"
+                )
+            streams = set(store.list_streams())
+            depth_info = depth_info_stream_for(streams, detected["depth"], detected["camera_info"])
+            print(
+                f"streams: color={detected['image']} depth={detected['depth']} "
+                f"info={detected['camera_info']}/{depth_info} tf={detected['tf']}",
+                flush=True,
+            )
 
-        memory_path = memory_db_for(recording)
-        # Built beside the final name and moved into place at the end: a rerun (or an
-        # interrupted run) must not append a second copy of every keyframe.
-        building = memory_path.with_name(memory_path.name + ".building")
-        for stale in (
-            building,
-            building.with_name(building.name + "-wal"),
-            building.with_name(building.name + "-shm"),
-        ):
-            stale.unlink(missing_ok=True)
-        memory = SqliteStore(path=str(building), must_exist=False)
-        memory.start()
-        opened.append(memory)
-        chosen = pick_device(device)
-        print(f"embedding with {model_name} on {chosen} -> {memory_path}", flush=True)
-        model = SigLIP2Patches(model_name=model_name, device=chosen, towers="vision")
-        model.start()
-        opened.append(model)
-        started = time.monotonic()
-        stats = _ingest(
-            store,
-            memory,
-            model,
-            streams=detected,
-            depth_info=depth_info,
-            hz=hz,
-            max_seconds=max_seconds,
-            config=IngestConfig(
-                gate=hs.KeyframeGateConfig(novelty_threshold=novelty), max_depth_m=max_depth_m
-            ),
-        )
+            memory_path = memory_db_for(recording)
+            # Built beside the final name and moved into place at the end: a rerun (or an
+            # interrupted run) must not append a second copy of every keyframe.
+            building = memory_path.with_name(memory_path.name + ".building")
+            for stale in (
+                building,
+                building.with_name(building.name + "-wal"),
+                building.with_name(building.name + "-shm"),
+            ):
+                stale.unlink(missing_ok=True)
+            memory = SqliteStore(path=str(building), must_exist=False)
+            memory.start()
+            opened.append(memory)
+            chosen = pick_device(device)
+            print(f"embedding with {model_name} on {chosen} -> {memory_path}", flush=True)
+            model = SigLIP2Patches(model_name=model_name, device=chosen, towers="vision")
+            model.start()
+            opened.append(model)
+            started = time.monotonic()
+            stats = _ingest(
+                store,
+                memory,
+                model,
+                streams=detected,
+                depth_info=depth_info,
+                hz=hz,
+                max_seconds=max_seconds,
+                config=IngestConfig(
+                    gate=hs.KeyframeGateConfig(novelty_threshold=novelty), max_depth_m=max_depth_m
+                ),
+            )
+        finally:  # the db is replaced below, so let go of it first
+            for obj in reversed(opened):
+                try:
+                    obj.stop()
+                except Exception:
+                    logger.exception("stopping %s", type(obj).__name__)
+        if not stats.get("kept"):  # nothing indexed: whatever search db was there stays
+            raise SystemExit(
+                f"no keyframe was kept from {stats.get('images', 0)} images (stamps never matched"
+                " depth, or tf placed none); the search db is unchanged"
+            )
+        for suffix in ("-wal", "-shm"):
+            memory_path.with_name(memory_path.name + suffix).unlink(missing_ok=True)
+        building.replace(memory_path)
+        published = True
     finally:
-        for obj in reversed(opened):
-            try:
-                obj.stop()
-            except Exception:
-                logger.exception("stopping %s", type(obj).__name__)
-    if not stats.get("kept"):  # nothing indexed: whatever search db was there stays
-        for suffix in ("", "-wal", "-shm"):
-            building.with_name(building.name + suffix).unlink(missing_ok=True)
-        raise SystemExit(
-            f"no keyframe was kept from {stats.get('images', 0)} images (stamps never matched"
-            " depth, or tf placed none); the search db is unchanged"
-        )
-    for suffix in ("-wal", "-shm"):
-        memory_path.with_name(memory_path.name + suffix).unlink(missing_ok=True)
-    building.replace(memory_path)
+        if building is not None and not published:
+            # However far it got, a half-built db must not be taken for a finished one.
+            for suffix in ("", "-wal", "-shm"):
+                building.with_name(building.name + suffix).unlink(missing_ok=True)
     summary: dict[str, Any] = {**stats, "seconds": round(time.monotonic() - started, 1)}
     print(f"done: {summary}", flush=True)
     return summary

@@ -430,6 +430,7 @@ class VisualMemoryIndex:
         device: str | None = None,
         dtype: torch.dtype = torch.float16,
         world_frame: str | None = None,
+        level_roll: bool = False,
     ) -> None:
         """*pose_of* maps an image observation to its camera's optical pose in
         the world as a 4x4 matrix, or None to skip the frame. *world_frame* names
@@ -437,6 +438,9 @@ class VisualMemoryIndex:
         self.store = store
         self.pose_of = pose_of
         self.world_frame = world_frame
+        # Poses are stored, not recomputed, so an index built under the camera-roll
+        # workaround cannot be read as one built without it.
+        self.level_roll = level_roll
         self.image_stream_name = image_stream_name
         self.index_stream_name = index_stream_name or index_stream_name_of(
             model_name, image_stream_name
@@ -449,6 +453,11 @@ class VisualMemoryIndex:
         self._precomputed: str | None | _Unresolved = _UNRESOLVED
         self._loaded: _LoadedIndex | None = None
         self._background: torch.Tensor | None = None
+
+    @property
+    def _pose_frame_tag(self) -> str:
+        """The pose convention of the stored rows, roll workaround included."""
+        return POSE_FRAME_TAG + ("+level_roll" if self.level_roll else "")
 
     @property
     def model(self) -> SigLIPModel:
@@ -484,10 +493,10 @@ class VisualMemoryIndex:
                         f"index stream {self.index_stream_name!r} holds poses in {built_in!r}, "
                         f"not {self.world_frame!r}; rebuild it"
                     )
-                if tags.get("pose_frame") != POSE_FRAME_TAG:
+                if tags.get("pose_frame") != self._pose_frame_tag:
                     raise ValueError(
                         f"index stream {self.index_stream_name!r} stores "
-                        f"{tags.get('pose_frame')!r} poses, not {POSE_FRAME_TAG!r}; rebuild it"
+                        f"{tags.get('pose_frame')!r} poses, not {self._pose_frame_tag!r}; rebuild it"
                     )
             self._index_stream = stream
         return self._index_stream
@@ -573,7 +582,7 @@ class VisualMemoryIndex:
                         "model": self.model_name,
                         "image_stream": self.image_stream_name,
                         "world_frame": self.world_frame,
-                        "pose_frame": POSE_FRAME_TAG,
+                        "pose_frame": self._pose_frame_tag,
                     },
                 )
                 added += 1
@@ -805,6 +814,11 @@ def main() -> None:
         help="the frame to place poses in; one tf lacks means its root",
     )
     parser.add_argument(
+        "--level-roll",
+        action="store_true",
+        help="level the camera roll, like the module's camera_level_roll; the index records it",
+    )
+    parser.add_argument(
         "--camera-frame",
         default=None,
         help="optical frame of the images (default: the image stream's own frame_id)",
@@ -836,6 +850,7 @@ def main() -> None:
         model_name=args.model,
         device=args.device,
         world_frame=world,
+        level_roll=args.level_roll,
     )
     try:
         added = index.build(stride=args.stride, batch_size=args.batch_size)

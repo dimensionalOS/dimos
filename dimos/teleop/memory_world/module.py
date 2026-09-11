@@ -1021,6 +1021,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 index_stream_name=self.config.image_index_stream_name,
                 model_name=self.config.siglip_model_name,
                 world_frame=self.config.world_frame,
+                level_roll=self.config.camera_level_roll,
             )
         return self._visual_index
 
