@@ -508,7 +508,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         root; a name given on the command line is kept when the recording has it.
         """
         present = set(store.list_streams())
-        detected = detect_streams(store)
+        # A configured colour stream keeps its own camera_info paired to it.
+        detected = detect_streams(store, image=self.config.image_stream_name or None)
         # tf first: naming the lidar needs the tree.
         for role, setting in (
             ("tf", "tf_stream_name"),
@@ -1251,10 +1252,11 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 if self._stopping.is_set():
                     raise RuntimeError("replay not built: stopping")
                 if self._replay_thread is None or not self._replay_thread.is_alive():
-                    self._replay_thread = threading.Thread(
+                    thread = threading.Thread(
                         target=self._build_replay, daemon=True, name="MemoryWorldReplay"
                     )
-                    self._replay_thread.start()
+                    thread.start()  # started before stop() can see it: join needs that
+                    self._replay_thread = thread
                 raise RuntimeError(f"replay {self._replay_progress}")
             replay = self._replay_locked()
             assert self._replay_index is not None  # set together with _replay
@@ -1328,6 +1330,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             return fn(*args)
 
     def _build_replay(self) -> None:
+        if self._stopping.is_set():  # stop() may have set it after the caller's check
+            return
         try:
             self._ensure_replay()
         except Exception:

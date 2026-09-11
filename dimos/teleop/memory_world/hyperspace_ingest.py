@@ -22,7 +22,8 @@ same :func:`dimos.mapping.hyperspace.cli.ingest`. Output goes to
 ``<recording>.hyperspace.db`` (see :func:`hyperspace_search.memory_db_for`).
 
     python -m dimos.teleop.memory_world.hyperspace_ingest <recording.db|.mcap> \
-        [--model-name DIR_OR_HF_ID] [--device mps|cuda|cpu] [--hz 5]
+        [--model-name DIR_OR_HF_ID] [--device mps|cuda|cpu] [--hz 5] \
+        [--image NAME] [--depth NAME] [--camera_info NAME] [--tf NAME]  # else detected
 """
 
 from __future__ import annotations
@@ -95,39 +96,49 @@ def ingest_recording(
     from dimos.teleop.memory_world.recording import detect_streams, open_recording
 
     recording = Path(recording)
-    store = open_recording(recording)
-    store.start()
-    detected = detect_streams(store)
-    detected.update({role: name for role, name in (streams or {}).items() if name})
-    missing = [role for role in ("image", "depth", "camera_info", "tf") if not detected.get(role)]
-    if missing:
-        raise SystemExit(f"{recording.name} has no {', '.join(missing)} stream; cannot ingest")
-    streams = set(store.list_streams())
-    depth_info = depth_info_stream_for(streams, detected["depth"], detected["camera_info"])
-    print(
-        f"streams: color={detected['image']} depth={detected['depth']} "
-        f"info={detected['camera_info']}/{depth_info} tf={detected['tf']}",
-        flush=True,
-    )
-
-    memory_path = memory_db_for(recording)
-    # Built beside the final name and moved into place at the end: a rerun (or an
-    # interrupted run) must not append a second copy of every keyframe.
-    building = memory_path.with_name(memory_path.name + ".building")
-    for stale in (
-        building,
-        building.with_name(building.name + "-wal"),
-        building.with_name(building.name + "-shm"),
-    ):
-        stale.unlink(missing_ok=True)
-    memory = SqliteStore(path=str(building), must_exist=False)
-    memory.start()
-    chosen = pick_device(device)
-    print(f"embedding with {model_name} on {chosen} -> {memory_path}", flush=True)
-    model = SigLIP2Patches(model_name=model_name, device=chosen, towers="vision")
-    model.start()
-    started = time.monotonic()
+    opened: list[Any] = []  # stopped in reverse, however far the setup got
     try:
+        store = open_recording(recording)
+        store.start()
+        opened.append(store)
+        chosen = {role: name for role, name in (streams or {}).items() if name}
+        detected = detect_streams(store, image=chosen.get("image"))
+        detected.update(chosen)
+        present = set(store.list_streams())
+        missing = [
+            role
+            for role in ("image", "depth", "camera_info", "tf")
+            if not detected.get(role) or detected[role] not in present  # a given name, too
+        ]
+        if missing:
+            raise SystemExit(f"{recording.name} has no {', '.join(missing)} stream; cannot ingest")
+        streams = set(store.list_streams())
+        depth_info = depth_info_stream_for(streams, detected["depth"], detected["camera_info"])
+        print(
+            f"streams: color={detected['image']} depth={detected['depth']} "
+            f"info={detected['camera_info']}/{depth_info} tf={detected['tf']}",
+            flush=True,
+        )
+
+        memory_path = memory_db_for(recording)
+        # Built beside the final name and moved into place at the end: a rerun (or an
+        # interrupted run) must not append a second copy of every keyframe.
+        building = memory_path.with_name(memory_path.name + ".building")
+        for stale in (
+            building,
+            building.with_name(building.name + "-wal"),
+            building.with_name(building.name + "-shm"),
+        ):
+            stale.unlink(missing_ok=True)
+        memory = SqliteStore(path=str(building), must_exist=False)
+        memory.start()
+        opened.append(memory)
+        chosen = pick_device(device)
+        print(f"embedding with {model_name} on {chosen} -> {memory_path}", flush=True)
+        model = SigLIP2Patches(model_name=model_name, device=chosen, towers="vision")
+        model.start()
+        opened.append(model)
+        started = time.monotonic()
         stats = _ingest(
             store,
             memory,
@@ -141,7 +152,7 @@ def ingest_recording(
             ),
         )
     finally:
-        for obj in (model, memory, store):
+        for obj in reversed(opened):
             try:
                 obj.stop()
             except Exception:

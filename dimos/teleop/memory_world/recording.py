@@ -532,8 +532,12 @@ def tf_root(tree: Any) -> str | None:
     return roots[0] if len(roots) == 1 else None
 
 
-def detect_streams(store: Store) -> dict[str, Any]:
+def detect_streams(store: Store, image: str | None = None) -> dict[str, Any]:
     """Name the stream to use for each role, from the payload types in *store*.
+
+    *image* is the colour stream the caller chose, when it did: its camera_info
+    is paired to that one. Depth is picked by name alone, so a rig with two depth
+    cameras needs its depth stream named explicitly.
 
     Recordings disagree about names — this rig calls its camera
     ``realsense_color_image`` where a Go2 recording says ``color_image`` — so
@@ -577,7 +581,7 @@ def detect_streams(store: Store) -> dict[str, Any]:
             candidates = [name for name in candidates if ("depth" in name.lower()) == depth_like]
         return candidates[0] if candidates else None
 
-    image = pick("image", "Image", depth_like=False)
+    image = image if image in by_type.get("Image", []) else pick("image", "Image", depth_like=False)
     detected = {
         "image": image,
         "depth": pick("depth", "Image", depth_like=True),

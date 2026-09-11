@@ -373,6 +373,7 @@ export class ReplayController {
 
     /** Stop every download and timer and free the frames; the controller is done. */
     dispose() {
+        this._loadingSince = null;  // a pending loading-label timer then does nothing
         this._disposed = true;
         if (this._preloadTimer) clearTimeout(this._preloadTimer);
         this._preloadTimer = null;

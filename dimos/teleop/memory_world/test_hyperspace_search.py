@@ -32,6 +32,20 @@ def _blob(origin: tuple[int, int, int], size: int) -> list[tuple[int, int, int]]
     return [(ox + i, oy + j, oz + k) for i in range(size) for j in range(size) for k in range(size)]
 
 
+def test_ingest_command_names_only_the_streams_the_module_chose() -> None:
+    from dimos.teleop.memory_world.hyperspace_ingest import ingest_command
+
+    command = ingest_command(
+        "/tmp/rec.mcap",
+        model_name="m",
+        device="cpu",
+        hz=2.0,
+        streams={"image": "left_image", "depth": None, "camera_info": "", "tf": "tf"},
+    )
+    assert command[-2:] == ["--image=left_image", "--tf=tf"]  # None and empty: detected
+    assert "--hz" in command and command[command.index("--hz") + 1] == "2.0"
+
+
 def test_two_blobs_become_two_clusters_best_first() -> None:
     weak = _blob((0, 0, 0), 2)  # 8 voxels
     strong = _blob((40, 40, 0), 3)  # 27 voxels, far away
