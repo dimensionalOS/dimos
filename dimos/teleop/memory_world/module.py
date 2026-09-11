@@ -57,8 +57,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.memory.store.base import Store
 from dimos.memory.transform import throttle
-from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.teleop.memory_world.embed import EmbeddingJob, siglipify_command, siglipify_config
+from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
 from dimos.teleop.memory_world.messages import (
     MSG_IMAGE_POSES,
     MSG_IMAGE_THUMBNAIL,
@@ -73,7 +73,6 @@ from dimos.teleop.memory_world.messages import (
 from dimos.teleop.memory_world.query import (
     MEMORY_ANALYSIS_BOOTSTRAP,
     RESULT_SENTINEL,
-    HighlightPath,
     HighlightPoint,
     MemoryQueryResult,
 )
@@ -259,6 +258,13 @@ class MemoryWorldConfig(ModuleConfig):
     # The viewer's "Add embeddings" button runs siglipify from this flake over
     # the recording, which writes the vectors back into it (see embed.py).
     siglipify_flake: str = "github:jeff-hykin/siglipify"
+    # Hyperspace (dimos.mapping.hyperspace) answers when <recording>.hyperspace.db exists.
+    hyperspace_model_name: str = "google/siglip2-so400m-patch16-384"
+    hyperspace_voxel_size: float = PydanticField(default=0.1, gt=0.0)
+    hyperspace_device: str = "cpu"  # text tower; MPS aborts inside a dimos worker
+    hyperspace_ingest_device: str = "auto"  # the ingest subprocess may use the GPU
+    hyperspace_ingest_hz: float = PydanticField(default=5.0, gt=0.0)
+    hyperspace_segments: bool = True
     # Two hits closer together than this are one place, not two answers.
     place_radius_m: float = PydanticField(default=2.5, gt=0.0)
     max_places: int = PydanticField(default=6, ge=1)
@@ -291,7 +297,7 @@ class MemoryWorldConfig(ModuleConfig):
     replay_frame_jpeg_quality: int = 60
 
 
-class MemoryWorldModule(Module):
+class MemoryWorldModule(HyperspaceAnswers, Module):
     """VR memory-world module.
 
     See :mod:`dimos.teleop.memory_world` for the architectural overview.
@@ -306,6 +312,7 @@ class MemoryWorldModule(Module):
         self._store: Store | None = None
         # Cached payloads so reconnects are cheap.
         self._cached_cloud: tuple[dict[str, Any], bytes] | None = None
+        self._init_hyperspace()
         self._cached_image_poses: tuple[dict[str, Any], bytes] | None = None
         # Per-pose JPEG thumbnails parallel to image_poses indices.
         self._cached_thumbnails: list[bytes] | None = None
@@ -362,6 +369,8 @@ class MemoryWorldModule(Module):
     def _setup_routes(self) -> None:
         assert self._web_server is not None
         app = self._web_server.app
+
+        self._setup_hyperspace_routes(app)
 
         @app.get(self.config.client_route, response_class=HTMLResponse)  # type: ignore[misc]
         async def memory_world_index() -> HTMLResponse:
@@ -619,6 +628,8 @@ class MemoryWorldModule(Module):
         except Exception:
             logger.exception("failed to build/send world payload")
             conn.send_threadsafe(encode_text("error", message="world load failed"))
+
+        self._resend_hyperspace(conn)
 
     def _build_cloud(self) -> tuple[dict[str, Any], bytes]:
         """Build a voxel cloud from the recording's lidar stream."""
@@ -1042,6 +1053,7 @@ class MemoryWorldModule(Module):
             present = index.precomputed_stream_name is not None or index.count() > 0
         except Exception as error:
             logger.warning("index status unavailable: %s", error)
+        present = present or self._hyperspace_ready()
         return {"present": present, "index": self._index_progress, **self._embed_job.status()}
 
     def _start_embedding(self) -> bool:
@@ -1094,6 +1106,8 @@ class MemoryWorldModule(Module):
         phrase = search_phrase(query)
         if not phrase:
             return SkillResult.fail("INVALID_QUERY", "The query text is empty")
+        if self._hyperspace_ready():
+            return self._find_with_hyperspace(phrase, started)
 
         index = self._ensure_visual_index()
         if index.count() == 0:
@@ -1529,35 +1543,6 @@ class MemoryWorldModule(Module):
             return output
         return output[:limit] + f"\n... [truncated, {len(output)} chars total]"
 
-    def _add_route_to_result(self, result: MemoryQueryResult) -> None:
-        # Routes are server-owned: only the planner may label one collision-aware.
-        result.route = None
-        with self._clients_lock:
-            viewer_position = self._viewer_position
-        if result.focus_point is None or viewer_position is None:
-            return
-        try:
-            store = self._ensure_store()
-            if "global_costmap" not in store.list_streams():
-                return
-            costmap = store.streams.global_costmap.last().data
-            route = min_cost_astar(
-                costmap,
-                goal=result.focus_point[:2],
-                start=viewer_position[:2],
-            )
-            if route is None:
-                return
-            points = [(pose.x, pose.y, pose.z + 0.08) for pose in route.poses]
-            if len(points) >= 2:
-                result.route = HighlightPath(
-                    points=points,
-                    label="Route to answer",
-                    color="#64ff8f",
-                )
-        except Exception:
-            logger.exception("failed to build route to memory query result")
-
     def _on_client_message(self, conn: _ClientConn, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
         if kind == "ping":
@@ -1638,9 +1623,11 @@ class MemoryWorldModule(Module):
             self._ensure_world_cache()
         except Exception:
             logger.exception("world cache build failed")
+        self._load_hyperspace()
         if self.config.build_replay_on_start:
             self._build_replay()
-        self._build_visual_index()
+        if not self._hyperspace_ready():  # the SigLIP index is the fallback engine
+            self._build_visual_index()
 
     @rpc
     def stop(self) -> None:
@@ -1654,6 +1641,9 @@ class MemoryWorldModule(Module):
                 self._prepare_thread.join(timeout=10)
                 self._prepare_thread = None
             self._embed_job.terminate()
+            self._prepare_job.terminate()
+            if self._hyperspace is not None:
+                self._hyperspace.close()
         finally:
             if self._visual_index is not None:
                 self._visual_index.stop()

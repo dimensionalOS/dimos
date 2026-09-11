@@ -59,7 +59,14 @@ class EmbeddingJob:
     not, on the job's thread.
     """
 
-    def __init__(self, on_finished: Callable[[EmbeddingJob], None] | None = None) -> None:
+    def __init__(
+        self,
+        on_finished: Callable[[EmbeddingJob], None] | None = None,
+        name: str = "siglipify",
+        done: str = "embeddings added",
+    ) -> None:
+        self.name = name
+        self.done_message = done
         self._lock = threading.Lock()
         self.state = "idle"
         self.progress = ""
@@ -75,8 +82,9 @@ class EmbeddingJob:
             self.state = state
             self.progress = progress
 
-    def start(self, command: list[str], config_text: str, adopt: Callable[[], None]) -> bool:
-        """Run *command* (given the config file path as its last argument) unless already running.
+    def start(self, command: list[str], config_text: str | None, adopt: Callable[[], None]) -> bool:
+        """Run *command* unless already running. With *config_text*, it is written
+        to a temp file whose path becomes the command's last argument.
 
         *adopt* runs after a successful exit, before the job is marked done;
         it is where the caller picks up what the tool wrote.
@@ -84,7 +92,7 @@ class EmbeddingJob:
         with self._lock:
             if self.state == "running":
                 return False
-            self.state, self.progress = "running", "starting siglipify"
+            self.state, self.progress = "running", f"starting {self.name}"
         threading.Thread(
             target=self._run,
             args=(command, config_text, adopt),
@@ -98,15 +106,16 @@ class EmbeddingJob:
         if process is not None:
             process.terminate()
 
-    def _run(self, command: list[str], config_text: str, adopt: Callable[[], None]) -> None:
+    def _run(self, command: list[str], config_text: str | None, adopt: Callable[[], None]) -> None:
         last = ""
         config_path: str | None = None
         try:
-            with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as handle:
-                handle.write(config_text)
-                config_path = handle.name
-            command = [*command, config_path]
-            logger.info("adding embeddings: %s", " ".join(command))
+            if config_text is not None:
+                with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as handle:
+                    handle.write(config_text)
+                    config_path = handle.name
+                command = [*command, config_path]
+            logger.info("%s: %s", self.name, " ".join(command))
             process = subprocess.Popen(
                 command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
             )
@@ -122,14 +131,14 @@ class EmbeddingJob:
                     if line:
                         last = line[-160:]
                         self._set("running", last)
-                        logger.info("siglipify: %s", line)
+                        logger.info("%s: %s", self.name, line)
             code = process.wait()
             if code != 0:
-                raise RuntimeError(f"siglipify exited with {code}: {last}")
+                raise RuntimeError(f"{self.name} exited with {code}: {last}")
             adopt()
-            self._set("done", "embeddings added")
+            self._set("done", self.done_message)
         except Exception as error:
-            logger.exception("adding embeddings failed")
+            logger.exception("%s failed", self.name)
             self._set("failed", str(error)[-200:])
         finally:
             self._process = None

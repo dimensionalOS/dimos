@@ -35,6 +35,7 @@ import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms, viewportHei
 import { OrbitControl } from '/static_mw/orbit.js';
 
 const WALK_SPEED_M_PER_S = 1.4;               // headset-relative
+const WALK_EASE_S = 0.16;                     // velocity time constant: start/stop ramps
 const POINT_SIZE = 0.025;                     // metres
 const TELEPORT_ARC_SEGMENTS = 24;
 const TELEPORT_MAX_DISTANCE = 8.0;            // metres along ray
@@ -573,9 +574,16 @@ export class WorldScene {
         this._updateQuality(dt);
         this._updateVoxelCull(dt);
 
-        const loc = this._pendingLocomote;
-        if (loc && dt > 0 && (Math.abs(loc.stickX) > 0.1 || Math.abs(loc.stickY) > 0.1 || Math.abs(loc.up) > 0.1)) {
-            this._walk(loc.stickX, loc.stickY, loc.up, dt);
+        // Walking eases in and out: the stick sets a target, the velocity follows it.
+        const loc = this._pendingLocomote || { stickX: 0, stickY: 0, up: 0 };
+        const dead = (v) => (Math.abs(v) > 0.1 ? v : 0);
+        const v = this._walkVelocity || (this._walkVelocity = { x: 0, y: 0, up: 0 });
+        if (dt > 0) {
+            const k = 1 - Math.exp(-dt / WALK_EASE_S);
+            v.x += (dead(loc.stickX) - v.x) * k;
+            v.y += (dead(loc.stickY) - v.y) * k;
+            v.up += (dead(loc.up) - v.up) * k;
+            if (Math.abs(v.x) + Math.abs(v.y) + Math.abs(v.up) > 0.01) this._walk(v.x, v.y, v.up, dt);
         }
 
         if (dt > 0 && Math.abs(this._pendingYawRate) > 1e-3) {

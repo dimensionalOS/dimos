@@ -227,7 +227,7 @@ def test_route_is_generated_by_server(
     )
     monkeypatch.setattr(memory_world, "_ensure_store", lambda: store)
     monkeypatch.setattr(
-        "dimos.teleop.memory_world.module.min_cost_astar",
+        "dimos.teleop.memory_world.hyperspace_answers.min_cost_astar",
         lambda costmap, *, goal, start: planned_path,
     )
     memory_world._viewer_position = (0.0, 0.0, 0.0)

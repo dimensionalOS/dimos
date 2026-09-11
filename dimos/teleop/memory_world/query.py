@@ -53,6 +53,19 @@ class HighlightPoint(BaseModel):
     radius: float | None = Field(default=None, gt=0.0, le=5.0)
 
 
+class ClusterSummary(BaseModel):
+    """One blob of a heat map: where it is, how big, how sure, how many pictures back it."""
+
+    index: int = Field(ge=0)
+    centre: Point3
+    radius: float = Field(gt=0.0)
+    score: float = Field(ge=0.0)
+    peak: float = Field(ge=0.0, le=1.0)
+    n_voxels: int = Field(ge=1)
+    n_evidence: int = Field(default=0, ge=0)
+    label: str = Field(default="", max_length=120)
+
+
 class MemoryQueryResult(BaseModel):
     """Textual answer and spatial evidence for one memory query."""
 
@@ -64,6 +77,11 @@ class MemoryQueryResult(BaseModel):
     observation_ids: list[int] = Field(default_factory=list, max_length=200)
     route: HighlightPath | None = None
     action: Literal["replace"] = "replace"
+    # Heat-map answers (Hyperspace): the clusters the viewer steps through with
+    # next/prev, best first. The voxels themselves travel as MSG_HEATMAP.
+    clusters: list[ClusterSummary] = Field(default_factory=list, max_length=64)
+    engine: Literal["hyperspace", "siglip", "agent"] = "agent"
+    query_text: str = Field(default="", max_length=400)
 
 
 RESULT_SENTINEL = "__DIMOS_MEMORY_RESULT__="

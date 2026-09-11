@@ -31,6 +31,9 @@ MSG_ODOM_TRAIL = 0x03
 MSG_TOP_DOWN_MAP = 0x04
 MSG_IMAGE_THUMBNAIL = 0x05
 MSG_QUERY_IMAGE = 0x06  # the frame behind one answer, with the camera pose that took it
+# A heat map: float32 xyz per voxel, then uint8 score (0..255 = 0..1), then
+# int16 cluster index (-1 = none). Header carries n, voxel_size, frame, query_id.
+MSG_HEATMAP = 0x07
 
 
 def encode_binary(msg_type: int, header: dict[str, Any], payload: bytes) -> bytes:
