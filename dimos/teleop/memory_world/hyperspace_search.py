@@ -54,7 +54,6 @@ from dimos.teleop.memory_world.hyperspace_fast import (
     pack_keys,
     patch_rects,
     project_pixels,
-    unpack_keys,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -123,7 +122,8 @@ class Cluster:
     centre: tuple[float, float, float]
     # Distance holding 90% of the cluster's voxels (>= half a voxel).
     radius: float
-    # Summed voxel score; the ranking key.
+    # The ranking key: the summed voxel score from cluster_voxels, or, after
+    # Hyperspace's refine, the cluster's share of the best one (0-1).
     score: float
     peak: float
     n_voxels: int
@@ -360,7 +360,6 @@ class HyperspaceSearch:
         # "none": the raw map. When a chain keeps nothing, the occupancy path answers instead.
         self.refine = refine
         self._config = config
-        self._scene: NDArray[np.int64] | None = None
         self._scene_keys: NDArray[np.int64] | None = None
         if scene is not None:
             self.set_scene(scene)
@@ -379,7 +378,6 @@ class HyperspaceSearch:
         points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
         # Packed keys: np.unique over rows is minutes on a city-scale map, over int64 keys it is seconds.
         self._scene_keys = np.unique(pack_keys(np.floor(points / self.voxel_size).astype(np.int64)))
-        self._scene = unpack_keys(self._scene_keys)
 
     def warm(self) -> None:
         """Load the model, every keyframe and the segments so the first answer is not slow."""
@@ -388,13 +386,16 @@ class HyperspaceSearch:
 
     def close(self) -> None:
         with self._lock:
-            for obj in (self._model, self._store):
-                try:
-                    if obj is not None and hasattr(obj, "stop"):
-                        obj.stop()
-                except Exception:
-                    logger.exception("closing %s", type(obj).__name__)
-            self._model = self._store = self._engine = self._fast = None
+            self._release()
+
+    def _release(self) -> None:
+        for obj in (self._model, self._store):
+            try:
+                if obj is not None and hasattr(obj, "stop"):
+                    obj.stop()
+            except Exception:
+                logger.exception("closing %s", type(obj).__name__)
+        self._model = self._store = self._engine = self._fast = None
 
     @property
     def keyframe_count(self) -> int:
@@ -415,27 +416,34 @@ class HyperspaceSearch:
         from dimos.memory.store.sqlite import SqliteStore
 
         started = time.monotonic()
-        store = SqliteStore(path=str(self.memory_db), must_exist=True)
-        store.start()
-        _use_the_cores()
-        model = SigLIP2Patches(model_name=self.model_name, device=self.device, towers="text")
-        model.start()
-        config = self._config or hs.QueryConfig()
-        engine = HyperspaceQuery(
-            store,
-            lambda text: model.embed_text_array(text)[0],
-            config,
-            world_frame=self.world_frame,
-            voxel_size=self.voxel_size,
-        )
-        fast = FastQuery(
-            engine,
-            world_frame=self.world_frame,
-            voxel_size=self.voxel_size,
-            embed_texts=lambda texts: model.embed_text_array(*texts),
-            with_segments=self.use_segments,
-        )
-        self._store, self._model, self._engine, self._fast = store, model, engine, fast
+        # Published as they open, so a failure part-way leaves nothing for close() to miss.
+        self._store = store = SqliteStore(path=str(self.memory_db), must_exist=True)
+        try:
+            store.start()
+            _use_the_cores()
+            self._model = model = SigLIP2Patches(
+                model_name=self.model_name, device=self.device, towers="text"
+            )
+            model.start()
+            config = self._config or hs.QueryConfig()
+            engine = HyperspaceQuery(
+                store,
+                lambda text: model.embed_text_array(text)[0],
+                config,
+                world_frame=self.world_frame,
+                voxel_size=self.voxel_size,
+            )
+            fast = FastQuery(
+                engine,
+                world_frame=self.world_frame,
+                voxel_size=self.voxel_size,
+                embed_texts=lambda texts: model.embed_text_array(*texts),
+                with_segments=self.use_segments,
+            )
+        except Exception:
+            self._release()
+            raise
+        self._engine, self._fast = engine, fast
         self.warm_seconds = time.monotonic() - started
         logger.info(
             "hyperspace: %d keyframes, %d segments from %s ready in %.1f s",
@@ -675,7 +683,7 @@ def _pyramids(
                 far=[tuple(float(v) for v in c) for c in far[i]],  # type: ignore[misc]
                 score=float(sub.score[i]),
                 keyframe_id=int(frames.ids[f]),
-                cluster=int(owner[p]) if p < len(owner) else -1,
+                cluster=int(owner[p]),
             )
         )
     return out

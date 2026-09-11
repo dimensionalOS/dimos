@@ -137,7 +137,7 @@ class MlsRoutePlanner:
             node_spacing_m=node_spacing_m,
         )
         self.planner.update_global_map(points)
-        self.surface_cells = len(self.planner.surface_map()) // 3  # for the log line
+        self.surface_cells = len(self.planner.surface_map())  # (M, 3) centres; for the log
         # Plans start and end on graph nodes; the planner snaps a point to its nearest
         # node in 3D, which under a shelf is the shelf top. So candidates are nodes.
         self.nodes = np.asarray(self.planner.nodes(), dtype=np.float64).reshape(-1, 3)
@@ -351,7 +351,7 @@ class RoutePlanner:
         goal = self.snap(goal_xy, snap_m, within=reachable)
         if goal is None:
             return None
-        path = min_cost_astar(self.grid, goal=goal, start=start, unknown_penalty=0.8)
+        path = min_cost_astar(self.grid, goal=goal, start=start)  # no unknown cells here
         if path is None or len(path.poses) < 2:
             return None
         points = [(float(p.x), float(p.y), self.floor_at((p.x, p.y))) for p in path.poses]

@@ -172,9 +172,10 @@ class HyperspaceAnswers:
         map, not the stride-sampled payload the viewer gets."""
         if self._map_xyz is not None:
             return self._map_xyz
-        if self._cached_cloud is None:
+        cached = self._cached_cloud  # read once: a reopen clears it
+        if cached is None:
             return None
-        header, payload = self._cached_cloud
+        header, payload = cached
         n = int(header.get("n", 0))
         return np.frombuffer(payload, dtype=np.float32, count=n * 3).reshape(n, 3)
 
@@ -527,7 +528,10 @@ class HyperspaceAnswers:
         with self._planner_lock:  # a reopen clears the cache under it
             if frame in self._orbit_cache:
                 return self._orbit_cache[frame]
-            index = self._replay_index_json()
+            try:
+                index = self._replay_index_json()
+            except RuntimeError as error:  # a build holds the replay: 503, like its routes
+                raise HTTPException(status_code=503, detail=str(error)) from error
             if frame == index.get("orbit", {}).get("frame"):
                 self._orbit_cache[frame] = index["orbit"]
                 return index["orbit"]

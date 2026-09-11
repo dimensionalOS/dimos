@@ -1,0 +1,267 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""The SigLIP fallback of the memory world: the per-frame visual index, the
+"add embeddings" job, and answers placed by raycasting hot patches through depth.
+
+Mixed into MemoryWorldModule; the Hyperspace path (hyperspace_answers.py) is the
+one the demo uses, this one answers when a recording has no Hyperspace memory."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+from dimos.teleop.memory_world.embed import EmbeddingJob, siglipify_command, siglipify_config
+from dimos.teleop.memory_world.messages import MSG_QUERY_IMAGE, encode_binary
+from dimos.teleop.memory_world.recording import depth_info_stream_for
+from dimos.teleop.memory_world.tf_tree import pose_matrix
+from dimos.teleop.memory_world.visual_search import (
+    PatchHit,
+    Place,
+    VisualMemoryIndex,
+    cluster_hits,
+    hot_patches,
+    patch_world_position,
+)
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+
+class VisualAnswers:
+    """Needs, from the module: ``config``, the store and index locks,
+    ``_ensure_store``, ``_ensure_visual_index``, ``_reopen_recording``,
+    ``_hyperspace_ready``, ``_camera_hfov``, ``_encode_jpeg``, ``_broadcast``,
+    ``whisper`` and the client bookkeeping."""
+
+    config: Any
+    _store_lock: Any
+    _index_lock: Any
+    _clients_lock: Any
+    _visual_index: VisualMemoryIndex | None
+    _index_progress: str
+    _embed_job: EmbeddingJob
+    _active_query_images: list[tuple[dict[str, Any], bytes]]
+    _cached_image_poses: tuple[dict[str, Any], bytes] | None
+
+    if TYPE_CHECKING:
+
+        def _ensure_store(self) -> Any: ...
+        def _ensure_visual_index(self) -> VisualMemoryIndex: ...
+        def _reopen_recording(self) -> None: ...
+        def _hyperspace_ready(self) -> bool: ...
+        def _camera_hfov(self) -> float: ...
+        def _broadcast(self, payload: bytes) -> None: ...
+        @property
+        def whisper(self) -> Any: ...
+        @staticmethod
+        def _encode_jpeg(img: Any, max_size: int, quality: int) -> bytes: ...
+
+    def _build_visual_index(self) -> None:
+        """Load the recording's index, building it first when configured to.
+
+        Slow and one-shot; runs off the request path. A recording with no
+        vectors and no build configured is left for the viewer's "Add
+        embeddings" button.
+        """
+        with self._store_lock:
+            missing = self.config.image_stream_name not in self._ensure_store().list_streams()
+        if missing:
+            # Nothing to index; saves loading a 3.7 GB model to find that out.
+            self._index_progress = f"no {self.config.image_stream_name!r} stream"
+            logger.warning("visual index skipped: %s", self._index_progress)
+            return
+        with self._store_lock, self._index_lock:  # the build reads every image
+            index = self._ensure_visual_index()
+            existing = index.count()
+            if existing == 0 and not self.config.build_image_index_on_start:
+                self._index_progress = "no embeddings; add them from the viewer"
+                logger.info("visual index: %s", self._index_progress)
+                return
+            self._index_progress = f"building (had {existing} frames)"
+            try:
+                added = index.build(stride=self.config.image_index_stride)
+            except Exception as error:
+                self._index_progress = f"failed: {error}"
+                logger.exception("visual index build failed")
+                return
+            self._index_progress = f"ready ({index.count()} frames)"
+            logger.info("visual index ready: %d frames (+%d new)", index.count(), added)
+            # Warm the model loads and the index here, off the request path: cold
+            # they add ~18s (and, for precomputed vectors, the pooling-head pass)
+            # to whichever query comes first, which is the one being demoed. Still under both
+            # locks: an embedding adoption would stop this index meanwhile.
+            if index.count() > 0:
+                self._index_progress = f"loading ({index.count()} frames)"
+                index.load()
+                self._index_progress = f"ready ({index.count()} frames)"
+            index.model.embed_text("warmup")  # this index's own model
+        _ = self.whisper  # needs neither the store nor the index
+        logger.info("voice query path warm")
+
+    def _index_status(self) -> dict[str, Any]:
+        """What the viewer shows for search: a query button, or an offer to embed first."""
+        present = False
+        try:
+            with self._store_lock:
+                index = self._ensure_visual_index()
+                present = index.precomputed_stream_name is not None or index.count() > 0
+        except Exception as error:
+            logger.warning("index status unavailable: %s", error)
+        present = present or self._hyperspace_ready()
+        return {"present": present, "index": self._index_progress, **self._embed_job.status()}
+
+    def _start_embedding(self) -> bool:
+        """Run siglipify over the recording in the background unless it already is."""
+        return self._embed_job.start(
+            siglipify_command(self.config.siglipify_flake, self.config.store_path),
+            siglipify_config(
+                self.config.siglip_model_name,
+                self.config.image_stream_name,
+                self.config.image_index_stride,
+            ),
+            adopt=self._adopt_embeddings,
+        )
+
+    def _adopt_embeddings(self) -> None:
+        """Pick up the stream siglipify just wrote and load the index from it."""
+        if self.config.store_path.endswith(".mcap"):
+            self._reopen_recording()  # drops the index with the store it read
+        else:
+            with self._store_lock, self._index_lock:  # store first, like every index user
+                self._drop_visual_index()
+        self._build_visual_index()
+
+    def _drop_visual_index(self) -> None:
+        """Under the store and index locks: a search holding the old index would read
+        a stream of a store that is about to close."""
+        if self._visual_index is not None:
+            self._visual_index.stop()
+            self._visual_index = None
+
+    def _publish_query_images(self, query_id: str, phrase: str, places: list[Place]) -> None:
+        """Send the frame behind each place, posed where its camera stood.
+
+        The header carries the camera position, its forward and up directions
+        and its field of view, so the viewer can hang the picture on the
+        camera's image plane.
+        """
+        hfov_deg = self._camera_hfov()
+        sent: list[tuple[dict[str, Any], bytes]] = []
+        for index, place in enumerate(places):
+            try:
+                with self._store_lock:  # resolved and read together: a reopen swaps the store
+                    images = self._ensure_store().streams[self.config.image_stream_name]
+                    frame = images.at(place.ts, tolerance=0.005).first()
+                    image = frame.data
+                jpeg = self._encode_jpeg(
+                    image, self.config.query_image_max_size, self.config.thumbnail_jpeg_quality
+                )
+            except Exception:
+                logger.exception("could not fetch the frame behind place %d", index)
+                continue
+            camera = pose_matrix(place.camera_position or place.position, place.orientation)
+            forward, up = camera[:3, 2], -camera[:3, 1]  # optical: z forward, y down
+            height, width = frame.data.shape[:2]
+            header = {
+                "query_id": query_id,
+                "index": index,
+                "label": f"{phrase} ({place.similarity:+.3f})",
+                "position": [float(v) for v in camera[:3, 3]],
+                "forward": [float(v) for v in forward],
+                "up": [float(v) for v in up],
+                "hfov_deg": hfov_deg,
+                "aspect": float(width) / float(height),
+                "distance_m": float(self.config.query_image_distance_m),
+            }
+            sent.append((header, jpeg))
+        with self._clients_lock:
+            self._active_query_images = sent
+        for header, jpeg in sent:
+            self._broadcast(encode_binary(MSG_QUERY_IMAGE, header, jpeg))
+
+    def _locate_objects(self, phrase: str) -> list[Place]:
+        """Raycast the hot patches of the best frames through depth and group the hits.
+
+        Empty when the recording has no depth stream or intrinsics, or when
+        no hot patch lands on valid depth.
+        """
+        if self.config.depth_stream_name is None or self.config.camera_info_stream_name is None:
+            return []
+        with self._store_lock:
+            store = self._ensure_store()
+            depth_stream = store.streams[self.config.depth_stream_name]
+            info = depth_info_stream_for(
+                set(store.list_streams()),
+                self.config.depth_stream_name,
+                self.config.camera_info_stream_name,
+            )
+            k = store.streams[info].first().data.K  # the depth camera's own intrinsics
+        intrinsics = (float(k[0]), float(k[4]), float(k[2]), float(k[5]))
+
+        hits: list[PatchHit] = []
+        with self._store_lock:
+            frames = list(
+                self._ensure_visual_index().frame_patches(phrase, k=self.config.locate_frames)
+            )
+        for frame in frames:
+            try:
+                with self._store_lock:
+                    depth = depth_stream.at(
+                        frame.ts, tolerance=self.config.depth_tolerance_s
+                    ).first()
+                    depth_mm = np.asarray(depth.data.data)
+            except LookupError:
+                continue
+            camera_to_world = pose_matrix(frame.position, frame.orientation)
+            for image_uv, score in hot_patches(frame.similarity, frame.rows, frame.cols):
+                position = patch_world_position(image_uv, depth_mm, intrinsics, camera_to_world)
+                if position is not None:
+                    hits.append(
+                        PatchHit(
+                            position=position,
+                            similarity=score,
+                            source_id=frame.source_id,
+                            ts=frame.ts,
+                            camera_position=frame.position,
+                            camera_orientation=frame.orientation,
+                        )
+                    )
+        return cluster_hits(
+            hits, radius=self.config.object_radius_m, max_places=self.config.max_places
+        )
+
+    def _markers_near(self, positions: list[tuple[float, float, float]]) -> list[int]:
+        """Ids of the capture-pose markers closest to each place.
+
+        The viewer only holds thumbnails for the ``n_image_markers`` poses it was
+        sent, and a matching frame is usually not one of them. Highlighting the
+        nearest marker instead puts a visible photo at each answer location.
+        """
+        cached = self._cached_image_poses  # read once: a reopen clears it
+        if cached is None:
+            return []
+        header, payload = cached
+        n = int(header.get("n", 0))
+        ids = header.get("ids") or []
+        if n == 0 or len(ids) < n:
+            return []
+        marker_xyz = np.frombuffer(payload, dtype=np.float32, count=n * 3).reshape(n, 3)
+        nearest = {
+            int(ids[int(np.argmin(np.linalg.norm(marker_xyz - np.asarray(p, np.float32), axis=1)))])
+            for p in positions
+        }
+        return sorted(nearest)

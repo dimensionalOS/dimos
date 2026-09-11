@@ -51,7 +51,7 @@ logger = setup_logger()
 VEC0_MAX_K = 4096
 SEGMENT_STREAM = "hyperspace_segments"
 # Voxel indices are packed into one int64 key; this many voxels each side of
-# the origin (52 km at 10 cm) fit.
+# the origin (105 km at 10 cm) fit.
 _KEY_HALF = 1 << 20
 _KEY_SPAN = 1 << 21
 
@@ -105,7 +105,7 @@ class Rasterized:
 class Pooled:
     index: NDArray[np.int64]  # (V, 3) unique voxels
     score: NDArray[np.float64]  # pooled, unnormalized
-    # Support per voxel: frames that saw it, distinct hot yaw bins (Hyperspace's refine uses both).
+    # Support per voxel: frames that saw it, distinct yaw bins (Hyperspace's refine uses both).
     frames: NDArray[np.int64] | None = None
     bins: NDArray[np.int64] | None = None
 
@@ -303,9 +303,13 @@ def pool(evidence: Rasterized, config: Any) -> Pooled:
     hot_bins = np.bincount(pairs[:, 0], minlength=len(starts))
     pooled = lse * np.sqrt(np.maximum(hot_bins, 1))
     frames = np.diff(np.append(starts, len(keys)))
-    return Pooled(
-        unpack_keys(keys[starts]), pooled, frames.astype(np.int64), hot_bins.astype(np.int64)
+    # Support counts every distinct yaw bin, like Hyperspace's: only the score
+    # multiplier is about the hot ones, and refine's min_bins must not drop a
+    # voxel the reference keeps.
+    bins = np.bincount(
+        np.unique(np.stack([group, yaw], axis=1), axis=0)[:, 0], minlength=len(starts)
     )
+    return Pooled(unpack_keys(keys[starts]), pooled, frames.astype(np.int64), bins.astype(np.int64))
 
 
 def normalize_scores(scores: NDArray[np.float64], percentile: float) -> NDArray[np.float64]:
@@ -622,7 +626,8 @@ STRUCTURAL_LABELS = ("floor", "wall", "ceiling")
 def structural_mask(patches: PatchBank, segments: SegmentBank, config: Any) -> NDArray[np.bool_]:
     """Per camera patch: whether the nearest segment frame of the same camera
     (within ``structural_gate_dt``) labelled its cell floor, wall or ceiling
-    with at least ``structural_gate_coverage``. Mirrors ``HyperspaceQuery.is_structural``."""
+    with at least ``structural_gate_coverage``. Mirrors ``HyperspaceQuery.is_structural``
+    over the segments the bank kept (those with a pose and intrinsics)."""
     mask = np.zeros(len(patches), dtype=bool)
     if len(segments) == 0 or len(patches) == 0:
         return mask
@@ -637,9 +642,10 @@ def structural_mask(patches: PatchBank, segments: SegmentBank, config: Any) -> N
         a, b = segments._cell_starts[seg], segments._cell_starts[seg + 1]
         idx = segments._cells_of[a:b]
         good = idx[segments.cell_cov[idx] >= coverage_min]
-        if len(good):
-            key = (segments.seg_camera[seg], float(segments.seg_ts[seg]))
-            cells_of.setdefault(key, set()).update(int(c) for c in segments.cell_index[good])
+        # A frame whose structural cells are all below the coverage stays, with no
+        # cells: nearest by stamp, it gates nothing, as in the reference.
+        key = (segments.seg_camera[seg], float(segments.seg_ts[seg]))
+        cells_of.setdefault(key, set()).update(int(c) for c in segments.cell_index[good])
     by_camera: dict[str, tuple[NDArray[np.float64], list[set[int]]]] = {}
     for camera in {c for c, _ in cells_of}:
         stamps = sorted(ts for c, ts in cells_of if c == camera)

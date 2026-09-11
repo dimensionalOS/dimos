@@ -117,7 +117,9 @@ BACKGROUND_PROMPTS = (
 )
 BACKGROUND_SYNONYM_CUTOFF = 0.85
 # A patch is "hot" when it scores at least this much and at least this fraction
-# of its frame's best patch (aligned patch-text cosines peak around 0.10-0.17).
+# of its frame's best patch. The scores are background-contrasted (patch cosine
+# minus its best background cosine; raw aligned cosines peak around 0.10-0.17),
+# so the floor is loose and the ratio does most of the work.
 HOT_PATCH_FLOOR = 0.10
 HOT_PATCH_RATIO = 0.75
 # Frames scored per matmul. The index stays fp16 in memory (5 fps of 848x480

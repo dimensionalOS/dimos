@@ -49,7 +49,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.memory.store.base import Store
 from dimos.memory.transform import throttle
 from dimos.teleop.memory_world.clients import ClientConn, RevalidatedStaticFiles
-from dimos.teleop.memory_world.embed import EmbeddingJob, siglipify_command, siglipify_config
+from dimos.teleop.memory_world.embed import EmbeddingJob
 from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
 from dimos.teleop.memory_world.messages import (
     MSG_IMAGE_POSES,
@@ -70,7 +70,6 @@ from dimos.teleop.memory_world.query import (
 )
 from dimos.teleop.memory_world.recording import (
     build_tf_tree,
-    depth_info_stream_for,
     detect_streams,
     open_recording,
     pick_lidar,
@@ -85,16 +84,12 @@ from dimos.teleop.memory_world.replay import (
 )
 from dimos.teleop.memory_world.replay_serving import HEIGHT_COLOR_STOPS, ReplayServing
 from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix
+from dimos.teleop.memory_world.visual_answers import VisualAnswers
 from dimos.teleop.memory_world.visual_search import (
     SIGLIP2_MODEL_NAME,
-    PatchHit,
-    Place,
     VisualMemoryIndex,
     body_style_quaternion,
-    cluster_hits,
     cluster_places,
-    hot_patches,
-    patch_world_position,
     search_phrase,
 )
 from dimos.utils.data import get_data
@@ -254,7 +249,7 @@ class MemoryWorldConfig(ModuleConfig):
     replay_frame_jpeg_quality: int = 60
 
 
-class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
+class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module):
     """VR memory-world module.
 
     See :mod:`dimos.teleop.memory_world` for the architectural overview.
@@ -305,6 +300,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         self._replay_index: dict[str, Any] | None = None
         self._replay_frames: OrderedDict[float, tuple[bytes, dict[str, Any]]] = OrderedDict()
         self._camera_hfov_deg: float | None = None
+        self._camera_frame_cache: str | None = None
         self._active_query_result: dict[str, Any] | None = None
         self._active_query_images: list[tuple[dict[str, Any], bytes]] = []
         self._query_revision = 0
@@ -974,90 +970,6 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
             )
         return self._visual_index
 
-    def _build_visual_index(self) -> None:
-        """Load the recording's index, building it first when configured to.
-
-        Slow and one-shot; runs off the request path. A recording with no
-        vectors and no build configured is left for the viewer's "Add
-        embeddings" button.
-        """
-        with self._store_lock:
-            missing = self.config.image_stream_name not in self._ensure_store().list_streams()
-        if missing:
-            # Nothing to index; saves loading a 3.7 GB model to find that out.
-            self._index_progress = f"no {self.config.image_stream_name!r} stream"
-            logger.warning("visual index skipped: %s", self._index_progress)
-            return
-        with self._store_lock, self._index_lock:  # the build reads every image
-            index = self._ensure_visual_index()
-            existing = index.count()
-            if existing == 0 and not self.config.build_image_index_on_start:
-                self._index_progress = "no embeddings; add them from the viewer"
-                logger.info("visual index: %s", self._index_progress)
-                return
-            self._index_progress = f"building (had {existing} frames)"
-            try:
-                added = index.build(stride=self.config.image_index_stride)
-            except Exception as error:
-                self._index_progress = f"failed: {error}"
-                logger.exception("visual index build failed")
-                return
-            self._index_progress = f"ready ({index.count()} frames)"
-            logger.info("visual index ready: %d frames (+%d new)", index.count(), added)
-            # Warm the model loads and the index here, off the request path: cold
-            # they add ~18s (and, for precomputed vectors, the pooling-head pass)
-            # to whichever query comes first, which is the one being demoed. Still
-            # under both locks: an embedding adoption would stop this index meanwhile.
-            index.model.embed_text("warmup")
-            _ = self.whisper
-            if index.count() > 0:
-                self._index_progress = f"loading ({index.count()} frames)"
-                index.load()
-                self._index_progress = f"ready ({index.count()} frames)"
-        logger.info("voice query path warm")
-
-    # ---- adding embeddings to a recording that has none -----------------------
-
-    def _index_status(self) -> dict[str, Any]:
-        """What the viewer shows for search: a query button, or an offer to embed first."""
-        present = False
-        try:
-            with self._store_lock:
-                index = self._ensure_visual_index()
-                present = index.precomputed_stream_name is not None or index.count() > 0
-        except Exception as error:
-            logger.warning("index status unavailable: %s", error)
-        present = present or self._hyperspace_ready()
-        return {"present": present, "index": self._index_progress, **self._embed_job.status()}
-
-    def _start_embedding(self) -> bool:
-        """Run siglipify over the recording in the background unless it already is."""
-        return self._embed_job.start(
-            siglipify_command(self.config.siglipify_flake, self.config.store_path),
-            siglipify_config(
-                self.config.siglip_model_name,
-                self.config.image_stream_name,
-                self.config.image_index_stride,
-            ),
-            adopt=self._adopt_embeddings,
-        )
-
-    def _adopt_embeddings(self) -> None:
-        """Pick up the stream siglipify just wrote and load the index from it."""
-        if self.config.store_path.endswith(".mcap"):
-            self._reopen_recording()  # drops the index with the store it read
-        else:
-            with self._store_lock, self._index_lock:  # store first, like every index user
-                self._drop_visual_index()
-        self._build_visual_index()
-
-    def _drop_visual_index(self) -> None:
-        """Under the store and index locks: a search holding the old index would read
-        a stream of a store that is about to close."""
-        if self._visual_index is not None:
-            self._visual_index.stop()
-            self._visual_index = None
-
     def _reopen_recording(self) -> None:
         """Open the recording afresh: siglipify rewrote the mcap, and the store holds the old file."""
         # Lock order everywhere: planner, world cache, replay, store, index.
@@ -1072,6 +984,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
             self._store = open_recording(self.config.store_path)
             self._replay = None
             self._replay_error = None
+            self._replay_progress = "not started"
             self._replay_index = None
             self._replay_frames.clear()
             self._drop_visual_index()
@@ -1080,6 +993,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
             self._name_streams(self._store)
             self._lidar_world_aligned_cache = None
             self._camera_hfov_deg = None
+            self._camera_frame_cache = None
             self._cached_cloud = self._cached_image_poses = self._cached_thumbnails = None
             self._cached_odom = self._cached_top_down = self._map_xyz = None
             self._route_planner = None
@@ -1162,49 +1076,6 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
             },
         )
 
-    def _publish_query_images(self, query_id: str, phrase: str, places: list[Place]) -> None:
-        """Send the frame behind each place, posed where its camera stood.
-
-        The header carries the camera position, its forward and up directions
-        and its field of view, so the viewer can hang the picture on the
-        camera's image plane.
-        """
-        store = self._ensure_store()
-        images = store.streams[self.config.image_stream_name]
-        hfov_deg = self._camera_hfov()
-
-        sent: list[tuple[dict[str, Any], bytes]] = []
-        for index, place in enumerate(places):
-            try:
-                with self._store_lock:
-                    frame = images.at(place.ts, tolerance=0.005).first()
-                    image = frame.data
-                jpeg = self._encode_jpeg(
-                    image, self.config.query_image_max_size, self.config.thumbnail_jpeg_quality
-                )
-            except Exception:
-                logger.exception("could not fetch the frame behind place %d", index)
-                continue
-            camera = pose_matrix(place.camera_position or place.position, place.orientation)
-            forward, up = camera[:3, 2], -camera[:3, 1]  # optical: z forward, y down
-            height, width = frame.data.shape[:2]
-            header = {
-                "query_id": query_id,
-                "index": index,
-                "label": f"{phrase} ({place.similarity:+.3f})",
-                "position": [float(v) for v in camera[:3, 3]],
-                "forward": [float(v) for v in forward],
-                "up": [float(v) for v in up],
-                "hfov_deg": hfov_deg,
-                "aspect": float(width) / float(height),
-                "distance_m": float(self.config.query_image_distance_m),
-            }
-            sent.append((header, jpeg))
-        with self._clients_lock:
-            self._active_query_images = sent
-        for header, jpeg in sent:
-            self._broadcast(encode_binary(MSG_QUERY_IMAGE, header, jpeg))
-
     # ---- poses -------------------------------------------------------------
 
     def _tf_tree(self) -> TfTree | None:
@@ -1228,13 +1099,13 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         return self._tf_tree_cache
 
     def _camera_frame(self) -> str:
-        if self.config.camera_optical_frame is None:  # read once, even when it is empty
+        if self.config.camera_optical_frame is not None:
+            return self.config.camera_optical_frame
+        if self._camera_frame_cache is None:  # read once, even when it is empty
             with self._store_lock:
                 first = self._ensure_store().streams[self.config.image_stream_name].first()
-            self.config.camera_optical_frame = str(
-                getattr(first.data, "frame_id", "") or ""
-            ).lstrip("/")
-        return self.config.camera_optical_frame
+            self._camera_frame_cache = str(getattr(first.data, "frame_id", "") or "").lstrip("/")
+        return self._camera_frame_cache
 
     def _lidar_world_aligned(self) -> bool:
         """Whether the lidar scans are stored already registered in the world frame."""
@@ -1359,10 +1230,10 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
                 lidar_stream_name=self.config.lidar_stream_name,
                 max_range=self.config.replay_max_range_m,
             )
-        if not available:
-            self._replay_progress = "building"
-            logger.info("building the voxel replay streams into %s", self.config.store_path)
-            try:
+        try:
+            if not available:
+                self._replay_progress = "building"
+                logger.info("building the voxel replay streams into %s", self.config.store_path)
                 stats = build_replay_streams(
                     store,
                     lidar_stream_name=self.config.lidar_stream_name,
@@ -1372,30 +1243,35 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
                     keyframe_interval_s=self.config.replay_keyframe_interval_s,
                     cancelled=self._stopping.is_set,
                 )
-            except Exception as error:
-                # Remembered: otherwise every viewer connect and every /replay/index
-                # retry would delete the streams and rebuild them from scratch.
-                self._replay_error = self._replay_progress = f"build failed: {error}"
-                raise
-            logger.info(
-                "voxel replay built: %d scans, %d keyframes, +%d/-%d edits in %.1f s",
-                stats.scans,
-                stats.keyframes,
-                stats.added,
-                stats.removed,
-                stats.seconds,
-            )
-        with self._store_lock:
-            # The replay shows the same heights as the static map.
-            replay = VoxelReplay(
-                store,
-                z_min=self.config.map_z_min if self.config.map_z_min is not None else -np.inf,
-                z_max=self.config.map_z_max if self.config.map_z_max is not None else np.inf,
-            )
-            # Listing every camera stamp is a pass over the image stream (on
-            # an mcap that decompresses every chunk), so it is done here, once.
-            self._replay_index = self._build_replay_index_json(replay)
-            self._replay = replay
+                if self._stopping.is_set():  # cut short: the streams lack their last keyframe
+                    raise RuntimeError("cancelled")
+                logger.info(
+                    "voxel replay built: %d scans, %d keyframes, +%d/-%d edits in %.1f s",
+                    stats.scans,
+                    stats.keyframes,
+                    stats.added,
+                    stats.removed,
+                    stats.seconds,
+                )
+            with self._store_lock:
+                # The replay shows the same heights as the static map.
+                replay = VoxelReplay(
+                    store,
+                    z_min=self.config.map_z_min if self.config.map_z_min is not None else -np.inf,
+                    z_max=self.config.map_z_max if self.config.map_z_max is not None else np.inf,
+                )
+                # Listing every camera stamp is a pass over the image stream (on
+                # an mcap that decompresses every chunk), so it is done here, once.
+                self._replay_index = self._build_replay_index_json(replay)
+        except Exception as error:
+            # The viewer reads this prefix: it stops polling on a failed build.
+            self._replay_progress = f"build failed: {error}"
+            # Remembered: otherwise every viewer connect and every /replay/index retry
+            # would rebuild from scratch. A cancelled build is retried by the next start.
+            if not self._stopping.is_set():
+                self._replay_error = self._replay_progress
+            raise
+        self._replay = replay
         self._replay_progress = "ready"
         return replay
 
@@ -1407,9 +1283,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
     def _build_replay(self) -> None:
         try:
             self._ensure_replay()
-        except Exception as error:
-            self._replay_progress = f"failed: {error}"
-            logger.exception("voxel replay build failed")
+        except Exception:
+            logger.exception("voxel replay build failed")  # _replay_locked keeps the reason
 
     def _frame_pose_at(self, frame: str, ts: float) -> np.ndarray | None:
         """world_T_frame at *ts* from tf, or None."""
@@ -1437,78 +1312,6 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
             return None
         body = pose_matrix(tuple(pose[:3]), tuple(pose[3:7]) if len(pose) >= 7 else (0, 0, 0, 1))
         return np.asarray(body @ OPTICAL_FROM_BODY)
-
-    def _locate_objects(self, phrase: str) -> list[Place]:
-        """Raycast the hot patches of the best frames through depth and group the hits.
-
-        Empty when the recording has no depth stream or intrinsics, or when
-        no hot patch lands on valid depth.
-        """
-        if self.config.depth_stream_name is None or self.config.camera_info_stream_name is None:
-            return []
-        with self._store_lock:
-            store = self._ensure_store()
-            depth_stream = store.streams[self.config.depth_stream_name]
-            info = depth_info_stream_for(
-                set(store.list_streams()),
-                self.config.depth_stream_name,
-                self.config.camera_info_stream_name,
-            )
-            k = store.streams[info].first().data.K  # the depth camera's own intrinsics
-        intrinsics = (float(k[0]), float(k[4]), float(k[2]), float(k[5]))
-
-        hits: list[PatchHit] = []
-        with self._store_lock:
-            frames = list(
-                self._ensure_visual_index().frame_patches(phrase, k=self.config.locate_frames)
-            )
-        for frame in frames:
-            try:
-                with self._store_lock:
-                    depth = depth_stream.at(
-                        frame.ts, tolerance=self.config.depth_tolerance_s
-                    ).first()
-                    depth_mm = np.asarray(depth.data.data)
-            except LookupError:
-                continue
-            camera_to_world = pose_matrix(frame.position, frame.orientation)
-            for image_uv, score in hot_patches(frame.similarity, frame.rows, frame.cols):
-                position = patch_world_position(image_uv, depth_mm, intrinsics, camera_to_world)
-                if position is not None:
-                    hits.append(
-                        PatchHit(
-                            position=position,
-                            similarity=score,
-                            source_id=frame.source_id,
-                            ts=frame.ts,
-                            camera_position=frame.position,
-                            camera_orientation=frame.orientation,
-                        )
-                    )
-        return cluster_hits(
-            hits, radius=self.config.object_radius_m, max_places=self.config.max_places
-        )
-
-    def _markers_near(self, positions: list[tuple[float, float, float]]) -> list[int]:
-        """Ids of the capture-pose markers closest to each place.
-
-        The viewer only holds thumbnails for the ``n_image_markers`` poses it was
-        sent, and a matching frame is usually not one of them. Highlighting the
-        nearest marker instead puts a visible photo at each answer location.
-        """
-        if self._cached_image_poses is None:
-            return []
-        header, payload = self._cached_image_poses
-        n = int(header.get("n", 0))
-        ids = header.get("ids") or []
-        if n == 0 or len(ids) < n:
-            return []
-        marker_xyz = np.frombuffer(payload, dtype=np.float32, count=n * 3).reshape(n, 3)
-        nearest = {
-            int(ids[int(np.argmin(np.linalg.norm(marker_xyz - np.asarray(p, np.float32), axis=1)))])
-            for p in positions
-        }
-        return sorted(nearest)
 
     @property
     def whisper(self) -> Any:

@@ -376,11 +376,14 @@ class ReplayIndex:
     """Everything a viewer needs to seek: scan stamps and where the keyframes sit."""
 
     voxel_size: float
-    scan_ts: np.ndarray  # (S,) float64, one per diff message, ascending
+    scan_ts: np.ndarray  # (S,) float64, one per diff message, in stream order
     keyframe_scan: np.ndarray  # (K,) int, scan index each keyframe was taken after
     keyframe_ts: np.ndarray  # (K,) float64
     origin: tuple[int, int, int]  # voxel index the int16 wire coordinates are relative to
 
+    # scan_at and segment_of are the reference for the viewer's scanAt/segmentOf
+    # (replay.js); the server itself seeks by scan index. Both assume ascending
+    # stamps, which _load_index checks.
     def scan_at(self, ts: float) -> int:
         """Index of the last scan at or before *ts* (0 before the first)."""
         return max(0, int(np.searchsorted(self.scan_ts, ts, side="right")) - 1)
@@ -475,6 +478,8 @@ class VoxelReplay:
         tags = dict(first.tags or {})
         voxel_size = float(tags["voxel_size"])
         scan_ts = np.array([float(obs.ts) for obs in self.diffs], dtype=np.float64)
+        if len(scan_ts) > 1 and np.any(np.diff(scan_ts) < 0):
+            logger.warning("replay scan stamps are not ascending; seeks by time are approximate")
         keyframe_scan: list[int] = []
         keyframe_ts: list[float] = []
         for obs in self.keyframes:  # tags only: the clouds stay on disk
