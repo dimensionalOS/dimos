@@ -109,6 +109,26 @@ STATIC_DIR = Path(__file__).parent / "web" / "static"
 OPTICAL_FROM_BODY = pose_matrix((0.0, 0.0, 0.0), (-0.5, 0.5, -0.5, 0.5))
 
 
+def _level_roll(world_T_optical: np.ndarray) -> np.ndarray:
+    """The same camera, looking the same way, with its horizon level.
+
+    An optical frame is x right, y down, z forward. Keeping z and taking y from
+    world down removes any roll about the view axis. A camera looking straight up
+    or down has no roll to remove and is returned untouched.
+    """
+    levelled = np.array(world_T_optical, dtype=np.float64)
+    forward = levelled[:3, 2]
+    down = np.array([0.0, 0.0, -1.0])
+    y = down - float(down @ forward) * forward
+    norm = float(np.linalg.norm(y))
+    if norm < 1e-3:  # looking along the world's own up: every roll is as good
+        return levelled
+    y /= norm
+    levelled[:3, 1] = y
+    levelled[:3, 0] = np.cross(y, forward)
+    return levelled
+
+
 class MemoryWorldConfig(ModuleConfig):
     """Config for the Memory World."""
 
@@ -169,6 +189,12 @@ class MemoryWorldConfig(ModuleConfig):
     world_frame: str = "world"
     # The image stream's own frame_id by default.
     camera_optical_frame: str | None = None
+    # HACK for the cart recordings (grocery/bike/park, 2026-09-11): their tf rolls
+    # the camera 30-50 degrees about its view axis, varying over the run, so every
+    # picture hangs askew against a level world. The pictures themselves are level,
+    # so the roll is wrong, not the camera. This keeps tf's view direction and takes
+    # the roll from the world instead. Set False once the recordings publish tf right.
+    camera_level_roll: bool = True
     # A lookup fails when the nearest tf sample is further away than this.
     tf_tolerance_s: float = PydanticField(default=0.1, gt=0.0)
     # Added to image timestamps before the tf lookup, for recorders whose
@@ -1399,9 +1425,12 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         optical convention.
         """
         if self._tf_tree() is not None:
-            return self._frame_pose_at(
+            world_T_optical = self._frame_pose_at(
                 self._camera_frame(), float(obs.ts) + self.config.camera_time_offset_s
             )
+            if world_T_optical is None or not self.config.camera_level_roll:
+                return world_T_optical
+            return _level_roll(np.asarray(world_T_optical))
         pose = getattr(obs, "pose_tuple", None)
         if pose is None:
             return None
