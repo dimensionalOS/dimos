@@ -23,7 +23,9 @@ from typing import TYPE_CHECKING, Any, Protocol
 from dimos.core.coordination.python_worker import Actor, MethodCallProxy
 from dimos.core.stream import RemoteStream
 from dimos.core.transport_factory import rpc_backend
+from dimos.protocol.rpc.jsonrpc import call as call_json
 from dimos.protocol.rpc.spec import RPCSpec
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -53,6 +55,7 @@ class RpcCall:
         self._remote_name = remote_name
         self._unsub_fns = unsub_fns
         self._stop_rpc_client = stop_client
+        self._native = bool(getattr(original_method, "__native_rpc__", False))
 
         self.__name__ = name
         self.__qualname__ = f"{self.__class__.__name__}.{name}"
@@ -60,7 +63,7 @@ class RpcCall:
             functools.update_wrapper(self, original_method)
             signature = inspect.signature(original_method)
             parameters = list(signature.parameters.values())
-            if parameters and parameters[0].name in {"self", "cls"}:
+            if parameters and (self._native or parameters[0].name in {"self", "cls"}):
                 parameters = parameters[1:]
             self.__signature__ = signature.replace(parameters=parameters)
 
@@ -78,6 +81,16 @@ class RpcCall:
         self._rpc = rpc
 
     def __call__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if self._native:
+            if not isinstance(self._rpc, ZenohRPC):
+                raise RuntimeError("native_rpc requires a running ZenohRPC client")
+            arguments = self.__signature__.bind(*args, **kwargs)
+            arguments.apply_defaults()
+            name = f"{self._remote_name}/{self._name}"
+            timeout = self._rpc.rpc_timeouts.get(name) or self._rpc.rpc_timeouts.get(
+                self._name, self._rpc.default_rpc_timeout
+            )
+            return call_json(self._rpc.session, name, arguments.arguments, timeout)
         if not self._rpc:
             logger.warning("RPC client not initialized")
             return None
@@ -98,10 +111,15 @@ class RpcCall:
         return result
 
     def __getstate__(self):  # type: ignore[no-untyped-def]
+        if self._native:
+            return (self._name, self._remote_name, self.__signature__)
         return (self._name, self._remote_name)
 
     def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        self._name, self._remote_name = state
+        self._name, self._remote_name = state[:2]
+        self._native = len(state) == 3
+        if self._native:
+            self.__signature__ = state[2]
         self._unsub_fns = []
         self._rpc = None
         self._stop_rpc_client = None

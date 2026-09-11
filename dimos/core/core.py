@@ -34,6 +34,21 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
+def native_rpc(fn: Callable[P, R]) -> Callable[P, R]:
+    """Declare a synchronous instance method served by a NativeModule's subprocess."""
+    if isinstance(fn, (staticmethod, classmethod)):
+        raise TypeError("native_rpc requires an instance method")
+    parameters = list(inspect.signature(fn).parameters.values())
+    if inspect.iscoroutinefunction(inspect.unwrap(fn)) or any(
+        p.kind not in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY) for p in parameters
+    ):
+        raise TypeError("native_rpc requires a sync method with named parameters")
+    if fn.__name__ in {"build", "start", "stop"} or fn.__name__.startswith("_"):
+        raise ValueError("native_rpc cannot replace lifecycle or private methods")
+    fn.__native_rpc__ = True  # type: ignore[attr-defined]
+    return rpc(fn)
+
+
 def rpc(fn: Callable[P, R]) -> Callable[P, R]:
     """Mark a method as an RPC body callable across modules.
 

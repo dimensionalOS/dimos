@@ -50,9 +50,11 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import IO, Any
+from uuid import uuid4
 
 from pydantic import Field, model_validator
 
@@ -61,6 +63,8 @@ from dimos.core.core import rpc
 from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.transport_factory import session_config
+from dimos.protocol.rpc.jsonrpc import call as call_json
+from dimos.protocol.rpc.zenohrpc import ZenohRPC
 from dimos.protocol.service.spec import SessionConfig
 from dimos.utils.logging_config import setup_logger
 
@@ -126,6 +130,7 @@ class NativeModuleConfig(ModuleConfig):
     # the rest of the graph connects to. None follows the global config.
     session: SessionConfig | None = None
     shutdown_timeout: float = DEFAULT_THREAD_JOIN_TIMEOUT
+    native_rpc_start_timeout: float = Field(default=10.0, gt=0)
     log_format: LogFormat = LogFormat.JSON
     auto_build: bool = False
 
@@ -210,7 +215,16 @@ class NativeModule(Module):
     _process: subprocess.Popen[bytes] | None = None
     _watchdog: threading.Thread | None = None
     _stopping: bool = False
+    _native_rpc_ready: bool = False
     _stop_lock: threading.Lock
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        for name, method in inspect.getmembers_static(cls):
+            if isinstance(method, (staticmethod, classmethod)) and getattr(
+                method.__func__, "__native_rpc__", False
+            ):
+                raise TypeError(f"native_rpc requires an instance method: {cls.__name__}.{name}")
 
     @functools.cached_property
     def _module_label(self) -> str:
@@ -278,65 +292,120 @@ class NativeModule(Module):
         qos = self._collect_output_qos()
         if qos:
             blob["qos"] = qos
+        if self._native_rpc_methods:
+            self._native_rpc_token = uuid4().hex
+            blob["rpc"] = {
+                "name": self.config.instance_name or type(self).__name__,
+                "methods": self._native_rpc_methods,
+                "token": self._native_rpc_token,
+            }
         return json.dumps(blob).encode() + b"\n"
+
+    @functools.cached_property
+    def _native_rpc_methods(self) -> list[str]:
+        return sorted(
+            name for name, method in self.rpcs.items() if getattr(method, "__native_rpc__", False)
+        )
+
+    def _wait_native_rpc(self, process: subprocess.Popen[bytes]) -> None:
+        rpc = self.rpc
+        if not isinstance(rpc, ZenohRPC):
+            raise RuntimeError("Native RPC service stopped before startup completed")
+        session = rpc.session
+        name = self.config.instance_name or type(self).__name__
+        deadline = time.monotonic() + self.config.native_rpc_start_timeout
+        while process.poll() is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"Native RPC for {name} did not become ready")
+            try:
+                ready = call_json(session, f"{name}/_ready", timeout=min(remaining, 0.1))
+            except TimeoutError:
+                # A missing queryable can finalize immediately. Also notice an early exit.
+                try:
+                    process.wait(timeout=min(remaining, 0.02))
+                except subprocess.TimeoutExpired:
+                    pass
+                continue
+            if ready != {"methods": self._native_rpc_methods, "token": self._native_rpc_token}:
+                raise ValueError(f"Native RPC registration for {name} does not match: {ready!r}")
+            return
+        raise RuntimeError(f"Native process {name} exited before RPC was ready")
 
     @rpc
     def start(self) -> None:
+        with self._stop_lock:
+            if self._stopping:
+                raise RuntimeError("Native module has stopped; create a new instance")
+        if self._native_rpc_methods:
+            if not self.config.stdin_config:
+                raise ValueError("native_rpc requires stdin_config=True")
+            if global_config.transport != "zenoh" or not isinstance(self.rpc, ZenohRPC):
+                raise ValueError("native_rpc requires an active Zenoh RPC service")
         super().start()
-        if self._process is not None and self._process.poll() is None:
-            logger.warning(
-                "Native process already running",
-                module=self._module_label,
-                pid=self._process.pid,
-            )
-            return
-
         topics = self._collect_topics()
         cmd = self._argv(topics)
-
-        # Built before the spawn: a config that cannot be serialized must fail
-        # without leaving a child blocked on a stdin line it will never get.
-        stdin_blob = self._stdin_blob(topics) if self.config.stdin_config else None
-
         env = self._spawn_env()
         cwd = self.config.cwd or str(Path(self.config.executable).resolve().parent)
 
-        logger.info(
-            "Starting native process",
-            module=self._module_label,
-            cmd=" ".join(cmd),
-            cwd=cwd,
-        )
-
-        self._process = subprocess.Popen(
-            cmd,
-            env=env,
-            cwd=cwd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            start_new_session=True,
-            preexec_fn=_set_process_to_die_when_parent_dies,
-        )
-        assert self._process.stdin is not None
-        if stdin_blob is not None:
-            self._process.stdin.write(stdin_blob)
-        self._process.stdin.close()
+        with self._stop_lock:
+            if self._stopping:
+                raise RuntimeError("Native module has stopped; create a new instance")
+            if self._process is not None and self._process.poll() is None:
+                if self._native_rpc_methods and not self._native_rpc_ready:
+                    raise RuntimeError("Native RPC is still starting")
+                logger.warning(
+                    "Native process already running",
+                    module=self._module_label,
+                    pid=self._process.pid,
+                )
+                return
+            stdin_blob = self._stdin_blob(topics) if self.config.stdin_config else b""
+            self._native_rpc_ready = False
+            logger.info(
+                "Starting native process",
+                module=self._module_label,
+                cmd=" ".join(cmd),
+                cwd=cwd,
+            )
+            # Preloaded stdin cannot block startup when the child never reads it.
+            with tempfile.TemporaryFile() as stdin:
+                stdin.write(stdin_blob)
+                stdin.seek(0)
+                self._process = subprocess.Popen(
+                    cmd,
+                    env=env,
+                    cwd=cwd,
+                    stdin=stdin,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    start_new_session=True,
+                    preexec_fn=_set_process_to_die_when_parent_dies,
+                )
+            process = self._process
+            self._watchdog = threading.Thread(
+                target=self._watch_process,
+                daemon=True,
+                name=f"native-watchdog-{self._module_label}",
+            )
+            self._watchdog.start()
         logger.info(
             "Native process started",
             module=self._module_label,
-            pid=self._process.pid,
+            pid=process.pid,
         )
-
-        watchdog = threading.Thread(
-            target=self._watch_process,
-            daemon=True,
-            name=f"native-watchdog-{self._module_label}",
-        )
-        with self._stop_lock:
-            self._stopping = False
-            self._watchdog = watchdog
-        watchdog.start()
+        if self._native_rpc_methods:
+            ready = False
+            try:
+                self._wait_native_rpc(process)
+                with self._stop_lock:
+                    if self._stopping or self._process is not process or process.poll() is not None:
+                        raise RuntimeError("Native process stopped during startup")
+                    ready = True
+                    self._native_rpc_ready = True
+            finally:
+                if not ready:
+                    self.stop()
 
     @rpc
     def stop(self) -> None:
