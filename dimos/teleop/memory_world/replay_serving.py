@@ -93,7 +93,9 @@ class ReplayServing:
         if tree is not None:
             positions = frame_positions(stamps, lambda ts: self._frame_pose_at(frame, ts))
         else:  # no tf: the pose stamped on the lidar scans is all there is
-            scans = self._ensure_store().streams[self.config.lidar_stream_name].order_by("ts")
+            # Row order, like build_replay_streams: sorting here would pair scan n's
+            # pose with a different scan's voxels.
+            scans = self._ensure_store().streams[self.config.lidar_stream_name]
             positions = stamped_positions(scans)[: len(stamps)]
         return {"frame": frame, "positions": positions}
 

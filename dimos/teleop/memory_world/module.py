@@ -88,11 +88,11 @@ from dimos.teleop.memory_world.replay_serving import HEIGHT_COLOR_STOPS, ReplayS
 from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix
 from dimos.teleop.memory_world.visual_answers import VisualAnswers
 from dimos.teleop.memory_world.visual_search import (
-    POSE_FRAME_TAG,
     SIGLIP2_MODEL_NAME,
     VisualMemoryIndex,
     body_style_quaternion,
     cluster_places,
+    pose_tag_for,
     search_phrase,
 )
 from dimos.utils.data import get_data
@@ -1025,9 +1025,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
 
     def _pose_tag(self) -> str:
         """Names the extrinsic the stored index poses were computed with."""
-        tree = self._tf_tree()
-        measured = tree is not None and getattr(tree, "corrected_static", False)
-        return POSE_FRAME_TAG + ("+measured_mount" if measured else "")
+        return pose_tag_for(self._tf_tree())
 
     def _reopen_recording(self) -> None:
         """Open the recording afresh: siglipify rewrote the mcap, and the store holds the old file."""

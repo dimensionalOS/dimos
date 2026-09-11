@@ -222,7 +222,11 @@ class HyperspaceAnswers:
             "engine": "hyperspace" if search is not None else None,
             "ready": search is not None,
             "memory_db": str(memory_db_for(self.config.store_path)),
-            "memory_db_present": memory_db_ready(self.config.store_path),
+            # A db we have refused is not one the viewer should wait on: saying it is
+            # present leaves the page on "loading Hyperspace…" for ever and hides the
+            # Prepare button the error text tells the user to press.
+            "memory_db_present": memory_db_ready(self.config.store_path)
+            and self._memory_db_predates_the_mount() is None,
             "keyframes": search.keyframe_count if search else 0,
             "segments": search.segment_count if search else 0,
             "error": self._hyperspace_error,

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -525,6 +526,21 @@ def build_tf_tree(
                     static=True,
                 )
                 tree.corrected_static = True  # this tree's mount was measured, not recorded
+                tree.mount_fingerprint = hashlib.sha1(
+                    repr(
+                        (
+                            str(t.frame_id),
+                            str(t.child_frame_id),
+                            round(float(p.x), 6),
+                            round(float(p.y), 6),
+                            round(float(p.z), 6),
+                            round(float(q.x), 6),
+                            round(float(q.y), 6),
+                            round(float(q.z), 6),
+                            round(float(q.w), 6),
+                        )
+                    ).encode()
+                ).hexdigest()[:8]
                 logger.info(
                     "tf: %s -> %s from %r", t.frame_id, t.child_frame_id, CORRECTED_STATIC_STREAM
                 )
@@ -536,16 +552,16 @@ def build_tf_tree(
     # frame and the assumed edge never exists. Getting this wrong is silent and costly:
     # the map is drawn loop-closed while every camera pose, marker and path is placed
     # by the uncorrected tf, and the two drift apart by the whole loop closure.
-    try:
-        sample = store.streams[corrected].first()
-    except LookupError:  # the stream exists but holds nothing: nothing to substitute
-        return tree
-    named = (
-        str(getattr(sample.data, "frame_id", "") or "").lstrip("/"),
-        str(getattr(sample.data, "child_frame_id", "") or "").lstrip("/"),
-    )
+    # The raw stream first: a corrected stream names its own output frame
+    # (`world -> corrected_odom`), which is nowhere in tf, while the raw odometry it was
+    # derived from names the edge that is.
+    named = [
+        _edge_named_by(store, name)
+        for name in (corrected.removesuffix("_corrected"), corrected)
+        if name in store.list_streams()
+    ]
     world = world_frame if world_frame in tree.frames else tf_root(tree)
-    edge_key = named if all(named) and named in tree._edges else (world, base_frame)
+    edge_key = next((pair for pair in named if pair and pair in tree._edges), (world, base_frame))
     world, base_frame = edge_key
     if world is None or edge_key not in tree._edges:
         logger.warning(
@@ -572,6 +588,17 @@ def build_tf_tree(
         tree.substituted_child = base_frame
         logger.info("tf: %s -> %s from %r (%d corrected poses)", world, base_frame, corrected, n)
     return tree
+
+
+def _edge_named_by(store: Store, name: str) -> tuple[str, str] | None:
+    """The tf edge an odometry stream describes, from its own header."""
+    try:
+        sample = store.streams[name].first()
+    except LookupError:  # declared but empty
+        return None
+    parent = str(getattr(sample.data, "frame_id", "") or "").lstrip("/")
+    child = str(getattr(sample.data, "child_frame_id", "") or "").lstrip("/")
+    return (parent, child) if parent and child else None
 
 
 def measured_mount_written_at(store: Store) -> float | None:

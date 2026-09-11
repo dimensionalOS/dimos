@@ -77,6 +77,18 @@ if TYPE_CHECKING:
 # How index rows say which frame their pose describes.
 POSE_FRAME_TAG = "camera_optical"
 
+
+def pose_tag_for(tree: Any) -> str:
+    """The pose convention tag for poses placed through *tree*.
+
+    Index rows store poses as computed and are never re-placed on read, so the tag
+    has to name the extrinsic that made them -- and name WHICH one, since replacing
+    one measurement with another moves every pose just as much as the first did.
+    """
+    mount = getattr(tree, "mount_fingerprint", None) if tree is not None else None
+    return POSE_FRAME_TAG + (f"+mount_{mount}" if mount else "")
+
+
 logger = setup_logger()
 
 # Highest-accuracy SigLIP 2 checkpoint with a text tower (85.0 zero-shot
@@ -860,6 +872,7 @@ def main() -> None:
         model_name=args.model,
         device=args.device,
         world_frame=world,
+        pose_tag=pose_tag_for(tree),
     )
     try:
         added = index.build(stride=args.stride, batch_size=args.batch_size)

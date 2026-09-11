@@ -191,6 +191,9 @@ class TfTree:
         # The child of the edge `substituted` replaced: pointlio tracks the lidar on
         # some rigs, so it is not always base_link and the ingest must not assume it.
         self.substituted_child = "base_link"
+        # Short digest of the measured mount this tree applied, so stored poses can
+        # say WHICH measurement placed them, not merely that one did.
+        self.mount_fingerprint: str | None = None
 
     @classmethod
     def from_stream(cls, stream: Iterable[Any]) -> TfTree:
@@ -219,8 +222,16 @@ class TfTree:
     ) -> None:
         edge = self._edges.setdefault((parent, child), _Edge())
         if static:
-            if edge.stamps:  # a latched tf_static republished: the one sample holds
+            if edge.static:  # a latched tf_static republished: the one sample holds
                 return
+            if edge.stamps:
+                # tf also carried this edge, over whatever window it happened to be
+                # published. tf_static says it holds for all time, and that is the
+                # stronger claim, so it replaces rather than joins.
+                edge.stamps.clear()
+                edge.positions.clear()
+                edge.orientations.clear()
+                edge._stamp_array = None
             edge.static = True
         edge.add(ts, position, orientation)
         self._neighbours.setdefault(parent, set()).add(child)

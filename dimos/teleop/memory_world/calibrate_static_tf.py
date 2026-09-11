@@ -236,9 +236,14 @@ def rigidly_joined(tree: Any, frame: str, other: str) -> bool:
         if edge.static:
             continue
         _, positions, orientations = edge._arrays()
-        moved = np.ptp(positions, axis=0).max() if len(positions) else 0.0
-        turned = np.abs(orientations - orientations[0]).max() if len(orientations) else 0.0
-        if max(float(moved), float(turned)) > 1e-6:  # a republished static edge never moves
+        if not len(positions):
+            continue
+        moved = float(np.ptp(positions, axis=0).max())
+        # q and -q are the same rotation, and a republisher is free to flip the sign,
+        # so compare by how far apart the rotations are, not by the numbers.
+        aligned = orientations @ orientations[0]
+        turned = float(np.abs(np.abs(aligned) - 1.0).max())
+        if max(moved, turned) > 1e-6:  # a republished static edge never moves
             return False
     return True
 
@@ -256,7 +261,11 @@ def sensor_lidar_stream(
     for name in [streams.get("lidar"), *streams.get("lidar_candidates", [])]:
         if not name:
             continue
-        frame = str(getattr(store.streams[name].first().data, "frame_id", "") or "").lstrip("/")
+        try:
+            sample = store.streams[name].first()
+        except LookupError:  # declared but empty: try the next candidate, not exit
+            continue
+        frame = str(getattr(sample.data, "frame_id", "") or "").lstrip("/")
         if frame and rigidly_joined(tree, frame, camera_frame):
             return name
     return None
@@ -370,15 +379,26 @@ def main() -> None:
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    from dimos.teleop.memory_world.recording import build_tf_tree, detect_streams, open_recording
+    from dimos.teleop.memory_world.recording import (
+        build_tf_tree,
+        depth_info_stream_for,
+        detect_streams,
+        open_recording,
+    )
 
     store = open_recording(args.recording)
     store.start()
     try:
         streams = detect_streams(store)
-        for role in ("depth", "lidar", "camera_info", "tf"):
+        for role in ("depth", "lidar", "tf"):
             if not streams.get(role):
                 raise SystemExit(f"{args.recording} has no {role} stream; cannot calibrate")
+        # The depth camera's own intrinsics are what unprojects its images; a rig with no
+        # colour camera has no colour camera_info and does not need one.
+        if not depth_info_stream_for(
+            set(store.list_streams()), streams["depth"], streams.get("camera_info")
+        ):
+            raise SystemExit(f"{args.recording} has no camera_info for {streams['depth']!r}")
         tree = build_tf_tree(store, streams["tf"])
         camera_frame = str(
             getattr(store.streams[streams["depth"]].first().data, "frame_id", "") or ""

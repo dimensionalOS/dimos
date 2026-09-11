@@ -744,11 +744,10 @@ class FastQuery:
         self.patches = PatchBank(list(engine._keyframes.values()), place)
         self.backgrounds = np.asarray(engine.backgrounds(), np.float32)
         self.patches.background_sims(self.backgrounds)
-        self.segments = (
-            SegmentBank(engine.store, place, embed_texts)
-            if with_segments and self.config.segment_weight > 0
-            else None
-        )
+        # Not gated on segment_weight: the structural gate reads the same bank, and
+        # SegmentBank.hot already no-ops at weight 0. Gating here turned the gate off
+        # silently, admitting every floor, wall and ceiling patch.
+        self.segments = SegmentBank(engine.store, place, embed_texts) if with_segments else None
         self.structural = (
             structural_mask(self.patches, self.segments, self.config)
             if self.segments is not None and getattr(self.config, "structural_gate", False)
@@ -760,8 +759,8 @@ class FastQuery:
             len(self.patches),
             len(self.patches.frames),
             self.patches.unplaced,
-            len(self.segments) if self.segments else 0,
-            self.segments.unplaced if self.segments else 0,
+            len(self.segments) if self.segments is not None else 0,
+            self.segments.unplaced if self.segments is not None else 0,
             self.build_seconds,
         )
 
