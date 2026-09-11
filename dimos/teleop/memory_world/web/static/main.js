@@ -842,6 +842,7 @@ window.addEventListener('keydown', (event) => {
 // the recording and swaps the buttons when the index is up.
 let indexStatus = { present: false, embedding: 'idle', progress: '' };
 let embedPoll = null;
+let lastIndexNote = null;  // said once, not on every three-second poll
 
 function applyIndexStatus(status) {
     indexStatus = status || indexStatus;
@@ -865,6 +866,15 @@ function applyIndexStatus(status) {
         if (embedPoll) { clearInterval(embedPoll); embedPoll = null; }
         if (indexStatus.embedding === 'failed') setStatus(`Embedding failed: ${indexStatus.progress}`);
         if (indexStatus.embedding === 'done') setStatus('Embeddings added — hold to ask');
+        // An index the server refused (another model, camera or world frame) reads as
+        // "no embeddings" otherwise, which is a different situation with the same button
+        // and sends the user to a long job that lands in the same place.
+        const why = indexStatus.index || '';
+        if (why && !/^(not started|no embeddings|ready|not needed)/.test(why) && why !== lastIndexNote) {
+            lastIndexNote = why;
+            setStatus(`Frame index: ${why.slice(0, 140)}`);
+        }
+        if (!why) lastIndexNote = null;
     }
 }
 
