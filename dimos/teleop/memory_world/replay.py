@@ -645,7 +645,10 @@ class VoxelReplay:
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Build the voxel replay streams of a recording")
+    parser = argparse.ArgumentParser(
+        description="Build the voxel replay streams of a recording whose scans are in their"
+        " sensor frame (world-aligned scans need the module)"
+    )
     parser.add_argument("store_path")
     parser.add_argument("--lidar-stream", default="lidar")
     parser.add_argument("--tf-stream", default="tf")

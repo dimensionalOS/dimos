@@ -357,25 +357,28 @@ def test_detect_streams_pairs_camera_info_with_the_chosen_image(tmp_path: Path) 
     assert ok
     store = SqliteStore(path=str(tmp_path / "rig.db"))
     store.start()
-    for side in ("left", "right"):
+    for side, info in (
+        ("left", "left_camera_info"),
+        ("right", "right_camera_info"),
+        ("top", "top_image_camera_info"),
+    ):
         store.stream(f"{side}_image", CompressedImage).append(
             CompressedImage(data=encoded.tobytes(), format="webp", frame_id=side, ts=1.0), ts=1.0
         )
-        store.stream(f"{side}_camera_info", CameraInfo).append(
+        store.stream(info, CameraInfo).append(
             CameraInfo(width=4, height=4, frame_id=side, ts=1.0), ts=1.0
         )
     store.stop()
     recording = open_recording(tmp_path / "rig.db")
     recording.start()
     try:
-        chosen = detect_streams(recording, image="right_image")
+        chosen = detect_streams(recording, image="right_image")  # the <prefix>_camera_info form
         assert (chosen["image"], chosen["camera_info"]) == ("right_image", "right_camera_info")
-        assert detect_streams(recording, image="no_such_image")["image"] in (
-            "left_image",
-            "right_image",
-        )
+        top = detect_streams(recording, image="top_image")  # the <image>_camera_info form
+        assert (top["image"], top["camera_info"]) == ("top_image", "top_image_camera_info")
         detected = detect_streams(recording)  # whichever it picks, the pair agrees
-        assert detected["camera_info"] == detected["image"].replace("_image", "_camera_info")
+        assert detect_streams(recording, image="no_such_image")["image"] == detected["image"]
+        assert detected["camera_info"].startswith(detected["image"].removesuffix("_image"))
     finally:
         recording.stop()
 

@@ -536,7 +536,8 @@ def detect_streams(store: Store, image: str | None = None) -> dict[str, Any]:
     """Name the stream to use for each role, from the payload types in *store*.
 
     *image* is the colour stream the caller chose, when it did: its camera_info
-    is paired to that one. Depth is picked by name alone, so a rig with two depth
+    is paired to that one (``<image>_camera_info``, else ``<image minus _image>_camera_info``).
+    Depth is picked by name alone, so a rig with two depth
     cameras needs the caller to name its depth stream (``depth_stream_name``).
 
     Recordings disagree about names — this rig calls its camera

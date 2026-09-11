@@ -309,6 +309,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         self._web_server_thread: threading.Thread | None = None
         self._prepare_thread: threading.Thread | None = None
         self._replay_thread: threading.Thread | None = None  # a build a route started
+        self._workers_lock = threading.Lock()  # publishes that handle; held for a moment
 
         super().__init__(**kwargs)
         self.config.store_path = str(self._resolve_store_path(self.config.store_path))
@@ -982,6 +983,9 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             payload.update(query_id=query_id, revision=self._query_revision)
             self._active_query_result = payload
             self._active_query_images = []
+            if payload.get("engine") != "hyperspace":  # no heat map or frusta go with it
+                self._active_heatmap = self._active_pyramids = None
+                self._last_answer = (None, None)
             # Queued under the lock: two answers then reach every viewer in revision order.
             message = encode_text("query_result", **payload)
             for client in tuple(self._world_clients):
@@ -1141,9 +1145,13 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         if self.config.camera_optical_frame is not None:
             return self.config.camera_optical_frame
         if self._camera_frame_cache is None:  # read once, even when it is empty
-            with self._store_lock:
-                first = self._ensure_store().streams[self.config.image_stream_name].first()
-            self._camera_frame_cache = str(getattr(first.data, "frame_id", "") or "").lstrip("/")
+            try:
+                with self._store_lock:
+                    first = self._ensure_store().streams[self.config.image_stream_name].first()
+                frame = str(getattr(first.data, "frame_id", "") or "")
+            except LookupError:  # no image stream, or an empty one
+                frame = ""
+            self._camera_frame_cache = frame.lstrip("/")
         return self._camera_frame_cache
 
     def _lidar_world_aligned(self) -> bool:
@@ -1154,7 +1162,12 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 with self._store_lock:
                     first = self._ensure_store().streams[self.config.lidar_stream_name].first()
                     frame_id = str(getattr(first.data, "frame_id", "")).lower().lstrip("/")
-                aligned = frame_id in {"map", "odom", "world"} or "corrected" in frame_id
+                world = str(self.config.world_frame or "").lower().lstrip("/")
+                aligned = (
+                    frame_id == world
+                    or frame_id in {"map", "odom", "world"}
+                    or "corrected" in frame_id
+                )
                 logger.info(
                     "lidar frame %r detected as %s",
                     frame_id,
@@ -1227,6 +1240,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 try:
                     store = self._ensure_store()
                     info = store.streams[self.config.camera_info_stream_name].first().data
+                    if not info.K[0]:
+                        raise LookupError("camera_info has no focal length")
                     self._camera_hfov_deg = float(
                         np.degrees(2.0 * np.arctan2(info.width / 2.0, info.K[0]))
                     )
@@ -1266,7 +1281,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                         target=self._build_replay, daemon=True, name="MemoryWorldReplay"
                     )
                     thread.start()  # started before stop() can see it: join needs that
-                    self._replay_thread = thread
+                    with self._workers_lock:
+                        self._replay_thread = thread
                 raise RuntimeError(f"replay {self._replay_progress}")
             replay = self._replay_locked()
             assert self._replay_index is not None  # set together with _replay
@@ -1282,6 +1298,11 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         try:
             with self._store_lock:
                 store = self._ensure_store()
+                if self.config.image_stream_name not in store.list_streams():
+                    raise RuntimeError(
+                        f"no {self.config.image_stream_name!r} image stream; "
+                        "the replay needs camera frames"
+                    )
                 available = VoxelReplay.available(
                     store,
                     voxel_size=self.config.voxel_size,
@@ -1498,7 +1519,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             self._stopping.set()  # prepare stops between steps; a replay build per scan
             self._embed_job.terminate()
             self._prepare_job.terminate()
-            with self._replay_lock:  # the worker handle is published under it
+            with self._workers_lock:  # never the replay lock: a build holds that for minutes
                 threads = (self._prepare_thread, self._replay_thread)
             for thread in threads:
                 if thread is not None:

@@ -152,6 +152,7 @@ function setupWebSocket() {
             if (ws === socket) void disconnect();  // dropped by the server: same teardown
         };
         ws.onmessage = (event) => {
+            if (ws !== socket) return;  // a frame in flight when the session was torn down
             if (typeof event.data === 'string') {
                 handleControl(decodeText(event.data));
             } else {
@@ -899,6 +900,12 @@ async function disconnect() {
         clearInterval(perfReadoutTimer);
         perfReadoutTimer = null;
     }
+    // The status polls run over plain HTTP; they would outlive the socket otherwise.
+    if (preparePoll) { clearInterval(preparePoll); preparePoll = null; }
+    if (embedPoll) { clearInterval(embedPoll); embedPoll = null; }
+    pendingQueryResult = null;
+    pendingPyramids = null;
+    pendingSceneMsgs.length = 0;
     perfEl.style.display = 'none';
     document.getElementById('timeline').hidden = true;
     if (replay) replay.dispose();

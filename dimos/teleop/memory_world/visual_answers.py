@@ -127,6 +127,7 @@ class VisualAnswers:
 
     def _start_embedding(self) -> bool:
         """Run siglipify over the recording in the background unless it already is."""
+        self._ensure_store()  # names the streams: siglipify must get the viewer's camera
         return self._embed_job.start(
             siglipify_command(self.config.siglipify_flake, self.config.store_path),
             siglipify_config(
@@ -214,6 +215,8 @@ class VisualAnswers:
             try:
                 k = store.streams[info].first().data.K  # the depth camera's own intrinsics
             except LookupError:  # declared, never published
+                return []
+            if not (k[0] and k[4]):  # uncalibrated: nothing to raycast through
                 return []
         intrinsics = (float(k[0]), float(k[4]), float(k[2]), float(k[5]))
 
