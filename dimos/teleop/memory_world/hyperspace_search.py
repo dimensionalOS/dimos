@@ -509,9 +509,11 @@ def _pyramids(
     frames: Frames, patches: Patches, owner: NDArray[np.int64], config: Any
 ) -> list[Pyramid]:
     """The frusta of the best ``MAX_PYRAMIDS`` camera patches, corners in the world frame."""
-    if len(patches) == 0:
+    usable = np.flatnonzero(np.isfinite(patches.depth) & (patches.depth > 0))
+    if len(usable) == 0:
         return []
-    order = np.argsort(-patches.score)[:MAX_PYRAMIDS]
+    # NaN corners would make the JSON unreadable; a patch without depth has no pyramid.
+    order = usable[np.argsort(-patches.score[usable])[:MAX_PYRAMIDS]]
     sub = Patches(
         patches.frame[order], patches.cell[order], patches.depth[order], patches.score[order]
     )

@@ -390,10 +390,15 @@ class PatchBank:
         return self._background_sims
 
     def hot(
-        self, query: NDArray[np.float32], backgrounds: NDArray[np.float32], config: Any
+        self,
+        query: NDArray[np.float32],
+        backgrounds: NDArray[np.float32],
+        config: Any,
+        gate: NDArray[np.bool_] | None = None,
     ) -> tuple[Patches, int]:
         """Patches whose query score beats their best background by ``hot_threshold``,
-        among the ``min(max_hot_patches, VEC0_MAX_K)`` most similar."""
+        among the ``min(max_hot_patches, VEC0_MAX_K)`` most similar; those *gate*
+        marks (structural: floor/wall/ceiling) are dropped."""
         if len(self) == 0:
             return Patches(
                 np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros(0), np.zeros(0)
@@ -407,8 +412,11 @@ class PatchBank:
             bg = self.background_sims(backgrounds)[top][:, usable]
             if bg.shape[1]:
                 contrast = contrast - bg.max(axis=1)
-        hot = top[contrast > config.hot_threshold]
-        hot_score = contrast[contrast > config.hot_threshold]
+        keep = contrast > config.hot_threshold
+        if gate is not None:
+            keep &= ~gate[top]
+        hot = top[keep]
+        hot_score = contrast[keep]
         return (
             Patches(
                 frame=self.patch_frame[hot],
@@ -439,6 +447,7 @@ class SegmentBank:
         seg_label: list[int] = []
         seg_conf: list[float] = []
         seg_ts: list[float] = []
+        seg_camera: list[str] = []
         labels: dict[str, int] = {}
         self.read = 0
         self.unplaced = 0
@@ -477,6 +486,7 @@ class SegmentBank:
                 seg_label.append(labels.setdefault(name, len(labels)))
                 seg_conf.append(float(record["confidence"]))
                 seg_ts.append(float(record["ts"]))
+                seg_camera.append(record["camera_frame"])
                 for index, coverage, depth in record["cells"]:
                     cell_frame.append(f)
                     cell_index.append(int(index))
@@ -486,6 +496,7 @@ class SegmentBank:
         self.seg_label = np.asarray(seg_label, np.int64)
         self.seg_conf = np.asarray(seg_conf)
         self.seg_ts = np.asarray(seg_ts)
+        self.seg_camera = seg_camera
         self.cell_frame = np.asarray(cell_frame, np.int64)
         self.cell_index = np.asarray(cell_index, np.int64)
         self.cell_cov = np.asarray(cell_cov)
@@ -547,6 +558,54 @@ class SegmentBank:
             len(chosen),
             words,
         )
+
+
+STRUCTURAL_LABELS = ("floor", "wall", "ceiling")
+
+
+def structural_mask(patches: PatchBank, segments: SegmentBank, config: Any) -> NDArray[np.bool_]:
+    """Per camera patch: whether the nearest segment frame of the same camera
+    (within ``structural_gate_dt``) labelled its cell floor, wall or ceiling
+    with at least ``structural_gate_coverage``. Mirrors ``HyperspaceQuery.is_structural``."""
+    mask = np.zeros(len(patches), dtype=bool)
+    if len(segments) == 0 or len(patches) == 0:
+        return mask
+    coverage_min = float(getattr(config, "structural_gate_coverage", 0.98))
+    max_dt = float(getattr(config, "structural_gate_dt", 0.3))
+    structural_labels = [
+        i for i, name in enumerate(segments.label_names) if name in STRUCTURAL_LABELS
+    ]
+    # Cells per (camera, stamp) that a structural segment covers well enough.
+    cells_of: dict[tuple[str, float], set[int]] = {}
+    for seg in np.flatnonzero(np.isin(segments.seg_label, structural_labels)):
+        a, b = segments._cell_starts[seg], segments._cell_starts[seg + 1]
+        idx = segments._cells_of[a:b]
+        good = idx[segments.cell_cov[idx] >= coverage_min]
+        if len(good):
+            key = (segments.seg_camera[seg], float(segments.seg_ts[seg]))
+            cells_of.setdefault(key, set()).update(int(c) for c in segments.cell_index[good])
+    by_camera: dict[str, tuple[NDArray[np.float64], list[set[int]]]] = {}
+    for camera in {c for c, _ in cells_of}:
+        stamps = sorted(ts for c, ts in cells_of if c == camera)
+        by_camera[camera] = (np.asarray(stamps), [cells_of[(camera, ts)] for ts in stamps])
+    frames = patches.frames
+    starts = np.searchsorted(patches.patch_frame, np.arange(len(frames) + 1))
+    for f in range(len(frames)):
+        entry = by_camera.get(frames.camera_frame[f])
+        if entry is None:
+            continue
+        stamps, cell_sets = entry
+        ts = float(frames.ts[f])
+        position = int(np.searchsorted(stamps, ts))
+        candidates = [i for i in (position - 1, position) if 0 <= i < len(stamps)]
+        if not candidates:
+            continue
+        nearest = min(candidates, key=lambda i: abs(stamps[i] - ts))
+        if abs(stamps[nearest] - ts) > max_dt or not cell_sets[nearest]:
+            continue
+        a, b = starts[f], starts[f + 1]
+        mask[a:b] = np.isin(patches.patch_cell[a:b], list(cell_sets[nearest]))
+    return mask
 
 
 def _frames_of(rows: list[tuple[int, NDArray[np.float64], Any, int, int, str, float]]) -> Frames:
@@ -626,6 +685,11 @@ class FastQuery:
             if with_segments and self.config.segment_weight > 0
             else None
         )
+        self.structural = (
+            structural_mask(self.patches, self.segments, self.config)
+            if self.segments is not None and getattr(self.config, "structural_gate", False)
+            else None
+        )
         self.build_seconds = time.monotonic() - started
         logger.info(
             "fast hyperspace: %d patches in %d frames (%d unplaced), %d segments (%d unplaced), built in %.1f s",
@@ -653,7 +717,11 @@ class FastQuery:
         timings["embed"] = clock() - t
 
         t = clock()
-        hot, searched = self.patches.hot(vector, self.backgrounds, config)
+        # Patches the segmenter called floor/wall/ceiling are not answers, unless
+        # the question is about those (Hyperspace's structural gate).
+        exempt = any(label in text.lower() for label in STRUCTURAL_LABELS)
+        gate = None if exempt else self.structural
+        hot, searched = self.patches.hot(vector, self.backgrounds, config, gate=gate)
         timings["search"] = clock() - t
         t = clock()
         evidence = rasterize(self.patches.frames, hot, self.voxel_size, config)
@@ -662,6 +730,7 @@ class FastQuery:
         stats: dict[str, Any] = {
             "hot_patches": len(hot),
             "patches_searched": searched,
+            "structural_gate": bool(gate is not None),
             "voxels_touched": len(patch_map.score),
         }
 

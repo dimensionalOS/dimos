@@ -152,6 +152,7 @@ export class WorldScene {
         this._pointsObj = null;               // THREE.Points of sphere sprites
         this._voxelsDrawn = 0;
         this._cloudData = null;               // {n, positions, colors, voxelSize}
+        this._roofCut = { value: 1e9 };       // voxels above this robot z are not drawn
         this._imageQuadGroup = new THREE.Group();     // textured quads, toggleable
         this._imageQuadGroup.visible = false;
         this._frameRotate.add(this._imageQuadGroup);
@@ -977,15 +978,17 @@ export class WorldScene {
         geometry.setAttribute('color', colors);
         geometry.setDrawRange(0, 0);
         const material = new THREE.ShaderMaterial({
-            uniforms: spriteUniforms(d.voxelSize),
+            uniforms: { ...spriteUniforms(d.voxelSize), roofCut: this._roofCut },
             vertexColors: true,
             vertexShader: `${SPRITE_VERTEX_GLSL}
+                uniform float roofCut;
                 varying vec3 vColor;
                 void main() {
                     vColor = color;
                     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-                    gl_PointSize = spritePointSize(mvPosition);
-                    gl_Position = projectionMatrix * mvPosition;
+                    // Above the roof cut (robot z) the voxel vanishes: the tour looks in from above.
+                    gl_PointSize = position.z > roofCut ? 0.0 : spritePointSize(mvPosition);
+                    gl_Position = position.z > roofCut ? vec4(2.0, 2.0, 2.0, 1.0) : projectionMatrix * mvPosition;
                 }`,
             fragmentShader: SPRITE_FRAGMENT_SHADER,
         });
@@ -1160,6 +1163,11 @@ export class WorldScene {
         this._queryImageCursor = -1;
         this._queryImageMeshes.forEach((mesh) => { if (mesh) mesh.visible = true; });
         this.diag('focused', { x, y, z });
+    }
+
+    /** Hide voxels above robot z `z` (Infinity/null shows all). */
+    setRoofCut(z) {
+        this._roofCut.value = (z === null || z === undefined) ? 1e9 : z;
     }
 
     toggleCloud() {

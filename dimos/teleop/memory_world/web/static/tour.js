@@ -7,6 +7,7 @@ import * as THREE from 'https://esm.sh/three@0.160.0';
 
 const DEFAULT_QUESTION = 'a chair';
 const REPLAY_SPEED = 6;
+const ROOF_HEIGHT_M = 2.3;   // above the floor, the overview's roof cut
 
 export class Tour {
     constructor({ scene, heatmap, pyramids, flight, results, baseUrl, diag, replay, ask, ui }) {
@@ -47,7 +48,7 @@ export class Tour {
                     <li>Drag to look, W A S D to walk, the wheel to scale; this tour flies you between exhibits.</li></ul>`,
                 enter: () => {
                     this._layers({ voxels: true, heat: false, pyramids: false, photos: false });
-                    this._overview(1.0);
+                    this._overview(0.62);
                 },
             },
             {
@@ -60,13 +61,17 @@ export class Tour {
                 enter: () => {
                     this._layers({ voxels: true, heat: false, pyramids: false, photos: false });
                     const replay = this.replayOf();
+                    this._roof(false);
                     if (replay && replay.index) {
                         replay.seekScan(0);
                         replay.setActive(true);
                         replay.play(true);
                         replay.speed = REPLAY_SPEED;
+                        // Circle the robot from just above it, inside the rooms rather than in the ceiling.
+                        this.scene._desktopPitch = -0.2;
+                        this.scene.camera.rotation.set(-0.2, this.scene._desktopYaw, 0);
                         this.scene.setOrbit(true);
-                        this.scene._orbit.distance = 7;
+                        this.scene._orbit.distance = 5;
                         this._replayWatch = replay;
                     } else {
                         this._overview(0.8);
@@ -94,6 +99,7 @@ export class Tour {
                     this._layers({ voxels: true, heat: false, pyramids: false, photos: true });
                     const at = this._trailPoint(0.35);
                     const ahead = this._trailPoint(0.4);
+                    this._roof(false);
                     if (at && ahead) {
                         const yaw = Math.atan2(-(ahead[0] - at[0]), ahead[1] - at[1]);
                         this.flight.lookAt([at[0], at[1], at[2] + 0.6], { distance: 3.5, yaw, pitch: -0.15 });
@@ -126,7 +132,7 @@ export class Tour {
                     <li>Yellow: pyramids behind the current place; blue: the others.</li></ul>`,
                 enter: () => {
                     this._layers({ voxels: true, heat: false, pyramids: true, photos: false });
-                    this._atCluster(0, 7.0);
+                    this._atCluster(0, 5.5);
                 },
             },
             {
@@ -167,6 +173,7 @@ export class Tour {
                         if (route && route.points && route.points.length) {
                             const mid = route.points[Math.floor(route.points.length / 2)];
                             const span = Math.max(route.length_m || 8, 6);
+                            this._roof(true);
                             this.flight.lookAt(mid, { distance: span * 0.9, pitch: -0.75 });
                             return;
                         }
@@ -245,12 +252,23 @@ export class Tour {
         }
     }
 
-    /** Fly high above the map's centre, looking down at it. */
+    /** Fly high above the map's centre, looking down into it with the roof cut away. */
     _overview(fraction) {
         const bounds = this._bounds();
         if (!bounds) return;
         const [centre, extent] = bounds;
+        this._roof(true);
         this.flight.lookAt(centre, { distance: Math.max(8, extent * fraction), pitch: -1.05 });
+    }
+
+    /** Cut the voxels above head height (on/off), so an overview shows rooms, not ceilings. */
+    _roof(cut) {
+        if (!cut) { this.scene.setRoofCut(null); return; }
+        const replay = this.replayOf();
+        const floor = replay && replay.index && replay.index.height ? replay.index.height.floor : null;
+        const trail = this._trailPoint(0.5);
+        const base = floor !== null ? floor : (trail ? trail[2] - 0.5 : 0);
+        this.scene.setRoofCut(base + ROOF_HEIGHT_M);
     }
 
     _bounds() {
@@ -269,11 +287,12 @@ export class Tour {
     }
 
     _atCluster(index, distance) {
+        this._roof(true);   // look into the room from above the walls, not through the ceiling
         const r = this.results;
         if (r && r.count) {
             const cluster = r.clusters[Math.min(index, r.count - 1)];
             r.go(cluster.index, { fly: false });
-            this.flight.lookAt(cluster.centre, { distance, pitch: -0.35 });
+            this.flight.lookAt(cluster.centre, { distance, pitch: -0.5, yaw: r._yawFromEvidence(cluster.index) });
         } else {
             this._overview(0.75);
         }
@@ -350,6 +369,12 @@ export class Tour {
             };
             document.body.classList.add('touring');
             if (this.ui && this.ui.panel) this.ui.panel.classList.add('open');
+            // A presentation shows the whole map from above: pin full quality (the
+            // governor's lower levels cull far voxels) and restore automatic on exit.
+            this._saved.quality = this.scene._qualityAuto ? null : this.scene._quality;
+            this._saved.hud = this.scene._hudGroup.visible;
+            this.scene._hudGroup.visible = false;   // minimap + answer panel: the card carries the words
+            this.scene.setQuality(0);
             this._buildPlacards();
             this.diag('tour_start', { station });
         }
@@ -366,9 +391,12 @@ export class Tour {
         if (this.ui && this.ui.panel) this.ui.panel.classList.remove('open');
         this._placards.visible = false;
         this._clearPlacards();
+        this.scene.setRoofCut(null);
         if (this._saved) {
             if (this.heatmap) this.heatmap.setVisible(this._saved.heat);
             if (this.pyramids) this.pyramids.setVisible(this._saved.pyramids);
+            this.scene.setQuality(this._saved.quality ?? null);
+            this.scene._hudGroup.visible = this._saved.hud;
         }
         this.diag('tour_exit');
     }
