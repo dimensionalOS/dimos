@@ -76,7 +76,7 @@ from dimos.teleop.memory_world.query import (
     HighlightPoint,
     MemoryQueryResult,
 )
-from dimos.teleop.memory_world.recording import detect_streams, open_recording
+from dimos.teleop.memory_world.recording import detect_streams, open_recording, pick_lidar
 from dimos.teleop.memory_world.replay import VoxelReplay, build_replay_streams
 from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix
 from dimos.teleop.memory_world.visual_search import (
@@ -166,7 +166,10 @@ class MemoryWorldConfig(ModuleConfig):
     # use every lidar frame (densest map, slowest build).
     # The output cloud is deduped by voxel_size, so more scans improves the
     # map without growing the wire payload — only build time goes up.
-    lidar_stream_name: str = "lidar"
+    # Empty picks the point-cloud stream whose poses agree with the tf tree
+    # (see recording.pick_lidar); a default name would silently win whenever
+    # a recording happens to contain it, as "lidar" did on a rig with ten.
+    lidar_stream_name: str = ""
     n_voxel_scans: int = 150
     # Set True if the stored lidar scans are ALREADY in the map/world frame
     # (e.g. SLAM-registered). Then we must NOT re-apply each scan's pose —
@@ -187,7 +190,8 @@ class MemoryWorldConfig(ModuleConfig):
     height_ramp_low_percentile: float = PydanticField(default=2.0, ge=0.0, le=100.0)
     height_ramp_high_percentile: float = PydanticField(default=98.0, ge=0.0, le=100.0)
     # color_image stream is sampled for "Street View" capture-pose markers.
-    image_stream_name: str = "color_image"
+    # Empty detects it from the recording's message types.
+    image_stream_name: str = ""
     n_image_markers: int = 200
     # Thumbnail params for the per-pose images that get textured onto quads in
     # 3D world space. Smaller = less bandwidth, lower res in headset.
@@ -201,7 +205,7 @@ class MemoryWorldConfig(ModuleConfig):
     # Every pose the world needs (camera frames, lidar scans, the path) is a
     # tf lookup at the observation's timestamp. Recordings without a tf stream
     # fall back to the pose stamped on each image, read as a body pose.
-    tf_stream_name: str = "tf"
+    tf_stream_name: str = ""  # empty detects it
     world_frame: str = "world"
     # The image stream's own frame_id by default.
     camera_optical_frame: str | None = None
@@ -482,29 +486,45 @@ class MemoryWorldModule(Module):
         return self._store
 
     def _name_streams(self, store: Store) -> None:
-        """Fill in stream names the recording does not actually have.
+        """Name the streams the configuration left empty or the recording lacks.
 
-        The defaults suit a Go2 recording (``color_image``, ``lidar``); this
-        rig says ``realsense_color_image`` and ``pointlio_lidar``, and someone
-        else's robot says something else again. A name given on the command
-        line is kept as-is — only names that are missing get detected, so a
-        recording with two cameras can still be pointed at one of them.
+        A Go2 recording says ``color_image`` and ``lidar``; this rig says
+        ``realsense_color_image`` and ``pointlio_lidar``; someone else's robot
+        says something else again. Roles are filled from the recording's
+        message types, and the lidar from whichever point-cloud stream agrees
+        with the tf tree. A name given on the command line is kept as-is when
+        the recording has it, so a recording with two cameras can still be
+        pointed at one of them.
         """
         present = set(store.list_streams())
         detected = detect_streams(store)
+        # tf first: naming the lidar needs the tree.
         for role, setting in (
+            ("tf", "tf_stream_name"),
             ("image", "image_stream_name"),
-            ("lidar", "lidar_stream_name"),
             ("depth", "depth_stream_name"),
             ("camera_info", "camera_info_stream_name"),
-            ("tf", "tf_stream_name"),
+            ("lidar", "lidar_stream_name"),
         ):
             configured = getattr(self.config, setting)
-            if configured in present or detected[role] is None:
+            if (configured and configured in present) or detected[role] is None:
                 continue
-            setattr(self.config, setting, detected[role])
+            chosen = detected[role]
+            if role == "lidar" and len(detected["lidar_candidates"]) > 1:
+                tree = self._tf_tree()
+                if tree is not None:
+                    chosen = (
+                        pick_lidar(
+                            store, detected["lidar_candidates"], tree, self.config.world_frame
+                        )
+                        or chosen
+                    )
+            setattr(self.config, setting, chosen)
             logger.info(
-                "%s: using %r (no %r in the recording)", setting, detected[role], configured
+                "%s: using %r (%s)",
+                setting,
+                chosen,
+                "detected" if not configured else f"no {configured!r} in the recording",
             )
 
     def _ensure_world_cache(self) -> None:

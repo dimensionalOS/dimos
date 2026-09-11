@@ -161,10 +161,15 @@
         body.desktop-view h1 { font-size: 15px; margin: 0 0 6px; }
         body.desktop-view h1 small { display: none; }
         body.desktop-view #hints { display: none; }
-        /* Once the world is up the menu gets out of the way: it fades out and
-           comes back on hover or with H. The answer lives on the 3D panel. */
-        body.desktop-view #ui, body.desktop-view #perf { opacity: 0; transition: opacity 0.25s; }
-        body.desktop-view #ui:hover, body.desktop-view.hud-visible #ui,
+        /* Once the world is up the menu gets out of the way: the title, status
+           and hints fade out and come back on hover or with H. The buttons
+           (Hold to ask, Disconnect) stay, or nobody can find the question
+           button. The answer lives on the 3D panel. */
+        body.desktop-view #ui > :not(button), body.desktop-view #perf {
+            opacity: 0;
+            transition: opacity 0.25s;
+        }
+        body.desktop-view #ui:hover > :not(button), body.desktop-view.hud-visible #ui > :not(button),
         body.desktop-view.hud-visible #perf { opacity: 1; }
         body.desktop-view #desktopHints { display: block; margin-top: 10px; }
         #desktopHints { display: none; }
@@ -213,7 +218,7 @@
         }
         /* No hover on a phone, so the buttons (mic, disconnect) must stay reachable. */
         @media (hover: none), (max-width: 640px) {
-            body.desktop-view #ui { opacity: 1; }
+            body.desktop-view #ui > :not(button) { opacity: 1; }
             body.desktop-view #hints, body.desktop-view #desktopHints { display: none; }
             body.desktop-view h1 { display: none; }
         }

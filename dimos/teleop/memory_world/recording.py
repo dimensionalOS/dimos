@@ -52,6 +52,9 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.go2.dds import cdr, ros
 from dimos.robot.unitree.go2.dds.codec import FnCodec
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 DERIVED_SUFFIX = ".derived.db"
 
@@ -554,3 +557,95 @@ def grid_side(patch_count: int) -> int:
     if side * side != patch_count:
         raise ValueError(f"{patch_count} patches do not form a square grid")
     return side
+
+
+# ---- which lidar agrees with the tf tree ------------------------------------
+
+# Scans sampled per candidate when measuring how far its poses sit from tf.
+LIDAR_AGREEMENT_SAMPLES = 10
+
+
+@dataclass(frozen=True)
+class LidarAgreement:
+    """How one point-cloud stream relates to the tf tree."""
+
+    name: str
+    frame_id: str
+    # tf can put this stream's frame in the world at its scans' stamps.
+    placeable: bool
+    # Median distance from the pose stamped on a scan to the nearest tf frame
+    # at that stamp, over sampled scans. None when the scans carry no pose.
+    disagreement_m: float | None
+
+
+def lidar_agreement(
+    store: Store, name: str, tree: Any, world_frame: str, samples: int = LIDAR_AGREEMENT_SAMPLES
+) -> LidarAgreement:
+    """Measure *name* against *tree* (a ``TfTree``) on scans spread over the recording."""
+    stream = store.streams[name]
+    first, last = stream.first(), stream.last()
+    stamps = np.linspace(float(first.ts), float(last.ts), samples + 2)[1:-1]
+    frame_id = str(getattr(first.data, "frame_id", "") or "").lstrip("/")
+    placeable = False
+    distances: list[float] = []
+    for ts in stamps:
+        try:
+            obs = stream.at(float(ts), tolerance=1.0).first()
+        except LookupError:
+            continue
+        if tree.lookup(world_frame, frame_id, float(obs.ts)) is not None:
+            placeable = True
+        pose = obs.pose_tuple
+        if pose is None:
+            continue
+        stamped = np.asarray(pose[:3], dtype=float)
+        nearest = min(
+            (
+                float(np.linalg.norm(matrix[:3, 3] - stamped))
+                for frame in tree.frames
+                if (matrix := tree.lookup(world_frame, frame, float(obs.ts))) is not None
+            ),
+            default=None,
+        )
+        if nearest is not None:
+            distances.append(nearest)
+    return LidarAgreement(
+        name=name,
+        frame_id=frame_id,
+        placeable=placeable,
+        disagreement_m=float(np.median(distances)) if distances else None,
+    )
+
+
+def pick_lidar(store: Store, candidates: list[str], tree: Any, world_frame: str) -> str | None:
+    """The point-cloud stream whose poses the tf tree agrees with.
+
+    A recording often holds several lidars and several stages of registration
+    — here ten — and the name says nothing about which one the tf tree was
+    built from: on this stairwell the stream called plain ``lidar`` sits 12 m
+    from where tf puts the robot (the robot's own SLAM, in its own world),
+    ``fastlio_lidar`` 1.4 m, ``pointlio_lidar`` 1 cm. Every candidate is
+    scored by the distance between the pose stamped on its scans and the
+    nearest tf frame at the same stamp; the closest wins. A stream tf cannot
+    place at all is out, and one with no stamped poses is a last resort, in
+    the caller's order.
+    """
+    measured: list[LidarAgreement] = []
+    for name in candidates:
+        try:
+            measured.append(lidar_agreement(store, name, tree, world_frame))
+        except Exception as error:  # a stream this build cannot read is not a candidate
+            logger.warning("lidar candidate %r unreadable: %s", name, error)
+    for entry in measured:
+        logger.info(
+            "lidar candidate %r (frame %r): %s, %s from tf",
+            entry.name,
+            entry.frame_id,
+            "placeable" if entry.placeable else "not placeable",
+            "no stamped pose" if entry.disagreement_m is None else f"{entry.disagreement_m:.2f} m",
+        )
+    usable = [entry for entry in measured if entry.placeable]
+    scored = [entry for entry in usable if entry.disagreement_m is not None]
+    if scored:
+        return min(scored, key=lambda entry: entry.disagreement_m or 0.0).name
+    return usable[0].name if usable else None

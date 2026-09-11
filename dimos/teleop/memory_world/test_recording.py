@@ -30,6 +30,8 @@ import numpy as np
 import pytest
 
 from dimos.memory.store.sqlite import SqliteStore
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.teleop.memory_world.recording import (
     EMBEDDING_PAYLOAD_MODULE,
@@ -44,8 +46,10 @@ from dimos.teleop.memory_world.recording import (
     grid_side,
     open_recording,
     open_ros2_mcap,
+    pick_lidar,
     stream_name_of,
 )
+from dimos.teleop.memory_world.tf_tree import TfTree
 
 DATASET = Path("~/datasets/d455/sf_office1_2").expanduser()
 needs_dataset = pytest.mark.skipif(
@@ -288,3 +292,32 @@ def test_derived_streams_live_beside_the_mcap(tmp_path: Path) -> None:
 def test_open_recording_rejects_missing_db(tmp_path: Path) -> None:
     with pytest.raises(Exception):
         open_recording(tmp_path / "missing.db")
+
+
+def test_pick_lidar_takes_the_stream_whose_poses_match_tf(tmp_path: Path) -> None:
+    """Names say nothing: the robot's own "lidar" lives in another world, the
+    SLAM's scans sit where tf says the sensor is, and a frame tf cannot place
+    is out however good its name."""
+    store = SqliteStore(path=str(tmp_path / "rec.db"))
+    store.start()
+    tree = TfTree()
+    identity = (0.0, 0.0, 0.0, 1.0)
+    try:
+        streams = {
+            "lidar": ("world", lambda t: (t + 12.0, 0.0, 0.0)),  # the robot's SLAM, 12 m off
+            "slam_lidar": ("sensor", lambda t: (t, 0.0, 0.5)),  # 0.5 m from the body
+            "orphan": ("nowhere", lambda t: (t, 0.0, 0.0)),  # frame not in tf
+        }
+        for ts in range(0, 12):
+            t = float(ts)
+            tree.add("world", "base", t, (t, 0.0, 0.0), identity)
+            tree.add("base", "sensor", t, (0.0, 0.0, 0.0), identity)
+            for name, (frame, position) in streams.items():
+                cloud = PointCloud2.from_numpy(np.zeros((1, 3), np.float32), frame, t)
+                store.stream(name, PointCloud2).append(
+                    cloud, ts=t, pose=PoseStamped(position=Vector3(*position(t)))
+                )
+        assert pick_lidar(store, ["lidar", "orphan", "slam_lidar"], tree, "world") == "slam_lidar"
+        assert pick_lidar(store, ["orphan"], tree, "world") is None
+    finally:
+        store.stop()
