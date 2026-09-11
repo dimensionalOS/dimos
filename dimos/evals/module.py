@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 import pkgutil
 
 from dimos.agents.annotation import skill
@@ -25,32 +26,56 @@ from dimos.core.module import Module
 
 
 def list_suites() -> list[str]:
-    """Dotted module paths under dimos.evals.suites exporting ``SUITE``."""
+    """Suite module paths, including nested suites and excluding shared helpers."""
     from dimos.evals import suites
 
+    return sorted(
+        f"{suites.__name__}.{'.'.join(path.relative_to(root).with_suffix('').parts)}"
+        for root in map(Path, suites.__path__)
+        for path in root.rglob("*.py")
+        if not any(
+            part == "lib" or part.startswith(("_", "test_"))
+            for part in path.relative_to(root).parts
+        )
+    )
+
+
+def list_agents() -> list[str]:
+    """Dotted module paths of the agents under dimos.evals.agents."""
+    from dimos.evals import agents
+
     return [
-        name for _, name, _ in pkgutil.iter_modules(suites.__path__, prefix=f"{suites.__name__}.")
+        name
+        for _, name, ispkg in pkgutil.iter_modules(agents.__path__, prefix=f"{agents.__name__}.")
+        if not ispkg and not name.endswith(".base")
     ]
 
 
 class EvalModule(Module):
     """Expose eval runs as skills so agents can iterate: run, read the summary,
-    grep transcripts in the returned run_dir, edit code/prompts, run again."""
+    grep trajectories in the returned run_dir, edit code/prompts, run again."""
 
     @skill
-    def run_evals(self, suite: str, tags: str = "") -> SkillResult:
+    def run_evals(
+        self, suite: str, agent: str = "dimos.evals.agents.question_answer", tags: str = ""
+    ) -> SkillResult:
         """Run an eval suite by dotted module path (see list_eval_suites).
 
         Args:
             suite: e.g. "dimos.evals.suites.go2_smoke" (must export SUITE).
+            agent: agent module (see list_eval_agents), run with its defaults.
             tags: optional comma-separated tag filter.
         """
+        from dimos.evals.cli import load_agent, run_provenance
         from dimos.evals.runner import EvalRunner, summarize
 
         cases = importlib.import_module(suite).SUITE
-        runner = EvalRunner(attach=True)
+        runner = EvalRunner()
         results = runner.run(
-            cases, tags=frozenset(t for t in tags.split(",") if t) if tags else frozenset()
+            cases,
+            load_agent(agent),
+            tags=frozenset(t for t in tags.split(",") if t) if tags else frozenset(),
+            provenance=run_provenance({"kind": "suite_module", "value": suite}, agent, {}),
         )
         s = summarize(results)
         return SkillResult.ok(
@@ -62,3 +87,8 @@ class EvalModule(Module):
     def list_eval_suites(self) -> SkillResult:
         """List available eval suite module paths."""
         return SkillResult.ok(", ".join(list_suites()))
+
+    @skill
+    def list_eval_agents(self) -> SkillResult:
+        """List available agent module paths."""
+        return SkillResult.ok(", ".join(list_agents()))
