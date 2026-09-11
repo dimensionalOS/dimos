@@ -392,10 +392,11 @@ class Rig:
     _clouds: OrderedDict[float, tuple[PointCloud2, float | None]] = field(
         default_factory=OrderedDict, repr=False, init=False
     )
-    # (ts, plane) -> per-column floor table of that frame's merged cloud
-    _shells: OrderedDict[tuple[float, int], tuple[np.ndarray, np.ndarray, float, np.ndarray]] = (
-        field(default_factory=OrderedDict, repr=False, init=False)
-    )
+    # (ts, plane id) -> that plane and its per-column floor table; the plane is
+    # held so its id cannot be recycled under a live key
+    _shells: OrderedDict[
+        tuple[float, int], tuple[SupportPlane, tuple[np.ndarray, np.ndarray, float, np.ndarray]]
+    ] = field(default_factory=OrderedDict, repr=False, init=False)
     _scans: OrderedDict[float, np.ndarray | None] = field(
         default_factory=OrderedDict, repr=False, init=False
     )
@@ -755,11 +756,6 @@ class Rig:
             self._clouds.popitem(last=False)
         return merged
 
-    def _quantum(self, ts: float) -> float | None:
-        """The lattice pitch of the merged cloud at ts; None for scan sources."""
-        self.cloud_at(ts)
-        return self._clouds[ts][1]
-
     def _shell_table(
         self, ts: float, plane: SupportPlane
     ) -> tuple[np.ndarray, np.ndarray, float, np.ndarray] | None:
@@ -777,7 +773,7 @@ class Rig:
         held = self._shells.get(key)
         if held is not None:
             self._shells.move_to_end(key)
-            return held
+            return held[1]
         points = cloud.as_numpy()[0]  # type: ignore[union-attr]
         anchor = points[0, :2]
         keys = _column_keys(points, quantum, anchor)
@@ -786,7 +782,7 @@ class Rig:
         keys_sorted = keys[order]
         starts = np.nonzero(np.concatenate(([True], np.diff(keys_sorted) != 0)))[0]
         table = (keys_sorted[starts], np.minimum.reduceat(heights[order], starts), quantum, anchor)
-        self._shells[key] = table
+        self._shells[key] = (plane, table)
         if len(self._shells) > _CLOUD_CACHE_MAX:
             self._shells.popitem(last=False)
         return table

@@ -78,6 +78,29 @@ The same two calls are skills, so an agent can reach them over MCP:
     uv run dimos mcp call localize -a 'objects=chair,table'
     uv run dimos mcp call localize -j '{"objects": "chair", "start": -30, "duration": 30}'
 
+### GPU limits for agents
+
+Comma-separated labels share one OWLv2 detector pass, but they do not have
+constant peak GPU cost. EdgeTAM segments every candidate box produced by the
+detector, so broad or overlapping labels can create a large mask batch and
+raise `Remote torch.OutOfMemoryError`. This is especially easy when Rerun and
+the rest of the perception stack already occupy the same GPU. The statement
+that 16 labels cost about the same as one applies to detector passes, not peak
+segmentation memory. There is not yet a measured safe label-count limit.
+
+On an unmeasured hardware stack:
+
+1. Use `dimos status` to confirm the intended stack and call `state` first.
+   You may probe available VRAM and computational resources.
+2. Start with one concrete label and the default ten-second window.
+3. Add concrete, non-overlapping labels in small batches. Do not begin with a
+   batch of broad labels or synonyms.
+4. A shorter window reduces total work. Raising `candidate_floor` reduces
+   detector proposals and recall. Neither establishes a safe peak-memory
+   budget.
+5. If a call reports `Remote torch.OutOfMemoryError`, retry with a twice smaller batch.
+   Check stack state and leave any restart decision to the stack operator.
+
 The client waits 30 seconds for an answer and then gives up. A wide window can
 take longer than that. The wait belongs to the caller, so raise it there. Per
 call, or for every call you make:
