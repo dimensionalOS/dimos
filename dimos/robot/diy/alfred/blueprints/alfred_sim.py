@@ -48,7 +48,7 @@ _base_joints = make_twist_base_joints("base")
 # Raised so the all-zero arm pose is collision-free (see ALFRED_LIFT_SAFE_MIN_M).
 SIM_LIFT_START_M = -0.25
 CASTER_STREAM_VELOCITY_LIMIT = 100.0  # rad/s; display joints, not a controller
-ARM_VELOCITY_LIMIT = 1.0  # rad/s, the trajectory task's own default
+ARM_VELOCITY_LIMIT = 0.5  # rad/s
 
 
 def mock_pillar_hardware() -> HardwareComponent:

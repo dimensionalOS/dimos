@@ -75,7 +75,7 @@ from dimos.visualization.vis_module import vis_module
 
 OPENARM_LEFT_CAN_ENV = "OPENARM_LEFT_CAN"
 OPENARM_RIGHT_CAN_ENV = "OPENARM_RIGHT_CAN"
-ARM_VELOCITY_LIMIT_RAD_S = 1.0
+ARM_VELOCITY_LIMIT_RAD_S = 0.5  # the speed the arms were hardware-tested at
 
 ODOM_FRAME = "odom"
 LIDAR_FRAME = "mid360_link"

@@ -58,12 +58,18 @@ ALFRED_LIFT_LINK = "lift_link"
 
 _CASTER_RENAMES = dict(zip(caster_urdf_joints(), caster_coordinator_joints(), strict=True))
 
-ALFRED_V1_MODEL = RobotModel.from_file(
-    ALFRED_V1_URDF, package_paths=ALFRED_PACKAGE_PATHS
-).with_renamed_joints({ALFRED_LIFT_URDF_JOINT: PILLAR_LIFT_JOINT})
-ALFRED_V2_MODEL = RobotModel.from_file(
-    ALFRED_V2_URDF, package_paths=ALFRED_PACKAGE_PATHS
-).with_renamed_joints({ALFRED_LIFT_URDF_JOINT: PILLAR_LIFT_JOINT, **_CASTER_RENAMES})
+# Joint velocity limits come from the URDF; acceleration is not in URDF, so one default.
+ALFRED_JOINT_ACCELERATION_LIMIT = 1.0
+ALFRED_V1_MODEL = (
+    RobotModel.from_file(ALFRED_V1_URDF, package_paths=ALFRED_PACKAGE_PATHS)
+    .with_default_joint_acceleration_limit(ALFRED_JOINT_ACCELERATION_LIMIT)
+    .with_renamed_joints({ALFRED_LIFT_URDF_JOINT: PILLAR_LIFT_JOINT})
+)
+ALFRED_V2_MODEL = (
+    RobotModel.from_file(ALFRED_V2_URDF, package_paths=ALFRED_PACKAGE_PATHS)
+    .with_default_joint_acceleration_limit(ALFRED_JOINT_ACCELERATION_LIMIT)
+    .with_renamed_joints({ALFRED_LIFT_URDF_JOINT: PILLAR_LIFT_JOINT, **_CASTER_RENAMES})
+)
 
 ALFRED_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     *OPENARM_GRIPPER_COLLISION_EXCLUSIONS,
@@ -132,8 +138,6 @@ def alfred_model_config(
         planning_groups=alfred_planning_groups(),
         collision_exclusion_pairs=ALFRED_COLLISION_EXCLUSIONS,
         auto_convert_meshes=True,
-        max_velocity=0.5,
-        max_acceleration=1.0,
         tf_extra_links=list(tf_extra_links or []),
         home_joints=[0.0] * len(joint_names),
     )
