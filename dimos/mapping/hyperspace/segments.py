@@ -23,7 +23,7 @@ segment by meaning without the segmenter's vocabulary getting in the way.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -60,6 +60,10 @@ class SegmentIngestConfig:
     depth_history: int = 64
     # Stride of the labelled points published as the semantic map.
     map_stride: int = 6
+    # A segment is stored as the cells of this grid its mask covers (the same
+    # grid the patch embedder uses: SigLIP2 so400m at 384 px is 24 x 24).
+    grid: int = 24
+    min_cell_coverage: float = 0.5
 
 
 @dataclass
@@ -215,7 +219,10 @@ class SegmentIngestor:
         if self.segments is None:
             return
         height, width = frame.result.labels.shape
+        camera = self.intrinsics.get(frame.camera_frame)
+        grid = (self.config.grid, self.config.grid)
         for segment in frame.result.segments:
+            mask = seg.rle_decode(segment.rle, (height, width))
             self.segments.append(
                 seg.segment_record(
                     segment,
@@ -223,6 +230,11 @@ class SegmentIngestor:
                     ts=frame.ts,
                     width=width,
                     height=height,
+                    cells=seg.segment_cells(
+                        mask, frame.depth, *grid, self.config.min_cell_coverage
+                    ),
+                    grid=grid,
+                    intrinsics=None if camera is None else asdict(camera),
                 ),
                 ts=frame.ts,
                 tags={"camera_frame": frame.camera_frame, "name": segment.name},

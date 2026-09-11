@@ -269,6 +269,14 @@ class QueryConfig:
         ]
     )
     background_synonym_cutoff: float = 0.85
+    # The segment channel, added on top of the patch channel. Text-text cosines
+    # sit in a narrow band (0.6-0.95, "a chair" vs chair 0.87, vs table 0.75),
+    # so a label is scored by how far its cosine to the query stands above the
+    # vocabulary's mean, in standard deviations: 0 at segment_min_z, 1 at
+    # twice that. A cell then scores word x segment confidence x coverage.
+    segment_weight: float = 1.0
+    segment_min_z: float = 2.0
+    max_hot_segments: int = 4000
 
 
 @dataclass
@@ -359,6 +367,9 @@ class Heatmap:
     # (index, score) best first
     voxels: list[tuple[tuple[int, int, int], float]]
     stats: dict[str, Any]
+    # Per voxel (patch score, segment score), each normalized on its own, when
+    # the map is the sum of both channels; empty for a single-channel map.
+    channels: dict[tuple[int, int, int], tuple[float, float]] = field(default_factory=dict)
 
     def centres(self) -> NDArray[np.float64]:
         if not self.voxels:
@@ -393,13 +404,7 @@ def heatmap(
             continue
         for index, yaw_bin in rasterize_pyramid(hot, pose, voxel_size, config):
             evidence.setdefault(index, []).append((hot.keyframe.id, hot.score, yaw_bin))
-    scored = [(index, pool(hits, config)) for index, hits in evidence.items()]
-    if scored:
-        values = np.sort(np.array([s for _, s in scored]))
-        rank = round((len(values) - 1) * min(max(config.normalize_percentile, 0.0), 1.0))
-        top = max(float(values[rank]), 1e-9)
-        scored = [(index, min(max(s / top, 0.0), 1.0)) for index, s in scored]
-    scored.sort(key=lambda item: (-item[1], item[0]))
+    scored = normalize([(index, pool(hits, config)) for index, hits in evidence.items()], config)
     return Heatmap(
         frame=target_frame,
         voxel_size=voxel_size,
@@ -411,6 +416,41 @@ def heatmap(
             "keyframes_seen": len(poses),
             "voxels_touched": len(evidence),
         },
+    )
+
+
+def normalize(
+    scored: list[tuple[tuple[int, int, int], float]], config: QueryConfig
+) -> list[tuple[tuple[int, int, int], float]]:
+    """Scores scaled so the ``normalize_percentile`` voxel is 1, clipped to
+    [0, 1], best first."""
+    if scored:
+        values = np.sort(np.array([s for _, s in scored]))
+        rank = round((len(values) - 1) * min(max(config.normalize_percentile, 0.0), 1.0))
+        top = max(float(values[rank]), 1e-9)
+        scored = [(index, min(max(s / top, 0.0), 1.0)) for index, s in scored]
+    return sorted(scored, key=lambda item: (-item[1], item[0]))
+
+
+def combine(patches: Heatmap, segments: Heatmap, config: QueryConfig) -> Heatmap:
+    """The two channels added: patch score + ``segment_weight`` x segment
+    score per voxel, renormalized, so voxels both channels light up rank
+    first. Keeps each channel's own score in ``channels``."""
+    channels: dict[tuple[int, int, int], tuple[float, float]] = {
+        index: (score, 0.0) for index, score in patches.voxels
+    }
+    for index, score in segments.voxels:
+        channels[index] = (channels.get(index, (0.0, 0.0))[0], score)
+    summed = [(index, e + config.segment_weight * s) for index, (e, s) in channels.items()]
+    stats = dict(patches.stats)
+    stats.update({f"segment_{k}": v for k, v in segments.stats.items()})
+    stats["voxels_in_both"] = sum(1 for e, s in channels.values() if e > 0 and s > 0)
+    return Heatmap(
+        frame=patches.frame,
+        voxel_size=patches.voxel_size,
+        voxels=normalize(summed, config),
+        stats=stats,
+        channels=channels,
     )
 
 

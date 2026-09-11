@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from scipy import ndimage
 
+from dimos.mapping.hyperspace.patches import per_patch_depth
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
@@ -347,8 +349,43 @@ def segment_frame(
     )
 
 
+def segment_cells(
+    mask: NDArray[np.bool_],
+    depth_m: NDArray[np.floating] | None,
+    rows: int,
+    cols: int,
+    min_coverage: float,
+) -> list[list[float]]:
+    """The segment as patches: ``[cell index, coverage, depth]`` for every cell
+    of a ``rows x cols`` grid over the image that the mask covers by at least
+    ``min_coverage``. Depth is the median under the mask alone, so the cell's
+    pyramid lands on the object rather than on what surrounds it; NaN without
+    depth."""
+    height, width = mask.shape
+    coverage = np.zeros(rows * cols, dtype=np.float32)
+    for row in range(rows):
+        y0, y1 = row * height // rows, (row + 1) * height // rows
+        for col in range(cols):
+            x0, x1 = col * width // cols, (col + 1) * width // cols
+            coverage[row * cols + col] = mask[y0:y1, x0:x1].mean()
+    covered = np.flatnonzero(coverage >= min_coverage)
+    if depth_m is None:
+        depth = np.full(rows * cols, np.nan, dtype=np.float32)
+    else:
+        depth = per_patch_depth(np.where(mask, depth_m, 0.0), rows, cols)
+    return [[int(i), float(coverage[i]), float(depth[i])] for i in covered]
+
+
 def segment_record(
-    segment: Segment, *, camera_frame: str, ts: float, width: int, height: int
+    segment: Segment,
+    *,
+    camera_frame: str,
+    ts: float,
+    width: int,
+    height: int,
+    cells: list[list[float]] | None = None,
+    grid: tuple[int, int] = (0, 0),
+    intrinsics: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """The memory-store payload for one segment."""
     return {
@@ -364,6 +401,11 @@ def segment_record(
         "depth_fraction": segment.depth_fraction,
         "flat_fraction": segment.flat_fraction,
         "rle": segment.rle,
+        # The segment as patches, see segment_cells; what a query rasterizes.
+        "rows": grid[0],
+        "cols": grid[1],
+        "cells": cells or [],
+        "intrinsics": intrinsics,
     }
 
 

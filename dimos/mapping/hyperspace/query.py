@@ -32,6 +32,7 @@ from dimos.mapping.hyperspace.ingest import (
     TF_STREAM,
     transform_to_matrix,
 )
+from dimos.mapping.hyperspace.segments import SEGMENT_STREAM
 from dimos.models.embedding.base import Embedding
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.tf.tf import MultiTBuffer
@@ -110,6 +111,8 @@ class HyperspaceQuery:
         self.voxel_size = voxel_size
         self._backgrounds: NDArray[np.float32] | None = None
         self._keyframes: dict[int, tuple[hs.Keyframe, NDArray[np.float16]]] = {}
+        self._labels: dict[str, NDArray[np.float32]] = {}
+        self._labels_last_id = -1
         self.tf = TfCache(store)
 
     def keyframe(self, keyframe_id: int) -> tuple[hs.Keyframe, NDArray[np.float16]] | None:
@@ -166,6 +169,71 @@ class HyperspaceQuery:
                 hot.append(hs.HotPatch(keyframe=keyframe, patch=index, score=contrast))
         return hot, len(hits)
 
+    def labels(self) -> dict[str, NDArray[np.float32]]:
+        """Every label the segments carry, with its text embedding. Read from
+        the tags alone (payloads stay unread); new labels are picked up as
+        they appear."""
+        if SEGMENT_STREAM not in self.store.list_streams():
+            return self._labels
+        for obs in self.store.stream(SEGMENT_STREAM, dict).order_by("ts"):
+            if obs.id <= self._labels_last_id:
+                continue
+            self._labels_last_id = max(self._labels_last_id, obs.id)
+            name = obs.tags.get("name")
+            if name and name not in self._labels:
+                self._labels[name] = np.asarray(self.embed_text(name), dtype=np.float32)
+        return self._labels
+
+    def label_scores(self, query: NDArray[np.float32]) -> dict[str, float]:
+        """Word score per label: its z-scored cosine to the query, 0 at
+        ``segment_min_z`` and 1 at twice that; only the labels scoring > 0."""
+        labels = self.labels()
+        if not labels:
+            return {}
+        names = list(labels)
+        cosine = np.stack([labels[n] for n in names]) @ query
+        z = (cosine - cosine.mean()) / max(float(cosine.std()), 1e-6)
+        floor = max(self.config.segment_min_z, 1e-6)
+        word = np.clip((z - floor) / floor, 0.0, 1.0)
+        return {n: float(w) for n, w in zip(names, word, strict=True) if w > 0}
+
+    def hot_segments(self, query: NDArray[np.float32]) -> tuple[list[hs.HotPatch], int]:
+        """Segments whose label matches the query, as hot patches: one per grid
+        cell the segment covers, scored word x confidence x coverage. Returns
+        (hot patches, segment records read)."""
+        if self.config.segment_weight <= 0:
+            return [], 0
+        hot: list[hs.HotPatch] = []
+        read = 0
+        for name, word in sorted(self.label_scores(query).items(), key=lambda kv: -kv[1]):
+            for hit in self.store.stream(SEGMENT_STREAM, dict).tags(name=name).order_by("ts"):
+                if read >= self.config.max_hot_segments:
+                    return hot, read
+                read += 1
+                record = hit.data
+                if not record.get("cells") or not record.get("intrinsics"):
+                    continue
+                rows, cols = int(record["rows"]), int(record["cols"])
+                patch_depth = np.full(rows * cols, np.nan, dtype=np.float32)
+                for index, _, depth in record["cells"]:
+                    patch_depth[int(index)] = depth
+                # Negative ids keep segment frames apart from keyframes in the pool.
+                keyframe = hs.Keyframe(
+                    id=-(hit.id + 1),
+                    camera_frame=record["camera_frame"],
+                    ts=float(record["ts"]),
+                    rows=rows,
+                    cols=cols,
+                    intrinsics=hs.Intrinsics(**record["intrinsics"]),
+                    patch_depth=patch_depth,
+                )
+                weight = word * float(record["confidence"])
+                for index, coverage, _ in record["cells"]:
+                    hot.append(
+                        hs.HotPatch(keyframe=keyframe, patch=int(index), score=weight * coverage)
+                    )
+        return hot, read
+
     def placer(self, target: str) -> Callable[[hs.Keyframe], NDArray[np.float64] | None]:
         self.tf.update()
         return lambda keyframe: self.tf.get(target, keyframe.camera_frame, keyframe.ts)
@@ -174,8 +242,15 @@ class HyperspaceQuery:
         target = frame or self.world_frame
         query = np.asarray(self.embed_text(text), dtype=np.float32)
         hot, searched = self.hot_patches(query)
-        result = hs.heatmap(hot, self.placer(target), target, self.voxel_size, self.config)
+        place = self.placer(target)
+        result = hs.heatmap(hot, place, target, self.voxel_size, self.config)
         result.stats["patches_searched"] = searched
+        hot_segments, segments_read = self.hot_segments(query)
+        if self.config.segment_weight > 0 and SEGMENT_STREAM in self.store.list_streams():
+            segments = hs.heatmap(hot_segments, place, target, self.voxel_size, self.config)
+            segments.stats["read"] = segments_read
+            segments.stats["labels"] = sorted(self.label_scores(query), key=str)
+            result = hs.combine(result, segments, self.config)
         return result
 
     def scene_voxels(

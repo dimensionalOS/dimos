@@ -119,6 +119,21 @@ def test_segments_are_components_with_flat_fraction() -> None:
     assert seg.rle_decode(chairs[0].rle, labels.shape).sum() == 600
 
 
+def test_segment_cells_cover_the_mask_with_the_masked_depth() -> None:
+    mask = np.zeros((HEIGHT, WIDTH), dtype=bool)
+    mask[:36, :48] = True  # the top-left quarter: cells 0, 1, 4, 5 of a 4x4 grid
+    mask[36:40, :48] = True  # spills 4 of 18 rows into cells 8 and 9: 22% coverage
+    depth = wall_depth(3.0)
+    depth[:36, :48] = 1.0  # the object is nearer than what surrounds it
+    cells = seg.segment_cells(mask, depth, 4, 4, min_coverage=0.5)
+    assert [c[0] for c in cells] == [0, 1, 4, 5]
+    assert all(c[1] == 1.0 and c[2] == 1.0 for c in cells)
+    partial = seg.segment_cells(mask, depth, 4, 4, min_coverage=0.2)
+    assert [c[0] for c in partial] == [0, 1, 4, 5, 8, 9]
+    assert partial[-1][1] == pytest.approx(4 / 18) and partial[-1][2] == 3.0
+    assert all(np.isnan(c[2]) for c in seg.segment_cells(mask, None, 4, 4, 0.5))
+
+
 class StubSegmenter:
     """Labels the left half chair and the right half wall, at constant confidence."""
 
@@ -175,3 +190,10 @@ def test_ingestor_writes_one_record_per_segment_with_embedding(store: SqliteStor
     wall = next(r.data for r in records if r.data["name"] == "wall")
     assert wall["flat_fraction"] == 1.0  # demoted pixels are no longer wall
     assert seg.rle_decode(wall["rle"], (HEIGHT, WIDTH)).sum() == wall["area"]
+    # The segment as patches: the chair is the left half, so the left half of
+    # the 24x24 grid, every cell at the wall's depth, with the camera attached.
+    chair = next(r.data for r in records if r.data["name"] == "chair")
+    assert (chair["rows"], chair["cols"]) == (24, 24)
+    assert [c[0] for c in chair["cells"]] == [r * 24 + c for r in range(24) for c in range(12)]
+    assert all(c[1] == 1.0 and c[2] == pytest.approx(2.0) for c in chair["cells"])
+    assert chair["intrinsics"]["fx"] == 80.0

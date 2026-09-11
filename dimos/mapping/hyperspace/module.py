@@ -233,6 +233,9 @@ class HyperspaceConfig(MemoryModuleConfig):
     cap_far: float = 1.1
     # Comma separated; empty uses the indoor defaults.
     background_prompts: str = ""
+    # The segment channel (HyperspaceSegments records) added on top; 0 = off.
+    segment_weight: float = 1.0
+    segment_min_z: float = 2.0
     # Depth samples a voxel needs to appear in scene_map.
     scene_min_samples: int = 3
     # Demo: after this many seconds, run demo_queries and publish the answers,
@@ -280,6 +283,8 @@ class Hyperspace(MemoryModule):
             max_hot_patches=self.config.max_hot_patches,
             cap_near=self.config.cap_near,
             cap_far=self.config.cap_far,
+            segment_weight=self.config.segment_weight,
+            segment_min_z=self.config.segment_min_z,
         )
         prompts = [p.strip() for p in self.config.background_prompts.split(",") if p.strip()]
         if prompts:

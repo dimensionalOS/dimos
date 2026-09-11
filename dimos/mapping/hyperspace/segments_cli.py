@@ -161,7 +161,7 @@ def main(
         text_model.start()
         embed_text = lambda text: text_model.embed_text_array(text)[0]  # noqa: E731
 
-    memory_path = memory_db or recording.with_suffix(recording.suffix + ".hyperspace.db")
+    memory_path = memory_db or recording.with_suffix(".hyperspace.db")
     memory = open_store(memory_path, must_exist=False)
     recorded_tf = StreamTF.from_store(source, tf_stream)
 

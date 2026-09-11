@@ -182,6 +182,42 @@ def heat_colors(scores: NDArray[np.float64]) -> NDArray[np.uint8]:
     return (ramp[low] * (1 - blend) + ramp[high] * blend).astype(np.uint8)
 
 
+def channel_colors(patch: NDArray[np.float64], segment: NDArray[np.float64]) -> NDArray[np.uint8]:
+    """Blue for the patch channel, red for the segment channel, purple where
+    both are hot; brightness follows the score."""
+    red = 60 + 195 * np.clip(segment, 0.0, 1.0)
+    blue = 60 + 195 * np.clip(patch, 0.0, 1.0)
+    green = 30 + 40 * np.minimum(patch, segment)
+    return np.column_stack([red, green, blue]).astype(np.uint8)
+
+
+def send_blueprint(scene_centres: NDArray[np.float64], queries: dict[str, str]) -> None:
+    """One top-down 3D view per query (its voxels over the scene), in a grid,
+    the eye fixed above the scene so every view opens on the whole map."""
+    import rerun as rr
+    import rerun.blueprint as rrb
+
+    low, high = np.percentile(scene_centres, [2, 98], axis=0)
+    centre = (low + high) / 2
+    height = float(max(high[0] - low[0], high[1] - low[1], 4.0)) * 1.1
+    eye = rrb.archetypes.EyeControls3D(
+        kind="FirstPerson",
+        position=[centre[0], centre[1], centre[2] + height],
+        look_target=centre,
+        eye_up=[0.0, 1.0, 0.0],
+    )
+    views = [
+        rrb.Spatial3DView(
+            name=text,
+            origin="world",
+            contents=["+ world/scene/**", "+ world/keyframes/**", f"+ {entity}/**"],
+            eye_controls=eye,
+        )
+        for text, entity in queries.items()
+    ]
+    rr.send_blueprint(rrb.Blueprint(rrb.Grid(*views), collapse_panels=True))
+
+
 def write_rrd(
     engine: HyperspaceQuery,
     answers: list[dict[str, Any]],
@@ -201,8 +237,17 @@ def write_rrd(
     rerun_init("hyperspace")
 
     scene = engine.scene_voxels()
+    entities = {
+        answer["id"]: "world/query/"
+        + (
+            "".join(c if c.isalnum() else "_" for c in answer["text"]).strip("_")
+            or str(answer["id"])
+        )
+        for answer in answers
+    }
     if scene:
         centres = (np.asarray([i for i, _ in scene], dtype=np.float64) + 0.5) * size
+        send_blueprint(centres, {answer["text"]: entities[answer["id"]] for answer in answers})
         counts = np.asarray([n for _, n in scene], dtype=np.float64)
         alpha = (SCENE_ALPHA_MIN + 160 * counts / max(counts.max(), 1.0)).astype(np.uint8)
         colors = np.column_stack([np.tile(SCENE_COLOR, (len(scene), 1)).astype(np.uint8), alpha])
@@ -248,19 +293,24 @@ def write_rrd(
         centres = result.centres()
         scores = result.scores()
         keep = scores >= cutoff
-        slug = "".join(c if c.isalnum() else "_" for c in answer["text"]).strip("_")
-        entity = f"world/query/{slug or answer['id']}"
+        entity = entities[answer["id"]]
         if not keep.any():
             typer.echo(f"{answer['text']!r}: nothing above {cutoff}")
             continue
         centres, scores = centres[keep], scores[keep]
         sizes = np.repeat(half * (0.55 + 0.45 * scores)[:, None], 3, axis=1)
+        if result.channels:
+            kept = [index for (index, _), k in zip(result.voxels, keep, strict=True) if k]
+            per_channel = np.asarray([result.channels[index] for index in kept], dtype=np.float64)
+            colors = channel_colors(per_channel[:, 0], per_channel[:, 1])
+        else:
+            colors = heat_colors(scores)
         rr.log(
             entity,
             rr.Boxes3D(
                 centers=centres,
                 half_sizes=sizes,
-                colors=heat_colors(scores),
+                colors=colors,
                 fill_mode=rr.components.FillMode.Solid,
             ),
             static=True,
