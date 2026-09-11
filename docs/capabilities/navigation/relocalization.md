@@ -174,7 +174,8 @@ for example `--relocalizationmodule.map-file=…`.
 |-------|---------|-------------|
 | `map_file` | `None` (module disabled) | Premap stem or path. dimOS appends `.pc2.lcm` automatically |
 | `fitness_threshold` | `0.45` | Minimum ICP fitness to accept a relocalization (0 to 1) |
-| `publish_loaded_map` | `false` | Republish raw premap on `loaded_map` every 2 s |
+| `tf_interval` | `10.0` | Seconds between tf republishes of the accepted fix (published immediately on every fix) |
+| `republish_loaded_map` | `0.0` | Seconds between `loaded_map` republishes once placed; `0` publishes once per fix |
 | `use_carving` | `true` | Column-carve when merging premap and live scan |
 
 Constants are not overridable via CLI today:

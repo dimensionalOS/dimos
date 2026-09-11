@@ -94,6 +94,8 @@ def _wait_for_relay(call: DimosCliCall, timeout_s: float) -> None:
 
 
 def _assert_odom_ticks(page: Page) -> None:
+    # The raw channel table lives behind the header's channels tab.
+    page.get_by_test_id("view-channels").click()
     seq = page.get_by_test_id("ch-odom-seq")
     expect(seq).not_to_have_text("-", timeout=60_000)
     first = seq.inner_text()
@@ -102,6 +104,9 @@ def _assert_odom_ticks(page: Page) -> None:
 
 
 def _assert_video_plays(page: Page) -> None:
+    # Back to the panel layout: the video canvas remounts, so the width check
+    # below starts from the 300 px HTML default again.
+    page.get_by_test_id("view-panels").click()
     # The manifest-driven video panel is live: the badge reporting an fps
     # proves frames arrive, the canvas leaving its 300 px HTML default width
     # proves one frame decoded, and two successive pixel changes prove frames

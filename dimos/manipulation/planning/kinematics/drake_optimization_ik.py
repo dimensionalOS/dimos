@@ -105,7 +105,7 @@ class DrakeOptimizationIK:
         ).to_matrix()
 
         # Get joint limits
-        lower_limits, upper_limits = world.get_joint_limits()
+        lower_limits, upper_limits = world.get_prepared_model().joint_space.position_limits()
 
         # Get seed from current state if not provided
         if seed is None:
@@ -200,7 +200,7 @@ class DrakeOptimizationIK:
                 "DrakeOptimizationIK requires a pose-targetable planning group",
             )
 
-        lower_limits, upper_limits = world.get_joint_limits()
+        lower_limits, upper_limits = world.get_prepared_model().joint_space.position_limits()
         target_matrix = Transform(
             translation=request.target_pose.position,
             rotation=request.target_pose.orientation,

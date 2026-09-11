@@ -87,7 +87,7 @@ impl VoxelRayMapper {
         *,
         voxel_size,
         max_range,
-        fine_divisor = 0,
+        fine_divisor = 3,
         ray_subsample = 1,
         shadow_depth = 0.1,
         grace_depth = 0.2,
@@ -117,9 +117,12 @@ impl VoxelRayMapper {
     ) -> PyResult<Self> {
         // A nonzero emit_every batches frames for take_local_bounds. Callers
         // that never take must leave it 0 or the batch grows forever.
+        // emit_fine only gates the module's publishing. This API queries fine
+        // points explicitly, so it stays off.
         let config = Config {
             voxel_size,
             fine_divisor,
+            emit_fine: false,
             max_range,
             ray_subsample,
             shadow_depth,

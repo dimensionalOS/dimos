@@ -44,7 +44,7 @@ from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.models import Obstacle
-from dimos.manipulation.planning.spec.validation import MAX_OCTREE_POINTS
+from dimos.manipulation.planning.spec.validation import MAX_OCTREE_POINTS, prepare_robot_model
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -485,7 +485,7 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
         """
     )
     return RobotModelConfig(
-        model=RobotModel.from_file(model_path),
+        model=RobotModel.from_file(model_path).with_default_joint_acceleration_limit(2.0),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),  # type: ignore[call-arg]
         joint_names=["joint1", "joint2"],
         base_link="base",
@@ -497,8 +497,6 @@ def robot_config(tmp_path: Path) -> RobotModelConfig:
                 tip_link="tcp",
             )
         ],
-        joint_limits_lower=[-1.0, -2.0],
-        joint_limits_upper=[1.0, 2.0],
     )
 
 
@@ -510,7 +508,7 @@ def _make_world(
     module = _import_roboplan_world(fake_roboplan)
 
     world = module.RoboPlanWorld()
-    world.load_model(robot_config)
+    world.load_model(prepare_robot_model(robot_config))
     world.finalize()
     world.sync_from_joint_state(
         JointState(
@@ -546,7 +544,7 @@ def test_roboplan_loads_canonical_slash_names_natively(
 """
     )
     config = RobotModelConfig(
-        model=RobotModel.from_file(model_path),
+        model=RobotModel.from_file(model_path).with_default_joint_acceleration_limit(2.0),
         joint_names=["left/j1"],
         base_link="world",
         planning_groups=[
@@ -557,21 +555,19 @@ def test_roboplan_loads_canonical_slash_names_natively(
                 tip_link="left/tool",
             )
         ],
-        joint_limits_lower=[-1.0],
-        joint_limits_upper=[1.0],
     )
 
     world = _make_world(fake_roboplan, config)
 
-    assert world.get_model_config().joint_names == ["left/j1"]
+    assert world.get_prepared_model().joint_space.names == ("left/j1",)
     assert "left/j1" in world._scene.constructor_kwargs["urdf"]
 
 
 def _selection(
-    configs: tuple[RobotModelConfig, ...],
+    config: RobotModelConfig,
     *group_ids: str,
 ) -> PlanningGroupSelection:
-    registry = PlanningGroupRegistry(configs)
+    registry = PlanningGroupRegistry(config.planning_groups)
     return PlanningGroupSelection.from_groups(
         tuple(registry.get(group_id) for group_id in group_ids)
     )
@@ -640,48 +636,30 @@ def test_robot_registration_finalization_and_joint_limits(
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
 
-    assert [world.get_model_config()] == [robot_config]
-    assert world.get_model_config() is robot_config
+    assert world.get_prepared_model().config is robot_config
     assert world._scene.constructor_kwargs["name"] == "dimos_model"
     assert ET.fromstring(world._scene.constructor_kwargs["urdf"]).get("name") == "dimos_model"
     assert world._scene.constructor_kwargs["srdf"].startswith('<robot name="dimos_model">')
     assert (
         'disable_collisions link1="base" link2="link1"' in world._scene.constructor_kwargs["srdf"]
     )
-    lower, upper = world.get_joint_limits()
+    lower, upper = world.get_prepared_model().joint_space.position_limits()
     np.testing.assert_allclose(lower, [-1.0, -2.0])
     np.testing.assert_allclose(upper, [1.0, 2.0])
 
     assert world.is_finalized
 
 
-def test_scene_joint_limits_are_reordered_to_configured_joint_order(
+def test_scene_joint_limit_order_does_not_override_canonical_model(
     fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config = robot_config.model_copy(
-        update={"joint_limits_lower": None, "joint_limits_upper": None}
-    )
+    config = robot_config
     monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint2", "joint1"])
-    monkeypatch.setattr(FakeScene, "position_limits_lower", [-2.0, -1.0])
-    monkeypatch.setattr(FakeScene, "position_limits_upper", [2.0, 1.0])
 
     world = _make_world(fake_roboplan, config)
-
-    lower, upper = world.get_joint_limits()
+    lower, upper = world.get_prepared_model().joint_space.position_limits()
     np.testing.assert_allclose(lower, [-1.0, -2.0])
     np.testing.assert_allclose(upper, [1.0, 2.0])
-
-
-def test_scene_joint_limits_validate_joint_names(
-    fake_roboplan: None, robot_config: RobotModelConfig, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    config = robot_config.model_copy(
-        update={"joint_limits_lower": None, "joint_limits_upper": None}
-    )
-    monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint2", "extra_joint"])
-
-    with pytest.raises(ValueError, match="does not match the composed model"):
-        _make_world(fake_roboplan, config)
 
 
 def test_context_cloning_and_joint_state_round_trip(
@@ -823,7 +801,7 @@ def test_obstacle_operations_require_finalization(
 ) -> None:
     module = _import_roboplan_world(fake_roboplan)
     world = module.RoboPlanWorld()
-    world.load_model(robot_config)
+    world.load_model(prepare_robot_model(robot_config))
     obstacle = Obstacle(
         name="box",
         obstacle_type=ObstacleType.BOX,
@@ -1267,8 +1245,6 @@ def test_group_fk_and_jacobian_use_group_tip_and_local_joint_order(
                     tip_link="tcp",
                 )
             ],
-            "joint_limits_lower": [-1.0, -2.0, -3.0],
-            "joint_limits_upper": [1.0, 2.0, 3.0],
         }
     )
     monkeypatch.setattr(FakeScene, "joint_group_joint_names", ["joint2", "joint1", "joint3"])
@@ -1665,11 +1641,11 @@ def test_native_planner_names_path_from_robot_config_when_start_is_unnamed(
     assert [state.name for state in result.path] == [["joint1", "joint2"]] * 3
 
 
-def test_native_selected_planner_returns_global_selected_joint_names(
+def test_native_selected_planner_returns_canonical_selected_joint_names(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
-    selection = _selection((robot_config,), "manipulator")
+    selection = _selection(robot_config, "manipulator")
 
     result = _planner_for(world).plan_selected_joint_path(
         world,
@@ -1690,7 +1666,7 @@ def test_native_selected_planner_uses_explicit_start_after_live_state_advances(
     mocker: MockerFixture,
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
-    selection = _selection((robot_config,), "manipulator")
+    selection = _selection(robot_config, "manipulator")
     observed_scene_start: list[float] = []
     native_plan = FakeRRT.plan
 
@@ -1732,7 +1708,7 @@ def test_native_selected_planner_supports_non_overlapping_multi_group_selection(
         }
     )
     world = _make_world(fake_roboplan, config)
-    selection = _selection((config,), "left", "right")
+    selection = _selection(config, "left", "right")
 
     result = _planner_for(world).plan_selected_joint_path(
         world,
@@ -1746,11 +1722,11 @@ def test_native_selected_planner_supports_non_overlapping_multi_group_selection(
     assert result.path[-1].position == pytest.approx([0.1, 0.1])
 
 
-def test_cartesian_planner_returns_timed_global_joint_states_and_options(
+def test_cartesian_planner_returns_timed_canonical_joint_states_and_options(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
-    selection = _selection((robot_config,), "manipulator")
+    selection = _selection(robot_config, "manipulator")
     option_overrides = {
         "dt": 0.02,
         "max_linear_speed": 0.2,
@@ -1818,7 +1794,7 @@ def test_cartesian_zero_rotation_preserves_start_orientation(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
-    selection = _selection((robot_config,), "manipulator")
+    selection = _selection(robot_config, "manipulator")
 
     result = _planner_for(world).plan_cartesian_path(
         world,
@@ -1844,7 +1820,7 @@ def test_cartesian_uses_explicit_start_after_live_state_advances(
     fake_roboplan: None, robot_config: RobotModelConfig
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
-    selection = _selection((robot_config,), "manipulator")
+    selection = _selection(robot_config, "manipulator")
     start = JointState(name=list(selection.joint_names), position=[0.1, 0.0])
     world.sync_from_joint_state(
         JointState(name=["joint1", "joint2"], position=[0.3, 0.2]),
@@ -1870,7 +1846,7 @@ def test_cartesian_rejects_official_planner_failure(
     mocker: MockerFixture,
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
-    selection = _selection((robot_config,), "manipulator")
+    selection = _selection(robot_config, "manipulator")
     mocker.patch.object(
         FakeCartesianPathPlanner,
         "plan",
@@ -1896,7 +1872,7 @@ def test_cartesian_postvalidation_checks_between_waypoints(
     mocker: MockerFixture,
 ) -> None:
     world = _make_world(fake_roboplan, robot_config)
-    selection = _selection((robot_config,), "manipulator")
+    selection = _selection(robot_config, "manipulator")
 
     def two_point_trajectory(
         planner: FakeCartesianPathPlanner,
@@ -2009,7 +1985,7 @@ def test_collision_exclusion_with_one_unknown_link_is_rejected(
     robot_config.collision_exclusion_pairs = [("base", "missing")]
     module = _import_roboplan_world(fake_roboplan)
     world = module.RoboPlanWorld()
-    world.load_model(robot_config)
+    world.load_model(prepare_robot_model(robot_config))
 
     with pytest.raises(
         ValueError,

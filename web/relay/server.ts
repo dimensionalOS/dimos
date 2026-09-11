@@ -10,12 +10,11 @@ import { LATEST_STALE_MS } from "./forward.ts";
 import { Registry } from "./registry.ts";
 import { RobotSession, ViewerSession } from "./session.ts";
 
-// Subs snapshots ride lossy datagrams; this resend interval is the loss- and
-// reorder-healing mechanism (bridges ignore stale `n`).
-const SNAPSHOT_RESEND_MS = 2_000;
-
 export interface RelayOptions {
-  /** TCP port for the HTTP side. Default 7780; 0 picks an ephemeral port. */
+  /**
+   * TCP port for the HTTP side (and, with cert/key, the QUIC port too).
+   * Default 7780; 0 picks an ephemeral port.
+   */
   port?: number;
   /** Bind host for both listeners. The default is the only secure-context-friendly choice. */
   host?: string;
@@ -28,6 +27,15 @@ export interface RelayOptions {
   sdkDir?: string;
   /** User static root served at / instead of the cockpit (--serve-dir). */
   serveDir?: string;
+  /**
+   * PEM certificate (chain) and private key (--cert/--key), both or neither.
+   * With them the relay terminates real TLS itself: HTTPS on `port`, QUIC on
+   * the same port, and no certificate hash advertised (clients verify the
+   * certificate normally). Without them: an ephemeral self-signed certificate
+   * pinned by hash, QUIC on an ephemeral port.
+   */
+  cert?: string;
+  key?: string;
   /**
    * Explicit acknowledgment for binding a non-loopback host. This local
    * relay trusts every origin that can reach it (wildcard CORS on the
@@ -44,8 +52,19 @@ export interface RelayHandle {
   quicPort: number;
   /** Base WebTransport URL (no path); clients append /robot or /viewer. */
   wtUrl: string;
-  certHash: string;
+  /** base64 SHA-256 of the ephemeral certificate; absent with cert/key. */
+  certHash?: string;
   shutdown(): Promise<void>;
+}
+
+export const CERT_KEY_PAIR_ERROR = "--cert and --key must be given together";
+
+/** What the listeners serve: the ephemeral certificate or the operator's. */
+interface ServedCert {
+  certPem: string;
+  keyPem: string;
+  /** Hash pinned through /api/info; absent for a real certificate. */
+  certHashB64?: string;
 }
 
 const MIME: Record<string, string> = {
@@ -65,6 +84,8 @@ const MIME: Record<string, string> = {
   ".gif": "image/gif",
   ".webp": "image/webp",
   ".wasm": "application/wasm",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
 };
 
 // Deliberate LOCAL-relay policy: this relay binds loopback (enforced in
@@ -164,11 +185,46 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   // precedence over it in handleHttp.
   const staticRoot = serveRoot ?? cockpitRoot;
 
-  const cert = await makeEphemeralCert();
+  // A real certificate (--cert/--key) is served as-is and its hash is not
+  // advertised: clients verify it like any other. Without one, an ephemeral
+  // self-signed certificate is pinned by hash through /api/info.
+  let cert: ServedCert;
+  if (options.cert !== undefined && options.key !== undefined) {
+    cert = { certPem: options.cert, keyPem: options.key };
+  } else if (options.cert === undefined && options.key === undefined) {
+    cert = await makeEphemeralCert();
+  } else {
+    throw new Error(CERT_KEY_PAIR_ERROR);
+  }
+  const tls = cert.certHashB64 === undefined;
 
-  // QUIC always binds an ephemeral port; clients discover it via the ready
-  // line or /api/info, so --port stays a single HTTP-facing knob.
-  const endpoint = new Deno.QuicEndpoint({ hostname: host, port: 0 });
+  // HTTP binds first so --port 0 works in both modes. With a real
+  // certificate QUIC shares its port (one "443 TCP + 443 UDP" rule pair, and
+  // /api/info derives the WebTransport URL from the request host); otherwise
+  // QUIC binds an ephemeral port that clients discover via the ready line or
+  // /api/info, so --port stays a single HTTP-facing knob. Nothing awaits
+  // between this bind and the consts handleHttp closes over.
+  const httpServer = Deno.serve(
+    {
+      hostname: host,
+      port: options.port ?? 7780,
+      onListen: () => {},
+      cert: options.cert,
+      key: options.key,
+    },
+    handleHttp,
+  );
+  const httpPort = (httpServer.addr as Deno.NetAddr).port;
+  let endpoint: Deno.QuicEndpoint;
+  try {
+    endpoint = new Deno.QuicEndpoint({ hostname: host, port: tls ? httpPort : 0 });
+  } catch (e) {
+    await httpServer.shutdown();
+    throw new Error(
+      `QUIC cannot bind UDP port ${httpPort} (with --cert/--key it shares --port): ` +
+        ((e as Error)?.message ?? e),
+    );
+  }
   const listener = endpoint.listen({
     cert: cert.certPem,
     key: cert.keyPem,
@@ -191,13 +247,11 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     wt.closed.catch(() => {}).finally(() => sessions.delete(wt));
   }
 
-  const resendTimer = setInterval(() => registry.resendSnapshots(), SNAPSHOT_RESEND_MS);
-  // A pending resend must not keep the Deno process alive after shutdown().
-  Deno.unrefTimer(resendTimer);
   // Offers reap stale latest streams opportunistically, but an idle input
   // stops offering; this interval bounds an idle stream's lifetime to just
   // under 2x the stale window.
   const reapTimer = setInterval(() => registry.reapAll(Date.now()), LATEST_STALE_MS);
+  // A pending reap must not keep the Deno process alive after shutdown().
   Deno.unrefTimer(reapTimer);
 
   (async () => {
@@ -223,11 +277,13 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   async function handleHttp(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/api/info") {
-      return Response.json({
-        wtUrl: `${wtUrl}/viewer`,
-        certHash: cert.certHashB64,
-        v: PROTOCOL_VERSION,
-      }, { headers: LOCAL_CORS });
+      // The base, like the ready line: clients append /robot or /viewer.
+      // With a real certificate it is the origin the client dialed (right by
+      // construction: QUIC shares the port) and there is no hash to pin.
+      const info = tls
+        ? { wtUrl: url.origin, v: PROTOCOL_VERSION }
+        : { wtUrl, certHash: cert.certHashB64, v: PROTOCOL_VERSION };
+      return Response.json(info, { headers: LOCAL_CORS });
     }
     if (url.pathname === "/api/stats") {
       return Response.json(registry.stats(), { headers: LOCAL_CORS });
@@ -268,19 +324,12 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
     return res;
   }
 
-  const httpServer = Deno.serve(
-    { hostname: host, port: options.port ?? 7780, onListen: () => {} },
-    handleHttp,
-  );
-  const httpPort = (httpServer.addr as Deno.NetAddr).port;
-
   return {
     httpPort,
     quicPort,
     wtUrl,
     certHash: cert.certHashB64,
     async shutdown(): Promise<void> {
-      clearInterval(resendTimer);
       clearInterval(reapTimer);
       for (const wt of sessions) {
         try {

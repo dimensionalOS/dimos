@@ -40,6 +40,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
 
       # --only-group, not --group: the site build imports nothing from dimos,
       # and syncing the project drags in the default groups, where pyaudio

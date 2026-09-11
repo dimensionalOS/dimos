@@ -60,7 +60,7 @@ from dimos.visualization.rerun.constants import (
     RERUN_WEB_VIEWER_PORT,
     RerunOpenOption,
 )
-from dimos.visualization.rerun.init import rerun_init
+from dimos.visualization.rerun.init import rerun_init, spawn_viewer
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -125,6 +125,22 @@ def _hex_to_rgba(hex_color: str) -> int:
     if len(h) == 6:
         return int(h + "ff", 16)
     return int(h[:8], 16)
+
+
+def _graphviz_plain_lines(output: str) -> list[str]:
+    """Join physical lines that Graphviz wraps with a trailing backslash."""
+    lines: list[str] = []
+    pending = ""
+    for physical_line in output.splitlines():
+        pending += physical_line
+        if pending.endswith("\\"):
+            pending = pending[:-1]
+            continue
+        lines.append(pending)
+        pending = ""
+    if pending:
+        lines.append(pending)
+    return lines
 
 
 def _with_graph_tab(bp: Blueprint) -> Blueprint:
@@ -429,37 +445,7 @@ class RerunBridgeModule(Module):
 
         spawned = False
         if self.config.rerun_open in ("native", "both"):
-            try:
-                import rerun_bindings
-
-                # Use --connect so the viewer connects to the bridge's gRPC
-                # server rather than starting its own (which would conflict).
-                rerun_bindings.spawn(
-                    executable_name="dimos-viewer",
-                    memory_limit=self.config.memory_limit,
-                    extra_args=["--connect", server_uri],
-                )
-                spawned = True
-            except ImportError:
-                pass  # dimos-viewer not installed
-            except Exception:
-                logger.warning(
-                    "dimos-viewer found but failed to spawn, falling back to stock rerun",
-                    exc_info=True,
-                )
-
-            # fallback on normal (non-dimos-viewer) rerun
-            if not spawned:
-                try:
-                    rr.spawn(connect=True, memory_limit=self.config.memory_limit)
-                    spawned = True
-                except (RuntimeError, FileNotFoundError):
-                    logger.warning(
-                        "Rerun native viewer not available (headless?). "
-                        "Bridge will continue without a viewer — data is still "
-                        "accessible via --rerun-open web or by connecting a viewer to the gRPC server.",
-                        exc_info=True,
-                    )
+            spawned = spawn_viewer(server_uri, self.config.memory_limit)
 
         open_web = self.config.rerun_open == "web" or self.config.rerun_open == "both"
         if open_web or self.config.rerun_web:
@@ -588,7 +574,7 @@ class RerunBridgeModule(Module):
         edges: list[tuple[str, str]] = []
         module_set = set(module_names)
 
-        for line in result.stdout.splitlines():
+        for line in _graphviz_plain_lines(result.stdout):
             if line.startswith("node "):
                 parts = line.split()
                 node_id = parts[1].strip('"')

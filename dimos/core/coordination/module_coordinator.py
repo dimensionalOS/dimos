@@ -107,12 +107,12 @@ class ModuleCoordinator(Resource):
                 self._coordinator_rpc = None
 
         for name, module in reversed(self._deployed_modules.items()):
-            logger.info("Stopping module...", module=name)
+            logger.info("Stopping module...", module=module.remote_name)
             try:
                 module.stop()
             except Exception:
                 logger.error("Error stopping module", module=name, exc_info=True)
-            logger.info("Module stopped.", module=name)
+            logger.info("Module stopped.", module=module.remote_name)
 
         def _stop_manager(m: WorkerManager) -> None:
             try:

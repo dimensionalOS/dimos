@@ -55,6 +55,7 @@ jobs:
         uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          prune-cache: true
       - name: Build sdist
         run: uv build --sdist
       - name: Check sdist contents

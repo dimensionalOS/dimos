@@ -69,6 +69,7 @@ class RunModuleB(Module):
         (["dimos", "--simulation"], ["dimos", "--simulation", "mujoco"]),
         (["dimos", "--record", "run", "go2"], ["dimos", "--record", "sqlite", "run", "go2"]),
         (["dimos", "--record", "sqlite", "run"], ["dimos", "--record", "sqlite", "run"]),
+        (["dimos", "--record", "mcap", "run"], ["dimos", "--record", "mcap", "run"]),
         # Explicit simulator — left untouched.
         (["dimos", "--simulation", "mujoco", "run"], ["dimos", "--simulation", "mujoco", "run"]),
         (["dimos", "--simulation", "dimsim", "run"], ["dimos", "--simulation", "dimsim", "run"]),
@@ -247,6 +248,43 @@ def test_run_rejects_record_topics_matching_nothing(stubbed_run: dict[str, Any])
     assert "blueprint" not in stubbed_run  # failed before build
 
 
+def test_python_recording_rejects_rust_encoding_threads(
+    stubbed_run: dict[str, Any],
+) -> None:
+    result = CliRunner().invoke(
+        main,
+        [
+            "--record",
+            "sqlite",
+            "--record-engine",
+            "python",
+            "--record-encoding-threads",
+            "4",
+            "run",
+            "alpha",
+        ],
+    )
+
+    assert result.exit_code == 2
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "valid only with" in output_plain
+    assert "--record-engine rust" in output_plain
+    assert "blueprint" not in stubbed_run
+
+
+def test_python_mcap_is_rejected_before_build(
+    stubbed_run: dict[str, Any],
+) -> None:
+    result = CliRunner().invoke(
+        main, ["--record", "mcap", "--record-engine", "python", "run", "alpha"]
+    )
+
+    assert result.exit_code == 2
+    output_plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "MCAP recording requires --record-engine rust" in output_plain
+    assert "blueprint" not in stubbed_run
+
+
 def test_run_parses_spaced_and_equals_config_flags(stubbed_run: dict[str, Any]) -> None:
     result = CliRunner().invoke(
         main,
@@ -324,6 +362,24 @@ def test_qualified_global_relay_flag_is_applied_before_composition(
     assert result.exit_code == 0, result.output
     assert observed_relay_values == [(True, None)]
     assert stubbed_run["parsed_config"].global_config["local_relay"] is True
+
+
+def test_run_relay_ca_flag_is_applied_before_composition(
+    stubbed_run: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str | None] = []
+
+    def compose(blueprint: Any) -> Any:
+        observed.append(global_config.relay_ca)
+        return blueprint
+
+    monkeypatch.setattr(lifecycle, "_with_relay_bridge", compose)
+
+    result = CliRunner().invoke(main, ["run", "alpha", "--relay-ca", "/ca.pem"])
+
+    assert result.exit_code == 0, result.output
+    assert observed == ["/ca.pem"]
 
 
 def test_run_rejects_ambiguous_short_config_flag(stubbed_run: dict[str, Any]) -> None:

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
 import time
@@ -37,6 +38,7 @@ from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
 import requests
 
+from dimos.agents.llm_trace import tracing_http_client
 from dimos.agents.mcp import tool_stream
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
@@ -53,15 +55,25 @@ logger = setup_logger()
 _RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
-def _init_model(model_name: str) -> Any:
-    """Initialize a model while preserving LangChain provider resolution."""
+def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
+    """Initialize a model while preserving LangChain provider resolution.
+
+    With *trace_dir*, every request/response body goes to disk whole
+    (:mod:`dimos.agents.llm_trace`). Only OpenAI-backed models take the
+    ``http_client``; other providers keep working, untraced at the wire.
+    """
+    client = None if trace_dir is None else tracing_http_client(trace_dir)
     if ":" in model_name or not model_name.startswith(_RESPONSES_REASONING_MODEL_PREFIXES):
-        return init_chat_model(model=model_name)
+        model = init_chat_model(model=model_name)
+        if client is not None and isinstance(model, ChatOpenAI):
+            return init_chat_model(model=model_name, http_client=client)
+        return model
 
     return ChatOpenAI(
         model=model_name,
         use_responses_api=True,
         reasoning={"effort": "medium", "summary": "auto"},
+        http_client=client,
     )
 
 
@@ -70,6 +82,7 @@ class McpClientConfig(ModuleConfig):
     model: str = "gpt-5.6-luna"
     model_fixture: str | None = None
     mcp_server_url: str = "http://localhost:9990/mcp"
+    trace_dir: Path | None = None
 
 
 class McpClient(Module):
@@ -81,6 +94,7 @@ class McpClient(Module):
     _lock: RLock
     _state_graph: CompiledStateGraph[Any, Any, Any, Any] | None
     _message_queue: Queue[BaseMessage]
+    _agent_tools: list[StructuredTool] | None
     _tool_registry: dict[str, dict[str, Any]]
     _history: list[BaseMessage]
     _thread: Thread
@@ -94,6 +108,7 @@ class McpClient(Module):
         self._lock = RLock()
         self._state_graph = None
         self._message_queue = Queue()
+        self._agent_tools = None
         self._tool_registry = {}
         self._history = []
         self._thread = Thread(
@@ -234,23 +249,26 @@ class McpClient(Module):
 
     @rpc
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
-        tools = self._fetch_tools()
-
-        if self.config.model_fixture is not None:
-            from dimos.agents.testing.mock_model import MockModel
-
-            model = MockModel(json_path=self.config.model_fixture)
-        else:
-            model = _init_model(self.config.model)
-
+        self._agent_tools = self._fetch_tools()
+        self._rebuild_agent()
         with self._lock:
-            self._state_graph = create_agent(
-                model=model,
-                tools=tools,
-                system_prompt=self.config.system_prompt,
-            )
             if not self._thread.is_alive():
                 self._thread.start()
+
+    def _rebuild_agent(self) -> None:
+        # Under the lock, or a concurrent set_trace_dir can lose its path to this build.
+        with self._lock:
+            if self.config.model_fixture is not None:
+                from dimos.agents.testing.mock_model import MockModel
+
+                model = MockModel(json_path=self.config.model_fixture)
+            else:
+                model = init_model(self.config.model, trace_dir=self.config.trace_dir)
+            self._state_graph = create_agent(
+                model=model,
+                tools=self._agent_tools or [],
+                system_prompt=self.config.system_prompt,
+            )
 
     @rpc
     def stop(self) -> None:
@@ -264,6 +282,20 @@ class McpClient(Module):
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         self._http_client.close()
         super().stop()
+
+    @rpc
+    def trace_dir(self) -> Path | None:
+        """Where raw LLM request/response bodies go; ``None`` when tracing is off."""
+        return self.config.trace_dir
+
+    @rpc
+    def set_trace_dir(self, path: str | None) -> None:
+        """Point raw LLM capture at *path* and rebuild the model to pick it
+        up; ``None`` turns tracing off."""
+        with self._lock:
+            self.config.trace_dir = Path(path) if path is not None else None
+            if self._state_graph is not None:
+                self._rebuild_agent()
 
     @rpc
     def add_message(self, message: BaseMessage) -> None:

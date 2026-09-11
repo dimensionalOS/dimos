@@ -104,6 +104,7 @@ def await_gripper_settle(
     target: float,
     config: GraspVerificationConfig,
     *,
+    arrival_tolerance: float | None = None,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> GripperSettle:
@@ -113,7 +114,17 @@ def await_gripper_settle(
     either observed travel or arrival at ``target``. Without that second
     condition a poll started before the jaws react would call the pre-command
     position settled. ``sleep`` and ``clock`` are injectable for tests.
+
+    ``arrival_tolerance`` answers a different question from ``settle_tolerance``:
+    stillness is how little the jaws moved between polls, arrival is how near the
+    target they stopped. It defaults to ``settle_tolerance`` because a close is
+    meant to stop short, on the object, and only an exact arrival at
+    ``closed_position`` means empty jaws. An open is the opposite: a gripper
+    driven to its mechanical stop always halts short of the commanded extreme --
+    the xArm rests at 0.988 of a nominal 850 count -- so the open path must pass
+    the band that decides whether where the jaws stopped counts as open.
     """
+    reached = config.settle_tolerance if arrival_tolerance is None else arrival_tolerance
     start = clock()
     deadline = start + config.timeout
     first: float | None = None
@@ -133,7 +144,7 @@ def await_gripper_settle(
             if abs(position - first) > config.settle_tolerance:
                 moved = True
             last = position
-            arrived = abs(position - target) <= config.settle_tolerance
+            arrived = abs(position - target) <= reached
             if stable >= config.settle_samples and (moved or arrived):
                 return GripperSettle(True, position, moved, clock() - start)
 

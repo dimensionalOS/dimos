@@ -1,4 +1,5 @@
 .unknown {
-  color: #8b949e;
-  padding: 1rem;
+  color: var(--fg-muted);
+  font-size: 12px;
+  padding: 12px;
 }

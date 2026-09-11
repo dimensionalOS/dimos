@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pickle
+import time
 from unittest.mock import ANY, MagicMock, call
 
 import numpy as np
@@ -43,12 +45,18 @@ from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
 from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType, PlanningStatus
+from dimos.manipulation.planning.spec.joint_space import (
+    CoordinateTopology,
+    JointCoordinate,
+    JointSpace,
+)
 from dimos.manipulation.planning.spec.models import (
     GeneratedPlan,
     IKResult,
     Obstacle,
     PlanningResult,
 )
+from dimos.manipulation.planning.spec.validation import PreparedRobotModel
 from dimos.manipulation.planning.trajectory_generator.config import (
     SimpleTrapezoidParametrizationConfig,
 )
@@ -58,13 +66,14 @@ from dimos.manipulation.planning.trajectory_generator.simple_parametrizer import
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
-from dimos.robot.assets.model import RobotModel
+from dimos.robot.assets.model import LoadedRobotModel, RobotModel
 
 
 def _control_coordinator(
@@ -95,8 +104,6 @@ def robot_config():
                 tip_link="link_tcp",
             )
         ],
-        max_velocity=1.0,
-        max_acceleration=2.0,
     )
 
 
@@ -136,7 +143,7 @@ def _install_generated_plan(
     """Install a canonical generated plan and current model state."""
     module.config.model = config
     module._world_monitor = MagicMock()
-    module._world_monitor.planning_groups = PlanningGroupRegistry([config])
+    module._world_monitor.planning_groups = PlanningGroupRegistry(config.planning_groups)
     module._world_monitor.current_model_joint_state.return_value = JointState(
         name=config.joint_names,
         position=[0.0 for _ in config.joint_names],
@@ -194,6 +201,28 @@ def _make_trajectory(*points: tuple[float, list[float]]) -> JointTrajectory:
 def _enable_simple_parametrization(module: ManipulationModule) -> None:
     module._trajectory_parametrizer = SimpleTrapezoidParametrizer(
         SimpleTrapezoidParametrizationConfig()
+    )
+
+
+def _prepared_model(config: RobotModelConfig) -> PreparedRobotModel:
+    return PreparedRobotModel(
+        config=config,
+        description=LoadedRobotModel("<robot/>", Path("/robot.urdf"), {}),
+        joint_space=JointSpace(
+            tuple(
+                JointCoordinate(
+                    name=name,
+                    mechanism_type="revolute",
+                    topology=CoordinateTopology.INTERVAL,
+                    lower=-1.0,
+                    upper=1.0,
+                    max_velocity=1.0,
+                    max_acceleration=2.0,
+                )
+                for name in config.joint_names
+            )
+        ),
+        planning_groups=(),
     )
 
 
@@ -571,20 +600,25 @@ class TestPlanningInitialization:
         assert config.kinematics.dt == 0.02
         assert config.kinematics.posture_cost == 0.0
 
-    def test_solve_ik_rpc_calls_configured_backend(self, robot_config, module_factory):
-        """solve_ik returns the backend IKResult without path planning."""
+    @pytest.mark.parametrize(
+        "operation_state", [ManipulationState.IDLE, ManipulationState.EXECUTING]
+    )
+    def test_inverse_kinematics_uses_current_seed_without_planning(
+        self, robot_config, module_factory, operation_state
+    ):
+        """IK returns the backend result without changing operation or plan state."""
         module = module_factory()
         module.config.model = robot_config
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.world.get_model_config.return_value = robot_config
-        module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+        module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         current = JointState(name=robot_config.joint_names, position=[0.0, 0.0, 0.0])
-        current_global = JointState(
+        current_model_state = JointState(
             name=["joint1", "joint2", "joint3"],
             position=[0.0, 0.0, 0.0],
         )
-        module._world_monitor.current_model_joint_state.return_value = current_global
+        module._world_monitor.current_model_joint_state.return_value = current_model_state
         expected = IKResult(
             status=IKStatus.SUCCESS,
             joint_state=JointState(name=robot_config.joint_names, position=[0.1, 0.2, 0.3]),
@@ -596,16 +630,19 @@ class TestPlanningInitialization:
         module._kinematics = MagicMock()
         module._kinematics.solve_pose_targets.return_value = expected
 
-        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
-        result = module.solve_ik(pose)
+        pose = PoseStamped(
+            frame_id="world", position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion()
+        )
+        module._state = operation_state
+        result = module.inverse_kinematics({"manipulator": pose})
 
         assert result is expected
-        assert module._state == ManipulationState.COMPLETED
+        assert module._state == operation_state
         assert module._last_plan is None
         module._kinematics.solve_pose_targets.assert_called_once()
         _, kwargs = module._kinematics.solve_pose_targets.call_args
         assert kwargs["world"] is module._world_monitor.world
-        assert kwargs["seed"].name == current_global.name
+        assert kwargs["seed"].name == current_model_state.name
         assert kwargs["seed"].position == current.position
         assert kwargs["check_collision"] is True
         [(group, target_pose)] = kwargs["pose_targets"].items()
@@ -613,46 +650,61 @@ class TestPlanningInitialization:
         assert target_pose.frame_id == "world"
         assert target_pose.position.x == 0.45
 
-    def test_solve_ik_rpc_returns_failure_without_joint_state(self, robot_config, module_factory):
-        """solve_ik reports a failed IKResult when no seed state is available."""
+    def test_inverse_kinematics_returns_failure_without_joint_state(
+        self, robot_config, module_factory
+    ):
+        """IK reports failure when no seed state is available."""
         module = module_factory()
         module.config.model = robot_config
-        module.config.model = robot_config
         module._world_monitor = MagicMock()
-        module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=[], position=[]
         )
         module._kinematics = MagicMock()
 
-        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
-        result = module.solve_ik(pose)
+        pose = PoseStamped(
+            frame_id="world", position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion()
+        )
+        result = module.inverse_kinematics({"manipulator": pose})
 
         assert result.status == IKStatus.NO_SOLUTION
         assert result.message == "No joint state"
         assert module._state == ManipulationState.IDLE
         module._kinematics.solve_pose_targets.assert_not_called()
 
-    def test_solve_ik_rpc_accepts_explicit_seed_without_current_state(
+    def test_inverse_kinematics_accepts_explicit_seed_without_current_state(
         self, robot_config, module_factory
     ):
-        """solve_ik succeeds with an explicit seed when no current state is available."""
+        """IK accepts an explicit seed without reading current telemetry."""
         module = module_factory()
         module.config.model = robot_config
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.world.get_model_config.return_value = robot_config
-        module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+        module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = None
         explicit_seed = JointState(name=robot_config.joint_names, position=[0.2, 0.1, 0.0])
+        pending_plan = GeneratedPlan(
+            group_ids=("manipulator",),
+            trajectory=JointTrajectory(joint_names=robot_config.joint_names),
+            path=[explicit_seed],
+            status=PlanningStatus.SUCCESS,
+        )
+        module._last_plan = pending_plan
+        module._state = ManipulationState.COMPLETED
         expected = IKResult(status=IKStatus.SUCCESS, joint_state=explicit_seed)
         module._kinematics = MagicMock()
         module._kinematics.solve_pose_targets.return_value = expected
 
-        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
-        result = module.solve_ik(pose, seed=explicit_seed)
+        pose = PoseStamped(
+            frame_id="world", position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion()
+        )
+        result = module.inverse_kinematics({"manipulator": pose}, seed=explicit_seed)
 
         assert result is expected
+        assert module._last_plan is pending_plan
+        assert module._state == ManipulationState.COMPLETED
         _, kwargs = module._kinematics.solve_pose_targets.call_args
         assert kwargs["seed"] is explicit_seed
         module._world_monitor.current_model_joint_state.assert_not_called()
@@ -664,7 +716,7 @@ class TestPlanningGroupApis:
     def test_list_planning_groups_and_model_info_include_groups(self, robot_config, module_factory):
         module = module_factory()
         module.config.model = robot_config
-        registry = PlanningGroupRegistry([robot_config])
+        registry = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor = MagicMock()
         module._world_monitor.planning_groups = registry
         module._init_joints = None
@@ -674,16 +726,16 @@ class TestPlanningGroupApis:
 
         assert [group.id for group in groups] == ["manipulator"]
         assert info["planning_groups"] == list(groups)
-        assert info["end_effector_link"] == "link_tcp"
+        assert info["planning_groups"][0].tip_frame == "link_tcp"
 
-    def test_plan_to_joint_targets_stores_generated_plan(self, robot_config, module_factory):
+    def test_generate_joint_plan_stores_generated_plan(self, robot_config, module_factory):
         module = module_factory()
         module.config.model = robot_config
-        registry = PlanningGroupRegistry([robot_config])
+        registry = PlanningGroupRegistry(robot_config.planning_groups)
         _enable_simple_parametrization(module)
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.world.get_model_config.return_value = robot_config
+        module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
         module._world_monitor.planning_groups = registry
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=["joint1", "joint2", "joint3"],
@@ -709,7 +761,7 @@ class TestPlanningGroupApis:
             message="ok",
         )
 
-        success = module.plan_to_joint_targets(
+        plan = module.generate_plan_to_joint_targets(
             {
                 "manipulator": JointState(
                     name=robot_config.joint_names,
@@ -718,7 +770,7 @@ class TestPlanningGroupApis:
             }
         )
 
-        assert success is True
+        assert plan is not None
         assert module._last_plan is not None
         assert module._last_plan.group_ids == ("manipulator",)
         assert module._last_plan.path == result_path
@@ -732,7 +784,7 @@ class TestPlanningGroupApis:
             "joint3",
         ]
 
-        success = module.plan_to_joint_targets(
+        plan = module.generate_plan_to_joint_targets(
             {
                 "manipulator": JointState(
                     name=robot_config.joint_names,
@@ -741,19 +793,17 @@ class TestPlanningGroupApis:
             }
         )
 
-        assert success is True
+        assert plan is not None
         assert module._planner.plan_selected_joint_path.call_count == 2
 
-    def test_plan_to_pose_targets_uses_group_ik_and_selected_path(
-        self, robot_config, module_factory
-    ):
+    def test_generate_pose_plan_uses_group_ik_and_selected_path(self, robot_config, module_factory):
         module = module_factory()
         module.config.model = robot_config
-        registry = PlanningGroupRegistry([robot_config])
+        registry = PlanningGroupRegistry(robot_config.planning_groups)
         _enable_simple_parametrization(module)
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.world.get_model_config.return_value = robot_config
+        module._world_monitor.world.get_prepared_model.return_value = _prepared_model(robot_config)
         module._world_monitor.planning_groups = registry
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=["joint1", "joint2", "joint3"],
@@ -781,9 +831,9 @@ class TestPlanningGroupApis:
         )
         pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
 
-        success = module.plan_to_pose_targets({"manipulator": pose})
+        plan = module.generate_plan_to_pose_targets({"manipulator": pose})
 
-        assert success is True
+        assert plan is not None
         module._kinematics.solve_pose_targets.assert_called_once()
         _, ik_kwargs = module._kinematics.solve_pose_targets.call_args
         target_groups = list(ik_kwargs["pose_targets"].keys())
@@ -801,7 +851,7 @@ class TestPlanningGroupApis:
     def test_failed_plan_materialization_clears_generated_plan(self, robot_config, module_factory):
         module = module_factory()
         module.config.model = robot_config
-        registry = PlanningGroupRegistry([robot_config])
+        registry = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
         module._world_monitor.planning_groups = registry
@@ -840,11 +890,11 @@ class TestPlanningGroupApis:
             ],
         )
 
-        success = module.plan_to_joint_targets(
+        plan = module.generate_plan_to_joint_targets(
             {"manipulator": JointState(position=[0.1, 0.2, 0.3])}
         )
 
-        assert success is False
+        assert plan is None
         assert module._state == ManipulationState.IDLE
         assert module._last_plan is None
         assert module.has_planned_path() is False
@@ -857,7 +907,7 @@ class TestPlanningGroupApis:
         module.config.model = model
         module._init_joints = JointState(name=model.joint_names, position=[0.1, -0.1])
         module._world_monitor = MagicMock(spec=WorldMonitor)
-        module._world_monitor.planning_groups = PlanningGroupRegistry([model])
+        module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
         module._world_monitor.current_group_joint_state.return_value = None
         module._world_monitor.get_group_ee_pose.return_value = None
 
@@ -873,7 +923,7 @@ class TestPlanningGroupApis:
         module = module_factory()
         module.config.model = model
         module._world_monitor = MagicMock(spec=WorldMonitor)
-        module._world_monitor.planning_groups = PlanningGroupRegistry([model])
+        module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
         module._world_monitor.get_group_ee_pose.side_effect = [
             PoseStamped(position=Vector3(0.4, 0.2, 0.3)),
             PoseStamped(position=Vector3(0.4, -0.2, 0.3)),
@@ -895,9 +945,39 @@ class TestPlanningGroupApis:
         ]
         publish.assert_called_once()
 
-    def test_pose_wrappers_fail_safely_without_unique_pose_group(
-        self, robot_config, module_factory
-    ):
+    def test_tf_loop_publishes_mount_edges_alongside_the_robot(
+        self, module_factory, mocker: MockerFixture
+    ) -> None:
+        """One publisher for the chain, so the mount is never stamped a period stale."""
+        model = _bimanual_config()
+        module = module_factory()
+        module.config.model = model
+        module.config.static_transforms = [
+            Transform(frame_id="left/tool", child_frame_id="camera_link")
+        ]
+        module._world_monitor = MagicMock(spec=WorldMonitor)
+        module._world_monitor.planning_groups = PlanningGroupRegistry(model.planning_groups)
+        module._world_monitor.get_group_ee_pose.return_value = PoseStamped(
+            position=Vector3(0.4, 0.2, 0.3)
+        )
+        publish = mocker.patch.object(module.tf, "publish")
+
+        def stop_after_first_iteration(_period: float) -> bool:
+            module._tf_stop_event.set()
+            return True
+
+        mocker.patch.object(module._tf_stop_event, "wait", side_effect=stop_after_first_iteration)
+        module._tf_stop_event.clear()
+        before = time.time()
+
+        module._tf_publish_loop()
+
+        published = list(publish.call_args.args[0])
+        mount = next(t for t in published if t.child_frame_id == "camera_link")
+        assert mount.frame_id == "left/tool"
+        assert mount.ts >= before
+
+    def test_get_ee_pose_fails_safely_without_pose_group(self, robot_config, module_factory):
         no_pose_config = RobotModelConfig(
             model=robot_config.model,
             base_pose=robot_config.base_pose,
@@ -914,21 +994,12 @@ class TestPlanningGroupApis:
         module = module_factory()
         module.config.model = no_pose_config
         module._world_monitor = MagicMock()
-        module._world_monitor.planning_groups = PlanningGroupRegistry([no_pose_config])
-        module._world_monitor.get_ee_pose.side_effect = ValueError("no pose group")
-        module._kinematics = MagicMock()
-
-        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
-
+        module._world_monitor.planning_groups = PlanningGroupRegistry(
+            no_pose_config.planning_groups
+        )
         assert module.get_ee_pose() is None
-        assert module.plan_to_pose(pose) is False
-        result = module.inverse_kinematics_single(pose)
-        assert result.status == IKStatus.NO_SOLUTION
-        assert "no unique pose-targetable planning group" in result.message
 
-    def test_pose_wrappers_fail_safely_with_multiple_pose_groups(
-        self, robot_config, module_factory
-    ):
+    def test_get_ee_pose_fails_safely_with_multiple_pose_groups(self, robot_config, module_factory):
         multi_pose_config = RobotModelConfig(
             model=robot_config.model,
             base_pose=robot_config.base_pose,
@@ -952,25 +1023,20 @@ class TestPlanningGroupApis:
         module = module_factory()
         module.config.model = multi_pose_config
         module._world_monitor = MagicMock()
-        module._world_monitor.planning_groups = PlanningGroupRegistry([multi_pose_config])
-        module._world_monitor.get_ee_pose.side_effect = ValueError("multiple pose groups")
-        module._kinematics = MagicMock()
-
-        pose = Pose(position=Vector3(x=0.45, y=0.0, z=0.25), orientation=Quaternion())
-
+        module._world_monitor.planning_groups = PlanningGroupRegistry(
+            multi_pose_config.planning_groups
+        )
         assert module.get_ee_pose() is None
-        assert module.plan_to_pose(pose) is False
-        result = module.inverse_kinematics_single(pose)
-        assert result.status == IKStatus.NO_SOLUTION
-        assert "2 pose-targetable planning groups" in result.message
 
-    def test_solve_ik_preserves_backend_failure_detail(self, robot_config, module_factory):
+    def test_inverse_kinematics_preserves_backend_failure_detail(
+        self, robot_config, module_factory
+    ):
         """IK diagnostics include the backend's human-readable failure message."""
         module = module_factory()
         module.config.model = robot_config
         module._world_monitor = MagicMock()
         module._world_monitor.world = MagicMock()
-        module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=robot_config.joint_names,
             position=[0.0, 0.0, 0.0],
@@ -980,10 +1046,11 @@ class TestPlanningGroupApis:
             status=IKStatus.NO_SOLUTION, message="target is outside the workspace"
         )
 
-        result = module.solve_ik(Pose(position=Vector3(), orientation=Quaternion()))
+        result = module.inverse_kinematics({"manipulator": PoseStamped(frame_id="world")})
 
         assert result.status == IKStatus.NO_SOLUTION
-        assert module.get_error() == "IK failed: NO_SOLUTION: target is outside the workspace"
+        assert result.message == "target is outside the workspace"
+        assert module.get_error() == ""
         assert module._state == ManipulationState.IDLE
 
 
@@ -993,7 +1060,7 @@ class TestPlanningDiagnostics:
         module = module_factory()
         module.config.model = robot_config
         module._world_monitor = MagicMock()
-        module._world_monitor.planning_groups = PlanningGroupRegistry([robot_config])
+        module._world_monitor.planning_groups = PlanningGroupRegistry(robot_config.planning_groups)
         module._world_monitor.current_model_joint_state.return_value = JointState(
             name=robot_config.joint_names,
             position=[0.0, 0.0, 0.0],
@@ -1018,6 +1085,30 @@ class TestPlanningDiagnostics:
 
 class TestExecute:
     """Test coordinator execution."""
+
+    def test_replaced_plan_is_not_dispatched_or_consumed(self, module_factory):
+        module = module_factory()
+        config = _one_joint_config()
+        _install_generated_plan(module, config, [0.0], [0.1])
+        original = pickle.loads(pickle.dumps(module._last_plan))
+        _install_generated_plan(module, config, [0.0], [0.2])
+        replacement = module._last_plan
+        coordinator = _control_coordinator()
+        module._control_coordinator = coordinator
+        module._initialize_execution()
+
+        result = module.execute(plan_id=original.plan_id, blocking=False)
+
+        assert result.status is ExecutionStatus.REJECTED
+        coordinator.execute_trajectory.assert_not_called()
+        assert module._last_plan is replacement
+        assert (
+            module.execute(
+                plan_id=pickle.loads(pickle.dumps(replacement)).plan_id, blocking=False
+            ).status
+            is ExecutionStatus.ACCEPTED
+        )
+        coordinator.execute_trajectory.assert_called_once()
 
     def test_execute_requires_trajectory(self, robot_config, module_factory):
         """Execute fails without planned trajectory."""

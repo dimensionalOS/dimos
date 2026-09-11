@@ -14,7 +14,7 @@
 
 """End-to-end tests for the ControlCoordinator.
 
-These tests start a real coordinator process and communicate via LCM/RPC.
+These tests start a real coordinator process and communicate over the active transport.
 Unlike unit tests, these verify the full system integration.
 """
 
@@ -38,11 +38,9 @@ class TestControlCoordinatorE2E:
 
     def test_coordinator_starts_and_responds_to_rpc(self, lcm_spy, start_blueprint) -> None:
         """Test that coordinator starts and responds to RPC queries."""
-        # Save topics we care about (LCM topics include type suffix)
+        # Save topics we care about (topic names carry the type suffix)
         joint_state_topic = "/coordinator_joint_state#sensor_msgs.JointState"
         lcm_spy.save_topic(joint_state_topic)
-        lcm_spy.save_topic("/rpc/ControlCoordinator/list_joints/res")
-        lcm_spy.save_topic("/rpc/ControlCoordinator/list_tasks/res")
 
         # Start the mock coordinator blueprint
         start_blueprint("coordinator-mock")
