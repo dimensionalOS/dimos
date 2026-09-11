@@ -181,26 +181,13 @@ Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
 misc = [
-    # Developer Specific
     "ipykernel",
-
-    # Perception Dependencies
-    "timm>=1.0.15",  # runtime backbone for the EdgeTAM/sam2 segmentation config
-    "edgetam-dimos>=1.0.1",
-
-    # embedding models
+    # Embedding models and their undeclared runtime imports.
     "open_clip_torch==3.2.0",
     "torchreid==0.2.5",
-    # torchreid's setup.py omits these but its package __init__ imports them at load:
-    # `data` -> gdown, `engine` -> torch.utils.tensorboard.
     "gdown>=5.2.2",
     "tensorboard==2.20.0",
-
-    # Mapping
     "googlemaps>=4.10.0",
-
-    # Hardware SDKs
-    "xarm-python-sdk>=1.17.0",
     "portal",
 ]
 
@@ -242,6 +229,7 @@ agents = [
 
 web = [
     "fastapi>=0.115.6",
+    "python-socketio>=5.16.1",  # WebsocketVisModule, also imported by Quest visualization
     "python-multipart>=0.0.27",
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
@@ -252,6 +240,8 @@ web = [
 ]
 
 perception = [
+    "timm>=1.0.15",  # runtime backbone for the EdgeTAM/sam2 segmentation config
+    "edgetam-dimos>=1.0.1",
     "ultralytics>=8.3.70",
     "Pillow",
     "lap>=0.5.12",
@@ -280,32 +270,35 @@ unitree-dds = [
     "mcap>=1.2.0",  # decode Go2 DDS mcap recordings (go2 dds store)
 ]
 
-manipulation = [
-    # Planning (Drake)
-    "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
-    "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
-
-    # Hardware SDKs
+# Coordinators, arm hardware adapters, and keyboard/Cartesian control.
+control = [
     "piper-sdk",
     "xarm-python-sdk>=1.17.0",
     "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "can-motor-control>=0.0.8",
+    "python-can>=4",
+    "pygame>=2.6.1",
+    "xacro",
+]
 
-    "can-motor-control>=0.0.8; sys_platform == 'linux' or sys_platform == 'darwin'",
-
+# Motion planning and its interactive visualization, without perception or agents.
+planning = [
+    "dimos[control]",
+    "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
+    "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
+    "roboplan>=0.6.0,<0.7.0",
     # Mesh conversion (STL/DAE → OBJ for Drake collision geometry)
     "trimesh",
     "pycollada",
-
-    # Visualization (Optional)
-    "pygame>=2.6.1",
     "viser[urdf]>=1.0.29",
     "yourdfpy>=0.0.60",
-    "xacro",
-
-    # Other
     "matplotlib>=3.7.1",
     "pyyaml>=6.0",
-    "roboplan>=0.6.0,<0.7.0",
+]
+
+# Complete manipulation workflow: control, planning, perception, agents, and simulation.
+manipulation = [
+    "dimos[planning,base,sim,cpu]",
 ]
 
 cpu = [
@@ -387,7 +380,7 @@ graspgenx = [
 ]
 
 all = [
-    "dimos[agents,apriltag,base,cpu,cuda,drone,manipulation,misc,perception,scene,sim,unitree,visualization,web,webrtc]",
+    "dimos[apriltag,cuda,drone,manipulation,misc,scene,unitree,webrtc]",
 ]
 
 [dependency-groups]
@@ -420,7 +413,7 @@ project-deps = [
     "langchain-openai>=1,<2",
     "ollama>=0.6.0",
     # The generic Damiao whole-body adapter imports upstream types directly.
-    "can-motor-control>=0.0.8; sys_platform == 'linux' or sys_platform == 'darwin'",
+    "can-motor-control>=0.0.8",
 ]
 
 tests = [
@@ -502,7 +495,7 @@ lint = [
 # GPU, ROS-dependent integration tests, simulation).
 tests-self-hosted = [
     {include-group = "tests"},
-    "dimos[agents,perception,manipulation,sim,unitree,misc]",
+    "dimos[manipulation,misc,unitree]",
     # go2 dds store tests decode mcap (pure-Python). The full `unitree-dds` extra
     # pulls `cyclonedds`, whose wheel needs a CycloneDDS C lib the ros-dev image
     # doesn't expose to the build — and these tests never open a live DDS link.
