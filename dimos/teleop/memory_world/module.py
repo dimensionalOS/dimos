@@ -169,11 +169,11 @@ class MemoryWorldConfig(ModuleConfig):
     world_frame: str = "world"
     # The image stream's own frame_id by default.
     camera_optical_frame: str | None = None
-    # HACK for the cart recordings (grocery/bike/park, 2026-09-11): their tf rolls
-    # the camera 30-50 degrees about its view axis, varying over the run, so every
-    # picture hangs askew against a level world. The pictures themselves are level,
-    # so the roll is wrong, not the camera. This keeps tf's view direction and takes
-    # the roll from the world instead. Set False once the recordings publish tf right.
+    # A stopgap for recordings whose tf rolls the camera about its view axis, which
+    # hangs every picture askew against a level world: this keeps tf's view direction
+    # and takes the roll from the world. It stands down by itself on a recording that
+    # carries a measured mount (calibrate_static_tf), where the roll left over is the
+    # robot really leaning and flattening it would be the lie. Set False to never level.
     camera_level_roll: bool = True
     # A lookup fails when the nearest tf sample is further away than this.
     tf_tolerance_s: float = PydanticField(default=0.1, gt=0.0)
@@ -1024,7 +1024,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 index_stream_name=self.config.image_index_stream_name,
                 model_name=self.config.siglip_model_name,
                 world_frame=self.config.world_frame,
-                level_roll=self.config.camera_level_roll,
+                level_roll=self._level_roll(),
             )
         return self._visual_index
 
@@ -1418,8 +1418,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
 
         From tf at the image's stamp (plus ``camera_time_offset_s``); without a
         tf stream, from the body pose stamped on the image, turned into the
-        optical convention. ``camera_level_roll`` applies to both, so markers,
-        replay pictures and search evidence never disagree about roll.
+        optical convention. ``_level_roll`` applies to both, so markers, replay
+        pictures and search evidence never disagree about roll.
         """
         if self._tf_tree() is not None:
             world_T_optical = self._frame_pose_at(
@@ -1433,9 +1433,20 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 tuple(pose[:3]), tuple(pose[3:7]) if len(pose) >= 7 else (0, 0, 0, 1)
             )
             world_T_optical = np.asarray(body @ OPTICAL_FROM_BODY)
-        if world_T_optical is None or not self.config.camera_level_roll:
+        if world_T_optical is None or not self._level_roll():
             return world_T_optical
         return level_camera_roll(np.asarray(world_T_optical))
+
+    def _level_roll(self) -> bool:
+        """Whether to take the camera's roll from the world rather than from tf.
+
+        Only where tf is still wrong about it: on a recording whose mount has been
+        measured the leftover roll is the robot really leaning, and that roll is real.
+        """
+        if not self.config.camera_level_roll:
+            return False
+        tree = self._tf_tree()
+        return tree is None or not getattr(tree, "corrected_static", False)
 
     @property
     def whisper(self) -> Any:

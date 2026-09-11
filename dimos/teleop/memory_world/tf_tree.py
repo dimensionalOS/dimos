@@ -185,6 +185,9 @@ class TfTree:
         # (world, odometry stream) once recording.build_tf_tree has replaced the
         # world -> base_link edge with corrected poses; the ingest follows it.
         self.substituted: tuple[str, str] | None = None
+        # True once a measured mount has replaced the recorded one; see
+        # calibrate_static_tf. The roll workaround stands down when it has.
+        self.corrected_static = False
 
     @classmethod
     def from_stream(cls, stream: Iterable[Any]) -> TfTree:

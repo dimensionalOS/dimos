@@ -518,6 +518,7 @@ def build_tf_tree(
                     (float(q.x), float(q.y), float(q.z), float(q.w)),
                     static=True,
                 )
+                tree.corrected_static = True  # the roll workaround stands down now
                 logger.info(
                     "tf: %s -> %s from %r", t.frame_id, t.child_frame_id, CORRECTED_STATIC_STREAM
                 )
