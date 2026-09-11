@@ -92,13 +92,6 @@ def _tf_to_rerun(tf_message: TFMessage) -> RerunData:
 
 
 def _camera_info_pinhole(camera_info: CameraInfo, origin: Callable[[str], str]) -> RerunData | None:
-    """Re-emit a shared CameraInfo onto its camera's image entity as a Pinhole.
-
-    The Pinhole names no ``parent_frame``: the camera entity takes its pose
-    from the entity above it, which :class:`_ImageBakedIntoAnchor` sets to the
-    camera's pose at capture time. A named parent frame would override that
-    and hang the pixels off the live tf instead.
-    """
     suffix = _OPTICAL_FRAME_TO_SUFFIX.get(camera_info.frame_id)
     if suffix is None:
         return None
