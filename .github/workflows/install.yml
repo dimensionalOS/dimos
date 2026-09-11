@@ -59,7 +59,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Install and verify
-        run: bash scripts/test-install.sh '${{ matrix.mode }}'
+        run: |
+          # checkout's safe.directory setting uses a temporary HOME. The
+          # container's later steps need to trust this mounted checkout too.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/.git"
+          bash scripts/test-install.sh '${{ matrix.mode }}'
       - uses: actions/upload-artifact@v7
         if: always()
         with:
