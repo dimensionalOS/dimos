@@ -219,8 +219,9 @@ export async function startRelay(options: RelayOptions = {}): Promise<RelayHandl
   async function handleHttp(req: Request): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === "/api/info") {
+      // The base, like the ready line: clients append /robot or /viewer.
       return Response.json({
-        wtUrl: `${wtUrl}/viewer`,
+        wtUrl,
         certHash: cert.certHashB64,
         v: PROTOCOL_VERSION,
       }, { headers: LOCAL_CORS });

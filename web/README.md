@@ -92,6 +92,11 @@ pass that base to `connect({url})` - from another local origin or straight from 
 supported browsers permit WebTransport there; `dimos/e2e_tests/test_sdk_browser.py` pins all three
 forms).
 
+A relay started by hand (`deno task dev` above) takes robots through `--relay-url`, given the
+relay's HTTP URL (`http://127.0.0.1:7780`): the bridge fetches `/api/info` on every connect, exactly
+like the SDK, so a relay restart (new QUIC port, new ephemeral certificate) is transparent to it.
+`docs/usage/web_sdk.md` has the recipe.
+
 ## Cockpit
 
 ```bash
