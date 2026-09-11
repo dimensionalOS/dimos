@@ -57,9 +57,22 @@ def yes_no(text: str) -> str:
     raise ValueError(f"not a yes/no reply: {text[:80]!r}")
 
 
-def choice(text: str) -> str:
-    """Normalize a multiple-choice reply for exact comparison."""
-    return text.strip().lower().rstrip(".")
+def choice(options: Sequence[str]) -> Callable[[str], str]:
+    """Parser for a multiple-choice reply: the last option the model names, so
+    that reasoning before the answer does not decide it. Longest option first,
+    so "northeast" wins over "north"."""
+    import re
+
+    pattern = re.compile(r"\b(" + "|".join(sorted(options, key=len, reverse=True)) + r")\b", re.I)
+
+    def parse(text: str) -> str:
+        # "north-west" must read as northwest, not as west.
+        found = pattern.findall(re.sub(r"(?<=[A-Za-z])-(?=[A-Za-z])", "", text))
+        if not found:
+            raise ValueError(f"no option from {list(options)} in reply: {text[:80]!r}")
+        return str(found[-1]).lower()
+
+    return parse
 
 
 def within(band: float) -> Callable[[float, float], float]:
@@ -90,7 +103,7 @@ def judge(rubric: str, *, model: str = "openai:gpt-5.6-luna") -> Callable[[str, 
     return _score
 
 
-# -- aggregates for interactive score series -------------------------------------
+# -- reducers over a series (e.g. a score per recorded pose) --------------------------
 
 
 def final(scores: Sequence[float]) -> float:

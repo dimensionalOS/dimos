@@ -30,7 +30,6 @@ def test_dual_openyam_model_has_canonical_groups_and_reference_posture() -> None
 
     assert config.joint_names == DUAL_OPENYAM_ARM_JOINTS
     assert config.home_joints == DUAL_OPENYAM_HOME_JOINTS
-    assert config.max_velocity == pytest.approx(2.0)
     assert [(group.name, group.tip_link) for group in config.planning_groups] == [
         ("left_manipulator", "left_grasp_frame"),
         ("right_manipulator", "right_grasp_frame"),

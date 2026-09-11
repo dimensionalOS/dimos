@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { SessionStatus } from "@dimos/sdk";
+import type { PageTab } from "../layout/PageView.tsx";
 import { StatusBar, type View } from "./StatusBar.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -35,13 +36,29 @@ describe("StatusBar", () => {
     container.remove();
   });
 
-  function render(status: SessionStatus, onViewChange: (view: View) => void = () => {}) {
-    act(() => root.render(<StatusBar status={status} view="panels" onViewChange={onViewChange} />));
+  type Props = Parameters<typeof StatusBar>[0];
+
+  function render(status: SessionStatus, over: Partial<Props> = {}) {
+    act(() =>
+      root.render(
+        <StatusBar
+          status={status}
+          view="panels"
+          onViewChange={() => {}}
+          pages={[]}
+          page={null}
+          onPageChange={() => {}}
+          {...over}
+        />,
+      )
+    );
   }
 
   function testId(id: string): Element {
     return container.querySelector(`[data-testid="${id}"]`)!;
   }
+
+  const STATS: PageTab[] = [{ id: "st", label: "Stats" }];
 
   it("shows the transport phase and the picked robot", () => {
     render(makeStatus({ watchedRobot: { id: "a", name: "Go2", model: "go2" } }));
@@ -82,10 +99,36 @@ describe("StatusBar", () => {
 
   it("offers the panels and channels views and reports the pick", () => {
     const picks: View[] = [];
-    render(makeStatus(), (v) => picks.push(v));
+    render(makeStatus(), { onViewChange: (v) => picks.push(v) });
     expect(testId("view-panels").getAttribute("aria-selected")).toBe("true");
     expect(testId("view-channels").getAttribute("aria-selected")).toBe("false");
     act(() => (testId("view-channels") as HTMLElement).click());
     expect(picks).toEqual(["channels"]);
+  });
+
+  it("renders Overview plus the page tabs, marks the open one and reports the pick", () => {
+    const picks: (string | null)[] = [];
+    render(makeStatus(), { pages: STATS, page: "st", onPageChange: (id) => picks.push(id) });
+    expect(testId("tab-overview").textContent).toBe("Overview");
+    expect(testId("tab-overview").getAttribute("aria-selected")).toBe("false");
+    expect(testId("tab-page-st").textContent).toBe("Stats");
+    expect(testId("tab-page-st").getAttribute("aria-selected")).toBe("true");
+    act(() => (testId("tab-overview") as HTMLElement).click());
+    expect(picks).toEqual([null]);
+  });
+
+  it("renders no page tabs without pages, and marks none open in the channels view", () => {
+    render(makeStatus());
+    expect(container.querySelector('[data-testid="tab-overview"]')).toBeNull();
+    render(makeStatus(), { pages: STATS, page: "st", view: "channels" });
+    expect(testId("tab-page-st").getAttribute("aria-selected")).toBe("false");
+    expect(testId("tab-overview").getAttribute("aria-selected")).toBe("false");
+  });
+
+  it("does not collide with a manifest page named overview", () => {
+    render(makeStatus(), { pages: [{ id: "overview", label: "Page" }], page: "overview" });
+    expect(container.querySelectorAll('[data-testid="tab-overview"]')).toHaveLength(1);
+    expect(testId("tab-overview").getAttribute("aria-selected")).toBe("false");
+    expect(testId("tab-page-overview").getAttribute("aria-selected")).toBe("true");
   });
 });

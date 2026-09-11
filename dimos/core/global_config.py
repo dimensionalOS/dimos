@@ -127,6 +127,8 @@ class GlobalConfig(BaseSettings):
     dimsim_headless: bool = True
     local_relay: bool = False
     relay_url: str | None = None
+    """HTTP URL of a relay started elsewhere (e.g. http://localhost:7780); the
+    bridge discovers its WebTransport endpoint through /api/info."""
     dimos_cloud_url: str = "https://api.dimensional.org"
     dimos_api_key: str | None = None
     dimos_upload_codec: str = "lz4"

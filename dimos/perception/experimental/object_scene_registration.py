@@ -175,7 +175,7 @@ class ObjectSceneRegistrationModule(Module):
                 return EdgeTAMImageSegmenter()
             except ModuleNotFoundError as e:
                 raise ModuleNotFoundError(
-                    "EdgeTAM requires the optional dependencies from dimos[misc]"
+                    "EdgeTAM requires the optional dependencies from dimos[perception]"
                 ) from e
         return None
 

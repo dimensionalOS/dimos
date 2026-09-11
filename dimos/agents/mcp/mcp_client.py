@@ -52,7 +52,7 @@ logger = setup_logger()
 _RESPONSES_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 
-def _init_model(model_name: str, trace_dir: Path | None = None) -> Any:
+def init_model(model_name: str, trace_dir: Path | None = None) -> Any:
     """Initialize a model while preserving LangChain provider resolution.
 
     With *trace_dir*, every request/response body goes to disk whole
@@ -96,6 +96,7 @@ class McpClient(Module):
     _lock: RLock
     _state_graph: CompiledStateGraph[Any, Any, Any, Any] | None
     _message_queue: Queue[BaseMessage]
+    _agent_tools: list[StructuredTool] | None
     _tool_registry: dict[str, dict[str, Any]]
     _history: list[BaseMessage]
     _thread: Thread
@@ -109,6 +110,7 @@ class McpClient(Module):
         self._lock = RLock()
         self._state_graph = None
         self._message_queue = Queue()
+        self._agent_tools = None
         self._tool_registry = {}
         self._history = []
         self._thread = Thread(
@@ -249,26 +251,29 @@ class McpClient(Module):
 
     @rpc
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
+        self._agent_tools = self._fetch_tools()
+        self._rebuild_agent()
+        with self._lock:
+            if not self._thread.is_alive():
+                self._thread.start()
+
+    def _rebuild_agent(self) -> None:
         # ~2s: pulls transformers+torch; deferred to keep module import light.
         from langchain.agents import create_agent
 
-        tools = self._fetch_tools()
-
-        if self.config.model_fixture is not None:
-            from dimos.agents.testing.mock_model import MockModel
-
-            model = MockModel(json_path=self.config.model_fixture)
-        else:
-            model = _init_model(self.config.model, trace_dir=self.trace_dir())
-
+        # Under the lock, or a concurrent set_trace_dir can lose its path to this build.
         with self._lock:
+            if self.config.model_fixture is not None:
+                from dimos.agents.testing.mock_model import MockModel
+
+                model = MockModel(json_path=self.config.model_fixture)
+            else:
+                model = init_model(self.config.model, trace_dir=self.config.trace_dir)
             self._state_graph = create_agent(
                 model=model,
-                tools=tools,
+                tools=self._agent_tools or [],
                 system_prompt=self.config.system_prompt,
             )
-            if not self._thread.is_alive():
-                self._thread.start()
 
     @rpc
     def stop(self) -> None:
@@ -287,6 +292,15 @@ class McpClient(Module):
     def trace_dir(self) -> Path | None:
         """Where raw LLM request/response bodies go; ``None`` when tracing is off."""
         return self.config.trace_dir
+
+    @rpc
+    def set_trace_dir(self, path: str | None) -> None:
+        """Point raw LLM capture at *path* and rebuild the model to pick it
+        up; ``None`` turns tracing off."""
+        with self._lock:
+            self.config.trace_dir = Path(path) if path is not None else None
+            if self._state_graph is not None:
+                self._rebuild_agent()
 
     @rpc
     def add_message(self, message: BaseMessage) -> None:
