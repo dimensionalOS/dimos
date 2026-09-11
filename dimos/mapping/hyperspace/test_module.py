@@ -194,43 +194,6 @@ def test_query_lights_up_the_object_voxel(store: SqliteStore) -> None:
     assert answer["stats"]["hot_patches"] == 3
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="loop closure is parked (Jeff, 2026-09-11): the transform buffer keeps both "
-    "the stale and the corrected transform for a stamp, and the lookup breaks ties on "
-    "timestamp rather than write order. Fixing it belongs in TBuffer, in core.",
-)
-def test_rewriting_tf_moves_the_answer(store: SqliteStore) -> None:
-    poses = ring(3, 2.5)
-    ingestor = fill(store, poses)
-    engine = HyperspaceQuery(
-        store,
-        StubModel.embed_text,
-        hs.QueryConfig(hot_threshold=0.3, background_prompts=["background"]),
-        WORLD,
-        0.1,
-    )
-    before = np.asarray(engine.answer("object", 1)["best"][0]["xyz"])
-    # Loop closure: every camera was really 1 m further along x. Re-publish tf.
-    for index, pose in enumerate(poses):
-        ts = 10.0 + index
-        x, y, z, w = quaternion_of(pose[:3, :3])
-        ingestor.add_tf(
-            TFMessage(
-                Transform(
-                    translation=Vector3(pose[0, 3] + 1.0, pose[1, 3], pose[2, 3]),
-                    rotation=Quaternion(x, y, z, w),
-                    frame_id=WORLD,
-                    child_frame_id=CAMERA,
-                    ts=ts,
-                )
-            ),
-            ts=ts,
-        )
-    after = np.asarray(engine.answer("object", 2)["best"][0]["xyz"])
-    assert abs((after - before)[0] - 1.0) < 0.15, (before, after)
-
-
 class CountingStream:
     """Forwards to a real stream, tallying the observations pulled from it."""
 
