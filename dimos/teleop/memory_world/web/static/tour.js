@@ -418,6 +418,12 @@ export class Tour {
         if (this._saved) {
             if (this.heatmap) this.heatmap.setVisible(this._saved.heat);
             if (this.pyramids) this.pyramids.setVisible(this._saved.pyramids);
+            // The photos too, through the toggle so the layer box follows.
+            if (this.scene._imageQuadGroup.visible !== this._saved.photos) this.scene.toggleImages();
+            for (const [id, on] of [['layerHeat', this._saved.heat], ['layerPyramids', this._saved.pyramids]]) {
+                const box = document.getElementById(id);
+                if (box) box.checked = on;
+            }
             this.scene.setQuality(this._saved.quality ?? null);
             this.scene._hudGroup.visible = this._saved.hud;
         }
