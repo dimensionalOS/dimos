@@ -45,7 +45,9 @@ def depth_info_stream_for(streams: set[str], depth_stream: str, camera_info: str
     return candidate if candidate in streams else camera_info
 
 
-def ingest_command(recording: str | Path, *, model_name: str, device: str, hz: float) -> list[str]:
+def ingest_command(
+    recording: str | Path, *, model_name: str, device: str, hz: float, novelty: float = 0.02
+) -> list[str]:
     """The subprocess that runs this module on *recording*, with the current interpreter."""
     return [
         sys.executable,
@@ -58,6 +60,8 @@ def ingest_command(recording: str | Path, *, model_name: str, device: str, hz: f
         device,
         "--hz",
         str(hz),
+        "--novelty",
+        str(novelty),
     ]
 
 
@@ -69,6 +73,7 @@ def ingest_recording(
     hz: float = 5.0,
     max_seconds: float = 1e9,
     max_depth_m: float = 10.0,
+    novelty: float = 0.02,
 ) -> dict[str, Any]:
     """Embed *recording*'s keyframes into its Hyperspace memory db. Returns the ingest stats."""
     from dimos.mapping.hyperspace import patches as hs
@@ -113,7 +118,11 @@ def ingest_recording(
             tf_stream=detected["tf"],
             hz=hz,
             max_seconds=max_seconds,
-            config=IngestConfig(gate=hs.KeyframeGateConfig(), max_depth_m=max_depth_m),
+            # A lower novelty threshold than Hyperspace's 0.05 keeps consecutive keyframes,
+            # which its "support" refinement needs (two keyframes agreeing on a voxel).
+            config=IngestConfig(
+                gate=hs.KeyframeGateConfig(novelty_threshold=novelty), max_depth_m=max_depth_m
+            ),
         )
     finally:
         for obj in (model, memory, store):
@@ -140,6 +149,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--max-seconds", type=float, default=1e9)
     parser.add_argument("--max-depth", type=float, default=10.0)
+    parser.add_argument(
+        "--novelty", type=float, default=0.02, help="keyframe gate novelty threshold"
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     ingest_recording(
@@ -149,6 +161,7 @@ def main(argv: list[str] | None = None) -> None:
         hz=args.hz,
         max_seconds=args.max_seconds,
         max_depth_m=args.max_depth,
+        novelty=args.novelty,
     )
 
 
