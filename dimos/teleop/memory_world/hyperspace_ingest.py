@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Iterator
+import fcntl
 import heapq
 import logging
 import os
@@ -77,43 +78,29 @@ def ingest_command(
     ]
 
 
-def _owner_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)  # signal 0 only asks
-    except ProcessLookupError:
-        return False
-    except PermissionError:  # someone else's process, but a live one
-        return True
-    return True
-
-
-def _claim(lock_path: Path, recording: Path) -> Path:
+def _claim(lock_path: Path, recording: Path) -> int:
     """Claim this recording's ingest, or say who holds it.
 
-    The claim carries the holder's pid: a run that was killed outright (the module
-    stops its ingest with SIGTERM) cannot release it, and without this every later
-    ingest of that recording would be refused for ever.
+    An OS lock, not a file's existence. The module stops its ingest with SIGTERM,
+    and a run killed outright cannot release anything it wrote, but the kernel
+    drops a flock the moment the process dies -- so a dead owner never locks the
+    recording out, and no pid has to be guessed at. The file itself is left behind
+    on purpose: deleting it would let the next run lock a fresh inode and ingest
+    alongside the first. The returned descriptor holds the lock until it closes.
     """
-    for attempt in (1, 2):
-        try:
-            handle = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            try:
-                owner = lock_path.read_text().strip()
-            except OSError:  # it went away between the open and the read
-                continue
-            if attempt == 1 and not (owner.isdigit() and _owner_alive(int(owner))):
-                logger.warning("taking over the ingest claim of pid %s, which is gone", owner)
-                lock_path.unlink(missing_ok=True)
-                continue
-            raise SystemExit(
-                f"another ingest of {recording.name} is running (pid {owner or 'unknown'},"
-                f" {lock_path}); wait for it, or delete that file"
-            ) from None
-        os.write(handle, str(os.getpid()).encode())
+    handle = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        owner = os.read(handle, 32).decode(errors="replace").strip()
         os.close(handle)
-        return lock_path
-    raise SystemExit(f"could not claim the ingest of {recording.name} ({lock_path})")
+        raise SystemExit(
+            f"another ingest of {recording.name} is running (pid {owner or 'unknown'},"
+            f" {lock_path}); wait for it, or stop that process"
+        ) from None
+    os.ftruncate(handle, 0)
+    os.write(handle, str(os.getpid()).encode())  # only ever read for the message above
+    return handle
 
 
 def ingest_recording(
@@ -139,7 +126,7 @@ def ingest_recording(
     recording = Path(recording)
     opened: list[Any] = []  # stopped in reverse, however far the setup got
     building: Path | None = None  # the db under construction, dropped unless published
-    held_lock: Path | None = None  # our claim on this recording's ingest
+    held_lock: int | None = None  # the descriptor holding our claim on this ingest
     published = False
     memory_path = memory_db_for(recording)
     # Two runs would share the staging db below and publish each other's half of it,
@@ -222,7 +209,7 @@ def ingest_recording(
             for suffix in ("", "-wal", "-shm"):
                 building.with_name(building.name + suffix).unlink(missing_ok=True)
         if held_lock is not None:
-            held_lock.unlink(missing_ok=True)
+            os.close(held_lock)  # releases the flock; the file stays for the next run
     summary: dict[str, Any] = {**stats, "seconds": round(time.monotonic() - started, 1)}
     print(f"done: {summary}", flush=True)
     return summary

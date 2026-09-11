@@ -1418,20 +1418,24 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
 
         From tf at the image's stamp (plus ``camera_time_offset_s``); without a
         tf stream, from the body pose stamped on the image, turned into the
-        optical convention.
+        optical convention. ``camera_level_roll`` applies to both, so markers,
+        replay pictures and search evidence never disagree about roll.
         """
         if self._tf_tree() is not None:
             world_T_optical = self._frame_pose_at(
                 self._camera_frame(), float(obs.ts) + self.config.camera_time_offset_s
             )
-            if world_T_optical is None or not self.config.camera_level_roll:
-                return world_T_optical
-            return level_camera_roll(np.asarray(world_T_optical))
-        pose = getattr(obs, "pose_tuple", None)
-        if pose is None:
-            return None
-        body = pose_matrix(tuple(pose[:3]), tuple(pose[3:7]) if len(pose) >= 7 else (0, 0, 0, 1))
-        return np.asarray(body @ OPTICAL_FROM_BODY)
+        else:
+            pose = getattr(obs, "pose_tuple", None)
+            if pose is None:
+                return None
+            body = pose_matrix(
+                tuple(pose[:3]), tuple(pose[3:7]) if len(pose) >= 7 else (0, 0, 0, 1)
+            )
+            world_T_optical = np.asarray(body @ OPTICAL_FROM_BODY)
+        if world_T_optical is None or not self.config.camera_level_roll:
+            return world_T_optical
+        return level_camera_roll(np.asarray(world_T_optical))
 
     @property
     def whisper(self) -> Any:

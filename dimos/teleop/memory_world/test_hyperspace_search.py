@@ -14,9 +14,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import sqlite3
 
 import numpy as np
+import pytest
 
 from dimos.teleop.memory_world.hyperspace_search import (
     Cluster,
@@ -30,6 +32,25 @@ from dimos.teleop.memory_world.hyperspace_search import (
 def _blob(origin: tuple[int, int, int], size: int) -> list[tuple[int, int, int]]:
     ox, oy, oz = origin
     return [(ox + i, oy + j, oz + k) for i in range(size) for j in range(size) for k in range(size)]
+
+
+def test_only_one_ingest_at_a_time_holds_the_claim(tmp_path: Path) -> None:
+    """The claim is an OS lock, so a run killed outright (the module stops an ingest
+    with SIGTERM) releases it, and a leftover lock file never blocks the next run."""
+    import os
+
+    from dimos.teleop.memory_world.hyperspace_ingest import _claim
+
+    lock = tmp_path / "rec.hyperspace.db.building.lock"
+    recording = tmp_path / "rec.db"
+    held = _claim(lock, recording)
+    assert lock.read_text().strip() == str(os.getpid())  # ours, and it says who
+    with pytest.raises(SystemExit, match="another ingest"):
+        _claim(lock, recording)  # a second run is turned away while we hold it
+
+    os.close(held)  # what a dying process gets for free from the kernel
+    assert lock.exists()  # the file stays: a fresh inode would not be locked
+    os.close(_claim(lock, recording))
 
 
 def test_ingest_command_names_only_the_streams_the_module_chose() -> None:

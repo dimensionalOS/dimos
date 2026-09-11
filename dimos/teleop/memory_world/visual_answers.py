@@ -90,7 +90,10 @@ class VisualAnswers:
             index = self._ensure_visual_index()
             try:
                 existing = index.count()
-            except Exception as error:  # another model, camera, pose convention or frame
+            except ValueError as mismatch:  # another model, camera, pose convention or frame
+                logger.warning("visual index will be rebuilt: %s", mismatch)
+                existing = 0  # build() drops the stale rows once it has vectors to replace them
+            except Exception as error:
                 self._index_progress = f"failed: {error}"
                 logger.exception("visual index unusable")
                 return

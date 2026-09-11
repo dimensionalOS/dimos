@@ -557,13 +557,11 @@ class VisualMemoryIndex:
         from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
         try:
-            target = self.index_stream
+            target: Any | None = self.index_stream
+            stale = ""
         except ValueError as mismatch:  # another model, camera or pose convention
-            logger.warning("dropping %r and rebuilding: %s", self.index_stream_name, mismatch)
-            self.store.delete_stream(self.index_stream_name)
-            self._index_stream = None
-            target = self.index_stream
-        already_indexed = {obs.data.source_id for obs in target}
+            target, stale = None, str(mismatch)  # dropped below, once vectors replace it
+        already_indexed = set() if target is None else {obs.data.source_id for obs in target}
         wanted = (
             (obs, pose)
             for index, (obs, pose) in enumerate(self._posed_frames())
@@ -580,6 +578,11 @@ class VisualMemoryIndex:
                     dict(self.model._processor(images=pil_images, return_tensors="pt"))
                 )
                 embeddings = per_patch_embeddings(self.model, inputs["pixel_values"])
+            if target is None:  # the replacement is in hand now, so the stale rows can go
+                logger.warning("dropping %r and rebuilding: %s", self.index_stream_name, stale)
+                self.store.delete_stream(self.index_stream_name)
+                self._index_stream = None
+                target = self.index_stream
             for (obs, matrix), patches in zip(batch, embeddings, strict=True):
                 target.append(
                     PatchGrid(
