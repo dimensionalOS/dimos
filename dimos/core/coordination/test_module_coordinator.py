@@ -374,6 +374,19 @@ def test_name_conflicts_are_reported() -> None:
         assert "Data2 in ModuleB" in error_message
 
 
+def test_subclass_on_a_base_typed_port_is_not_a_conflict() -> None:
+    class Data1Stamped(Data1):
+        pass
+
+    class Producer(Module):
+        shared_data: Out[Data1Stamped]
+
+    class Consumer(Module):
+        shared_data: In[Data1]
+
+    _verify_no_name_conflicts(autoconnect(Producer.blueprint(), Consumer.blueprint()))
+
+
 def test_multiple_name_conflicts_are_reported() -> None:
     class Module1(Module):
         sensor_data: Out[Data1]
