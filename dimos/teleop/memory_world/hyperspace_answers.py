@@ -530,8 +530,10 @@ class HyperspaceAnswers:
                 return self._orbit_cache[frame]
             try:
                 index = self._replay_index_json()
-            except RuntimeError as error:  # a build holds the replay: 503, like its routes
-                raise HTTPException(status_code=503, detail=str(error)) from error
+            except Exception as error:  # building, or failed: 503, like the replay routes
+                raise HTTPException(
+                    status_code=503, detail=f"replay {self._replay_progress}"
+                ) from error
             if frame == index.get("orbit", {}).get("frame"):
                 self._orbit_cache[frame] = index["orbit"]
                 return index["orbit"]

@@ -358,6 +358,7 @@ export class WorldScene {
                 material.dispose();
             }
         });
+        this._pageListeners?.abort();  // the window/document handlers of startDesktop
         this.three.domElement.remove();
         this.three.dispose();
     }
@@ -383,10 +384,13 @@ export class WorldScene {
             this._desktopDragging = true;
             dom.style.cursor = 'grabbing';
         });
+        // Canvas handlers die with the canvas; these outlive it unless aborted.
+        this._pageListeners = new AbortController();
+        const signal = this._pageListeners.signal;
         window.addEventListener('mouseup', () => {
             this._desktopDragging = false;
             if (document.pointerLockElement !== dom) dom.style.cursor = 'grab';
-        });
+        }, { signal });
         dom.addEventListener('dblclick', () => {
             if (document.pointerLockElement !== dom) dom.requestPointerLock();
         });
@@ -404,17 +408,17 @@ export class WorldScene {
             const locked = document.pointerLockElement === dom;
             dom.style.cursor = locked ? 'none' : 'grab';
             if (!locked) this._desktopKeys.clear();
-        });
+        }, { signal });
         document.addEventListener('mousemove', (event) => {
             if (document.pointerLockElement !== dom && !this._desktopDragging) return;
             this._desktopYaw -= event.movementX * DESKTOP_LOOK_SENSITIVITY;
             this._desktopPitch -= event.movementY * DESKTOP_LOOK_SENSITIVITY;
             this._desktopPitch = Math.max(-DESKTOP_PITCH_LIMIT, Math.min(DESKTOP_PITCH_LIMIT, this._desktopPitch));
             this.camera.rotation.set(this._desktopPitch, this._desktopYaw, 0);
-        });
-        window.addEventListener('keydown', (event) => this._onDesktopKey(event, true));
-        window.addEventListener('keyup', (event) => this._onDesktopKey(event, false));
-        window.addEventListener('resize', () => this._resizeDesktopCamera());
+        }, { signal });
+        window.addEventListener('keydown', (event) => this._onDesktopKey(event, true), { signal });
+        window.addEventListener('keyup', (event) => this._onDesktopKey(event, false), { signal });
+        window.addEventListener('resize', () => this._resizeDesktopCamera(), { signal });
         this._installTouch(dom);
 
         this.three.setAnimationLoop((time) => {
