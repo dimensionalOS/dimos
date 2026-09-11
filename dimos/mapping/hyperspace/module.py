@@ -40,6 +40,7 @@ from dimos.mapping.hyperspace import patches as hs
 from dimos.mapping.hyperspace.embedder import SIGLIP2_MODEL_NAME, SigLIP2Patches
 from dimos.mapping.hyperspace.ingest import IngestConfig, PatchIngestor, transform_to_matrix
 from dimos.mapping.hyperspace.query import HyperspaceQuery
+from dimos.mapping.hyperspace.refine import refine_config_of
 from dimos.memory.module import MemoryModule, MemoryModuleConfig
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
@@ -236,6 +237,8 @@ class HyperspaceConfig(MemoryModuleConfig):
     # The segment channel (HyperspaceSegments records) added on top; 0 = off.
     segment_weight: float = 1.0
     segment_min_z: float = 2.0
+    # Refinement chain (see refine.py); "default" = QueryConfig.refine, "none" = raw map.
+    refine: str = "default"
     # Depth samples a voxel needs to appear in scene_map.
     scene_min_samples: int = 3
     # Demo: after this many seconds, run demo_queries and publish the answers,
@@ -295,6 +298,7 @@ class Hyperspace(MemoryModule):
             query_config,
             world_frame=self.config.world_frame,
             voxel_size=self.config.voxel_size,
+            refine_config=refine_config_of(self.config.refine, query_config.refine),
         )
         self._lock = threading.Lock()
         self._ids = iter(range(1, 1 << 30))

@@ -279,6 +279,19 @@ class QueryConfig:
     segment_weight: float = 1.0
     segment_min_z: float = 2.0
     max_hot_segments: int = 4000
+    # Default refinement chain (comma separated refine.py methods; "" = raw
+    # map). Chosen 2026-09-11 on sf_office: see refine.py and the SacredLocust
+    # report; with structural_gate it is what makes the answers object-shaped.
+    refine: str = "occupancy,support,prior"
+    # Drop hot patches whose grid cell the segmenter labelled floor, wall or
+    # ceiling (in the nearest segment frame within structural_gate_dt
+    # seconds), unless the query names one of those. SigLIP patches carry
+    # image-wide context: the floor beside a cone scores like a cone.
+    structural_gate: bool = True
+    structural_gate_dt: float = 0.3
+    # A cell counts as floor/wall/ceiling only when almost all of it is: a far
+    # cone fills a tenth of its cell and must not be gated with the floor.
+    structural_gate_coverage: float = 0.98
 
 
 @dataclass
@@ -363,6 +376,18 @@ def pool(evidence: Iterable[tuple[int, float, int]], config: QueryConfig) -> flo
 
 
 @dataclass
+class Cluster:
+    """One refined answer: a connected blob of voxels, ranked by score."""
+
+    rank: int
+    score: float
+    voxels: int
+    centre: tuple[float, float, float]  # metres, score-weighted
+    extent: tuple[float, float, float]  # metres, bounding box
+    peak: tuple[int, int, int]  # voxel index of the best voxel
+
+
+@dataclass
 class Heatmap:
     frame: str
     voxel_size: float
@@ -372,6 +397,11 @@ class Heatmap:
     # Per voxel (patch score, segment score), each normalized on its own, when
     # the map is the sum of both channels; empty for a single-channel map.
     channels: dict[tuple[int, int, int], tuple[float, float]] = field(default_factory=dict)
+    # Per voxel (distinct frames, distinct yaw bins) that put evidence on it.
+    support: dict[tuple[int, int, int], tuple[int, int]] = field(default_factory=dict)
+    # Voxel -> cluster rank (0 = best) once refined; see refine.py.
+    cluster_of: dict[tuple[int, int, int], int] = field(default_factory=dict)
+    clusters: list[Cluster] = field(default_factory=list)
 
     def centres(self) -> NDArray[np.float64]:
         if not self.voxels:
@@ -407,10 +437,15 @@ def heatmap(
         for index, yaw_bin in rasterize_pyramid(hot, pose, voxel_size, config):
             evidence.setdefault(index, []).append((hot.keyframe.id, hot.score, yaw_bin))
     scored = normalize([(index, pool(hits, config)) for index, hits in evidence.items()], config)
+    support = {
+        index: (len({f for f, _, _ in hits}), len({b for _, _, b in hits}))
+        for index, hits in evidence.items()
+    }
     return Heatmap(
         frame=target_frame,
         voxel_size=voxel_size,
         voxels=scored,
+        support=support,
         stats={
             "hot_patches": len(hot_patches),
             "hot_patches_without_depth": without_depth,
@@ -447,12 +482,17 @@ def combine(patches: Heatmap, segments: Heatmap, config: QueryConfig) -> Heatmap
     stats = dict(patches.stats)
     stats.update({f"segment_{k}": v for k, v in segments.stats.items()})
     stats["voxels_in_both"] = sum(1 for e, s in channels.values() if e > 0 and s > 0)
+    support = dict(patches.support)
+    for index, (frames, bins) in segments.support.items():
+        had = support.get(index, (0, 0))
+        support[index] = (had[0] + frames, max(had[1], bins))
     return Heatmap(
         frame=patches.frame,
         voxel_size=patches.voxel_size,
         voxels=normalize(summed, config),
         stats=stats,
         channels=channels,
+        support=support,
     )
 
 
