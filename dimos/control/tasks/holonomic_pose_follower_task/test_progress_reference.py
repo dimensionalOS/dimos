@@ -53,7 +53,7 @@ def test_rejects_degenerate_paths():
     with pytest.raises(ValueError):
         ProgressPathReference(Path(poses=[_pose(0, 0, 0)]))
     with pytest.raises(ValueError):
-        ProgressPathReference(Path(poses=[_pose(0, 0, 0), _pose(0, 0, 1.0)]))
+        ProgressPathReference(Path(poses=[_pose(0, 0, 0), _pose(0, 0, 0)]))
 
 
 def test_arc_length_and_end_pose():
@@ -151,3 +151,12 @@ def test_curvature_reported_for_position_turns():
     ref = ProgressPathReference(_circle(radius=1.0))
     _, kappa = ref.max_rates_ahead(ref.length / 2, 0.3)
     assert kappa == pytest.approx(1.0, rel=0.1)
+
+
+def test_turn_in_place_has_fixed_position_and_final_heading():
+    ref = ProgressPathReference(Path(poses=[_pose(1, 2, 0), _pose(1, 2, -math.pi / 2)]))
+    assert ref.advance(1.03, 1.98) == 0
+    sample = ref.sample(10)
+    assert (sample.x, sample.y, sample.yaw) == pytest.approx((1, 2, -math.pi / 2))
+    assert (sample.tangent_x, sample.tangent_y, sample.dyaw_ds) == (0, 0, 0)
+    assert ref.max_rates_ahead(0, 1) == (0, 0)

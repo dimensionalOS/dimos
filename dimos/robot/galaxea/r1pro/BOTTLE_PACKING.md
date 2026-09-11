@@ -67,6 +67,56 @@ leaves the tray, grip is lost, or an obstacle is contacted. An obstructed route
 raises an error. The output includes separate `packing_success`, `delivery.success`
 and overall `success`; check the overall result for an end-to-end run.
 
+## Navigate using the whole house point cloud
+
+Add `--kronknav` to the delivery command to use the native Rust KronkNav planner
+and `HolonomicPoseFollowerTask`. Build the planner once from this worktree:
+
+```bash
+cargo build --release --locked -p dimos-mls-planner --bin mls_planner
+```
+
+With the desktop environment setup above:
+
+```bash
+python -m dimos.robot.galaxea.r1pro.demo_packing_stack \
+  --artifact "$PWD/recordings/r1pro-act-task/policy-packing-augmented" \
+  --output "$PWD/recordings/r1pro-act-task/my-kronknav-delivery" \
+  --zenoh-scout-addr 224.0.0.224:19467 \
+  --scene-package /home/mustafa/dimos/data/scene_packages/hssd_102344115 \
+  --deliver-to-laptop --kronknav --seed 5000 --stay-open
+```
+
+The simulated lidar supplies the entire static environment point cloud, sampled
+from physical house surfaces including the floor. The robot, articulated arms,
+tray and bottles are excluded from this map. This is perfect-map simulation:
+there is no lidar occlusion, scan noise, localization drift or online mapping.
+The generated `navigation-cloud.npy` is a map, not a stored route.
+
+After the same five ACT picks and physical two-handed pickup, the holonomic task
+backs away and turns where the full loaded geometry clears the worktop. KronkNav
+then plans from current odometry to the laptop-table parking pose. Planning uses
+the measured centre of the asymmetric carrying footprint; path positions are
+converted back to base poses while preserving the commanded carrying heading.
+An independent collision check includes both arms, the tray and every bottle
+before the coordinator accepts the path. An incomplete or obstructed route stops
+the run rather than silently using the old transport planner.
+
+`tray_navigation` owns three Twist base resources in the ControlCoordinator.
+It tracks the path through the existing `HolonomicPoseFollowerTask`; body-frame
+velocities feed the simulation's physical planar actuators with acceleration
+limits and a command watchdog. Arm trajectories own a separate set of twenty
+joints. No live robot/tray pose teleportation or object attachments are used.
+The existing arm planner performs final support-checked placement. No ACT
+retraining is needed. The controller settings are specific to this slow simulated
+planar stage and are not hardware calibration.
+
+The native Rust planner communicates through the same isolated LCM session as
+DimOS. `result.json` records map acknowledgement, footprint offset, native path,
+controller stages and measured cargo history under `delivery.navigation` and
+`delivery.stages`. `packing_success` alone does not establish delivery success.
+Without `--kronknav`, the earlier position-trajectory delivery stays available.
+
 ## What is learned
 
 A geometry planner selects an accessible bottle and an empty tray slot. ACT gets

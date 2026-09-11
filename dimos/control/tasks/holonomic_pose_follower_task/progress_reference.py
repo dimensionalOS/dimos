@@ -67,6 +67,7 @@ class ProgressPathReference:
         xs: list[float] = []
         ys: list[float] = []
         yaws: list[float] = []
+        initial_yaw = float(path.poses[0].orientation.euler[2])
         for p in path.poses:
             x, y = float(p.position.x), float(p.position.y)
             yaw = float(p.orientation.euler[2])
@@ -79,7 +80,7 @@ class ProgressPathReference:
             xs.append(x)
             ys.append(y)
             yaws.append(yaw)
-        if len(xs) < 2:
+        if len(xs) < 2 and abs(math.remainder(yaws[-1] - initial_yaw, 2 * math.pi)) < _EPS:
             raise ValueError("ProgressPathReference: path has no positive arc length")
 
         self._x = np.asarray(xs)
@@ -123,6 +124,8 @@ class ProgressPathReference:
     def advance(self, x: float, y: float) -> float:
         """Project (x, y) onto the path within the progress window; update and
         return the progress arc length ``s_robot``."""
+        if self.length == 0:
+            return 0.0
         s_lo = max(0.0, self._s_progress - self._back_m)
         s_hi = min(self.length, self._s_progress + self._window_m)
         i_lo = int(np.searchsorted(self._s, s_lo, side="right") - 1)
@@ -147,6 +150,9 @@ class ProgressPathReference:
     def sample(self, s: float) -> PoseSample:
         """Interpolate the full pose (and its spatial rates) at arc length ``s``
         (clamped to the path)."""
+        if self.length == 0:
+            x, y, yaw = self.end_pose()
+            return PoseSample(0.0, x, y, yaw, 0.0, 0.0, 0.0)
         s = min(max(s, 0.0), self.length)
         i = int(np.searchsorted(self._s, s, side="right") - 1)
         i = min(max(i, 0), len(self._s) - 2)
@@ -170,6 +176,8 @@ class ProgressPathReference:
         The speed regulator uses these to slow down BEFORE a fast-yaw stretch
         or a tight curve rather than at it.
         """
+        if self.length == 0:
+            return 0.0, 0.0
         s = min(max(s, 0.0), self.length)
         i_lo = int(np.searchsorted(self._s, s, side="right") - 1)
         i_lo = min(max(i_lo, 0), len(self._s) - 2)

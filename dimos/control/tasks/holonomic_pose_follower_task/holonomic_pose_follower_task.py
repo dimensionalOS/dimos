@@ -225,18 +225,24 @@ class HolonomicPoseFollowerTask(BaseControlTask):
 
         # Previewing by the lookahead lets the command lead the plant's dead
         # time + lag through corners.
-        ff_vx_world = preview.tangent_x * v_path
-        ff_vy_world = preview.tangent_y * v_path
+        foot = ref.sample(s_robot)
+        # A preview past a hairpin can command backwards while projection is
+        # still on the incoming segment, creating an equilibrium before the
+        # corner. Keep advancing on that segment until its turn is reached.
+        direction = preview
+        if foot.tangent_x * preview.tangent_x + foot.tangent_y * preview.tangent_y <= 0:
+            direction = foot
+        ff_vx_world = direction.tangent_x * v_path
+        ff_vy_world = direction.tangent_y * v_path
         cos_yaw = math.cos(yaw)
         sin_yaw = math.sin(yaw)
         vx = cos_yaw * ff_vx_world + sin_yaw * ff_vy_world
         vy = -sin_yaw * ff_vx_world + cos_yaw * ff_vy_world
-        wz = preview.dyaw_ds * v_path
+        wz = direction.dyaw_ds * v_path
 
         # Trim against the projection foot, not the preview: along-track error
         # is ~0 at the foot, so feedback adds no along-path bias and the
         # feedforward alone sets speed.
-        foot = ref.sample(s_robot)
         fb_vx, fb_vy, fb_wz = self._feedback((foot.x, foot.y, foot.yaw), pose)
         return vx + fb_vx, vy + fb_vy, wz + fb_wz
 
@@ -485,7 +491,9 @@ class HolonomicPoseFollowerTask(BaseControlTask):
         return True
 
     def cancel(self) -> bool:
-        if not self.is_active():
+        pending = self._pending_path is not None
+        self._pending_path = None
+        if not self.is_active() and not pending:
             return False
         self._state = "aborted"
         return True

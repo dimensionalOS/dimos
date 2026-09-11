@@ -162,9 +162,9 @@ def test_set_speed_refused_while_active():
     assert task._config.speed == 0.5
 
 
-def test_rejects_pure_rotation_path():
+def test_rejects_identical_pose_path():
     task = _task()
-    path = Path(poses=[_pose(0, 0, 0.0), _pose(0, 0, 1.0)])
+    path = Path(poses=[_pose(0, 0, 0.0), _pose(0, 0, 0.0)])
     assert not task.start_path(path, _pose())
 
 
@@ -375,3 +375,27 @@ def test_configure_refused_while_active_and_accepts_unknown_kwargs():
     assert task._config.speed == 0.7
     task.start_path(straight_rotate(), _pose())
     assert not task.configure(speed=0.3)
+
+
+def test_turn_in_place_arrives_without_translation():
+    task = _task(goal_tolerance=0.01, orientation_tolerance=0.01)
+    plant, trace = _run_closed_loop(task, Path(poses=[_pose(), _pose(yaw=-math.pi / 2)]))
+    assert trace.arrived
+    assert abs(angle_diff(plant.yaw, -math.pi / 2)) < 0.01
+    assert (plant.x, plant.y) == pytest.approx((0, 0), abs=1e-8)
+
+
+def test_cancel_discards_a_streamed_path_before_first_pose():
+    task = _task()
+    task.on_path(straight_rotate(), 0)
+    assert task.cancel()
+    assert task.compute(_state(0, 0, 0, 0.1)) is None
+    assert not task.is_active()
+
+
+def test_short_reversing_tail_reaches_goal_instead_of_stalling_before_corner():
+    task = _task(speed=0.04, lookahead=0.025, goal_tolerance=0.006, orientation_tolerance=0.006)
+    path = Path(poses=[_pose(0, 0), _pose(0, -0.2), _pose(-0.06, -0.2), _pose(-0.0568, -0.1907)])
+    plant, trace = _run_closed_loop(task, path, max_ticks=1500)
+    assert trace.arrived
+    assert math.hypot(plant.x + 0.0568, plant.y + 0.1907) < 0.006

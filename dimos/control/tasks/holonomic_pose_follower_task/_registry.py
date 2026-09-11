@@ -24,3 +24,14 @@ TASK_CONSUMES = {
         "speed": ("on_speed", "direct"),
     },
 }
+
+TASK_EXPOSES = {
+    "holonomic_pose_follower": [
+        "start_path",
+        "get_state",
+        "cancel",
+        "reset",
+        "configure",
+        "set_speed",
+    ],
+}

@@ -243,6 +243,9 @@ def build_r1pro_manipulation(
     viewer_distance: float = 3.0,
     viewer_azimuth: float | None = None,
     viewer_elevation: float | None = None,
+    velocity_base: HardwareComponent | None = None,
+    navigation_task: TaskConfig | None = None,
+    coordinator_type: type[ControlCoordinator] = ControlCoordinator,
 ) -> Blueprint:
     """Shared physical robot/camera/coordinator wiring for manipulation profiles."""
     scene_path = scene_path.expanduser().resolve()
@@ -251,8 +254,11 @@ def build_r1pro_manipulation(
             mujoco.mj_name2id(task.model, mujoco.mjtObj.mjOBJ_JOINT, VIRTUAL_BASE_JOINTS[0]) >= 0
         )
         free_tray = mujoco.mj_name2id(task.model, mujoco.mjtObj.mjOBJ_JOINT, "task_tray_free") >= 0
-        joints = (*R1PRO_PICK_PLACE_JOINTS, *(VIRTUAL_BASE_JOINTS if mobile else ()))
-        home = task.home.tolist() + ([0.0] * 3 if mobile else [])
+        if velocity_base is not None and not (mobile and free_tray):
+            raise ValueError("Velocity navigation requires the mobile base and free tray scene")
+        position_base = mobile and velocity_base is None
+        joints = (*R1PRO_PICK_PLACE_JOINTS, *(VIRTUAL_BASE_JOINTS if position_base else ()))
+        home = task.home.tolist() + ([0.0] * 3 if position_base else [])
         ranges = [task.model.joint(name).range.tolist() for name in joints]
     camera = SimCameraSpec(name="right_wrist", stream="right_wrist", width=160, height=160, fps=40)
     hardware = HardwareComponent(
@@ -266,7 +272,7 @@ def build_r1pro_manipulation(
         limits=JointLimits(
             position_lower=[bounds[0] for bounds in ranges],
             position_upper=[bounds[1] for bounds in ranges],
-            velocity_max=[2.0] * 18 + [0.25, 0.25] + ([0.4, 0.4, 0.4] if mobile else []),
+            velocity_max=[2.0] * 18 + [0.25, 0.25] + ([0.4, 0.4, 0.4] if position_base else []),
         ),
     )
     return autoconnect(
@@ -281,7 +287,9 @@ def build_r1pro_manipulation(
             background_camera_rendering=background_camera_rendering,
             viewer_track_body="base_link" if free_tray else None,
             position_target_velocity_limits=(
-                dict(zip(VIRTUAL_BASE_JOINTS, [0.1, 0.1, 0.15], strict=True)) if free_tray else {}
+                dict(zip(VIRTUAL_BASE_JOINTS, [0.1, 0.1, 0.15], strict=True))
+                if free_tray and position_base
+                else {}
             ),
             camera_name="head",
             width=160,
@@ -300,9 +308,10 @@ def build_r1pro_manipulation(
                 root_body_names=("base_link",),
             ),
         ),
-        ControlCoordinator.blueprint(
-            hardware=[hardware],
+        coordinator_type.blueprint(
+            hardware=[hardware, *([velocity_base] if velocity_base is not None else [])],
             tasks=[
+                *([navigation_task] if navigation_task is not None else []),
                 *(
                     [
                         TaskConfig(
@@ -312,7 +321,7 @@ def build_r1pro_manipulation(
                             joint_names=list(VIRTUAL_BASE_JOINTS),
                         )
                     ]
-                    if mobile
+                    if position_base
                     else []
                 ),
                 TaskConfig(

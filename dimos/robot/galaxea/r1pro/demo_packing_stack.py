@@ -26,6 +26,9 @@ import numpy as np
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.imitation.policy.module import POLICY_ROLLOUT_INSTANCE_NAME
+from dimos.robot.galaxea.r1pro.navigation_blueprint import build_r1pro_packing_navigation
+from dimos.robot.galaxea.r1pro.navigation_cloud import save_environment_cloud
+from dimos.robot.galaxea.r1pro.navigation_delivery import prepare_navigation_map
 from dimos.robot.galaxea.r1pro.packing_blueprint import R1ProPackingSim, build_r1pro_packing
 from dimos.robot.galaxea.r1pro.packing_sim import (
     PACKING_BODIES,
@@ -52,11 +55,16 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         x, y = np.asarray(xy) + rng.uniform(-args.jitter, args.jitter, 2)
         body.set("pos", f"{x} {y} 0.771")
     tree.write(scene, encoding="unicode")
-    blueprint = build_r1pro_packing(
+    navigation_cloud = None
+    if args.kronknav:
+        navigation_cloud = args.output / "navigation-cloud.npy"
+        save_environment_cloud(scene, navigation_cloud)
+    builder = build_r1pro_packing_navigation if args.kronknav else build_r1pro_packing
+    blueprint = builder(
         scene_path=scene, artifact=str(args.artifact), headless=args.no_viewer
     ).global_config(
         viewer="none",
-        n_workers=3,
+        n_workers=4 if args.kronknav else 3,
         zenoh_scout_addr=args.zenoh_scout_addr,
     )
     coordinator: ModuleCoordinator | None = None
@@ -72,6 +80,8 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         coordinator = ModuleCoordinator.build(blueprint)
         policy = coordinator.get_instance(POLICY_ROLLOUT_INSTANCE_NAME)
         sim = coordinator.get_instance(R1ProPackingSim)
+        if navigation_cloud is not None:
+            prepare_navigation_map(sim, navigation_cloud)
         deadline = time.monotonic() + 30
         while not sim.packing_state()["ready_for_pick"]:
             if time.monotonic() >= deadline:
@@ -152,7 +162,12 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             report["completion_reason"] = "delivery_in_progress"
             report["delivery"] = {}
             (args.output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
-            run_tray_delivery(coordinator.get_instance(ControlCoordinator), sim, report["delivery"])
+            run_tray_delivery(
+                coordinator.get_instance(ControlCoordinator),
+                sim,
+                report["delivery"],
+                navigation_cloud=navigation_cloud,
+            )
             report["final"] = sim.task_state()
             report["success"] = bool(report["delivery"]["success"] and report["final"]["success"])
             report["completion_reason"] = "delivered" if report["success"] else "delivery_failed"
@@ -192,6 +207,11 @@ def main() -> None:
         action="store_true",
         help="After ACT packs five bottles, carry and place the tray using planned trajectories",
     )
+    parser.add_argument(
+        "--kronknav",
+        action="store_true",
+        help="Plan loaded-tray travel from the whole house cloud and execute with the holonomic task",
+    )
     parser.add_argument("--seed", type=int, default=9000)
     parser.add_argument(
         "--random-order",
@@ -203,6 +223,8 @@ def main() -> None:
     parser.add_argument("--no-viewer", action="store_true")
     parser.add_argument("--stay-open", action="store_true")
     args = parser.parse_args()
+    if args.kronknav and not args.deliver_to_laptop:
+        parser.error("--kronknav requires --deliver-to-laptop")
     if args.deliver_to_laptop and args.scene_package is None:
         parser.error("--deliver-to-laptop requires --scene-package")
     if not 0 <= args.jitter <= 0.01 or not 0 < args.seconds <= 120:

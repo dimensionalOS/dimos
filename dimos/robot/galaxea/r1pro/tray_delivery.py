@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from itertools import groupby, pairwise
+from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +28,7 @@ from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.galaxea.r1pro.grasping_sim import VIRTUAL_BASE_JOINTS
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_JOINTS
+from dimos.robot.galaxea.r1pro.navigation_delivery import run_navigation_transport
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
@@ -181,7 +183,13 @@ def _arm_motion(
     return state
 
 
-def run_tray_delivery(control: ModuleProxy, sim: ModuleProxy, report: dict[str, Any]) -> None:
+def run_tray_delivery(
+    control: ModuleProxy,
+    sim: ModuleProxy,
+    report: dict[str, Any],
+    *,
+    navigation_cloud: Path | None = None,
+) -> None:
     """Run after ACT has stopped; every moving joint is owned by the coordinator."""
     report.update(success=False, stages=[], destination=sim.tray_destination())
     destination = report["destination"]
@@ -193,38 +201,41 @@ def run_tray_delivery(control: ModuleProxy, sim: ModuleProxy, report: dict[str, 
     report["pickup"] = _arm_motion(control, sim, sim.plan_tray_motion("pickup"), report)
     report["pickup_snapshot"] = sim.simulation_snapshot()
     sim.set_tray_delivery_view()
-    path = sim.plan_transport(*destination["base_position"])
-    report["path"] = path
-    for index, (first, second) in enumerate(pairwise(path)):
-        duration = max(
-            0.5,
-            1.5 * float(np.linalg.norm(np.array(second[:2]) - first[:2])) / 0.08,
-            1.5 * abs(second[2] - first[2]) / 0.12,
-        )
-        # Finish each collision-checked segment in measured state before
-        # dispatching the next. A slow simulator must not cut route corners.
-        points = []
-        for fraction in np.linspace(0, 1, max(2, int(np.ceil(duration * 20))) + 1):
-            smooth = 3 * fraction**2 - 2 * fraction**3
-            target = np.array(first) + smooth * (np.array(second) - first)
-            points.append(
-                TrajectoryPoint(
-                    positions=target.tolist(),
-                    velocities=[0.0] * 3,
-                    time_from_start=float(fraction * duration),
-                )
+    if navigation_cloud is not None:
+        run_navigation_transport(control, sim, report, navigation_cloud)
+    else:
+        path = sim.plan_transport(*destination["base_position"])
+        report["path"] = path
+        for index, (first, second) in enumerate(pairwise(path)):
+            duration = max(
+                0.5,
+                1.5 * float(np.linalg.norm(np.array(second[:2]) - first[:2])) / 0.08,
+                1.5 * abs(second[2] - first[2]) / 0.12,
             )
-        report["arrival"] = _execute(
-            control,
-            sim,
-            list(VIRTUAL_BASE_JOINTS),
-            points,
-            "base_transport",
-            f"carry_segment_{index + 1}",
-            report,
-            grasp=True,
-            check_obstacles=True,
-        )
+            # Finish each collision-checked segment in measured state before
+            # dispatching the next. A slow simulator must not cut route corners.
+            points = []
+            for fraction in np.linspace(0, 1, max(2, int(np.ceil(duration * 20))) + 1):
+                smooth = 3 * fraction**2 - 2 * fraction**3
+                target = np.array(first) + smooth * (np.array(second) - first)
+                points.append(
+                    TrajectoryPoint(
+                        positions=target.tolist(),
+                        velocities=[0.0] * 3,
+                        time_from_start=float(fraction * duration),
+                    )
+                )
+            report["arrival"] = _execute(
+                control,
+                sim,
+                list(VIRTUAL_BASE_JOINTS),
+                points,
+                "base_transport",
+                f"carry_segment_{index + 1}",
+                report,
+                grasp=True,
+                check_obstacles=True,
+            )
     report["arrival_snapshot"] = sim.simulation_snapshot()
     final = _arm_motion(
         control, sim, sim.plan_tray_motion("place", destination["tray_position"]), report
