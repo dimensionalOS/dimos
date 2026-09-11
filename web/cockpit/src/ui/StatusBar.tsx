@@ -27,15 +27,20 @@ const PHASE_LABEL: Record<string, string> = {
   failed: "failed",
 };
 
-export function StatusBar({ status, view, onViewChange, pages, page, onPageChange }: {
-  status: SessionStatus;
-  view: View;
-  onViewChange: (view: View) => void;
-  /** The manifest's page tabs (none: no tab strip), the open page, and the pick. */
-  pages: PageTab[];
-  page: string | null;
-  onPageChange: (id: string | null) => void;
-}) {
+export function StatusBar(
+  { status, view, onViewChange, pages, page, onPageChange, onSwitchRobot }: {
+    status: SessionStatus;
+    view: View;
+    onViewChange: (view: View) => void;
+    /** The manifest's page tabs (none: no tab strip), the open page, and the pick. */
+    pages: PageTab[];
+    page: string | null;
+    onPageChange: (id: string | null) => void;
+    /** Reopens the robot picker; null hides the button (nothing else to
+     * watch, or the picker is already open). */
+    onSwitchRobot: (() => void) | null;
+  },
+) {
   const transport = status.transport;
   const now = useNowWhile(transport.phase === "reconnecting", 250);
 
@@ -113,6 +118,16 @@ export function StatusBar({ status, view, onViewChange, pages, page, onPageChang
           )
           : "no robot"}
       </span>
+      {onSwitchRobot !== null && (
+        <button
+          type="button"
+          className={styles.switchRobot}
+          data-testid="switch-robot"
+          onClick={onSwitchRobot}
+        >
+          switch robot
+        </button>
+      )}
       {status.lastError !== null && <span className={styles.error}>{status.lastError.message}
       </span>}
     </header>

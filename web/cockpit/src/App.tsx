@@ -6,17 +6,22 @@ import { LayoutTree } from "./layout/LayoutTree.tsx";
 import { type PageTab, pageTabs, PageView } from "./layout/PageView.tsx";
 import { startChatTranscripts } from "./panels/chatTranscript.ts";
 import { ChannelList } from "./ui/ChannelList.tsx";
+import { RobotPicker } from "./ui/RobotPicker.tsx";
 import { StatusBar, type View } from "./ui/StatusBar.tsx";
 import styles from "./App.module.css";
 
 export function App({ session }: { session: Session }) {
   const status = useStatus(session);
   const teleop = teleopHooks(session);
-  // Panels or the raw channel table, and the open page tab. Both live above
-  // the epoch-keyed <main> so a manifest change (robot restart) does not yank
-  // the operator off the table or their page.
+  // Panels or the raw channel table, the open page tab, and a pending
+  // "switch robot" request. All live above the epoch-keyed <main> so a
+  // manifest change (robot restart or switch) does not yank the operator off
+  // the table, their page, or the picker.
   const [view, setView] = useState<View>("panels");
   const [pageId, setPageId] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
+  const watchedId = status.watchedRobot?.id ?? null;
+  const hasMultipleRobots = status.robots.length > 1;
   // Chat transcripts outlive their panels (an inactive page is unmounted),
   // so they start as soon as a manifest names them.
   useEffect(() => {
@@ -31,22 +36,37 @@ export function App({ session }: { session: Session }) {
     }
   }, [pageId, status.manifest]);
 
+  // Nothing to switch to (the list shrank, or a relay restart pushed an empty
+  // one): drop a stale request so a later registration does not pop the
+  // picker over the live layout unprompted.
+  useEffect(() => {
+    if (!hasMultipleRobots) setPicking(false);
+  }, [hasMultipleRobots]);
+
   const openPage = (id: string | null): void => {
     setPageId(id);
     setView("panels");
   };
+
+  const pickRobot = (id: string): void => {
+    setPicking(false);
+    // The promise rejects only with WatchRejectedError (superseded by a newer
+    // pick, or the session closed): nothing the operator can act on.
+    void session.watch(id).catch(() => {});
+  };
+
+  // Several robots and none watched: the operator has to pick (the SDK
+  // auto-watches only a lone robot). A pick pins the watch for the session;
+  // "switch robot" in the status bar reopens the list.
+  const showPicker = hasMultipleRobots && (picking || status.watchedRobot === null);
 
   let content;
   let pages: PageTab[] = [];
   let page: string | null = null;
   if (status.transport.phase === "failed") {
     content = <p className={styles.notice}>Connection failed: {status.transport.reason}</p>;
-  } else if (status.robots.length > 1) {
-    content = (
-      <p className={styles.notice}>
-        {status.robots.length} robots connected; the robot picker arrives in a later release.
-      </p>
-    );
+  } else if (showPicker) {
+    content = <RobotPicker robots={status.robots} current={watchedId} onPick={pickRobot} />;
   } else if (status.manifestUnsupported) {
     content = (
       <p className={styles.notice}>
@@ -100,6 +120,7 @@ export function App({ session }: { session: Session }) {
         pages={pages}
         page={page}
         onPageChange={openPage}
+        onSwitchRobot={hasMultipleRobots && !showPicker ? () => setPicking(true) : null}
       />
       {/* A changed manifest remounts everything below the status bar. */}
       <main className={styles.main} key={status.epoch}>

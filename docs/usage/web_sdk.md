@@ -46,6 +46,7 @@ The bridge discovers the WebTransport endpoint (an ephemeral QUIC port and certi
 - A bridge killed without a clean close keeps its robot id registered until the relay's 30 s idle timeout. Restarting it inside that window waits the conflict out.
 - `--serve-dir` belongs to the relay here (`deno task dev --serve-dir DIR`). `dimos run --serve-dir` is rejected together with `--relay-url`.
 - A second robot on the same relay needs its own `--robot-id`. A synthetic one: `uv run python -m dimos.web.relay_bridge.demo_smoke --url http://localhost:7780`.
+- With several robots on the relay the cockpit lists them; pick one to watch it. "switch robot" in the status bar reopens the list.
 - Another machine cannot use this relay yet: its certificate is ephemeral and self-signed, which only loopback may trust.
 
 ## Your first page
