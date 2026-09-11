@@ -164,14 +164,12 @@ class MemoryWorldConfig(ModuleConfig):
 
     store_path: str = "data/go2_bigoffice.db"
     server_port: int = 8443
-    # Voxel size for downsampling before shipping to the headset (metres).
-    # 0.05m on a typical office map gives ~150k points; raise if your map is
-    # bigger, lower for finer detail at the cost of bandwidth. This same value
-    # is sent to the client so rendered point size matches voxel spacing.
-    voxel_size: float = 0.05
-    # Hard cap on the static cloud sent to a viewer; the ray-traced map of a
-    # building at 5 cm runs to about a million voxels, and the viewer's
-    # quality governor drops voxels itself when a device cannot draw them all.
+    # Voxel size of the map (metres), also the rendered point size. 8 cm is
+    # the ray-tracing module's own: its support gate keeps walls and floors
+    # and drops the fuzz at this size, where 5 cm loses most of both.
+    voxel_size: float = 0.08
+    # Cap on the static cloud sent to a viewer. A building is about a million
+    # voxels; the viewer's quality governor thins what it cannot draw.
     max_points: int = 1_500_000
     # Which lidar stream to accumulate and how many scans to sample. <= 0 means
     # use every lidar frame (densest map, slowest build).
@@ -254,11 +252,12 @@ class MemoryWorldConfig(ModuleConfig):
     # Every Nth frame. The recording is ~15fps, so 3 keeps sub-metre coverage
     # at a third of the embedding cost.
     image_index_stride: int = PydanticField(default=3, ge=1)
-    build_image_index_on_start: bool = True
-    # A recording with no embeddings offers to add them: the viewer's "Add
-    # embeddings" button runs siglipify from this flake over the recording,
-    # which writes the vectors back into it (a .db gains a stream, an .mcap
-    # is rewritten with a new topic), and the index is loaded from those.
+    # Embed the frames here, with the model in-process, when the recording has
+    # no vectors. Off by default: the viewer offers "Add embeddings" (siglipify)
+    # instead, and an index that already exists is loaded either way.
+    build_image_index_on_start: bool = False
+    # The viewer's "Add embeddings" button runs siglipify from this flake over
+    # the recording, which writes the vectors back into it (see embed.py).
     siglipify_flake: str = "github:jeff-hykin/siglipify"
     # Two hits closer together than this are one place, not two answers.
     place_radius_m: float = PydanticField(default=2.5, gt=0.0)
@@ -286,7 +285,7 @@ class MemoryWorldConfig(ModuleConfig):
     # Rays longer than this are not cast. The replay is ray-traced (each scan
     # clears the voxels its rays pass through), and its final keyframe is the
     # static map, so this bounds both.
-    replay_max_range_m: float = PydanticField(default=20.0, gt=0.0)
+    replay_max_range_m: float = PydanticField(default=30.0, gt=0.0)
     # The camera frame shown while scrubbing, fetched one at a time.
     replay_frame_max_size: int = 480
     replay_frame_jpeg_quality: int = 60
@@ -995,7 +994,12 @@ class MemoryWorldModule(Module):
         return self._visual_index
 
     def _build_visual_index(self) -> None:
-        """Embed the recording's frames. Slow and one-shot; runs off the request path."""
+        """Load the recording's index, building it first when configured to.
+
+        Slow and one-shot; runs off the request path. A recording with no
+        vectors and no build configured is left for the viewer's "Add
+        embeddings" button.
+        """
         if self.config.image_stream_name not in self._ensure_store().list_streams():
             # Nothing to index; saves loading a 3.7 GB model to find that out.
             self._index_progress = f"no {self.config.image_stream_name!r} stream"
@@ -1004,6 +1008,10 @@ class MemoryWorldModule(Module):
         with self._index_lock:
             index = self._ensure_visual_index()
             existing = index.count()
+            if existing == 0 and not self.config.build_image_index_on_start:
+                self._index_progress = "no embeddings; add them from the viewer"
+                logger.info("visual index: %s", self._index_progress)
+                return
             self._index_progress = f"building (had {existing} frames)"
             try:
                 added = index.build(stride=self.config.image_index_stride)
@@ -1297,6 +1305,7 @@ class MemoryWorldModule(Module):
                 store,
                 voxel_size=self.config.voxel_size,
                 lidar_stream_name=self.config.lidar_stream_name,
+                max_range=self.config.replay_max_range_m,
             ):
                 self._replay_progress = "building"
                 logger.info("building the voxel replay streams into %s", self.config.store_path)
@@ -1631,8 +1640,7 @@ class MemoryWorldModule(Module):
             logger.exception("world cache build failed")
         if self.config.build_replay_on_start:
             self._build_replay()
-        if self.config.build_image_index_on_start:
-            self._build_visual_index()
+        self._build_visual_index()
 
     @rpc
     def stop(self) -> None:

@@ -64,7 +64,7 @@ TAG_ADDED = 1
 TAG_REMOVED = 2
 FORMAT_VERSION = 1
 # Streams built another way (column carving, before ray tracing) are rebuilt.
-BUILDER = "raytrace:healthy"
+BUILDER = "raytrace"
 
 
 @dataclass(frozen=True)
@@ -127,20 +127,17 @@ class RayTracedGrid:
     ``max_range`` of the sensor, so the diff is taken by comparing the mapper's
     voxels inside that cylinder with the ones held for it before the scan.
 
-    Every healthy voxel is kept, as in the ray-tracing module's own global
-    map. The mapper's ``support_min`` gate (a voxel must have that many
-    healthy neighbours to be shown) is meant for its live local map; on a
-    sparse lidar it hides two thirds of a building's walls, so it is off here.
+    The mapper's other settings are its defaults, which are the ray-tracing
+    module's: in particular ``support_min`` (a voxel needs that many healthy
+    neighbours to be shown) stays on, because at 8 cm it is what separates
+    walls and floors from the fuzz around them. At 5 cm the same gate hides
+    two thirds of a building, so the voxel size is not free to shrink.
     """
 
-    def __init__(
-        self, voxel_size: float, max_range: float, support_min: int = 0, **mapper_kwargs: Any
-    ) -> None:
+    def __init__(self, voxel_size: float, max_range: float, **mapper_kwargs: Any) -> None:
         self.voxel_size = voxel_size
         self.max_range = max_range
-        self.mapper = VoxelRayMapper(
-            voxel_size=voxel_size, max_range=max_range, support_min=support_min, **mapper_kwargs
-        )
+        self.mapper = VoxelRayMapper(voxel_size=voxel_size, max_range=max_range, **mapper_kwargs)
         self.keys = np.empty(0, dtype=np.int64)
         # Centres of `keys`, kept in step, so the cylinder test is a lookup.
         self._centres = np.empty((0, 3), dtype=np.float32)
@@ -202,7 +199,7 @@ def build_replay_streams(
     lidar_stream_name: str,
     to_scan: Callable[[Any], SensorScan | None],
     voxel_size: float,
-    max_range: float = 20.0,
+    max_range: float = 30.0,
     keyframe_interval_s: float = 5.0,
     diff_stream_name: str = DIFF_STREAM,
     keyframe_stream_name: str = KEYFRAME_STREAM,
@@ -423,8 +420,10 @@ class VoxelReplay:
         self._encoded: dict[int, tuple[bytes, bytes]] = {}
 
     @staticmethod
-    def available(store: Any, *, voxel_size: float, lidar_stream_name: str) -> bool:
-        """True when both streams exist and were built for this grid and lidar."""
+    def available(
+        store: Any, *, voxel_size: float, lidar_stream_name: str, max_range: float | None = None
+    ) -> bool:
+        """True when both streams exist and were built for this grid, range and lidar."""
         names = store.list_streams()
         if DIFF_STREAM not in names or KEYFRAME_STREAM not in names:
             return False
@@ -434,6 +433,7 @@ class VoxelReplay:
             tags.get("format") == FORMAT_VERSION
             and tags.get("builder") == BUILDER
             and abs(float(tags.get("voxel_size", 0.0)) - voxel_size) < 1e-9
+            and (max_range is None or abs(float(tags.get("max_range", 0.0)) - max_range) < 1e-9)
             and tags.get("lidar_stream") == lidar_stream_name
         )
 
@@ -601,10 +601,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--lidar-stream", default="lidar")
     parser.add_argument("--tf-stream", default="tf")
     parser.add_argument("--world-frame", default="world")
-    parser.add_argument("--voxel-size", type=float, default=0.05)
+    parser.add_argument("--voxel-size", type=float, default=0.08)
     parser.add_argument("--keyframe-interval", type=float, default=5.0)
     parser.add_argument("--tf-tolerance", type=float, default=0.1)
-    parser.add_argument("--max-range", type=float, default=20.0, help="ray length limit, metres")
+    parser.add_argument("--max-range", type=float, default=30.0, help="ray length limit, metres")
     parser.add_argument("--dry-run", action="store_true", help="only report the statistics")
     args = parser.parse_args(argv)
 
