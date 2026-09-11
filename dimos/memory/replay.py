@@ -241,13 +241,13 @@ class ReplayStream(Generic[T]):
             sched = scheduler or TimeoutScheduler()
             is_disposed = False
 
-            def make_iterator() -> Iterator[tuple[float, T]]:
+            def make_iterator() -> Iterator[tuple[float, Any]]:
                 while True:
                     emitted = False
                     obs: Any
                     for obs in base():
                         emitted = True
-                        yield (obs.ts, decode(obs))
+                        yield (obs.ts, obs)  # decoded at emission, keeping subscribe cheap
                     if not loop or not emitted:
                         break
 
@@ -282,7 +282,7 @@ class ReplayStream(Generic[T]):
 
             prev_ts = first_ts
 
-            def schedule(message: tuple[float, T], wrap_off: float, prev: float) -> None:
+            def schedule(message: tuple[float, Any], wrap_off: float, prev: float) -> None:
                 ts, data = message
                 if ts < prev:
                     wrap_off += (prev - ts) + _LOOP_GAP
@@ -293,7 +293,7 @@ class ReplayStream(Generic[T]):
                     nonlocal wrap_offset, prev_ts
                     if is_disposed:
                         return None
-                    observer.on_next(data)
+                    observer.on_next(decode(data))
                     try:
                         nxt = next(iterator)
                     except StopIteration:

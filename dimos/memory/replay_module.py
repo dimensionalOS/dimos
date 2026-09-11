@@ -22,6 +22,7 @@ class still ends up with the same ports.
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 import re
 import sys
@@ -33,6 +34,7 @@ from dimos.core.stream import Out
 from dimos.memory.cli.dataset import open_dataset, stream_payload_types
 from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
+from dimos.utils.generic import classproperty
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -46,6 +48,7 @@ logger = setup_logger()
 
 class ReplayModuleConfig(ModuleConfig):
     dataset: str = ""
+    topics: str = "*"
     speed: float = 1.0
     loop: bool = False
     seek: float | None = None
@@ -67,14 +70,32 @@ class ReplayModule(Module):
 
     config: ReplayModuleConfig
     stream_types: dict[str, type] = {}  # set by replay_module()
+    topics: str = "*"  # set by replay_module(); carried to workers via the blueprint kwargs
     _store: Store | None = None
+
+    @classproperty
+    def blueprint(cls) -> Any:  # noqa: N805
+        from dimos.core.coordination.blueprints import Blueprint
+
+        return partial(Blueprint.create, cls, topics=cls.topics)  # type: ignore[arg-type]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         if self.config.dataset:
-            for name, t in stream_types_of(self.config.dataset).items():
-                if not hasattr(self, name):
-                    setattr(self, name, Out(t, name, self))
+            try:
+                self._add_ports()
+            except Exception:
+                self.stop()  # Module.__init__ already spun up its threads
+                raise
+
+    def _add_ports(self) -> None:
+        types = stream_types_of(self.config.dataset)
+        existing = self.outputs
+        for name in _port_names(self.config.topics, types):
+            if name in existing:
+                continue
+            _reject_clash(name, self)
+            setattr(self, name, Out(types[name], name, self))
 
     @rpc
     def start(self) -> None:
@@ -90,11 +111,15 @@ class ReplayModule(Module):
             seek=self.config.seek,
             duration=self.config.duration,
         )
+        # Open every stream before pinning the anchor, so setup time is not
+        # counted as lateness that observable() would skip past.
+        streams: dict[str, ReplayStream[DimosMsg]] = {
+            name: replay.stream(name) for name in self.outputs
+        }
         replay.pin_anchor()
         port: Out[DimosMsg]
         for name, port in self.outputs.items():
-            stream: ReplayStream[DimosMsg] = replay.stream(name)
-            timed: Observable[DimosMsg] = stream.observable()
+            timed: Observable[DimosMsg] = streams[name].observable()
             logger.info("Replaying %s -> %s", name, port)
             self.register_disposable(timed.subscribe(port.publish))
 
@@ -106,6 +131,16 @@ class ReplayModule(Module):
             self._store = None
 
 
+def _port_names(topics: str, types: dict[str, type]) -> list[str]:
+    check_topics(topics, types)
+    return sorted(matching(topics, types))
+
+
+def _reject_clash(name: str, owner: Any) -> None:
+    if hasattr(owner, name):
+        raise ValueError(f"recorded stream {name!r} clashes with a ReplayModule attribute")
+
+
 def replay_module(dataset: str, topics: str = "*", name: str = "Replay") -> type[ReplayModule]:
     """Build a :class:`ReplayModule` subclass with an ``Out`` per stream in *dataset*.
 
@@ -115,13 +150,15 @@ def replay_module(dataset: str, topics: str = "*", name: str = "Replay") -> type
     ports: dict[str, Any] = {}
     if dataset:
         types = stream_types_of(dataset)
-        check_topics(topics, types)
-        ports = {n: Out[types[n]] for n in sorted(matching(topics, types))}  # type: ignore[valid-type]
+        for n in _port_names(topics, types):
+            _reject_clash(n, ReplayModule)
+            ports[n] = Out[types[n]]  # type: ignore[valid-type]
     caller = sys._getframe(1).f_globals.get("__name__", __name__)
     namespace = {
         "__annotations__": ports,
         "__module__": caller,
         "stream_types": {n: types[n] for n in ports} if dataset else {},
+        "topics": topics,
     }
     return type(name, (ReplayModule,), namespace)
 

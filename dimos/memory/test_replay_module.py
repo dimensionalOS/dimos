@@ -14,6 +14,7 @@
 
 from pathlib import Path
 import time
+from typing import Any
 
 import pytest
 
@@ -67,6 +68,53 @@ def test_portless_class_gets_ports_from_dataset(recording: str) -> None:
     module = replay_module("")(dataset=recording)
     assert sorted(module.outputs) == ["goal", "odom"]
     module.stop()
+
+
+def test_topic_filter_reaches_the_instance(recording: str) -> None:
+    """Workers rebuild ports from config, so the filter must travel in the blueprint kwargs."""
+    cls = replay_module(recording, topics="odom")
+    assert cls.blueprint(dataset=recording).blueprints[0].kwargs["topics"] == "odom"
+    module = replay_module("")(dataset=recording, topics="odom")
+    assert sorted(module.outputs) == ["odom"]
+    module.stop()
+
+
+def test_stream_named_like_a_module_attribute_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "memory.db"
+    store = SqliteStore(path=str(path))
+    store.start()
+    store.stream("start", PoseStamped).append(PoseStamped(ts=1.0), ts=1.0)
+    store.stop()
+    with pytest.raises(ValueError, match="'start' clashes"):
+        replay_module(str(path))
+    with pytest.raises(ValueError, match="'start' clashes"):
+        replay_module("")(dataset=str(path))
+
+
+def test_slow_first_decode_does_not_skip_other_streams(
+    recording: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Anchor is pinned after setup; a stream that is slow to prime must not make later streams late."""
+    from dimos.memory import replay as replay_mod
+
+    real = replay_mod.ReplayStream._decode
+
+    def slow(self: Any, obs: Any) -> Any:
+        if obs.ts == 1.05:  # the goal frame, subscribed first (sorted order)
+            time.sleep(0.2)
+        return real(self, obs)
+
+    monkeypatch.setattr(replay_mod.ReplayStream, "_decode", slow)
+    module = replay_module(recording)(dataset=recording)
+    got: dict[str, list[float]] = {"odom": [], "goal": []}
+    module.outputs["odom"].subscribe(lambda m: got["odom"].append(m.ts))
+    module.outputs["goal"].subscribe(lambda m: got["goal"].append(m.ts))
+    module.start()
+    deadline = time.time() + 5
+    while time.time() < deadline and (len(got["odom"]) < 3 or not got["goal"]):
+        time.sleep(0.01)
+    module.stop()
+    assert [round(t, 3) for t in got["odom"]] == [1.0, 1.1, 1.2]
 
 
 def test_recorded_rerun_config_from_run_dir(tmp_path: Path) -> None:
