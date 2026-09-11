@@ -4,6 +4,7 @@
   border: 1px solid #30363d;
   border-radius: 6px;
   display: flex;
+  flex: 1;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
@@ -14,6 +15,7 @@
 .frameMax {
   inset: 0.75rem;
   position: fixed;
+  width: auto;
   z-index: 10;
 }
 
@@ -70,9 +72,4 @@
   min-height: 120px;
   overflow: hidden;
   position: relative;
-}
-
-/* A maximized frame owns the viewport; lift the panels' own height caps. */
-.frameMax .body :global(canvas) {
-  max-height: 100%;
 }
