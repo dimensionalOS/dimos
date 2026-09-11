@@ -34,8 +34,6 @@ _FEATURE_CACHE_MAX = 128
 
 class Owlv2Config(HuggingFaceModelConfig):
     model_name: str = "google/owlv2-base-patch16-ensemble"
-    # float16 runs the forward under autocast at roughly half the latency;
-    # scores jitter by a few thousandths, so threshold-edge boxes may flip.
     dtype: torch.dtype = torch.float32
 
 

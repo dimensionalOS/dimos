@@ -38,11 +38,9 @@ PLANE_SEED = 0  # so one window always fits the same plane
 
 @dataclass
 class SupportPlane:
-    """Plane coefficients (a, b, c, d), normal up, plus the inlier footprint."""
+    """Plane coefficients (a, b, c, d), normal up."""
 
     coefficients: tuple[float, float, float, float]
-    footprint_hull: np.ndarray  # (K, 2) convex hull of inlier (x, y), world
-    inlier_count: int
 
     def height_above(self, points: np.ndarray) -> np.ndarray:
         a, b, c, d = self.coefficients
@@ -76,30 +74,24 @@ def fit_support_plane(rig: Rig, keyframes: list[Observation[Image]]) -> SupportP
     distance = PLANE_DISTANCE if rig.depth is not None else PLANE_DISTANCE_CLOUD
     remaining = o3d.geometry.PointCloud()
     remaining.points = o3d.utility.Vector3dVector(points)
-    best: tuple[np.ndarray, np.ndarray] | None = None
+    best: tuple[np.ndarray, int] | None = None
     for _ in range(4):
         if len(remaining.points) < 500:
             break
         model, inlier_idx = remaining.segment_plane(
             distance_threshold=distance, ransac_n=3, num_iterations=1000, probability=1.0
         )
-        inliers = np.asarray(remaining.points)[inlier_idx]
-        if abs(model[2]) >= MIN_HORIZONTAL_DOT and (best is None or len(inliers) > len(best[1])):
-            best = (np.array(model), inliers)
+        if abs(model[2]) >= MIN_HORIZONTAL_DOT and (best is None or len(inlier_idx) > best[1]):
+            best = (np.array(model), len(inlier_idx))
         remaining = remaining.select_by_index(inlier_idx, invert=True)
 
     if best is None:
         logger.warning("support plane: no horizontal plane found in backdrop")
         return None
 
-    model, inliers = best
+    model, _ = best
     if model[2] < 0:
         model = -model
-    from scipy.spatial import ConvexHull
-
-    xy = inliers[:, :2]
     return SupportPlane(
-        coefficients=(float(model[0]), float(model[1]), float(model[2]), float(model[3])),
-        footprint_hull=xy[ConvexHull(xy).vertices],
-        inlier_count=len(inliers),
+        coefficients=(float(model[0]), float(model[1]), float(model[2]), float(model[3]))
     )
