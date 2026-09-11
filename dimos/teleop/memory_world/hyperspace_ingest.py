@@ -233,8 +233,17 @@ def _ingest(
                 ),
             )
 
+    def statics() -> Iterator[tuple[float, TFMessage]]:
+        if streams.get("tf_static") is None:
+            return
+        held = [t for obs in store.streams[streams["tf_static"]] for t in obs.data.transforms]
+        if held:  # once, before everything: Hyperspace holds the last sample of an edge
+            yield start_ts - 5.0, TFMessage(*held)
+
     transforms = 0
-    for stamp, message in heapq.merge(originals(), corrected_poses(), key=lambda item: item[0]):
+    for stamp, message in heapq.merge(
+        statics(), originals(), corrected_poses(), key=lambda item: item[0]
+    ):
         ingestor.add_tf(message, ts=stamp)
         transforms += 1
     print(

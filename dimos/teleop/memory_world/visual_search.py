@@ -606,7 +606,7 @@ class VisualMemoryIndex:
         # Ids and stamps only: an mcap observation holds its image bytes, and a
         # recording has tens of thousands of them.
         frames = [
-            SimpleNamespace(id=int(obs.id), ts=float(obs.ts))
+            SimpleNamespace(id=int(obs.id), ts=float(obs.ts), pose_tuple=obs.pose_tuple)
             for obs in self.store.streams[self.image_stream_name].order_by("ts")
         ]
         by_id = {obs.id: obs for obs in frames}

@@ -14,9 +14,16 @@
 
 """First-person VR exploration of a recorded robot memory."""
 
-from dimos.teleop.memory_world.module import (
-    MemoryWorldConfig,
-    MemoryWorldModule,
-)
+from typing import Any
 
 __all__ = ["MemoryWorldConfig", "MemoryWorldModule"]
+
+
+def __getattr__(name: str) -> Any:
+    # Lazily: the module pulls in torch, FastAPI and cv2, and a sibling such as
+    # recording.py is imported by subprocesses that must start fast.
+    if name in __all__:
+        from dimos.teleop.memory_world import module
+
+        return getattr(module, name)
+    raise AttributeError(name)

@@ -237,10 +237,14 @@ def build_replay_streams(
     last_keyframe_ts: float | None = None
     low = np.full(3, np.inf)  # of every voxel ever added: the int16 grid's span
     high = np.full(3, -np.inf)
-    total = store.streams[lidar_stream_name].count()
-    for obs in store.streams[lidar_stream_name]:
+    # One scan of lookahead says which is the last: an mcap's count() is not reliable.
+    scans = iter(store.streams[lidar_stream_name])
+    obs = next(scans, None)
+    while obs is not None:
         if cancelled is not None and cancelled():
             break
+        following = next(scans, None)
+        is_last = following is None
         scan = to_scan(obs)
         if scan is not None:
             added, removed = grid.add_scan(scan)
@@ -255,9 +259,7 @@ def build_replay_streams(
         ts = float(obs.ts)
         # The last scan is always a keyframe: that is the finished map.
         take_keyframe = (
-            last_keyframe_ts is None
-            or ts - last_keyframe_ts >= keyframe_interval_s
-            or stats.scans == total - 1
+            last_keyframe_ts is None or ts - last_keyframe_ts >= keyframe_interval_s or is_last
         )
         if take_keyframe:
             last_keyframe_ts = ts
@@ -282,12 +284,13 @@ def build_replay_streams(
                     tags={
                         **stream_tags,
                         "scan_index": stats.scans,
-                        "last": stats.scans == total - 1,  # a build that died early has none
+                        "last": is_last,  # a build that died early has none
                         "low": np.where(np.isfinite(low), low, 0.0).tolist(),
                         "high": np.where(np.isfinite(high), high, 0.0).tolist(),
                     },
                 )
         stats.scans += 1
+        obs = following
         if stats.scans % 200 == 0:
             logger.info(
                 "replay build: %d scans, %d voxels, +%d/-%d so far",
@@ -436,6 +439,7 @@ class VoxelReplay:
         # Gzipped wire form of the segments served so far, most recent last. A long
         # recording has gigabytes of segments and the viewer preloads them all.
         self._wire: OrderedDict[int, bytes] = OrderedDict()
+        self._wire_bytes = 0
 
     @staticmethod
     def available(
@@ -580,8 +584,9 @@ class VoxelReplay:
                 self.encode_segment(*self.segment(number)), compresslevel=6, mtime=0
             )  # mtime=0: the same bytes every time, so the viewer's cache validates
             self._wire[number] = cached
-            while sum(map(len, self._wire.values())) > WIRE_CACHE_BYTES and len(self._wire) > 1:
-                self._wire.popitem(last=False)
+            self._wire_bytes += len(cached)
+            while self._wire_bytes > WIRE_CACHE_BYTES and len(self._wire) > 1:
+                self._wire_bytes -= len(self._wire.popitem(last=False)[1])
         else:
             self._wire.move_to_end(number)
         return cached
@@ -627,11 +632,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--dry-run", action="store_true", help="only report the statistics")
     args = parser.parse_args(argv)
 
-    from dimos.teleop.memory_world.recording import open_recording
-    from dimos.teleop.memory_world.tf_tree import TfTree
+    from dimos.teleop.memory_world.recording import build_tf_tree, open_recording
 
     store = open_recording(args.store_path)
-    tree = TfTree.from_stream(store.streams[args.tf_stream])
+    tree = build_tf_tree(store, args.tf_stream, args.world_frame)
 
     def to_scan(obs: Any) -> SensorScan | None:
         # Scans must be in their sensor frame here; a world-aligned stream

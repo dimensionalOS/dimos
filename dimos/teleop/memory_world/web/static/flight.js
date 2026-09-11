@@ -60,20 +60,6 @@ export class Flight {
         this._start(end, endYaw, endPitch, duration);
     }
 
-    /** Stand where a camera stood and look the way it looked (desktop), gliding there. */
-    pose(eye, forward, { duration = DEFAULT_DURATION_S } = {}) {
-        const scene = this.scene;
-        if (scene.three.xr.isPresenting) return false;
-        const head = scene.getCameraPositionWorld();
-        const eyeThree = toThree(scene, eye);
-        const f = new THREE.Vector3(forward[0], forward[2], -forward[1]).normalize();
-        const end = new THREE.Vector3(head.x - eyeThree.x, head.y - eyeThree.y, head.z - eyeThree.z);
-        const yaw = Math.atan2(-f.x, -f.z);
-        const pitch = Math.asin(Math.max(-1, Math.min(1, f.y)));
-        this._start(end, yaw, pitch, duration);
-        return true;
-    }
-
     _start(endPosition, endYaw, endPitch, duration) {
         const scene = this.scene;
         const startYaw = scene._desktopYaw ?? 0;

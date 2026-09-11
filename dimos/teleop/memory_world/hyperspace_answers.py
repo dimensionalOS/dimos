@@ -98,7 +98,7 @@ class HyperspaceAnswers:
     _cached_cloud: tuple[dict[str, Any], bytes] | None
     _map_xyz: np.ndarray | None  # the whole map, before the viewer's stride
     _viewer_position: tuple[float, float, float] | None
-    _store_lock: threading.Lock
+    _store_lock: Any  # an RLock
 
     if TYPE_CHECKING:
 
@@ -221,6 +221,12 @@ class HyperspaceAnswers:
     # ---- answering ---------------------------------------------------------
 
     def _find_with_hyperspace(self, phrase: str, started: float) -> SkillResult:
+        # One question at a time, publication included: two answers interleaving
+        # would leave the heat map of one under the clusters of the other.
+        with self._hyperspace_lock:
+            return self._answer(phrase, started)
+
+    def _answer(self, phrase: str, started: float) -> SkillResult:
         search = self._hyperspace
         assert search is not None
         try:
@@ -369,11 +375,12 @@ class HyperspaceAnswers:
                     "channel": evidence.channel,
                     "ts": evidence.ts,
                 }
-                sent.append((header, jpeg))
                 with self._clients_lock:
                     if not self._query_is_current(query_id):
                         return  # a newer question replaced this one
-                    self._active_query_images = list(sent)
+                    if self._active_query_images is not sent:
+                        self._active_query_images = sent  # the list itself; appended under the lock
+                    sent.append((header, jpeg))
                 self._broadcast(encode_binary(MSG_QUERY_IMAGE, header, jpeg))
 
     def _query_is_current(self, query_id: str) -> bool:
@@ -454,6 +461,8 @@ class HyperspaceAnswers:
         if route is None:
             raise HTTPException(status_code=422, detail="no route through the known free space")
         points = [(float(x), float(y), float(z)) for x, y, z in route.points]
+        if len(points) < 2:
+            raise HTTPException(status_code=422, detail="already there")
         payload = {
             "query_id": query_id,
             "cluster": cluster.index,

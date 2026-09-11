@@ -178,7 +178,7 @@ class RecordingDb(SqliteStore):
         backend = super()._assemble_backend(name, stored)
         if stored["payload_module"].endswith(".CompressedImage"):
             codec = _DecodedImages(backend.codec)
-            backend.codec = backend.metadata_store.codec = backend.metadata_store._codec = codec
+            backend.codec = backend.metadata_store._codec = codec
             backend.data_type = Image
         return backend
 
@@ -487,16 +487,17 @@ def build_tf_tree(
 
     tree = TfTree.from_stream(store.streams[tf_stream])
     static = detect_streams(store).get("tf_static")
-    if static is not None:  # published once, before anything else: held for all time
+    if static is not None:
         for obs in store.streams[static]:
             for t in obs.data.transforms:
                 p, q = t.translation, t.rotation
                 tree.add(
                     str(t.frame_id),
                     str(t.child_frame_id),
-                    0.0,
+                    float(obs.ts),
                     (float(p.x), float(p.y), float(p.z)),
                     (float(q.x), float(q.y), float(q.z), float(q.w)),
+                    static=True,
                 )
     corrected = corrected_odometry_stream(store)
     if corrected is None:
@@ -510,7 +511,7 @@ def build_tf_tree(
         pose = obs.data.pose
         p, q = pose.position, pose.orientation
         edge.add(
-            float(obs.ts),
+            float(getattr(obs.data, "ts", 0.0) or obs.ts),  # the header stamp, like every tf edge
             (float(p.x), float(p.y), float(p.z)),
             (float(q.x), float(q.y), float(q.z), float(q.w)),
         )
@@ -586,7 +587,9 @@ def detect_streams(store: Store) -> dict[str, Any]:
         # nothing about which one agrees with the tf tree — the caller checks.
         "lidar_candidates": rank("lidar", "PointCloud2"),
         "tf": pick("tf", "TFMessage"),
-        "tf_static": pick("tf_static", "TFMessage"),
+        "tf_static": next(
+            (n for n in rank("tf_static", "TFMessage") if "static" in n.lower()), None
+        ),
     }
     # Prefer the camera_info that belongs to the chosen image stream.
     if image is not None:

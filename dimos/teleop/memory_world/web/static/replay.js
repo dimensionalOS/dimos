@@ -358,6 +358,7 @@ export class ReplayController {
 
     /** Stop every download and timer and free the frames; the controller is done. */
     dispose() {
+        this._disposed = true;
         if (this._preloadTimer) clearTimeout(this._preloadTimer);
         this._preloadTimer = null;
         this._abortPendingExcept(-1);
@@ -452,12 +453,14 @@ export class ReplayController {
                     if (!response.ok) throw new Error(`frame: ${response.status}`);
                     const meta = JSON.parse(response.headers.get('X-Camera-Pose') || '{}');
                     const bitmap = await createImageBitmap(await response.blob(), { imageOrientation: 'flipY' });
+                    if (this._disposed) { bitmap.close(); return; }   // disconnected mid-download
                     frame = { bitmap, meta };
                     this._frameCache.set(ts, frame);
-                    if (this._frameCache.size > 60) {
-                        const oldest = this._frameCache.keys().next().value;
-                        this._frameCache.get(oldest).bitmap.close();
-                        this._frameCache.delete(oldest);
+                    for (const [old, cached] of this._frameCache) {   // oldest first; never the one on screen
+                        if (this._frameCache.size <= 60) break;
+                        if (old === this._frameShown) continue;
+                        cached.bitmap.close();
+                        this._frameCache.delete(old);
                     }
                     this.stats.frames++;
                 }

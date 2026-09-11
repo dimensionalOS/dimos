@@ -205,6 +205,10 @@ def test_build_cut_short_is_not_available(store) -> None:  # type: ignore[no-unt
     for data, ts, tags in kept:
         keyframes.append(data, ts=ts, tags=tags)
     assert not VoxelReplay.available(store, voxel_size=VOXEL, lidar_stream_name="lidar")
+    # ... and one that died before its first keyframe left the streams empty
+    store.delete_stream("voxel_keyframe")
+    store.stream("voxel_keyframe", PointCloud2)
+    assert not VoxelReplay.available(store, voxel_size=VOXEL, lidar_stream_name="lidar")
 
 
 def test_wire_cache_is_bounded(store, monkeypatch) -> None:  # type: ignore[no-untyped-def]

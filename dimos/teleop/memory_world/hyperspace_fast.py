@@ -614,6 +614,8 @@ class SegmentBank:
         )
 
 
+TEXT_CACHE_SIZE = 64  # phrases whose embedding is kept (a demo asks a few dozen)
+
 STRUCTURAL_LABELS = ("floor", "wall", "ceiling")
 
 
@@ -762,6 +764,8 @@ class FastQuery:
         if vector is None:
             vector = np.asarray(self._embed_texts([text])[0], np.float32)
             self._text_cache[text] = vector
+            if len(self._text_cache) > TEXT_CACHE_SIZE:
+                del self._text_cache[next(iter(self._text_cache))]
         return vector
 
     def query(self, text: str) -> FastResult:

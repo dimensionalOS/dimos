@@ -168,7 +168,6 @@ export class WorldScene {
         this._queryImageCursor = -1;
 
         // Top-down map: shared texture, used twice (ground projection + HUD).
-        this._topDownTex = null;
         this._topDownBounds = null;
 
         // HUD minimap — head-locked panel attached to scene root (not world).
@@ -1534,22 +1533,15 @@ export class WorldScene {
     setTopDownMap(header, jpegArrayBuffer) {
         const blob = new Blob([jpegArrayBuffer], { type: 'image/jpeg' });
         createImageBitmap(blob).then((bitmap) => {
-            const tex = new THREE.Texture(bitmap);
-            tex.colorSpace = THREE.SRGBColorSpace;
-            tex.needsUpdate = true;
-            this._topDownTex = tex;
             this._topDownBounds = header;
-
-            // The same map used to be pasted on the floor as well. It hid the
-            // voxels you were standing among and read as a surface that is not
-            // there, so the minimap is now the only place it appears.
-
-            // HUD panel, with V flipped: the histogram's row 0 is at y_max.
-            const hudTex = tex.clone();
+            // Only the minimap shows it (pasted on the floor it hid the voxels you stood
+            // among); V flipped: the histogram's row 0 is at y_max.
+            const hudTex = new THREE.Texture(bitmap);
             hudTex.needsUpdate = true;
             hudTex.colorSpace = THREE.SRGBColorSpace;
             hudTex.repeat.y = -1;
             hudTex.offset.y = 1;
+            if (this._hudPanelMat.map) { this._hudPanelMat.map.image?.close?.(); this._hudPanelMat.map.dispose(); }
             this._hudPanelMat.color.set(0xffffff);
             this._hudPanelMat.map = hudTex;
             this._hudPanelMat.opacity = 0.95;

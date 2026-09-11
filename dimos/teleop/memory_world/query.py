@@ -94,14 +94,9 @@ import sys
 
 import numpy as np
 
-if sys.argv[1].endswith(".mcap"):
-    from dimos.teleop.memory_world.recording import open_recording
+from dimos.teleop.memory_world.recording import open_recording
 
-    store = open_recording(sys.argv[1])
-else:  # a .db opens without importing the whole package (which takes seconds)
-    from dimos.memory.store.sqlite import SqliteStore
-
-    store = SqliteStore(path=sys.argv[1], must_exist=True)
+store = open_recording(sys.argv[1])
 store.start()
 viewer_position = json.loads(sys.argv[2])
 

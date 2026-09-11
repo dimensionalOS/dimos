@@ -31,6 +31,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from itertools import pairwise
+import math
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -116,6 +117,7 @@ class _Edge:
     _stamp_array: np.ndarray | None = None
     _position_array: np.ndarray | None = None
     _orientation_array: np.ndarray | None = None
+    static: bool = False  # tf_static: one sample, valid for all time
 
     def add(
         self,
@@ -139,6 +141,8 @@ class _Edge:
 
     @property
     def span(self) -> tuple[float, float]:
+        if self.static:
+            return -math.inf, math.inf
         stamps, _, _ = self._arrays()
         return float(stamps[0]), float(stamps[-1])
 
@@ -149,6 +153,8 @@ class _Edge:
         it, the nearest end is held.
         """
         stamps, positions, orientations = self._arrays()
+        if self.static:
+            return pose_matrix(positions[0], orientations[0])
         if len(stamps) == 1 or ts <= stamps[0]:
             if ts < stamps[0] - tolerance_s:
                 return None
@@ -196,8 +202,14 @@ class TfTree:
         ts: float,
         position: tuple[float, float, float],
         orientation: tuple[float, float, float, float],
+        static: bool = False,
     ) -> None:
-        self._edges.setdefault((parent, child), _Edge()).add(ts, position, orientation)
+        edge = self._edges.setdefault((parent, child), _Edge())
+        if static:
+            if edge.stamps:  # a latched tf_static republished: the one sample holds
+                return
+            edge.static = True
+        edge.add(ts, position, orientation)
         self._neighbours.setdefault(parent, set()).add(child)
         self._neighbours.setdefault(child, set()).add(parent)
 

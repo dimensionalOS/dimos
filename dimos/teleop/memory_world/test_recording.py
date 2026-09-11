@@ -177,6 +177,26 @@ def test_decode_image_by_hand() -> None:
     assert image.ts == pytest.approx(12.0000005)
 
 
+def test_decode_image_honours_row_padding_and_big_endian_depth() -> None:
+    depth = np.array([[1, 2, 3], [4, 5, 60000]], dtype=">u2")  # big-endian 16UC1
+    rows = b"".join(row.tobytes() + b"\xee\xee" for row in depth)  # step 8: two pad bytes per row
+    body = (
+        _Cdr()
+        .prim("i", 0)
+        .prim("I", 0)
+        .string("depth")
+        .prim("I", 2, 3)
+        .string("16UC1")
+        .prim("B", 1)  # is_bigendian
+        .prim("I", 8)  # step
+        .raw(rows)
+        .bytes()
+    )
+    image = decode_image(body)
+    assert image.data.dtype == np.uint16 and image.data.shape == (2, 3)
+    assert image.data.tolist() == [[1, 2, 3], [4, 5, 60000]]
+
+
 def test_decode_tf_message_by_hand() -> None:
     writer = _Cdr().prim("I", 2)
     for parent, child in (("world", "base"), ("base", "cam")):
@@ -508,5 +528,7 @@ def test_build_tf_tree_holds_static_transforms_and_uses_their_stamps(tmp_path: P
         camera = tree.lookup("odom", "camera", 15.0)
         assert camera is not None
         assert np.allclose(camera[:3, 3], [5.0, 0.0, 1.5])  # halfway by the transforms' own stamps
+        assert tree.span("odom", "camera") == (10.0, 20.0)  # the static edge does not bound it
+        assert tree.lookup("odom", "camera", 500.0) is None  # but the moving one still does
     finally:
         store.stop()

@@ -320,7 +320,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         # The store's sqlite connection is not safe to read from two threads at
         # once: a scrubbing viewer fetches segments and frames while an answer's
         # evidence frames are being decoded.
-        self._store_lock = threading.Lock()
+        self._store_lock = threading.RLock()  # the world cache build re-enters it
         self._stopping = threading.Event()
         self._replay_progress = "not started"
         self._replay_index: dict[str, Any] | None = None
@@ -394,10 +394,14 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         @app.get(f"{self.config.client_route}/replay/segment/{{number}}")  # type: ignore[misc]
         async def memory_world_replay_segment(number: int, request: Request) -> Response:
             """One keyframe plus the diffs up to the next; see VoxelReplay.segment."""
-            replay = await asyncio.to_thread(self._ensure_replay)
-            if not 0 <= number < len(replay.index.keyframe_scan):
-                raise HTTPException(status_code=404, detail="no such segment")
-            gzipped = await asyncio.to_thread(self._replay_read, replay.encoded_segment, number)
+
+            def segment() -> bytes:  # resolved and read under the one store lock
+                replay = self._ensure_replay()
+                if not 0 <= number < len(replay.index.keyframe_scan):
+                    raise HTTPException(status_code=404, detail="no such segment")
+                return replay.encoded_segment(number)
+
+            gzipped = await asyncio.to_thread(self._replay_read, segment)
             headers = {"Cache-Control": "max-age=3600"}
             if "gzip" in request.headers.get("accept-encoding", ""):
                 headers["Content-Encoding"] = "gzip"
@@ -504,11 +508,12 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
     # ---- initial payload ---------------------------------------------------
 
     def _ensure_store(self) -> Store:
-        if self._store is None:
-            self._store = open_recording(self.config.store_path)
-            logger.info("opened memory store at %s", self.config.store_path)
-            self._name_streams(self._store)
-        return self._store
+        with self._store_lock:
+            if self._store is None:
+                self._store = open_recording(self.config.store_path)
+                logger.info("opened memory store at %s", self.config.store_path)
+                self._name_streams(self._store)
+            return self._store
 
     def _name_streams(self, store: Store) -> None:
         """Name the streams (and the world frame) the config left empty or the recording lacks.
@@ -1014,7 +1019,8 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         _ = self.whisper
         if index.count() > 0:
             self._index_progress = f"loading ({index.count()} frames)"
-            index.load()
+            with self._store_lock:  # reads the image stream's ids and stamps
+                index.load()
             self._index_progress = f"ready ({index.count()} frames)"
         logger.info("voice query path warm")
 
@@ -1055,7 +1061,8 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
 
     def _reopen_recording(self) -> None:
         """Open the recording afresh: siglipify rewrote the mcap, and the store holds the old file."""
-        with self._world_cache_lock, self._replay_lock, self._index_lock, self._store_lock:
+        # Lock order everywhere: world cache, store, replay, index.
+        with self._world_cache_lock, self._store_lock, self._replay_lock, self._index_lock:
             old = self._store
             self._store = open_recording(self.config.store_path)
             self._name_streams(self._store)
@@ -1076,11 +1083,8 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
 
     @skill
     def find_in_memory(self, query: str) -> SkillResult:
-        """Find the distinct places something was seen and highlight them in VR.
-
-        Answers questions like "where did I see a car" by comparing the phrase
-        against precomputed SigLIP 2 embeddings of the recording's camera
-        frames, then reducing the matches to one marker per distinct location.
+        """Find the distinct places something was seen and highlight them in VR:
+        "where did I see a car" → Hyperspace when ready, else the SigLIP index.
 
         Args:
             query: What to look for, e.g. "a car" or "a whiteboard".
@@ -1634,15 +1638,15 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
             self._prepare_job.terminate()
             if self._prepare_thread is not None:
                 self._prepare_thread.join(timeout=60)
-            if self._hyperspace is not None:
-                self._hyperspace.close()
         finally:
-            if self._visual_index is not None:
-                self._visual_index.stop()
-                self._visual_index = None
             if self._prepare_thread is not None and self._prepare_thread.is_alive():
-                logger.warning("prepare is still running; its store is left for the process exit")
+                logger.warning("prepare is still running; its stores are left to the process exit")
             else:
+                if self._hyperspace is not None:
+                    self._hyperspace.close()
+                if self._visual_index is not None:
+                    self._visual_index.stop()
+                    self._visual_index = None
                 store, self._store = self._store, None
                 if store is not None:
                     try:
