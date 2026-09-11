@@ -259,16 +259,18 @@ def test_index_built_with_body_poses_is_refused(sqlite_store: SqliteStore) -> No
         _ = VisualMemoryIndex(sqlite_store, pose_of=lambda obs: None, model_name=GIANT).index_stream
 
 
-def test_index_with_a_frame_on_one_side_only_is_accepted(sqlite_store: SqliteStore) -> None:
-    """Backward compatible: an index written before the tag fits any frame, and a
-    tagged one fits a caller that names no frame. Only two named frames can clash."""
+def test_an_untagged_index_is_refused_and_a_caller_naming_no_frame_takes_anything(
+    sqlite_store: SqliteStore,
+) -> None:
+    """An index with no world_frame was written before the tag, which means old, not
+    universal: nothing says its poses are in the frame this caller wants. A caller that
+    names no frame has made no claim to contradict, so it takes what it finds."""
     _seed_index(sqlite_store, GIANT)  # no world_frame tag
-    assert (
-        VisualMemoryIndex(
+    with pytest.raises(ValueError, match="rebuild it"):
+        _ = VisualMemoryIndex(
             sqlite_store, pose_of=lambda obs: None, model_name=GIANT, world_frame="map"
         ).count()
-        == 1
-    )
+    assert VisualMemoryIndex(sqlite_store, pose_of=lambda obs: None, model_name=GIANT).count() == 1
     tagged = index_stream_name_of(GIANT, "color_image") + "_tagged"
     sqlite_store.stream(tagged, PatchGrid).append(
         PatchGrid(source_id=7, rows=2, cols=2, patches=np.zeros((4, 2), dtype=np.float16)),

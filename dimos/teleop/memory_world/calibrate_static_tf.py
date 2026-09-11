@@ -23,9 +23,9 @@ the ONE rigid transform that explains them all. Per-frame registration was tried
 first and is far too unstable to trust: a rigid mount only shows up when the frames
 are solved together.
 
-The answer is written as a ``tf_static_corrected`` stream (one edge, the camera's
-mount) which :func:`recording.build_tf_tree` applies over the recording's own
-static tf. The recording itself is never rewritten.
+With ``--write`` the answer goes into the recording's own ``tf_static``, replacing
+whatever that edge said. Nothing reads it specially afterwards: a recording whose
+static tf is wrong is fixed by writing the right static tf.
 
     python -m dimos.teleop.memory_world.calibrate_static_tf <recording.db|.mcap> [--samples 20]
         [--write]

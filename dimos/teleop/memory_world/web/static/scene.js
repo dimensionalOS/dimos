@@ -1217,13 +1217,12 @@ export class WorldScene {
         // budget alone is enough to bound the cost there.
         const level = QUALITY_LEVELS[this._quality];
         const budget = Math.min(IMAGE_QUAD_BUDGET, level.quad_budget);
-        // An answer's ids may be marker ids or the store's own; if they match neither,
-        // show the photos near the viewer rather than none at all.
+        // The agent skill answers with the store's own observation ids; every other
+        // engine with marker ids. The server sends -1 as a source id where it has none,
+        // which matches nothing, so an answer that selects no photo shows no photo --
+        // rather than quietly showing whatever is nearby and passing for an answer.
         const idOf = this._selectedAreSourceIds ? (m) => m.sourceId : (m) => m.id;
-        let selected = this._selectedImageIds.size > 0 ? this._selectedImageIds : null;
-        if (selected && !this._imagePoseMeta.some((m) => selected.has(idOf(m)))) {
-            selected = null;  // an mcap has no real store ids, so fall back to what is near
-        }
+        const selected = this._selectedImageIds.size > 0 ? this._selectedImageIds : null;
         const maxDist = selected
             ? Infinity
             : Math.min(IMAGE_RENDER_DISTANCE_M, Number.isFinite(level.voxel_range_m) ? level.voxel_range_m : Infinity) / scale;

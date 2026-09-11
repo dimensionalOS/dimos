@@ -150,8 +150,9 @@ def ingest_recording(
                 raise SystemExit(
                     f"{recording.name} has no {', '.join(missing)} stream; cannot ingest"
                 )
-            streams = set(store.list_streams())
-            depth_info = depth_info_stream_for(streams, detected["depth"], detected["camera_info"])
+            depth_info = depth_info_stream_for(
+                set(store.list_streams()), detected["depth"], detected["camera_info"]
+            )
             print(
                 f"streams: color={detected['image']} depth={detected['depth']} "
                 f"info={detected['camera_info']}/{depth_info} tf={detected['tf']}",

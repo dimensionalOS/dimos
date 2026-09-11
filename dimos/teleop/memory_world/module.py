@@ -172,9 +172,6 @@ class MemoryWorldConfig(ModuleConfig):
     camera_optical_frame: str | None = None
     # A lookup fails when the nearest tf sample is further away than this.
     tf_tolerance_s: float = PydanticField(default=0.1, gt=0.0)
-    # Added to image timestamps before the tf lookup, for recorders whose
-    # camera and tf clocks disagree. 0 trusts the stamps.
-    camera_time_offset_s: float = 0.0
     # The camera's path is drawn as a polyline sampled from tf.
     n_trail_samples: int = 400
     # The frame the viewer's orbit mode circles, sent per replay scan. Falls
@@ -804,9 +801,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
 
     @staticmethod
     def _encode_jpeg(img: Any, max_size: int, quality: int) -> bytes:
-        if hasattr(img, "resize_to_fit"):
-            img, _ = img.resize_to_fit(max_size, max_size)
-        bgr = img.to_bgr().to_opencv() if hasattr(img, "to_bgr") else img
+        img, _ = img.resize_to_fit(max_size, max_size)
+        bgr = img.to_bgr().to_opencv()
         ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
         return buf.tobytes() if ok else b""
 
@@ -1410,14 +1406,12 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
     def _camera_pose_of(self, obs: Any) -> np.ndarray | None:
         """world_T_optical for an image observation.
 
-        From tf at the image's stamp (plus ``camera_time_offset_s``); without a
+        From tf at the image's stamp; without a
         tf stream, from the body pose stamped on the image, turned into the
         optical convention.
         """
         if self._tf_tree() is not None:
-            world_T_optical = self._frame_pose_at(
-                self._camera_frame(), float(obs.ts) + self.config.camera_time_offset_s
-            )
+            world_T_optical = self._frame_pose_at(self._camera_frame(), float(obs.ts))
         else:
             pose = getattr(obs, "pose_tuple", None)
             if pose is None:

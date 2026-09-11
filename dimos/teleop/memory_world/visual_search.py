@@ -479,10 +479,10 @@ class VisualMemoryIndex:
                         f"{tags.get('image_stream')!r}, not {self.image_stream_name!r}"
                     )
                 built_in = tags.get("world_frame")
-                if built_in and self.world_frame and built_in != self.world_frame:
+                if self.world_frame and built_in != self.world_frame:
                     raise ValueError(
                         f"index stream {self.index_stream_name!r} holds poses in {built_in!r}, "
-                        f"not {self.world_frame!r}; rebuild it"
+                        f"not {self.world_frame!r}; rebuild it"  # no tag means old, not any
                     )
                 if tags.get("pose_frame") != POSE_FRAME_TAG:
                     raise ValueError(
@@ -552,7 +552,7 @@ class VisualMemoryIndex:
 
         added = 0
         vision_config = self.model._model.config.vision_config
-        grid_side = vision_config.image_size // vision_config.patch_size
+        side = vision_config.image_size // vision_config.patch_size
         for batch in _batched(wanted, batch_size):
             pil_images = [PILImage.fromarray(obs.data.to_rgb().data) for obs, _ in batch]
             with torch.inference_mode():
@@ -569,8 +569,8 @@ class VisualMemoryIndex:
                 target.append(
                     PatchGrid(
                         source_id=int(obs.id),
-                        rows=grid_side,
-                        cols=grid_side,
+                        rows=side,
+                        cols=side,
                         patches=patches.to(torch.float16).cpu().numpy(),
                     ),
                     ts=obs.ts,
