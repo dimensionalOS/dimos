@@ -430,6 +430,7 @@ class VisualMemoryIndex:
         device: str | None = None,
         dtype: torch.dtype = torch.float16,
         world_frame: str | None = None,
+        pose_tag: str = POSE_FRAME_TAG,
     ) -> None:
         """*pose_of* maps an image observation to its camera's optical pose in
         the world as a 4x4 matrix, or None to skip the frame. *world_frame* names
@@ -437,6 +438,11 @@ class VisualMemoryIndex:
         self.store = store
         self.pose_of = pose_of
         self.world_frame = world_frame
+        # Rows carry poses as they were computed, never recomputed on read, so this
+        # records which extrinsic produced them. A recording whose camera mount is
+        # later measured moves every pose by the whole correction, and an index built
+        # before that has to be rebuilt rather than quietly believed.
+        self.pose_tag = pose_tag
         self.image_stream_name = image_stream_name
         self.index_stream_name = index_stream_name or index_stream_name_of(
             model_name, image_stream_name
@@ -484,10 +490,10 @@ class VisualMemoryIndex:
                         f"index stream {self.index_stream_name!r} holds poses in {built_in!r}, "
                         f"not {self.world_frame!r}; rebuild it"
                     )
-                if tags.get("pose_frame") != POSE_FRAME_TAG:
+                if tags.get("pose_frame") != self.pose_tag:
                     raise ValueError(
                         f"index stream {self.index_stream_name!r} stores "
-                        f"{tags.get('pose_frame')!r} poses, not {POSE_FRAME_TAG!r}; rebuild it"
+                        f"{tags.get('pose_frame')!r} poses, not {self.pose_tag!r}; rebuild it"
                     )
             self._index_stream = stream
         return self._index_stream
@@ -582,7 +588,7 @@ class VisualMemoryIndex:
                         "model": self.model_name,
                         "image_stream": self.image_stream_name,
                         "world_frame": self.world_frame,
-                        "pose_frame": POSE_FRAME_TAG,
+                        "pose_frame": self.pose_tag,
                     },
                 )
                 added += 1
