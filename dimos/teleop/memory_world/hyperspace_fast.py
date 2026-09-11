@@ -308,8 +308,9 @@ def pool(evidence: Rasterized, config: Any) -> Pooled:
     # frame can see a voxel from two bins): only the score multiplier is about
     # the hot per-frame bests, and refine's min_bins must not drop a voxel the
     # reference keeps.
-    seen = np.unique(np.stack([all_keys, all_yaw], axis=1), axis=0)
-    bins = np.bincount(np.searchsorted(keys[starts], seen[:, 0]), minlength=len(starts))
+    seen = np.zeros((len(starts), max(int(config.yaw_bins), 1)), dtype=bool)
+    seen[np.searchsorted(keys[starts], all_keys), all_yaw] = True  # dense: 4x np.unique
+    bins = seen.sum(axis=1)
     return Pooled(unpack_keys(keys[starts]), pooled, frames.astype(np.int64), bins.astype(np.int64))
 
 

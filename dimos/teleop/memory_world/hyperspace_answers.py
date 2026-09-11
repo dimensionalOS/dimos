@@ -212,6 +212,12 @@ class HyperspaceAnswers:
                 model_name=self.config.hyperspace_model_name,
                 device=self.config.hyperspace_ingest_device,
                 hz=self.config.hyperspace_ingest_hz,
+                streams={  # the camera the viewer shows, not whichever detects first
+                    "image": self.config.image_stream_name,
+                    "depth": self.config.depth_stream_name,
+                    "camera_info": self.config.camera_info_stream_name,
+                    "tf": self.config.tf_stream_name,
+                },
             ),
             None,
             adopt=self._adopt_prepared,

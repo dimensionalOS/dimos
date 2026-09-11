@@ -45,9 +45,18 @@ logger = logging.getLogger(__name__)
 
 
 def ingest_command(
-    recording: str | Path, *, model_name: str, device: str, hz: float, novelty: float = 0.02
+    recording: str | Path,
+    *,
+    model_name: str,
+    device: str,
+    hz: float,
+    novelty: float = 0.02,
+    streams: dict[str, str | None] | None = None,
 ) -> list[str]:
-    """The subprocess that runs this module on *recording*, with the current interpreter."""
+    """The subprocess that runs this module on *recording*, with the current interpreter.
+    *streams* names the image, depth, camera_info and tf streams the module chose, so a
+    multi-camera recording is indexed from the camera the viewer shows."""
+    chosen = [f"--{role}={name}" for role, name in (streams or {}).items() if name]
     return [
         sys.executable,
         "-m",
@@ -61,6 +70,7 @@ def ingest_command(
         str(hz),
         "--novelty",
         str(novelty),
+        *chosen,
     ]
 
 
@@ -73,8 +83,10 @@ def ingest_recording(
     max_seconds: float = 1e9,
     max_depth_m: float = 10.0,
     novelty: float = 0.02,
+    streams: dict[str, str | None] | None = None,
 ) -> dict[str, Any]:
-    """Embed *recording*'s keyframes into its Hyperspace memory db. Returns the ingest stats."""
+    """Embed *recording*'s keyframes into its Hyperspace memory db. Returns the ingest stats.
+    *streams* overrides the detected image/depth/camera_info/tf stream names per role."""
     from dimos.mapping.hyperspace import patches as hs
     from dimos.mapping.hyperspace.cli import pick_device
     from dimos.mapping.hyperspace.embedder import SigLIP2Patches
@@ -86,6 +98,7 @@ def ingest_recording(
     store = open_recording(recording)
     store.start()
     detected = detect_streams(store)
+    detected.update({role: name for role, name in (streams or {}).items() if name})
     missing = [role for role in ("image", "depth", "camera_info", "tf") if not detected.get(role)]
     if missing:
         raise SystemExit(f"{recording.name} has no {', '.join(missing)} stream; cannot ingest")
@@ -291,6 +304,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--novelty", type=float, default=0.02, help="keyframe gate novelty threshold"
     )
+    for role in ("image", "depth", "camera_info", "tf"):
+        parser.add_argument(f"--{role}", default=None, help=f"the {role} stream (default: detect)")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     ingest_recording(
@@ -301,6 +316,7 @@ def main(argv: list[str] | None = None) -> None:
         max_seconds=args.max_seconds,
         max_depth_m=args.max_depth,
         novelty=args.novelty,
+        streams={role: getattr(args, role) for role in ("image", "depth", "camera_info", "tf")},
     )
 
 

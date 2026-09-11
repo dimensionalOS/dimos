@@ -429,7 +429,8 @@ export class ReplayController {
         if (on) {
             if (this._loadingSince === null) this._loadingSince = performance.now();
             if (performance.now() - this._loadingSince < LOADING_LABEL_AFTER_MS) {
-                setTimeout(() => { if (this._loadingSince !== null) this._setLoading(true, number); }, LOADING_LABEL_AFTER_MS);
+                // Re-read the target when the timer fires: a drag may have moved on.
+                setTimeout(() => { if (this._loadingSince !== null) this._setLoading(true, this.segmentOf(this.targetScan)); }, LOADING_LABEL_AFTER_MS);
                 return;
             }
             this.ui.bar.classList.add('loading');

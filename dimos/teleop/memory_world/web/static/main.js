@@ -229,6 +229,9 @@ function handleControl(msg) {
         case 'index_status':
             applyIndexStatus(msg);
             break;
+        case 'status':
+            setStatus(msg.message);
+            break;
         case 'error':
             setStatus(`Server error: ${msg.message || 'unknown'}`);
             break;

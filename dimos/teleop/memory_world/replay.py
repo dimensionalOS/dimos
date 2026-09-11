@@ -155,7 +155,7 @@ class RayTracedGrid:
     def add_scan(self, scan: SensorScan) -> tuple[np.ndarray, np.ndarray]:
         """Fold one scan into the map; returns the (added, removed) sorted keys."""
         self.mapper.add_frame(scan.points, scan.position, scan.orientation)
-        x, y, z = scan.position
+        z = scan.position[2]
         now = pack_keys(
             self.mapper.local_map(
                 scan.position, self.max_range, z - self.max_range, z + self.max_range

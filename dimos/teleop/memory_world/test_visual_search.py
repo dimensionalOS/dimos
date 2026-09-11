@@ -130,6 +130,10 @@ def test_spoken_questions_reduce_to_the_thing_asked_about(spoken: str, expected:
     assert search_phrase(spoken) == expected
 
 
+def test_a_long_transcript_is_capped_at_the_result_field_length() -> None:
+    assert len(search_phrase("word " * 200)) == 400  # MemoryQueryResult.query_text's max
+
+
 # ---- scoring ----------------------------------------------------------------
 
 
@@ -197,10 +201,13 @@ GIANT = "google/siglip2-giant-opt-patch16-384"
 
 
 def test_each_model_gets_its_own_stream() -> None:
-    """Two models' vectors are not comparable, so they must not share a stream."""
-    assert index_stream_name_of(GIANT) == "image_index_siglip2_giant_opt_p16_384"
+    """Two models' vectors are not comparable, and two cameras' frames are not the
+    same evidence, so neither pair may share a stream; siglipify's stays apart too."""
+    assert index_stream_name_of(GIANT, "image") == "image_index_siglip2_giant_opt_p16_384"
     assert index_stream_name_of(GIANT, "color_image") != embedding_stream_name("color_image", GIANT)
-    assert index_stream_name_of("google/siglip2-so400m-patch16-384") != index_stream_name_of(GIANT)
+    assert index_stream_name_of(
+        "google/siglip2-so400m-patch16-384", "image"
+    ) != index_stream_name_of(GIANT, "image")
     # ...and two cameras' frames are different evidence.
     assert index_stream_name_of(GIANT, "left_image") != index_stream_name_of(GIANT, "right_image")
 
@@ -249,6 +256,17 @@ def test_index_built_with_body_poses_is_refused(sqlite_store: SqliteStore) -> No
         tags={"model": GIANT, "pose_frame": "body"},
     )
     with pytest.raises(ValueError, match="rebuild"):
+        _ = VisualMemoryIndex(sqlite_store, pose_of=lambda obs: None, model_name=GIANT).index_stream
+
+
+def test_index_of_another_camera_is_refused(sqlite_store: SqliteStore) -> None:
+    sqlite_store.stream(index_stream_name_of(GIANT, "color_image"), PatchGrid).append(
+        PatchGrid(source_id=7, rows=2, cols=2, patches=np.zeros((4, 2), dtype=np.float16)),
+        ts=1.0,
+        pose=PoseStamped(position=Vector3(0.0, 0.0, 0.0)),
+        tags={"model": GIANT, "image_stream": "left_image", "pose_frame": POSE_FRAME_TAG},
+    )
+    with pytest.raises(ValueError, match="left_image"):
         _ = VisualMemoryIndex(sqlite_store, pose_of=lambda obs: None, model_name=GIANT).index_stream
 
 

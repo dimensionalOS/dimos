@@ -41,7 +41,8 @@ the same per-patch head trick and marks the stream ``text_aligned``; a stream
 without the mark holds raw tower tokens and is refused rather than searched.
 
 The index stream stores the source observation id as part of its payload
-rather than a copy of the image, and the model name in its tags: the grid
+rather than a copy of the image, and the model name and image stream in its
+tags: the grid
 shape and vector width are fixed by the checkpoint, so an index built with one
 model cannot be searched with another. Each row's pose is the camera's
 *optical* frame in the world (z forward, x right, y down), supplied by the
@@ -94,7 +95,7 @@ def model_slug(model_name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", tail.lower()).strip("_")
 
 
-def index_stream_name_of(model_name: str, image_stream_name: str = "image") -> str:
+def index_stream_name_of(model_name: str, image_stream_name: str) -> str:
     """Name the index stream after the images and the model that built it.
 
     Two models' embeddings are not comparable, and two cameras' frames are not
@@ -424,7 +425,7 @@ class VisualMemoryIndex:
         store: Store,
         pose_of: Callable[[Any], np.ndarray | None],
         image_stream_name: str = "color_image",
-        index_stream_name: str = "",  # default: named after the model
+        index_stream_name: str = "",  # default: named after the images and the model
         model_name: str = SIGLIP2_MODEL_NAME,
         device: str | None = None,
         dtype: torch.dtype = torch.float16,
@@ -784,7 +785,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("store_path")
     parser.add_argument("--image-stream", default="color_image")
-    parser.add_argument("--index-stream", default="", help="default: named after the model")
+    parser.add_argument(
+        "--index-stream", default="", help="default: named after the images and the model"
+    )
     parser.add_argument("--tf-stream", default="tf")
     parser.add_argument("--world-frame", default="world")
     parser.add_argument(

@@ -195,7 +195,8 @@ class MemoryWorldConfig(ModuleConfig):
     # part and happens once per recording, in the background, into the
     # recording itself (~1.7 MB per indexed frame at fp16).
     siglip_model_name: str = SIGLIP2_MODEL_NAME
-    # Empty means "named after siglip_model_name", so two models never share one.
+    # Empty means "named after the image stream and siglip_model_name", so two
+    # models, or two cameras, never share one.
     image_index_stream_name: str = ""
     # Every Nth frame. The recording is ~15fps, so 3 keeps sub-metre coverage
     # at a third of the embedding cost.
@@ -307,6 +308,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         self._web_server: RobotWebInterface | None = None
         self._web_server_thread: threading.Thread | None = None
         self._prepare_thread: threading.Thread | None = None
+        self._replay_thread: threading.Thread | None = None  # a build a route started
 
         super().__init__(**kwargs)
         self.config.store_path = str(self._resolve_store_path(self.config.store_path))
@@ -575,6 +577,10 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
 
     def _send_initial_payload(self, conn: ClientConn) -> None:
         try:
+            if self._cached_cloud is None:  # unlocked hint: this viewer waits for the build
+                conn.send_threadsafe(
+                    encode_text("status", message="Building the map from the recording…")
+                )
             cloud, top_down, poses, thumbnails, odom = self._ensure_world_cache()
             cloud_header, cloud_payload = cloud
             conn.send_threadsafe(encode_text("world_summary", **cloud_header))
@@ -635,6 +641,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 try:
                     replay = self._ensure_replay()
                     xyz = self._replay_read(lambda: replay.final_keyframe().data.points_f32())
+                    if xyz.size == 0:  # scans tf could not place: accumulate them instead
+                        raise RuntimeError("the replay's final keyframe is empty")
                     logger.info("voxel cloud from the ray-traced replay: %d voxels", len(xyz))
                 except Exception:
                     if self._stopping.is_set():
@@ -1065,6 +1073,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             return SkillResult.fail("NOT_FOUND", f"Nothing in the recording matches {phrase!r}")
 
         result = MemoryQueryResult(
+            engine="siglip",
+            query_text=phrase,
             answer=f"Found {phrase} in {len(places)} place(s), best match {places[0].similarity:+.3f}",
             focus_point=places[0].position,
             points=[
@@ -1237,10 +1247,14 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             raise RuntimeError(f"replay {self._replay_progress}")
         try:
             if self._replay is None and self._replay_error is None:
-                # Never build on a request thread: start it and let the viewer poll.
-                threading.Thread(
-                    target=self._build_replay, daemon=True, name="MemoryWorldReplay"
-                ).start()
+                # Never build on a request thread: start it (once) and let the viewer poll.
+                if self._stopping.is_set():
+                    raise RuntimeError("replay not built: stopping")
+                if self._replay_thread is None or not self._replay_thread.is_alive():
+                    self._replay_thread = threading.Thread(
+                        target=self._build_replay, daemon=True, name="MemoryWorldReplay"
+                    )
+                    self._replay_thread.start()
                 raise RuntimeError(f"replay {self._replay_progress}")
             replay = self._replay_locked()
             assert self._replay_index is not None  # set together with _replay
@@ -1470,11 +1484,15 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             self._stopping.set()  # prepare stops between steps; a replay build per scan
             self._embed_job.terminate()
             self._prepare_job.terminate()
-            if self._prepare_thread is not None:
-                self._prepare_thread.join(timeout=60)
+            for thread in (self._prepare_thread, self._replay_thread):
+                if thread is not None:
+                    thread.join(timeout=60)
         finally:
-            if self._prepare_thread is not None and self._prepare_thread.is_alive():
-                logger.warning("prepare is still running; its stores are left to the process exit")
+            busy = [t for t in (self._prepare_thread, self._replay_thread) if t and t.is_alive()]
+            if busy:
+                logger.warning(
+                    "%s is still running; its stores are left to the process exit", busy[0].name
+                )
             else:
                 if self._hyperspace is not None:
                     self._hyperspace.close()
