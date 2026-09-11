@@ -112,13 +112,30 @@ export class ResultsNav {
         }
     }
 
+    /** Orbit this place, or stop orbiting if this is the place already being orbited. */
     orbitCurrent() {
+        if (this.scene.isOrbiting()) {
+            this.scene.setOrbit(false);
+            this._syncOrbitLabel();
+            if (this.onOrbitChange) this.onOrbitChange();
+            this.diag('results_orbit', { index: this.current, on: false });
+            return;
+        }
         if (this.current < 0 && !this.go(0, { fly: false })) return;
         const cluster = this.clusters[this.current];
         this.scene.setOrbitTarget(cluster.centre);
         this.scene._orbit.distance = Math.max(2.0, cluster.radius * 3 + 1.0);
         this.scene.setOrbit(true);
-        this.diag('results_orbit', { index: this.current });
+        this._syncOrbitLabel();
+        if (this.onOrbitChange) this.onOrbitChange();  // the toolbar's own orbit button
+        this.diag('results_orbit', { index: this.current, on: true });
+    }
+
+    /** The button says what pressing it will do, whoever last changed orbit. */
+    _syncOrbitLabel() {
+        const button = (this.ui || {}).orbitBtn;
+        if (!button) return;
+        button.textContent = this.scene.isOrbiting() ? 'Stop orbit' : 'Orbit';
     }
 
     dispose() { this._disposed = true; }  // an in-flight /navigate reply then does nothing

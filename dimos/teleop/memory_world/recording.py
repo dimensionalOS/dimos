@@ -477,6 +477,10 @@ def corrected_odometry_stream(store: Store) -> str | None:
     return None
 
 
+# Written by calibrate_static_tf: the camera mount as the lidar actually sees it.
+CORRECTED_STATIC_STREAM = "tf_static_corrected"
+
+
 def build_tf_tree(
     store: Store, tf_stream: str, world_frame: str | None = None, base_frame: str = "base_link"
 ) -> TfTree:
@@ -498,6 +502,24 @@ def build_tf_tree(
                     (float(p.x), float(p.y), float(p.z)),
                     (float(q.x), float(q.y), float(q.z), float(q.w)),
                     static=True,
+                )
+    # A measured mount replaces the recorded one outright: the two disagree by tens of
+    # degrees, so holding both would only average a right answer with a wrong one.
+    if CORRECTED_STATIC_STREAM in store.list_streams():
+        for obs in store.streams[CORRECTED_STATIC_STREAM]:
+            for t in obs.data.transforms:
+                p, q = t.translation, t.rotation
+                tree._edges.pop((str(t.frame_id), str(t.child_frame_id)), None)
+                tree.add(
+                    str(t.frame_id),
+                    str(t.child_frame_id),
+                    float(obs.ts),
+                    (float(p.x), float(p.y), float(p.z)),
+                    (float(q.x), float(q.y), float(q.z), float(q.w)),
+                    static=True,
+                )
+                logger.info(
+                    "tf: %s -> %s from %r", t.frame_id, t.child_frame_id, CORRECTED_STATIC_STREAM
                 )
     corrected = corrected_odometry_stream(store)
     if corrected is None:

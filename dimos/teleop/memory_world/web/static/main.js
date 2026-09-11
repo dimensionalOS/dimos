@@ -304,6 +304,8 @@ function buildScene() {
                 status: statusEl,
             },
         }) : null;
+        // Either orbit button may be the one pressed; both say the same thing after.
+        if (results) results.onOrbitChange = () => setOrbit(scene.isOrbiting());
         tour = Tour ? new Tour({
             scene, heatmap, pyramids, flight, results, baseUrl, diag,
             replay: () => replay,
@@ -869,6 +871,7 @@ function setOrbit(enabled) {
     const label = on ? 'Stop orbit' : `Orbit ${replay?.index?.orbit?.frame || 'frame'}`;
     orbitBtn.textContent = label;
     document.getElementById('orbitTouchBtn').textContent = on ? 'Walk' : 'Orbit';
+    if (results && results._syncOrbitLabel) results._syncOrbitLabel();  // label only, no loop
 }
 orbitBtn.addEventListener('click', () => setOrbit(!scene?.isOrbiting()));
 document.getElementById('orbitTouchBtn').addEventListener('click', () => setOrbit(!scene?.isOrbiting()));
