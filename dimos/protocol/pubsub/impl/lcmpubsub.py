@@ -37,6 +37,7 @@ logger = setup_logger()
 class Topic:
     topic: str | re.Pattern[str] | Glob
     lcm_type: type[DimosMsg] | None = None
+    queue_capacity: int = 10000
 
     @property
     def is_pattern(self) -> bool:
@@ -131,8 +132,7 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
 
             lcm_subscription = self.l.subscribe(topic_str, plain_handler)
 
-        # Set queue capacity to 10000 to handle high-volume bursts
-        lcm_subscription.set_queue_capacity(10000)
+        lcm_subscription.set_queue_capacity(topic.queue_capacity)
 
         def unsubscribe() -> None:
             nonlocal alive

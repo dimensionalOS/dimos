@@ -26,7 +26,12 @@ import pytest
 
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.simulation.engines.mujoco_engine import CameraFrame, MujocoEngine
-from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule, MujocoSimModuleConfig
+from dimos.simulation.engines.mujoco_shm import CMD_MODE_PD_TAU
+from dimos.simulation.engines.mujoco_sim_module import (
+    MujocoSimModule,
+    MujocoSimModuleConfig,
+    _WholeBodySimHooks,
+)
 
 
 class _FakeData:
@@ -80,6 +85,30 @@ class _FakeSimHooks:
 
     def clear_latched_commands(self) -> None:
         self.cleared = True
+
+
+def test_whole_body_physics_waits_for_complete_pd_command(mocker: Any) -> None:
+    shm = mocker.MagicMock()
+    shm.read_command_mode.return_value = CMD_MODE_PD_TAU
+    shm.read_position_command.return_value = None
+    shm.read_velocity_command.return_value = None
+    shm.read_kp_command.return_value = None
+    shm.read_kd_command.return_value = None
+    shm.read_tau_command.return_value = None
+    engine = mocker.MagicMock()
+    engine.joint_positions = [0.0, 0.0]
+    engine.joint_velocities = [0.0, 0.0]
+    hooks = _WholeBodySimHooks(shm, dof=2)
+
+    hooks.pre_step(engine)
+    assert hooks.ready_for_physics() is False
+
+    shm.read_position_command.return_value = np.array([0.1, 0.2])
+    shm.read_kp_command.return_value = np.array([10.0, 10.0])
+    shm.read_kd_command.return_value = np.array([1.0, 1.0])
+    hooks.pre_step(engine)
+
+    assert hooks.ready_for_physics() is True
 
 
 def test_ready_signal_happens_after_joint_state_and_imu_write() -> None:

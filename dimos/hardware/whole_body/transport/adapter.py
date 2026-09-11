@@ -20,15 +20,17 @@ Subscribes /{hardware_id}/motor_states + /{hardware_id}/imu, publishes
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import threading
 from typing import Any
 
-from dimos.core.transport import LCMTransport
+from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.hardware.spec import JointLimits
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -41,7 +43,7 @@ class TransportWholeBodyAdapter:
         self,
         dof: int = 29,
         hardware_id: str = "wholebody",
-        transport_cls: type = LCMTransport,
+        transport_cls: Callable[[str, type], Any] = LCMTransport,
         network_interface: int | str = "",  # accepted-and-ignored — see module docstring
         **_: object,
     ) -> None:
@@ -59,6 +61,7 @@ class TransportWholeBodyAdapter:
         self._motor_states_unsub: Any = None
         self._imu_unsub: Any = None
         self._connected = False
+        self._active = False
 
     def connect(self) -> bool:
         ms_topic = f"/{self._prefix}/motor_states"
@@ -73,6 +76,7 @@ class TransportWholeBodyAdapter:
         self._imu_unsub = self._imu_transport.subscribe(self._on_imu)
 
         self._connected = True
+        self._active = False
         logger.info(
             f"TransportWholeBodyAdapter connected: motor_states={ms_topic}, "
             f"imu={imu_topic}, motor_command={cmd_topic}"
@@ -103,10 +107,23 @@ class TransportWholeBodyAdapter:
             self._latest_imu = None
 
         self._connected = False
+        self._active = False
         logger.info("TransportWholeBodyAdapter disconnected")
 
     def is_connected(self) -> bool:
         return self._connected
+
+    def activate(self) -> bool:
+        if not self._connected:
+            return False
+        self._active = True
+        return True
+
+    def deactivate(self) -> bool:
+        if not self._connected:
+            return False
+        self._active = False
+        return True
 
     def read_motor_states(self) -> list[MotorState]:
         with self._lock:
@@ -129,8 +146,8 @@ class TransportWholeBodyAdapter:
         return None
 
     def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
-        if self._motor_command_transport is None:
-            logger.warning("write_motor_commands called before connect()")
+        if self._motor_command_transport is None or not self._active:
+            logger.warning("write_motor_commands called before activation")
             return False
 
         msg = MotorCommandArray(
@@ -185,6 +202,24 @@ class TransportWholeBodyAdapter:
 def transport_lcm_factory(**kwargs: Any) -> TransportWholeBodyAdapter:
     """Factory for the ``transport_lcm`` adapter (see ``_registry.py``)."""
     kwargs.setdefault("transport_cls", LCMTransport)
+    return TransportWholeBodyAdapter(**kwargs)
+
+
+def zenoh_latest_transport(topic: str, msg_type: type) -> ZenohTransport[Any]:
+    """Build a robot-scoped, latest-only typed Zenoh transport."""
+    return ZenohTransport(
+        ZenohTopic(
+            f"dimos/{topic.lstrip('/')}",
+            msg_type,
+            queue_capacity=1,
+            qos=QOS_LATEST_WINS,
+        )
+    )
+
+
+def transport_zenoh_factory(**kwargs: Any) -> TransportWholeBodyAdapter:
+    """Factory for a latest-only Zenoh whole-body adapter."""
+    kwargs.setdefault("transport_cls", zenoh_latest_transport)
     return TransportWholeBodyAdapter(**kwargs)
 
 

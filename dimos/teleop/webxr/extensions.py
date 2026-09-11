@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Quest teleop module extensions and subclasses.
+"""WebXR teleop module extensions and subclasses.
 
 Available subclasses:
     - ArmTeleopModule: Per-hand press-and-hold engage (X/A hold to track)
     - HandTeleopModule: Pinch-to-toggle arm teleop using WebXR hand tracking
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
-    - VideoArmTeleopModule: ArmTeleopModule + JPEG frames pushed to the Quest over /ws
+    - VideoArmTeleopModule: ArmTeleopModule + JPEG frames pushed to the headset over /ws
     - Go2TeleopModule: Thumbstick → Twist velocity for the Go2 + camera over /ws
 """
 
 import asyncio
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import WebSocket
 
@@ -35,8 +35,8 @@ from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.teleop.quest.quest_teleop_module import QuestTeleopConfig, QuestTeleopModule
-from dimos.teleop.quest.quest_types import Buttons, Hand, QuestControllerState
+from dimos.teleop.webxr.controller_types import Buttons, Hand, WebXRControllerState
+from dimos.teleop.webxr.module import WebXRTeleopConfig, WebXRTeleopModule
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -51,11 +51,11 @@ async def _ws_send_jpeg(ws: WebSocket, data: bytes) -> None:
         pass
 
 
-def _push_jpeg(module: QuestTeleopModule, msg: Image, quality: int) -> None:
+def _push_jpeg(module: WebXRTeleopModule, msg: Image, quality: int) -> None:
     """JPEG-encode an Image and push it to all of module's connected /ws clients.
 
     Runs on the RX thread; sends are scheduled on the asyncio loop captured by
-    QuestTeleopModule when the first client connected.
+    WebXRTeleopModule when the first client connected.
     """
     # Snapshot clients under the lock to avoid concurrent set mutation from
     # the uvicorn thread. Skip the encode entirely if nobody is listening.
@@ -77,16 +77,16 @@ def _push_jpeg(module: QuestTeleopModule, msg: Image, quality: int) -> None:
         asyncio.run_coroutine_threadsafe(_ws_send_jpeg(ws, jpeg), loop)
 
 
-class TwistTeleopConfig(QuestTeleopConfig):
+class TwistTeleopConfig(WebXRTeleopConfig):
     """Configuration for TwistTeleopModule."""
 
     linear_scale: float = 1.0
     angular_scale: float = 1.0
 
 
-# Example implementation to show how to extend QuestTeleopModule for different teleop behaviors and outputs.
-class TwistTeleopModule(QuestTeleopModule):
-    """Quest teleop that outputs TwistStamped instead of PoseStamped.
+# Example implementation to show how to extend WebXRTeleopModule for different teleop behaviors and outputs.
+class TwistTeleopModule(WebXRTeleopModule):
+    """WebXR teleop that outputs TwistStamped instead of PoseStamped.
 
     Config:
         - linear_scale: Scale factor for linear (position) values. Default 1.0.
@@ -125,8 +125,8 @@ class TwistTeleopModule(QuestTeleopModule):
             self.right_twist.publish(twist)
 
 
-class ArmTeleopModule(QuestTeleopModule):
-    """Quest teleop with per-hand press-and-hold engage.
+class ArmTeleopModule(WebXRTeleopModule):
+    """WebXR teleop with per-hand press-and-hold engage.
 
     Each controller's primary button (X for left, A for right)
     engages that hand while held, disengages on release. Each hand's
@@ -162,8 +162,8 @@ class ArmTeleopModule(QuestTeleopModule):
 
     def _publish_button_state(
         self,
-        left: QuestControllerState | None,
-        right: QuestControllerState | None,
+        left: WebXRControllerState | None,
+        right: WebXRControllerState | None,
     ) -> None:
         """Publish Buttons with analog triggers packed into bits 16-29."""
         buttons = Buttons.from_controllers(left, right)
@@ -176,8 +176,8 @@ class ArmTeleopModule(QuestTeleopModule):
 
     def _publish_gripper_commands(
         self,
-        left: QuestControllerState | None,
-        right: QuestControllerState | None,
+        left: WebXRControllerState | None,
+        right: WebXRControllerState | None,
     ) -> None:
         """Publish normalized opening for each currently engaged hand."""
         controllers = {Hand.LEFT: left, Hand.RIGHT: right}
@@ -217,8 +217,8 @@ class HandTeleopModule(ArmTeleopModule):
 
     def _publish_button_state(
         self,
-        left: QuestControllerState | None,
-        right: QuestControllerState | None,
+        left: WebXRControllerState | None,
+        right: WebXRControllerState | None,
     ) -> None:
         """Keep downstream press-and-hold teleop tasks engaged between pinches."""
         buttons = Buttons.from_controllers(left, right)
@@ -232,14 +232,14 @@ class HandTeleopModule(ArmTeleopModule):
         self._publish_gripper_commands(left, right)
 
 
-class VideoArmTeleopConfig(QuestTeleopConfig):
+class VideoArmTeleopConfig(WebXRTeleopConfig):
     """Configuration for VideoArmTeleopModule."""
 
     video_jpeg_quality: int = 70
 
 
 class VideoArmTeleopModule(ArmTeleopModule):
-    """ArmTeleopModule + camera frames pushed to the Quest as JPEG over /ws.
+    """ArmTeleopModule + camera frames pushed to the headset as JPEG over /ws.
 
     Subscribes to color_image, JPEG-encodes each frame, and broadcasts raw
     JPEG bytes to every connected /ws client as a binary message. The client
@@ -262,7 +262,93 @@ class VideoArmTeleopModule(ArmTeleopModule):
         _push_jpeg(self, msg, self.config.video_jpeg_quality)
 
 
-class Go2TeleopConfig(QuestTeleopConfig):
+class MobileVideoArmTeleopConfig(VideoArmTeleopConfig):
+    """Configuration for combined arm, video, and mobile-base teleoperation."""
+
+    linear_scale: float = 0.3
+    yaw_scale: float = 0.3
+    strafe_scale: float = 0.3
+    right_stick_mode: Literal["yaw", "strafe"] = "yaw"
+    deadzone: float = 0.18
+
+
+class MobileVideoArmTeleopModule(VideoArmTeleopModule):
+    """Video arm teleop with thumbstick velocity for a mobile manipulator."""
+
+    dedicated_worker = True
+
+    config: MobileVideoArmTeleopConfig
+
+    cmd_vel: Out[Twist]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._cmd_vel_moving = False
+        self._right_stick_pressed = False
+
+    def _on_joy_bytes(self, data: bytes) -> bool:
+        if not super()._on_joy_bytes(data):
+            return False
+        with self._lock:
+            left = self._controllers.get(Hand.LEFT)
+            right = self._controllers.get(Hand.RIGHT)
+        self._publish_cmd_vel(left, right)
+        return True
+
+    def _publish_cmd_vel(
+        self,
+        left: WebXRControllerState | None,
+        right: WebXRControllerState | None,
+    ) -> None:
+        """Publish operator motion and one definitive stop per stop transition."""
+
+        def deadzone(value: float) -> float:
+            return 0.0 if abs(value) < self.config.deadzone else value
+
+        right_stick_pressed = right is not None and right.thumbstick_press
+        if right_stick_pressed:
+            if not self._right_stick_pressed:
+                self.cmd_vel.publish(Twist.zero())
+            self._right_stick_pressed = True
+            self._cmd_vel_moving = False
+            return
+        self._right_stick_pressed = False
+
+        left_x = deadzone(left.thumbstick.x if left is not None else 0.0)
+        left_y = deadzone(left.thumbstick.y if left is not None else 0.0)
+        right_x = deadzone(right.thumbstick.x if right is not None else 0.0)
+
+        vx = -left_y * self.config.linear_scale
+        vy = 0.0
+        yaw_rate = 0.0
+        if self.config.right_stick_mode == "strafe":
+            vy = -right_x * self.config.strafe_scale
+            yaw_rate = -left_x * self.config.yaw_scale
+        else:
+            yaw_rate = -right_x * self.config.yaw_scale
+
+        moving = any(value != 0.0 for value in (vx, vy, yaw_rate))
+        if moving:
+            self.cmd_vel.publish(
+                Twist(
+                    linear=Vector3(vx, vy, 0.0),
+                    angular=Vector3(0.0, 0.0, yaw_rate),
+                )
+            )
+        elif self._cmd_vel_moving:
+            self.cmd_vel.publish(Twist.zero())
+        self._cmd_vel_moving = moving
+
+    @rpc
+    def stop(self) -> None:
+        try:
+            self.cmd_vel.publish(Twist.zero())
+        except Exception:
+            logger.exception("Failed to publish stop Twist")
+        super().stop()
+
+
+class Go2TeleopConfig(WebXRTeleopConfig):
     """Configuration for Go2TeleopModule."""
 
     linear_speed: float = 0.5  # m/s at full stick deflection
@@ -271,8 +357,8 @@ class Go2TeleopConfig(QuestTeleopConfig):
     video_jpeg_quality: int = 70
 
 
-class Go2TeleopModule(QuestTeleopModule):
-    """Quest teleop for the Unitree Go2: thumbstick driving + camera in the headset.
+class Go2TeleopModule(WebXRTeleopModule):
+    """WebXR teleop for the Unitree Go2: thumbstick driving + camera in the headset.
 
     Velocity is derived from the controller thumbsticks as each Joy message
     arrives (left stick → forward/strafe, right stick → yaw) and published on

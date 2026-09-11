@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import importlib
 import time
 from typing import Any, NoReturn, Protocol, TypeGuard
 
@@ -31,12 +32,17 @@ app = typer.Typer(help="Operate a running Unitree G1 stack safely")
 
 _COORDINATOR = "ControlCoordinator"
 _MANIPULATION = "G1Manipulation"
-_GROOT_TASK = "groot_wbc"
 _TELEOP_TASK = "teleop_g1"
 _ARM_POLL_SECONDS = 0.1
+_LIFECYCLE_COMMANDS = frozenset({"arm", "disarm", "set_dry_run", "state_snapshot"})
+_LIFECYCLE_STATE_FIELDS = frozenset(
+    {"active", "armed", "arming", "arm_pending", "dry_run", "arming_duration"}
+)
 
 
 class _G1CoordinatorHandle(Protocol):
+    def list_tasks(self) -> list[str]: ...
+    def describe_task(self, task_name: str) -> dict[str, Any] | None: ...
     def task_invoke(self, task_name: str, method: str, kwargs: dict[str, Any]) -> Any: ...
     def set_dry_run(self, dry_run: bool) -> Any: ...
     def set_activated(self, activated: bool) -> Any: ...
@@ -69,7 +75,15 @@ def _has_methods(handle: ModuleHandle, names: tuple[str, ...]) -> bool:
 def _is_coordinator(handle: ModuleHandle) -> TypeGuard[_G1CoordinatorHandle]:
     return _has_methods(
         handle,
-        ("task_invoke", "set_dry_run", "set_activated", "get_active_tasks", "cancel_trajectory"),
+        (
+            "list_tasks",
+            "describe_task",
+            "task_invoke",
+            "set_dry_run",
+            "set_activated",
+            "get_active_tasks",
+            "cancel_trajectory",
+        ),
     )
 
 
@@ -85,29 +99,48 @@ def _coordinator(client: Dimos) -> _G1CoordinatorHandle:
 
 
 def _manipulation(client: Dimos) -> _G1ManipulationHandle:
-    handle = client.get_module(_MANIPULATION)
+    try:
+        handle = client.get_module(_MANIPULATION)
+    except (AttributeError, KeyError):
+        _abort("the running stack does not expose the required G1 manipulation RPCs")
     if not _is_manipulation(handle):
         _abort("the running stack does not expose the required G1 manipulation RPCs")
     return handle
 
 
-def _is_groot_state(value: Any) -> TypeGuard[dict[str, Any]]:
-    return isinstance(value, dict)
+def _lifecycle_task(coordinator: _G1CoordinatorHandle) -> str:
+    matches: list[str] = []
+    for task_name in coordinator.list_tasks():
+        description = coordinator.describe_task(task_name)
+        if not isinstance(description, dict):
+            continue
+        commands = description.get("commands")
+        if isinstance(commands, dict) and _LIFECYCLE_COMMANDS <= commands.keys():
+            matches.append(task_name)
+    if not matches:
+        _abort("the running stack has no G1 policy task with lifecycle controls")
+    if len(matches) > 1:
+        _abort(f"the running stack has multiple G1 policy lifecycle tasks: {', '.join(matches)}")
+    return matches[0]
 
 
-def _groot_state(coordinator: _G1CoordinatorHandle) -> dict[str, Any]:
-    state = coordinator.task_invoke(_GROOT_TASK, "state_snapshot", {})
-    if not _is_groot_state(state):
-        _abort("the running stack does not expose G1 GR00T safety state")
+def _is_lifecycle_state(value: Any) -> TypeGuard[dict[str, Any]]:
+    return isinstance(value, dict) and _LIFECYCLE_STATE_FIELDS <= value.keys()
+
+
+def _policy_state(coordinator: _G1CoordinatorHandle, task_name: str) -> dict[str, Any]:
+    state = coordinator.task_invoke(task_name, "state_snapshot", {})
+    if not _is_lifecycle_state(state):
+        _abort(f"G1 policy task {task_name!r} returned an invalid lifecycle state")
     return state
 
 
-def _require_armed_and_enabled(coordinator: _G1CoordinatorHandle) -> dict[str, Any]:
-    state = _groot_state(coordinator)
+def _require_armed_and_enabled(coordinator: _G1CoordinatorHandle, task_name: str) -> dict[str, Any]:
+    state = _policy_state(coordinator, task_name)
     if not state.get("armed") or state.get("arming") or state.get("arm_pending"):
         _abort("G1 is not fully armed; run `dimos hardware g1 arm` first")
     if state.get("dry_run"):
-        _abort("motor output is still disabled; run `dimos hardware g1 enable` first")
+        _abort("learned-policy output is still in dry-run; run `dimos hardware g1 enable` first")
     return state
 
 
@@ -115,12 +148,14 @@ def _fully_armed(state: dict[str, Any]) -> bool:
     return bool(state.get("armed") and not state.get("arming") and not state.get("arm_pending"))
 
 
-def _arm_and_wait(coordinator: _G1CoordinatorHandle, timeout: float) -> dict[str, Any]:
+def _arm_and_wait(
+    coordinator: _G1CoordinatorHandle, task_name: str, timeout: float
+) -> dict[str, Any]:
     coordinator.set_dry_run(True)
     coordinator.set_activated(True)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        state = _groot_state(coordinator)
+        state = _policy_state(coordinator, task_name)
         if _fully_armed(state):
             return state
         time.sleep(_ARM_POLL_SECONDS)
@@ -129,14 +164,15 @@ def _arm_and_wait(coordinator: _G1CoordinatorHandle, timeout: float) -> dict[str
 
 def _enable_motor_output(
     coordinator: _G1CoordinatorHandle,
+    task_name: str,
     state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    current = state if state is not None else _groot_state(coordinator)
+    current = state if state is not None else _policy_state(coordinator, task_name)
     if not _fully_armed(current):
         _abort("G1 is not fully armed; run `dimos hardware g1 arm` first")
     coordinator.set_dry_run(False)
     try:
-        enabled = _groot_state(coordinator)
+        enabled = _policy_state(coordinator, task_name)
         if enabled.get("dry_run"):
             _abort("G1 remained in dry-run after the enable request")
     except BaseException as enable_error:
@@ -158,9 +194,10 @@ def _require_teleop_disengaged(coordinator: _G1CoordinatorHandle) -> None:
 
 def _execute_ready_pose(
     coordinator: _G1CoordinatorHandle,
+    task_name: str,
     manipulation: _G1ManipulationHandle,
 ) -> None:
-    _require_armed_and_enabled(coordinator)
+    _require_armed_and_enabled(coordinator, task_name)
     _require_teleop_disengaged(coordinator)
     targets = {
         group: JointState(position=list(positions)) for group, positions in G1_READY_JOINTS.items()
@@ -173,26 +210,90 @@ def _execute_ready_pose(
         _abort(f"ready-pose execution failed: {executed}")
 
 
+def _run_sonic_doctor() -> Any:
+    # ONNX Runtime is optional; load diagnostics only for this command so a
+    # minimal DimOS install can still use every unrelated CLI command.
+    diagnostics = importlib.import_module("dimos.control.tasks.g1_sonic_wbc_task.sonic_diagnostics")
+    return diagnostics.run_sonic_doctor()
+
+
+@app.command("sonic-doctor")
+def sonic_doctor() -> None:
+    """Validate the onboard SONIC GPU runtime without contacting the robot."""
+    report = _run_sonic_doctor()
+    for check in report.checks:
+        status = "PASS" if check.passed else "FAIL"
+        typer.echo(f"{status}  {check.name}: {check.detail}")
+    if not report.passed:
+        failures = sum(not check.passed for check in report.checks)
+        _abort(f"SONIC doctor found {failures} problem(s); do not enable real-robot control")
+    typer.echo("SONIC doctor passed; proceed to the MuJoCo soak test before real hardware.")
+
+
 @app.command()
 def status() -> None:
     """Show the G1 safety state, trajectory state, and planning groups."""
     client = _connect()
     try:
         coordinator = _coordinator(client)
-        state = _groot_state(coordinator)
-        trajectory = coordinator.task_invoke(
-            JOINT_TRAJECTORY_TASK_NAME, "get_status", {"t_now": None}
-        )
+        task_name = _lifecycle_task(coordinator)
+        state = _policy_state(coordinator, task_name)
+        if JOINT_TRAJECTORY_TASK_NAME in coordinator.list_tasks():
+            trajectory = coordinator.task_invoke(
+                JOINT_TRAJECTORY_TASK_NAME, "get_status", {"t_now": None}
+            )
+        else:
+            trajectory = "unavailable"
         try:
-            groups = _manipulation(client).list_planning_groups()
+            manipulation = client.get_module(_MANIPULATION)
+            if not _is_manipulation(manipulation):
+                raise KeyError(_MANIPULATION)
+            groups = manipulation.list_planning_groups()
             group_ids = [str(group.id) for group in groups]
         except (AttributeError, KeyError):
             group_ids = []
 
+        typer.echo(f"controller:  {task_name}")
         typer.echo(f"active:      {bool(state.get('active'))}")
         typer.echo(f"armed:       {bool(state.get('armed'))}")
         typer.echo(f"arming:      {bool(state.get('arming') or state.get('arm_pending'))}")
         typer.echo(f"dry_run:     {bool(state.get('dry_run'))}")
+        if "control_state" in state:
+            typer.echo(f"control:     {state['control_state']}")
+        if "reference_source" in state:
+            typer.echo(f"reference:   {state['reference_source']}")
+        if state.get("stream_active"):
+            backlog = int(state.get("stream_backlog_frames", 0))
+            typer.echo(f"stream_lag:  {backlog} frames ({backlog * 20} ms)")
+        policy_timing = state.get("policy_timing")
+        if isinstance(policy_timing, dict):
+            interval = policy_timing.get("start_interval_ms")
+            if isinstance(interval, dict) and int(interval.get("samples", 0)) > 0:
+                mean_ms = float(interval.get("mean", 0.0))
+                p99_ms = float(interval.get("p99", 0.0))
+                effective_hz = 1000.0 / mean_ms if mean_ms > 0.0 else 0.0
+                typer.echo(
+                    f"policy_rate: {effective_hz:.1f} Hz "
+                    f"(mean {mean_ms:.2f} ms, p99 {p99_ms:.2f} ms)"
+                )
+        webxr = state.get("webxr_teleop")
+        if isinstance(webxr, dict):
+            typer.echo(f"webxr:       {webxr.get('mode', 'unknown')}")
+            typer.echo(f"pipeline:    {webxr.get('sonic_pipeline', 'unknown')}")
+            buffered = webxr.get("buffered_frames", 0)
+            required = webxr.get("pose_window_frames", 0)
+            readiness = "ready" if webxr.get("stream_ready") else "waiting"
+            typer.echo(f"pose_buffer: {buffered}/{required} ({readiness})")
+            mode = webxr.get("mode")
+            if mode == "planner_prepare":
+                age = float(webxr.get("planner_prepare_age_seconds", 0.0))
+                typer.echo(f"reference_handoff: holding pose; fresh planner pending ({age:.2f}s)")
+            elif mode in {"pose_transition", "planner_transition"}:
+                progress = float(webxr.get("pose_transition_progress", 0.0))
+                duration = float(webxr.get("pose_transition_seconds", 0.0))
+                direction = "planner->pose" if mode == "pose_transition" else "pose->planner"
+                typer.echo(f"reference_handoff: {direction} {progress:.0%} of {duration:.2f}s")
+            typer.echo(f"transition:  {webxr.get('last_transition_reason', 'unknown')}")
         typer.echo(f"trajectory:  {trajectory}")
         typer.echo(f"manipulation: {', '.join(group_ids) if group_ids else 'unavailable'}")
     except (AttributeError, KeyError, RuntimeError) as exc:
@@ -203,11 +304,12 @@ def status() -> None:
 
 @app.command()
 def arm(timeout: float = typer.Option(15.0, min=0.1, help="Arming timeout in seconds.")) -> None:
-    """Run the GR00T pose ramp, then keep policy output in dry-run."""
+    """Run the policy pose ramp, then keep learned-policy output in dry-run."""
     client = _connect()
     try:
         coordinator = _coordinator(client)
-        _arm_and_wait(coordinator, timeout)
+        task_name = _lifecycle_task(coordinator)
+        _arm_and_wait(coordinator, task_name, timeout)
         typer.echo("G1 armed in dry-run; inspect the robot, then run `dimos hardware g1 enable`.")
     except (AttributeError, KeyError, RuntimeError) as exc:
         _abort(f"failed to arm G1: {exc}")
@@ -217,12 +319,13 @@ def arm(timeout: float = typer.Option(15.0, min=0.1, help="Arming timeout in sec
 
 @app.command()
 def enable() -> None:
-    """Enable motor output after a completed dry-run arming ramp."""
+    """Enable learned-policy output after a completed dry-run arming ramp."""
     client = _connect()
     try:
         coordinator = _coordinator(client)
-        _enable_motor_output(coordinator)
-        typer.echo("G1 motor output enabled.")
+        task_name = _lifecycle_task(coordinator)
+        _enable_motor_output(coordinator, task_name)
+        typer.echo("G1 live policy output enabled.")
     except (AttributeError, KeyError, RuntimeError) as exc:
         _abort(f"failed to enable G1: {exc}")
     finally:
@@ -238,42 +341,44 @@ def activate(
         help="Move both arms to the conservative ready pose after enabling motor output.",
     ),
 ) -> None:
-    """Arm, confirm physical safety, and enable live GR00T output."""
+    """Arm, confirm physical safety, and enable live policy output."""
     client = _connect()
     motor_output_enabled = False
     try:
         coordinator = _coordinator(client)
-        state = _groot_state(coordinator)
+        manipulation = _manipulation(client) if ready else None
+        task_name = _lifecycle_task(coordinator)
+        state = _policy_state(coordinator, task_name)
         if not _fully_armed(state):
-            state = _arm_and_wait(coordinator, timeout)
+            state = _arm_and_wait(coordinator, task_name, timeout)
 
         if state.get("dry_run"):
             typer.echo(
                 "Arming ramp complete. Inspect the robot and confirm the remote and E-stop "
                 "are ready."
             )
-            if not typer.confirm("Enable live GR00T motor output?", default=False):
+            if not typer.confirm("Enable live G1 policy motor output?", default=False):
                 typer.echo("Activation cancelled; G1 remains armed in dry-run.")
                 raise typer.Exit(1)
-            _enable_motor_output(coordinator, state)
+            _enable_motor_output(coordinator, task_name, state)
             motor_output_enabled = True
-            typer.echo("G1 motor output enabled.")
+            typer.echo("G1 live policy output enabled.")
         else:
             motor_output_enabled = True
             typer.echo("G1 is already activated.")
 
         if ready:
-            manipulation = _manipulation(client)
+            assert manipulation is not None
             try:
-                _execute_ready_pose(coordinator, manipulation)
+                _execute_ready_pose(coordinator, task_name, manipulation)
             except typer.Exit:
-                typer.echo("GR00T motor output remains enabled.", err=True)
+                typer.echo("G1 policy motor output remains enabled.", err=True)
                 raise
             typer.echo("G1 reached the ready pose.")
         elif state.get("dry_run"):
             typer.echo("G1 activated.")
     except (AttributeError, KeyError, RuntimeError) as exc:
-        suffix = "; GR00T motor output remains enabled" if motor_output_enabled else ""
+        suffix = "; G1 policy motor output remains enabled" if motor_output_enabled else ""
         _abort(f"failed to activate G1: {exc}{suffix}")
     finally:
         client.stop()
@@ -285,8 +390,9 @@ def ready() -> None:
     client = _connect()
     try:
         coordinator = _coordinator(client)
+        task_name = _lifecycle_task(coordinator)
         manipulation = _manipulation(client)
-        _execute_ready_pose(coordinator, manipulation)
+        _execute_ready_pose(coordinator, task_name, manipulation)
         typer.echo("G1 reached the ready pose.")
     except (AttributeError, KeyError, RuntimeError) as exc:
         _abort(f"failed to move G1 to the ready pose: {exc}")
@@ -312,7 +418,10 @@ def disable() -> None:
                 failures.append(f"{description}: {exc}")
         if failures:
             _abort("; ".join(failures))
-        typer.echo("G1 trajectory cancelled, motor output disabled, and controller disarmed.")
+        typer.echo(
+            "G1 trajectory cancelled and policy disarmed into current-pose hold. "
+            "Run `dimos stop` to stop low-level motor commands."
+        )
     except (AttributeError, KeyError, RuntimeError) as exc:
         _abort(f"failed to disable G1: {exc}")
     finally:

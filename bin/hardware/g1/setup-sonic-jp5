@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Install the pinned CUDA ONNX Runtime wheel for a JetPack 5 G1 PC2.
+set -euo pipefail
+
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
+CUDA_HOME_JP5=/usr/local/cuda-11.8
+SONIC_VENV="$REPO_ROOT/.venv-sonic-jp5"
+SONIC_PYTHON_VERSION=3.10
+ORT_AUTO_VERSION=1.23.3
+ORT_DISTRIBUTION_VERSION=1.18.1.11.8
+ORT_VERSION=1.18.1
+CHECK_ONLY=false
+FAILED=0
+
+usage() {
+    echo "usage: bin/hardware/g1/setup-sonic-jp5 [--check]"
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --check) CHECK_ONLY=true ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+    esac
+    shift
+done
+
+pass() {
+    echo "PASS  $1"
+}
+
+fail() {
+    echo "FAIL  $1" >&2
+    FAILED=$((FAILED + 1))
+}
+
+[[ -f "$REPO_ROOT/pyproject.toml" && -f "$REPO_ROOT/uv.lock" ]] \
+    && pass "DimOS source checkout: $REPO_ROOT" \
+    || fail "run this script from a DimOS source checkout"
+
+[[ $(uname -m) == aarch64 ]] \
+    && pass "architecture: aarch64" \
+    || fail "expected the G1 PC2 aarch64 host, found $(uname -m)"
+
+if [[ -r /etc/nv_tegra_release ]] && head -n 1 /etc/nv_tegra_release | grep -q '^# R35'; then
+    pass "Jetson Linux: $(head -n 1 /etc/nv_tegra_release)"
+else
+    fail "expected Jetson Linux R35 (JetPack 5)"
+fi
+
+[[ -e "$CUDA_HOME_JP5/lib64/libcudart.so.11.0" ]] \
+    && pass "CUDA 11.8 runtime: $CUDA_HOME_JP5/lib64/libcudart.so.11.0" \
+    || fail "CUDA 11.8 runtime is missing from $CUDA_HOME_JP5"
+
+[[ -e "$CUDA_HOME_JP5/compat/libcuda.so" ]] \
+    && pass "CUDA 11.8 compatibility driver: $CUDA_HOME_JP5/compat/libcuda.so" \
+    || fail "cuda-compat-11-8 is missing"
+
+[[ -e /usr/lib/aarch64-linux-gnu/libcudnn.so.8 ]] \
+    && pass "cuDNN 8: /usr/lib/aarch64-linux-gnu/libcudnn.so.8" \
+    || fail "cuDNN 8 is missing"
+
+command -v uv >/dev/null 2>&1 && pass "uv: $(command -v uv)" || fail "uv is missing"
+
+if [[ "$FAILED" -ne 0 ]]; then
+    cat >&2 <<'EOF'
+
+Prerequisites failed. This setup does not flash JetPack and does not install
+system packages. For CUDA, use NVIDIA's CUDA 11.8 archive and select:
+  Linux / aarch64-jetson / Ubuntu / 20.04 / deb
+Then install the versioned packages:
+  sudo apt-get install cuda-runtime-11-8 cuda-compat-11-8
+https://developer.nvidia.com/cuda-11-8-0-download-archive
+EOF
+    exit 1
+fi
+
+if [[ "$CHECK_ONLY" == true ]]; then
+    echo "JetPack 5 SONIC prerequisites passed."
+    exit 0
+fi
+
+export PATH="$CUDA_HOME_JP5/bin:$PATH"
+export LD_LIBRARY_PATH="$CUDA_HOME_JP5/compat:$CUDA_HOME_JP5/lib64:/usr/lib/aarch64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+if [[ ! -x "$SONIC_VENV/bin/python" ]] \
+    || [[ $("$SONIC_VENV/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")') != "$SONIC_PYTHON_VERSION" ]]; then
+    uv venv --clear --python "$SONIC_PYTHON_VERSION" "$SONIC_VENV"
+fi
+DIMOS_ALLOW_MISSING_COCKPIT=1 VIRTUAL_ENV="$SONIC_VENV" uv sync \
+    --active \
+    --python "$SONIC_VENV/bin/python" \
+    --locked \
+    --no-default-groups \
+    --extra unitree-dds \
+    --inexact \
+    --no-install-package gtsam-extended \
+    --no-install-package onnxruntime
+uv pip install \
+    --python "$SONIC_VENV/bin/python" \
+    "numpy==1.26.4" \
+    pip
+
+"$SONIC_VENV/bin/python" -m pip uninstall --yes \
+    onnxruntime \
+    onnxruntime-gpu \
+    onnxruntime-gpu-extended \
+    onnxruntime-gpu-extended-auto
+"$SONIC_VENV/bin/python" -m pip install \
+    --no-cache-dir \
+    "onnxruntime-gpu-extended-auto==$ORT_AUTO_VERSION"
+
+"$SONIC_VENV/bin/python" - \
+    "$ORT_AUTO_VERSION" \
+    "$ORT_DISTRIBUTION_VERSION" \
+    "$ORT_VERSION" <<'PY'
+import sys
+from importlib.metadata import version
+
+try:
+    import onnxruntime as ort
+except ImportError as exc:
+    msg = "onnxruntime-gpu-extended installation did not provide onnxruntime"
+    raise ImportError(msg) from exc
+import onnxruntime as ort
+
+expected_auto, expected_distribution, expected_runtime = sys.argv[1:]
+actual_auto = version("onnxruntime-gpu-extended-auto")
+actual_distribution = version("onnxruntime-gpu-extended")
+actual_runtime = ort.__version__
+providers = ort.get_available_providers()
+
+expected = (expected_auto, expected_distribution, expected_runtime)
+actual = (actual_auto, actual_distribution, actual_runtime)
+if actual != expected:
+    raise SystemExit(f"unexpected ONNX Runtime packages: expected {expected}, found {actual}")
+if "CUDAExecutionProvider" not in providers:
+    raise SystemExit(f"CUDAExecutionProvider unavailable; ONNX Runtime exposes {providers}")
+
+print(
+    "PASS  ONNX Runtime: "
+    f"auto={actual_auto} distribution={actual_distribution} runtime={actual_runtime}"
+)
+print(f"PASS  execution providers: {providers}")
+PY
+
+"$SONIC_VENV/bin/python" "$REPO_ROOT/bin/hardware/g1/setup-sonic-models"
+
+"$SONIC_VENV/bin/python" - <<'PY'
+try:
+    import open3d
+except ImportError as exc:
+    msg = "JetPack-compatible Open3D is missing from the SONIC environment"
+    raise ImportError(msg) from exc
+import open3d
+
+from dimos.cli.dimos import cli_main
+from dimos.core.o3dpickle import register_picklers
+from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_sonic_webxr_teleop import (
+    unitree_g1_sonic_webxr_teleop,
+)
+
+register_picklers()
+print(f"PASS  Open3D: {open3d.__version__}")
+print("PASS  DimOS CLI and SONIC WebXR blueprint imports")
+PY
+
+cat <<EOF
+
+JetPack 5 SONIC environment is ready.
+
+Before each run:
+  export DIMOS_TRANSPORT=zenoh
+  export PATH=$CUDA_HOME_JP5/bin:\$PATH
+  export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}
+  export LD_LIBRARY_PATH=$CUDA_HOME_JP5/lib64:\$LD_LIBRARY_PATH
+  export LD_LIBRARY_PATH=$CUDA_HOME_JP5/compat:\$LD_LIBRARY_PATH
+  source $SONIC_VENV/bin/activate
+  dimos hardware g1 sonic-doctor
+
+Use the activated environment's dimos command directly. Do not use uv run.
+EOF

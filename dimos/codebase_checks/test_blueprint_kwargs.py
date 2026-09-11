@@ -78,16 +78,15 @@ def _allowed_kwarg_names(module: type[ModuleBase]) -> set[str]:
 
 
 def _blueprint_params() -> list[str | pytest.ParameterSet]:
-    self_hosted = set(SELF_HOSTED_BLUEPRINTS)
     return [
-        pytest.param(name, marks=pytest.mark.self_hosted) if name in self_hosted else name
+        pytest.param(name, marks=pytest.mark.self_hosted)
+        if name in SELF_HOSTED_BLUEPRINTS
+        else name
         for name in sorted(all_blueprints)
     ]
 
 
-@pytest.mark.parametrize("blueprint_name", _blueprint_params())
-def test_blueprint_atom_kwargs_match_module_config(blueprint_name: str) -> None:
-    """Fail when blueprint kwargs cannot be consumed by their target module."""
+def _assert_blueprint_atom_kwargs_match_module_config(blueprint_name: str) -> None:
     blueprint = _get_blueprint_or_skip(blueprint_name)
 
     violations: list[str] = []
@@ -107,3 +106,9 @@ def test_blueprint_atom_kwargs_match_module_config(blueprint_name: str) -> None:
             "for legacy modules with direct constructor parameters, use the declared "
             "`__init__` keyword names."
         )
+
+
+@pytest.mark.parametrize("blueprint_name", _blueprint_params())
+def test_blueprint_atom_kwargs_match_module_config(blueprint_name: str) -> None:
+    """Fail when blueprint kwargs cannot be consumed by their target module."""
+    _assert_blueprint_atom_kwargs_match_module_config(blueprint_name)
