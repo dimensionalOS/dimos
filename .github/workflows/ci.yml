@@ -251,6 +251,8 @@ jobs:
             dimos/navigation/nav_3d/mls_planner/test_transformer.py
       - name: Bake e2e tests
         run: uv run pytest -m bake_e2e dimos/cli/bake/test_bake_e2e.py --no-cov
+      - name: Native RPC toy
+        run: uv run pytest examples/native_rpc/test_native_rpc.py --no-cov
 
   native:
     name: Native builds (C++ and Rust)
