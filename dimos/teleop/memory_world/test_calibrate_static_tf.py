@@ -160,3 +160,96 @@ def test_thinning_keeps_one_point_per_cube_and_obeys_the_cap() -> None:
     thinned = _thinned(spread, 0.5, 500)
     assert len(thinned) == 500  # capped, and every survivor is one of the originals
     assert {tuple(p) for p in thinned} <= {tuple(p) for p in spread}
+
+
+def test_a_correction_goes_inert_on_a_recording_already_fixed_at_the_source(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Two fixes must never compose. The measurement is what decides, not a memory.
+
+    A correction carries the lidar-to-camera transform it was measured to produce. If
+    the recording already produces that -- because the publisher was fixed and the file
+    re-derived -- applying it again would undo the fix by exactly the amount it fixed.
+    """
+    import json
+
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.calibrate_static_tf import write_corrected_static
+    from dimos.teleop.memory_world.recording import (
+        CORRECTED_STATIC_STREAM,
+        _already_measures_up,
+        build_tf_tree,
+        measured_mount_written_at,
+    )
+
+    def edge(parent: str, child: str, x: float) -> TFMessage:
+        return TFMessage(
+            Transform(
+                translation=Vector3(x, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id=parent,
+                child_frame_id=child,
+                ts=1.0,
+            )
+        )
+
+    store = SqliteStore(path=str(tmp_path / "rec.db"), must_exist=False)
+    store.start()
+    try:
+        store.stream("tf", TFMessage).append(edge("lidar", "mount", 1.0), ts=1.0)
+        store.stream("tf_static", TFMessage).append(edge("mount", "cam", 9.0), ts=1.0)
+
+        measured = np.eye(4)
+        measured[0, 3] = 3.0  # what lidar -> cam should be: the recording says 10
+        fixed = np.eye(4)
+        fixed[0, 3] = 2.0  # so mount -> cam should be 2, not 9
+        write_corrected_static(
+            store,
+            "mount",
+            "cam",
+            fixed,
+            1.0,
+            measured=measured,
+            lidar_frame="lidar",
+            camera_frame="cam",
+        )
+        assert build_tf_tree(store, "tf").lookup("lidar", "cam", 1.0)[0, 3] == 3.0
+        assert measured_mount_written_at(store) is not None  # dated, so staleness is checkable
+
+        tags = store.streams[CORRECTED_STATIC_STREAM].first().tags
+        already = build_tf_tree(store, "tf")  # a tree that already measures up
+        assert _already_measures_up(already, tags, 1.0)  # so the correction must not apply again
+
+        # And a tree that does not: the correction is the only thing fixing it.
+        store.delete_stream(CORRECTED_STATIC_STREAM)
+        assert not _already_measures_up(build_tf_tree(store, "tf"), tags, 1.0)
+        assert json.loads(str(tags["measured"]))[3] == 3.0  # the measurement, stored as measured
+    finally:
+        store.stop()
+
+
+def test_the_mount_correction_reproduces_what_was_measured(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """corrected_mount turns a lidar-to-camera measurement into one edge of the tree."""
+    from dimos.teleop.memory_world.calibrate_static_tf import corrected_mount
+
+    tree = cart_tree()
+    measured = np.eye(4)
+    measured[:3, :3] = _rotation(0.0, 0.0, np.pi / 2)
+    measured[:3, 3] = [0.3, -0.2, 0.1]
+
+    mount, child, matrix = corrected_mount(
+        tree, measured, "camera_depth_optical_frame", "livox_frame", 0.5
+    )
+    assert (mount, child) == ("base_link", "handle_bar_link")
+    tree._edges.pop((mount, child))
+    tree.add(mount, child, 0.0, tuple(matrix[:3, 3]), _quat(matrix[:3, :3]), static=True)
+    # The whole point: the tree now produces exactly the transform that was measured.
+    assert np.allclose(tree.lookup("livox_frame", "camera_depth_optical_frame", 0.5), measured)
+
+
+def _quat(rotation: np.ndarray) -> tuple[float, float, float, float]:
+    from dimos.teleop.memory_world.tf_tree import quaternion_from_matrix
+
+    return quaternion_from_matrix(rotation)

@@ -1543,7 +1543,11 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         self._load_hyperspace()
         if self.config.build_replay_on_start and not self._stopping.is_set():
             self._build_replay()
-        if not self._hyperspace_ready() and not self._stopping.is_set():
+        if self._hyperspace_ready():
+            # Say so rather than leaving it "not started": the viewer reads that as a
+            # build in flight and polls for it for the whole session.
+            self._index_progress = "not needed; Hyperspace answers this recording"
+        elif not self._stopping.is_set():
             self._build_visual_index()  # the SigLIP index is the fallback engine
 
     @rpc

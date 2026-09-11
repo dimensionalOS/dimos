@@ -629,10 +629,13 @@ class HyperspaceAnswers:
 
         @app.get(f"{base}/frames")  # type: ignore[misc]
         async def memory_world_frames() -> dict[str, Any]:
-            return {
-                "frames": await asyncio.to_thread(self._tf_frames),
-                "default": self.config.orbit_frame,
-            }
+            frames = await asyncio.to_thread(self._tf_frames)
+            # The configured frame only if tf has it: /orbit falls back to the camera,
+            # and offering a default nothing matches lets the browser pick its own.
+            chosen = self.config.orbit_frame
+            if frames and chosen not in frames:
+                chosen = self._camera_frame() if self._camera_frame() in frames else frames[0]
+            return {"frames": frames, "default": chosen}
 
         @app.get(f"{base}/orbit")  # type: ignore[misc]
         async def memory_world_orbit(frame: str) -> dict[str, Any]:
