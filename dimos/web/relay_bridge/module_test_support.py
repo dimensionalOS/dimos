@@ -14,8 +14,8 @@
 
 """Shared fakes and helpers for the RelayBridgeModule unit-test files
 (test_relay_bridge_module.py, test_relay_bridge_authoring.py): no network,
-no Deno, no LCM. A fake relay client is injected under `connect_with_backoff`
-and fake transports under the module's `In` streams, so lazy
+no Deno, no LCM. Relay discovery and `RelayClient.connect` are replaced by
+fakes (patch_relay) and fake transports sit under the module's `In` streams, so lazy
 subscribe/unsubscribe, the encode path, publishing, and reconnect are all
 observable directly.
 """
@@ -31,8 +31,12 @@ from typing import Any
 import pytest
 
 from dimos.web.relay_bridge import relay_bridge_module
-from dimos.web.relay_bridge.protocol import DataFrame, Msg
+from dimos.web.relay_bridge.protocol import PROTOCOL_VERSION, DataFrame, Msg
 from dimos.web.relay_bridge.relay_bridge_module import RelayBridgeModule
+from dimos.web.relay_bridge.wt_client import RelayClient, RelayInfo
+
+# What the fake /api/info answers; the URL is never dialed.
+FAKE_INFO = RelayInfo(wt_url="https://127.0.0.1:1", cert_hash="fake", v=PROTOCOL_VERSION)
 
 
 class FakeWriter:
@@ -175,6 +179,17 @@ def flush_loop(module: RelayBridgeModule) -> None:
     assert flushed.wait(timeout=5.0)
 
 
+def patch_relay(monkeypatch: pytest.MonkeyPatch, fake_connect: Callable[..., Any]) -> None:
+    """Route the module's relay discovery and connect to fakes: /api/info
+    answers FAKE_INFO and RelayClient.connect is `fake_connect(url, role, **kw)`."""
+
+    async def fake_fetch(base_url: str, **kwargs: Any) -> RelayInfo:
+        return FAKE_INFO
+
+    monkeypatch.setattr(relay_bridge_module, "fetch_relay_info", fake_fetch)
+    monkeypatch.setattr(RelayClient, "connect", fake_connect)
+
+
 def make_bridge(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -191,9 +206,9 @@ def make_bridge(
         clients.append(FakeClient(hello_error=error))
         return clients[-1]
 
-    monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fake_connect)
+    patch_relay(monkeypatch, fake_connect)
     module = RelayBridgeModule(
-        relay_url="https://127.0.0.1:1",
+        relay_url="http://127.0.0.1:1",
         open_browser=False,
         robot_id="unit-bot",
         available_channels=available_channels,
@@ -247,9 +262,9 @@ def start_authored(
         clients.append(FakeClient())
         return clients[-1]
 
-    monkeypatch.setattr(relay_bridge_module, "connect_with_backoff", fake_connect)
+    patch_relay(monkeypatch, fake_connect)
     module = atom.module(
-        relay_url="https://127.0.0.1:1", open_browser=False, robot_id="unit-bot", **atom.kwargs
+        relay_url="http://127.0.0.1:1", open_browser=False, robot_id="unit-bot", **atom.kwargs
     )
     for ch in wire:
         getattr(module, ch).transport = FakeTransport()

@@ -570,7 +570,8 @@ jobs:
           dimos/e2e_tests/test_sdk_browser.py
           dimos/e2e_tests/test_custom_channel_browser.py
           dimos/e2e_tests/test_publish_browser.py
-          dimos/e2e_tests/test_voice_browser.py --no-cov
+          dimos/e2e_tests/test_voice_browser.py
+          dimos/e2e_tests/test_stats_browser.py --no-cov
 
   tests:
     if: |
@@ -751,10 +752,10 @@ jobs:
                 - /var/cache/dimos-nix:/nix
             markers: "self_hosted or skipif_no_ros"
             experimental: false
-#          - os: macOS
-#            container: null  # run on host — `container:` is Linux-only
-#            markers: "self_hosted"
-#            experimental: true
+          - os: macOS
+            container: null  # run on host — `container:` is Linux-only
+            markers: "self_hosted"
+            experimental: true
     runs-on:
       - self-hosted
       - ${{ matrix.os }}
