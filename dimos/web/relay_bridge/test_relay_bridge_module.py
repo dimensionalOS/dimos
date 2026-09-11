@@ -1151,9 +1151,11 @@ def test_failed_start_stops_spawned_relay(monkeypatch) -> None:
 
 # Teleop (the tele_cmd_vel tx channel).
 
-# Short deadman window so silence tests stay fast; well above the 50 ms
+# Short deadman window so the one silence test stays fast; well above the 50 ms
 # watchdog poll.
 _TELEOP_TEST_WATCHDOG_MS = 120.0
+# Every other teleop test exercises gen/seq gating, not the deadman.
+_TELEOP_INERT_WATCHDOG_MS = 3_600_000.0
 
 
 def teleop_manifest(**params: Any) -> dict[str, Any]:
@@ -1188,8 +1190,11 @@ def wire_twist(vx: float, vy: float, wz: float, seq: float, gen: int | None = 1)
 
 
 @pytest.fixture
-def teleop_bridge(monkeypatch):
-    module, clients = make_bridge(monkeypatch, manifest=teleop_manifest())
+def teleop_bridge(monkeypatch, request):
+    # Disarm the deadman by default (see _TELEOP_INERT_WATCHDOG_MS); the deadman
+    # test overrides watchdogMs through indirect parametrization.
+    watchdog_ms = getattr(request, "param", _TELEOP_INERT_WATCHDOG_MS)
+    module, clients = make_bridge(monkeypatch, manifest=teleop_manifest(watchdogMs=watchdog_ms))
     twists: list[Twist] = []
     module.tele_cmd_vel.subscribe(twists.append)
     try:
@@ -1230,6 +1235,7 @@ def test_teleop_seq_guard_drops_stale_within_live_stream(teleop_bridge) -> None:
     assert [t.linear.x for t in twists] == [0.1, 0.2]
 
 
+@pytest.mark.parametrize("teleop_bridge", [_TELEOP_TEST_WATCHDOG_MS], indirect=True)
 def test_teleop_watchdog_deadline_and_high_water_survives_silence(teleop_bridge) -> None:
     module, clients, twists = teleop_bridge
     push(module, clients[0], wire_twist(0.5, 0.0, 0.0, seq=100))

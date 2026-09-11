@@ -14,6 +14,7 @@
 
 from collections.abc import Iterator
 import runpy
+import sys
 
 import can_motor_control
 import numpy as np
@@ -30,7 +31,12 @@ from dimos.robot.manipulators.openarm.config import OPENARM_DOF, OPENARM_JOINTS
 
 @pytest.fixture
 def openarm_adapter(mocker: MockerFixture) -> Iterator[OpenArmDamiaoAdapter]:
-    mocker.patch.object(can_motor_control, "SocketCanBus", can_motor_control.MockCanBus)
+    # The darwin can-motor-control wheel omits SocketCanBus; take the Linux
+    # bus path with it patched in.
+    mocker.patch.object(sys, "platform", "linux")
+    mocker.patch.object(
+        can_motor_control, "SocketCanBus", can_motor_control.MockCanBus, create=True
+    )
     adapter = OpenArmDamiaoAdapter(
         runtime_config=DamiaoRuntimeConfig(gravity_comp=False),
     )
