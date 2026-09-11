@@ -32,6 +32,7 @@ from dimos.mapping.hyperspace.ingest import (
     TF_STREAM,
     transform_to_matrix,
 )
+from dimos.mapping.hyperspace.refine import STRUCTURAL_LABELS, RefineConfig, refine
 from dimos.mapping.hyperspace.segments import SEGMENT_STREAM
 from dimos.models.embedding.base import Embedding
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -103,10 +104,18 @@ class HyperspaceQuery:
         config: hs.QueryConfig,
         world_frame: str = "odom",
         voxel_size: float = 0.1,
+        refine_config: RefineConfig | None = None,
     ) -> None:
         self.store = store
         self.embed_text = embed_text
         self.config = config
+        # None = raw map. Set (or pass) to get ranked clusters; see refine.py.
+        self.refine_config = refine_config
+        self._scene: tuple[int, list[tuple[int, int, int]]] | None = None
+        self._surfaces: tuple[int, list[tuple[int, int, int]]] | None = None
+        self._structural: tuple[int, dict[str, list[tuple[float, set[int]]]]] | None = None
+        self._query_text = ""
+        self._last_gated = 0
         self.world_frame = world_frame
         self.voxel_size = voxel_size
         self._backgrounds: NDArray[np.float32] | None = None
@@ -156,6 +165,9 @@ class HyperspaceQuery:
             .to_list()
         )
         hot: list[hs.HotPatch] = []
+        gate = self.structural_cells() if self.config.structural_gate else None
+        exempt = any(label in self._query_text.lower() for label in STRUCTURAL_LABELS)
+        gated = 0
         for hit in hits:
             entry = self.keyframe(int(hit.data["keyframe"]))
             if entry is None:
@@ -165,9 +177,55 @@ class HyperspaceQuery:
             vector = grid[index].astype(np.float32)
             background = float((backgrounds @ vector).max()) if len(backgrounds) else 0.0
             contrast = float(vector @ query) - background
-            if contrast > self.config.hot_threshold:
-                hot.append(hs.HotPatch(keyframe=keyframe, patch=index, score=contrast))
+            if contrast <= self.config.hot_threshold:
+                continue
+            if gate is not None and not exempt and self.is_structural(gate, keyframe, index):
+                gated += 1
+                continue
+            hot.append(hs.HotPatch(keyframe=keyframe, patch=index, score=contrast))
+        self._last_gated = gated
         return hot, len(hits)
+
+    def structural_cells(self) -> dict[str, list[tuple[float, set[int]]]]:
+        """Per camera frame, the (ts, grid cells) the segmenter labelled
+        floor/wall/ceiling, sorted by ts; rebuilt when the segment count
+        changes."""
+        if SEGMENT_STREAM not in self.store.list_streams():
+            return {}
+        count = self.store.stream(SEGMENT_STREAM, dict).count()
+        if self._structural is not None and self._structural[0] == count:
+            return self._structural[1]
+        frames: dict[tuple[str, float], set[int]] = {}
+        for label in STRUCTURAL_LABELS:
+            for hit in self.store.stream(SEGMENT_STREAM, dict).tags(name=label).order_by("ts"):
+                record = hit.data
+                cells = frames.setdefault((record["camera_frame"], float(record["ts"])), set())
+                cells.update(
+                    int(index)
+                    for index, coverage, _ in record.get("cells", [])
+                    if coverage >= self.config.structural_gate_coverage
+                )
+        by_camera: dict[str, list[tuple[float, set[int]]]] = {}
+        for (camera, ts), cells in sorted(frames.items()):
+            by_camera.setdefault(camera, []).append((ts, cells))
+        self._structural = (count, by_camera)
+        return by_camera
+
+    def is_structural(
+        self, gate: dict[str, list[tuple[float, set[int]]]], keyframe: hs.Keyframe, index: int
+    ) -> bool:
+        """Whether the nearest segment frame (same camera, within
+        structural_gate_dt) labelled this patch's cell floor/wall/ceiling."""
+        frames = gate.get(keyframe.camera_frame)
+        if not frames:
+            return False
+        stamps = [ts for ts, _ in frames]
+        position = int(np.searchsorted(stamps, keyframe.ts))
+        candidates = [i for i in (position - 1, position) if 0 <= i < len(frames)]
+        nearest = min(candidates, key=lambda i: abs(stamps[i] - keyframe.ts))
+        if abs(stamps[nearest] - keyframe.ts) > self.config.structural_gate_dt:
+            return False
+        return index in frames[nearest][1]
 
     def labels(self) -> dict[str, NDArray[np.float32]]:
         """Every label the segments carry, with its text embedding. Read from
@@ -211,22 +269,9 @@ class HyperspaceQuery:
                     return hot, read
                 read += 1
                 record = hit.data
-                if not record.get("cells") or not record.get("intrinsics"):
+                keyframe = self.segment_keyframe(hit.id, record)
+                if keyframe is None:
                     continue
-                rows, cols = int(record["rows"]), int(record["cols"])
-                patch_depth = np.full(rows * cols, np.nan, dtype=np.float32)
-                for index, _, depth in record["cells"]:
-                    patch_depth[int(index)] = depth
-                # Negative ids keep segment frames apart from keyframes in the pool.
-                keyframe = hs.Keyframe(
-                    id=-(hit.id + 1),
-                    camera_frame=record["camera_frame"],
-                    ts=float(record["ts"]),
-                    rows=rows,
-                    cols=cols,
-                    intrinsics=hs.Intrinsics(**record["intrinsics"]),
-                    patch_depth=patch_depth,
-                )
                 weight = word * float(record["confidence"])
                 for index, coverage, _ in record["cells"]:
                     hot.append(
@@ -241,17 +286,79 @@ class HyperspaceQuery:
     def heatmap(self, text: str, frame: str | None = None) -> hs.Heatmap:
         target = frame or self.world_frame
         query = np.asarray(self.embed_text(text), dtype=np.float32)
+        self._query_text = text
         hot, searched = self.hot_patches(query)
         place = self.placer(target)
         result = hs.heatmap(hot, place, target, self.voxel_size, self.config)
         result.stats["patches_searched"] = searched
+        result.stats["patches_gated"] = self._last_gated
         hot_segments, segments_read = self.hot_segments(query)
         if self.config.segment_weight > 0 and SEGMENT_STREAM in self.store.list_streams():
             segments = hs.heatmap(hot_segments, place, target, self.voxel_size, self.config)
             segments.stats["read"] = segments_read
             segments.stats["labels"] = sorted(self.label_scores(query), key=str)
             result = hs.combine(result, segments, self.config)
+        if self.refine_config is not None:
+            methods = self.refine_config.methods
+            scene = self.scene_indices(target) if "occupancy" in methods else None
+            surfaces = self.surface_indices(target) if "structural" in methods else None
+            result = refine(result, self.refine_config, scene=scene, surfaces=surfaces, text=text)
         return result
+
+    def surface_indices(self, frame: str) -> list[tuple[int, int, int]]:
+        """Voxels on floor/wall/ceiling segment surfaces, rasterized once per
+        segment count (the segment records already carry cells + depth)."""
+        if SEGMENT_STREAM not in self.store.list_streams():
+            return []
+        count = self.store.stream(SEGMENT_STREAM, dict).count()
+        if self._surfaces is not None and self._surfaces[0] == count:
+            return self._surfaces[1]
+        place = self.placer(frame)
+        voxels: set[tuple[int, int, int]] = set()
+        for label in STRUCTURAL_LABELS:
+            for hit in self.store.stream(SEGMENT_STREAM, dict).tags(name=label).order_by("ts"):
+                keyframe = self.segment_keyframe(hit.id, hit.data)
+                if keyframe is None:
+                    continue
+                pose = place(keyframe)
+                if pose is None:
+                    continue
+                for index, _, depth in hit.data["cells"]:
+                    if not (depth > 0) or not math.isfinite(depth):
+                        continue
+                    patch = hs.HotPatch(keyframe=keyframe, patch=int(index), score=1.0)
+                    for voxel, _ in hs.rasterize_pyramid(patch, pose, self.voxel_size, self.config):
+                        voxels.add(voxel)
+        self._surfaces = (count, sorted(voxels))
+        return self._surfaces[1]
+
+    @staticmethod
+    def segment_keyframe(hit_id: int, record: dict[str, Any]) -> hs.Keyframe | None:
+        """A segment record as a placeable keyframe (negative id, its cells'
+        depth as patch depth), or None when it has no cells or camera."""
+        if not record.get("cells") or not record.get("intrinsics"):
+            return None
+        rows, cols = int(record["rows"]), int(record["cols"])
+        patch_depth = np.full(rows * cols, np.nan, dtype=np.float32)
+        for index, _, depth in record["cells"]:
+            patch_depth[int(index)] = depth
+        # Negative ids keep segment frames apart from keyframes in the pool.
+        return hs.Keyframe(
+            id=-(hit_id + 1),
+            camera_frame=record["camera_frame"],
+            ts=float(record["ts"]),
+            rows=rows,
+            cols=cols,
+            intrinsics=hs.Intrinsics(**record["intrinsics"]),
+            patch_depth=patch_depth,
+        )
+
+    def scene_indices(self, frame: str) -> list[tuple[int, int, int]]:
+        """Occupied voxel indices, kept until the keyframe count changes."""
+        count = self.store.stream(KEYFRAME_STREAM, dict).count()
+        if self._scene is None or self._scene[0] != count:
+            self._scene = (count, [index for index, _ in self.scene_voxels(frame)])
+        return self._scene[1]
 
     def scene_voxels(
         self, frame: str | None = None, min_samples: int = 3

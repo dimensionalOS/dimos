@@ -45,6 +45,7 @@ from dimos.mapping.hyperspace.ingest import (
     transform_to_matrix,
 )
 from dimos.mapping.hyperspace.query import HyperspaceQuery
+from dimos.mapping.hyperspace.refine import METHODS, refine_config_of
 from dimos.memory.tf import StreamTF
 
 if TYPE_CHECKING:
@@ -361,6 +362,12 @@ def main(
     cutoff: float = typer.Option(0.3, help="Hide answer voxels scoring below this"),
     cap_near: float = typer.Option(0.99, help="Pyramids start at this fraction of the patch depth"),
     cap_far: float = typer.Option(1.01, help="Pyramids end at this fraction of the patch depth"),
+    refine: str = typer.Option(
+        "default",
+        help="Refinement steps, comma separated, from "
+        + ", ".join(METHODS)
+        + "; 'default' = QueryConfig.refine, 'none' = the raw map",
+    ),
     model_name: str = typer.Option(
         SIGLIP2_MODEL_NAME, help="SigLIP2 snapshot: HF id or local directory"
     ),
@@ -413,12 +420,14 @@ def main(
         typer.echo(f"reusing {memory_path} (pass --no-reuse to re-embed)")
     text_model = SigLIP2Patches(model_name=model_name, device=device, towers="text")
     text_model.start()
+    query_config = hs.QueryConfig(cap_near=cap_near, cap_far=cap_far)
     engine = HyperspaceQuery(
         memory,
         lambda text: text_model.embed_text_array(text)[0],
-        hs.QueryConfig(cap_near=cap_near, cap_far=cap_far),
+        query_config,
         world_frame=frame,
         voxel_size=voxel_size,
+        refine_config=refine_config_of(refine, query_config.refine, cutoff),
     )
     answers = []
     for index, text in enumerate(query, start=1):
@@ -428,6 +437,12 @@ def main(
             f"{text!r}: {answer['voxels']} voxels in {(time.monotonic() - started) * 1000:.0f} ms "
             f"{answer['stats']}"
         )
+        for cluster in answer["heatmap"].clusters[:10]:
+            typer.echo(
+                f"  cluster {cluster.rank}: score {cluster.score:.2f}, {cluster.voxels} voxels, "
+                f"centre ({cluster.centre[0]:.2f}, {cluster.centre[1]:.2f}, {cluster.centre[2]:.2f}), "
+                f"extent {tuple(round(e, 1) for e in cluster.extent)} m"
+            )
         answers.append(answer)
 
     open_after = out is None
