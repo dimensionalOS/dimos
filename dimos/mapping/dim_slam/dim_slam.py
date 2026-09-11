@@ -122,8 +122,12 @@ class SourceConfig(BaseModel):
 class DimSlamConfig(NativeModuleConfig):
     cwd: str | None = "rust"
     executable: str = "result/bin/dim_slam"
+    # git+file, not path:. : the flake's ../../../.. input must be inside the entered tree.
+    # Builds see tracked files only.
     build_command: str | None = Field(
-        default_factory=lambda: f"nix build -L 'path:.#{sdk_variant()}'"
+        default_factory=lambda: (
+            f"nix build -L 'git+file:../../../..?dir=dimos/mapping/dim_slam/rust#{sdk_variant()}'"
+        )
     )
     stdin_config: bool = True
     extra_env: dict[str, str] = Field(default_factory=driver_env)
