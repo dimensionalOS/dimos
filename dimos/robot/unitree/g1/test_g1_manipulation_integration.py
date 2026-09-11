@@ -25,10 +25,10 @@ from dimos.manipulation.planning.world import roboplan_world as roboplan_world_m
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.unitree.g1.manip_config import (
     G1_LEFT_ARM_JOINTS,
-    G1_READY_JOINTS,
     G1_RIGHT_ARM_JOINTS,
     g1_manipulation_model_config,
 )
+from dimos.robot.unitree.g1.ready_pose import G1_READY_JOINTS
 
 pytestmark = pytest.mark.self_hosted
 
