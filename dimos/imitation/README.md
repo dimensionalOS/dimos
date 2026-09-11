@@ -1,143 +1,51 @@
-# Imitation Learning
+# Imitation learning
 
-Collect demonstrations, build training datasets, and run trained policies in
-DimOS. Teleoperation records episodes to a SQLite or MCAP artifact, and DataPrep
-converts that recording into a LeRobot or HDF5 dataset for imitation learning.
+Collection uses ordinary DimOS Blueprints. The graph owns robot hardware,
+cameras, transports, and runtime lifecycle. A `CollectionProfile` declares
+typed inputs and dataset projections; `collection_recorder(profile=...)`
+creates matching recorder ports before autoconnect.
 
-```
-teleop (WebXR) ─▶ recorder ─▶ session_<robot>_<ts>.db/.mcap ─▶ dimos dataprep ─▶ dataset
-```
-
-After training, use the production
-[`LeRobotPolicyModule`](policy/lerobot/README.md) to run a checkpoint against
-live camera and joint-state observations.
-
----
-
-## 1. Record a session
-
-Run a collection blueprint. Add `--simulation` to drive MuJoCo; omit it for real
-hardware (a RealSense + the arm).
+## OpenYAM Quest collection
 
 ```bash
-# XArm7 in sim
-dimos --simulation run learning-collect-webxr-xarm7 --task "pick up the red block"
-
-# Piper on real hardware
-dimos run learning-collect-webxr-piper --task "pick up the red block"
-
-# OpenYAM + Quest + wrist camera; native MCAP
-dimos --can-port follower_l run learning-collect-quest-openyam \
-  --task "pick up the red block" \
-  --WristCamera.hardware.camera-index 0 \
-  --nativecollectionrecorder.store.path data/recordings/session_openyam.mcap
+dimos run openyam-quest-collection \
+  --recorder.recording recordings/session-001 \
+  --episodes.task "pick up the cube"
 ```
 
-This brings up teleop, a RealSense (real only), the episode monitor, and the
-recorder, all wired together.
+Configure camera and hardware options through `dimos run BLUEPRINT --help`.
+Quest B starts/saves an episode; Y discards it. Python clients can use
+`Dimos.connect().find_module_by_spec(EpisodeControlSpec)` and its
+`get_status()` and `command(event)` RPCs instead.
 
-### Controls (WebXR)
+The recording is a new directory containing `schema.json` and
+`recording.mcap`, or `recording.db` with `--recorder.format sqlite`.
+Existing directories are rejected. Copy or move the complete directory.
+Stopping the runtime leaves an active episode incomplete; export excludes
+incomplete and discarded episodes. Support the arms before shutdown.
 
-| Button | Action |
-| --- | --- |
-| **A** (right) / **X** (left) | **Hold to engage** — the arm tracks the controller only while held |
-| **B** | **Toggle record** — press to start an episode, press again to save it |
-| **Y** | **Discard** the in-progress episode |
+## Prepare a recording
 
-So a take is: hold **A** to move the arm into place → press **B** to start →
-perform the task → press **B** to save (or **Y** to throw it away). The terminal
-prints one line per transition:
+```python
+from pathlib import Path
 
-```
-[collect] ▶ RECORDING episode  (state=recording  saved=0  discarded=0)
-[collect] ✓ SAVED episode      (state=idle       saved=1  discarded=0)
-```
+from dimos.imitation.collection.recording import RecordingSchema
+from dimos.imitation.dataprep.core import OutputConfig
+from dimos.imitation.dataprep.lerobot import run_lerobot_dataprep
 
-> End each good take with **B** before quitting — an episode still recording at
-> shutdown is dropped.
-
-### Where the recording goes
-
-```
-~/.local/state/dimos/recordings/session_<robot>_<YYYYMMDD_HHMMSS>.db
+directory = Path("recordings/session-001")
+config = RecordingSchema.read(directory).dataprep_config(
+    directory, OutputConfig(format="lerobot", path=Path("datasets/session-001"))
+)
+run_lerobot_dataprep(config)
 ```
 
-A new timestamped SQLite file per XArm/Piper run, or a timestamped MCAP file
-for OpenYAM (nothing is overwritten). Both formats record `color_image`,
-`coordinator_joint_state`,
-`applied_joint_position_command`, and `status` (the episode
-start/save/discard markers).
+Preparation uses the saved schema, not a current robot profile. Only prepare
+trusted recordings; custom message classes must be installed in the reader
+environment. Generic `run_dataprep(config)` supports HDF5 output.
 
-The exact path is printed when the recorder starts — note it for the next step.
+## Policy execution
 
----
-
-## 2. Build a dataset
-
-DataPrep is an offline batch step that reads a session `.db` or `.mcap` and
-writes a dataset. A typed Python profile owns the observation/action schema and
-output format; each invocation supplies only its source and optional output.
-
-```bash
-# OpenYAM's typed profile selects LeRobot and its 30 Hz wrist/joint/action schema
-dimos dataprep build \
-  --source data/recordings/session_openyam.mcap \
-  --profile dimos.robot.manipulators.openyam.learning:OPENYAM_LEARNING_PROFILE \
-  --output data/datasets/openyam-mcap
-```
-
-The OpenYAM graph uses the globally selected transport (Zenoh by default) and
-MCAP. Override the path with
-`--nativecollectionrecorder.store.path /path/to/session_openyam.mcap`. Stop
-collection gracefully so MCAP can finalize its summary and indexes; MCAP
-append mode is unsupported.
-
-Reuse the profile across runs and swap `--source`. `--output` overrides the
-profile's output path, and `--quality-mode strict|fill` overrides its validation
-mode. A profile can select HDF5 instead of LeRobot in its `DataPrepConfig`.
-
-Inspect the result (features, shapes, dtypes, episode/frame counts):
-
-```bash
-dimos dataprep inspect data/datasets/session       # LeRobot dir
-dimos dataprep inspect data/datasets/session.hdf5  # HDF5 file
-
-# Validate saved recording episodes before conversion
-dimos dataprep inspect session_openyam.mcap \
-  --profile dimos.robot.manipulators.openyam.learning:OPENYAM_LEARNING_PROFILE
-```
-
-Each dataset gets a `dimos_meta.json` sidecar recording exactly how it was built
-(source, schema, sync, quality settings, included episodes, and rejection or
-fill reports).
-
----
-
-## 3. Profile reference
-
-A profile is a Python object with `dataprep_config() -> DataPrepConfig`. Pass it
-as `module:attribute`; profiles are imported and executed, so use trusted local
-code. The returned config is a reusable template whose fields mean:
-
-- **`source`** — the session `.db` or `.mcap`.
-- **`observation` / `action`** — map each final dataset feature name to an
-  explicit `{stream, field, dtype, shape, names}` schema. OpenYAM actions come
-  from the accepted `applied_joint_position_command`, not future feedback.
-- **`sync`** — resample everything onto one timeline: `anchor` stream,
-  `rate_hz`, and nearest-match `tolerance_ms`. `fps` is derived from `rate_hz`
-  unless set explicitly.
-- **`quality`** — `strict` excludes only invalid episodes; `fill` preserves the
-  fixed-rate grid with causal holds and marks filled frames in
-  `complementary_info.is_filled`. The build fails when no valid episode remains.
-- **`output`** — `format` (`lerobot` | `hdf5`), default `path`, and `metadata`
-  (`repo_id`, `robot_type`, …).
-
----
-
-## Notes
-
-- **Sim vs real camera** — under `--simulation` the MuJoCo camera supplies
-  `color_image`; on real hardware a RealSense does. The blueprint picks the
-  right one automatically.
-- **"action" is an applied command** — it is published only after arbitration
-  and hardware acceptance. Rejected and non-position commands are not emitted.
+The [LeRobot module](policy/lerobot/README.md) provides isolated checkpoint
+loading, preflight, and controlled trajectory execution. Collection profiles
+do not define arbitrary policy-backend compatibility.

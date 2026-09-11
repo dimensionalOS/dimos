@@ -27,8 +27,7 @@ import pytest
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
-from dimos.experimental.memory.rust_recorder import RustSqliteStoreConfig
-from dimos.imitation.collection.native_recorder import NativeCollectionRecorder
+from dimos.imitation.collection.native_recorder import collection_recorder
 from dimos.imitation.dataprep.core import EpisodeExtractor, extract_episodes
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.imitation_msgs.EpisodeStatus import EpisodeStatus
@@ -37,6 +36,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_NEVER_DROP, Topic
+from dimos.robot.manipulators.openyam.collection import OPENYAM_QUEST_COLLECTION
 from dimos.utils.testing.waiting import wait_until
 
 pytestmark = [
@@ -46,8 +46,8 @@ pytestmark = [
     pytest.mark.skipif_no_turbojpeg,
 ]
 
-_RUST_WORKSPACE = DIMOS_PROJECT_ROOT / "native" / "rust"
-_EXECUTABLE = _RUST_WORKSPACE / "target" / "debug" / "dimos-memory-recorder"
+_RUST_WORKSPACE = DIMOS_PROJECT_ROOT / "dimos" / "experimental" / "memory" / "rust"
+_EXECUTABLE = DIMOS_PROJECT_ROOT / "target" / "debug" / "dimos-memory-recorder"
 
 
 @pytest.fixture(scope="module")
@@ -71,14 +71,18 @@ def test_native_collection_records_typed_zenoh_streams(
     native_recorder_executable: Path,
 ) -> None:
     monkeypatch.setattr(global_config, "transport", "zenoh")
-    artifact = tmp_path / "native-openyam.db"
-    recorder = NativeCollectionRecorder(
+    directory = tmp_path / "native-openyam"
+    artifact = directory / "recording.db"
+    atom = collection_recorder(
+        profile=OPENYAM_QUEST_COLLECTION, recording=directory, format="sqlite"
+    ).active_blueprints[0]
+    recorder = atom.module(
         executable=str(native_recorder_executable),
-        store=RustSqliteStoreConfig(path=str(artifact)),
+        **atom.kwargs,
     )
     topic_prefix = f"dimos/test/native-collection/{uuid.uuid4().hex}"
     payload_types: dict[str, type[Any]] = {
-        "color_image": Image,
+        "wrist_image": Image,
         "coordinator_joint_state": JointState,
         "applied_joint_position_command": JointState,
         "status": EpisodeStatus,
@@ -127,7 +131,7 @@ def test_native_collection_records_typed_zenoh_streams(
             ),
         )
         publish(
-            "color_image",
+            "wrist_image",
             Image(
                 ts=10.0,
                 frame_id="wrist_camera_link",
@@ -172,7 +176,7 @@ def test_native_collection_records_typed_zenoh_streams(
             lambda: all(
                 _stream_count(artifact, name) >= count
                 for name, count in {
-                    "color_image": 1,
+                    "wrist_image": 1,
                     "coordinator_joint_state": 1,
                     "applied_joint_position_command": 1,
                     "status": 3,
@@ -188,7 +192,7 @@ def test_native_collection_records_typed_zenoh_streams(
             publisher.stop()
 
     with SqliteStore(path=str(artifact), must_exist=True) as store:
-        image_observation = store.stream("color_image", Image).last()
+        image_observation = store.stream("wrist_image", Image).last()
         image = image_observation.data
         image_ts = image_observation.ts
         joint_observation = store.stream("coordinator_joint_state", JointState).last()

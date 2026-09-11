@@ -222,7 +222,7 @@ class NativeModule(Module):
         self._stop_lock = threading.Lock()
 
         if self.config.cwd is not None and not Path(self.config.cwd).is_absolute():
-            base_dir = Path(inspect.getfile(type(self))).resolve().parent
+            base_dir = Path(inspect.getfile(type(self.config))).resolve().parent
             self.config.cwd = str(base_dir / self.config.cwd)
         if not Path(self.config.executable).is_absolute():
             # The spawn runs from the executable's own directory, so a relative

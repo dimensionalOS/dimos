@@ -19,6 +19,9 @@ payload type is fixed. Other formats use a caller-supplied ``codecs`` map (wire
 topic -> codec), while ``streams`` may map friendly stream names to topics. See
 ``dimos.robot.unitree.go2.dds.store.Go2McapStore`` for the Go2 DDS wiring.
 
+For trusted native recordings, ``decode_native=True`` reconstructs supported
+codecs from DimOS channel metadata. This imports the recorded message classes.
+
 Read-only: no append, blobs, vectors, or embeddings. Payloads decode lazily on
 ``obs.data``; ts and counts are cheap (counts come from the mcap index).
 """
@@ -28,10 +31,10 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from functools import partial
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from dimos.memory.backend import Backend
-from dimos.memory.codecs.base import codec_for
+from dimos.memory.codecs.base import codec_for, codec_from_id
 from dimos.memory.codecs.jpeg import JpegCodec
 from dimos.memory.notifier.subject import SubjectNotifier
 from dimos.memory.observationstore.base import ObservationStore, ObservationStoreConfig
@@ -171,6 +174,7 @@ class McapStore(Store):
         *,
         codecs: Mapping[str, StreamCodec] | None = None,
         streams: dict[str, str] | None = None,
+        decode_native: bool = False,
         **kwargs: Any,
     ) -> None:
         from mcap.reader import make_reader  # optional mcap dependency
@@ -191,8 +195,24 @@ class McapStore(Store):
             for cid, ch in summary.channels.items():
                 count = summary.statistics.channel_message_counts.get(cid, 0)
                 name = name_of.get(ch.topic) or _slug(ch.topic)
-                if ch.topic not in self._codecs and ch.message_encoding == "jpeg":
-                    self._codecs[ch.topic] = JpegCodec()
+                if ch.topic not in self._codecs:
+                    payload_type = ch.metadata.get("dimos.payload_type")
+                    if (
+                        decode_native
+                        and payload_type
+                        and ch.message_encoding in {"jpeg", "lcm", "lz4+lcm"}
+                    ):
+                        try:
+                            self._codecs[ch.topic] = cast(
+                                "StreamCodec", codec_from_id(ch.message_encoding, payload_type)
+                            )
+                        except (ImportError, AttributeError) as exc:
+                            raise ImportError(
+                                f"Cannot decode MCAP stream {ch.topic!r}: install the package "
+                                f"providing {payload_type!r} in the dataset reader environment"
+                            ) from exc
+                    elif ch.message_encoding == "jpeg":
+                        self._codecs[ch.topic] = JpegCodec()
                 self._stream_topic[name] = ch.topic
                 self._available[name] = count
                 self._observation_uses_publish_time[name] = (

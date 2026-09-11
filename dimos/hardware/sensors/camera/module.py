@@ -107,8 +107,9 @@ class CameraModule(Module, perception.Camera):
 
     @rpc
     def stop(self) -> None:
-        if self.hardware and hasattr(self.hardware, "stop"):
-            self.hardware.stop()
+        hardware = getattr(self, "hardware", None)
+        if hardware is not None and hasattr(hardware, "stop"):
+            hardware.stop()
         super().stop()
 
 
