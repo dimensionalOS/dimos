@@ -100,6 +100,7 @@ all_blueprints = {
     "openyam-lerobot-rollout": "dimos.robot.manipulators.openyam.blueprints.learning_rollout:openyam_lerobot_rollout",
     "openyam-planner-coordinator": "dimos.robot.manipulators.openyam.blueprints.basic:openyam_planner_coordinator",
     "openyam-quest-collection": "dimos.robot.manipulators.openyam.blueprints.learning_quest_collection:openyam_quest_collection",
+    "openyam-teach-collection": "dimos.robot.manipulators.openyam.blueprints.learning_collection:openyam_teach_collection",
     "r1pro-coordinator": "dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator:r1pro_coordinator",
     "r1pro-manipulation": "dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_manipulation:r1pro_manipulation",
     "r1pro-nav": "dimos.robot.galaxea.r1pro.blueprints.navigation.r1pro_nav:r1pro_nav",
