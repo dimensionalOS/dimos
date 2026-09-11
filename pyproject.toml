@@ -275,6 +275,10 @@ booster = [
     "booster-rpc>=0.0.11",
 ]
 
+teleop = [
+    "pygame>=2.6.1",
+]
+
 # Coordinators, arm hardware adapters, and keyboard/Cartesian control.
 control = [
     "piper-sdk",
@@ -282,7 +286,7 @@ control = [
     "a750-control; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "can-motor-control>=0.0.8",
     "python-can>=4",
-    "pygame>=2.6.1",
+    "dimos[teleop]",
     "xacro",
 ]
 
@@ -320,7 +324,7 @@ sim = [
     # Simulation
     "mujoco>=3.3.4",
     "playground>=0.0.5",
-    "pygame>=2.6.1",
+    "dimos[teleop]",
 ]
 
 mapping = [
@@ -385,7 +389,7 @@ graspgenx = [
 ]
 
 all = [
-    "dimos[apriltag,cuda,drone,manipulation,misc,scene,unitree,webrtc]",
+    "dimos[apriltag,cuda,drone,manipulation,misc,scene,teleop,unitree,webrtc]",
 ]
 
 [dependency-groups]
@@ -449,13 +453,12 @@ tests = [
 
     # Deps the lint job swaps for stubs (`stubs/<pkg>/` or `types-*`):
     # the real packages are needed at test time, stubs cover mypy.
-    "dimos[apriltag,mapping,drone,cpu,learning]",
+    "dimos[apriltag,mapping,drone,cpu,learning,teleop]",
     # Scene-cooking tests need these two from the `scene` extra. The full
     # extra can't be included: usd-core ships no linux-aarch64 wheel.
     "coacd>=1.0.0",
     "trimesh>=4.0.0",
     "mujoco>=3.3.4",
-    "pygame>=2.6.1",
     "python-can>=4",
     "unitree-webrtc-connect>=2.1.2",
     "viser[urdf]>=1.0.29; sys_platform != 'linux' or platform_machine != 'aarch64'",
