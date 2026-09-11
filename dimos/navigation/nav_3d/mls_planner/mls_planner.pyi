@@ -24,6 +24,7 @@ class MLSPlanner:
         voxel_size: float,
         robot_height: float,
         max_overhead_m: float = 2.0,
+        full_map_tile_m: float = 4.0,
         surface_closing_radius: float = 0.3,
         node_spacing_m: float = 1.0,
         wall_clearance_m: float = 0.1,
@@ -56,9 +57,8 @@ class MLSPlanner:
         self,
         points: NDArray[np.float32],
         center: tuple[float, float],
-        tile_size_m: float,
     ) -> int:
-        """Partition a whole-map cloud into pending tiles, nearest center first.
+        """Partition a whole-map cloud into full_map_tile_m tiles, nearest center first.
 
         Replaces any pending tiles. Returns the tile count.
         """
@@ -67,7 +67,7 @@ class MLSPlanner:
     def apply_full_map_tile(self) -> int:
         """Apply the next pending tile through the region pipeline.
 
-        Tiles a later update_region fully covered are skipped. Returns how many remain.
+        What a later update_region covered is skipped. Returns how many remain.
         """
         ...
 

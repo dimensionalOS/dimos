@@ -98,6 +98,8 @@ SIZE_SERIES = [
     ("edges", "3_edges", "edges", TURBO_GREEN),
     ("nodes", "4_nodes", "nodes", TURBO_BLUE),
 ]
+# Logged only on seeded runs.
+TILES_LEFT_SERIES = "metrics/size/5_tiles"
 
 
 class LocalCrop(NamedTuple):
@@ -391,6 +393,7 @@ def _build_planners(
     node_spacing: float,
     step_height: float,
     step_penalty_weight: float,
+    full_map_tile_m: float,
 ) -> list[tuple[str, list[int], MLSPlanner]]:
     planners: list[tuple[str, list[int], MLSPlanner]] = []
     for i, (clr, buf, wgt) in enumerate(configs):
@@ -405,6 +408,7 @@ def _build_planners(
             wall_buffer_weight=wgt,
             step_threshold_m=step_height,
             step_penalty_weight=step_penalty_weight,
+            full_map_tile_m=full_map_tile_m,
         )
         color = PATH_PALETTE[i % len(PATH_PALETTE)]
         label = f"cfg{i}_c{clr:g}_b{buf:g}_w{wgt:g}"
@@ -631,7 +635,7 @@ def main(
         tiles_left = 0
         if loaded_map is not None:
             rr.log(
-                "metrics/size/5_tiles",
+                TILES_LEFT_SERIES,
                 rr.SeriesLines(colors=[[255, 255, 255]], names=["tiles_left"]),
                 static=True,
             )
@@ -648,6 +652,7 @@ def main(
             node_spacing,
             step_height,
             step_penalty_weight,
+            tile_m,
         )
 
         rr.log("world/goal", rr.Points3D([goal], colors=[[255, 0, 0]], radii=0.1), static=True)
@@ -712,7 +717,7 @@ def main(
                     created = ray.mapper.seed_points(seed_pts)
                     full = ray.mapper.full_map()
                     for _, _, planner in planners:
-                        tiles_left = planner.start_full_map_load(full, (start[0], start[1]), tile_m)
+                        tiles_left = planner.start_full_map_load(full, (start[0], start[1]))
                     log_loaded_map(seed_pts)
                     print(f"\nseeded {created} voxels, loading {tiles_left} tiles")
                     loaded_map = None
@@ -722,7 +727,7 @@ def main(
                     if tiles_left == 0:
                         print("\nfull map load finished")
                 if seeded_run:
-                    rr.log("metrics/size/5_tiles", rr.Scalars(float(tiles_left)))
+                    rr.log(TILES_LEFT_SERIES, rr.Scalars(float(tiles_left)))
                 _log_odometry(ray_obs.pose_tuple, ray_obs.ts, sensor_trail, base)
                 frame += 1
                 print(

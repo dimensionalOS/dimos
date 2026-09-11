@@ -77,6 +77,9 @@ pub struct Config {
     /// Ground-plane distance from goal at which the planner stops replanning.
     #[validate(range(exclusive_min = 0.0))]
     pub goal_tolerance: f32,
+    /// Full-map load tile spacing, small enough to apply one between live updates.
+    #[validate(range(exclusive_min = 0.0))]
+    pub full_map_tile_m: f32,
     /// Rate cap for republishing the surface_map / nodes / node_edges viz
     /// artifacts. 0 disables them entirely. The path output is unthrottled.
     #[validate(range(min = 0.0))]
@@ -157,13 +160,21 @@ impl RegionBounds {
         }
     }
 
-    /// Whether `other` lies entirely inside this cylinder.
-    fn contains(&self, other: &RegionBounds) -> bool {
-        if other.z_min < self.z_min || other.z_max > self.z_max {
-            return false;
-        }
+    /// Whether `other`'s footprint lies entirely inside this one.
+    fn covers_xy(&self, other: &RegionBounds) -> bool {
         let d = (other.origin_x - self.origin_x).hypot(other.origin_y - self.origin_y);
         d + other.radius <= self.radius
+    }
+
+    /// This cylinder over a different z band.
+    fn with_z(&self, z_min: f32, z_max: f32) -> RegionBounds {
+        RegionBounds {
+            origin_x: self.origin_x,
+            origin_y: self.origin_y,
+            radius: self.radius,
+            z_min,
+            z_max,
+        }
     }
 
     fn contains_voxel(&self, (kx, ky, kz): VoxelKey, voxel_size: f32) -> bool {
@@ -195,16 +206,44 @@ pub struct MapTile {
     pub points: Vec<(f32, f32, f32)>,
 }
 
-/// Cloud points grouped by the grid cell of the tile that covers them.
-type TilePoints = AHashMap<(i32, i32), Vec<(f32, f32, f32)>>;
+/// Inclusive z extent, empty until extended.
+#[derive(Clone, Copy)]
+struct ZBand {
+    min: f32,
+    max: f32,
+}
+
+impl Default for ZBand {
+    fn default() -> Self {
+        ZBand {
+            min: f32::INFINITY,
+            max: f32::NEG_INFINITY,
+        }
+    }
+}
+
+impl ZBand {
+    fn extend(&mut self, z: f32) {
+        self.min = self.min.min(z);
+        self.max = self.max.max(z);
+    }
+}
+
+/// The cloud points one tile covers and their z extent.
+#[derive(Default)]
+struct TileCloud {
+    points: Vec<(f32, f32, f32)>,
+    band: ZBand,
+}
+
+/// Tile clouds keyed by grid cell.
+type TileClouds = AHashMap<(i32, i32), TileCloud>;
 
 /// The cloud half of a full-map partition, computed without the planner so
 /// it can run off the worker thread. `Planner::finish_partition` merges it
 /// against the map.
 pub struct CloudPartition {
-    tile_points: TilePoints,
-    z_min: f32,
-    z_max: f32,
+    clouds: TileClouds,
     tile_size_m: f32,
 }
 
@@ -218,20 +257,16 @@ pub fn partition_cloud(
 ) -> CloudPartition {
     let s = tile_size_m;
     let radius = tile_radius(s, voxel_size);
-    let mut z_min = f32::INFINITY;
-    let mut z_max = f32::NEG_INFINITY;
-    let mut tile_points = TilePoints::default();
+    let mut clouds = TileClouds::default();
     for &p in points {
-        z_min = z_min.min(p.2);
-        z_max = z_max.max(p.2);
         covering_cells(p.0, p.1, s, radius, |cell| {
-            tile_points.entry(cell).or_default().push(p);
+            let tile = clouds.entry(cell).or_default();
+            tile.points.push(p);
+            tile.band.extend(p.2);
         });
     }
     CloudPartition {
-        tile_points,
-        z_min,
-        z_max,
+        clouds,
         tile_size_m,
     }
 }
@@ -243,7 +278,7 @@ fn tile_radius(s: f32, voxel_size: f32) -> f32 {
 }
 
 /// A tiled full-map load in progress. Live regions applied meanwhile are
-/// recorded, and a tile one of them fully covers is skipped as stale.
+/// recorded, and a tile they cover applies only outside their z band.
 pub struct MapLoad {
     tiles: Vec<MapTile>,
     next: usize,
@@ -278,19 +313,35 @@ impl MapLoad {
         self.regions.push(bounds);
     }
 
-    /// Apply the next tile no applied region fully covers. Returns false once
-    /// every tile is consumed.
+    /// Apply what live regions left of the next tile. False once every tile is consumed.
     pub fn apply_next_tile(&mut self, planner: &mut Planner, config: &Config) -> bool {
         while let Some(tile) = self.tiles.get(self.next) {
             self.next += 1;
-            if self.regions.iter().any(|r| r.contains(&tile.bounds)) {
+            let mut bands = vec![(tile.bounds.z_min, tile.bounds.z_max)];
+            for r in self.regions.iter().filter(|r| r.covers_xy(&tile.bounds)) {
+                bands = bands
+                    .iter()
+                    .flat_map(|&b| subtract_band(b, (r.z_min, r.z_max)))
+                    .collect();
+            }
+            if bands.is_empty() {
                 continue;
             }
-            planner.update_region(&tile.points, &tile.bounds, config);
+            for (z_min, z_max) in bands {
+                let bounds = tile.bounds.with_z(z_min, z_max);
+                planner.update_region(&tile.points, &bounds, config);
+            }
             return true;
         }
         false
     }
+}
+
+/// Band `a` less band `b`.
+fn subtract_band(a: (f32, f32), b: (f32, f32)) -> impl Iterator<Item = (f32, f32)> {
+    let below = (a.0, a.1.min(b.0));
+    let above = (a.0.max(b.1), a.1);
+    [below, above].into_iter().filter(|(lo, hi)| lo < hi)
 }
 
 pub struct Planner {
@@ -376,9 +427,8 @@ impl Planner {
         });
     }
 
-    /// Finish a cloud partition against the current map: sweep tiles for
-    /// map-only cells, the union z band, and near-`center`-first order.
-    /// Bounded by the map size, so the worker can afford it inline.
+    /// Finish a cloud partition against the current map, so the tiles also
+    /// sweep every voxel absent from the cloud. Nearest `center` first.
     pub fn finish_partition(
         &self,
         part: CloudPartition,
@@ -386,44 +436,38 @@ impl Planner {
         config: &Config,
     ) -> Vec<MapTile> {
         let s = part.tile_size_m;
-        let radius = tile_radius(s, config.voxel_size);
-        let half = config.voxel_size * 0.5;
-        let CloudPartition {
-            mut tile_points,
-            mut z_min,
-            mut z_max,
-            ..
-        } = part;
+        let vs = config.voxel_size;
+        let radius = tile_radius(s, vs);
+        let half = vs * 0.5;
+        let CloudPartition { mut clouds, .. } = part;
 
         // A stale voxel needs only one covering tile, and its home tile
         // always covers it.
-        let mut occupied: AHashSet<(i32, i32)> = AHashSet::new();
         for &(kx, ky, kz) in &self.voxel_map {
-            let z = kz as f32 * config.voxel_size + half;
-            z_min = z_min.min(z);
-            z_max = z_max.max(z);
-            let x = kx as f32 * config.voxel_size + half;
-            let y = ky as f32 * config.voxel_size + half;
-            occupied.insert(((x / s).floor() as i32, (y / s).floor() as i32));
+            let x = kx as f32 * vs + half;
+            let y = ky as f32 * vs + half;
+            let cell = ((x / s).floor() as i32, (y / s).floor() as i32);
+            clouds
+                .entry(cell)
+                .or_default()
+                .band
+                .extend(kz as f32 * vs + half);
         }
-        occupied.extend(tile_points.keys().copied());
-        if occupied.is_empty() {
+        if clouds.is_empty() {
             return Vec::new();
         }
 
-        let z_min = z_min - config.voxel_size;
-        let z_max = z_max + config.voxel_size;
-        let mut tiles: Vec<MapTile> = occupied
+        let mut tiles: Vec<MapTile> = clouds
             .into_iter()
-            .map(|cell| MapTile {
+            .map(|(cell, cloud)| MapTile {
                 bounds: RegionBounds {
                     origin_x: (cell.0 as f32 + 0.5) * s,
                     origin_y: (cell.1 as f32 + 0.5) * s,
                     radius,
-                    z_min,
-                    z_max,
+                    z_min: cloud.band.min - vs,
+                    z_max: cloud.band.max + vs,
                 },
-                points: tile_points.remove(&cell).unwrap_or_default(),
+                points: cloud.points,
             })
             .collect();
         let dist = |t: &MapTile| {
@@ -438,18 +482,14 @@ impl Planner {
         tiles
     }
 
-    /// Partition a whole-map cloud into region tiles on a `tile_size_m` grid,
-    /// ordered nearest `center` first. Tiles cover the union of the cloud and
-    /// the current map, so applying them all removes every voxel absent from
-    /// the cloud. The z band spans both, with no sensor overhead cap.
+    /// Partition a whole-map cloud into region tiles, nearest `center` first.
     pub fn partition_full_map(
         &self,
         points: &[(f32, f32, f32)],
         center: (f32, f32),
-        tile_size_m: f32,
         config: &Config,
     ) -> Vec<MapTile> {
-        let part = partition_cloud(points, tile_size_m, config.voxel_size);
+        let part = partition_cloud(points, config.full_map_tile_m, config.voxel_size);
         self.finish_partition(part, center, config)
     }
 
@@ -915,7 +955,7 @@ mod region_tests {
         center: (f32, f32),
         cfg: &Config,
     ) {
-        for tile in p.partition_full_map(points, center, 2.0, cfg) {
+        for tile in p.partition_full_map(points, center, cfg) {
             p.update_region(&tile.points, &tile.bounds, cfg);
         }
     }
@@ -941,6 +981,7 @@ mod region_tests {
             step_threshold_m: 0.25,
             step_penalty_weight: 0.0,
             goal_tolerance: 0.3,
+            full_map_tile_m: 2.0,
             viz_publish_hz: 2.0,
             worker_threads: 4,
         }
@@ -1805,7 +1846,7 @@ mod region_tests {
         let cfg = test_config();
         let all = big_world();
         let p = Planner::new(cfg.worker_threads);
-        let tiles = p.partition_full_map(&all, (0.0, 0.0), 2.0, &cfg);
+        let tiles = p.partition_full_map(&all, (0.0, 0.0), &cfg);
         assert!(tiles.len() >= 4);
         let d: Vec<f32> = tiles
             .iter()
@@ -1818,7 +1859,7 @@ mod region_tests {
 
         let mut stale = Planner::new(cfg.worker_threads);
         stale.update_global_map(&[(30.05, 30.05, 0.05)], &cfg);
-        let tiles = stale.partition_full_map(&all, (0.0, 0.0), 2.0, &cfg);
+        let tiles = stale.partition_full_map(&all, (0.0, 0.0), &cfg);
         let covers_stale = tiles.iter().any(|t| {
             t.points.is_empty()
                 && t.bounds.contains_voxel(
@@ -1840,16 +1881,22 @@ mod region_tests {
     }
 
     #[test]
-    fn region_contains_by_distance_and_z() {
+    fn region_covers_xy_by_distance() {
         let outer = cyl(0.0, 0.0, 2.0);
-        assert!(outer.contains(&cyl(0.5, 0.0, 1.0)));
+        assert!(outer.covers_xy(&cyl(0.5, 0.0, 1.0)));
         assert!(
-            !outer.contains(&cyl(1.5, 0.0, 1.0)),
-            "grazing is not containment"
+            !outer.covers_xy(&cyl(1.5, 0.0, 1.0)),
+            "grazing is not coverage"
         );
-        let mut high = cyl(0.0, 0.0, 1.0);
-        high.z_max = 3.0;
-        assert!(!outer.contains(&high));
+    }
+
+    #[test]
+    fn subtract_band_keeps_what_the_other_misses() {
+        let bands = |a, b| subtract_band(a, b).collect::<Vec<_>>();
+        assert_eq!(bands((0.0, 3.0), (-1.0, 2.0)), vec![(2.0, 3.0)]);
+        assert_eq!(bands((0.0, 3.0), (1.0, 2.0)), vec![(0.0, 1.0), (2.0, 3.0)]);
+        assert_eq!(bands((0.0, 3.0), (-1.0, 4.0)), vec![]);
+        assert_eq!(bands((0.0, 3.0), (4.0, 5.0)), vec![(0.0, 3.0)]);
     }
 
     #[test]
@@ -1884,7 +1931,7 @@ mod region_tests {
         let cfg = test_config();
         let all = big_world();
         let mut p = Planner::new(cfg.worker_threads);
-        let mut load = MapLoad::new(p.partition_full_map(&all, (4.0, 4.0), 2.0, &cfg));
+        let mut load = MapLoad::new(p.partition_full_map(&all, (4.0, 4.0), &cfg));
         assert!(load.apply_next_tile(&mut p, &cfg));
 
         let live = RegionBounds {
@@ -1905,6 +1952,55 @@ mod region_tests {
             voxel_set(&p),
             voxel_set(&clean),
             "a tile straddling the live region went unloaded"
+        );
+        assert_eq!(surface_set(&p), surface_set(&clean));
+    }
+
+    /// A tile a capped live region covers must not paste the snapshot back
+    /// over it, while its ceiling above the cap still loads.
+    #[test]
+    fn capped_live_region_still_makes_the_tile_under_it_stale() {
+        let cfg = test_config();
+        let vs = cfg.voxel_size;
+        let half = vs * 0.5;
+        let mut snapshot = big_world();
+        let mut cleared = snapshot.clone();
+        for ix in 8..11 {
+            for iy in 8..11 {
+                for iz in 0..5 {
+                    snapshot.push((
+                        ix as f32 * vs + half,
+                        iy as f32 * vs + half,
+                        iz as f32 * vs + half,
+                    ));
+                }
+            }
+        }
+        // A ceiling everywhere, above what any live region can reach.
+        for ix in 0..80 {
+            for iy in 0..80 {
+                let p = (ix as f32 * vs + half, iy as f32 * vs + half, 3.0 + half);
+                snapshot.push(p);
+                cleared.push(p);
+            }
+        }
+
+        let mut p = Planner::new(cfg.worker_threads);
+        let mut load = MapLoad::new(p.partition_full_map(&snapshot, (1.0, 1.0), &cfg));
+
+        // The box is gone by the time the live region lands.
+        let live = RegionBounds::capped(1.0, 1.0, 3.0, -0.1, 5.0, 0.3, cfg.max_overhead_m);
+        assert!(live.z_max < 3.0);
+        p.update_region(&slice(&cleared, &live, vs), &live, &cfg);
+        load.region_applied(live);
+        while load.apply_next_tile(&mut p, &cfg) {}
+
+        let mut clean = Planner::new(cfg.worker_threads);
+        clean.update_global_map(&cleared, &cfg);
+        assert_eq!(
+            voxel_set(&p),
+            voxel_set(&clean),
+            "the tile under the live region pasted the snapshot back"
         );
         assert_eq!(surface_set(&p), surface_set(&clean));
     }

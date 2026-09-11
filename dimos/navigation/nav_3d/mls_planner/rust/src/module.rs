@@ -26,10 +26,6 @@ use lcm_msgs::std_msgs::{Header, Time};
 use tokio::sync::Notify;
 use tracing::{debug, info, warn};
 
-/// Grid spacing of full-map load tiles, sized so one tile applies quickly
-/// between live updates.
-const FULL_MAP_TILE_M: f32 = 4.0;
-
 /// A point in the planner's world frame.
 type Xyz = (f32, f32, f32);
 type Xyzi = (f32, f32, f32, f32);
@@ -56,7 +52,7 @@ enum AppliedUpdate {
 }
 
 /// Extract and partition a full-map cloud. None when unusable or empty.
-fn extract_and_partition(msg: &PointCloud2, voxel_size: f32) -> Option<CloudPartition> {
+fn extract_and_partition(msg: &PointCloud2, config: &Config) -> Option<CloudPartition> {
     let points = match extract_xyz(msg) {
         Ok(p) => p,
         Err(e) => {
@@ -71,7 +67,16 @@ fn extract_and_partition(msg: &PointCloud2, voxel_size: f32) -> Option<CloudPart
     if points.is_empty() {
         return None;
     }
-    Some(partition_cloud(&points, FULL_MAP_TILE_M, voxel_size))
+    Some(partition_cloud(
+        &points,
+        config.full_map_tile_m,
+        config.voxel_size,
+    ))
+}
+
+/// Tiles alone never replan, so a load cannot flood the path topic.
+fn replan_due(woke: bool, live_update: bool, load_finished: bool) -> bool {
+    woke || live_update || load_finished
 }
 
 #[derive(Module)]
@@ -160,9 +165,9 @@ impl MlsPlanner {
     async fn on_full_map(&mut self, msg: PointCloud2) {
         let slot = Arc::clone(&self.pending_full_map);
         let wake = Arc::clone(&self.wake);
-        let voxel_size = self.config.voxel_size;
+        let config = self.config.clone();
         tokio::task::spawn_blocking(move || {
-            let Some(part) = extract_and_partition(&msg, voxel_size) else {
+            let Some(part) = extract_and_partition(&msg, &config) else {
                 return;
             };
             *slot.lock().expect("full map mutex") = Some(part);
@@ -246,33 +251,30 @@ impl Worker {
             } else {
                 tokio::task::yield_now().await;
             }
-            // Tiles alone never trigger a replan, so a load cannot flood the
-            // path topic.
-            let mut replan = woke;
             let update = self.pending.lock().expect("pending mutex").take();
-            if let Some(update) = update {
-                match self
-                    .apply_update(&mut planner, update, &mut last_viz_at)
-                    .await
-                {
-                    Some(AppliedUpdate::Region(bounds)) => {
-                        if let Some(l) = load.as_mut() {
-                            l.region_applied(bounds);
-                        }
-                        replan = true;
-                    }
-                    // A full rebuild replaces everything a load would add.
-                    Some(AppliedUpdate::Global) => {
-                        load = None;
-                        replan = true;
-                    }
-                    None => {}
+            let applied = match update {
+                Some(update) => {
+                    self.apply_update(&mut planner, update, &mut last_viz_at)
+                        .await
                 }
+                None => None,
+            };
+            let live_update = applied.is_some();
+            match applied {
+                Some(AppliedUpdate::Region(bounds)) => {
+                    if let Some(l) = load.as_mut() {
+                        l.region_applied(bounds);
+                    }
+                }
+                // A full rebuild replaces everything a load would add.
+                Some(AppliedUpdate::Global) => load = None,
+                None => {}
             }
             let full = self.pending_full_map.lock().expect("full map mutex").take();
             if let Some(part) = full {
                 load = Some(self.start_load(&planner, part));
             }
+            let mut load_finished = false;
             if let Some(l) = load.as_mut() {
                 let tile_start = Instant::now();
                 let applied =
@@ -288,10 +290,10 @@ impl Worker {
                 if l.finished() {
                     info!(load_s = l.elapsed().as_secs_f64(), "full map load finished");
                     load = None;
-                    replan = true;
+                    load_finished = true;
                 }
             }
-            if replan {
+            if replan_due(woke, live_update, load_finished) {
                 self.maybe_replan(&mut planner, &mut last_path_at).await;
             }
         }
@@ -709,6 +711,14 @@ fn read_f32_le(buf: &[u8], off: usize) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_tile_pass_skips_the_replan() {
+        assert!(!replan_due(false, false, false), "tile-only pass");
+        assert!(replan_due(true, false, false), "woken by a goal");
+        assert!(replan_due(false, true, false), "live update");
+        assert!(replan_due(false, false, true), "load finished");
+    }
 
     #[test]
     fn is_at_goal_respects_tolerance_and_ignores_z() {

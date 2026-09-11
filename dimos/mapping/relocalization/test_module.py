@@ -115,6 +115,18 @@ def test_premap_defines_the_map_frame_and_waits_for_a_fix(module, tmp_path):
     disposables[0].dispose()
 
 
+def test_premap_stem_resolves_from_the_cwd(module, tmp_path, monkeypatch):
+    """A bare stem gets the suffix and is looked up beside the caller before the data dir."""
+    (tmp_path / "site.pc2.lcm").write_bytes(
+        PointCloud2.from_numpy(np.zeros((5, 3), dtype=np.float32), timestamp=0.0).lcm_encode()
+    )
+    monkeypatch.chdir(tmp_path)
+    m = module()
+    m.register_disposable = lambda d: None
+    m._load_premap("site")
+    assert m.premap is not None and len(m.premap) == 5
+
+
 def test_relocalizer_refuses_below_its_own_threshold(monkeypatch):
     """One config surface: the relocalizer holds the knobs and the accept decision."""
     from dimos.mapping.relocalization.lidar import relocalize as lidar

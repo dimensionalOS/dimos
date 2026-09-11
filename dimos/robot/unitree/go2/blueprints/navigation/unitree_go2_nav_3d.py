@@ -153,7 +153,6 @@ mls_planner_config = MLSPlannerNativeConfig(
     wall_buffer_weight=100.0,
     step_threshold_m=0.16,
     step_penalty_weight=4.0,
-    viz_publish_hz=planner_viz_hz,
 )
 
 
