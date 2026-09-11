@@ -309,3 +309,57 @@ def test_concurrent_clients_build_the_world_once(
 
     assert len(builds) == 1
     assert memory_world._cached_top_down is not None
+
+
+def test_an_answers_ids_reach_the_viewer_as_marker_ids_whatever_the_engine_counted_in() -> None:
+    """The viewer holds thumbnails for markers and nothing else, so that is what it is sent.
+
+    Marker ids and the store's observation ids are both small integers and overlap, so
+    the engine states which space it means: only the agent skill answers in store ids.
+    Deciding by whether the numbers happen to match would highlight the wrong photo.
+    """
+    from dimos.teleop.memory_world.query import HighlightPoint
+
+    # Marker k was built from observation 100*k, so the two spaces overlap at 0 and
+    # nowhere else -- exactly the case a value test gets wrong.
+    module = SimpleNamespace(
+        _cached_image_poses=({"ids": [0, 1, 2], "source_ids": [0, 100, 200]}, b""),
+        _markers_near=lambda positions: [7] * len(positions),
+    )
+    snap = MemoryWorldModule._marker_ids_for
+
+    for engine in ("hyperspace", "siglip"):
+        already = MemoryQueryResult(answer="a", engine=engine, observation_ids=[1, 2])
+        assert snap(module, already) == [1, 2]  # already marker ids: untouched
+
+    agent = MemoryQueryResult(answer="a", engine="agent", observation_ids=[100, 200])
+    assert snap(module, agent) == [1, 2]  # store ids, translated through the markers
+
+    # An agent answer naming frames no marker was built from falls back to where it points.
+    elsewhere = MemoryQueryResult(
+        answer="a",
+        engine="agent",
+        observation_ids=[55, 66],
+        points=[HighlightPoint(position=(1.0, 2.0, 3.0), label="x")],
+    )
+    assert snap(module, elsewhere) == [7]
+
+    # ... and with nowhere to point either, it says so rather than inventing ids.
+    nothing = MemoryQueryResult(answer="a", engine="agent", observation_ids=[55])
+    assert (
+        snap(SimpleNamespace(**{**module.__dict__, "_markers_near": lambda p: []}), nothing) == []
+    )
+
+    # An mcap numbers each windowed read from zero, so the server publishes -1 for
+    # "no real id"; -1 must never be matched as though it were one.
+    mcap = SimpleNamespace(
+        _cached_image_poses=({"ids": [0, 1], "source_ids": [-1, -1]}, b""),
+        _markers_near=lambda positions: [3],
+    )
+    from_mcap = MemoryQueryResult(
+        answer="a",
+        engine="agent",
+        observation_ids=[-1],
+        points=[HighlightPoint(position=(0.0, 0.0, 0.0), label="x")],
+    )
+    assert snap(mcap, from_mcap) == [3]

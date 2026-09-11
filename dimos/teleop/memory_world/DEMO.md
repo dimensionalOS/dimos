@@ -13,10 +13,9 @@ memworld ~/datasets/lite_recorder/grocery.mcap   # or bike.mcap / park.mcap / an
   lidar and write it into the recording's own `tf_static`:
   `python -m dimos.teleop.memory_world.calibrate_static_tf <recording> --samples 20 --write`
   (without `--write` it only prints). Nothing reads it specially afterwards.
-  **Do this before building the search index**, not after: the index and the
-  Hyperspace memory db store poses as they were computed, so one built against the
-  old mount keeps the old poses. If you calibrate later, delete
-  `<recording>.hyperspace.db` and re-run Prepare search.
+  The search index and the Hyperspace memory db store poses as they were computed,
+  so `--write` deletes both: they held the old mount. The next start rebuilds the
+  index, and **Prepare search** rebuilds the memory db.
 - First start on a new recording builds the ray-traced replay (minutes on a
   long one); later starts take seconds. A build that places no scan (tf cannot
   reach the lidar frame, or everything is out of range) is thrown away and the

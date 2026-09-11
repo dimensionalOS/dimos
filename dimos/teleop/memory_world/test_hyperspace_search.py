@@ -62,9 +62,14 @@ def test_ingest_command_names_only_the_streams_the_module_chose() -> None:
         device="cpu",
         hz=2.0,
         streams={"image": "left_image", "depth": None, "camera_info": "", "tf": "tf"},
+        world_frame="odom",
     )
-    assert command[-2:] == ["--image=left_image", "--tf=tf"]  # None and empty: detected
+    # The world frame decides whether build_tf_tree substitutes the loop-closed odometry,
+    # so an ingest that does not get the module's would build a different tree from it.
+    assert command[-3:] == ["--image=left_image", "--tf=tf", "--world-frame=odom"]
     assert "--hz" in command and command[command.index("--hz") + 1] == "2.0"
+    detected = ingest_command("/tmp/rec.mcap", model_name="m", device="cpu", hz=2.0)
+    assert not [arg for arg in detected if arg.startswith("--world-frame")]  # else: detect
 
 
 def test_two_blobs_become_two_clusters_best_first() -> None:
