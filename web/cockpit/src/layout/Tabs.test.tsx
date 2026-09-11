@@ -10,8 +10,8 @@ import { Tabs } from "./Tabs.tsx";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function panel(id: string, title = ""): PanelSpec {
-  // stats is an unknown kind in this build: pages render via UnknownPanel.
-  return { id, kind: "stats", title, channels: [], params: {} };
+  // voxels is an unknown kind in this build: pages render via UnknownPanel.
+  return { id, kind: "voxels", title, channels: [], params: {} };
 }
 
 function manifest(pages: string[], panels: PanelSpec[]): Manifest {
@@ -66,7 +66,7 @@ describe("Tabs", () => {
     // The grid unmounts: a hidden canvas would keep decoding.
     expect(container.querySelector('[data-testid="grid-content"]')).toBeNull();
     expect(container.querySelector('[data-testid="panel-st"]')).not.toBeNull();
-    expect(container.textContent).toContain("unknown panel kind stats");
+    expect(container.textContent).toContain("unknown panel kind voxels");
 
     act(() => tab("overview")!.click());
     expect(container.querySelector('[data-testid="grid-content"]')).not.toBeNull();

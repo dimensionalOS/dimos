@@ -447,6 +447,35 @@ class Chat(Panel):
         return tuple(replace(_request_of(channel), paced=True) for channel in self._channels())
 
 
+@dataclass(frozen=True)
+class Stats(Panel):
+    """dtop as a page: per-process CPU, memory, thread, fd and child stats
+    of the running system, one row per worker. The bridge subscribes the
+    resource monitor's /resource_stats topic (dimos/core/resource_monitor/,
+    a pickled dict at 1 Hz; the monitor publishes nowhere else) and
+    re-encodes it as stats.json.v1. Meant for `pages=`; works in the grid
+    too. The monitor runs only under GlobalConfig.dtop, so cockpit()
+    switches that on whenever a Stats panel is present (a page that stays
+    empty unless you remember a flag is a trap); `--no-dtop` still wins.
+    """
+
+    kind: ClassVar[str] = "stats"
+    title: str = field(default="Stats", kw_only=True)
+
+    def _channels(self) -> tuple[Channel, ...]:
+        # A 1 Hz producer through the bridge's sampling gate at exactly 1 Hz
+        # would lose every arrival that lands a hair early; 2 Hz passes it
+        # losslessly without pacing.
+        return (
+            Channel(
+                "resource_stats", dict, encoding="stats.json.v1", delivery="latest", max_hz=2.0
+            ),
+        )
+
+    def _channel_requests(self) -> tuple[ChannelRequest, ...]:
+        return tuple(_request_of(channel) for channel in self._channels())
+
+
 class _Split:
     """Base for Row/Col: children plus optional flex shares."""
 
@@ -835,4 +864,11 @@ def cockpit(
     # Generated classes carry only the custom ports; the built-ins are
     # inherited. No custom streams means the plain static class.
     module_class = make_relay_bridge_class(ports) if ports else RelayBridgeModule
-    return autoconnect(module_class.blueprint(manifest=data, channels=tuple(specs)))
+    blueprint = autoconnect(module_class.blueprint(manifest=data, channels=tuple(specs)))
+    if any(isinstance(p, Stats) for p in (*_panels(layout), *_panels(tuple(pages)))):
+        # Blueprint-level config is the lowest-precedence source, applied by
+        # ModuleCoordinator.build before the worker pool (and its
+        # StatsMonitor) starts; every other source, --no-dtop included,
+        # overrides it.
+        blueprint = blueprint.global_config(dtop=True)
+    return blueprint

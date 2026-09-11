@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from dataclasses import replace
+from dataclasses import asdict, replace
 import json
 import pickle
 import struct
@@ -33,13 +33,14 @@ import pytest
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.resource_monitor.stats import ProcessStats, WorkerStats
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.web.cockpit import Channel, Chat, Video, cockpit
+from dimos.web.cockpit import Channel, Chat, Stats, Video, cockpit
 from dimos.web.codecs import EncodedPayload, PublishContext, web_decoder, web_encoder
 from dimos.web.relay_bridge import builtin_codecs, relay_bridge_module
 from dimos.web.relay_bridge.audio_codec import AudioChunk
@@ -524,6 +525,30 @@ def test_chat_panel_forwards_every_message(monkeypatch) -> None:
         assert wait_until(lambda: clients[0].control_frames)
         assert seen == ["walk forward"]
         assert isinstance(clients[0].control_frames[0], PubAck)
+    finally:
+        stop_module(module)
+
+
+def test_stats_panel_forwards_snapshots(monkeypatch) -> None:
+    # The resource monitor's pickled dict crosses as stats.json.v1 on a latest
+    # channel (the newest snapshot wins), whitelisted keys only.
+    message = {
+        "coordinator": {**asdict(ProcessStats(pid=1234, alive=True, cpu_percent=12.5)), "rss": 1},
+        "workers": [asdict(WorkerStats(pid=1235, alive=True, worker_id=0, modules=["Nav"]))],
+    }
+    module, clients = start_authored(monkeypatch, cockpit(layout=Stats()), wire=("resource_stats",))
+    try:
+        stats = transport_of(module, "resource_stats")
+        push(module, clients[0], Subs(chs=["resource_stats"], n=1))
+        assert wait_until(lambda: stats.subscribers)
+        stats.publish(message)
+        writer = lambda: clients[0].writers.get("resource_stats")  # noqa: E731
+        assert wait_until(lambda: writer() is not None and writer().offers)
+        ((payload, meta),) = writer().offers
+        assert meta is None
+        frame = json.loads(payload)
+        assert frame["coordinator"]["cpu_percent"] == 12.5 and "rss" not in frame["coordinator"]
+        assert [(w["worker_id"], w["modules"]) for w in frame["workers"]] == [(0, ["Nav"])]
     finally:
         stop_module(module)
 
