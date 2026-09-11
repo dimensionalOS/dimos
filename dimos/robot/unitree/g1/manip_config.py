@@ -26,6 +26,10 @@ from dimos.control.tasks.g1_groot_wbc_task.g1_groot_wbc_task import (
 from dimos.manipulation.planning.groups.models import PlanningGroupDefinition
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.robot.assets.model import RobotModel
+from dimos.robot.unitree.g1.ready_pose import (
+    G1_READY_JOINTS as G1_READY_JOINTS,
+    G1_READY_SPEED_SCALE as G1_READY_SPEED_SCALE,
+)
 from dimos.utils.data import LfsPath
 
 G1_URDF_PATH = Path(__file__).resolve().parent / "g1.urdf"
@@ -54,12 +58,6 @@ G1_TELEOP_ARM_MODEL = (
     )
     .with_fixed_joints(*(_urdf_joint_name(name) for name in G1_WAIST_JOINTS))
 )
-
-G1_READY_JOINTS = {
-    "left_arm": (-0.4, 0.2, 0.0, 1.2, 0.0, 0.0, 0.0),
-    "right_arm": (-0.4, -0.2, 0.0, 1.2, 0.0, 0.0, 0.0),
-}
-G1_READY_SPEED_SCALE = 0.25
 
 
 def g1_manipulation_model_config() -> RobotModelConfig:
