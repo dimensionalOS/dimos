@@ -216,7 +216,8 @@ describe("App session states", () => {
       );
     };
     const tab = (id: string) => {
-      act(() => container.querySelector<HTMLElement>(`[data-testid="tab-${id}"]`)!.click());
+      const testId = id === "overview" ? "tab-overview" : `tab-page-${id}`;
+      act(() => container.querySelector<HTMLElement>(`[data-testid="${testId}"]`)!.click());
     };
     act(() => {
       status.update({
@@ -273,6 +274,69 @@ describe("App session states", () => {
     view("panels");
     expect(row()).toBeNull();
     expect(container.textContent).toContain("no panels");
+  });
+
+  it("keeps the open page across a manifest epoch and drops it when it vanishes", () => {
+    const cam: PanelSpec = {
+      id: "cam",
+      kind: "video",
+      title: "Front camera",
+      channels: ["color_image"],
+      params: {},
+    };
+    const withPage: Manifest = { ...mf([ODOM, IMAGE], [cam]), pages: ["cam"] };
+    const tab = (id: string) => {
+      const testId = id === "overview" ? "tab-overview" : `tab-page-${id}`;
+      return container.querySelector(`[data-testid="${testId}"]`);
+    };
+    act(() => status.update({ watchedRobot: ROBOT, robots: [ROBOT], manifest: withPage }));
+    expect(tab("overview")!.getAttribute("aria-selected")).toBe("true");
+    act(() => (tab("cam") as HTMLElement).click());
+    expect(tab("cam")!.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector('[data-testid="panel-cam"]')).not.toBeNull();
+
+    // A robot restart (same manifest, new epoch) keeps the operator on the page.
+    act(() => status.update({ manifest: { ...withPage }, epoch: 1 }));
+    expect(tab("cam")!.getAttribute("aria-selected")).toBe("true");
+
+    // The page is gone from the new manifest: back to the grid, no strip.
+    act(() => status.update({ manifest: mf([ODOM, IMAGE], [cam]), epoch: 2 }));
+    expect(tab("cam")).toBeNull();
+    expect(container.querySelector('[data-testid="panel-cam"]')).not.toBeNull();
+
+    // Reintroducing the page does not resurrect the discarded selection.
+    act(() => status.update({ manifest: withPage, epoch: 3 }));
+    expect(tab("overview")!.getAttribute("aria-selected")).toBe("true");
+    expect(tab("cam")!.getAttribute("aria-selected")).toBe("false");
+    expect(container.querySelector('[data-testid="panel-cam"]')).toBeNull();
+  });
+
+  it("leaves the channels view when a page tab is picked", () => {
+    const cam: PanelSpec = {
+      id: "cam",
+      kind: "video",
+      title: "",
+      channels: ["color_image"],
+      params: {},
+    };
+    const selected = (id: string) =>
+      container.querySelector(`[data-testid="${id}"]`)!.getAttribute("aria-selected");
+    act(() => {
+      status.update({
+        watchedRobot: ROBOT,
+        robots: [ROBOT],
+        manifest: { ...mf([ODOM, IMAGE], [cam]), pages: ["cam"] },
+      });
+    });
+    view("channels");
+    expect(selected("tab-overview")).toBe("false");
+    expect(container.querySelector('[data-testid="ch-odom-seq"]')).not.toBeNull();
+
+    act(() => container.querySelector<HTMLElement>('[data-testid="tab-page-cam"]')!.click());
+    expect(selected("view-panels")).toBe("true");
+    expect(selected("tab-page-cam")).toBe("true");
+    expect(container.querySelector('[data-testid="ch-odom-seq"]')).toBeNull();
+    expect(container.querySelector('[data-testid="panel-cam"]')).not.toBeNull();
   });
 
   it("shows the multi-robot notice instead of channels", () => {
