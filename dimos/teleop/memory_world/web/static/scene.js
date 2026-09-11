@@ -6,6 +6,7 @@
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
 import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms, viewportHeight, viewportHeightPx } from '/static_mw/voxel_sprites.js';
+import { addQueryImage } from '/static_mw/evidence.js';
 import { OrbitControl } from '/static_mw/orbit.js';
 
 const WALK_SPEED_M_PER_S = 1.4;               // headset-relative
@@ -144,6 +145,8 @@ export class WorldScene {
         this._activeQueryId = null;                   // query images for any other id are stale
         this._queryImages = [];                       // headers of the frames behind the last answer
         this._queryImageMeshes = [];                  // their quads, so one can be shown alone
+        this._queryMatchMarks = [];                   // the ring and link belonging to each
+        this._photosPinnedOff = false;                // set when the user turns Photos off
         this._queryImageCursor = -1;
 
         // Top-down map: shared texture, used twice (ground projection + HUD).
@@ -1136,7 +1139,7 @@ export class WorldScene {
             this._worldGroup.position.y = head.y - 0.4 - local.y;
         }
         this._queryImageCursor = -1;
-        this._queryImageMeshes.forEach((mesh) => { if (mesh) mesh.visible = true; });
+        this._applyQueryImageVisibility();
         this.diag('focused', { x, y, z });
     }
 
@@ -1192,9 +1195,35 @@ export class WorldScene {
         this._thumbnailBytes.set(index, jpegArrayBuffer);
     }
 
+    /** Whether each answer's evidence photo should be on screen right now.
+     *
+     * Two different things put a picture in the world: the capture-pose markers, which
+     * live in _imageQuadGroup, and an answer's evidence, which lives among the
+     * highlights. "Photos" means both, so this is the single rule for the second kind
+     * and every place that shows or hides one calls it.
+     */
+    _applyQueryImageVisibility() {
+        const photos = this._imageQuadGroup.visible;
+        const cursor = this._queryImageCursor;
+        const filter = this.clusterFilter;
+        this._queryImageMeshes.forEach((mesh, i) => {
+            if (!mesh) return;
+            const cluster = this._queryImages[i]?.cluster;
+            const shown = photos
+                && (cursor < 0 || i === cursor)
+                && !(filter >= 0 && cluster !== undefined && cluster !== filter);
+            mesh.visible = shown;
+            // The ring on the matched pixel and the line to the voxel it produced belong
+            // to this photograph and go with it.
+            (this._queryMatchMarks[i] || []).forEach((mark) => { mark.visible = shown; });
+        });
+    }
+
     toggleImages() {
         this._imageQuadGroup.visible = !this._imageQuadGroup.visible;
+        this._photosPinnedOff = !this._imageQuadGroup.visible;  // the user's own choice
         if (!this._imageQuadGroup.visible) this._releaseAllThumbnails();
+        this._applyQueryImageVisibility();  // an answer's photos are photos too
         this._imageLodAccumS = IMAGE_LOD_INTERVAL_S;
         this.diag('images_toggle', { visible: this._imageQuadGroup.visible });
         if (this.onLayerChange) this.onLayerChange();
@@ -1351,7 +1380,9 @@ export class WorldScene {
 
         this.clusterFilter = -1;
         this._selectedImageIds = new Set(result.observation_ids || []);
-        if (this._selectedImageIds.size > 0 && !this._imageQuadGroup.visible) {
+        // An answer turns the photos on to show its evidence, but never over the user:
+        // turning them off and then asking a question used to bring them all back.
+        if (this._selectedImageIds.size > 0 && !this._imageQuadGroup.visible && !this._photosPinnedOff) {
             this._imageQuadGroup.visible = true;
             if (this.onLayerChange) this.onLayerChange();  // the photos box follows
         }
@@ -1362,6 +1393,7 @@ export class WorldScene {
         this._activeQueryId = result.query_id || null;
         this._queryImages = [];
         this._queryImageMeshes = [];
+        this._queryMatchMarks = [];
         this._queryImageCursor = -1;
         this._setAnswer(result.answer || 'Memory result');
         this.diag('query_result_loaded', {
@@ -1373,69 +1405,9 @@ export class WorldScene {
         });
     }
 
-    /** Hang the frame behind an answer on its camera's image plane: a quad
-     *  `distance_m` in front of where the camera stood, sized by its field of
-     *  view, with thin lines back to the camera so the frustum reads. */
+    /** Hang each photograph behind an answer where its camera stood (evidence.js). */
     addQueryImage(header, jpegArrayBuffer) {
-        if (header.query_id !== this._activeQueryId) return;
-        const blob = new Blob([jpegArrayBuffer], { type: 'image/jpeg' });
-        createImageBitmap(blob, { imageOrientation: 'flipY' }).then((bitmap) => {
-            if (header.query_id !== this._activeQueryId) { bitmap.close(); return; }
-            const texture = new THREE.Texture(bitmap);
-            texture.flipY = false;
-            texture.colorSpace = THREE.SRGBColorSpace;
-            texture.generateMipmaps = false;
-            texture.minFilter = THREE.LinearFilter;
-            texture.needsUpdate = true;
-
-            const eye = new THREE.Vector3(...header.position);
-            const forward = new THREE.Vector3(...header.forward).normalize();
-            const up = new THREE.Vector3(...header.up).normalize();
-            const distance = header.distance_m || 1.0;
-            const width = 2 * distance * Math.tan(THREE.MathUtils.degToRad(header.hfov_deg || 70) / 2);
-            const height = width / (header.aspect || 16 / 9);
-
-            const quad = new THREE.Mesh(
-                new THREE.PlaneGeometry(width, height),
-                new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide }),
-            );
-            quad.position.copy(eye).addScaledVector(forward, distance);
-            // lookAt works in world space; the group is a child of the frame rotation.
-            this._frameRotate.updateWorldMatrix(true, false);
-            quad.up.copy(up).transformDirection(this._frameRotate.matrixWorld);
-            this._highlightGroup.add(quad);
-            // lookAt aims the plane's front (+z, where the texture reads
-            // correctly) at the eye. Turning it away showed the back face,
-            // which is the picture mirrored.
-            quad.lookAt(this._frameRotate.localToWorld(eye.clone()));
-
-            const right = new THREE.Vector3().crossVectors(forward, up).normalize();
-            const centre = quad.position.clone();
-            const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sx, sy]) =>
-                centre.clone().addScaledVector(right, sx * width / 2).addScaledVector(up, sy * height / 2));
-            const segments = [];
-            for (const corner of corners) segments.push(eye.clone(), corner);
-            for (let i = 0; i < 4; i++) segments.push(corners[i], corners[(i + 1) % 4]);
-            const frustum = new THREE.LineSegments(
-                new THREE.BufferGeometry().setFromPoints(segments),
-                new THREE.LineBasicMaterial({ color: header.cluster === 0 || header.index === 0 ? 0xff5c3a : 0xffb347 }),
-            );
-            if (header.cluster !== undefined) frustum.userData.cluster = header.cluster;
-            this._highlightGroup.add(frustum);
-            this._queryImages[header.index] = header;
-            this._queryImageMeshes[header.index] = quad;
-            // Frames from nearby poses overlap; while standing at one camera, only its frame shows,
-            // and while a cluster is selected only that cluster's frames do.
-            if (this._queryImageCursor >= 0) quad.visible = header.index === this._queryImageCursor;
-            const filter = this.clusterFilter;
-            if (filter >= 0 && header.cluster !== undefined && header.cluster !== filter) {
-                quad.visible = false;
-                frustum.visible = false;
-            }
-            this.diag('query_image_placed', { index: header.index, width: Number(width.toFixed(2)) });
-        }).catch((e) => {
-            this.diag('query_image_failed', { index: header.index, error: String(e.message || e) });
-        });
+        addQueryImage(this, header, jpegArrayBuffer);
     }
 
     /** Stand where the camera behind answer *index* stood and look the way it
@@ -1457,7 +1429,7 @@ export class WorldScene {
         this._desktopPitch = Math.asin(Math.max(-1, Math.min(1, fwdThree.y)));
         this.camera.rotation.set(this._desktopPitch, this._desktopYaw, 0);
         this._queryImageCursor = index;
-        this._queryImageMeshes.forEach((mesh, i) => { if (mesh) mesh.visible = i === index; });
+        this._applyQueryImageVisibility();
         this.diag('view_from', { index });
         return true;
     }

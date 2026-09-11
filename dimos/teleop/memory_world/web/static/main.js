@@ -1064,6 +1064,23 @@ window.app = {
         // rotate (0, 0, 1) by q
         return [2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)].map((v) => +v.toFixed(3));
     }),
+    // What is actually on screen, for checking that a layer toggle covers everything it
+    // names. "Photos" means both the capture-pose markers and an answer's evidence.
+    photos: () => {
+        if (!scene) return null;
+        const counts = { markers: 0, evidence: 0, matchRings: 0, matchLines: 0 };
+        const walk = (node, shown) => {
+            const visible = shown && node.visible !== false;
+            if (visible && node.material && node.material.map) {
+                counts[node.parent === scene._imageQuadGroup ? 'markers' : 'evidence']++;
+            }
+            if (visible && node.geometry && node.geometry.type === 'RingGeometry') counts.matchRings++;
+            if (visible && node.type === 'Line') counts.matchLines++;
+            (node.children || []).forEach((child) => walk(child, visible));
+        };
+        walk(scene._frameRotate, true);
+        return counts;
+    },
 };
 
 // H pins the desktop menu and perf readout, which otherwise fade out once

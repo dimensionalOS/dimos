@@ -100,11 +100,9 @@ export class ResultsNav {
 
     _showEvidence(index) {
         const scene = this.scene;
-        (scene._queryImageMeshes || []).forEach((mesh, i) => {
-            if (!mesh) return;
-            const header = scene._queryImages[i];
-            mesh.visible = !header || header.cluster === undefined || header.cluster === index;
-        });
+        // The scene owns whether a photo is on screen: it also knows whether the user
+        // has Photos turned off, which this used to override.
+        if (scene._applyQueryImageVisibility) scene._applyQueryImageVisibility();
         for (const child of scene._highlightGroup.children) {
             if (child.userData && child.userData.cluster !== undefined) {
                 child.visible = child.userData.cluster === index;
