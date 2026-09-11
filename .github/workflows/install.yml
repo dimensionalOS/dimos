@@ -26,7 +26,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-14]
+        # macOS runners are temporarily disabled to conserve runner capacity.
+        os: [ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
@@ -76,6 +77,8 @@ jobs:
           path: /tmp/dimos-install-test/logs
 
   macos:
+    # Temporarily disabled: macOS runner capacity is exhausted.
+    if: ${{ false }}
     needs: regression
     strategy:
       fail-fast: false
@@ -141,7 +144,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04-arm, macos-14]
+        # macOS runners are temporarily disabled to conserve runner capacity.
+        os: [ubuntu-22.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
