@@ -363,9 +363,17 @@ export class WorldScene {
         });
     }
 
-    /** Stop rendering and drop the canvas, so a reconnect doesn't stack a second one. */
+    /** Stop rendering, free the GPU buffers and drop the canvas, so a reconnect
+     *  doesn't stack a second one. */
     dispose() {
         this.three.setAnimationLoop(null);
+        this.scene.traverse((obj) => {
+            if (obj.geometry) obj.geometry.dispose();
+            for (const material of [].concat(obj.material || [])) {
+                if (material.map) material.map.dispose();
+                material.dispose();
+            }
+        });
         this.three.domElement.remove();
         this.three.dispose();
     }
@@ -1491,7 +1499,10 @@ export class WorldScene {
             const child = this._highlightGroup.children.pop();
             child.traverse((obj) => {
                 if (obj.geometry) obj.geometry.dispose();
-                if (obj.material) obj.material.dispose();
+                if (obj.material) {
+                    if (obj.material.map) obj.material.map.dispose();  // the evidence photo
+                    obj.material.dispose();
+                }
             });
         }
     }

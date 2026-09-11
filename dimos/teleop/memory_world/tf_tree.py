@@ -20,9 +20,9 @@ composes each edge at the requested time: translation interpolated linearly,
 rotation by slerp, between the two bracketing samples. An edge published once
 (or whose samples never change) is simply static.
 
-This is the only source of poses the memory world uses. Camera frames, lidar
-scans and the robot's path are all placed by asking this tree, never by the
-pose an observation happens to carry.
+Camera frames, lidar scans and the robot's path are placed by asking this
+tree; the pose an observation carries is used only when the tree has no edge
+for its frame.
 """
 
 from __future__ import annotations

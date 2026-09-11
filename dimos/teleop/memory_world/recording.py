@@ -397,6 +397,18 @@ def open_recording(path: str | Path) -> Store:
 
 # ---- naming a recording's streams -------------------------------------------
 
+
+def depth_info_stream_for(streams: set[str], depth_stream: str, camera_info: str) -> str:
+    """The depth camera's own ``camera_info`` when the recording has one, else the colour one."""
+    for candidate in (
+        f"{depth_stream}_camera_info",
+        f"{depth_stream.removesuffix('_image')}_camera_info",
+    ):
+        if candidate in streams:
+            return candidate
+    return camera_info
+
+
 # Streams this module writes itself; never candidates for the recording's own.
 # The SigLIP index needs no entry — its payload type matches no sensor role.
 DERIVED_STREAMS = frozenset({"voxel_diff", "voxel_keyframe"})
@@ -495,26 +507,6 @@ def detect_streams(store: Store) -> dict[str, Any]:
         ]
 
         def order(name: str) -> tuple[int, int, str]:
-            hit = next(
-                (i for i, word in enumerate(preferred) if word in name.lower()), len(preferred)
-            )
-            return (hit, len(name), name)
-
-        return sorted(candidates, key=order)
-
-    def pick(role: str, type_name: str, depth_like: bool | None = None) -> str | None:
-        preferred, disqualifying = _STREAM_HINTS[role]
-        candidates = [
-            name
-            for name in by_type.get(type_name, [])
-            if not any(word in name.lower() for word in disqualifying)
-        ]
-        if depth_like is not None:
-            candidates = [name for name in candidates if ("depth" in name.lower()) == depth_like]
-        if not candidates:
-            return None
-
-        def rank(name: str) -> tuple[int, int, str]:
             # Earlier words in `preferred` win: a recording with both
             # `pointlio_lidar` and `rtab_cloud` should give the lidar, since
             # "cloud" also fits a cloud some other stage derived.
@@ -523,7 +515,13 @@ def detect_streams(store: Store) -> dict[str, Any]:
             )
             return (hit, len(name), name)
 
-        return min(candidates, key=rank)
+        return sorted(candidates, key=order)
+
+    def pick(role: str, type_name: str, depth_like: bool | None = None) -> str | None:
+        candidates = rank(role, type_name)
+        if depth_like is not None:
+            candidates = [name for name in candidates if ("depth" in name.lower()) == depth_like]
+        return candidates[0] if candidates else None
 
     image = pick("image", "Image", depth_like=False)
     detected = {

@@ -35,11 +35,12 @@ export class ResultsNav {
 
     _bindUi() {
         const { prevBtn, nextBtn, orbitBtn, navigateBtn, closeBtn } = this.ui || {};
-        if (prevBtn) prevBtn.addEventListener('click', () => this.prev());
-        if (nextBtn) nextBtn.addEventListener('click', () => this.next());
-        if (orbitBtn) orbitBtn.addEventListener('click', () => this.orbitCurrent());
-        if (navigateBtn) navigateBtn.addEventListener('click', () => this.navigate());
-        if (closeBtn) closeBtn.addEventListener('click', () => this.clear());
+        // handler properties, not addEventListener: each reconnect makes a new nav
+        if (prevBtn) prevBtn.onclick = () => this.prev();
+        if (nextBtn) nextBtn.onclick = () => this.next();
+        if (orbitBtn) orbitBtn.onclick = () => this.orbitCurrent();
+        if (navigateBtn) navigateBtn.onclick = () => this.navigate();
+        if (closeBtn) closeBtn.onclick = () => this.clear();
     }
 
     /** A new answer arrived (the `query_result` message). */

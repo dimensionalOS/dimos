@@ -95,7 +95,9 @@ class HyperspaceAnswers:
     _clients_lock: threading.Lock
     _active_query_images: list[tuple[dict[str, Any], bytes]]
     _cached_cloud: tuple[dict[str, Any], bytes] | None
+    _map_xyz: np.ndarray | None  # the whole map, before the viewer's stride
     _viewer_position: tuple[float, float, float] | None
+    _store_lock: threading.Lock
 
     if TYPE_CHECKING:
 
@@ -122,6 +124,7 @@ class HyperspaceAnswers:
         self._active_pyramids: str | None = None
         self._last_answer: HeatmapAnswer | None = None
         self._route_planner: RoutePlanner | MlsRoutePlanner | None = None
+        self._planner_lock = threading.Lock()
         self._orbit_cache: dict[str, dict[str, Any]] = {}
 
     # ---- loading -----------------------------------------------------------
@@ -162,7 +165,10 @@ class HyperspaceAnswers:
         return True
 
     def _map_points(self) -> np.ndarray | None:
-        """The ray-traced map's voxel centres, when the world cache is built."""
+        """The ray-traced map's voxel centres, when the world cache is built: the whole
+        map, not the stride-sampled payload the viewer gets."""
+        if self._map_xyz is not None:
+            return self._map_xyz
         if self._cached_cloud is None:
             return None
         header, payload = self._cached_cloud
@@ -228,6 +234,7 @@ class HyperspaceAnswers:
             return SkillResult.fail("NOT_FOUND", f"Nothing in the recording matches {phrase!r}")
 
         best = answer.clusters[0]
+        short = phrase[:80]  # labels are capped at 120 characters; questions at 400
         result = MemoryQueryResult(
             answer=f"{phrase}: {len(answer.clusters)} place{'s' if len(answer.clusters) != 1 else ''}, "
             f"best {best.peak:.2f} from {len(best.evidence)} view{'s' if len(best.evidence) != 1 else ''}",
@@ -235,7 +242,7 @@ class HyperspaceAnswers:
             points=[
                 HighlightPoint(
                     position=cluster.centre,
-                    label=f"#{cluster.index + 1} {phrase} ({cluster.peak:.2f}, {len(cluster.evidence)} views)",
+                    label=f"#{cluster.index + 1} {short} ({cluster.peak:.2f}, {len(cluster.evidence)} views)",
                     color="#ff5c3a" if cluster.index == 0 else "#ffb347",
                 )
                 for cluster in answer.clusters
@@ -249,7 +256,7 @@ class HyperspaceAnswers:
                     peak=cluster.peak,
                     n_voxels=cluster.n_voxels,
                     n_evidence=len(cluster.evidence),
-                    label=f"{phrase} #{cluster.index + 1}",
+                    label=f"{short} #{cluster.index + 1}",
                 )
                 for cluster in answer.clusters
             ],
@@ -286,6 +293,7 @@ class HyperspaceAnswers:
         )
         query_id = self._publish_query_result(result)
         self._publish_heatmap(query_id, answer)
+        self._publish_pyramids(query_id, answer)  # clears the previous answer's frusta too
 
     def _publish_heatmap(self, query_id: str, answer: HeatmapAnswer) -> None:
         payload = (
@@ -327,11 +335,11 @@ class HyperspaceAnswers:
         for cluster in answer.clusters[:EVIDENCE_CLUSTERS]:
             for evidence in cluster.evidence:
                 try:
-                    frame = images.at(evidence.ts, tolerance=0.02).first()
+                    with self._store_lock:  # the scrubber reads the same connection
+                        frame = images.at(evidence.ts, tolerance=0.02).first()
+                        image = frame.data
                     jpeg = self._encode_jpeg(
-                        frame.data,
-                        self.config.query_image_max_size,
-                        self.config.thumbnail_jpeg_quality,
+                        image, self.config.query_image_max_size, self.config.thumbnail_jpeg_quality
                     )
                 except Exception as error:
                     logger.warning(
@@ -343,7 +351,7 @@ class HyperspaceAnswers:
                     "query_id": query_id,
                     "index": len(sent),
                     "cluster": cluster.index,
-                    "label": f"{phrase} #{cluster.index + 1} ({evidence.score:+.2f})",
+                    "label": f"{phrase[:80]} #{cluster.index + 1} ({evidence.score:+.2f})",
                     "position": list(evidence.position),
                     "forward": list(evidence.forward),
                     "up": list(evidence.up),
@@ -382,17 +390,14 @@ class HyperspaceAnswers:
     def _planner(self) -> RoutePlanner | MlsRoutePlanner:
         """The MLS 3D planner over the map, built once; the 2D costmap when the
         binding is missing or the map is a city."""
-        if self._route_planner is None:
-            if self._cached_cloud is None:
+        with self._planner_lock:
+            if self._route_planner is not None:
+                return self._route_planner
+            points = self._map_points()
+            if points is None:
                 raise HTTPException(status_code=503, detail="the map is still building")
-            header, payload = self._cached_cloud
-            n = int(header.get("n", 0))
-            voxels = (
-                np.frombuffer(payload, dtype=np.float32, count=n * 3)
-                .reshape(n, 3)
-                .astype(np.float64)
-            )
-            voxel_size = float(header.get("voxel_size", self.config.voxel_size))
+            voxels = points.astype(np.float64)
+            voxel_size = float(self.config.voxel_size)
             if mls_available() and len(voxels) <= MLS_MAX_VOXELS:
                 started = time.monotonic()
                 mls = MlsRoutePlanner(voxels, voxel_size=voxel_size)
@@ -414,7 +419,7 @@ class HyperspaceAnswers:
                     dtype=np.float64,
                 ).reshape(-1, 3)
                 self._route_planner = RoutePlanner.from_voxels(voxels, path, voxel_size=voxel_size)
-        return self._route_planner
+            return self._route_planner
 
     def _robot_end_pose(self) -> tuple[float, float, float]:
         """Where the robot's orbit frame was at the end of the recording."""
@@ -424,7 +429,10 @@ class HyperspaceAnswers:
         raise HTTPException(status_code=503, detail="the robot's path is not known yet")
 
     def _navigate_to(self, request: NavigateRequest) -> dict[str, Any]:
-        answer = self._last_answer
+        with self._clients_lock:
+            answer = self._last_answer
+            active = getattr(self, "_active_query_result", None)
+            query_id = active.get("query_id") if isinstance(active, dict) else None
         if answer is None or request.cluster >= len(answer.clusters):
             raise HTTPException(status_code=404, detail="no such cluster in the last answer")
         cluster = answer.clusters[request.cluster]
@@ -438,7 +446,10 @@ class HyperspaceAnswers:
         if route is None:
             raise HTTPException(status_code=422, detail="no route through the known free space")
         points = [(float(x), float(y), float(z)) for x, y, z in route.points]
+        if not self._query_is_current(query_id):
+            raise HTTPException(status_code=409, detail="the answer changed while planning")
         payload = {
+            "query_id": query_id,
             "cluster": cluster.index,
             "start": [float(v) for v in start],
             "goal": [float(v) for v in cluster.centre],
@@ -449,7 +460,7 @@ class HyperspaceAnswers:
         }
         with self._clients_lock:
             active = getattr(self, "_active_query_result", None)
-        if isinstance(active, dict) and len(points) >= 2:
+        if isinstance(active, dict) and active.get("query_id") == query_id and len(points) >= 2:
             active["route"] = HighlightPath(
                 points=points, label=f"Route to #{cluster.index + 1}", color="#64ff8f"
             ).model_dump(mode="json")

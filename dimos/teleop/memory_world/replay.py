@@ -41,6 +41,7 @@ streams ahead of time; the module builds them on first use otherwise.
 from __future__ import annotations
 
 import argparse
+from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 import gzip
@@ -65,6 +66,7 @@ TAG_REMOVED = 2
 FORMAT_VERSION = 1
 # Streams built another way (column carving, before ray tracing) are rebuilt.
 BUILDER = "raytrace"
+WIRE_CACHE_BYTES = 256_000_000  # gzipped segments kept for the next viewer
 
 
 @dataclass(frozen=True)
@@ -204,12 +206,14 @@ def build_replay_streams(
     diff_stream_name: str = DIFF_STREAM,
     keyframe_stream_name: str = KEYFRAME_STREAM,
     dry_run: bool = False,
+    cancelled: Callable[[], bool] | None = None,
 ) -> ReplayStats:
     """Write the keyframe and diff streams for every scan of the lidar stream.
 
     ``to_scan`` turns a lidar observation into a :class:`SensorScan` (or None
     to skip it). Existing streams of the same names are replaced. ``dry_run``
-    only gathers the statistics.
+    only gathers the statistics. A build that ``cancelled`` cuts short lacks
+    the keyframe tagged ``last`` and is rebuilt next time.
     """
     started = time.monotonic()
     stream_tags = {
@@ -231,8 +235,12 @@ def build_replay_streams(
     grid = RayTracedGrid(voxel_size, max_range)
     stats = ReplayStats()
     last_keyframe_ts: float | None = None
+    low = np.full(3, np.inf)  # of every voxel ever added: the int16 grid's span
+    high = np.full(3, -np.inf)
     total = store.streams[lidar_stream_name].count()
     for obs in store.streams[lidar_stream_name]:
+        if cancelled is not None and cancelled():
+            break
         scan = to_scan(obs)
         if scan is not None:
             added, removed = grid.add_scan(scan)
@@ -240,6 +248,10 @@ def build_replay_streams(
             added = removed = np.empty(0, dtype=np.int64)
         stats.added += len(added)
         stats.removed += len(removed)
+        added_centres = grid.centres(added)
+        if len(added_centres):
+            low = np.minimum(low, added_centres.min(axis=0))
+            high = np.maximum(high, added_centres.max(axis=0))
         ts = float(obs.ts)
         # The last scan is always a keyframe: that is the finished map.
         take_keyframe = (
@@ -251,7 +263,7 @@ def build_replay_streams(
             last_keyframe_ts = ts
             stats.keyframes += 1
         if diffs is not None and keyframes is not None:
-            centres = np.concatenate([grid.centres(added), grid.centres(removed)])
+            centres = np.concatenate([added_centres, grid.centres(removed)])
             tags = np.concatenate(
                 [
                     np.full(len(added), TAG_ADDED, np.uint8),
@@ -267,7 +279,13 @@ def build_replay_streams(
                 keyframes.append(
                     PointCloud2.from_numpy(grid.centres(), frame_id="world", timestamp=ts),
                     ts=ts,
-                    tags={**stream_tags, "scan_index": stats.scans},
+                    tags={
+                        **stream_tags,
+                        "scan_index": stats.scans,
+                        "last": stats.scans == total - 1,  # a build that died early has none
+                        "low": np.where(np.isfinite(low), low, 0.0).tolist(),
+                        "high": np.where(np.isfinite(high), high, 0.0).tolist(),
+                    },
                 )
         stats.scans += 1
         if stats.scans % 200 == 0:
@@ -416,21 +434,24 @@ class VoxelReplay:
         self.z_min = z_min
         self.z_max = z_max
         self.index = self._load_index()
-        self._segments: dict[int, tuple[dict[str, Any], bytes]] = {}
-        self._encoded: dict[int, tuple[bytes, bytes]] = {}
+        # Gzipped wire form of the segments served so far, most recent last. A long
+        # recording has gigabytes of segments and the viewer preloads them all.
+        self._wire: OrderedDict[int, bytes] = OrderedDict()
 
     @staticmethod
     def available(
         store: Any, *, voxel_size: float, lidar_stream_name: str, max_range: float | None = None
     ) -> bool:
-        """True when both streams exist and were built for this grid, range and lidar."""
+        """True when both streams exist, were built for this grid, range and lidar,
+        and the build reached the last scan."""
         names = store.list_streams()
         if DIFF_STREAM not in names or KEYFRAME_STREAM not in names:
             return False
-        first = store.streams[KEYFRAME_STREAM].first()
-        tags = first.tags or {}
+        keyframes = store.streams[KEYFRAME_STREAM]
+        tags = keyframes.first().tags or {}
         return (
-            tags.get("format") == FORMAT_VERSION
+            bool((keyframes.last().tags or {}).get("last"))
+            and tags.get("format") == FORMAT_VERSION
             and tags.get("builder") == BUILDER
             and abs(float(tags.get("voxel_size", 0.0)) - voxel_size) < 1e-9
             and (max_range is None or abs(float(tags.get("max_range", 0.0)) - max_range) < 1e-9)
@@ -444,17 +465,14 @@ class VoxelReplay:
         scan_ts = np.array([float(obs.ts) for obs in self.diffs], dtype=np.float64)
         keyframe_scan: list[int] = []
         keyframe_ts: list[float] = []
-        low = np.full(3, np.inf)
-        high = np.full(3, -np.inf)
-        for obs in self.keyframes:
+        for obs in self.keyframes:  # tags only: the clouds stay on disk
             keyframe_scan.append(int(obs.tags["scan_index"]))
             keyframe_ts.append(float(obs.ts))
-            points = obs.data.points_f32()
-            if len(points):
-                low = np.minimum(low, points.min(axis=0))
-                high = np.maximum(high, points.max(axis=0))
-        if not np.all(np.isfinite(low)):
-            low = high = np.zeros(3)
+        last = self.keyframes.last().tags
+        low, high = (
+            np.array(last["low"], dtype=np.float64),
+            np.array(last["high"], dtype=np.float64),
+        )
         centre = np.floor((low + high) / 2 / voxel_size).astype(np.int64)
         return ReplayIndex(
             voxel_size=voxel_size,
@@ -482,16 +500,13 @@ class VoxelReplay:
         return (shifted[:, 0] << 32) | (shifted[:, 1] << 16) | shifted[:, 2]
 
     def segment(self, number: int) -> tuple[dict[str, Any], bytes]:
-        """Header and payload of one segment; built once, then cached.
+        """Header and payload of one segment.
 
         Payload: ``int16 xyz`` for every slot of the position table (keyframe
         voxels first, then voxels the diffs introduce, in order of appearance),
         then ``uint32`` slot per diff entry of every scan in order, then one
         ``uint8`` op per entry.
         """
-        cached = self._segments.get(number)
-        if cached is not None:
-            return cached
         start, end = self.index.segment_scans(number)
         keyframe = self.keyframes.at(float(self.index.keyframe_ts[number]), tolerance=1e-3).first()
         table, _ = self._grid_indices(keyframe.data)
@@ -555,16 +570,20 @@ class VoxelReplay:
                 all_ops.tobytes(),
             ]
         )
-        self._segments[number] = (header, payload)
         return header, payload
 
-    def encoded_segment(self, number: int) -> tuple[bytes, bytes]:
-        """The wire form of a segment, raw and gzipped, each built once."""
-        cached = self._encoded.get(number)
+    def encoded_segment(self, number: int) -> bytes:
+        """The gzipped wire form of a segment, built once and kept within WIRE_CACHE_BYTES."""
+        cached = self._wire.get(number)
         if cached is None:
-            raw = self.encode_segment(*self.segment(number))
-            cached = (raw, gzip.compress(raw, compresslevel=6))
-            self._encoded[number] = cached
+            cached = gzip.compress(
+                self.encode_segment(*self.segment(number)), compresslevel=6, mtime=0
+            )  # mtime=0: the same bytes every time, so the viewer's cache validates
+            self._wire[number] = cached
+            while sum(map(len, self._wire.values())) > WIRE_CACHE_BYTES and len(self._wire) > 1:
+                self._wire.popitem(last=False)
+        else:
+            self._wire.move_to_end(number)
         return cached
 
     def _diffs_between(self, start: int, end: int) -> Iterable[Any]:

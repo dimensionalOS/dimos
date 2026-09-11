@@ -132,7 +132,8 @@ function setupWebSocket() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws_memory_world`;
         setStatus('Connecting to server…');
-        ws = new WebSocket(wsUrl);
+        const socket = new WebSocket(wsUrl);
+        ws = socket;
         ws.binaryType = 'arraybuffer';
 
         ws.onopen = () => {
@@ -148,7 +149,7 @@ function setupWebSocket() {
         };
         ws.onclose = () => {
             log('ws closed');
-            setStatus('Disconnected');
+            if (ws === socket) void disconnect();  // dropped by the server: same teardown
         };
         ws.onmessage = (event) => {
             if (typeof event.data === 'string') {
@@ -875,6 +876,14 @@ async function disconnect() {
     if (ws) {
         try { ws.close(); } catch (_) { /* ignore */ }
         ws = null;
+    }
+    if (micStream) {
+        for (const track of micStream.getTracks()) track.stop();
+        micStream = null;
+    }
+    if (scene) {
+        scene.dispose();  // stops the render loop; the next connect builds a fresh one
+        scene = null;
     }
     if (perfReadoutTimer) {
         clearInterval(perfReadoutTimer);

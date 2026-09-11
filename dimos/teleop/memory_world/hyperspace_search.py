@@ -360,7 +360,6 @@ class HyperspaceSearch:
         self._config = config
         self._scene: NDArray[np.int64] | None = None
         self._scene_keys: NDArray[np.int64] | None = None
-        self._sparse_support = False  # set once "support" has emptied an answer on this recording
         if scene is not None:
             self.set_scene(scene)
         self._lock = threading.Lock()
@@ -554,17 +553,13 @@ class HyperspaceSearch:
             },
         )
         scene: list[tuple[int, int, int]] = []
-        if self._sparse_support and config.min_frames > 1:
-            config = replace(config, min_frames=1)
         refined = rf.refine(heat, config, scene=scene, text=text)
         if len(refined.clusters) < 2 and config.min_frames > 1:
             # A sparse ingest (one keyframe per voxel) gives "support" nothing to count and
             # the answer collapses to nothing or a single blob; the rest of the chain
-            # (occupancy, size prior, merge) still shapes the places. Remembered, so
-            # later questions run the chain once and every answer is judged the same way.
-            self._sparse_support = True
+            # (occupancy, size prior, merge) still shapes the places. Decided per question,
+            # so an answer never depends on what was asked before it.
             refined = rf.refine(heat, replace(config, min_frames=1), scene=scene, text=text)
-        refined.stats["min_frames"] = config.min_frames if not self._sparse_support else 1
         if not refined.voxels or not refined.clusters:
             return None
         # Best first, and no more places than the viewer steps through (a broad

@@ -74,8 +74,9 @@ memworld ~/datasets/lite_recorder/grocery.mcap   # or bike.mcap / park.mcap / an
   (max per frame → log-sum-exp across frames → × √ viewing directions),
   heat kept only next to the ray-traced map, connected components ranked by
   summed score. `hyperspace_fast.py`, `hyperspace_search.py`.
-- Route: 2D costmap along the driven path (body-height voxels are obstacles,
-  inflated by the robot radius), dimos `min_cost_astar`. `route.py`.
+- Route: dimos MLS planner (3D terrain traversability over the ray-traced
+  map); on maps too large for it, a 2D costmap along the driven path with
+  dimos `min_cost_astar`. `route.py`.
 - Switches: `--memoryworldmodule.hyperspace-refine "occupancy,support,prior"`
   runs Hyperspace's own refine chain instead; `--memoryworldmodule.hyperspace-segments false`
   drops the segment channel.

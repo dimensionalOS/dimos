@@ -373,6 +373,8 @@ def patch_world_position(
     frame (x right, y down, z forward), and moves it into the world with
     *camera_to_world*. None when the window holds no valid depth.
     """
+    if depth_mm.dtype.kind == "f":  # 32FC1 depth is metres
+        depth_mm = depth_mm * 1000.0
     height, width = depth_mm.shape
     u = round(image_uv[0] * width)
     v = round(image_uv[1] * height)

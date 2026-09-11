@@ -23,6 +23,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 pytest.importorskip("dimos_voxel_ray_tracing")
 
+from dimos.teleop.memory_world import replay as replay_module
 from dimos.teleop.memory_world.replay import (
     TAG_ADDED,
     TAG_REMOVED,
@@ -186,3 +187,38 @@ def test_build_streams_and_serve_segments(store) -> None:  # type: ignore[no-unt
         points20[tags20 == TAG_REMOVED]
     )
     assert shown == expected
+
+
+def test_build_cut_short_is_not_available(store) -> None:  # type: ignore[no-untyped-def]
+    build_replay_streams(
+        store,
+        lidar_stream_name="lidar",
+        to_scan=lambda obs: SensorScan(obs.data.points_f32(), *AT_ORIGIN),
+        voxel_size=VOXEL,
+        max_range=10.0,
+        keyframe_interval_s=1.0,
+    )
+    # a build that died before the last scan never wrote the keyframe marked last
+    kept = [(obs.data, obs.ts, obs.tags) for obs in store.streams["voxel_keyframe"]][:-1]
+    store.delete_stream("voxel_keyframe")
+    keyframes = store.stream("voxel_keyframe", PointCloud2)
+    for data, ts, tags in kept:
+        keyframes.append(data, ts=ts, tags=tags)
+    assert not VoxelReplay.available(store, voxel_size=VOXEL, lidar_stream_name="lidar")
+
+
+def test_wire_cache_is_bounded(store, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    build_replay_streams(
+        store,
+        lidar_stream_name="lidar",
+        to_scan=lambda obs: SensorScan(obs.data.points_f32(), *AT_ORIGIN),
+        voxel_size=VOXEL,
+        max_range=10.0,
+        keyframe_interval_s=1.0,
+    )
+    monkeypatch.setattr(replay_module, "WIRE_CACHE_BYTES", 1)
+    replay = VoxelReplay(store)
+    first = replay.encoded_segment(0)
+    replay.encoded_segment(1)
+    assert list(replay._wire) == [1]  # the older one made room
+    assert replay.encoded_segment(0) == first  # rebuilt, byte for byte

@@ -333,9 +333,9 @@ def test_siglipify_config_names_the_stream_and_model() -> None:
     assert 'model = "google/siglip2-giant-opt-patch16-384"' in text
     assert 'embedding = "patches"' in text and "stride = 5" in text
     assert 'streams = ["color_image"]' in text
-    command = siglipify_command("github:jeff-hykin/siglipify", "/data/rec.mcap", "/tmp/c.toml")
+    command = siglipify_command("github:jeff-hykin/siglipify", "/data/rec.mcap")
     assert command[:3] == ["nix", "run", "github:jeff-hykin/siglipify"]
-    assert command[-4:] == ["run", "/data/rec.mcap", "--config", "/tmp/c.toml"]
+    assert command[-3:] == ["run", "/data/rec.mcap", "--config"]  # the job appends the config path
 
 
 def test_embedding_job_reports_progress_then_adopts() -> None:

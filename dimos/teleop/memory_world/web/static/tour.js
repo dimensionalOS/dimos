@@ -372,9 +372,10 @@ export class Tour {
 
     _bindUi() {
         const { prevBtn, nextBtn, exitBtn } = this.ui || {};
-        if (prevBtn) prevBtn.addEventListener('click', () => this.prev());
-        if (nextBtn) nextBtn.addEventListener('click', () => this.next());
-        if (exitBtn) exitBtn.addEventListener('click', () => this.exit());
+        // handler properties, not addEventListener: each reconnect makes a new tour
+        if (prevBtn) prevBtn.onclick = () => this.prev();
+        if (nextBtn) nextBtn.onclick = () => this.next();
+        if (exitBtn) exitBtn.onclick = () => this.exit();
     }
 
     start(station = 0) {

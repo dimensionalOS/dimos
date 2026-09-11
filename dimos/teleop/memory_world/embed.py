@@ -47,8 +47,9 @@ def siglipify_config(model_name: str, image_stream_name: str, stride: int) -> st
     )
 
 
-def siglipify_command(flake: str, store_path: str, config_path: str) -> list[str]:
-    return ["nix", "run", flake, "--", "run", store_path, "--config", config_path]
+def siglipify_command(flake: str, store_path: str) -> list[str]:
+    """The job appends the config file's path (see EmbeddingJob.start)."""
+    return ["nix", "run", flake, "--", "run", store_path, "--config"]
 
 
 class EmbeddingJob:
@@ -71,6 +72,7 @@ class EmbeddingJob:
         self.state = "idle"
         self.progress = ""
         self._process: subprocess.Popen[str] | None = None
+        self._terminated = False
         self._on_finished = on_finished
 
     def status(self) -> dict[str, str]:
@@ -102,7 +104,9 @@ class EmbeddingJob:
         return True
 
     def terminate(self) -> None:
-        process = self._process
+        with self._lock:
+            self._terminated = True
+            process = self._process
         if process is not None:
             process.terminate()
 
@@ -119,7 +123,10 @@ class EmbeddingJob:
             process = subprocess.Popen(
                 command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
             )
-            self._process = process
+            with self._lock:
+                self._process = process
+                if self._terminated:  # stop() came while the process was starting
+                    process.terminate()
             assert process.stdout is not None
             # Progress bars redraw with a carriage return, so split on both.
             pending = ""

@@ -156,7 +156,10 @@ class MlsRoutePlanner:
         if len(near) == 0:
             return []
         above = self.nodes[near, 2] > xyz[2] + 0.3
-        order = near[np.lexsort((d[near], above))][:MLS_SNAP_CANDIDATES]
+        # Nearest by distance with the vertical gap counted twice: the storey under
+        # the point wins over the one below it.
+        closeness = d[near] + 2.0 * np.abs(self.nodes[near, 2] - xyz[2])
+        order = near[np.lexsort((closeness, above))][:MLS_SNAP_CANDIDATES]
         return [tuple(float(v) for v in self.nodes[i]) for i in order]  # type: ignore[misc]
 
     def snap(self, xyz: tuple[float, float, float]) -> tuple[float, float, float] | None:
@@ -252,9 +255,10 @@ class RoutePlanner:
         pr, pc = cells(dense)
         driven[pr, pc] = True
         path_z[pr, pc] = dense[:, 2]
-        _, nearest = ndimage.distance_transform_edt(~driven, return_indices=True)
+        off_path, nearest = ndimage.distance_transform_edt(~driven, return_indices=True)
+        off_path *= resolution  # metres from the driven path
         floor = path_z[nearest[0], nearest[1]]
-        known = ndimage.distance_transform_edt(~driven) * resolution <= corridor_m
+        known = off_path <= corridor_m
 
         row, col = cells(voxels)
         z = voxels[:, 2] - floor[row, col]
@@ -264,7 +268,7 @@ class RoutePlanner:
         # The robot was where it drove, so voxels there are its own body or
         # people walking beside it, not walls: nothing within its radius of the
         # path blocks.
-        obstacle &= ndimage.distance_transform_edt(~driven) * resolution > robot_radius_m
+        obstacle &= off_path > robot_radius_m
         # Cells the robot's footprint would overlap are lethal; a cost ramp
         # beyond that keeps the route off the walls when there is room.
         distance = ndimage.distance_transform_edt(~obstacle) * resolution

@@ -509,9 +509,10 @@ export class ReplayController {
         ui.scrub.max = this.index.scans.length - 1;
         ui.scrub.step = 1;
         ui.scrub.value = 0;
-        ui.scrub.addEventListener('input', () => { this.playing = false; this.seekScan(Number(ui.scrub.value)); });
-        ui.playBtn.addEventListener('click', () => this.play());
-        ui.exitBtn.addEventListener('click', () => this.exit());
+        // handler properties, not addEventListener: each reconnect makes a new controller
+        ui.scrub.oninput = () => { this.playing = false; this.seekScan(Number(ui.scrub.value)); };
+        ui.playBtn.onclick = () => this.play();
+        ui.exitBtn.onclick = () => this.exit();
         this._updateTimeline();
     }
 

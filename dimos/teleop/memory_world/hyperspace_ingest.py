@@ -41,17 +41,6 @@ from dimos.teleop.memory_world.hyperspace_search import memory_db_for
 logger = logging.getLogger(__name__)
 
 
-def depth_info_stream_for(streams: set[str], depth_stream: str, camera_info: str) -> str:
-    """The depth camera's own ``camera_info`` when the recording has one, else the colour one."""
-    for candidate in (
-        f"{depth_stream}_camera_info",
-        f"{depth_stream.removesuffix('_image')}_camera_info",
-    ):
-        if candidate in streams:
-            return candidate
-    return camera_info
-
-
 def ingest_command(
     recording: str | Path, *, model_name: str, device: str, hz: float, novelty: float = 0.02
 ) -> list[str]:
@@ -106,7 +95,16 @@ def ingest_recording(
     )
 
     memory_path = memory_db_for(recording)
-    memory = SqliteStore(path=str(memory_path), must_exist=False)
+    # Built beside the final name and moved into place at the end: a rerun (or an
+    # interrupted run) must not append a second copy of every keyframe.
+    building = memory_path.with_name(memory_path.name + ".building")
+    for stale in (
+        building,
+        building.with_name(building.name + "-wal"),
+        building.with_name(building.name + "-shm"),
+    ):
+        stale.unlink(missing_ok=True)
+    memory = SqliteStore(path=str(building), must_exist=False)
     memory.start()
     chosen = pick_device(device)
     print(f"embedding with {model_name} on {chosen} -> {memory_path}", flush=True)
@@ -132,6 +130,9 @@ def ingest_recording(
                 obj.stop()
             except Exception:
                 logger.exception("stopping %s", type(obj).__name__)
+    for suffix in ("-wal", "-shm"):
+        memory_path.with_name(memory_path.name + suffix).unlink(missing_ok=True)
+    building.replace(memory_path)
     summary: dict[str, Any] = {**stats, "seconds": round(time.monotonic() - started, 1)}
     print(f"done: {summary}", flush=True)
     return summary
@@ -186,7 +187,9 @@ def _ingest(
     start_ts = float(colors.first().ts)
     # Only the tf the slice can use; a whole recording's tf is hundreds of
     # thousands of messages the query side would otherwise decode.
-    transforms = 0
+    # Hyperspace reads tf back in time order but skips ids it has passed, so the
+    # messages go in chronologically: originals and corrected poses merged.
+    messages: list[tuple[float, Any]] = []
     for observation in store.streams[streams["tf"]].order_by("ts"):
         stamp = float(observation.ts)
         if stamp < start_ts - 5.0 or stamp > start_ts + max_seconds + 5.0:
@@ -201,8 +204,7 @@ def _ingest(
             if not kept:
                 continue
             message = TFMessage(*kept)
-        ingestor.add_tf(message, ts=stamp)
-        transforms += 1
+        messages.append((stamp, message))
     if corrected is not None:
         for observation in store.streams[corrected].order_by("ts"):
             stamp = float(observation.ts)
@@ -210,19 +212,24 @@ def _ingest(
                 continue
             pose = observation.data.pose
             p, q = pose.position, pose.orientation
-            ingestor.add_tf(
-                TFMessage(
-                    Transform(
-                        translation=Vector3(float(p.x), float(p.y), float(p.z)),
-                        rotation=Quaternion(float(q.x), float(q.y), float(q.z), float(q.w)),
-                        frame_id=world,
-                        child_frame_id="base_link",
-                        ts=stamp,
-                    )
-                ),
-                ts=stamp,
+            messages.append(
+                (
+                    stamp,
+                    TFMessage(
+                        Transform(
+                            translation=Vector3(float(p.x), float(p.y), float(p.z)),
+                            rotation=Quaternion(float(q.x), float(q.y), float(q.z), float(q.w)),
+                            frame_id=world,
+                            child_frame_id="base_link",
+                            ts=stamp,
+                        )
+                    ),
+                )
             )
-            transforms += 1
+    messages.sort(key=lambda item: item[0])
+    for stamp, message in messages:
+        ingestor.add_tf(message, ts=stamp)
+    transforms = len(messages)
     print(
         f"tf: {transforms} messages{' (corrected base poses from ' + corrected + ')' if corrected else ''}",
         flush=True,

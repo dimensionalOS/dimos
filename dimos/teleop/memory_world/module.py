@@ -23,15 +23,15 @@ On WebSocket connect we:
    image at that location.
 3. Push the odom trail as a polyline.
 
-All locomotion (smooth walk, snap turn, teleport, scale) is client-side —
-the server is a one-shot data push plus diagnostics.
+All locomotion (smooth walk, snap turn, teleport, scale) is client-side; the
+server pushes the world, answers questions and serves the replay.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from dataclasses import dataclass, field
+import gzip
 import io
 import json
 from pathlib import Path
@@ -46,7 +46,6 @@ import cv2
 from fastapi import HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, Response
-from fastapi.staticfiles import StaticFiles
 import numpy as np
 from pydantic import Field as PydanticField
 
@@ -57,6 +56,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.memory.store.base import Store
 from dimos.memory.transform import throttle
+from dimos.teleop.memory_world.clients import ClientConn, RevalidatedStaticFiles
 from dimos.teleop.memory_world.embed import EmbeddingJob, siglipify_command, siglipify_config
 from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
 from dimos.teleop.memory_world.messages import (
@@ -78,6 +78,7 @@ from dimos.teleop.memory_world.query import (
 )
 from dimos.teleop.memory_world.recording import (
     build_tf_tree,
+    depth_info_stream_for,
     detect_streams,
     open_recording,
     pick_lidar,
@@ -112,44 +113,6 @@ from dimos.web.robot_web_interface import RobotWebInterface
 logger = setup_logger()
 
 STATIC_DIR = Path(__file__).parent / "web" / "static"
-
-
-class _RevalidatedStaticFiles(StaticFiles):
-    """Static files the browser must revalidate (ETag) on every load.
-
-    Without this a phone kept a stale scene.js beside a fresh main.js for
-    hours and every new control on the page was a TypeError.
-    """
-
-    async def get_response(self, path: str, scope: Any) -> Any:
-        response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-cache"
-        return response
-
-
-@dataclass(eq=False)
-class _ClientConn:
-    """One connected memory-world client."""
-
-    ws: WebSocket
-    loop: asyncio.AbstractEventLoop
-    queue: asyncio.Queue[bytes | str] = field(default_factory=lambda: asyncio.Queue(maxsize=512))
-
-    def send_threadsafe(self, msg: bytes | str) -> None:
-        try:
-            self.loop.call_soon_threadsafe(self._enqueue, msg)
-        except RuntimeError:
-            pass
-
-    def _enqueue(self, msg: bytes | str) -> None:
-        try:
-            self.queue.put_nowait(msg)
-        except asyncio.QueueFull:
-            try:
-                self.queue.get_nowait()
-            except asyncio.QueueEmpty:
-                pass
-            self.queue.put_nowait(msg)
 
 
 # A body frame (x forward, z up) seen as a camera optical frame (z forward,
@@ -322,12 +285,13 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
     config: MemoryWorldConfig
 
     def __init__(self, **kwargs: Any) -> None:
-        self._world_clients: set[_ClientConn] = set()
+        self._world_clients: set[ClientConn] = set()
         self._clients_lock = threading.Lock()
 
         self._store: Store | None = None
         # Cached payloads so reconnects are cheap.
         self._cached_cloud: tuple[dict[str, Any], bytes] | None = None
+        self._map_xyz: np.ndarray | None = None
         self._init_hyperspace()
         self._cached_image_poses: tuple[dict[str, Any], bytes] | None = None
         # Per-pose JPEG thumbnails parallel to image_poses indices.
@@ -353,9 +317,11 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         self._tf_missing = False
         self._replay: VoxelReplay | None = None
         self._replay_lock = threading.Lock()
-        # The store's sqlite connection is not safe to read from two threads
-        # at once, and a scrubbing viewer fetches segments and frames together.
-        self._replay_read_lock = threading.Lock()
+        # The store's sqlite connection is not safe to read from two threads at
+        # once: a scrubbing viewer fetches segments and frames while an answer's
+        # evidence frames are being decoded.
+        self._store_lock = threading.Lock()
+        self._stopping = threading.Event()
         self._replay_progress = "not started"
         self._replay_index: dict[str, Any] | None = None
         self._replay_frames: OrderedDict[int, tuple[bytes, dict[str, Any]]] = OrderedDict()
@@ -404,7 +370,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         if STATIC_DIR.is_dir():
             app.mount(
                 "/static_mw",
-                _RevalidatedStaticFiles(directory=str(STATIC_DIR)),
+                RevalidatedStaticFiles(directory=str(STATIC_DIR)),
                 name="memory_world_static",
             )
 
@@ -427,24 +393,18 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
 
         @app.get(f"{self.config.client_route}/replay/segment/{{number}}")  # type: ignore[misc]
         async def memory_world_replay_segment(number: int, request: Request) -> Response:
-            """One keyframe plus the diffs up to the next, see VoxelReplay.segment.
-
-            Segments are gzipped once when first built: compressing a megabyte
-            per request cost more than sending it.
-            """
+            """One keyframe plus the diffs up to the next; see VoxelReplay.segment."""
             replay = await asyncio.to_thread(self._ensure_replay)
             if not 0 <= number < len(replay.index.keyframe_scan):
                 raise HTTPException(status_code=404, detail="no such segment")
-            raw, gzipped = await asyncio.to_thread(
-                self._replay_read, replay.encoded_segment, number
-            )
+            gzipped = await asyncio.to_thread(self._replay_read, replay.encoded_segment, number)
             headers = {"Cache-Control": "max-age=3600"}
             if "gzip" in request.headers.get("accept-encoding", ""):
                 headers["Content-Encoding"] = "gzip"
-                return Response(
-                    content=gzipped, media_type="application/octet-stream", headers=headers
-                )
-            return Response(content=raw, media_type="application/octet-stream", headers=headers)
+                content = gzipped
+            else:
+                content = gzip.decompress(gzipped)
+            return Response(content=content, media_type="application/octet-stream", headers=headers)
 
         @app.get(f"{self.config.client_route}/replay/frame")  # type: ignore[misc]
         async def memory_world_replay_frame(t: float) -> Response:
@@ -498,7 +458,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
     async def _handle_ws(self, ws: WebSocket) -> None:
         await ws.accept()
         loop = asyncio.get_running_loop()
-        conn = _ClientConn(ws=ws, loop=loop)
+        conn = ClientConn(ws=ws, loop=loop)
         with self._clients_lock:
             self._world_clients.add(conn)
         logger.info("memory-world client connected (now %d)", len(self._world_clients))
@@ -526,7 +486,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
             with self._clients_lock:
                 self._world_clients.discard(conn)
 
-    async def _sender_loop(self, conn: _ClientConn) -> None:
+    async def _sender_loop(self, conn: ClientConn) -> None:
         try:
             while True:
                 msg = await conn.queue.get()
@@ -606,7 +566,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
             if self._cached_odom is None:
                 self._cached_odom = self._build_trail()
 
-    def _send_initial_payload(self, conn: _ClientConn) -> None:
+    def _send_initial_payload(self, conn: ClientConn) -> None:
         try:
             self._ensure_world_cache()
             assert self._cached_cloud is not None  # built above; narrows the type
@@ -691,6 +651,9 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
             xyz = xyz[m]
             if xyz.size == 0:
                 return None
+            self._map_xyz = np.ascontiguousarray(
+                xyz.astype(np.float32)
+            )  # the whole map, for planning
             if xyz.shape[0] > self.config.max_points:
                 stride = xyz.shape[0] // self.config.max_points + 1
                 xyz = xyz[::stride]
@@ -707,7 +670,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
             return None
 
     def _height_colors(self, positions: np.ndarray) -> np.ndarray:
-        """Map Z (robot up) onto the purple-to-orange height ramp.
+        """Map Z (robot up) onto the purple-to-green height ramp.
 
         The ramp spans the cloud's own height range, from the
         ``height_ramp_low_percentile`` to the ``height_ramp_high_percentile``
@@ -826,7 +789,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         cloud_header, cloud_payload = cloud
         n = int(cloud_header.get("n", 0))
         xyz = np.frombuffer(cloud_payload, dtype=np.float32, count=n * 3).reshape(n, 3)
-        if xyz is None or xyz.size == 0:
+        if xyz.size == 0:
             return None
 
         z = xyz[:, 2]
@@ -1071,7 +1034,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
     def _start_embedding(self) -> bool:
         """Run siglipify over the recording in the background unless it already is."""
         return self._embed_job.start(
-            siglipify_command(self.config.siglipify_flake, self.config.store_path, "")[:-1],
+            siglipify_command(self.config.siglipify_flake, self.config.store_path),
             siglipify_config(
                 self.config.siglip_model_name,
                 self.config.image_stream_name,
@@ -1099,6 +1062,14 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
             self._replay = None
             self._replay_index = None
             self._replay_frames.clear()
+            self._tf_tree_cache = None
+            self._tf_missing = False
+            self._lidar_world_aligned_cache = None
+            self._camera_hfov_deg = None
+            self._cached_cloud = self._cached_image_poses = self._cached_thumbnails = None
+            self._cached_odom = self._cached_top_down = self._map_xyz = None
+            self._route_planner = None
+            self._orbit_cache.clear()
             if old is not None:
                 old.stop()
         logger.info("reopened %s", self.config.store_path)
@@ -1347,6 +1318,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
                     voxel_size=self.config.voxel_size,
                     max_range=self.config.replay_max_range_m,
                     keyframe_interval_s=self.config.replay_keyframe_interval_s,
+                    cancelled=self._stopping.is_set,
                 )
                 logger.info(
                     "voxel replay built: %d scans, %d keyframes, +%d/-%d edits in %.1f s",
@@ -1370,7 +1342,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
 
     def _replay_read(self, fn: Any, *args: Any) -> Any:
         """Run one store-reading replay call at a time."""
-        with self._replay_read_lock:
+        with self._store_lock:
             return fn(*args)
 
     def _build_replay(self) -> None:
@@ -1416,13 +1388,13 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         return {"frame": frame, "positions": positions}
 
     def _replay_frame(self, ts: float) -> tuple[bytes, dict[str, Any]] | None:
-        """JPEG and camera pose of the image nearest *ts*, kept in a small LRU."""
+        """JPEG and camera pose of the image nearest *ts*, in a small LRU."""
         images = self._ensure_store().streams[self.config.image_stream_name]
         candidates = list(images.at(ts, tolerance=0.25))
         if not candidates:
             return None
         obs = min(candidates, key=lambda o: abs(float(o.ts) - ts))
-        key = int(obs.id)
+        key = round(float(obs.ts), 4)  # not obs.id: an mcap numbers each windowed read from 0
         cached = self._replay_frames.get(key)
         if cached is not None:
             self._replay_frames.move_to_end(key)
@@ -1480,7 +1452,12 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
             return []
         store = self._ensure_store()
         depth_stream = store.streams[self.config.depth_stream_name]
-        k = store.streams[self.config.camera_info_stream_name].first().data.K
+        info = depth_info_stream_for(
+            set(store.list_streams()),
+            self.config.depth_stream_name,
+            self.config.camera_info_stream_name,
+        )
+        k = store.streams[info].first().data.K  # the depth camera's own intrinsics
         intrinsics = (float(k[0]), float(k[4]), float(k[2]), float(k[5]))
 
         hits: list[PatchHit] = []
@@ -1560,7 +1537,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
             return output
         return output[:limit] + f"\n... [truncated, {len(output)} chars total]"
 
-    def _on_client_message(self, conn: _ClientConn, msg: dict[str, Any]) -> None:
+    def _on_client_message(self, conn: ClientConn, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
         if kind == "ping":
             conn.send_threadsafe(encode_text("pong"))
@@ -1654,11 +1631,12 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
             if self._web_server_thread is not None:
                 self._web_server_thread.join(timeout=3)
                 self._web_server_thread = None
-            if self._prepare_thread is not None:
-                self._prepare_thread.join(timeout=10)
-                self._prepare_thread = None
+            self._stopping.set()  # ends a replay build; the store closes only after it
             self._embed_job.terminate()
             self._prepare_job.terminate()
+            if self._prepare_thread is not None:
+                self._prepare_thread.join(timeout=60)
+                self._prepare_thread = None
             if self._hyperspace is not None:
                 self._hyperspace.close()
         finally:
