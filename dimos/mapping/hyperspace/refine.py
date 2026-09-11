@@ -312,9 +312,20 @@ def prior(heat: Heatmap, config: RefineConfig, size: SizePrior) -> Heatmap:
     size_vox = np.array([size.length, size.length, size.height]) / heat.voxel_size
     half = np.maximum(np.floor(size_vox / 2).astype(int), 1)
     kept: list[tuple[Index, float]] = []
-    for label in range(1, count + 1):
-        remaining = scores.copy()
-        remaining[labels != label] = 0.0
+    boxes = ndimage.find_objects(labels)
+    margin = half + 1
+    for label, found in enumerate(boxes, start=1):
+        if found is None:
+            continue
+        # Work inside the component's bounding box (plus the window's reach,
+        # so clamping never shaves an edge): the grid can be the whole scene
+        # and a query can have hundreds of components.
+        box = tuple(
+            slice(max(part.start - int(m), 0), min(part.stop + int(m), size))
+            for part, m, size in zip(found, margin, scores.shape, strict=True)
+        )
+        origin = np.array([part.start for part in box])
+        remaining = np.where(labels[box] == label, scores[box], 0.0).astype(np.float32)
         while (remaining > 0).sum() >= max(config.min_cluster, 1):
             centre = np.asarray(np.unravel_index(int(np.argmax(remaining)), remaining.shape))
             # A few mean-shift steps: slide the window onto the local mass so
@@ -337,18 +348,26 @@ def prior(heat: Heatmap, config: RefineConfig, size: SizePrior) -> Heatmap:
             inner = np.zeros_like(window)
             inner[lo[0] + 1 : hi[0] - 1, lo[1] + 1 : hi[1] - 1, lo[2] : hi[2]] = True
             piece = np.argwhere(inner & (remaining > 0))
-            kept.extend(_trim_thickness(piece, remaining, size.thickness / heat.voxel_size, grid))
+            kept.extend(
+                _trim_thickness(
+                    piece, remaining, size.thickness / heat.voxel_size, grid.lo + origin
+                )
+            )
             remaining[window] = 0.0
     return _with(heat, kept)
 
 
 def _trim_thickness(
-    piece: NDArray[np.integer], scores: NDArray[np.floating], thickness_vox: float, grid: Grid
+    piece: NDArray[np.integer],
+    scores: NDArray[np.floating],
+    thickness_vox: float,
+    offset: NDArray[np.integer],
 ) -> list[tuple[Index, float]]:
-    """Drop the voxels of ``piece`` farther than half the thickness from its
-    horizontal principal line, so a slab keeps one face."""
+    """Drop the voxels of ``piece`` (local to ``scores``, world = local +
+    ``offset``) farther than half the thickness from the horizontal
+    principal line, so a slab keeps one face."""
     if len(piece) < 3:
-        return [(_index(c + grid.lo), float(scores[tuple(c)])) for c in piece]
+        return [(_index(c + offset), float(scores[tuple(c)])) for c in piece]
     weights = np.array([scores[tuple(c)] for c in piece], dtype=np.float64)
     xy = piece[:, :2].astype(np.float64)
     centre = np.average(xy, axis=0, weights=weights)
@@ -356,9 +375,9 @@ def _trim_thickness(
     covariance = (centred * weights[:, None]).T @ centred / max(weights.sum(), 1e-9)
     _, vectors = np.linalg.eigh(covariance)
     minor = vectors[:, 0]  # eigh sorts ascending: first is the thin direction
-    offset = np.abs(centred @ minor)
-    keep = offset <= max(thickness_vox / 2, 0.5)
-    return [(_index(c + grid.lo), float(scores[tuple(c)])) for c in piece[keep]]
+    distance = np.abs(centred @ minor)
+    keep = distance <= max(thickness_vox / 2, 0.5)
+    return [(_index(c + offset), float(scores[tuple(c)])) for c in piece[keep]]
 
 
 def _merge_close(
