@@ -345,9 +345,9 @@ class HyperspaceSearch:
         self.voxel_size = voxel_size
         self.device = device
         self.use_segments = use_segments
-        # "occupancy" (default): heat within a voxel of the map, then connected components here;
-        # "none": the raw map; anything else is handed to Hyperspace's own refine chain
-        # ("default" = its QueryConfig.refine, or e.g. "occupancy,support,prior").
+        # "default" (Hyperspace's QueryConfig.refine chain, e.g. "occupancy,support,prior") or any
+        # such chain; "occupancy": heat within a voxel of the map + connected components here;
+        # "none": the raw map. When a chain keeps nothing, the occupancy path answers instead.
         self.refine = refine
         self._config = config
         self._scene: NDArray[np.int64] | None = None
@@ -447,16 +447,16 @@ class HyperspaceSearch:
         result = fast.query(text)
 
         keep = result.score >= SCORE_CUTOFF
-        if self.refine == "occupancy" and self._scene_keys is not None:
+        refined = (
+            self._refine(text, result, keep) if self.refine not in ("occupancy", "none") else None
+        )
+        if refined is None and self.refine != "none" and self._scene_keys is not None:
             # Heat that floats in free space is a pyramid slice that missed its surface.
             grounded = near_scene(result.index, self._scene_keys)
             if (keep & grounded).any():
                 keep &= grounded
         indices = result.index[keep]
         scores = result.score[keep].astype(np.float32)
-        refined = (
-            self._refine(text, result, keep) if self.refine not in ("occupancy", "none") else None
-        )
         if refined is not None:
             indices, scores, clusters, cluster_of = refined
         else:
