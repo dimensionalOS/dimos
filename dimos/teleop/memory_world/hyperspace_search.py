@@ -566,7 +566,9 @@ class HyperspaceSearch:
         refined.stats["min_frames"] = config.min_frames if not self._sparse_support else 1
         if not refined.voxels or not refined.clusters:
             return None
-        ranked = sorted(refined.clusters, key=lambda c: c.rank)
+        # Best first, and no more places than the viewer steps through (a broad
+        # question in a shop can return 70+ blobs; the rest stay as dim heat).
+        ranked = sorted(refined.clusters, key=lambda c: c.rank)[:MAX_CLUSTERS]
         rank_to_index = {c.rank: i for i, c in enumerate(ranked)}
         score_of = dict(refined.voxels)
         out_index = np.asarray([ijk for ijk, _ in refined.voxels], dtype=np.int64).reshape(-1, 3)
