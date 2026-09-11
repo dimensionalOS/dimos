@@ -1530,7 +1530,7 @@ export class WorldScene {
             this._hudPanelMat.opacity = 0.95;
             this._hudPanelMat.needsUpdate = true;
 
-            this.diag('top_down_map_loaded', { w, h });
+            this.diag('top_down_map_loaded', { w: bitmap.width, h: bitmap.height });
         }).catch((e) => {
             this.diag('top_down_decode_failed', { error: String(e.message || e) });
         });
