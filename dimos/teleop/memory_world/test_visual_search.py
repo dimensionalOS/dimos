@@ -259,6 +259,19 @@ def test_index_built_with_body_poses_is_refused(sqlite_store: SqliteStore) -> No
         _ = VisualMemoryIndex(sqlite_store, pose_of=lambda obs: None, model_name=GIANT).index_stream
 
 
+def test_index_built_in_another_world_frame_is_refused(sqlite_store: SqliteStore) -> None:
+    sqlite_store.stream(index_stream_name_of(GIANT, "color_image"), PatchGrid).append(
+        PatchGrid(source_id=7, rows=2, cols=2, patches=np.zeros((4, 2), dtype=np.float16)),
+        ts=1.0,
+        pose=PoseStamped(position=Vector3(0.0, 0.0, 0.0)),
+        tags={"model": GIANT, "world_frame": "odom", "pose_frame": POSE_FRAME_TAG},
+    )
+    with pytest.raises(ValueError, match="odom"):
+        _ = VisualMemoryIndex(
+            sqlite_store, pose_of=lambda obs: None, model_name=GIANT, world_frame="map"
+        ).index_stream
+
+
 def test_index_of_another_camera_is_refused(sqlite_store: SqliteStore) -> None:
     sqlite_store.stream(index_stream_name_of(GIANT, "color_image"), PatchGrid).append(
         PatchGrid(source_id=7, rows=2, cols=2, patches=np.zeros((4, 2), dtype=np.float16)),

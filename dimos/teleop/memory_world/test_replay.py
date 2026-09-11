@@ -128,6 +128,65 @@ def store(tmp_path):  # type: ignore[no-untyped-def]
     store.stop()
 
 
+def test_replay_built_in_one_world_frame_serves_only_that_one(store) -> None:  # type: ignore[no-untyped-def]
+    build_replay_streams(
+        store,
+        lidar_stream_name="lidar",
+        to_scan=lambda obs: SensorScan(obs.data.points_f32(), *AT_ORIGIN),
+        voxel_size=VOXEL,
+        max_range=10.0,
+        keyframe_interval_s=1.0,
+        world_frame="odom",
+    )
+    assert VoxelReplay.available(
+        store, voxel_size=VOXEL, lidar_stream_name="lidar", world_frame="odom"
+    )
+    assert VoxelReplay.available(
+        store, voxel_size=VOXEL, lidar_stream_name="lidar"
+    )  # no preference
+    assert not VoxelReplay.available(
+        store, voxel_size=VOXEL, lidar_stream_name="lidar", world_frame="map"
+    )
+
+
+def _sensor_frame_recording(path: Path, tf_child: str) -> None:
+    """Three scans in the 'lidar' frame and a tf stream odom -> *tf_child* at their stamps."""
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+
+    store = SqliteStore(path=str(path))
+    store.start()
+    lidar, tf = store.stream("lidar", PointCloud2), store.stream("tf", TFMessage)
+    for ts in (1.0, 2.0, 3.0):
+        points = np.array([[2.0, 0.0, 0.0], [0.0, 2.0, 0.0]], np.float32)
+        lidar.append(PointCloud2.from_numpy(points, frame_id="lidar", timestamp=ts), ts=ts)
+        tf.append(
+            TFMessage(
+                Transform(
+                    translation=Vector3(ts, 0.0, 0.0),
+                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                    frame_id="odom",
+                    child_frame_id=tf_child,
+                    ts=ts,
+                )
+            ),
+            ts=ts,
+        )
+    store.stop()
+
+
+def test_cli_falls_back_to_the_tf_root_and_refuses_an_empty_build(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    _sensor_frame_recording(tmp_path / "placed.db", "lidar")
+    replay_module.main([str(tmp_path / "placed.db"), "--world-frame", "world", "--dry-run"])
+    out = capsys.readouterr().out
+    assert "using its root 'odom'" in out and "3 scans" in out
+    _sensor_frame_recording(tmp_path / "unplaced.db", "base_link")  # tf never reaches 'lidar'
+    with pytest.raises(SystemExit, match="no voxel came out"):
+        replay_module.main([str(tmp_path / "unplaced.db"), "--world-frame", "odom", "--dry-run"])
+
+
 def test_cli_refuses_scans_already_in_the_world_frame(tmp_path: Path) -> None:
     store = SqliteStore(path=str(tmp_path / "aligned.db"))
     store.start()
@@ -164,7 +223,7 @@ def test_build_streams_and_serve_segments(store) -> None:  # type: ignore[no-unt
     assert VoxelReplay.available(store, voxel_size=VOXEL, lidar_stream_name="lidar")
     assert not VoxelReplay.available(store, voxel_size=VOXEL * 2, lidar_stream_name="lidar")
     assert not VoxelReplay.available(store, voxel_size=VOXEL, lidar_stream_name="other_lidar")
-    # Built without a frame: accepted in any frame. Built in one: only that one.
+    # Built without a frame: accepted in any frame (built in one: the test below).
     assert VoxelReplay.available(
         store, voxel_size=VOXEL, lidar_stream_name="lidar", world_frame="map"
     )

@@ -8,9 +8,7 @@
 // rotation around X, which maps (rx, ry, rz) -> (rx, rz, -ry). Outside that
 // rotate group, normal Y-up three.js logic applies.
 //
-// Locomotion strategy: we don't move the camera (WebXR drives it). Instead
-// we translate / rotate / scale `_worldGroup`, which contains everything the
-// user is looking at. Walking forward = world moves backward, etc.
+// Locomotion moves `_worldGroup`, not the camera (WebXR drives that).
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
 import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms, viewportHeight, viewportHeightPx } from '/static_mw/voxel_sprites.js';
@@ -510,6 +508,7 @@ export class WorldScene {
     toggleHud() {
         this._hudPanel.visible = !this._hudPanel.visible;
         this.diag('hud_toggle', { visible: this._hudPanel.visible });
+        if (this.onLayerChange) this.onLayerChange();
         return this._hudPanel.visible;
     }
 
@@ -1171,6 +1170,7 @@ export class WorldScene {
         this._cloudWanted = !this._cloudWanted;
         if (this._pointsObj) this._pointsObj.visible = this._cloudWanted && !this._replayActive;
         this.diag('cloud_toggle', { visible: this._cloudWanted });
+        if (this.onLayerChange) this.onLayerChange();  // keyboard toggles reach the boxes too
     }
 
     setImagePoses(header, payloadArrayBuffer) {
@@ -1217,6 +1217,7 @@ export class WorldScene {
         if (!this._imageQuadGroup.visible) this._releaseAllThumbnails();
         this._imageLodAccumS = IMAGE_LOD_INTERVAL_S;
         this.diag('images_toggle', { visible: this._imageQuadGroup.visible });
+        if (this.onLayerChange) this.onLayerChange();
     }
 
     /** Keep decoded thumbnails to the nearest `IMAGE_QUAD_BUDGET` poses within

@@ -247,7 +247,7 @@ export class Tour {
 
     _layers({ voxels, heat, pyramids, photos }) {
         const scene = this.scene;
-        if (scene._pointsObj && scene._pointsObj.visible !== voxels) scene.toggleCloud();
+        if (scene._cloudWanted !== voxels) scene.toggleCloud();
         if (this.heatmap) this.heatmap.setVisible(heat);
         if (this.pyramids) this.pyramids.setVisible(pyramids);
         if (scene._imageQuadGroup.visible !== photos) scene.toggleImages();

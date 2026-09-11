@@ -661,7 +661,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("store_path")
     parser.add_argument("--lidar-stream", default="lidar")
     parser.add_argument("--tf-stream", default="tf")
-    parser.add_argument("--world-frame", default="world")
+    parser.add_argument(
+        "--world-frame",
+        default="world",
+        help="the frame to build in; a frame tf lacks means its root. A build that places"
+        " no scan through tf exits non-zero and leaves no replay behind",
+    )
     parser.add_argument("--voxel-size", type=float, default=0.08)
     parser.add_argument("--keyframe-interval", type=float, default=5.0)
     parser.add_argument("--tf-tolerance", type=float, default=0.1)
@@ -716,7 +721,13 @@ def main(argv: list[str] | None = None) -> None:
         world_frame=world,
     )
     if stats.scans and stats.added == 0:
-        raise SystemExit(f"no scan could be placed in {world!r} through tf; the replay is empty")
+        if not args.dry_run:  # the empty streams would pass as a finished replay
+            for name in (DIFF_STREAM, KEYFRAME_STREAM):
+                store.delete_stream(name)
+        raise SystemExit(
+            f"no voxel came out of {stats.scans} scans in {world!r} (tf could not place them, or"
+            " they were empty or out of range); the replay is empty"
+        )
     print(
         f"{stats.scans} scans, {stats.keyframes} keyframes, +{stats.added} / -{stats.removed} voxel "
         f"edits, {stats.final_voxels} voxels at the end, {stats.seconds:.1f} s"

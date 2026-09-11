@@ -396,6 +396,7 @@ async function startReplay() {
     const mine = replay;
     tickers.push(() => { if (replay === mine) mine.tick(); });
     scene.onQualityChange = () => replay && replay.refill();
+    scene.onLayerChange = syncBoxesFromScene;
     // Polled while the server builds the replay streams (up to half an hour on a long
     // recording); a build the server remembers as failed will not change, so stop then.
     for (let attempt = 0; scene === owner; attempt++) {
@@ -714,6 +715,15 @@ layerBoxes.hud.addEventListener('change', () => {
     if (scene && scene._hudPanel.visible !== layerBoxes.hud.checked) hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
 });
 
+/** The scene changed a layer itself (a key, the tour): the boxes and the map button follow. */
+function syncBoxesFromScene() {
+    if (!scene) return;
+    layerBoxes.voxels.checked = scene._cloudWanted;
+    layerBoxes.photos.checked = scene._imageQuadGroup.visible;
+    layerBoxes.hud.checked = scene._hudPanel.visible;
+    hudBtn.textContent = scene._hudPanel.visible ? 'Hide map' : 'Show map';
+}
+
 /** Apply the boxes to the current scene: they keep their state across a reconnect, the scene does not. */
 function syncLayerBoxes() {
     if (heatmap) heatmap.setVisible(layerBoxes.heat.checked);
@@ -931,6 +941,7 @@ async function disconnect() {
     timeline.classList.remove('loading', 'replaying');
     orbitBtn.textContent = 'Orbit frame';  // the next world names its frame again
     hudBtn.textContent = 'Show map';       // a fresh scene starts with the minimap hidden
+    askBtn.disabled = false;               // a question in flight stops owning it
     if (replay) replay.dispose();
     replay = null;
     document.body.classList.remove('desktop-view');

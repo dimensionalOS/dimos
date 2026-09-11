@@ -131,7 +131,7 @@ class MemoryWorldConfig(ModuleConfig):
     # True: the scans are already registered in the world frame (e.g. SLAM output),
     # so their poses must not be applied again. None detects it: a scan frame equal
     # to world_frame, or a stitched *corrected* frame, counts as aligned; any other
-    # frame is placed through tf.
+    # frame is placed through tf; map/odom/world count as aligned when tf cannot place them.
     lidar_world_frame: bool | None = None
     # Heights kept from the cloud. None means keep everything, which is the
     # default: a recording can be multi-storey, its origin can be the sensor
@@ -1009,6 +1009,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 image_stream_name=self.config.image_stream_name,
                 index_stream_name=self.config.image_index_stream_name,
                 model_name=self.config.siglip_model_name,
+                world_frame=self.config.world_frame,
             )
         return self._visual_index
 
@@ -1168,8 +1169,10 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 world = str(self.config.world_frame or "").lower().lstrip("/")
                 # Any other fixed frame goes through tf: map <- odom is not the identity.
                 aligned = frame_id == world or "corrected" in frame_id
-                if not aligned and frame_id in {"map", "odom", "world"} and self._tf_tree() is None:
-                    aligned = True  # no tf to place a fixed frame through: it is the world
+                if not aligned and frame_id in {"map", "odom", "world"}:
+                    tree = self._tf_tree()
+                    known = set() if tree is None else {f.lower().lstrip("/") for f in tree.frames}
+                    aligned = frame_id not in known  # tf cannot place it: it is the world
                 logger.info(
                     "lidar frame %r detected as %s",
                     frame_id,

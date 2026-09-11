@@ -41,8 +41,8 @@ the same per-patch head trick and marks the stream ``text_aligned``; a stream
 without the mark holds raw tower tokens and is refused rather than searched.
 
 The index stream stores the source observation id as part of its payload
-rather than a copy of the image, and the model name and image stream in its
-tags: the grid
+rather than a copy of the image, and the model name, image stream and world
+frame in its tags: the grid
 shape and vector width are fixed by the checkpoint, so an index built with one
 model cannot be searched with another. Each row's pose is the camera's
 *optical* frame in the world (z forward, x right, y down), supplied by the
@@ -429,11 +429,14 @@ class VisualMemoryIndex:
         model_name: str = SIGLIP2_MODEL_NAME,
         device: str | None = None,
         dtype: torch.dtype = torch.float16,
+        world_frame: str | None = None,
     ) -> None:
         """*pose_of* maps an image observation to its camera's optical pose in
-        the world as a 4x4 matrix, or None to skip the frame."""
+        the world as a 4x4 matrix, or None to skip the frame. *world_frame* names
+        that world: an index built in another one is refused, not reused."""
         self.store = store
         self.pose_of = pose_of
+        self.world_frame = world_frame
         self.image_stream_name = image_stream_name
         self.index_stream_name = index_stream_name or index_stream_name_of(
             model_name, image_stream_name
@@ -474,6 +477,12 @@ class VisualMemoryIndex:
                     raise ValueError(
                         f"index stream {self.index_stream_name!r} indexes "
                         f"{tags.get('image_stream')!r}, not {self.image_stream_name!r}"
+                    )
+                built_in = tags.get("world_frame")
+                if built_in and self.world_frame and built_in != self.world_frame:
+                    raise ValueError(
+                        f"index stream {self.index_stream_name!r} holds poses in {built_in!r}, "
+                        f"not {self.world_frame!r}; rebuild it"
                     )
                 if tags.get("pose_frame") != POSE_FRAME_TAG:
                     raise ValueError(
@@ -563,6 +572,7 @@ class VisualMemoryIndex:
                     tags={
                         "model": self.model_name,
                         "image_stream": self.image_stream_name,
+                        "world_frame": self.world_frame,
                         "pose_frame": POSE_FRAME_TAG,
                     },
                 )
@@ -789,7 +799,11 @@ def main() -> None:
         "--index-stream", default="", help="default: named after the images and the model"
     )
     parser.add_argument("--tf-stream", default="tf")
-    parser.add_argument("--world-frame", default="world")
+    parser.add_argument(
+        "--world-frame",
+        default="world",
+        help="the frame to place poses in; one tf lacks means its root",
+    )
     parser.add_argument(
         "--camera-frame",
         default=None,
