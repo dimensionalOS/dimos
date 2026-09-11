@@ -11,7 +11,8 @@ and `dimos --local-relay` auto-downloads Deno via `ensure_deno()`.
 
 ```bash
 deno task dev            # relay on http://127.0.0.1:7780 (add --cockpit-dir cockpit/dist for the UI,
-                         # --sdk-dir sdk/dist for /sdk.js, --serve-dir DIR for a custom page at /)
+                         # --sdk-dir sdk/dist for /sdk.js, --serve-dir DIR for a custom page at /,
+                         # --cert PEM --key PEM for real TLS)
 deno task test           # relay + shared tests (unit + loopback e2e)
 deno task check          # type-check relay + shared; deno fmt + deno lint for style (all of web/)
 ```
@@ -96,6 +97,10 @@ A relay started by hand (`deno task dev` above) takes robots through `--relay-ur
 relay's HTTP URL (`http://127.0.0.1:7780`): the bridge fetches `/api/info` on every connect, exactly
 like the SDK, so a relay restart (new QUIC port, new ephemeral certificate) is transparent to it.
 `docs/usage/web_sdk.md` has the recipe.
+
+With `--cert PEM --key PEM`, HTTPS and QUIC share `--port` and clients verify the certificate
+normally. A private CA reaches the robot as `--relay-ca`; non-loopback binding still needs
+`--unsafe-non-loopback` until relay auth lands.
 
 ## Cockpit
 

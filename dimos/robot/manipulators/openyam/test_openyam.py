@@ -28,7 +28,7 @@ from dimos.robot.manipulators.openyam.blueprints.basic import (
 from dimos.robot.manipulators.openyam.blueprints.teleop import (
     keyboard_teleop_openyam,
     keyboard_teleop_openyam_planner,
-    teleop_quest_openyam,
+    teleop_webxr_openyam,
 )
 from dimos.robot.manipulators.openyam.config import (
     OPENYAM_ARM_JOINTS,
@@ -184,8 +184,8 @@ def test_keyboard_teleop_openyam_gripper_task_has_no_extra_params() -> None:
     assert gripper.params == {}
 
 
-def test_quest_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
-    tasks = _coordinator_kwargs(teleop_quest_openyam)["tasks"]
+def test_webxr_teleop_routes_pose_and_gripper_to_separate_tasks() -> None:
+    tasks = _coordinator_kwargs(teleop_webxr_openyam)["tasks"]
     teleop = next(task for task in tasks if task.type == "teleop_ik")
     gripper = next(task for task in tasks if task.type == "gripper")
 
