@@ -25,6 +25,12 @@ Usage:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import math
+import time
+
+from dimos.utils.trigonometry import angle_diff
+
 
 class MockTwistBaseAdapter:
     """Fake twist base adapter for unit tests.
@@ -34,14 +40,26 @@ class MockTwistBaseAdapter:
     - Unit testing coordinator logic without hardware
     - Integration testing with predictable behavior
     - Development without a physical base
+
+    With ``integrate_odometry`` a 3-DOF base moves: each odometry read advances
+    the pose by the last commanded body-frame velocity, with yaw wrapped.
     """
 
-    def __init__(self, dof: int = 3, **_: object) -> None:
+    def __init__(
+        self,
+        dof: int = 3,
+        integrate_odometry: bool = False,
+        clock: Callable[[], float] = time.monotonic,
+        **_: object,
+    ) -> None:
         self._dof = dof
         self._velocities = [0.0] * dof
         self._odometry: list[float] | None = [0.0] * dof
         self._enabled = False
         self._connected = False
+        self._integrate_odometry = integrate_odometry and dof == 3
+        self._clock = clock
+        self._odometry_t: float | None = None
 
     def connect(self) -> bool:
         """Simulate connection."""
@@ -68,7 +86,22 @@ class MockTwistBaseAdapter:
         """Return mock odometry."""
         if self._odometry is None:
             return None
+        if self._integrate_odometry:
+            self._advance_odometry(self._odometry)
         return self._odometry.copy()
+
+    def _advance_odometry(self, odometry: list[float]) -> None:
+        now = self._clock()
+        if self._odometry_t is not None:
+            dt = now - self._odometry_t
+            vx, vy, wz = self._velocities
+            x, y, yaw = odometry
+            self._odometry = [
+                x + (math.cos(yaw) * vx - math.sin(yaw) * vy) * dt,
+                y + (math.sin(yaw) * vx + math.cos(yaw) * vy) * dt,
+                angle_diff(yaw + wz * dt, 0.0),
+            ]
+        self._odometry_t = now
 
     def write_velocities(self, velocities: list[float]) -> bool:
         """Set mock velocities."""
@@ -94,6 +127,7 @@ class MockTwistBaseAdapter:
     def set_odometry(self, odometry: list[float] | None) -> None:
         """Set odometry directly for testing."""
         self._odometry = list(odometry) if odometry is not None else None
+        self._odometry_t = None
 
     def set_velocities_directly(self, velocities: list[float]) -> None:
         """Set velocities directly for testing (bypasses DOF check)."""
