@@ -26,7 +26,12 @@ from dimos.robot.galaxea.r1pro.grasping_task import HOME_TCP, GraspingTask
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_FPS as FPS
 from dimos.robot.galaxea.r1pro.packing import clear_pick_order
 from dimos.robot.galaxea.r1pro.packing_sim import PACKING_BODIES, PACKING_JOINTS, PACKING_SOURCES
-from dimos.robot.galaxea.r1pro.packing_state import PackingResult, plan_bottle_goal, score_packing
+from dimos.robot.galaxea.r1pro.packing_state import (
+    PackingResult,
+    open_gripper_at_home,
+    plan_bottle_goal,
+    score_packing,
+)
 
 
 class PackingTask(GraspingTask):
@@ -64,13 +69,17 @@ class PackingTask(GraspingTask):
         self.goal[:] = 0
         self.select_bottle(0)
 
-    def pick_order(self, seed: int) -> list[int]:
-        """Vary source selection while clearing front bottles before rear ones."""
+    def pick_order(self, seed: int | None = None) -> list[int]:
+        """Clear front bottles first; an optional seed randomizes accessible choices."""
         positions = tuple(
             (float(self.data.body(name).xpos[0]), float(self.data.body(name).xpos[1]))
             for name in PACKING_BODIES
         )
-        priority = tuple(map(int, np.random.default_rng(seed).permutation(5)))
+        priority = (
+            tuple(map(int, np.random.default_rng(seed).permutation(5)))
+            if seed is not None
+            else None
+        )
         return clear_pick_order(positions, priority)
 
     def select_bottle(self, index: int) -> bool:
@@ -104,8 +113,7 @@ class PackingTask(GraspingTask):
 
     def pick_complete(self) -> bool:
         """Containment plus a clear, open gripper at home before the next pick."""
-        position = self.data.site_xpos[self.tcp_id]
-        return bool(self.result().success and np.linalg.norm(position - HOME_TCP) < 0.015)
+        return self.result().success and open_gripper_at_home(self.data)
 
     def remember_result(self) -> None:
         self.evidence[self.selected] = (self.peak_lift, self.bilateral_grasp)

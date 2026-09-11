@@ -69,7 +69,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             viewer.cam.elevation = -35
         for seed in range(args.start_seed, args.start_seed + args.episodes):
             task.reset_packing(seed, args.jitter)
-            order = task.pick_order(seed)
+            order = task.pick_order(None if args.canonical_order else seed)
             picks = []
             reason = "completed"
             started = time.monotonic()
@@ -95,6 +95,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                     history.append(
                         {
                             "frame": frame,
+                            "mode": "policy",
                             "tcp": task.data.site_xpos[task.tcp_id].tolist(),
                             **task.result().to_dict(),
                         }
@@ -102,14 +103,34 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                     if viewer is not None:
                         viewer.sync()
                         time.sleep(max(0, 1 / FPS - (time.monotonic() - tick)))
-                    if stable >= FPS:
+                    if stable >= 3:
                         break
+                # Mirror coordinator cancellation: hardware retains the last
+                # policy command. Verify without generating another trajectory.
+                hold = task.data.ctrl[task.aids].astype(np.float32).copy()
+                for _ in range(FPS // 2):
+                    tick = time.monotonic()
+                    task.step(hold)
+                    history.append(
+                        {
+                            "frame": len(history),
+                            "mode": "stop_hold",
+                            "tcp": task.data.site_xpos[task.tcp_id].tolist(),
+                            **task.result().to_dict(),
+                        }
+                    )
+                    if viewer is not None:
+                        viewer.sync()
+                        time.sleep(max(0, 1 / FPS - (time.monotonic() - tick)))
+                complete = stable >= 3 and task.pick_complete()
                 task.remember_result()
                 row = {
                     "bottle": index + 1,
                     "goal": task.goal.tolist(),
                     **task.result().to_dict(),
-                    "pick_complete": stable >= FPS,
+                    "pick_complete": complete,
+                    "stop_hold_frames": FPS // 2,
+                    "stop_hold_target": "last_policy_command",
                     "frames": len(history),
                 }
                 picks.append(row)
@@ -123,7 +144,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                     qvel=task.data.qvel,
                     ctrl=task.data.ctrl,
                 )
-                if stable < FPS:
+                if not complete:
                     reason = "pick_failed"
                     break
             report = task.report()
@@ -142,6 +163,7 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                 "artifact": str(args.artifact.resolve()),
                 "action_steps": steps,
                 "jitter_m": args.jitter,
+                "order_mode": "left_to_right" if args.canonical_order else "random",
                 "episodes": results,
                 "successes": sum(row["success"] for row in results),
                 "total": len(results),
@@ -164,6 +186,11 @@ def main() -> None:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--episodes", type=int, default=1)
     parser.add_argument("--start-seed", type=int, default=9000)
+    parser.add_argument(
+        "--canonical-order",
+        action="store_true",
+        help="Use the native demo default accessible left-to-right order",
+    )
     parser.add_argument("--jitter", type=float, default=0.003)
     parser.add_argument("--seconds", type=float, default=22)
     parser.add_argument("--action-steps", type=int)

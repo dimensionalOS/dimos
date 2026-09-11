@@ -300,6 +300,8 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     viewer_track_body: str | None = None
     viewer_lookat: tuple[float, float, float] | None = None
     viewer_distance: float | None = Field(default=None, gt=0)
+    viewer_azimuth: float | None = None
+    viewer_elevation: float | None = Field(default=None, ge=-90, le=90)
     # Render sensor snapshots separately so GPU waits do not block motor physics.
     background_camera_rendering: bool = False
     dof: int = 7
@@ -572,6 +574,8 @@ class MujocoSimModule(
             viewer_track_body=self.config.viewer_track_body,
             viewer_lookat=self.config.viewer_lookat,
             viewer_distance=self.config.viewer_distance,
+            viewer_azimuth=self.config.viewer_azimuth,
+            viewer_elevation=self.config.viewer_elevation,
             background_camera_rendering=self.config.background_camera_rendering,
         )
         if self.config.robot_mjcf is not None:

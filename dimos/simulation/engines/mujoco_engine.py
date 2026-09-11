@@ -225,6 +225,8 @@ class MujocoEngine(SimulationEngine):
         viewer_track_body: str | None = None,
         viewer_lookat: tuple[float, float, float] | None = None,
         viewer_distance: float | None = None,
+        viewer_azimuth: float | None = None,
+        viewer_elevation: float | None = None,
         background_camera_rendering: bool = False,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
@@ -238,6 +240,8 @@ class MujocoEngine(SimulationEngine):
         self._viewer_track_body = viewer_track_body
         self._viewer_lookat = viewer_lookat
         self._viewer_distance = viewer_distance
+        self._viewer_azimuth = viewer_azimuth
+        self._viewer_elevation = viewer_elevation
         self._background_camera_rendering = background_camera_rendering
 
         model_path = self._resolve_model_path(config_path)
@@ -852,6 +856,10 @@ class MujocoEngine(SimulationEngine):
                         m_viewer.cam.lookat[:] = self._viewer_lookat
                     if self._viewer_distance is not None:
                         m_viewer.cam.distance = self._viewer_distance
+                    if self._viewer_azimuth is not None:
+                        m_viewer.cam.azimuth = self._viewer_azimuth
+                    if self._viewer_elevation is not None:
+                        m_viewer.cam.elevation = self._viewer_elevation
                     next_step = time.monotonic()
                     while m_viewer.is_running() and not self._stop_event.is_set():
                         _step_once(sync_viewer=True)

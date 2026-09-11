@@ -228,6 +228,11 @@ def build_r1pro_manipulation(
     simulator: type[R1ProGraspingSim],
     policy_module: type[_PolicyModule],
     task_description: str,
+    background_camera_rendering: bool = False,
+    viewer_lookat: tuple[float, float, float] = (0.0, -0.4, 0.85),
+    viewer_distance: float = 3.0,
+    viewer_azimuth: float | None = None,
+    viewer_elevation: float | None = None,
 ) -> Blueprint:
     """Shared physical robot/camera/coordinator wiring for manipulation profiles."""
     scene_path = scene_path.expanduser().resolve()
@@ -259,8 +264,11 @@ def build_r1pro_manipulation(
             address=scene_path,
             dof=len(joints),
             headless=headless,
-            viewer_lookat=(0.0, -0.4, 0.85),
-            viewer_distance=3.0,
+            viewer_lookat=viewer_lookat,
+            viewer_distance=viewer_distance,
+            viewer_azimuth=viewer_azimuth,
+            viewer_elevation=viewer_elevation,
+            background_camera_rendering=background_camera_rendering,
             viewer_track_body="base_link" if free_tray else None,
             position_target_velocity_limits=(
                 dict(zip(VIRTUAL_BASE_JOINTS, [0.1, 0.1, 0.15], strict=True)) if free_tray else {}

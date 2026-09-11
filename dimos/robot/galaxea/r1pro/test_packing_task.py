@@ -19,7 +19,12 @@ import numpy as np
 import pytest
 
 from dimos.robot.galaxea.r1pro.packing_sim import prepare_packing_scene
-from dimos.robot.galaxea.r1pro.packing_state import PackingMonitor, plan_bottle_goal, score_packing
+from dimos.robot.galaxea.r1pro.packing_state import (
+    PackingMonitor,
+    open_gripper_at_home,
+    plan_bottle_goal,
+    score_packing,
+)
 from dimos.robot.galaxea.r1pro.packing_task import PackingTask
 
 pytestmark = [pytest.mark.mujoco, pytest.mark.self_hosted]
@@ -97,3 +102,22 @@ def test_a_fallen_bottle_blocks_slots_that_an_upright_bottle_would_clear(task):
     assert not task.select_bottle(0)
     np.testing.assert_array_equal(task.data.qpos, before[0])
     np.testing.assert_array_equal(task.data.ctrl, before[1])
+
+
+def test_placed_bottle_stays_released_when_gripper_closes_elsewhere(task):
+    task.reset_packing(8200, 0.003)
+    tray = task.data.body("task_bin").xpos.copy()
+    task.data.joint("task_bottle_free").qpos[:] = (
+        *tuple(tray + np.array([0, 0, 0.085])),
+        1,
+        0,
+        0,
+        0,
+    )
+    task.data.joint("task_bottle_free").qvel[:] = 0
+    task.data.joint("r1pro/right_gripper").qpos[:] = 0
+    mujoco.mj_forward(task.model, task.data)
+    result = score_packing(task.data, 0, peak_lift=0.12, bilateral_grasp=True, touching_pads=set())
+    assert result.success and result.released
+    # Per-object release does not permit another pick with a closed gripper.
+    assert not open_gripper_at_home(task.data)

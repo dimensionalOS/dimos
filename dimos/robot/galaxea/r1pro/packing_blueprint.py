@@ -15,6 +15,7 @@
 """Goal-conditioned bottle packing through the standard DimOS coordinator."""
 
 from pathlib import Path
+import time
 from typing import Any
 
 import numpy as np
@@ -27,11 +28,14 @@ from dimos.imitation.observation import VectorObservation
 from dimos.imitation.policy.lerobot.module import R1ProPackingPolicy
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.galaxea.r1pro.grasping_blueprint import R1ProGraspingSim, build_r1pro_manipulation
-from dimos.robot.galaxea.r1pro.grasping_task import HOME_TCP
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PACKING_TASK
 from dimos.robot.galaxea.r1pro.packing import clear_pick_order
 from dimos.robot.galaxea.r1pro.packing_sim import PACKING_BODIES
-from dimos.robot.galaxea.r1pro.packing_state import PackingMonitor, plan_bottle_goal
+from dimos.robot.galaxea.r1pro.packing_state import (
+    PackingMonitor,
+    open_gripper_at_home,
+    plan_bottle_goal,
+)
 from dimos.simulation.engines.mujoco_engine import MujocoEngine
 
 
@@ -66,7 +70,10 @@ class R1ProPackingSim(R1ProGraspingSim):
         return applied
 
     def _publish_goal(self, frame: Image) -> None:
-        goal = self._goal
+        if self._engine is None:
+            return
+        with self._engine._lock:
+            goal = self._goal
         if goal is not None:
             self.packing_goal.publish(VectorObservation(ts=frame.ts, values=goal))
 
@@ -78,8 +85,8 @@ class R1ProPackingSim(R1ProGraspingSim):
             self._packing_monitor.observe()
 
     @rpc
-    def packing_order(self, seed: int) -> list[int]:
-        """Choose a varied order with unblocked source corridors."""
+    def packing_order(self, seed: int | None = None) -> list[int]:
+        """Choose accessible sources left to right, or randomize with a seed."""
         if self._engine is None:
             raise RuntimeError("Simulation has not started")
         with self._engine._lock:
@@ -91,7 +98,10 @@ class R1ProPackingSim(R1ProGraspingSim):
                 for name in PACKING_BODIES
             )
         return clear_pick_order(
-            positions, tuple(map(int, np.random.default_rng(seed).permutation(5)))
+            positions,
+            tuple(map(int, np.random.default_rng(seed).permutation(5)))
+            if seed is not None
+            else None,
         )
 
     @rpc
@@ -103,10 +113,7 @@ class R1ProPackingSim(R1ProGraspingSim):
             data = self._engine.data
             if data.time < 0.6:
                 raise RuntimeError("Wait for the scene to settle before selecting a bottle")
-            if (
-                np.linalg.norm(data.site("right_tcp").xpos - HOME_TCP) >= 0.015
-                or data.joint("r1pro/right_gripper").qpos[0] < 0.04
-            ):
+            if not open_gripper_at_home(data):
                 raise RuntimeError(
                     "Stop the policy with the open gripper at home before selecting a bottle"
                 )
@@ -126,6 +133,8 @@ class R1ProPackingSim(R1ProGraspingSim):
         with self._engine._lock:
             return {
                 **self._packing_monitor.report(),
+                "wall_time": time.time(),
+                "right_tcp": self._engine.data.site("right_tcp").xpos.tolist(),
                 "ready_for_pick": bool(self._engine.data.time >= 0.6),
                 "selected": self._packing_monitor.bottle_state(self._selected)
                 if self._selected is not None
@@ -145,4 +154,9 @@ def build_r1pro_packing(
         simulator=R1ProPackingSim,
         policy_module=R1ProPackingPolicy,
         task_description=R1PRO_PACKING_TASK,
+        background_camera_rendering=True,
+        viewer_lookat=(0.2, -0.25, 1.0),
+        viewer_distance=1.8,
+        viewer_azimuth=225.0,
+        viewer_elevation=-30.0,
     )

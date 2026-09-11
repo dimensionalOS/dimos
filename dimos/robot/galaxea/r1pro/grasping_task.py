@@ -76,6 +76,7 @@ def score_task(
     joint_name: str = "task_bottle_free",
     radius: float = BOTTLE_RADIUS,
     half_height: float = BOTTLE_HALF_HEIGHT,
+    require_open_gripper: bool = True,
 ) -> TaskResult:
     """Apply the same physical success criteria in offline and distributed runs."""
     bottle = data.body(bottle_name)
@@ -91,7 +92,9 @@ def score_task(
         np.all(np.abs(pos[:2]) + extent[:2] < BIN_INNER_HALF_SIZE)
         and abs(pos[2] - extent[2] - (BIN_FLOOR_Z - TABLE_Z)) < 0.008
     )
-    released = not touching_pads and data.joint("r1pro/right_gripper").qpos[0] > 0.04
+    released = not touching_pads and (
+        not require_open_gripper or data.joint("r1pro/right_gripper").qpos[0] > 0.04
+    )
     settled = bool(np.linalg.norm(data.joint(joint_name).qvel) < 0.03)
     success = peak_lift > 0.06 and bilateral_grasp and inside and released and settled
     return TaskResult(

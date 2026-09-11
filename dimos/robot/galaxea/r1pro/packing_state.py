@@ -49,12 +49,21 @@ def score_packing(
         touching_pads=touching_pads,
         bottle_name=PACKING_BODIES[index],
         joint_name=PACKING_JOINTS[index],
+        require_open_gripper=False,
     )
     tray_axis = data.body("task_bin").xmat.reshape(3, 3)[:, 2]
     bottle_axis = data.body(PACKING_BODIES[index]).xmat.reshape(3, 3)[:, 2]
     upright = bool(tray_axis @ bottle_axis >= math.cos(math.radians(15)))
     return PackingResult(
         **(result.to_dict() | {"success": result.success and upright, "upright": upright})
+    )
+
+
+def open_gripper_at_home(data: mujoco.MjData) -> bool:
+    """The next pick starts only after ACT returns with an open, clear gripper."""
+    return bool(
+        np.linalg.norm(data.site("right_tcp").xpos - HOME_TCP) < 0.015
+        and data.joint("r1pro/right_gripper").qpos[0] > 0.04
     )
 
 
@@ -122,11 +131,10 @@ class PackingMonitor:
             bilateral_grasp=bool(self.grasped[index]),
             touching_pads=self.touching[index],
         )
-        home = np.linalg.norm(self.data.site("right_tcp").xpos - HOME_TCP) < 0.015
         return {
             "bottle": index + 1,
             **result.to_dict(),
-            "pick_complete": bool(result.success and home),
+            "pick_complete": result.success and open_gripper_at_home(self.data),
         }
 
     def report(self) -> dict[str, Any]:

@@ -377,7 +377,7 @@ rejection. The R1Pro source is also local until an authorized push completes.
 A source push alone does not transfer the local training artifacts.
 
 
-## 2026-09-10 — Five-bottle ACT packing in progress
+## 2026-09-10: Five-bottle ACT packing in progress
 
 User chose planned neat placements and stop when full, with no rearrangement.
 Tray grasp learning and navigation changes are deferred. Existing single-bottle
@@ -609,3 +609,342 @@ isolated mypy passed five LeRobot files with the same import setting. Ruff and
 implementation commit with explicit pending-validation documentation; trained
 weights/data remain ignored local artifacts. Final learned validation, repeated
 native full-viewer runs and final operator documentation are still outstanding.
+
+
+### Full-data split correction and active job IDs
+
+Implementation commit: **95bdae0bc** (29 files; all normal pre-commit hooks pass).
+The first larger run logged 119 training episodes: LeRobot rounds the held-out
+fraction up, so `.077` held 11 episodes and split a scene. Stopped that owned
+training attempt after its first few hundred steps and preserved it at
+`train-packing-full-split-119`; its scripts/logs are archived as
+`before-split-fix-*`. Corrected the fraction to **.0769** and reused the completed
+130-episode dataset. The new run confirms **120 training episodes / 31,680
+frames**, leaving exactly two whole scenes (10 picks) for validation.
+
+Current active detached PIDs:
+- `jobs/packing-full-conditioned`: **1495914**, training 20,000 steps, batch 32,
+  eight loaders, ~200 samples/s (~6 updates/s). Started 14:56 PDT Sept 10.
+- `jobs/packing-full-checkpoints`: **1495915**, waiting for checkpoints at
+  5000/10000/15000 to test tuning seeds 9100–9102.
+
+Do not use older PIDs from earlier handoff entries. Inspect each saved `pid`,
+`stage`, `run.log`, `exit-code` as the source of current job status. First physical
+checkpoint feedback should arrive around 15:10 PDT; full training about 15:50.
+Timing is approximate. No complete learned packing sequence has passed yet.
+
+
+### Corrected per-bottle release reporting (after implementation commit)
+
+Audit found that shared single-bottle scoring required an open right gripper
+for **every** bottle, so closing it for the next pick made already-placed bottles
+report `released=false`. Earlier `packed=0` summaries did NOT establish that those
+bottles were knocked out. Correction to the earlier handoff wording: saved poses
+show the successfully placed bottles remained in the tray. The 8000-step pilot
+actually left **1, 1 and 4** bottles correctly packed on 9100, 9101 and 9102. Full
+success remains 0/3. Original reports are preserved; exact saved-state rescore is
+`eval-packing-conditioned/release-audit.json`.
+
+`score_task` now has a backward-compatible `require_open_gripper=True` option.
+Packing passes False for per-object release (no pad contact). A shared
+`open_gripper_at_home()` separately gates selected-pick completion and the next
+native goal, so this does not weaken the open/home requirement. Six packing plus
+seven original grasp physics tests pass (13 total), including both full teacher
+sequences and the new closed-gripper-elsewhere regression. Source changes since
+95bdae0bc are not committed yet.
+
+Detached horizon tuning `jobs/packing-conditioned-horizons` PID 1500248 finished:
+20 and 10 executed actions/chunk both failed all three tuning scenes. Keep the
+30-action baseline. Full training PID 1495914 and checkpoint watcher 1495915
+remain active; step count was approximately 4400 at the latest check. Need full
+learned success and final native viewer validation before claiming completion.
+
+
+### First full learned sequences, completion tuning, native diagnostics
+
+`policy-packing-full-5000` (5000 steps into the full-data continuation) passed
+**1/3** complete tuning scenes with the original one-second-active completion
+rule: 9100 packed 3 then missed bottle 1; 9101 packed 3 but left home again before
+one-second confirmation; 9102 packed all 5. No teacher actions were used.
+`eval-packing-full-5000/result.json` preserves this baseline.
+
+A completion experiment confirms home for ~0.1 s, stops ACT, then verifies after
+0.5 s held. Native uses the coordinator's normal cancellation. First offline
+implementation held measured joints; it passed **2/3**, counts 1,5,5 in
+`eval-packing-full-5000-stop`. First scene regressed but two full scenes passed.
+An attempted broad HEAD restore was automatically rejected (potential loss of
+uncommitted work); it did NOT execute. After inspecting complete experiment
+results we retained the candidate and preserved its exact source/patch in
+`jobs/packing-5000-stop/source/`. No tracked source was lost.
+
+Corrected offline stop hold to retain `task.data.ctrl[task.aids]`, matching native
+hardware's hold-last-command semantics, instead of introducing a measured-joint
+setpoint. Current offline result rows include `stop_hold_target=last_policy_command`.
+Current native launcher confirms 0.1 s, stops, waits 0.5 s, then rechecks the same
+physical success/open-home constraints. Every manipulating motion remains ACT;
+there is no scripted return-home or object trajectory fallback. This completion
+change still needs final native validation. Its source is uncommitted.
+
+`policy-packing-full-10000` passed **2/3** in the automatic watcher, counts 5,2,5.
+Those results (`eval-packing-full-10000`) still used the earlier measured hold
+(the script had loaded before the correction). Fresh same-seed evaluation with
+command holding is now detached at `jobs/packing-10000-command-hold`; inspect its
+saved PID/status and `eval-packing-full-10000-command-hold`.
+
+Native full viewer baseline `jobs/packing-native-5000`, PID 1513179, reproduced
+the OLD stall: first chunk accepted, second inference completed, no second
+trajectory accepted, stop times out after 2 s with active=true. Result
+`native-packing-5000-9102/result.json`. Do not mistake this for a model failure.
+
+Trace attempts:
+- `packing-native-trace` PID 1518699: broad sitecustomize after-fork tracing
+  interfered with worker startup. Stopped this owned process group; diagnostics
+  are not evidence of the original stall.
+- `packing-native-trace-2` PID 1527776: timer traceback limited to isolated policy.
+  Completed two picks, then isolated Python 1529017 (uv wrapper 1528981) exited
+  **139** at 22:27:25 UTC. Host RPC waited 120 s and then reported runtime not
+  ready. The dump ended mid-stack; tracing itself may have contributed. Do not
+  assume it proves a Zenoh root cause. Shared-memory close/resource_tracker
+  warnings remain at teardown. Last healthy rollout stack was waiting normally
+  between chunks, not the original blocked control call.
+- Current `packing-native-control-trace`, PID **1536270**, uses checkpoint 10000,
+  seed 9100, full native viewer, isolated bus 19468. `/tmp/packing_trace/sitecustomize.py`
+  now wraps ONLY the isolated policy's rollout thread with sys.setprofile;
+  logs call/return boundaries for policy runtime and RPC methods to
+  `jobs/packing-native-control-trace/threads/calls-<pythonpid>.log`. No after-fork
+  hooks or timed stack dumps. Examine the last call if the stall recurs. Exact
+  scripts/PIDs remain in each job. All other old native jobs have ended.
+
+No source changes have been made to ZenohRPC yet. Its `_issue_query.on_finalize`
+currently sleeps then retries synchronously inside the callback; this is a
+possible reentrancy problem, not an established diagnosis. Need concrete trace
+before changing transport. Native deployment is NOT reliable yet. Continue full
+training PID 1495914 and watcher 1495915 (checkpoint 15000 still coming), verify
+stronger models on unused seeds, fix native failures, then finalize docs/commit.
+
+
+### 2026-09-10: full checkpoint, native timing diagnosis, snapshot cameras (in progress)
+
+20,000-step continuation completed at 15:54 PDT in 58m25s. Artifact:
+`recordings/r1pro-act-task/policy-packing-full-conditioned`. Fresh randomized
+physical evaluation 9200–9204 passed **2/5**, counts **1,3,1,5,5**. Final held-out
+loss .0063 is not a success metric. All training/checkpoint watcher jobs ended.
+The 10k and 15k tuning checkpoints each passed 2/3 complete scenes (5,2,5).
+
+Production planner now defaults to accessible sources from left to right:
+4,2,5,1,3 (one-based), still front-before-rear. Native `--random-order` restores
+randomized accessible selection. Collector remains randomized. Offline evaluator
+remains randomized by default, with `--canonical-order` to match native. Fresh
+canonical evaluation 9500–9504 passed **3/5**, counts **5,1,5,1,5**. Failures and
+original random reports are preserved. This is not robust arbitrary-item ACT.
+
+Native status is STILL NOT COMPLETE. Several runs place the first bottle but
+fail the second. Native input NPZ recordings in `native-packing-inputs-9401/inputs`
+prove the second goal reaches ACT correctly. Logging wall/sim time exposed a
+large timing problem: physics ran at .53–.57 of real time while coordinator
+trajectories used wall time. Fixed an independent bug: primary RGB-only cameras
+were still rendering unused depth. Four consumer-mode tests pass.
+
+Direct engine profiling (`jobs/packing-engine-profile`) confirmed GPU rendering
+and viewer synchronization dominate. Actual GLFW renderer is NVIDIA RTX 4090
+Laptop, not software rendering. A state-only viewer sync experiment performed
+worse and was removed; there is no remaining state-only configuration change.
+Current opt-in `background_camera_rendering` captures mjSTATE_INTEGRATION and
+capture wall timestamp under the engine lock, then runs mj_forward and both
+sensor renders on separate MjData outside the lock. GL resources are created,
+used and closed on the camera thread. Only packing opts in; other stacks keep
+the existing default. Intended for models fixed after startup. Full native
+viewer remains enabled. Camera failures stop the sim; teardown signals and joins
+the renderer. The full simulator test file passed 17 tests, including a blocked
+render proving live physics remains unlocked and snapshot state independent.
+
+Current native job `jobs/packing-native-background`, PID **1578410**, output
+`native-packing-background-9403`, final checkpoint, full viewer, bus19468. First
+pick passed with measured physics/wall ratio **.9996**. Remaining picks pending.
+Need inspect its physical results and repeat full native success before claiming
+completion. Fresh native jobs use distinct output directories. Do not touch
+other user stacks (notably a separate `dimos` PID1527073 exists).
+
+Temporary Zenoh trace edits were removed narrowly with a backup at
+`jobs/packing-native-rpc-trace/zenohrpc-with-trace.py`. Trace showed one call's
+session.get returned but callback never reached the waiting client; root cause
+still unproven. Another trace run had healthy request/reply delivery. LCM trial
+could not start because host multicast configuration requires sudo. No network
+or sudo changes were made. Native preflight now retains a loaded backend while
+waiting for new goal/camera observations instead of reloading the model per pick;
+18 runtime tests pass. 11 planner tests pass including the canonical order.
+All these final scoring/runtime/native fixes remain uncommitted after95bdae0bc.
+
+
+### Image sensitivity isolated; two bounded follow-up training jobs
+
+Native snapshot-rendering run9403 completed first pick but missed second;
+physics/wall ratios .9996 and1.0002. Native15k checkpoint randomized9102
+(`jobs/packing-native-15000-random`, PID1587187, finished) placed bottles2and5,
+then missed4. Stops were clean. No complete native five-bottle success yet.
+
+CPU replay of saved native input0049 using the same20k artifact reproduced
+native actions (maximum CPU/CUDA action delta .000103). The predicted1.5s end
+TCP was (.359,-.403,.883). Matching teacher8210/pick1 input predicted
+(.341,-.403,.908). Replacing ONLY the native images with those teacher images
+predicted (.341,-.405,.908), correcting the approach. Replacing only joints or
+only goal barely changed the bad prediction. Native/teacher images have correct
+RGB orientation; first-pick camera mean absolute differences <1/255, second-pick
+head3/255 andwrist5.7/255. Script `/tmp/packing_prediction_audit.py` holds exact
+comparison. Evidence supports sensitivity to small visual differences, not an
+unreceived goal or a large joint-state mismatch.
+
+Detached follow-ups:
+- `jobs/packing-direct-finetune`, PID1590590: 5000 updates from final20k on same
+  120training episodes, use_vae=False, lr3e-5/backbone6e-6, batch32. Exports
+  `policy-packing-direct`, evaluates canonical fresh9600–9602. This is an
+  ablation; no claim it will fix visual sensitivity. About2500updates atlastcheck.
+- `jobs/packing-augmented`, PID1600519: waits for direct job exit, then5000
+  updates from original20k (VAE retained), same data, small RGB transforms:
+  ±2degrees, ±2%translation, brightness/contrast.95–1.05. Exports
+  `policy-packing-augmented`, canonical fresh9700–9702 evaluation. Check actual
+  physical outcomes before selecting either checkpoint. Exact commands saved.
+
+Current BOTTLE_PACKING.md explicitly marks native validation incomplete. Need
+finish learned evaluation/native repeated runs, then rewrite docs around the
+chosen checkpoint and commit remaining source. Added local MuJoCo state API
+stubs instead of suppressing typing; last host typing passed7files. Isolated
+mypy and13physical regressions were launched; inspect pending sessions6148and72523
+if their completion has not yet been recorded. Source has no temporary RPC logs.
+
+
+### User-requested pause: 2026-09-10 16:46 PDT
+
+The user needs the machine for other tests and requested no live DimOS stack
+from this work. Live testing and implementation are paused until they resume.
+Background training/tuning was explicitly allowed.
+
+Stopped the stalled `packing-native-lcm-verified` job and all nine tracked
+processes (1621779, 1621780, 1621781, 1623141, 1623142, 1623144, 1623145,
+1623461, 1623482) with SIGTERM. No SIGKILL was needed. Host `/proc` verification
+found no remaining non-training runtime processes in this R1Pro worktree.
+Cleanup evidence: `recordings/r1pro-act-task/jobs/packing-native-lcm-verified/pause-cleanup.json`.
+The separate planar preview PID 1527073 had already exited. A newly started
+user Go2 holonomic benchmark was deliberately left alone.
+
+Preserved detached training group **1600519**, job `jobs/packing-augmented`.
+It was at approximately 4336/5000 updates at cleanup (about 2–3 minutes of
+fitting remaining at the observed rate, plus export and evaluation). Its saved
+run.sh exports `policy-packing-augmented`, then runs three standalone offline
+MuJoCo evaluations, seeds 9700–9702, canonical order, without a viewer. It does
+not start a DimOS blueprint/RPC stack. This job continues to use GPU/CPU and exits
+automatically afterward. No further live stack is scheduled. Check `stage`,
+`run.log`, `exit-code`, and `eval-packing-augmented-canonical` on resumption.
+
+Current result remains experimental: five bottles, neat slot planning, and
+stop-when-full are implemented. Best final-checkpoint offline canonical result
+is **3/5 complete scenes** (counts 5, 1, 5, 1, 5); randomized result is 2/5.
+No native five-bottle sequence has completed successfully. The no-VAE ablation
+finished: final 5000-update checkpoint 1/3 complete (counts 1, 5, 4), halfway
+checkpoint 2/3 (5, 1, 5). Neither established an improvement. Image replay
+isolated the wrist image as the main source of sensitivity; augmentation results
+are still pending. Do not present this as ready or repeatedly validated.
+
+Latest uncommitted infrastructure work:
+- Local LCM multicast actually delivered 10/10 fragmented 76,800-byte payloads
+  without host network changes. Added an explicit ttl=0 delivery probe before
+  static interface checks; failed probes preserve existing checks. 69 system
+  configurator tests passed before the final small typing/URL-parse cleanup.
+- The LCM native trial got past startup network checks (optional host changes
+  declined), then crashed in GLFW X11 initialization because camera and viewer
+  initialization ran concurrently. Added a camera-ready event so viewer creation
+  waits for renderer initialization. The focused synchronization test passed;
+  native validation of this fix is pending. The immediate retry exited because
+  the old crashed stack still held its session lock, now released by cleanup.
+- Remaining checks from the previous entry completed successfully: isolated
+  evaluator mypy and 13 packing/grasp physics regressions. Source changes after
+  commit 95bdae0bc7 remain uncommitted; no push was performed.
+
+On resumption: inspect augmentation results first; finish review/lint/typing for
+uncommitted infrastructure changes, including renderer shutdown lifetime; then
+validate the GLFW initialization fix and repeated full native sequences before
+updating the documented recommended artifact. Do not start live testing during
+this pause without the user's resumption instruction.
+
+
+### Resumed at user request: 2026-09-10 17:49 PDT
+
+User explicitly asked to continue. No existing DimOS runtime or training process
+was active at the initial host check; GPU use was low. The paused augmentation
+job finished with exit 0: **3/3 complete offline scenes**, all 15 picks, seeds
+9700–9702. Artifact `policy-packing-augmented` is now the leading checkpoint.
+
+First full native run `native-packing-resume-augmented-9700/result.json` passed
+all five bottles, clean stops and shutdown, physics/wall ratios .99935–1.00073.
+Used LCM with explicit ttl=0 address 224.0.0.224:19468; optional buffer changes
+were declined. The camera-ready barrier resolved the earlier GLFW startup race
+in this run. No host network modifications were made.
+
+Completed renderer lifecycle review: track camera thread on the engine, retain
+references after a timed-out disconnect, reject reconnect until prior threads
+exit, make camera initialization interruptible by stop, and cover initialization
+in sim-loop cleanup. Camera streaming and published packing goal reads now use
+the same locks as writes. 88 simulator/configurator tests and 29 runtime/planner
+tests passed; mypy passed 10 source files; changed Python files pass ruff.
+
+Detached bounded validation continues in `jobs/packing-resume-validation`,
+PID **1722170**. Exact run.sh and logs saved. Native seeds 5000 and 9800 already
+passed all five, and 9801 is starting. After those runs, the job evaluates ten
+fresh canonical scenes (9800–9809) and five randomized-order scenes (9900–9904)
+without a viewer, then exits. No further training is currently needed or queued.
+Check the actual result files before finalizing counts. BOTTLE_PACKING.md now
+uses the augmented artifact, GLFW full display, explicit LCM configuration and
+thread limits. Final source commit and validation-summary update remain pending.
+
+
+### Five-bottle baseline validated: 2026-09-10 18:09 PDT
+
+The resumed work reached a usable matching-bottle baseline. **No active R1Pro
+runtime or training processes remain**, verified against host `/proc` after the
+last run. No new jobs are queued. Leave the ignored datasets and model artifacts
+in place so the documented command remains runnable.
+
+Selected artifact: `recordings/r1pro-act-task/policy-packing-augmented`, ACT with
+30 actions per chunk at 20 Hz, head/wrist 160x160 RGB, 20 joint positions and an
+8-value geometric goal. It uses the existing 120-episode training split; the
+successful final improvement was 5000 updates with small image augmentation.
+No new fitting was necessary during this resumed turn.
+
+Measured results, with all bottles still upright, released, settled and contained
+at the end, plus learned return to an open gripper at home:
+- Native **6/6 complete runs**, 30/30 bottles: seeds 9700, 5000, 9800, 9801, 5001,
+  5002. All per-pick stops have active=False and last_error=None. First four
+  physics/wall ranges were .9984–1.0011. All use LCM ttl=0 on bus 19468.
+- Offline canonical **13/13 scenes**, 65/65 bottles: 9700–9702 and 9800–9809.
+- Offline randomized accessible order **5/5 scenes**, 25/25 bottles: 9900–9904,
+  five different source orders. Total offline **18/18 scenes**, 90/90 bottles.
+- Focused tests in this resumed turn: **126 passed** (88 sim/configuration,
+  29 policy/planner, 9 existing camera/timing). Touched production code passes
+  mypy and ruff. The 13 physical task regressions had passed before the pause;
+  the scoring logic was unchanged in this resumed turn.
+
+Visual inspection caught cabinet occlusion in the old default view. Setting the
+MJCF default free-camera angle was ignored by the passive viewer; that temporary
+scene edit was removed. Engine/module now accept optional viewer azimuth and
+elevation. Packing sets those, its look-at and distance directly; other stacks
+retain their previous defaults. Sensor views and trained inputs are unchanged.
+The corrected native screenshot is
+`jobs/packing-display-verified/native-final.png`, showing all five bottles in the
+supported tray. This is an actual native-window capture, not an illustrative
+render. `validation-summary.json` beside it lists exact source result files.
+
+Both display-capture helpers ran with --stay-open and deliberately sent Ctrl-C
+AFTER successful completion and screenshot, exercising normal teardown. Raw
+child signal 2 is recorded in each `child-exit.json`. The first wrapper returned
+130 and its stage remained native because it did not recognize that expected
+close; it was not a policy crash. The final wrapper recognizes the intentional
+close, reports complete/exit0, and all workers exited. Preserve raw exit records.
+
+Runtime/transport fixes are committed locally as **bc7c31db0d**. Final packing
+scoring, default order, viewer framing, runbook and this handoff are being saved
+in the next local commit. No push was attempted in this resumed turn.
+BOTTLE_PACKING.md contains the full desktop command using the selected artifact,
+GLFW and explicit LCM configuration; optional socket-buffer changes were declined
+throughout testing. It needs no API key. The base stays parked; learned tray
+handling and heterogeneous items remain outside this completed baseline. Broader
+shape/layout generalization requires new demonstrations and physical validation.

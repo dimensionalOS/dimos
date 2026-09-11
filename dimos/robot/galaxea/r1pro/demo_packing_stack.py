@@ -61,6 +61,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     report: dict[str, Any] = {
         "artifact": str(args.artifact.resolve()),
         "seed": args.seed,
+        "order_mode": "random" if args.random_order else "left_to_right",
         "success": False,
         "picks": [],
     }
@@ -73,7 +74,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             if time.monotonic() >= deadline:
                 raise RuntimeError("Simulation did not settle during startup")
             time.sleep(0.05)
-        report["order"] = sim.packing_order(args.seed)
+        report["order"] = sim.packing_order(args.seed if args.random_order else None)
         report["initial"] = sim.packing_state()
         for index in report["order"]:
             pick: dict[str, Any] = {"bottle": index + 1, "history": [], "success": False}
@@ -110,7 +111,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
                     pick["history"].append(state)
                     if state["selected"]["pick_complete"]:
                         stable_since = time.monotonic() if stable_since is None else stable_since
-                        if time.monotonic() - stable_since >= 1:
+                        if time.monotonic() - stable_since >= 0.1:
                             pick["success"] = True
                             break
                     else:
@@ -118,7 +119,13 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
                     time.sleep(0.05)
             finally:
                 pick["stopped"] = policy.stop_rollout()
+                # Cancel at arrival, then verify while the coordinator holds.
+                # Keeping ACT active here can start another approach to the old goal.
+                time.sleep(0.5)
                 pick["final"] = sim.packing_state()
+                pick["success"] = bool(
+                    pick["success"] and pick["final"]["selected"]["pick_complete"]
+                )
                 (args.output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
             if pick["stopped"]["active"] or pick["stopped"]["last_error"]:
                 raise RuntimeError(f"Packing policy did not stop cleanly: {pick['stopped']}")
@@ -162,6 +169,11 @@ def main() -> None:
     parser.add_argument("--zenoh-scout-addr", required=True)
     parser.add_argument("--scene-package", type=Path)
     parser.add_argument("--seed", type=int, default=9000)
+    parser.add_argument(
+        "--random-order",
+        action="store_true",
+        help="Randomize accessible source choices for robustness testing",
+    )
     parser.add_argument("--jitter", type=float, default=0.003)
     parser.add_argument("--seconds", type=float, default=30)
     parser.add_argument("--no-viewer", action="store_true")

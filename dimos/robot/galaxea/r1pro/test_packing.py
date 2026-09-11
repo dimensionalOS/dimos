@@ -55,3 +55,10 @@ def test_rear_bottles_wait_until_their_transfer_corridor_is_clear():
     assert order.index(0) < order.index(2)
     assert order.index(1) < order.index(4)
     assert order[0] == 3
+
+
+@pytest.mark.parametrize("offset", [-0.003, 0.0, 0.003])
+def test_default_order_clears_sources_left_to_right(offset):
+    positions = ((0.45, -0.28), (0.34, -0.4), (0.45, -0.4), (0.24, -0.4), (0.34, -0.52))
+    jittered = tuple((x + offset * (-1) ** i, y - offset) for i, (x, y) in enumerate(positions))
+    assert clear_pick_order(jittered) == [3, 1, 4, 0, 2]

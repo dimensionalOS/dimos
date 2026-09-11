@@ -72,18 +72,23 @@ def empty_slots(
 
 def clear_pick_order(
     positions: tuple[tuple[float, float], ...],
-    priority: tuple[int, ...],
+    priority: tuple[int, ...] | None = None,
 ) -> list[int]:
     """Pick front bottles before a rear bottle in the same transfer corridor.
 
     The current vertical grasp cannot carry a bottle over another tall bottle.
     Positive Y is toward the tray in this workstation. Tie-breaking priority
     permits variation among sources that already have a clear approach.
+    By default, work from left to right among accessible bottles.
     """
-    if sorted(priority) != list(range(len(positions))):
-        raise ValueError("Pick priority must contain every bottle exactly once")
     if not all(math.isfinite(v) for xy in positions for v in xy):
         raise ValueError("Source positions must be finite")
+    if priority is None:
+        priority = tuple(
+            sorted(range(len(positions)), key=lambda i: (positions[i][0], -positions[i][1], i))
+        )
+    if sorted(priority) != list(range(len(positions))):
+        raise ValueError("Pick priority must contain every bottle exactly once")
     remaining = list(priority)
     ordered = []
     while remaining:
