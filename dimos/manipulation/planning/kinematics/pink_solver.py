@@ -266,7 +266,6 @@ class _PinkSolverCore:
         _assert_base_link_is_model_root(model, config.base_link)
         frame_id = _get_frame_id(model, frame_name)
         mapping = _build_joint_mapping(model, prepared.joint_space, controlled_joints)
-        _apply_configured_velocity_limits(model, config, mapping)
         return _PinkRobotContext(
             model=model,
             data=data,
@@ -412,32 +411,6 @@ def _read_dimos_position(q: NDArray[np.float64], mapping: _JointMapping, local_i
     if local_index in mapping.periodic_indices:
         return float(np.arctan2(q[idx_q + 1], q[idx_q]))
     return float(q[idx_q])
-
-
-def _apply_configured_velocity_limits(
-    model: pinocchio.Model,
-    config: RobotModelConfig,
-    mapping: _JointMapping,
-) -> None:
-    """Override URDF velocity limits when the robot model config is explicit."""
-    limits = config.velocity_limits
-    if limits is None:
-        return
-    if len(limits) != len(config.joint_names):
-        raise ValueError(
-            f"RobotModelConfig velocity_limits has {len(limits)} values for "
-            f"{len(config.joint_names)} joints"
-        )
-    limits_by_name = dict(zip(config.joint_names, limits, strict=True))
-    for joint_name, velocity_index in zip(
-        mapping.model_joint_names,
-        mapping.idx_v,
-        strict=True,
-    ):
-        limit = float(limits_by_name[joint_name])
-        if not np.isfinite(limit) or limit <= 0.0:
-            raise ValueError(f"Velocity limit for joint '{joint_name}' must be positive and finite")
-        model.velocityLimit[velocity_index] = limit
 
 
 def _get_joint_id(model: pinocchio.Model, joint_name: str) -> int:

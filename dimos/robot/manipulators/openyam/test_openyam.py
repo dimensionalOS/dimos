@@ -42,7 +42,7 @@ from dimos.robot.manipulators.openyam.config import (
     openyam_hardware,
 )
 from dimos.robot.manipulators.openyam.teleop_ik import OpenYamPinkPoseTargetSolver
-from dimos.teleop.quest.quest_extensions import ArmTeleopModule
+from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 
 def _module_kwargs(blueprint: Blueprint, module_type: type) -> dict[str, Any]:
@@ -67,8 +67,6 @@ def test_make_openyam_model_config_uses_canonical_arm_joints() -> None:
     assert config.planning_groups[0].tip_link == "gripper_tip"
     assert config.gripper_hardware_id == OPENYAM_HARDWARE_ID
     assert config.home_joints == OPENYAM_HOME_JOINTS
-    assert config.velocity_limits == [2.0] * OPENYAM_DOF
-    assert config.max_velocity == 2.0
 
 
 @pytest.mark.self_hosted
@@ -90,7 +88,7 @@ def test_make_openyam_model_config_preserves_explicit_home() -> None:
 
 
 def test_quest_teleop_matches_dual_openyam_response_tuning() -> None:
-    tasks = _coordinator_kwargs(teleop_quest_openyam)["tasks"]
+    tasks = _coordinator_kwargs(teleop_webxr_openyam)["tasks"]
     teleop = next(task for task in tasks if task.type == "teleop_ik")
 
     assert teleop.params["pink"].gain == 1.0
@@ -141,7 +139,7 @@ def test_openyam_hardware_simulation_mode_returns_generic_whole_body_mock(
 
 
 def test_quest_teleop_module_accepts_blueprint_config() -> None:
-    kwargs = _module_kwargs(teleop_quest_openyam, ArmTeleopModule)
+    kwargs = _module_kwargs(teleop_webxr_openyam, ArmTeleopModule)
 
     module = ArmTeleopModule(**kwargs)
     module.stop()

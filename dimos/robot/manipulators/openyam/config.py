@@ -29,13 +29,15 @@ from dimos.robot.assets.model import RobotModel
 from dimos.robot.manipulators._modeling import (
     joint_names,
 )
+from dimos.robot.manipulators.openyam.joints import (
+    OPENYAM_ARM_JOINTS as OPENYAM_ARM_JOINTS,
+    OPENYAM_DOF as OPENYAM_DOF,
+    OPENYAM_GRIPPER_JOINT as OPENYAM_GRIPPER_JOINT,
+    OPENYAM_JOINTS as OPENYAM_JOINTS,
+)
 from dimos.utils.data import LfsPath
 
-OPENYAM_DOF = 6
 OPENYAM_HARDWARE_ID = "openyam"
-OPENYAM_ARM_JOINTS = joint_names(OPENYAM_DOF, prefix="yam_joint")
-OPENYAM_GRIPPER_JOINT = "arm/gripper"
-OPENYAM_JOINTS = [*OPENYAM_ARM_JOINTS, OPENYAM_GRIPPER_JOINT]
 OPENYAM_HOME_JOINTS = [0.0, 1.047, 1.047, 0.0, 0.0, 0.0]
 OPENYAM_PACKAGE = LfsPath("yam_description")
 OPENYAM_MODEL_PATH = OPENYAM_PACKAGE / "i2rt/yam.urdf"
@@ -102,6 +104,4 @@ def make_openyam_model_config(
         collision_exclusion_pairs=[],
         gripper_hardware_id=OPENYAM_HARDWARE_ID,
         home_joints=list(OPENYAM_HOME_JOINTS if home_joints is None else home_joints),
-        velocity_limits=[2.0] * OPENYAM_DOF,
-        max_velocity=2.0,
     )
