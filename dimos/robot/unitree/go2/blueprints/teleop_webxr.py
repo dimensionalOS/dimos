@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Quest velocity teleoperation and headset video for Go2."""
+"""WebXR velocity teleoperation and headset video for Go2."""
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.coordination.blueprints import autoconnect
@@ -21,10 +21,10 @@ from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.teleop.quest.quest_extensions import Go2TeleopModule
+from dimos.teleop.webxr.extensions import Go2TeleopModule
 
 # Go2 quadruped: thumbstick velocity teleop + camera streamed to the headset.
-teleop_quest_go2 = (
+teleop_webxr_go2 = (
     autoconnect(
         Go2TeleopModule.blueprint(),
         GO2Connection.blueprint(),

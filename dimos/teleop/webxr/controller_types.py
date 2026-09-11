@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Quest controller types with nice API for parsing Joy messages."""
+"""WebXR controller types with nice API for parsing Joy messages."""
 
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -37,8 +37,8 @@ class ThumbstickState:
 
 
 @dataclass
-class QuestControllerState:
-    """Parsed Quest controller state from Joy message with no data loss.
+class WebXRControllerState:
+    """Parsed WebXR controller state from Joy message with no data loss.
 
     Preserves full-fidelity analog values (trigger, grip as floats, thumbstick axes)
     from the raw Joy message in a readable format. Use this when you need analog
@@ -69,12 +69,12 @@ class QuestControllerState:
     thumbstick: ThumbstickState = field(default_factory=ThumbstickState)
 
     @classmethod
-    def from_joy(cls, joy: Joy, is_left: bool = True) -> "QuestControllerState":
-        """Create QuestControllerState from Joy message.
+    def from_joy(cls, joy: Joy, is_left: bool = True) -> "WebXRControllerState":
+        """Create WebXRControllerState from Joy message.
         Expected axes: [thumbstick_x, thumbstick_y, trigger_analog, grip_analog]
         Expected buttons: [trigger, grip, touchpad, thumbstick, X/A, Y/B, menu]
         Raises:
-            ValueError: If Joy message doesn't have expected Quest controller format.
+            ValueError: If Joy message doesn't have expected WebXR controller format.
         """
         buttons = joy.buttons or []
         axes = joy.axes or []
@@ -187,10 +187,10 @@ class Buttons(UInt32):
     @classmethod
     def from_controllers(
         cls,
-        left: "QuestControllerState | None",
-        right: "QuestControllerState | None",
+        left: "WebXRControllerState | None",
+        right: "WebXRControllerState | None",
     ) -> "Buttons":
-        """Create Buttons from two QuestControllerState instances."""
+        """Create Buttons from two WebXRControllerState instances."""
         # Safe: cls() calls UInt32.__init__ which sets self.data = 0 before bit ops.
         buttons = cls()
 
@@ -215,7 +215,7 @@ class Buttons(UInt32):
         return buttons
 
 
-# Quest controller face-button labels → Buttons attribute names. Callers can
+# WebXR controller face-button labels → Buttons attribute names. Callers can
 # also pass a raw attribute name (e.g. "right_grip") directly where an alias is
 # accepted.
 BUTTON_ALIASES: dict[str, str] = {
