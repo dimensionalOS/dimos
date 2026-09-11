@@ -54,6 +54,7 @@ from dimos.teleop.memory_world.hyperspace_fast import (
     pack_keys,
     patch_rects,
     project_pixels,
+    unpack_keys,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -76,6 +77,10 @@ MAX_CLUSTERS = 12
 # A cluster whose summed score is under this fraction of the best is dropped.
 MIN_CLUSTER_FRACTION = 0.05
 EVIDENCE_PER_CLUSTER = 2
+# Hyperspace's refine chain works on dense grids over the heat's bounding box; on a
+# city-scale map a broad question lights thousands of voxels kilometres apart, so
+# only the best ones are refined (the rest never made a cluster anyway).
+REFINE_MAX_VOXELS = 3000
 MAX_PYRAMIDS = 240
 
 
@@ -368,8 +373,9 @@ class HyperspaceSearch:
         """The map's occupied points (world frame); refine's occupancy step keeps
         heat only next to them. Quantized to the heat map's voxel size."""
         points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
-        self._scene = np.unique(np.floor(points / self.voxel_size).astype(np.int64), axis=0)
-        self._scene_keys = np.sort(pack_keys(self._scene))
+        # Packed keys: np.unique over rows is minutes on a city-scale map, over int64 keys it is seconds.
+        self._scene_keys = np.unique(pack_keys(np.floor(points / self.voxel_size).astype(np.int64)))
+        self._scene = unpack_keys(self._scene_keys)
 
     def warm(self) -> None:
         """Load the model, every keyframe and the segments so the first answer is not slow."""
@@ -448,14 +454,16 @@ class HyperspaceSearch:
         result = fast.query(text)
 
         keep = result.score >= SCORE_CUTOFF
-        refined = (
-            self._refine(text, result, keep) if self.refine not in ("occupancy", "none") else None
-        )
-        if refined is None and self.refine != "none" and self._scene_keys is not None:
+        if self.refine != "none" and self._scene_keys is not None:
             # Heat that floats in free space is a pyramid slice that missed its surface.
+            # Done here on sorted keys (sparse, fast) rather than by refine's dense grid,
+            # which on a city-scale map would span kilometres.
             grounded = near_scene(result.index, self._scene_keys)
             if (keep & grounded).any():
                 keep &= grounded
+        refined = (
+            self._refine(text, result, keep) if self.refine not in ("occupancy", "none") else None
+        )
         indices = result.index[keep]
         scores = result.score[keep].astype(np.float32)
         if refined is not None:
@@ -513,6 +521,13 @@ class HyperspaceSearch:
         )
         if config is None or not keep.any():
             return None
+        # Occupancy was applied above on sparse keys; the dense version is skipped.
+        config = replace(config, methods=[m for m in config.methods if m != "occupancy"])
+        if int(keep.sum()) > REFINE_MAX_VOXELS:
+            ranked = np.flatnonzero(keep)
+            ranked = ranked[np.argsort(-result.score[ranked])[:REFINE_MAX_VOXELS]]
+            keep = np.zeros_like(keep)
+            keep[ranked] = True
         index = result.index[keep]
         heat = hs.Heatmap(
             frame=self.world_frame,
@@ -528,14 +543,6 @@ class HyperspaceSearch:
             },
         )
         scene: list[tuple[int, int, int]] = []
-        if self._scene is not None and "occupancy" in config.methods:
-            # Only the part of the map near the heat matters to the occupancy test.
-            reach = int(getattr(config, "occupancy_radius", 1)) + 1
-            lo, hi = index.min(axis=0) - reach, index.max(axis=0) + reach
-            near = self._scene[np.all((self._scene >= lo) & (self._scene <= hi), axis=1)]
-            scene = [tuple(int(v) for v in ijk) for ijk in near]
-        elif "occupancy" in config.methods:
-            scene = list(self._engine.scene_indices(self.world_frame))
         if self._sparse_support and config.min_frames > 1:
             config = replace(config, min_frames=1)
         refined = rf.refine(heat, config, scene=scene, text=text)

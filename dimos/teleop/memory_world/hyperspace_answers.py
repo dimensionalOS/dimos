@@ -121,13 +121,20 @@ class HyperspaceAnswers:
 
     # ---- loading -----------------------------------------------------------
 
-    def _load_hyperspace(self) -> bool:
-        """Warm the search over the recording's memory db when it has one. Slow (seconds); off the request path."""
+    def _load_hyperspace(self, reload: bool = False) -> bool:
+        """Warm the search over the recording's memory db when it has one. Slow (seconds); off the request path.
+        Not while the ingest is still writing that db (it would load a partial index); *reload*
+        replaces a search already loaded, for when the ingest has just finished."""
         if not memory_db_ready(self.config.store_path):
             return False
+        if self._prepare_job.status()["embedding"] == "running" and not reload:
+            return False
         with self._hyperspace_lock:
-            if self._hyperspace is not None:
+            if self._hyperspace is not None and not reload:
                 return True
+            if self._hyperspace is not None:
+                self._hyperspace.close()
+                self._hyperspace = None
             try:
                 search = HyperspaceSearch(
                     memory_db_for(self.config.store_path),
@@ -196,7 +203,7 @@ class HyperspaceAnswers:
         )
 
     def _adopt_prepared(self) -> None:
-        self._load_hyperspace()
+        self._load_hyperspace(reload=True)
 
     # ---- answering ---------------------------------------------------------
 

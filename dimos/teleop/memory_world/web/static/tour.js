@@ -8,6 +8,8 @@ import * as THREE from 'https://esm.sh/three@0.160.0';
 const DEFAULT_QUESTION = 'a chair';
 const REPLAY_SPEED = 6;
 const ROOF_HEIGHT_M = 2.3;   // above the floor, the overview's roof cut
+const OUTDOOR_HEIGHT_SPAN_M = 12;  // more height than this = no ceiling to cut
+const OVERVIEW_MAX_M = 140;  // a city-scale map is shown from this high at most, around the path's middle
 
 export class Tour {
     constructor({ scene, heatmap, pyramids, flight, results, baseUrl, diag, replay, ask, ui }) {
@@ -256,19 +258,34 @@ export class Tour {
     _overview(fraction) {
         const bounds = this._bounds();
         if (!bounds) return;
-        const [centre, extent] = bounds;
+        let [centre, extent] = bounds;
         this._roof(true);
-        this.flight.lookAt(centre, { distance: Math.max(8, extent * fraction), pitch: -1.05 });
+        let distance = Math.max(8, extent * fraction);
+        if (distance > OVERVIEW_MAX_M) {
+            // Kilometres of streets do not fit one view: hover over the middle of the ride instead.
+            const mid = this._trailPoint(0.5);
+            if (mid) centre = mid;
+            distance = OVERVIEW_MAX_M;
+        }
+        this.flight.lookAt(centre, { distance, pitch: -1.05 });
     }
 
-    /** Cut the voxels above head height (on/off), so an overview shows rooms, not ceilings. */
+    /** Cut the voxels above head height (on/off), so an overview shows rooms, not ceilings.
+     *  Outdoors (or on a hilly ride) there is no ceiling and no single floor, so nothing is cut. */
     _roof(cut) {
-        if (!cut) { this.scene.setRoofCut(null); return; }
+        if (!cut || this._outdoors()) { this.scene.setRoofCut(null); return; }
         const replay = this.replayOf();
         const floor = replay && replay.index && replay.index.height ? replay.index.height.floor : null;
         const trail = this._trailPoint(0.5);
         const base = floor !== null ? floor : (trail ? trail[2] - 0.5 : 0);
         this.scene.setRoofCut(base + ROOF_HEIGHT_M);
+    }
+
+    /** A map whose heights span more than a building's is outdoors or multi-level. */
+    _outdoors() {
+        const replay = this.replayOf();
+        const span = replay && replay.index && replay.index.height ? replay.index.height.span : 0;
+        return span > OUTDOOR_HEIGHT_SPAN_M;
     }
 
     _bounds() {
