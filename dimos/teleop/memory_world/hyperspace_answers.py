@@ -206,6 +206,7 @@ class HyperspaceAnswers:
 
     def _start_prepare(self) -> bool:
         """Embed the recording's keyframes into its memory db, in the background."""
+        self._ensure_store()  # names the streams: the ingest must get the viewer's camera
         return self._prepare_job.start(
             ingest_command(
                 self.config.store_path,

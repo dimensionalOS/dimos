@@ -982,7 +982,10 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             payload.update(query_id=query_id, revision=self._query_revision)
             self._active_query_result = payload
             self._active_query_images = []
-        self._broadcast(encode_text("query_result", **payload))
+            # Queued under the lock: two answers then reach every viewer in revision order.
+            message = encode_text("query_result", **payload)
+            for client in tuple(self._world_clients):
+                client.send_threadsafe(message)
         return query_id
 
     # ---- spoken visual search ---------------------------------------------
@@ -1221,11 +1224,18 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         if self._camera_hfov_deg is None:
             self._camera_hfov_deg = 70.0
             if self.config.camera_info_stream_name is not None:
-                store = self._ensure_store()
-                info = store.streams[self.config.camera_info_stream_name].first().data
-                self._camera_hfov_deg = float(
-                    np.degrees(2.0 * np.arctan2(info.width / 2.0, info.K[0]))
-                )
+                try:
+                    store = self._ensure_store()
+                    info = store.streams[self.config.camera_info_stream_name].first().data
+                    self._camera_hfov_deg = float(
+                        np.degrees(2.0 * np.arctan2(info.width / 2.0, info.K[0]))
+                    )
+                except LookupError:  # declared, never published: the default stands
+                    logger.warning(
+                        "no %r message; using a %.0f degree field of view",
+                        self.config.camera_info_stream_name,
+                        self._camera_hfov_deg,
+                    )
         return self._camera_hfov_deg
 
     # ---- timeline replay -----------------------------------------------------
@@ -1488,7 +1498,9 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             self._stopping.set()  # prepare stops between steps; a replay build per scan
             self._embed_job.terminate()
             self._prepare_job.terminate()
-            for thread in (self._prepare_thread, self._replay_thread):
+            with self._replay_lock:  # the worker handle is published under it
+                threads = (self._prepare_thread, self._replay_thread)
+            for thread in threads:
                 if thread is not None:
                     thread.join(timeout=60)
         finally:

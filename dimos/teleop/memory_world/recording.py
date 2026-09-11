@@ -537,7 +537,7 @@ def detect_streams(store: Store, image: str | None = None) -> dict[str, Any]:
 
     *image* is the colour stream the caller chose, when it did: its camera_info
     is paired to that one. Depth is picked by name alone, so a rig with two depth
-    cameras needs its depth stream named explicitly.
+    cameras needs the caller to name its depth stream (``depth_stream_name``).
 
     Recordings disagree about names — this rig calls its camera
     ``realsense_color_image`` where a Go2 recording says ``color_image`` — so
@@ -598,9 +598,11 @@ def detect_streams(store: Store, image: str | None = None) -> dict[str, Any]:
     }
     # Prefer the camera_info that belongs to the chosen image stream.
     if image is not None:
-        paired = f"{image}_camera_info"
-        if paired in by_type.get("CameraInfo", []):
-            detected["camera_info"] = paired
+        infos = by_type.get("CameraInfo", [])
+        for paired in (f"{image}_camera_info", f"{image.removesuffix('_image')}_camera_info"):
+            if paired in infos:
+                detected["camera_info"] = paired
+                break
     return detected
 
 

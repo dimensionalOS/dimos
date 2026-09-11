@@ -211,7 +211,10 @@ class VisualAnswers:
                 self.config.depth_stream_name,
                 self.config.camera_info_stream_name,
             )
-            k = store.streams[info].first().data.K  # the depth camera's own intrinsics
+            try:
+                k = store.streams[info].first().data.K  # the depth camera's own intrinsics
+            except LookupError:  # declared, never published
+                return []
         intrinsics = (float(k[0]), float(k[4]), float(k[2]), float(k[5]))
 
         hits: list[PatchHit] = []

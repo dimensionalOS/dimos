@@ -913,6 +913,10 @@ async function disconnect() {
     orbitBtn.classList.add('hidden');
     menuEl.classList.remove('open');
     if (tour && tour.active) tour.exit();
+    if (tour) tour.dispose();
+    if (results) results.dispose();
+    // The next connect builds fresh ones; a key or a late message must not reach these.
+    results = tour = heatmap = pyramids = flight = null;
     document.getElementById('results').hidden = true;
     setStatus('Disconnected');
 }

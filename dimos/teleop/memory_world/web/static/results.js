@@ -121,6 +121,8 @@ export class ResultsNav {
         this.diag('results_orbit', { index: this.current });
     }
 
+    dispose() { this._disposed = true; }  // an in-flight /navigate reply then does nothing
+
     async navigate() {
         if (this.current < 0 && !this.go(0, { fly: false })) return null;
         const cluster = this.current;
@@ -131,6 +133,7 @@ export class ResultsNav {
                 body: JSON.stringify({ cluster, query_id: this.queryId }),
             });
             const body = await response.json();
+            if (this._disposed) return null;
             if (!response.ok) {
                 this._status(`No route: ${body.detail || response.status}`);
                 return null;

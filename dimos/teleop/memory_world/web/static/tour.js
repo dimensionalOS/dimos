@@ -320,6 +320,8 @@ export class Tour {
 
     // ---- placards: numbered signs in the world at the exhibits -------------------
 
+    dispose() { this._disposed = true; }  // a station still entering then draws nothing
+
     _buildPlacards() {
         this._clearPlacards();
         const bounds = this._bounds();
@@ -440,7 +442,7 @@ export class Tour {
         this._refresh();
         const result = station.enter();
         if (result && typeof result.then === 'function') {
-            result.then(() => { this._refresh(); this._buildPlacards(); }).catch((e) => this.diag('tour_station_failed', { index, error: String(e.message || e) }));
+            result.then(() => { if (this._disposed) return; this._refresh(); this._buildPlacards(); }).catch((e) => this.diag('tour_station_failed', { index, error: String(e.message || e) }));
         }
         this.diag('tour_station', { index, title: station.title });
     }

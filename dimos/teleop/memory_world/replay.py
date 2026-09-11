@@ -660,6 +660,12 @@ def main(argv: list[str] | None = None) -> None:
     from dimos.teleop.memory_world.recording import build_tf_tree, open_recording
 
     store = open_recording(args.store_path)
+    first = store.streams[args.lidar_stream].first()
+    if str(getattr(first.data, "frame_id", "") or "").lstrip("/") == args.world_frame:
+        raise SystemExit(
+            f"{args.lidar_stream!r} is already in {args.world_frame!r}: its rays need the sensor"
+            " pose stamped on each scan, which only the module knows how to read"
+        )
     tree = build_tf_tree(store, args.tf_stream, args.world_frame)
 
     def to_scan(obs: Any) -> SensorScan | None:

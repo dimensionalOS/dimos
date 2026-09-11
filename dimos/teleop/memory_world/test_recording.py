@@ -346,6 +346,52 @@ def test_pick_lidar_takes_the_stream_whose_poses_match_tf(tmp_path: Path) -> Non
 # ---- adding embeddings with siglipify -----------------------------------------
 
 
+def test_detect_streams_pairs_camera_info_with_the_chosen_image(tmp_path: Path) -> None:
+    import cv2
+
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+    from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+    from dimos.teleop.memory_world.recording import detect_streams
+
+    ok, encoded = cv2.imencode(".webp", np.zeros((4, 4, 3), dtype=np.uint8))
+    assert ok
+    store = SqliteStore(path=str(tmp_path / "rig.db"))
+    store.start()
+    for side in ("left", "right"):
+        store.stream(f"{side}_image", CompressedImage).append(
+            CompressedImage(data=encoded.tobytes(), format="webp", frame_id=side, ts=1.0), ts=1.0
+        )
+        store.stream(f"{side}_camera_info", CameraInfo).append(
+            CameraInfo(width=4, height=4, frame_id=side, ts=1.0), ts=1.0
+        )
+    store.stop()
+    recording = open_recording(tmp_path / "rig.db")
+    recording.start()
+    try:
+        chosen = detect_streams(recording, image="right_image")
+        assert (chosen["image"], chosen["camera_info"]) == ("right_image", "right_camera_info")
+        assert detect_streams(recording, image="no_such_image")["image"] in (
+            "left_image",
+            "right_image",
+        )
+        detected = detect_streams(recording)  # whichever it picks, the pair agrees
+        assert detected["camera_info"] == detected["image"].replace("_image", "_camera_info")
+    finally:
+        recording.stop()
+
+
+def test_ingest_refuses_a_named_stream_the_recording_lacks(tmp_path: Path) -> None:
+    import pytest
+
+    from dimos.teleop.memory_world.hyperspace_ingest import ingest_recording
+
+    store = SqliteStore(path=str(tmp_path / "bare.db"))
+    store.start()
+    store.stop()
+    with pytest.raises(SystemExit, match="image"):
+        ingest_recording(tmp_path / "bare.db", model_name="m", streams={"image": "nope"})
+
+
 def test_siglipify_config_names_the_stream_and_model() -> None:
     from dimos.teleop.memory_world.embed import siglipify_command, siglipify_config
 
