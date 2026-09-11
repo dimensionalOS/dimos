@@ -123,6 +123,15 @@ def test_recorded_rerun_config_from_run_dir(tmp_path: Path) -> None:
     db = tmp_path / "20260910-135235-unitree-go2" / "memory.db"
     cfg = recorded_rerun_config(str(db))
     assert "world/robot_body" in cfg["static"]
-    assert "blueprint" not in cfg
+    assert callable(cfg["blueprint"])  # the live layout, so replay looks like the live run
     assert recorded_rerun_config(str(tmp_path / "downloads" / "x.db")) == {}
     assert recorded_rerun_config(str(tmp_path / "20260910-135235-no-such-bp" / "m.db")) == {}
+
+
+def test_dataset_path_resolves_names_and_skips_the_default(recording: str) -> None:
+    from dimos.memory.replay_module import dataset_path
+
+    assert dataset_path(recording) == recording
+    assert dataset_path(recording, explicit=False) == recording  # a real file always counts
+    assert dataset_path("go2_short", explicit=False) == ""  # registry import: no LFS
+    assert dataset_path("no-such-dataset-for-this-test") == ""

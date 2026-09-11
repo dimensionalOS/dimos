@@ -14,17 +14,19 @@
 
 """``dimos --replay-db <memory.db> run replay``: every recorded stream back on the bus, with the viewer.
 
-``--replay-db`` must be a path to a recording; the ports are read from it when this
-module is imported. Anywhere the value is not a file (the blueprint registry, workers,
-tests) ``Replay`` has no class-level ports; instances add them from ``dataset``.
+``--replay-db`` is a recording path or a bare dataset name (data/, LFS), like ``--replay``.
+The ports are read from it when this module is imported by ``dimos run replay``. Elsewhere
+(the blueprint registry, workers, tests) ``Replay`` has no class-level ports; instances add
+them from ``dataset``.
 """
 
-from pathlib import Path
+import sys
 from typing import Any
 
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.memory.replay_module import (
+    dataset_path,
     recorded_rerun_config,
     replay_module,
     rerun_layout,
@@ -32,12 +34,16 @@ from dimos.memory.replay_module import (
 )
 from dimos.visualization.vis_module import vis_module
 
-_DATASET = global_config.replay_db if Path(global_config.replay_db).is_file() else ""
+# Resolve a bare dataset name only when this process is `dimos ... run replay`. Importing
+# the module anywhere else (blueprint registry, tests, forkserver workers) must not touch a
+# database or pull from LFS; workers get the resolved path through the blueprint kwargs.
+_DATASET = dataset_path(global_config.replay_db, explicit="replay" in sys.argv[1:])
 
 Replay = replay_module(_DATASET)
 
 
 def _layout() -> Any:
+    # Fallback when the recording did not come from a registered blueprint.
     # Runs in the bridge worker at start(), where the global config is already applied.
     return rerun_layout(stream_types_of(global_config.replay_db))
 
@@ -45,7 +51,7 @@ def _layout() -> Any:
 replay = autoconnect(
     vis_module(
         global_config.viewer,
-        rerun_config={**recorded_rerun_config(_DATASET), "blueprint": _layout},
+        rerun_config={"blueprint": _layout, **recorded_rerun_config(_DATASET)},
     ),
     Replay.blueprint(dataset=_DATASET),
 )

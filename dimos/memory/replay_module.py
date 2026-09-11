@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.memory.cli.dataset import open_dataset, stream_payload_types
+from dimos.memory.cli.dataset import open_dataset, resolve_dataset, stream_payload_types
 from dimos.memory.store.base import Store
 from dimos.memory.tap import check_topics, matching
 from dimos.utils.generic import classproperty
@@ -53,6 +53,22 @@ class ReplayModuleConfig(ModuleConfig):
     loop: bool = False
     seek: float | None = None
     duration: float | None = None
+
+
+def dataset_path(name: str, *, explicit: bool = True) -> str:
+    """``--replay-db`` as a file path: a path, or a bare dataset name resolved like
+    ``--replay`` does (cwd, data/, then LFS via ``get_data``).
+
+    A bare name is only resolved when the user passed it (*explicit*), so importing the
+    blueprint with the config default (registry, tests) never opens a database or pulls
+    from LFS.
+    """
+    if not explicit and not Path(name).is_file():
+        return ""
+    try:
+        return str(resolve_dataset(name))
+    except (OSError, ValueError):
+        return ""
 
 
 def stream_types_of(dataset: str) -> dict[str, type]:
@@ -163,11 +179,11 @@ def replay_module(dataset: str, topics: str = "*", name: str = "Replay") -> type
     return type(name, (ReplayModule,), namespace)
 
 
-_VIS_KEYS = ("static", "visual_override", "max_hz", "tf_axes")
+_VIS_KEYS = ("blueprint", "static", "visual_override", "max_hz", "tf_axes")
 
 
 def recorded_rerun_config(dataset: str) -> dict[str, Any]:
-    """Viewer config of the blueprint that made *dataset*: robot body, converters, rate caps.
+    """Viewer config of the blueprint that made *dataset*: layout, robot body, converters, rate caps.
 
     Run dirs are ``<stamp>-<blueprint>`` (``generate_run_id``). Anything else, or a
     blueprint without a Rerun bridge, yields ``{}``.
@@ -198,7 +214,11 @@ def rerun_layout(stream_types: dict[str, type]) -> Any:
         for n, t in stream_types.items()
         if issubclass(t, Image)
     ]
+    plots = [
+        rrb.TimeSeriesView(origin="plots/odom", name="odom"),
+        rrb.TimeSeriesView(origin="plots/cmd_vel", name="cmd_vel"),
+    ]
     world = rrb.Spatial3DView(origin="world", name="3D")
     if not images:
         return rrb.Blueprint(world)
-    return rrb.Blueprint(rrb.Horizontal(rrb.Vertical(*images), world, column_shares=[1, 2]))
+    return rrb.Blueprint(rrb.Horizontal(rrb.Vertical(*images, *plots), world, column_shares=[1, 2]))
