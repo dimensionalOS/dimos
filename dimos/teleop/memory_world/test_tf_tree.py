@@ -99,6 +99,17 @@ def test_span_is_where_every_edge_on_the_path_has_data() -> None:
     assert tree.span("world", "nowhere") is None
 
 
+def test_an_edge_published_once_spans_from_then_on() -> None:
+    """A camera hung on the body by one tf message (no tf_static) is held afterwards,
+    so the span of the path is bounded by the moving edge, not collapsed to an instant."""
+    tree = TfTree()
+    tree.add("world", "body", 10.0, (0.0, 0.0, 0.0), IDENTITY)
+    tree.add("world", "body", 20.0, (0.0, 0.0, 0.0), IDENTITY)
+    tree.add("body", "camera", 12.0, (0.0, 0.0, 1.0), IDENTITY)
+    assert tree.span("world", "camera") == (12.0, 20.0)
+    assert tree.lookup("world", "camera", 19.0) is not None
+
+
 def test_quaternion_round_trips_through_the_matrix() -> None:
     for quat in [IDENTITY, (0.0, 0.218, 0.0, 0.976), (0.5, 0.5, 0.5, 0.5), YAW_90]:
         unit = np.array(quat) / np.linalg.norm(quat)

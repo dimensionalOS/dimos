@@ -74,7 +74,7 @@ class ReplayServing:
         payload["frames"] = [round(float(obs.ts), 4) for obs in images]
         payload["hfov_deg"] = self._camera_hfov()
         # The viewer colours replayed voxels itself, on the static map's ramp.
-        final = replay.keyframes.last().data.points_f32()
+        final = replay.final_keyframe().data.points_f32()
         z = final[:, 2] if len(final) else np.zeros(1)
         low = float(np.percentile(z, self.config.height_ramp_low_percentile))
         high = float(np.percentile(z, self.config.height_ramp_high_percentile))

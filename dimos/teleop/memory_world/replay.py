@@ -411,6 +411,12 @@ class ReplayIndex:
         }
 
 
+def _final(keyframes: Any) -> Any:
+    """The keyframe with the highest scan index (two scans can share a stamp, so
+    not ``last()``); tags only, the clouds stay on disk until ``.data``."""
+    return max(keyframes, key=lambda obs: int((obs.tags or {}).get("scan_index", -1)))
+
+
 class VoxelReplay:
     """Serves a recording's replay streams as compact segments for a viewer.
 
@@ -456,7 +462,7 @@ class VoxelReplay:
             return False
         tags = keyframes.first().tags or {}
         return (
-            bool((keyframes.last().tags or {}).get("last"))
+            bool(_final(keyframes).tags.get("last"))
             and tags.get("format") == FORMAT_VERSION
             and tags.get("builder") == BUILDER
             and abs(float(tags.get("voxel_size", 0.0)) - voxel_size) < 1e-9
@@ -474,7 +480,7 @@ class VoxelReplay:
         for obs in self.keyframes:  # tags only: the clouds stay on disk
             keyframe_scan.append(int(obs.tags["scan_index"]))
             keyframe_ts.append(float(obs.ts))
-        last = self.keyframes.last().tags
+        last = _final(self.keyframes).tags
         low, high = (
             np.array(last["low"], dtype=np.float64),
             np.array(last["high"], dtype=np.float64),
@@ -487,6 +493,10 @@ class VoxelReplay:
             keyframe_ts=np.array(keyframe_ts, dtype=np.float64),
             origin=(int(centre[0]), int(centre[1]), int(centre[2])),
         )
+
+    def final_keyframe(self) -> Any:
+        """The keyframe of the last scan: the finished map."""
+        return _final(self.keyframes)
 
     def _grid_indices(self, cloud: PointCloud2) -> tuple[np.ndarray, np.ndarray]:
         """(N, 3) int64 grid indices of a cloud's voxels within the z slab, and the kept mask."""
@@ -513,7 +523,7 @@ class VoxelReplay:
         ``uint8`` op per entry.
         """
         start, end = self.index.segment_scans(number)
-        keyframe = self.keyframes.at(float(self.index.keyframe_ts[number]), tolerance=1e-3).first()
+        keyframe = self.keyframes.tags(scan_index=start).first()  # by index: stamps can repeat
         table, _ = self._grid_indices(keyframe.data)
         table_keys = self._keys(table)
         order = np.argsort(table_keys)

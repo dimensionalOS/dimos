@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
 import struct
 
 import numpy as np
@@ -226,3 +227,33 @@ def test_wire_cache_is_bounded(store, monkeypatch) -> None:  # type: ignore[no-u
     replay.encoded_segment(1)
     assert list(replay._wire) == [1]  # the older one made room
     assert replay.encoded_segment(0) == first  # rebuilt, byte for byte
+
+
+def test_keyframes_are_found_by_scan_index_when_stamps_repeat(tmp_path: Path) -> None:
+    """Two scans stamped alike: the interval keyframe and the forced final one share a
+    stamp, so the final map and each segment's keyframe go by scan index."""
+    store = SqliteStore(path=str(tmp_path / "dup.db"))
+    store.start()
+    lidar = store.stream("lidar", PointCloud2)
+    for ts, x in ((100.0, 1.0), (105.0, 2.0), (105.0, 3.0)):
+        lidar.append(
+            PointCloud2.from_numpy(np.array([[x, 0.0, 0.0]]), frame_id="lidar", timestamp=ts),
+            ts=ts,
+        )
+    try:
+        stats = build_replay_streams(
+            store,
+            lidar_stream_name="lidar",
+            to_scan=lambda obs: SensorScan(obs.data.points_f32(), *AT_ORIGIN),
+            voxel_size=VOXEL,
+            max_range=10.0,
+            keyframe_interval_s=5.0,
+        )
+        assert stats.keyframes == 3
+        assert VoxelReplay.available(store, voxel_size=VOXEL, lidar_stream_name="lidar")
+        replay = VoxelReplay(store)
+        assert int(replay.final_keyframe().tags["scan_index"]) == 2
+        header, _ = replay.segment(2)
+        assert header["keyframe"]["scan"] == 2
+    finally:
+        store.stop()

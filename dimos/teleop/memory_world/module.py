@@ -615,7 +615,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
             xyz: np.ndarray | None
             if self.config.build_replay_on_start:
                 replay = self._ensure_replay()
-                xyz = self._replay_read(lambda: replay.keyframes.last().data.points_f32())
+                xyz = self._replay_read(lambda: replay.final_keyframe().data.points_f32())
                 logger.info("voxel cloud from the ray-traced replay: %d voxels", len(xyz))
             else:
                 xyz = self._replay_read(self._accumulated_cloud)
@@ -954,7 +954,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
     # ---- spoken visual search ---------------------------------------------
 
     def _ensure_visual_index(self) -> VisualMemoryIndex:
-        with self._index_lock:  # a lazy init; the lock is re-entrant for the build
+        with self._store_lock, self._index_lock:  # a lazy init that opens the store; store first
             return self._visual_index_unlocked()
 
     def _visual_index_unlocked(self) -> VisualMemoryIndex:
@@ -1081,7 +1081,9 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
             return self._find_with_hyperspace(phrase, started)
 
         index = self._ensure_visual_index()
-        if index.count() == 0:
+        with self._store_lock:
+            indexed = index.count()
+        if indexed == 0:
             return SkillResult.fail(
                 "INDEX_NOT_READY",
                 f"The SigLIP index for {self.config.store_path} holds no frames "
@@ -1093,10 +1095,10 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         located = bool(places)
         if not located:
             # No depth or extrinsics: answer with the poses the frames were taken from.
+            with self._store_lock:  # the index reads its stream; a reopen swaps the store
+                hits = index.search(phrase, k=self.config.search_top_k)
             places = cluster_places(
-                index.search(phrase, k=self.config.search_top_k),
-                radius=self.config.place_radius_m,
-                max_places=self.config.max_places,
+                hits, radius=self.config.place_radius_m, max_places=self.config.max_places
             )
         if not places:
             return SkillResult.fail("NOT_FOUND", f"Nothing in the recording matches {phrase!r}")

@@ -260,6 +260,7 @@ export class ReplayController {
         this.stats.seeks++;
         this.stats.lastSeekMs = ms;
         this.stats.maxSeekMs = Math.max(this.stats.maxSeekMs, ms);
+        this._evictSegments();   // the one just left is no longer protected
         this._prefetchAround(number);
         return true;
     }
@@ -449,7 +450,8 @@ export class ReplayController {
             this._frameBusy = true;
             try {
                 let frame = this._frameCache.get(ts);
-                if (!frame) {
+                if (frame) { this._frameCache.delete(ts); this._frameCache.set(ts, frame); }   // LRU: bump on a hit
+                else {
                     const response = await fetch(`${this.baseUrl}/replay/frame?t=${ts}`);
                     if (!response.ok) throw new Error(`frame: ${response.status}`);
                     const meta = JSON.parse(response.headers.get('X-Camera-Pose') || '{}');
