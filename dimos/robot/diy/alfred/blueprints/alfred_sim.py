@@ -31,9 +31,9 @@ from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.robot.diy.alfred.alfred_model import alfred_sim_model_config
 from dimos.robot.diy.alfred.blueprints.pillar import PILLAR_LIFT_VELOCITY_LIMIT_M_S
 from dimos.robot.diy.alfred.caster_kinematics import (
-    CASTER_HARDWARE_ID,
     CasterKinematics,
     caster_coordinator_joints,
+    caster_mock_hardware,
 )
 from dimos.robot.diy.alfred.pillar_connection import PILLAR_HARDWARE_ID, PILLAR_LIFT_JOINT
 from dimos.robot.manipulators.common.blueprints import planner
@@ -62,19 +62,6 @@ def mock_pillar_hardware() -> HardwareComponent:
     )
 
 
-def mock_caster_hardware() -> HardwareComponent:
-    """Eight caster joints (steer/drive per corner) driven by CasterKinematics for display."""
-    joints = caster_coordinator_joints()
-    return HardwareComponent(
-        hardware_id=CASTER_HARDWARE_ID,
-        hardware_type=HardwareType.WHOLE_BODY,
-        joints=joints,
-        adapter_type="mock_whole_body",
-        auto_enable=True,
-        wb_config=WholeBodyConfig(kp=(0.0,) * len(joints), kd=(0.0,) * len(joints)),
-    )
-
-
 alfred_sim = (
     autoconnect(
         planner(
@@ -86,7 +73,7 @@ alfred_sim = (
             hardware=[
                 _mock_twist_base(),
                 mock_pillar_hardware(),
-                mock_caster_hardware(),
+                caster_mock_hardware(),
                 openarm_hardware(),
             ],
             tasks=[

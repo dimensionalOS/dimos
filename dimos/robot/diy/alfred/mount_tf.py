@@ -69,19 +69,65 @@ class AlfredMountTf(StaticTfPublisher):
         return mount_transforms()
 
 
-def lidar_rooted_mount_transforms() -> list[Transform]:
-    """The mount tree re-rooted at mid360_link: Point-LIO owns the lidar's parent edge."""
+def alfred_mount_transforms() -> list[Transform]:
+    """Fixed sensor-mount edges of alfred_v1 that hang off base_link.
+
+    The lift subtree moves with the pillar and is left to the planner; the imager frames
+    under each camera_*_link are published by the RealSense driver from the device's own
+    extrinsics. Rooted at mid360_link: Point-LIO owns the lidar's parent edge.
+    """
+    from dimos.robot.diy.alfred.alfred_model import ALFRED_V1_MODEL
+
+    root = ElementTree.fromstring(ALFRED_V1_MODEL.load().xml)
+    fixed = []
+    children: dict[str, list[str]] = {}
+    for joint in root.findall("joint"):
+        parent = joint.find("parent")
+        child = joint.find("child")
+        origin = joint.find("origin")
+        if parent is None or child is None or origin is None:
+            continue
+        children.setdefault(parent.attrib["link"], []).append(child.attrib["link"])
+        if joint.get("type") == "fixed":
+            fixed.append((parent.attrib["link"], child.attrib["link"], origin))
+    moving = _descendants("lift_link", children)
     transforms = []
-    for transform in mount_transforms():
-        if transform.frame_id == "base_link" and transform.child_frame_id == "mid360_link":
-            transforms.append(-transform)
-        else:
-            transforms.append(transform)
+    for parent_link, child_link, origin in fixed:
+        if parent_link in moving or parent_link == "lift_link":
+            continue
+        if _is_camera_imager_edge(parent_link):
+            continue
+        translation = [float(value) for value in origin.attrib["xyz"].split()]
+        rpy = [float(value) for value in origin.attrib["rpy"].split()]
+        transform = Transform(
+            translation=Vector3(*translation),
+            rotation=Quaternion.from_euler(Vector3(*rpy)),
+            frame_id=parent_link,
+            child_frame_id=child_link,
+        )
+        if parent_link == "base_link" and child_link == "mid360_link":
+            transform = -transform
+        transforms.append(transform)
     return transforms
 
 
+def _descendants(link: str, children: dict[str, list[str]]) -> set[str]:
+    found: set[str] = set()
+    stack = list(children.get(link, []))
+    while stack:
+        node = stack.pop()
+        if node not in found:
+            found.add(node)
+            stack.extend(children.get(node, []))
+    return found
+
+
+def _is_camera_imager_edge(parent_link: str) -> bool:
+    return parent_link.startswith("camera_") and not parent_link.endswith("_bottom_screw_frame")
+
+
 class AlfredLidarMountTf(StaticTfPublisher):
-    """Publishes Alfred's mount tree rooted at mid360_link, for lidar odometry."""
+    """Publishes the alfred_v1 sensor mounts rooted at mid360_link, for lidar odometry."""
 
     def transforms(self) -> list[Transform]:
-        return lidar_rooted_mount_transforms()
+        return alfred_mount_transforms()

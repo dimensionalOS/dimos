@@ -37,7 +37,7 @@ from dimos.robot.diy.alfred.alfred_model import (
 from dimos.robot.diy.alfred.blueprints.alfred_nav import alfred_nav
 from dimos.robot.diy.alfred.blueprints.alfred_sim import alfred_sim
 from dimos.robot.diy.alfred.effector_high_level import AlfredHighLevel
-from dimos.robot.diy.alfred.mount_tf import AlfredLidarMountTf, lidar_rooted_mount_transforms
+from dimos.robot.diy.alfred.mount_tf import AlfredLidarMountTf, alfred_mount_transforms
 from dimos.robot.diy.alfred.pillar_connection import (
     PILLAR_HARDWARE_ID,
     PILLAR_LIFT_JOINT,
@@ -59,6 +59,15 @@ def _atoms(blueprint: Blueprint, module: type) -> list[Any]:
 def _coordinator_kwargs(blueprint: Blueprint) -> dict[str, Any]:
     (atom,) = _atoms(blueprint, ControlCoordinator)
     return cast("dict[str, Any]", atom.kwargs)
+
+
+def _lfs_archive_available() -> bool:
+    archive = get_project_root() / "data" / ".lfs" / "alfred_description.tar.gz"
+    try:
+        with archive.open("rb") as f:
+            return not f.read(64).startswith(b"version https://git-lfs")
+    except OSError:
+        return False
 
 
 def test_alfred_nav_keeps_the_base_out_of_the_coordinator() -> None:
@@ -87,12 +96,18 @@ def test_alfred_nav_runs_on_lidar_odometry() -> None:
     assert pointlio.kwargs["sensor_frame_id"] == "mid360_link"
 
 
-def test_lidar_rooted_mount_tree_has_one_parent_per_frame_and_reaches_base_link() -> None:
-    edges = {t.child_frame_id: t.frame_id for t in lidar_rooted_mount_transforms()}
-    assert len(edges) == len(lidar_rooted_mount_transforms()), "a frame has two parents"
+@pytest.mark.skipif(
+    not _lfs_archive_available(), reason="alfred_description LFS archive not pulled"
+)
+def test_alfred_mount_tree_is_rooted_at_the_lidar_and_leaves_moving_parts_out() -> None:
+    transforms = alfred_mount_transforms()
+    edges = {t.child_frame_id: t.frame_id for t in transforms}
+    assert len(edges) == len(transforms), "a frame has two parents"
     assert edges["base_link"] == "mid360_link"
     assert "mid360_link" not in edges, "Point-LIO must be the lidar frame's only parent"
-    for link in ("d455_link", "camera_link", "mid360_imu_link"):
+    assert "lift_link" not in edges and not any("openarm" in c for c in edges)
+    assert "camera_front_depth_optical_frame" not in edges, "imager frames belong to the driver"
+    for link in ("camera_front_link", "camera_back_link", "mid360_imu_link"):
         frame = link
         while frame in edges:
             frame = edges[frame]
@@ -125,15 +140,6 @@ def test_alfred_model_uses_pillar_joint_convention() -> None:
 def test_alfred_sim_still_composes() -> None:
     hardware_ids = {hw.hardware_id for hw in _coordinator_kwargs(alfred_sim)["hardware"]}
     assert {PILLAR_HARDWARE_ID, OPENARM_HARDWARE_ID, "casters"} <= hardware_ids
-
-
-def _lfs_archive_available() -> bool:
-    archive = get_project_root() / "data" / ".lfs" / "alfred_description.tar.gz"
-    try:
-        with archive.open("rb") as f:
-            return not f.read(64).startswith(b"version https://git-lfs")
-    except OSError:
-        return False
 
 
 @pytest.mark.skipif(

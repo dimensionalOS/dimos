@@ -28,9 +28,11 @@ import time
 from typing import Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 
@@ -54,6 +56,19 @@ def caster_coordinator_joints() -> list[str]:
 def caster_urdf_joints() -> list[str]:
     """Matching alfred_v2.urdf joint names."""
     return [f"{c}_{k}_joint" for c in CASTER_CORNERS for k in ("caster", "wheel")]
+
+
+def caster_mock_hardware() -> HardwareComponent:
+    """In-memory caster joints so the URDF casters have state; driven by CasterKinematics."""
+    joints = caster_coordinator_joints()
+    return HardwareComponent(
+        hardware_id=CASTER_HARDWARE_ID,
+        hardware_type=HardwareType.WHOLE_BODY,
+        joints=joints,
+        adapter_type="mock_whole_body",
+        auto_enable=True,
+        wb_config=WholeBodyConfig(kp=(0.0,) * len(joints), kd=(0.0,) * len(joints)),
+    )
 
 
 def _wrap(a: float) -> float:

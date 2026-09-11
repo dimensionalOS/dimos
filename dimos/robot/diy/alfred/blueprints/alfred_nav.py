@@ -18,7 +18,7 @@
 
 Navigation is the Go2 pattern on Point-LIO odometry (voxel map, MLS planner, dannav
 holonomic follower, MovementManager) with AlfredHighLevel as the only FlowBase writer and
-the sensor mounts published rooted at the lidar. The pillar and the OpenArms sit on a
+the alfred_v1 sensor mounts published rooted at the lidar. The pillar and the OpenArms sit on a
 ControlCoordinator and are planned through viser on the alfred_v1 model; the arms are real
 when OPENARM_LEFT_CAN and OPENARM_RIGHT_CAN are set, mock otherwise. Teleop comes from the
 viewer. Transport is pinned to LCM because the Point-LIO C++ native does not speak zenoh.
