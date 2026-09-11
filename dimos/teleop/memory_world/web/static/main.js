@@ -607,7 +607,8 @@ document.getElementById('answerBtn').addEventListener('click', () => window.app.
 async function ask(text) {
     text = (text || '').trim();
     if (!text) return null;
-    const session = ws;  // the answer belongs to this connection only
+    const session = ws;  // the answer belongs to this connection only, and there must be one
+    if (!session) return null;
     askBtn.disabled = true;
     setStatus(`Asking: ${text}`);
     diag('ask', { text });
@@ -844,8 +845,10 @@ function applyIndexStatus(status) {
     if (running) {
         embedBtn.textContent = `Embedding… ${(indexStatus.progress || '').slice(0, 60)}`;
         if (connected && !embedPoll) embedPoll = setInterval(pollEmbeddings, 3000);
-    } else if (/^(building|loading)/.test(indexStatus.index || '')) {
-        // The server is building the frame index, which takes minutes and holds the store.
+    } else if (/^(not started|building|loading)/.test(indexStatus.index || '')) {
+        // The server builds the frame index on startup and never pushes its progress, so
+        // this has to keep asking. "not started" is the window before the build begins:
+        // offering "Add embeddings" there invites a second job doing the same work.
         embedBtn.textContent = `Indexing… ${indexStatus.index.slice(0, 60)}`;
         embedBtn.disabled = true;
         if (connected && !embedPoll) embedPoll = setInterval(pollEmbeddings, 3000);
@@ -884,7 +887,10 @@ embedBtn.addEventListener('click', async () => {
 function setOrbit(enabled) {
     if (!scene) return;
     const on = scene.setOrbit(enabled);
-    const label = on ? 'Stop orbit' : `Orbit ${replay?.index?.orbit?.frame || 'frame'}`;
+    // The frame the user picked, not the recording's default: OrbitControl keeps
+    // orbiting their choice, so the button has to name it.
+    const frame = orbitFrameSel.value || replay?.index?.orbit?.frame || 'frame';
+    const label = on ? 'Stop orbit' : `Orbit ${frame}`;
     orbitBtn.textContent = label;
     document.getElementById('orbitTouchBtn').textContent = on ? 'Walk' : 'Orbit';
     if (results && results._syncOrbitLabel) results._syncOrbitLabel();  // label only, no loop
