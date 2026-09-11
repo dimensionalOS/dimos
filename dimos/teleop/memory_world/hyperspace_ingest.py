@@ -43,7 +43,7 @@ from typing import Any
 import numpy as np
 
 from dimos.teleop.memory_world.hyperspace_search import memory_db_for
-from dimos.teleop.memory_world.recording import depth_info_stream_for
+from dimos.teleop.memory_world.recording import CORRECTED_STATIC_STREAM, depth_info_stream_for
 
 logger = logging.getLogger(__name__)
 
@@ -308,9 +308,29 @@ def _ingest(
             )
 
     def statics() -> Iterator[tuple[float, TFMessage]]:
+        """The recording's static edges, with a measured mount replacing the recorded one.
+
+        The memory db is what places keyframes at query time, so it has to agree with
+        the tree the module places markers and pictures with. Without this the search
+        evidence would sit where the recording claims the camera was and the map would
+        show where it actually was, disagreeing by the whole correction.
+        """
         if streams.get("tf_static") is None:
             return
         held = [t for obs in store.streams[streams["tf_static"]] for t in obs.data.transforms]
+        measured = (
+            [t for obs in store.streams[CORRECTED_STATIC_STREAM] for t in obs.data.transforms]
+            if CORRECTED_STATIC_STREAM in store.list_streams()
+            else []
+        )
+        if measured:
+            replaced = {(str(t.frame_id), str(t.child_frame_id)) for t in measured}
+            held = [
+                t for t in held if (str(t.frame_id), str(t.child_frame_id)) not in replaced
+            ] + measured
+            print(
+                f"tf: {len(measured)} measured static edge(s) replace the recorded ones", flush=True
+            )
         if held:  # once, before everything: Hyperspace holds the last sample of an edge
             yield start_ts - 5.0, TFMessage(*held)
 

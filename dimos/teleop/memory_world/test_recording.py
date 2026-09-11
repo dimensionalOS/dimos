@@ -615,13 +615,11 @@ def test_build_tf_tree_holds_static_transforms_and_uses_their_stamps(tmp_path: P
         store.stop()
 
 
-def test_a_measured_mount_replaces_the_recorded_one_and_stands_the_workaround_down(
-    tmp_path,
-) -> None:  # type: ignore[no-untyped-def]
+def test_a_measured_mount_replaces_the_recorded_one(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """calibrate_static_tf writes tf_static_corrected; the tree must prefer it outright.
 
     The two disagree by tens of degrees, so holding both would average a right answer
-    with a wrong one, and the roll workaround must know it is no longer needed.
+    with a wrong one, and the tree has to say which of the two it used.
     """
     from dimos.memory.store.sqlite import SqliteStore
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -656,6 +654,6 @@ def test_a_measured_mount_replaces_the_recorded_one_and_stands_the_workaround_do
         )
         fixed = build_tf_tree(store, "tf")
         assert fixed.lookup("odom", "camera", 1.0)[0, 3] == 3.0  # replaced, not averaged in
-        assert fixed.corrected_static  # so the roll workaround knows to stand down
+        assert fixed.corrected_static  # and says so, for anything that needs to know
     finally:
         store.stop()

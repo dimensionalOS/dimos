@@ -518,7 +518,7 @@ def build_tf_tree(
                     (float(q.x), float(q.y), float(q.z), float(q.w)),
                     static=True,
                 )
-                tree.corrected_static = True  # the roll workaround stands down now
+                tree.corrected_static = True  # this tree's mount was measured, not recorded
                 logger.info(
                     "tf: %s -> %s from %r", t.frame_id, t.child_frame_id, CORRECTED_STATIC_STREAM
                 )
@@ -617,7 +617,13 @@ def detect_streams(store: Store, image: str | None = None) -> dict[str, Any]:
         "lidar_candidates": rank("lidar", "PointCloud2"),
         "tf": pick("tf", "TFMessage"),
         "tf_static": next(
-            (n for n in rank("tf_static", "TFMessage") if "static" in n.lower()), None
+            (
+                n
+                for n in rank("tf_static", "TFMessage")
+                # The measured mount is applied over these, never mistaken for them.
+                if "static" in n.lower() and n != CORRECTED_STATIC_STREAM
+            ),
+            None,
         ),
     }
     # Prefer the camera_info that belongs to the chosen image stream.

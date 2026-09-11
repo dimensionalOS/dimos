@@ -9,9 +9,11 @@ Hyperspace answering questions in plain words with the pictures to prove it.
 memworld ~/datasets/lite_recorder/grocery.mcap   # or bike.mcap / park.mcap / any .db; ~/Commands/memworld
 ```
 
-- Two workarounds for the cart recordings: `camera-level-roll` (on) levels the
-  camera, whose tf roll is 30-50 degrees out, and the capture-pose photos hang
-  at the height the camera was, not a fixed one. Both go once tf is fixed.
+- The cart recordings' own tf puts the camera 90 degrees out in yaw. Measure the
+  real mount against the lidar once per recording and everything after reads it:
+  `python -m dimos.teleop.memory_world.calibrate_static_tf <recording> --samples 20`.
+  It writes a `tf_static_corrected` stream into the recording's companion derived
+  db; the recording is never rewritten. Photos hang at the height the camera was.
 - First start on a new recording builds the ray-traced replay (minutes on a
   long one); later starts take seconds. A build that places no scan (tf cannot
   reach the lidar frame, or everything is out of range) is thrown away and the

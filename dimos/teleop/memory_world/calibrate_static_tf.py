@@ -47,6 +47,8 @@ logger = logging.getLogger(__name__)
 MIN_DEPTH_M, MAX_DEPTH_M = 1.0, 4.0  # outside this a d455 returns noise, not geometry
 MAX_LIDAR_M = 12.0
 VOXEL_M = 0.06
+# Below this share of camera points within 10 cm of a lidar point the clouds never met.
+MIN_INLIER_FRACTION = 0.25
 GRID_DEG = np.arange(-40, 41, 8.0)  # the seed rotations, around the nominal axis swap
 SEEDS_REFINED = 24
 # camera optical (x right, y down, z forward) -> a livox body frame (x fwd, y left, z up)
@@ -64,6 +66,14 @@ def _rotation(roll: float, pitch: float, yaw: float) -> np.ndarray:
             [-sp, cp * sr, cp * cr],
         ]
     )
+
+
+def _nearest(stream: Any, ts: float, tolerance: float) -> Any:
+    """The observation closest to *ts*, not merely the first inside the window."""
+    near = list(stream.at(ts, tolerance=tolerance))
+    if not near:
+        raise LookupError(f"nothing within {tolerance}s of {ts}")
+    return min(near, key=lambda obs: abs(float(obs.ts) - ts))
 
 
 def _thinned(points: np.ndarray, size: float, cap: int) -> np.ndarray:
@@ -93,16 +103,18 @@ def _pairs(store: Any, streams: dict[str, Any], samples: int) -> list[tuple[np.n
     for k in range(samples):
         ts = float(first.ts) + (k + 0.5) / samples * (float(last.ts) - float(first.ts))
         try:
-            near = depth.at(ts, tolerance=0.2).first()
-            scan = lidar.at(float(near.ts), tolerance=0.12).first()
+            near = _nearest(depth, ts, 0.2)
+            scan = _nearest(lidar, float(near.ts), 0.12)
         except LookupError:
             continue
-        millimetres = np.asarray(near.data.data)
-        if millimetres.ndim != 2:
+        raw = np.asarray(near.data.data)
+        if raw.ndim != 2:
             continue
         step = 4  # a 1280x720 depth image is far more than the fit needs
-        rows, cols = np.mgrid[0 : millimetres.shape[0] : step, 0 : millimetres.shape[1] : step]
-        z = millimetres[::step, ::step].astype(np.float64) / 1000.0
+        rows, cols = np.mgrid[0 : raw.shape[0] : step, 0 : raw.shape[1] : step]
+        z = raw[::step, ::step].astype(np.float64)
+        if not np.issubdtype(raw.dtype, np.floating):
+            z /= 1000.0  # an integer depth image is millimetres; a float one is metres
         usable = (z > MIN_DEPTH_M) & (z < MAX_DEPTH_M) & np.isfinite(z)
         if usable.sum() < 2000:
             continue
@@ -182,6 +194,18 @@ def measure_camera_from_lidar(store: Any, streams: dict[str, Any], samples: int 
     logger.info(
         "residual %.4f m, median inlier fraction %.2f", best_cost, float(np.median(inliers))
     )
+    # The truncated residual stays finite when nothing matched at all -- every point
+    # simply costs the cap -- so a seed that never moved would otherwise be published
+    # as a measurement. Support is what says the two clouds actually found each other.
+    supported = sum(1 for fraction in inliers if fraction >= MIN_INLIER_FRACTION)
+    if float(np.median(inliers)) < MIN_INLIER_FRACTION or supported < len(pairs) // 2:
+        logger.warning(
+            "no agreement: %d of %d frames reach %.0f%% inliers; this is not a mount",
+            supported,
+            len(pairs),
+            MIN_INLIER_FRACTION * 100,
+        )
+        return None
     return best, best_cost, inliers
 
 
@@ -192,33 +216,63 @@ def sensor_lidar_stream(store: Any, tree: Any, streams: dict[str, Any]) -> str |
     stamped ``corrected_odom``). Those are the same walls seen from a moving robot,
     so no single transform relates them to the camera; only the raw scans calibrate.
     """
+    rigid = _rigid_frames(tree)
     for name in [streams.get("lidar"), *streams.get("lidar_candidates", [])]:
         if not name:
             continue
         frame = str(getattr(store.streams[name].first().data, "frame_id", "") or "").lstrip("/")
-        if any(child == frame for _, child in tree._edges):  # a frame that hangs off the robot
+        if frame in rigid:
             return name
     return None
 
 
-def camera_mount_edge(tree: Any, camera_frame: str) -> tuple[str | None, str]:
-    """The edge that carries the whole camera: (whatever it is bolted to, the camera root).
+def _rigid_frames(tree: Any, body: str = "base_link") -> set[str]:
+    """Frames bolted to the robot: *body* and everything hanging below it.
 
-    Correcting it moves colour, depth and infra together, which is what a wrong
-    mount actually means -- the frames inside the camera are the vendor's and right.
+    A map frame can also be somebody's child (``map -> odom -> base_link``), so being a
+    child proves nothing; being below the body is what makes a frame the sensor's own.
     """
-    parent_of = {child: parent for parent, child in tree._edges}
-    node = camera_frame
-    while parent_of.get(node, "").startswith("camera"):
-        node = parent_of[node]
-    return parent_of.get(node), node
+    children: dict[str, list[str]] = {}
+    for parent, child in tree._edges:
+        children.setdefault(parent, []).append(child)
+    if body not in tree.frames:
+        return set(tree.frames)  # no body to hang off: fall back to naming any known frame
+    found, queue = {body}, [body]
+    while queue:
+        for child in children.get(queue.pop(), ()):
+            if child not in found:
+                found.add(child)
+                queue.append(child)
+    return found
+
+
+def camera_mount_edge(tree: Any, camera_frame: str, lidar_frame: str) -> tuple[str | None, str]:
+    """The edge to put the whole correction on: (what the camera hangs off, the camera root).
+
+    Walk the tf path from the lidar to the camera. It climbs to the frame the two
+    sensors share and then descends; the first descending edge is the outermost one
+    that is the camera's and not the body's, so correcting it moves colour, depth and
+    infra together and leaves everything else alone.
+
+    A relative measurement cannot say WHICH joint along that path is wrong -- a yaw at
+    the camera's joint and the opposite yaw at the lidar's give the same answer -- so
+    this puts the whole correction on one edge by choice, not by deduction. Separating
+    them needs a frame outside both chains, such as gravity on the body.
+    """
+    hops = tree._path(lidar_frame, camera_frame)
+    if not hops:
+        return None, camera_frame
+    for parent, child, forward in hops:
+        if forward:  # the first edge we traverse parent -> child is the descent
+            return parent, child
+    return None, camera_frame
 
 
 def corrected_mount(
     tree: Any, lidar_T_camera: np.ndarray, camera_frame: str, lidar_frame: str, ts: float
 ) -> Any:
     """What the camera's mount edge should have been, given the measured extrinsic."""
-    mount, camera_root = camera_mount_edge(tree, camera_frame)
+    mount, camera_root = camera_mount_edge(tree, camera_frame, lidar_frame)
     if mount is None:
         return None
     mount_T_lidar = tree.lookup(mount, lidar_frame, ts, 0.5)
