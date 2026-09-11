@@ -47,6 +47,7 @@ from dimos.navigation.dannav.local_planner.module import DanLocalPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.navigation.nav_3d.mls_planner.mls_planner_native import MLSPlannerNative
 from dimos.navigation.nav_3d.mls_planner.start_relay import StartRelay
+from dimos.navigation.nav_3d.mls_planner.viz import planner_visual_override
 from dimos.robot.diy.alfred.alfred_model import (
     alfred_arm_joints,
     alfred_model_config,
@@ -81,6 +82,8 @@ LIDAR_FRAME = "mid360_link"
 VOXEL_SIZE_M = 0.08
 MAP_MAX_RANGE_M = 15.0  # far returns are the costliest to raytrace and the least reliable
 STEP_THRESHOLD_M = 0.06  # wheeled base: a kerb is an obstacle (Go2 uses 0.16)
+WALL_CLEARANCE_M = 0.2
+PLANNER_VIZ_HZ = 0.0  # raise to draw the planner's search (nodes, edges, surface)
 ALFRED_RERUN_ROOT = "world/alfred"
 
 
@@ -161,17 +164,23 @@ _rerun_config = {
     "blueprint": _rerun_blueprint,
     "tf_axes": 0.35,
     "static": {ALFRED_RERUN_ROOT: _alfred_urdf_static},
+    # The viewer rides wifi and Tailscale: small ring buffer, maps only, low rates.
+    "memory_limit": "64MB",
     "max_hz": {
         "world/tf": 2.0,
-        "world/lidar": 1.0,
         "world/global_map": 0.5,
         "world/local_map": 1.0,
-        "world/surface_map": 1.0,
+        "world/wheel_odometry": 1.0,
+        "world/coordinator_joint_state": 2.0,
     },
     "visual_override": {
+        "world/lidar": None,
         "world/planner_path": _empty_path_dropped,
         "world/path": partial(_path_colored, color=(60, 220, 120)),
         "world/coordinator_joint_state": _AlfredJointStateVisual(),
+        **planner_visual_override(
+            PLANNER_VIZ_HZ, voxel_size=VOXEL_SIZE_M, wall_clearance_m=WALL_CLEARANCE_M
+        ),
     },
 }
 
@@ -202,11 +211,12 @@ alfred_nav = (
             voxel_size=VOXEL_SIZE_M,
             robot_height=ALFRED.body_height,
             start_z_offset_m=0.0,
-            wall_clearance_m=0.2,
+            wall_clearance_m=WALL_CLEARANCE_M,
             wall_buffer_m=0.75,
             wall_buffer_weight=100.0,
             step_threshold_m=STEP_THRESHOLD_M,
             step_penalty_weight=4.0,
+            viz_publish_hz=PLANNER_VIZ_HZ,
         ).remappings(
             [
                 (MLSPlannerNative, "global_map", "global_map_unused"),
