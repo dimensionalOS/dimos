@@ -32,6 +32,7 @@ import argparse
 from collections.abc import Iterator
 import heapq
 import logging
+import os
 from pathlib import Path
 import sys
 import time
@@ -98,7 +99,20 @@ def ingest_recording(
     recording = Path(recording)
     opened: list[Any] = []  # stopped in reverse, however far the setup got
     building: Path | None = None  # the db under construction, dropped unless published
+    held_lock: Path | None = None  # our claim on this recording's ingest
     published = False
+    memory_path = memory_db_for(recording)
+    # Two runs would share the staging db below and publish each other's half of it,
+    # so the second one is turned away before either touches it.
+    lock_path = memory_path.with_name(memory_path.name + ".building.lock")
+    try:
+        os.close(os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except FileExistsError:
+        raise SystemExit(
+            f"another ingest of {recording.name} is running ({lock_path} exists);"
+            " wait for it, or delete that file if it is stale"
+        ) from None
+    held_lock = lock_path
     try:
         try:
             store = open_recording(recording)
@@ -125,7 +139,6 @@ def ingest_recording(
                 flush=True,
             )
 
-            memory_path = memory_db_for(recording)
             # Built beside the final name and moved into place at the end: a rerun (or an
             # interrupted run) must not append a second copy of every keyframe.
             building = memory_path.with_name(memory_path.name + ".building")
@@ -176,6 +189,8 @@ def ingest_recording(
             # However far it got, a half-built db must not be taken for a finished one.
             for suffix in ("", "-wal", "-shm"):
                 building.with_name(building.name + suffix).unlink(missing_ok=True)
+        if held_lock is not None:
+            held_lock.unlink(missing_ok=True)
     summary: dict[str, Any] = {**stats, "seconds": round(time.monotonic() - started, 1)}
     print(f"done: {summary}", flush=True)
     return summary

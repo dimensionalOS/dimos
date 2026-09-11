@@ -66,7 +66,7 @@ from dimos.teleop.memory_world.recording import (
     embedding_stream_name,
     grid_side,
 )
-from dimos.teleop.memory_world.tf_tree import quaternion_from_matrix
+from dimos.teleop.memory_world.tf_tree import level_camera_roll, quaternion_from_matrix
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -439,7 +439,9 @@ class VisualMemoryIndex:
         self.pose_of = pose_of
         self.world_frame = world_frame
         # Poses are stored, not recomputed, so an index built under the camera-roll
-        # workaround cannot be read as one built without it.
+        # workaround cannot be read as one built without it. The levelling happens
+        # here, so the tag cannot promise what pose_of did not do; it is idempotent,
+        # and a caller that levels already (the module) is unaffected.
         self.level_roll = level_roll
         self.image_stream_name = image_stream_name
         self.index_stream_name = index_stream_name or index_stream_name_of(
@@ -518,10 +520,17 @@ class VisualMemoryIndex:
             return StoredEmbeddings(self.store, self.precomputed_stream_name).count()
         return int(self.index_stream.count())
 
+    def _placed(self, obs: Any) -> np.ndarray | None:
+        """``pose_of`` for this observation, levelled when the index says it is."""
+        matrix = self.pose_of(obs)
+        if matrix is None or not self.level_roll:
+            return matrix
+        return level_camera_roll(np.asarray(matrix, dtype=np.float64))
+
     def _posed_frames(self) -> Iterator[tuple[Any, np.ndarray]]:
         """(image observation, world_T_optical) in time order, skipping frames tf cannot place."""
         for obs in self.store.streams[self.image_stream_name].order_by("ts"):
-            matrix = self.pose_of(obs)
+            matrix = self._placed(obs)
             if matrix is not None:
                 yield obs, matrix
 
@@ -673,7 +682,7 @@ class VisualMemoryIndex:
                     f"{self.model_name}; pass model_name={row.model!r}"
                 )
             obs = frame_of(row)
-            matrix = None if obs is None else self.pose_of(obs)
+            matrix = None if obs is None else self._placed(obs)
             if obs is None or matrix is None:
                 dropped += 1
                 continue

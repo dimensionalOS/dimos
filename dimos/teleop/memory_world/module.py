@@ -758,6 +758,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             timestamps: list[float] = []
             ids: list[int] = []  # marker ids, unique per marker
             source_ids: list[int] = []  # the store's own, which analyze_memory names
+            source_ids_are_real = not self.config.store_path.endswith(".mcap")
             thumbnails: list[bytes] = []
 
             # One indexed read per marker rather than a pass over every frame:
@@ -778,7 +779,9 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 quats.append(body_style_quaternion(optical))
                 timestamps.append(float(obs.ts))
                 ids.append(k)  # unique per marker: an mcap's observation ids are window-local
-                source_ids.append(int(getattr(obs, "id", 0)))
+                # An mcap numbers each windowed read from zero, so its ids would name
+                # the wrong frames; only a db's are the ids analyze_memory means.
+                source_ids.append(int(getattr(obs, "id", 0)) if source_ids_are_real else -1)
 
                 try:
                     thumbnails.append(self._encode_jpeg(obs.data, max_size, quality))
