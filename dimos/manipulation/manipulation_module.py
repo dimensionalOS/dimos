@@ -26,7 +26,7 @@ import traceback
 from typing import Any, Literal, TypeAlias
 
 import numpy as np
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.coordinator import ControlCoordinator
@@ -166,6 +166,18 @@ class ManipulationModuleConfig(ModuleConfig):
     default_speed_scale: float = Field(default=1.0, gt=0.0, le=1.0)
     linear_speed_scale: float = Field(default=0.5, gt=0.0, le=1.0)
     execution_timeout: float = Field(default=60.0, gt=0.0)
+    # Coordinator joint name -> model joint name, so a twist base's odometry
+    # joints (chassis/vx, ...) can feed the model's planar base joints.
+    joint_state_aliases: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_joint_state_aliases(self) -> ManipulationModuleConfig:
+        model_joints = set(self.model.joint_names)
+        if unknown := sorted(set(self.joint_state_aliases.values()) - model_joints):
+            raise ValueError(f"joint_state_aliases targets are not model joints: {unknown}")
+        if shadowed := sorted(set(self.joint_state_aliases) & model_joints):
+            raise ValueError(f"joint_state_aliases sources are model joints: {shadowed}")
+        return self
 
 
 class ManipulationModule(Module):
@@ -308,7 +320,8 @@ class ManipulationModule(Module):
             if self._world_monitor is None:
                 return
 
-            name_to_idx = {name: i for i, name in enumerate(msg.name)}
+            aliases = self.config.joint_state_aliases
+            name_to_idx = {aliases.get(name, name): i for i, name in enumerate(msg.name)}
             names = self.config.model.joint_names
             missing = [name for name in names if name not in name_to_idx]
             if missing:
