@@ -250,8 +250,10 @@ class Keyframe:
 class QueryConfig:
     hot_threshold: float = 0.02
     max_hot_patches: int = 6000
-    cap_near: float = 0.9
-    cap_far: float = 1.1
+    # Pyramids span this slice of the patch depth; 0.99-1.01 is a thin shell
+    # at the depth itself (Jeff, 2026-09-10: tighter caps read better).
+    cap_near: float = 0.99
+    cap_far: float = 1.01
     lse_temperature: float = 0.02
     yaw_bins: int = 8
     yaw_hot_threshold: float = 0.04
