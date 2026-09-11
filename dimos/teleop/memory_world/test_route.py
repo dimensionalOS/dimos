@@ -129,3 +129,14 @@ def test_unreachable_snap_returns_none() -> None:
         _floor(0, 2, 0, 2), _path((0.5, 0.5), (1.5, 1.5)), voxel_size=VOXEL
     )
     assert planner.snap((30.0, 30.0)) is None
+
+
+def test_city_scale_map_plans_on_coarse_cells() -> None:
+    # A 4 km straight road: at 10 cm cells the grid would be 40k cells across.
+    road = _floor(0, 4000, 0, 4)
+    drive = _path((1, 2), (3999, 2))
+    planner = RoutePlanner.from_voxels(road[::7], drive, voxel_size=VOXEL)
+    assert 0.9 < planner.resolution < 1.2
+    assert planner.costs.shape[1] < 4200
+    route = planner.plan((10, 2), (3990, 2))
+    assert route is not None and route.length_m > 3900

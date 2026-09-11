@@ -20,6 +20,12 @@ memworld path/to/recording.mcap        # or .db; ~/Commands/memworld
       --model-name ~/models/siglip2-so400m-patch16-384 --device mps
   ```
 
+- The world frame is taken from the tf root (`odom` on the Pi rig) unless
+  `--memoryworldmodule.world-frame` says otherwise. An outdoor ride makes a
+  city-scale map (bike.mcap: 6.7M voxels); pass
+  `--memoryworldmodule.max-points 3500000` so streets are not thinned to dots,
+  and expect the first connection to take a minute while the marker photos
+  are decoded from the mcap.
 - Open `https://127.0.0.1:8443/memory_world?flat` (self-signed cert →
   Advanced → proceed), press **Connect**. Phone/Quest: same URL on the LAN
   address the launcher prints.

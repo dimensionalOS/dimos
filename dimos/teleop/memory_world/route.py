@@ -57,6 +57,9 @@ INFLATION_M = 0.6
 # How far a start or goal may be moved to reach a passable cell (the goal is
 # usually inside the object that was asked about).
 SNAP_RADIUS_M = 4.0
+# The costmap is dense: on a city-scale map the cells grow so the grid stays
+# about this many cells across (a 4 km ride plans on ~1 m cells).
+MAX_GRID_CELLS = 4000
 ROUTE_HEIGHT_BELOW_PATH_M = 0.2
 
 
@@ -119,10 +122,12 @@ class RoutePlanner:
         path = np.asarray(path, dtype=np.float64).reshape(-1, 3)
         if len(voxels) == 0 or len(path) == 0:
             raise ValueError("no voxels or no path to plan over")
-        resolution = float(voxel_size)
+        lo = np.minimum(voxels[:, :2].min(axis=0), path[:, :2].min(axis=0))
+        hi = np.maximum(voxels[:, :2].max(axis=0), path[:, :2].max(axis=0))
+        resolution = max(float(voxel_size), float((hi - lo).max()) / MAX_GRID_CELLS)
         margin = corridor_m + inflation_m + resolution
-        lo = np.minimum(voxels[:, :2].min(axis=0), path[:, :2].min(axis=0)) - margin
-        hi = np.maximum(voxels[:, :2].max(axis=0), path[:, :2].max(axis=0)) + margin
+        lo = lo - margin
+        hi = hi + margin
         width = math.ceil((hi[0] - lo[0]) / resolution) + 1
         height = math.ceil((hi[1] - lo[1]) / resolution) + 1
 
@@ -233,13 +238,15 @@ class RoutePlanner:
         return self._components == self._components[row, col]
 
     def plan(self, start_xy: tuple[float, float], goal_xy: tuple[float, float]) -> Route | None:
-        start = self.snap(start_xy)
+        # Coarse cells (a city map) need a proportionally wider snap.
+        snap_m = max(SNAP_RADIUS_M, 4 * self.resolution)
+        start = self.snap(start_xy, snap_m)
         if start is None:
             return None
         # The goal is snapped to free space the start can actually reach: the
         # nearest free cell to an object may sit on a floor island or another level.
         reachable = self.reachable_from(start)
-        goal = self.snap(goal_xy, within=reachable)
+        goal = self.snap(goal_xy, snap_m, within=reachable)
         if goal is None:
             return None
         path = min_cost_astar(self.grid, goal=goal, start=start, unknown_penalty=0.8)
