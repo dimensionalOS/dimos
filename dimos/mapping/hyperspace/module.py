@@ -19,7 +19,8 @@ keeping, and writes each kept frame's 576 text-aligned patch embeddings into
 the recording's memory store (one vector per patch, so the store's own vector
 search finds them). ``Hyperspace`` answers questions against that store: text
 in, scored voxels out, placing every keyframe through the recorded tf at query
-time so a loop closure that rewrites old transforms also moves old answers.
+time: a keyframe stores no pose, so corrected transforms would move old answers
+once the transform buffer lets a rewrite win (see test_rewriting_tf_moves_the_answer).
 """
 
 from __future__ import annotations
@@ -372,9 +373,10 @@ class Hyperspace(MemoryModule):
             return answer
 
     async def handle_tf(self, msg: TFMessage) -> None:
-        # Live transforms land in the same buffer the answers read; the store
-        # is still read at query time for whatever was written before start.
-        self.engine.tf.receive(msg)
+        # The subscription TF(port, buffer_size=inf) would make, without its
+        # transport timing: transforms land in the buffer the answers read,
+        # which the store still tops up with whatever predates this module.
+        self.engine.tf.receive_tfmessage(msg)
 
     async def handle_query(self, msg: String) -> None:
         payload = msg.data.strip()

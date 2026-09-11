@@ -20,7 +20,7 @@ patch's view frustum cut at 0.9x..1.1x its depth. Pyramids are rasterized into
 a sparse voxel grid and pooled per voxel: max over a frame's patches, log-sum-
 exp across frames, times the square root of how many distinct yaw bins were
 hot. Keyframes store no pose; the caller places them at query time, which is
-what lets a loop closure move old answers.
+what would let a loop closure move old answers.
 """
 
 from __future__ import annotations

@@ -31,7 +31,7 @@ from dimos.mapping.hyperspace.ingest import (
     IngestConfig,
     PatchIngestor,
 )
-from dimos.mapping.hyperspace.query import HyperspaceQuery, TfCache
+from dimos.mapping.hyperspace.query import HyperspaceQuery
 from dimos.mapping.hyperspace.segments import SEGMENT_STREAM
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.models.embedding.base import Embedding
@@ -194,6 +194,12 @@ def test_query_lights_up_the_object_voxel(store: SqliteStore) -> None:
     assert answer["stats"]["hot_patches"] == 3
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="loop closure is parked (Jeff, 2026-09-11): the transform buffer keeps both "
+    "the stale and the corrected transform for a stamp, and the lookup breaks ties on "
+    "timestamp rather than write order. Fixing it belongs in TBuffer, in core.",
+)
 def test_rewriting_tf_moves_the_answer(store: SqliteStore) -> None:
     poses = ring(3, 2.5)
     ingestor = fill(store, poses)
@@ -250,15 +256,14 @@ class CountingStream:
 
 def test_tf_is_read_once_not_on_every_query(store: SqliteStore) -> None:
     ingestor = fill(store, ring(3, 2.5))
-    cache = TfCache(store)
-    cache.update()
+    engine = HyperspaceQuery(store, StubModel.embed_text, hs.QueryConfig(), WORLD, 0.1)
+    engine.read_tf()
     tally = [0]
     original = store.stream
     store.stream = lambda *a, **k: CountingStream(original(*a, **k), tally)  # type: ignore[method-assign]
     try:
-        cache.update()
+        engine.read_tf()
         assert tally[0] <= 1, "an unchanged tf stream should not be re-scanned"
-        placed = len(cache.latest)
         ingestor.add_tf(
             TFMessage(
                 Transform(
@@ -272,10 +277,10 @@ def test_tf_is_read_once_not_on_every_query(store: SqliteStore) -> None:
             ts=99.0,
         )
         tally[0] = 0
-        cache.update()
+        engine.read_tf()
         # The one new observation is read (plus the row the scan stops on).
         assert tally[0] <= 2, tally[0]
-        assert len(cache.latest) == placed + 1
+        assert engine.tf.get(WORLD, "extra", 99.0, warn=False) is not None
     finally:
         store.stream = original  # type: ignore[method-assign]
 
@@ -284,9 +289,8 @@ def test_live_transforms_land_in_the_buffer_the_answers_read(store: SqliteStore)
     fill(store, ring(3, 2.5))
     engine = HyperspaceQuery(store, StubModel.embed_text, hs.QueryConfig(), WORLD, 0.1)
     engine.placer(WORLD)  # reads what the store holds
-    placed = len(engine.tf.latest)
     # What Hyperspace.handle_tf does with a transform published while running.
-    engine.tf.receive(
+    engine.tf.receive_tfmessage(
         TFMessage(
             Transform(
                 translation=Vector3(9.0, 0.0, 0.0),
@@ -297,8 +301,7 @@ def test_live_transforms_land_in_the_buffer_the_answers_read(store: SqliteStore)
             )
         )
     )
-    assert len(engine.tf.latest) == placed + 1
-    assert engine.tf.get(WORLD, "extra", 99.0) is not None
+    assert engine.tf.get(WORLD, "extra", 99.0, warn=False) is not None
 
 
 def test_scene_voxels_come_from_depth_thumbnails(store: SqliteStore) -> None:

@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import math
 import sqlite3
-import threading
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -49,75 +48,6 @@ if TYPE_CHECKING:
 
 # sqlite-vec refuses knn queries with k above this.
 VEC0_MAX_K = 4096
-
-
-class TfCache:
-    """The recorded tf, decoded once and kept, where a transform written later
-    for the same (parent, child, stamp) replaces the earlier one.
-
-    That replacement is how a loop closure rewrites the past: keyframes store
-    no pose, so re-publishing corrected transforms moves every answer that
-    depends on them. New observations are picked up incrementally; a
-    replacement rebuilds the buffer from the surviving transforms.
-    """
-
-    def __init__(self, store: Store, stream: str = TF_STREAM) -> None:
-        self.store = store
-        self.stream_name = stream
-        self.buffer = MultiTBuffer(buffer_size=math.inf)
-        self.latest: dict[tuple[str, str, float], Any] = {}
-        self.last_id = -1
-        self.lock = threading.Lock()  # live transforms arrive while a query reads
-
-    def update(self) -> None:
-        if self.stream_name not in self.store.list_streams():
-            return
-        # Newest id first, stopping at the last one seen, so a pass over an
-        # unchanging recording reads one row rather than the whole stream --
-        # answering a query used to re-scan every tf observation. Ids are
-        # assigned in write order, so a transform republished for an old stamp
-        # still arrives here (that is how a loop closure rewrites the past).
-        stream = self.store.stream(self.stream_name, TFMessage)
-        batch: Iterable[Any]
-        if self.last_id < 0:
-            batch = stream.order_by("ts")  # first pass: read it all, in order
-        else:
-            tail = []
-            for obs in stream.order_by("id", desc=True):
-                if obs.id <= self.last_id:
-                    break
-                tail.append(obs)
-            if not tail:
-                return
-            batch = sorted(tail, key=lambda o: o.ts)
-        transforms = []
-        for obs in batch:
-            self.last_id = max(self.last_id, obs.id)
-            transforms.extend(obs.data.transforms)
-        self.take(transforms)
-
-    def receive(self, message: TFMessage) -> None:
-        """Transforms as they are published, so a live map needs no re-read."""
-        self.take(message.transforms)
-
-    def take(self, transforms: Iterable[Any]) -> None:
-        with self.lock:
-            fresh, replaced = [], False
-            for transform in transforms:
-                key = (transform.frame_id, transform.child_frame_id, float(transform.ts))
-                if key in self.latest:
-                    replaced = True
-                self.latest[key] = transform
-                fresh.append(transform)
-            if replaced:
-                self.buffer = MultiTBuffer(buffer_size=math.inf)
-                self.buffer.receive_transform(*self.latest.values())
-            elif fresh:
-                self.buffer.receive_transform(*fresh)
-
-    def get(self, target: str, source: str, ts: float) -> NDArray[np.float64] | None:
-        transform = self.buffer.get(target, source, ts, warn=False)
-        return None if transform is None else transform_to_matrix(transform)
 
 
 class HyperspaceQuery:
@@ -153,7 +83,11 @@ class HyperspaceQuery:
         self._members: list[str] = []
         self._labels: dict[str, NDArray[np.float32]] = {}
         self._labels_last_id = -1
-        self.tf = TfCache(store)
+        # The recorded transforms, and whatever is published while we run: the
+        # live module hands them to the same buffer (see Hyperspace.handle_tf).
+        # Unbounded, because a query reaches back to the first keyframe.
+        self.tf = MultiTBuffer(buffer_size=math.inf)
+        self._tf_last_id = -1
 
     def keyframe(self, keyframe_id: int) -> tuple[hs.Keyframe, NDArray[np.float16]] | None:
         """A keyframe and its patch grid. The first miss loads every keyframe in
@@ -402,9 +336,37 @@ class HyperspaceQuery:
                     )
         return hot, read
 
+    def read_tf(self) -> None:
+        """Take in the transforms written since the last pass. Newest id first,
+        stopping at the last one seen, so an unchanging recording costs one row
+        -- this used to re-scan every tf observation on every query."""
+        if TF_STREAM not in self.store.list_streams():
+            return
+        stream = self.store.stream(TF_STREAM, TFMessage)
+        batch: Iterable[Any]
+        if self._tf_last_id < 0:
+            batch = stream.order_by("ts")  # first pass: read it all, in order
+        else:
+            tail = []
+            for obs in stream.order_by("id", desc=True):
+                if obs.id <= self._tf_last_id:
+                    break
+                tail.append(obs)
+            if not tail:
+                return
+            batch = sorted(tail, key=lambda o: o.ts)
+        for obs in batch:
+            self._tf_last_id = max(self._tf_last_id, obs.id)
+            self.tf.receive_tfmessage(obs.data)
+
     def placer(self, target: str) -> Callable[[hs.Keyframe], NDArray[np.float64] | None]:
-        self.tf.update()
-        return lambda keyframe: self.tf.get(target, keyframe.camera_frame, keyframe.ts)
+        self.read_tf()
+
+        def place(keyframe: hs.Keyframe) -> NDArray[np.float64] | None:
+            transform = self.tf.get(target, keyframe.camera_frame, keyframe.ts, warn=False)
+            return None if transform is None else transform_to_matrix(transform)
+
+        return place
 
     def heatmap(self, text: str, frame: str | None = None) -> hs.Heatmap:
         target = frame or self.world_frame
