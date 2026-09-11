@@ -375,13 +375,13 @@ def main(
         "One = the classic single model; several = an ensemble pooled per cell. "
         "When reusing a db its own members are used.",
     ),
-    pool: str = typer.Option("2nd", help="Ensemble pooling: min, 2nd (second lowest) or mean"),
+    pool: str = typer.Option("min", help="Ensemble pooling: min, 2nd (second lowest) or mean"),
     min_frames: int = typer.Option(
         1,
         help="Keyframes a voxel must be seen from (refine 'support'); 2 was the single-model setting",
     ),
     pooled_hot_threshold: float = typer.Option(
-        0.02, help="Hot threshold on the pooled score (use ~0.005 with --pool min)"
+        0.005, help="Hot threshold on the pooled score (0.005 for min, 0.02 for 2nd)"
     ),
     device: str = typer.Option("auto", help="cuda, mps, cpu, or auto"),
     max_depth: float = typer.Option(10.0, help="Depth readings beyond this many meters are holes"),

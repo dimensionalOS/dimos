@@ -52,15 +52,13 @@ if TYPE_CHECKING:
 
 # Fixed-resolution SigLIP2: 384 / 16 = 24 patches per side = 576 patches, 1152-d.
 SIGLIP2_MODEL_NAME = "google/siglip2-so400m-patch16-384"
-# The ensemble the size sweep picked: three small checkpoints whose per-cell
-# second-lowest score (a 2-of-3 vote) doubles the single So400m's cluster
-# precision at the same recall, at 1.8-4.5x its frame rate and 85% of its
-# memory (sf_office, 302 keyframes, 4 queries; plan.md step 7).
-DEFAULT_MEMBERS = [
-    "google/siglip2-base-patch16-224",
-    "google/siglip2-base-patch16-256",
-    "google/siglip2-base-patch32-256",
-]
+# The ensemble the size sweep picked (sf_office, 302 keyframes, 4 queries;
+# plan.md step 7): two small checkpoints whose per-cell minimum doubles the
+# single So400m's cluster precision at 0.8x its recall, at 2.7x (Mac) / 5.9x
+# (RTX 5070) its frame rate and 57% of its memory. Adding
+# "google/siglip2-base-patch32-256" and pooling with "2nd" keeps the full
+# recall at 1.6-3x the frame rate instead.
+DEFAULT_MEMBERS = ["google/siglip2-base-patch16-224", "google/siglip2-base-patch16-256"]
 
 
 def parse_member(spec: str) -> tuple[str, int | None]:

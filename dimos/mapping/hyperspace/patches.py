@@ -283,13 +283,13 @@ class QueryConfig:
     hot_threshold: float = 0.02
     max_hot_patches: int = 6000
     # Ensemble stores (several grids per keyframe): how the members' per-cell
-    # contrasts combine. "2nd" = the second lowest (a 2-of-3 vote with three
-    # members; one may miss), "min" keeps only what every member sees, "mean"
-    # averages. The threshold applies to the pooled score: 0.02 with "2nd";
-    # a minimum sits below every member's score, so "min" wants ~0.005
-    # (matched the single model's recall at twice its precision, plan.md 7).
-    pool: str = "2nd"
-    pooled_hot_threshold: float = 0.02
+    # contrasts combine. "min" keeps only what every member sees, "2nd" = the
+    # second lowest (a 2-of-3 vote with three members; one may miss), "mean"
+    # averages. The threshold applies to the pooled score: a minimum sits
+    # below every member's score, so "min" wants 0.005 (the single model's
+    # recall at twice its precision, plan.md 7); use 0.02 with "2nd".
+    pool: str = "min"
+    pooled_hot_threshold: float = 0.005
     # Pyramids span this slice of the patch depth; 0.99-1.01 is a thin shell
     # at the depth itself (Jeff, 2026-09-10: tighter caps read better).
     cap_near: float = 0.99

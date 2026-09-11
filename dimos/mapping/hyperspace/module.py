@@ -253,10 +253,10 @@ class HyperspaceConfig(MemoryModuleConfig):
     model_name: str = SIGLIP2_MODEL_NAME
     # "auto" = cuda if available, else cpu (never mps, see start()).
     device: str = "auto"
-    # Ensemble stores: how the members' cell scores combine ("2nd", "min",
+    # Ensemble stores: how the members' cell scores combine ("min", "2nd",
     # "mean") and the threshold on the pooled score. See QueryConfig.
-    pool: str = "2nd"
-    pooled_hot_threshold: float = 0.02
+    pool: str = "min"
+    pooled_hot_threshold: float = 0.005
     # Frame answers are given in unless a request names another.
     world_frame: str = "odom"
     voxel_size: float = 0.10
