@@ -540,8 +540,20 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 logger.info("world_frame: using %r (the tf root)", root)
                 self.config.world_frame = root
 
-    def _ensure_world_cache(self) -> None:
-        """Build the cloud, top-down map, markers and trail once, whoever asks first."""
+    def _ensure_world_cache(
+        self,
+    ) -> tuple[
+        tuple[dict[str, Any], bytes],
+        tuple[dict[str, Any], bytes] | None,
+        tuple[dict[str, Any], bytes],
+        list[bytes] | None,
+        tuple[dict[str, Any], bytes],
+    ]:
+        """Build the cloud, top-down map, markers and trail once, whoever asks first.
+
+        Returns (cloud, top-down map, image poses, thumbnails, trail) as one
+        snapshot taken under the lock: a reopen clears the fields meanwhile.
+        """
         with self._world_cache_lock:
             if self._cached_cloud is None:
                 self._cached_cloud = self._build_cloud()
@@ -553,34 +565,38 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             if self._cached_odom is None:
                 with self._store_lock:
                     self._cached_odom = self._build_trail()
+            return (
+                self._cached_cloud,
+                self._cached_top_down,
+                self._cached_image_poses,
+                self._cached_thumbnails,
+                self._cached_odom,
+            )
 
     def _send_initial_payload(self, conn: ClientConn) -> None:
         try:
-            self._ensure_world_cache()
-            assert self._cached_cloud is not None  # built above; narrows the type
-            assert self._cached_image_poses is not None
-            assert self._cached_odom is not None
-            cloud_header, cloud_payload = self._cached_cloud
+            cloud, top_down, poses, thumbnails, odom = self._ensure_world_cache()
+            cloud_header, cloud_payload = cloud
             conn.send_threadsafe(encode_text("world_summary", **cloud_header))
             conn.send_threadsafe(encode_binary(MSG_POINT_CLOUD, cloud_header, cloud_payload))
 
             # Send top-down map next — both the ground plane and the HUD
             # minimap need it, so render asap on the client.
-            if self._cached_top_down is not None:
-                map_header, map_payload = self._cached_top_down
+            if top_down is not None:
+                map_header, map_payload = top_down
                 conn.send_threadsafe(encode_binary(MSG_TOP_DOWN_MAP, map_header, map_payload))
 
-            poses_header, poses_payload = self._cached_image_poses
+            poses_header, poses_payload = poses
             conn.send_threadsafe(encode_binary(MSG_IMAGE_POSES, poses_header, poses_payload))
 
             # One MSG_IMAGE_THUMBNAIL frame per pose. Indices match poses_header.
-            if self._cached_thumbnails:
-                for i, jpeg in enumerate(self._cached_thumbnails):
+            if thumbnails:
+                for i, jpeg in enumerate(thumbnails):
                     if not jpeg:
                         continue
                     conn.send_threadsafe(encode_binary(MSG_IMAGE_THUMBNAIL, {"index": i}, jpeg))
 
-            odom_header, odom_payload = self._cached_odom
+            odom_header, odom_payload = odom
             conn.send_threadsafe(encode_binary(MSG_ODOM_TRAIL, odom_header, odom_payload))
 
             conn.send_threadsafe(encode_text("ready"))

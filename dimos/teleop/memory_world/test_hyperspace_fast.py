@@ -171,6 +171,9 @@ def test_pool_max_per_frame_then_lse_then_yaw_bins() -> None:
         (0.3 + 0.02 * np.log(1 + np.exp((0.2 - 0.3) / 0.02) + np.exp((0.01 - 0.3) / 0.02)))
         * np.sqrt(2)
     )
+    # Support like Hyperspace's: three frames, three distinct yaw bins (the faint one too).
+    assert got.frames.tolist() == [3]
+    assert got.bins.tolist() == [3]
 
 
 def test_pack_keys_roundtrip_with_negative_indices() -> None:

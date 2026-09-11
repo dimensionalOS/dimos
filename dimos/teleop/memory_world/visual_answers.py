@@ -44,7 +44,7 @@ logger = setup_logger()
 class VisualAnswers:
     """Needs, from the module: ``config``, the store and index locks,
     ``_ensure_store``, ``_ensure_visual_index``, ``_reopen_recording``,
-    ``_hyperspace_ready``, ``_camera_hfov``, ``_encode_jpeg``, ``_broadcast``,
+    ``_hyperspace_ready``, ``_query_is_current``, ``_camera_hfov``, ``_encode_jpeg``, ``_broadcast``,
     ``whisper`` and the client bookkeeping."""
 
     config: Any
@@ -63,6 +63,7 @@ class VisualAnswers:
         def _ensure_visual_index(self) -> VisualMemoryIndex: ...
         def _reopen_recording(self) -> None: ...
         def _hyperspace_ready(self) -> bool: ...
+        def _query_is_current(self, query_id: str) -> bool: ...
         def _camera_hfov(self) -> float: ...
         def _broadcast(self, payload: bytes) -> None: ...
         @property
@@ -189,6 +190,8 @@ class VisualAnswers:
             }
             sent.append((header, jpeg))
         with self._clients_lock:
+            if not self._query_is_current(query_id):
+                return  # a newer question replaced this one while its frames decoded
             self._active_query_images = sent
         for header, jpeg in sent:
             self._broadcast(encode_binary(MSG_QUERY_IMAGE, header, jpeg))
