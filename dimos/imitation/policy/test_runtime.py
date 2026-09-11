@@ -131,6 +131,7 @@ def runtime(
     )
     control = mocker.MagicMock()
     control.list_tasks.return_value = ["policy_rollout"]
+    control.task_invoke.return_value = {joint: (-100.0, 100.0) for joint in JOINTS}
     control.execute_trajectory.return_value = TrajectoryExecutionResult(
         TrajectoryExecutionStatus.ACCEPTED
     )
@@ -237,11 +238,18 @@ def test_preflight_requires_configured_coordinator_task_without_loading_backend(
     control.execute_trajectory.assert_not_called()
 
 
-def test_all_command_points_are_bounded_without_altering_measured_observations(
+@pytest.mark.parametrize(
+    ("measured_value", "hardware_upper", "anchor"), [(2.06, 3.0, 2.06), (2.0005, 2.0, 2.0)]
+)
+def test_trajectory_anchor_uses_hardware_bounds_and_actions_use_demonstration_bounds(
     runtime: tuple[RuntimeModule, Any],
     mocker: pytest_mock.MockerFixture,
+    measured_value: float,
+    hardware_upper: float,
+    anchor: float,
 ) -> None:
     module, control = runtime
+    control.task_invoke.return_value = {"left": (-100.0, 100.0), "right": (0.0, hardware_upper)}
     module._backend.actions[:, 1] = 3.0
     module._backend.info = PolicyBackendInfo(
         name="fake",
@@ -253,7 +261,7 @@ def test_all_command_points_are_bounded_without_altering_measured_observations(
     now = time.time()
     module._on_observation("top_image", _image(now))
     module._on_observation("left_image", _image(now))
-    measured = np.asarray([1.0, 2.0005], dtype=np.float32)
+    measured = np.asarray([1.0, measured_value], dtype=np.float32)
     module._on_observation(
         "joint_state", JointState(ts=now, name=list(JOINTS), position=measured.tolist())
     )
@@ -265,7 +273,9 @@ def test_all_command_points_are_bounded_without_altering_measured_observations(
     module.stop_rollout()
 
     trajectory = control.execute_trajectory.call_args.args[0]
-    assert [point.positions for point in trajectory.points] == [[1.0, 2.0], [0.0, 2.0]]
+    np.testing.assert_allclose(
+        [point.positions for point in trajectory.points], [[1.0, anchor], [0.0, 2.0]]
+    )
     np.testing.assert_array_equal(predict.call_args.args[0]["state"], measured)
 
 

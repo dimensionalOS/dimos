@@ -28,6 +28,7 @@ def test_generated_contract_has_profile_ports_and_rpc_surface() -> None:
     assert OpenYamLeRobotPolicy.implementation == ("dimos_lerobot.runtime:LeRobotPolicyRuntime")
     assert streams == {"button_pressed", "wrist_image", "coordinator_joint_state"}
     assert contract_rpc_names(OpenYamLeRobotPolicy) == {
+        "clear_rollout_observations",
         "preflight_rollout",
         "rollout_status",
         "start_rollout",

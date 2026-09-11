@@ -156,3 +156,8 @@ def test_completed_trajectory_does_not_bypass_start_validation(positions, expect
         ],
     )
     assert task.execute(trajectory, positions).status is expected
+
+
+def test_position_limits_query_returns_only_task_joints_from_connected_hardware(hardware):
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]), hardware=hardware)
+    assert task.get_position_limits() == {"joint": (-2.0, 2.0)}

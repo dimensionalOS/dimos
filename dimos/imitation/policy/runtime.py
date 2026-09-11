@@ -78,6 +78,7 @@ class _PolicyRuntimeMixin:
         self._observation_floor_ts = 0.0
         self._backend = self.backend_type(self.config)
         self._backend_info: PolicyBackendInfo | None = None
+        self._position_bounds: tuple[NDArray[np.float32], NDArray[np.float32]] | None = None
         self._stop_event = Event()
         self._thread: Thread | None = None
         self._chunks_accepted = 0
@@ -125,10 +126,24 @@ class _PolicyRuntimeMixin:
                     "ControlCoordinator is missing configured rollout task "
                     f"{self.config.trajectory_task_name!r}"
                 )
+            limits = self._control.task_invoke(
+                self.config.trajectory_task_name, "get_position_limits", {}
+            )
+            joints = self.profile.action.demonstration.joints
+            bounds = np.asarray([limits[joint] for joint in joints], dtype=np.float32)
+            if (
+                bounds.shape != (len(joints), 2)
+                or not np.isfinite(bounds).all()
+                or np.any(bounds[:, 0] >= bounds[:, 1])
+            ):
+                raise RuntimeError(
+                    "Rollout task must declare finite ordered hardware position limits"
+                )
             backend_info = self._backend_info or self._backend.load(self.profile)
             self._validate_backend_info(backend_info)
             with self._lock:
                 self._backend_info = backend_info
+                self._position_bounds = (bounds[:, 0], bounds[:, 1])
                 try:
                     self._snapshot_observation(time.time())
                     self._last_error = None
@@ -333,7 +348,7 @@ class _PolicyRuntimeMixin:
                 if self._stop_event.is_set():
                     break
                 result = self._control.execute_trajectory(
-                    self._trajectory(state, actions, info),
+                    self._trajectory(state, actions),
                     task_name=self.config.trajectory_task_name,
                 )
                 if result.status is TrajectoryExecutionStatus.START_STATE_MISMATCH:
@@ -441,12 +456,13 @@ class _PolicyRuntimeMixin:
         self,
         state: NDArray[np.float32],
         actions: NDArray[np.float32],
-        info: PolicyBackendInfo,
     ) -> JointTrajectory:
-        # Measured joints can overshoot a stop; the anchor is still a command target.
-        if info.action_lower is not None:
-            assert info.action_upper is not None
-            state = np.clip(state, info.action_lower, info.action_upper)
+        # Anchor at the measured pose, even outside the demonstration range.
+        # Only physical joint stops constrain this initial command. Clipping it
+        # to action statistics can otherwise cause perpetual start-state rejection.
+        if self._position_bounds is None:
+            raise RuntimeError("Preflight must resolve hardware limits before rollout")
+        state = np.clip(state, *self._position_bounds)
         joints = list(self.profile.action.demonstration.joints)
         zeros = [0.0] * len(joints)
         points = [

@@ -30,6 +30,7 @@ def test_abc_contract_is_importable_without_torch() -> None:
         "coordinator_joint_state",
     }
     assert contract_rpc_names(DualOpenYamAbcPolicy) == {
+        "clear_rollout_observations",
         "preflight_rollout",
         "rollout_status",
         "start_rollout",

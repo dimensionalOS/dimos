@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import ClassVar, Protocol, TypedDict
+from typing import Any, ClassVar, Protocol, TypedDict
 
 from pydantic import Field, field_validator
 
@@ -55,6 +55,10 @@ class PolicyControlSpec(Spec, Protocol):
     def cancel_trajectory(self, task_name: str) -> TrajectoryCancellationResult: ...
 
     def list_tasks(self) -> list[str]: ...
+
+    def task_invoke(
+        self, task_name: str, method: str, kwargs: dict[str, Any] | None = None
+    ) -> Any: ...
 
 
 class RolloutStatus(TypedDict):

@@ -426,6 +426,10 @@ class JointTrajectoryTask(BaseControlTask):
             resolved[joint_name] = (lower, upper)
         return resolved
 
+    def get_position_limits(self) -> dict[str, tuple[float, float]]:
+        """Return authoritative hardware position bounds for this task's joints."""
+        return self._position_limits(self._joint_names_list)
+
     def execute(
         self,
         trajectory: JointTrajectory,
