@@ -21,8 +21,8 @@ trap 'exit 143' TERM
 INSTALLER_VERSION="0.3.0"
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
-UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg python3-dev pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config"
-MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo python pre-commit ffmpeg libsndfile pkg-config"
+UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config"
+MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit ffmpeg libsndfile pkg-config"
 
 INSTALL_MODE="${DIMOS_INSTALL_MODE:-}"
 EXTRAS="${DIMOS_EXTRAS:-}"
@@ -521,7 +521,7 @@ install_system_deps() {
 
     case "$DETECTED_OS" in
         ubuntu|wsl)
-            local -a needed=() privilege=(env)
+            local -a needed=() privilege=(/usr/bin/env)
             if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
             for pkg in $UBUNTU_PACKAGES; do
                 if [[ "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)" != "install ok installed" ]]; then
@@ -538,7 +538,7 @@ install_system_deps() {
                 return
             fi
             run_cmd "${privilege[@]}" apt-get update
-            run_cmd "${privilege[@]}" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y "${needed[@]}"
+            run_cmd "${privilege[@]}" /usr/bin/env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y "${needed[@]}"
             ;;
         macos)
             # Homebrew may exist outside PATH, including immediately after bootstrap.
@@ -741,7 +741,7 @@ do_install_library() {
     fi
     if [[ -d "$dir/.venv" && "$DRY_RUN" != 1 ]]; then
         if prompt_confirm "Replace existing virtual environment?" no; then
-            project_cmd env UV_VENV_CLEAR=1 uv venv --python 3.12
+            project_cmd /usr/bin/env UV_VENV_CLEAR=1 uv venv --python 3.12
         else
             info "keeping existing .venv"
         fi
@@ -766,7 +766,7 @@ do_install_dev() {
         git -C "$dir" rev-parse --is-inside-work-tree >/dev/null || die "invalid Git checkout: $dir"
         info "using existing checkout at $(git -C "$dir" rev-parse --short HEAD)"
     else
-        run_cmd env GIT_LFS_SKIP_SMUDGE=1 git clone -b "$GIT_BRANCH" https://github.com/dimensionalOS/dimos.git "$dir"
+        run_cmd /usr/bin/env GIT_LFS_SKIP_SMUDGE=1 git clone -b "$GIT_BRANCH" https://github.com/dimensionalOS/dimos.git "$dir"
     fi
     local -a sync_args=(--locked --python 3.12 --group tests --group lint)
     local -a extras=()
