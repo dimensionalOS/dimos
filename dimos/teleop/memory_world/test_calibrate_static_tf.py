@@ -212,6 +212,46 @@ def test_a_measured_mount_is_written_as_ordinary_static_tf(tmp_path) -> None:  #
         store.stop()
 
 
+def test_the_mount_goes_into_whatever_the_recording_calls_its_static_tf(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A namespaced static stream is the recording's static tf and must be the one written.
+
+    Writing a second stream called tf_static instead would leave two static edges for
+    the same joint and no rule about which wins.
+    """
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.calibrate_static_tf import write_static_mount
+    from dimos.teleop.memory_world.recording import build_tf_tree
+
+    def edge(parent: str, child: str, x: float) -> TFMessage:
+        return TFMessage(
+            Transform(
+                translation=Vector3(x, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id=parent,
+                child_frame_id=child,
+                ts=1.0,
+            )
+        )
+
+    store = SqliteStore(path=str(tmp_path / "rec.db"), must_exist=False)
+    store.start()
+    try:
+        store.stream("robot_tf", TFMessage).append(edge("lidar", "mount", 1.0), ts=1.0)
+        store.stream("robot_tf_static", TFMessage).append(edge("mount", "cam", 9.0), ts=1.0)
+
+        fixed = np.eye(4)
+        fixed[0, 3] = 2.0
+        assert write_static_mount(store, "mount", "cam", fixed, 1.0) == "robot_tf_static"
+        assert "tf_static" not in store.list_streams()  # no second static tf appears
+        assert build_tf_tree(store, "robot_tf").lookup("lidar", "cam", 1.0)[0, 3] == 3.0
+    finally:
+        store.stop()
+
+
 def test_the_mount_correction_reproduces_what_was_measured(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """corrected_mount turns a lidar-to-camera measurement into one edge of the tree."""
     from dimos.teleop.memory_world.calibrate_static_tf import corrected_mount
