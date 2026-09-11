@@ -288,6 +288,7 @@ def pool(evidence: Rasterized, config: Any) -> Pooled:
     )
     first = np.ones(len(keys), dtype=bool)
     first[1:] = (keys[1:] != keys[:-1]) | (frame[1:] != frame[:-1])
+    all_keys, all_yaw = keys, yaw  # every hit: the bin support counts them all
     keys, score, yaw = keys[first], score[first], yaw[first]
 
     # Per voxel: log-sum-exp over its frames' bests.
@@ -303,12 +304,12 @@ def pool(evidence: Rasterized, config: Any) -> Pooled:
     hot_bins = np.bincount(pairs[:, 0], minlength=len(starts))
     pooled = lse * np.sqrt(np.maximum(hot_bins, 1))
     frames = np.diff(np.append(starts, len(keys)))
-    # Support counts every distinct yaw bin, like Hyperspace's: only the score
-    # multiplier is about the hot ones, and refine's min_bins must not drop a
-    # voxel the reference keeps.
-    bins = np.bincount(
-        np.unique(np.stack([group, yaw], axis=1), axis=0)[:, 0], minlength=len(starts)
-    )
+    # Support counts every distinct yaw bin over every hit, like Hyperspace's (a
+    # frame can see a voxel from two bins): only the score multiplier is about
+    # the hot per-frame bests, and refine's min_bins must not drop a voxel the
+    # reference keeps.
+    seen = np.unique(np.stack([all_keys, all_yaw], axis=1), axis=0)
+    bins = np.bincount(np.searchsorted(keys[starts], seen[:, 0]), minlength=len(starts))
     return Pooled(unpack_keys(keys[starts]), pooled, frames.astype(np.int64), bins.astype(np.int64))
 
 

@@ -184,7 +184,7 @@ def _seed_index(
     source_id: int = 7,
 ) -> None:
     grid = patches if patches is not None else np.zeros((4, 2), dtype=np.float16)
-    store.stream(index_stream_name_of(model_name), PatchGrid).append(
+    store.stream(index_stream_name_of(model_name, "color_image"), PatchGrid).append(
         PatchGrid(source_id=source_id, rows=2, cols=2, patches=grid),
         ts=ts,
         pose=PoseStamped(position=Vector3(*position)),
@@ -199,6 +199,8 @@ def test_each_model_gets_its_own_stream() -> None:
     """Two models' vectors are not comparable, so they must not share a stream."""
     assert index_stream_name_of(GIANT) == "image_siglip2_giant_opt_p16_384"
     assert index_stream_name_of("google/siglip2-so400m-patch16-384") != index_stream_name_of(GIANT)
+    # ...and two cameras' frames are different evidence.
+    assert index_stream_name_of(GIANT, "left_image") != index_stream_name_of(GIANT, "right_image")
 
 
 def test_index_built_by_another_model_is_refused(sqlite_store: SqliteStore) -> None:
@@ -209,7 +211,7 @@ def test_index_built_by_another_model_is_refused(sqlite_store: SqliteStore) -> N
         _ = VisualMemoryIndex(
             sqlite_store,
             pose_of=lambda obs: None,
-            index_stream_name=index_stream_name_of(other),
+            index_stream_name=index_stream_name_of(other, "color_image"),
             model_name=GIANT,
         ).index_stream
 
@@ -238,7 +240,7 @@ def test_search_returns_the_frame_and_patch_that_matched(sqlite_store: SqliteSto
 
 
 def test_index_built_with_body_poses_is_refused(sqlite_store: SqliteStore) -> None:
-    sqlite_store.stream(index_stream_name_of(GIANT), PatchGrid).append(
+    sqlite_store.stream(index_stream_name_of(GIANT, "color_image"), PatchGrid).append(
         PatchGrid(source_id=7, rows=2, cols=2, patches=np.zeros((4, 2), dtype=np.float16)),
         ts=1.0,
         pose=PoseStamped(position=Vector3(0.0, 0.0, 0.0)),

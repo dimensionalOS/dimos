@@ -141,6 +141,7 @@ def test_build_streams_and_serve_segments(store) -> None:  # type: ignore[no-unt
     assert stats.keyframes == 4  # t=100.0, 101.0, 102.0 and the last scan
     assert VoxelReplay.available(store, voxel_size=VOXEL, lidar_stream_name="lidar")
     assert not VoxelReplay.available(store, voxel_size=VOXEL * 2, lidar_stream_name="lidar")
+    assert not VoxelReplay.available(store, voxel_size=VOXEL, lidar_stream_name="other_lidar")
 
     diffs = list(store.streams["voxel_diff"])
     assert len(diffs) == 30

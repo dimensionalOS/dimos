@@ -253,6 +253,7 @@ export class ReplayController {
             }).catch((e) => {
                 if (e && e.name === 'AbortError') return;
                 this.diag('replay_segment_failed', { number, error: String(e.message || e) });
+                this.playing = false;  // autoplay would retry this fetch ten times a second
                 this._setLoading(false);
                 if (this.ui) this.ui.timeLabel.textContent = 'segment failed, scrub again';
             });
@@ -317,7 +318,13 @@ export class ReplayController {
         if (inFlight) return inFlight.promise;
         const controller = new AbortController();
         const promise = fetch(`${this.baseUrl}/replay/segment/${number}`, { signal: controller.signal })
-            .then((r) => { if (!r.ok) throw new Error(`segment ${number}: ${r.status}`); return r.arrayBuffer(); })
+            .then(async (r) => {
+                if (!r.ok) {
+                    const detail = await r.json().then((body) => body.detail).catch(() => null);
+                    throw new Error(detail || `segment ${number}: ${r.status}`);
+                }
+                return r.arrayBuffer();
+            })
             .then((buffer) => {
                 const segment = new ReplaySegment(buffer, this.index);
                 segment.bytes = buffer.byteLength;

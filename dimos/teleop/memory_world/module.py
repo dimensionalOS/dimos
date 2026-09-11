@@ -632,9 +632,16 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         try:
             xyz: np.ndarray | None
             if self.config.build_replay_on_start:
-                replay = self._ensure_replay()
-                xyz = self._replay_read(lambda: replay.final_keyframe().data.points_f32())
-                logger.info("voxel cloud from the ray-traced replay: %d voxels", len(xyz))
+                try:
+                    replay = self._ensure_replay()
+                    xyz = self._replay_read(lambda: replay.final_keyframe().data.points_f32())
+                    logger.info("voxel cloud from the ray-traced replay: %d voxels", len(xyz))
+                except Exception:
+                    if self._stopping.is_set():
+                        raise
+                    # No seekable replay (a failed build, too few scans): the map still shows.
+                    logger.exception("no replay for the cloud; accumulating the scans instead")
+                    xyz = self._replay_read(self._accumulated_cloud)
             else:
                 xyz = self._replay_read(self._accumulated_cloud)
             if xyz is None or xyz.size == 0:
@@ -1229,6 +1236,12 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         if not self._replay_lock.acquire(blocking=False):
             raise RuntimeError(f"replay {self._replay_progress}")
         try:
+            if self._replay is None and self._replay_error is None:
+                # Never build on a request thread: start it and let the viewer poll.
+                threading.Thread(
+                    target=self._build_replay, daemon=True, name="MemoryWorldReplay"
+                ).start()
+                raise RuntimeError(f"replay {self._replay_progress}")
             replay = self._replay_locked()
             assert self._replay_index is not None  # set together with _replay
             return replay, self._replay_index

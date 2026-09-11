@@ -94,15 +94,14 @@ def model_slug(model_name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", tail.lower()).strip("_")
 
 
-def index_stream_name_of(model_name: str) -> str:
-    """Name the index stream after the model that built it.
+def index_stream_name_of(model_name: str, image_stream_name: str = "image") -> str:
+    """Name the index stream after the images and the model that built it.
 
-    Two models' embeddings are not comparable, so they must not share a stream.
-    Naming the stream for the model lets both sit in one recording and be
-    scored against each other: ``google/siglip2-giant-opt-patch16-384`` ->
-    ``image_siglip2_giant_opt_p16_384``.
+    Two models' embeddings are not comparable, and two cameras' frames are not
+    the same evidence, so neither pair may share a stream: ``color_image`` with
+    ``google/siglip2-giant-opt-patch16-384`` -> ``color_image_siglip2_giant_opt_p16_384``.
     """
-    return f"image_{model_slug(model_name)}"
+    return f"{image_stream_name}_{model_slug(model_name)}"
 
 
 BACKGROUND_PROMPTS = (
@@ -194,7 +193,7 @@ def search_phrase(spoken: str) -> str:
     "Where did I see a traffic cone?" scores fine as-is, but the answer text
     and the markers should read "a traffic cone", not the whole question.
     """
-    phrase = " ".join(spoken.split()).strip(" ?.!,")
+    phrase = " ".join(spoken.split()).strip(" ?.!,")[:400]  # MemoryQueryResult.query_text's cap
     lowered = phrase.lower()
     for prefix in _QUESTION_PREFIXES:
         if lowered.startswith(prefix + " "):
@@ -433,7 +432,9 @@ class VisualMemoryIndex:
         self.store = store
         self.pose_of = pose_of
         self.image_stream_name = image_stream_name
-        self.index_stream_name = index_stream_name or index_stream_name_of(model_name)
+        self.index_stream_name = index_stream_name or index_stream_name_of(
+            model_name, image_stream_name
+        )
         self.model_name = model_name
         self._device = device
         self._dtype = dtype
@@ -465,6 +466,11 @@ class VisualMemoryIndex:
                     raise ValueError(
                         f"index stream {self.index_stream_name!r} was built with {built_with}, "
                         f"not {self.model_name}; rebuild it or pass model_name={built_with!r}"
+                    )
+                if tags.get("image_stream", self.image_stream_name) != self.image_stream_name:
+                    raise ValueError(
+                        f"index stream {self.index_stream_name!r} indexes "
+                        f"{tags.get('image_stream')!r}, not {self.image_stream_name!r}"
                     )
                 if tags.get("pose_frame") != POSE_FRAME_TAG:
                     raise ValueError(
@@ -551,7 +557,11 @@ class VisualMemoryIndex:
                         position=Vector3(*matrix[:3, 3]),
                         orientation=Quaternion(*quaternion_from_matrix(matrix[:3, :3])),
                     ),
-                    tags={"model": self.model_name, "pose_frame": POSE_FRAME_TAG},
+                    tags={
+                        "model": self.model_name,
+                        "image_stream": self.image_stream_name,
+                        "pose_frame": POSE_FRAME_TAG,
+                    },
                 )
                 added += 1
             logger.info("indexed %d frames of %s", added, self.image_stream_name)

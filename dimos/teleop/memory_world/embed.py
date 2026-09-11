@@ -115,6 +115,7 @@ class EmbeddingJob:
     def _run(self, command: list[str], config_text: str | None, adopt: Callable[[], None]) -> None:
         last = ""
         config_path: str | None = None
+        process: subprocess.Popen[bytes] | None = None
         try:
             if config_text is not None:
                 with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as handle:
@@ -151,7 +152,8 @@ class EmbeddingJob:
             self._set("failed", str(error)[-200:])
         finally:
             with self._lock:
-                self._process = None
+                if self._process is process:  # a job started after "done" owns the handle now
+                    self._process = None
             if config_path is not None:
                 Path(config_path).unlink(missing_ok=True)
             if self._on_finished is not None:
