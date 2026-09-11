@@ -56,6 +56,7 @@ from dimos.cli.commands.data import data_app
 from dimos.cli.commands.docs import docs
 from dimos.cli.commands.global_options import create_dynamic_callback
 from dimos.cli.commands.graph import graph
+from dimos.cli.commands.imitation import imitation_app
 from dimos.cli.commands.info import list_blueprints, show_config
 from dimos.cli.commands.lifecycle import log_cmd, restart, run, status, stop
 from dimos.cli.commands.map import map_app
@@ -129,6 +130,7 @@ main.command(
 main.command(name="list")(list_blueprints)
 main.command()(graph)
 main.command()(docs)
+main.add_typer(imitation_app, name="imitation")
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(spy)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(lcmspy)
 main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})(agentspy)
@@ -140,7 +142,6 @@ main.add_typer(map_app, name="map")
 from dimos.navigation.nav_3d.evaluator.cli import app as nav_eval_app
 
 main.add_typer(nav_eval_app, name="nav-eval")
-
 from dimos.memory.cli.app import mem_app
 
 main.add_typer(mem_app, name="mem")

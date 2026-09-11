@@ -68,17 +68,19 @@ Run the complete manipulation imitation-learning workflow through one command
 group:
 
 ```bash
-dimos imitation list
-dimos imitation collect WORKFLOW --task TEXT
-dimos imitation prepare WORKFLOW RECORDING
-dimos imitation inspect ARTIFACT [--workflow WORKFLOW]
+dimos run COLLECTION_BLUEPRINT --daemon --recording RECORDING_DIR --task TEXT
+dimos imitation collect
+dimos imitation prepare RECORDING_DIR --output DATASET_DIR
+dimos imitation inspect ARTIFACT
 dimos imitation train [LEROBOT_ARGS...]
-dimos imitation run WORKFLOW CHECKPOINT --task TEXT [--quest-control]
+dimos run ROLLOUT_BLUEPRINT --daemon --policy-path CHECKPOINT --task TEXT
+dimos imitation rollout
 ```
 
-Collection and rollout own their robot stacks from startup through shutdown.
-Quest is optional and rollout performs a non-moving checkpoint and live-input
-preflight before enabling policy motion. See the
+`dimos run` owns the robot stack. The collection and rollout panels attach by
+typed Spec; quitting either panel only disconnects. Stop the runtime separately
+with `dimos stop`. Rollout checks checkpoint and live-input readiness before
+accepting a start request. See the
 [imitation-learning guide](/docs/capabilities/manipulation/imitation-learning.md)
 for hardware safety, controls, artifact paths, and compatibility limits.
 
