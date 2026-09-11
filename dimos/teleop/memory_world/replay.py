@@ -43,7 +43,7 @@ from __future__ import annotations
 import argparse
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import gzip
 import json
 import struct
@@ -376,7 +376,6 @@ class ReplayIndex:
     keyframe_scan: np.ndarray  # (K,) int, scan index each keyframe was taken after
     keyframe_ts: np.ndarray  # (K,) float64
     origin: tuple[int, int, int]  # voxel index the int16 wire coordinates are relative to
-    stream_tags: dict[str, Any] = field(default_factory=dict)
 
     def scan_at(self, ts: float) -> int:
         """Index of the last scan at or before *ts* (0 before the first)."""
@@ -448,6 +447,8 @@ class VoxelReplay:
         if DIFF_STREAM not in names or KEYFRAME_STREAM not in names:
             return False
         keyframes = store.streams[KEYFRAME_STREAM]
+        if keyframes.count() == 0:  # a build that died before its first keyframe
+            return False
         tags = keyframes.first().tags or {}
         return (
             bool((keyframes.last().tags or {}).get("last"))
@@ -480,7 +481,6 @@ class VoxelReplay:
             keyframe_scan=np.array(keyframe_scan, dtype=np.int64),
             keyframe_ts=np.array(keyframe_ts, dtype=np.float64),
             origin=(int(centre[0]), int(centre[1]), int(centre[2])),
-            stream_tags=tags,
         )
 
     def _grid_indices(self, cloud: PointCloud2) -> tuple[np.ndarray, np.ndarray]:

@@ -891,6 +891,7 @@ async function disconnect() {
     }
     perfEl.style.display = 'none';
     document.getElementById('timeline').hidden = true;
+    if (replay) replay.dispose();
     replay = null;
     document.body.classList.remove('desktop-view');
     connectBtn.classList.remove('hidden');

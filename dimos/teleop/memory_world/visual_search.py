@@ -53,6 +53,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -380,7 +381,7 @@ def patch_world_position(
     v = round(image_uv[1] * height)
     half = window_px // 2
     window = depth_mm[max(v - half, 0) : v + half, max(u - half, 0) : u + half]
-    valid = window[window > 0]
+    valid = window[np.isfinite(window) & (window > 0)]
     if valid.size == 0:
         return None
     depth_m = float(np.median(valid)) / 1000.0
@@ -602,9 +603,14 @@ class VisualMemoryIndex:
                 f"embedding stream {name!r} holds raw vision-tower tokens, which text cannot "
                 "score; re-run siglipify (it now applies the pooling head per patch)"
             )
-        frames = list(self.store.streams[self.image_stream_name].order_by("ts"))
-        by_id = {int(obs.id): obs for obs in frames}
-        stamps = np.array([float(obs.ts) for obs in frames])
+        # Ids and stamps only: an mcap observation holds its image bytes, and a
+        # recording has tens of thousands of them.
+        frames = [
+            SimpleNamespace(id=int(obs.id), ts=float(obs.ts))
+            for obs in self.store.streams[self.image_stream_name].order_by("ts")
+        ]
+        by_id = {obs.id: obs for obs in frames}
+        stamps = np.array([obs.ts for obs in frames])
 
         def frame_of(row: Any) -> Any | None:
             if row.source_id is not None:
@@ -779,11 +785,11 @@ def main() -> None:
     parser.add_argument("--search", default=None, help="run this query after building")
     args = parser.parse_args()
 
-    from dimos.teleop.memory_world.tf_tree import TfTree
+    from dimos.teleop.memory_world.recording import build_tf_tree
 
     store = open_recording(args.store_path)
     store.start()
-    tree = TfTree.from_stream(store.streams[args.tf_stream])
+    tree = build_tf_tree(store, args.tf_stream, args.world_frame)
     camera_frame = args.camera_frame or str(
         getattr(store.streams[args.image_stream].first().data, "frame_id", "")
     )

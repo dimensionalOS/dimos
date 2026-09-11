@@ -435,3 +435,78 @@ def test_build_tf_tree_takes_the_corrected_odometry_for_the_base(tmp_path) -> No
     assert cam is not None
     assert [round(float(v), 3) for v in cam[:3, 3]] == [2.0, 1.0, 0.5]
     store.stop()
+
+
+def test_open_recording_reads_compressed_images_as_images(tmp_path: Path) -> None:
+    """The stitched Pi recordings store colour as webp CompressedImage."""
+    import cv2
+
+    from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
+    from dimos.msgs.sensor_msgs.Image import Image
+    from dimos.teleop.memory_world.recording import detect_streams
+
+    pixels = np.zeros((8, 12, 3), dtype=np.uint8)
+    pixels[:, :, 1] = 200
+    ok, encoded = cv2.imencode(".webp", pixels)
+    assert ok
+    store = SqliteStore(path=str(tmp_path / "stitch.db"))
+    store.start()
+    store.stream("color_image", CompressedImage).append(
+        CompressedImage(data=encoded.tobytes(), format="webp", frame_id="d455_color", ts=5.0),
+        ts=5.0,
+    )
+    store.stop()
+
+    recording = open_recording(tmp_path / "stitch.db")
+    recording.start()
+    try:
+        image = recording.streams["color_image"].first().data
+        assert isinstance(image, Image)
+        assert image.data.shape == (8, 12, 3) and image.frame_id == "d455_color"
+        assert detect_streams(recording)["image"] == "color_image"
+    finally:
+        recording.stop()
+
+
+def test_build_tf_tree_holds_static_transforms_and_uses_their_stamps(tmp_path: Path) -> None:
+    """tf_static is published once; a camera hung off base_link by it is placed for all time,
+    and a transform carrying its own stamp is filed under that stamp."""
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree
+
+    def moving(x: float, ts: float) -> TFMessage:
+        return TFMessage(
+            Transform(
+                translation=Vector3(x, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="odom",
+                child_frame_id="base_link",
+                ts=ts,
+            )
+        )
+
+    store = SqliteStore(path=str(tmp_path / "ros.db"))
+    store.start()
+    tf = store.stream("tf", TFMessage)
+    tf.append(moving(0.0, 10.0), ts=10.0)
+    tf.append(moving(10.0, 20.0), ts=20.5)  # batched: stored half a second late
+    store.stream("tf_static", TFMessage).append(
+        TFMessage(
+            Transform(
+                translation=Vector3(0.0, 0.0, 1.5),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="base_link",
+                child_frame_id="camera",
+            )
+        ),
+        ts=9.0,
+    )
+    try:
+        tree = build_tf_tree(store, "tf", "odom")
+        camera = tree.lookup("odom", "camera", 15.0)
+        assert camera is not None
+        assert np.allclose(camera[:3, 3], [5.0, 0.0, 1.5])  # halfway by the transforms' own stamps
+    finally:
+        store.stop()

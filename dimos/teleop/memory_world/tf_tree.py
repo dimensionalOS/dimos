@@ -20,9 +20,10 @@ composes each edge at the requested time: translation interpolated linearly,
 rotation by slerp, between the two bracketing samples. An edge published once
 (or whose samples never change) is simply static.
 
-Camera frames, lidar scans and the robot's path are placed by asking this
-tree; the pose an observation carries is used only when the tree has no edge
-for its frame.
+Camera frames, sensor-relative lidar scans and the robot's path are placed by
+asking this tree. A scan already in the world frame (a corrected lidar stream)
+keeps its own stamped pose, and a frame the tree does not know falls back to
+the pose its observation carries.
 """
 
 from __future__ import annotations
@@ -182,7 +183,7 @@ class TfTree:
                 tree.add(
                     str(transform.frame_id),
                     str(transform.child_frame_id),
-                    float(obs.ts),
+                    float(getattr(transform, "ts", 0.0) or obs.ts),  # its own stamp when it has one
                     (float(t.x), float(t.y), float(t.z)),
                     (float(r.x), float(r.y), float(r.z), float(r.w)),
                 )

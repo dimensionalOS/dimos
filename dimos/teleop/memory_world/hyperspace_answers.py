@@ -78,6 +78,7 @@ class AskRequest(BaseModel):
 
 
 class NavigateRequest(BaseModel):
+    query_id: str | None = None  # the answer the cluster belongs to, when the viewer knows it
     cluster: int = Field(default=0, ge=0)
     # Start from here (world xyz) instead of where the robot ended the recording.
     start: tuple[float, float, float] | None = None
@@ -122,7 +123,8 @@ class HyperspaceAnswers:
         )
         self._active_heatmap: tuple[dict[str, Any], bytes] | None = None
         self._active_pyramids: str | None = None
-        self._last_answer: HeatmapAnswer | None = None
+        # The Hyperspace answer on screen and the query id it was published under.
+        self._last_answer: tuple[HeatmapAnswer | None, str | None] = (None, None)
         self._route_planner: RoutePlanner | MlsRoutePlanner | None = None
         self._planner_lock = threading.Lock()
         self._orbit_cache: dict[str, dict[str, Any]] = {}
@@ -228,7 +230,6 @@ class HyperspaceAnswers:
             return SkillResult.fail(
                 "QUERY_FAILED", f"Hyperspace could not answer {phrase!r}: {error}"
             )
-        self._last_answer = answer
         if not answer.clusters:
             self._publish_empty(phrase, answer)
             return SkillResult.fail("NOT_FOUND", f"Nothing in the recording matches {phrase!r}")
@@ -264,6 +265,8 @@ class HyperspaceAnswers:
             query_text=phrase,
         )
         query_id = self._publish_query_result(result)
+        with self._clients_lock:
+            self._last_answer = (answer, query_id)
         self._publish_heatmap(query_id, answer)
         self._publish_pyramids(query_id, answer)
         # The pictures come from the recording (seconds on an mcap); the answer does not wait for them.
@@ -292,6 +295,8 @@ class HyperspaceAnswers:
             answer=f"Nothing matches {phrase!r}", engine="hyperspace", query_text=phrase
         )
         query_id = self._publish_query_result(result)
+        with self._clients_lock:
+            self._last_answer = (answer, query_id)
         self._publish_heatmap(query_id, answer)
         self._publish_pyramids(query_id, answer)  # clears the previous answer's frusta too
 
@@ -430,9 +435,12 @@ class HyperspaceAnswers:
 
     def _navigate_to(self, request: NavigateRequest) -> dict[str, Any]:
         with self._clients_lock:
-            answer = self._last_answer
+            answer, query_id = self._last_answer
             active = getattr(self, "_active_query_result", None)
-            query_id = active.get("query_id") if isinstance(active, dict) else None
+        if not isinstance(active, dict) or active.get("query_id") != query_id:
+            raise HTTPException(status_code=409, detail="the last answer is not a Hyperspace one")
+        if request.query_id not in (None, query_id):
+            raise HTTPException(status_code=409, detail="that answer has been replaced")
         if answer is None or request.cluster >= len(answer.clusters):
             raise HTTPException(status_code=404, detail="no such cluster in the last answer")
         cluster = answer.clusters[request.cluster]
@@ -446,8 +454,6 @@ class HyperspaceAnswers:
         if route is None:
             raise HTTPException(status_code=422, detail="no route through the known free space")
         points = [(float(x), float(y), float(z)) for x, y, z in route.points]
-        if not self._query_is_current(query_id):
-            raise HTTPException(status_code=409, detail="the answer changed while planning")
         payload = {
             "query_id": query_id,
             "cluster": cluster.index,
@@ -458,12 +464,13 @@ class HyperspaceAnswers:
             "cells": route.cells,
             "planner": route.planner,
         }
-        with self._clients_lock:
-            active = getattr(self, "_active_query_result", None)
-        if isinstance(active, dict) and active.get("query_id") == query_id and len(points) >= 2:
-            active["route"] = HighlightPath(
-                points=points, label=f"Route to #{cluster.index + 1}", color="#64ff8f"
-            ).model_dump(mode="json")
+        with self._clients_lock:  # still the answer on screen? then reconnects get the route too
+            if self._active_query_result is active:
+                active["route"] = HighlightPath(
+                    points=points, label=f"Route to #{cluster.index + 1}", color="#64ff8f"
+                ).model_dump(mode="json")
+            else:
+                raise HTTPException(status_code=409, detail="the answer changed while planning")
         self._broadcast(encode_text("route", **payload))
         return payload
 
@@ -566,7 +573,7 @@ class HyperspaceAnswers:
         @app.get(f"{base}/answer")  # type: ignore[misc]
         async def memory_world_answer() -> dict[str, Any]:
             """The last answer's clusters and stats, for scripts and the tour."""
-            answer = self._last_answer
+            answer, _ = self._last_answer
             if answer is None:
                 return {"text": None, "clusters": []}
             return {

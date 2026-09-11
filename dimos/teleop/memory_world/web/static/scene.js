@@ -12,23 +12,8 @@
 // we translate / rotate / scale `_worldGroup`, which contains everything the
 // user is looking at. Walking forward = world moves backward, etc.
 //
-// Public methods (called by main.js):
-//   setSession(session, perFrame)
-//   setPointCloud(header, payloadArrayBuffer)
-//   setImagePoses(header, payloadArrayBuffer)
-//   setOdomTrail(header, payloadArrayBuffer)
-//   applyLocomote({stickX, stickY, dt})
-//   applySnapTurn({sign})
-//   setTeleportAim({originWorld, dirWorld})
-//   clearTeleportAim()
-//   applyTeleportCommit()
-//   applyScale({factor, pivotWorld})
-//   resetView()
-//
-// Public read-only helpers used by InputAdapter:
-//   getCameraForwardXZ() -> [x, z] unit vector in world space
-//   getCameraPositionWorld() -> THREE.Vector3
-//   worldToRobot(point)  -- for diag / future use
+// main.js drives the scene through its public methods; InputAdapter reads the
+// camera helpers (getCameraForwardXZ, getCameraPositionWorld, worldToRobot).
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
 import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms, viewportHeight, viewportHeightPx } from '/static_mw/voxel_sprites.js';
@@ -370,7 +355,7 @@ export class WorldScene {
         this.scene.traverse((obj) => {
             if (obj.geometry) obj.geometry.dispose();
             for (const material of [].concat(obj.material || [])) {
-                if (material.map) material.map.dispose();
+                if (material.map) { material.map.image?.close?.(); material.map.dispose(); }
                 material.dispose();
             }
         });
@@ -1311,6 +1296,7 @@ export class WorldScene {
         const quad = this._imageQuadsByIndex.get(index);
         if (!quad) return;
         this._imageQuadGroup.remove(quad);
+        quad.material.map.image.close();   // the ImageBitmap; dispose() only drops the GPU copy
         quad.material.map.dispose();
         quad.material.dispose();
         this._imageQuadsByIndex.delete(index);
@@ -1500,7 +1486,10 @@ export class WorldScene {
             child.traverse((obj) => {
                 if (obj.geometry) obj.geometry.dispose();
                 if (obj.material) {
-                    if (obj.material.map) obj.material.map.dispose();  // the evidence photo
+                    if (obj.material.map) {   // the evidence photo: bitmap and GPU copy
+                        obj.material.map.image?.close?.();
+                        obj.material.map.dispose();
+                    }
                     obj.material.dispose();
                 }
             });

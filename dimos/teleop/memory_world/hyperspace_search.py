@@ -552,7 +552,7 @@ class HyperspaceSearch:
                 for ijk, f, b in zip(index, result.frames[keep], result.bins[keep], strict=True)
             },
         )
-        scene: list[tuple[int, int, int]] = []
+        scene: list[tuple[int, int, int]] = []  # occupancy was already applied on sparse keys
         refined = rf.refine(heat, config, scene=scene, text=text)
         if len(refined.clusters) < 2 and config.min_frames > 1:
             # A sparse ingest (one keyframe per voxel) gives "support" nothing to count and

@@ -156,8 +156,8 @@ class MlsRoutePlanner:
         if len(near) == 0:
             return []
         above = self.nodes[near, 2] > xyz[2] + 0.3
-        # Nearest by distance with the vertical gap counted twice: the storey under
-        # the point wins over the one below it.
+        # Ranked by planar distance plus twice the height gap, so the surface the point
+        # sits on beats one under it; nodes above the point come last.
         closeness = d[near] + 2.0 * np.abs(self.nodes[near, 2] - xyz[2])
         order = near[np.lexsort((closeness, above))][:MLS_SNAP_CANDIDATES]
         return [tuple(float(v) for v in self.nodes[i]) for i in order]  # type: ignore[misc]

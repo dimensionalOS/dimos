@@ -46,6 +46,7 @@ export class ResultsNav {
     /** A new answer arrived (the `query_result` message). */
     setResult(msg) {
         this.clusters = msg.clusters || [];
+        this.queryId = msg.query_id || null;
         this.queryText = msg.query_text || '';
         this.current = -1;
         this.clearRoute();
@@ -127,7 +128,7 @@ export class ResultsNav {
             const response = await fetch(`${this.baseUrl}/navigate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cluster }),
+                body: JSON.stringify({ cluster, query_id: this.queryId }),
             });
             const body = await response.json();
             if (!response.ok) {

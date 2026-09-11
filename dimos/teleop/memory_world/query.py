@@ -28,7 +28,7 @@ Color = Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")]
 class HighlightPath(BaseModel):
     """A world-frame path rendered as a tube in VR."""
 
-    points: list[Point3] = Field(min_length=2, max_length=2_000)
+    points: list[Point3] = Field(min_length=2, max_length=20_000)  # a planned route: one per cell
     label: str = Field(default="", max_length=120)
     color: Color = "#ffd166"
 

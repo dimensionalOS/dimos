@@ -324,7 +324,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         self._stopping = threading.Event()
         self._replay_progress = "not started"
         self._replay_index: dict[str, Any] | None = None
-        self._replay_frames: OrderedDict[int, tuple[bytes, dict[str, Any]]] = OrderedDict()
+        self._replay_frames: OrderedDict[float, tuple[bytes, dict[str, Any]]] = OrderedDict()
         self._camera_hfov_deg: float | None = None
         self._active_query_result: dict[str, Any] | None = None
         self._active_query_images: list[tuple[dict[str, Any], bytes]] = []
@@ -556,7 +556,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
 
     def _ensure_world_cache(self) -> None:
         """Build the cloud, top-down map, markers and trail once, whoever asks first."""
-        with self._world_cache_lock:
+        with self._world_cache_lock, self._store_lock:  # the image stream is read here
             if self._cached_cloud is None:
                 self._cached_cloud = self._build_cloud()
             if self._cached_top_down is None:
@@ -875,8 +875,8 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
     ) -> SkillResult:
         """Analyze the recorded memory and display validated spatial results in VR.
 
-        Run complete Python code in a fresh process with ``store`` (the mem2
-        SqliteStore), ``np`` (NumPy), and ``viewer_position`` available. Inspect
+        Run complete Python code in a fresh process with ``store`` (the recording,
+        a mem2 store), ``np`` (NumPy), and ``viewer_position`` available. Inspect
         streams with ``store.list_streams()``, ``store.summary()``, and
         ``store.streams[name]``. Observations expose ``pose_tuple``, ``data``,
         and ``id``. ``store.read_stream`` does not exist. For a bounded xyz
@@ -1055,7 +1055,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
 
     def _reopen_recording(self) -> None:
         """Open the recording afresh: siglipify rewrote the mcap, and the store holds the old file."""
-        with self._world_cache_lock, self._replay_lock, self._index_lock:
+        with self._world_cache_lock, self._replay_lock, self._index_lock, self._store_lock:
             old = self._store
             self._store = open_recording(self.config.store_path)
             self._name_streams(self._store)
@@ -1119,7 +1119,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
             points=[
                 HighlightPoint(
                     position=place.position,
-                    label=f"{phrase} ({place.similarity:+.3f}, {place.views} view"
+                    label=f"{phrase[:80]} ({place.similarity:+.3f}, {place.views} view"
                     f"{'s' if place.views != 1 else ''})",
                     radius=self.config.object_radius_m if located else None,
                 )
@@ -1164,9 +1164,11 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         sent: list[tuple[dict[str, Any], bytes]] = []
         for index, place in enumerate(places):
             try:
-                frame = images.at(place.ts, tolerance=0.005).first()
+                with self._store_lock:
+                    frame = images.at(place.ts, tolerance=0.005).first()
+                    image = frame.data
                 jpeg = self._encode_jpeg(
-                    frame.data, self.config.query_image_max_size, self.config.thumbnail_jpeg_quality
+                    image, self.config.query_image_max_size, self.config.thumbnail_jpeg_quality
                 )
             except Exception:
                 logger.exception("could not fetch the frame behind place %d", index)
@@ -1605,23 +1607,19 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         self._prepare_thread.start()
 
     def _prepare(self) -> None:
-        """Build what every client needs, in order of urgency, on one thread.
-
-        Each step is a pass over the recording; run together they starve each
-        other (on an mcap every pass decompresses the image chunks), so the
-        world cache goes first (building the ray-traced replay it takes its
-        map from, when that is missing), then the slow SigLIP index. A client
-        that connects mid-way waits on the world cache lock.
-        """
+        """Build what every client needs, in order of urgency, on one thread: each
+        step is a pass over the recording and run together they starve each other."""
         try:
             self._ensure_world_cache()
         except Exception:
             logger.exception("world cache build failed")
+        if self._stopping.is_set():
+            return
         self._load_hyperspace()
-        if self.config.build_replay_on_start:
+        if self.config.build_replay_on_start and not self._stopping.is_set():
             self._build_replay()
-        if not self._hyperspace_ready():  # the SigLIP index is the fallback engine
-            self._build_visual_index()
+        if not self._hyperspace_ready() and not self._stopping.is_set():
+            self._build_visual_index()  # the SigLIP index is the fallback engine
 
     @rpc
     def stop(self) -> None:
@@ -1631,23 +1629,24 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
             if self._web_server_thread is not None:
                 self._web_server_thread.join(timeout=3)
                 self._web_server_thread = None
-            self._stopping.set()  # ends a replay build; the store closes only after it
+            self._stopping.set()  # prepare stops between steps; a replay build per scan
             self._embed_job.terminate()
             self._prepare_job.terminate()
             if self._prepare_thread is not None:
                 self._prepare_thread.join(timeout=60)
-                self._prepare_thread = None
             if self._hyperspace is not None:
                 self._hyperspace.close()
         finally:
             if self._visual_index is not None:
                 self._visual_index.stop()
                 self._visual_index = None
-            store = self._store
-            self._store = None
-            if store is not None:
-                try:
-                    store.stop()
-                except Exception:
-                    logger.exception("error closing memory store")
+            if self._prepare_thread is not None and self._prepare_thread.is_alive():
+                logger.warning("prepare is still running; its store is left for the process exit")
+            else:
+                store, self._store = self._store, None
+                if store is not None:
+                    try:
+                        store.stop()
+                    except Exception:
+                        logger.exception("error closing memory store")
             super().stop()

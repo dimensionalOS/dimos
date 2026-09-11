@@ -77,6 +77,8 @@ memworld ~/datasets/lite_recorder/grocery.mcap   # or bike.mcap / park.mcap / an
 - Route: dimos MLS planner (3D terrain traversability over the ray-traced
   map); on maps too large for it, a 2D costmap along the driven path with
   dimos `min_cost_astar`. `route.py`.
-- Switches: `--memoryworldmodule.hyperspace-refine "occupancy,support,prior"`
-  runs Hyperspace's own refine chain instead; `--memoryworldmodule.hyperspace-segments false`
+- Switches: `--memoryworldmodule.hyperspace-refine` picks the refinement:
+  `default` (Hyperspace's own chain, the default), a chain of your own such
+  as `"occupancy,prior"`, `occupancy` (heat next to the map + components
+  only) or `none` (the raw map); `--memoryworldmodule.hyperspace-segments false`
   drops the segment channel.

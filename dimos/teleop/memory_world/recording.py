@@ -33,7 +33,7 @@ import json
 import math
 from pathlib import Path
 import sqlite3
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -53,6 +53,9 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.unitree.go2.dds import cdr, ros
 from dimos.robot.unitree.go2.dds.codec import FnCodec
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.teleop.memory_world.tf_tree import TfTree
 
 logger = setup_logger()
 
@@ -102,7 +105,11 @@ def decode_image(buf: bytes) -> Image:
     if w.encoding not in IMAGE_ENCODINGS:
         raise ValueError(f"unsupported image encoding {w.encoding!r}")
     fmt, dtype, channels = IMAGE_ENCODINGS[w.encoding]
-    pixels: np.ndarray = w.data.view(dtype)
+    itemsize = np.dtype(dtype).itemsize
+    rows = np.frombuffer(w.data, dtype=np.uint8).reshape(w.height, w.step)  # step: padded rows
+    pixels = np.ascontiguousarray(rows[:, : w.width * channels * itemsize]).view(dtype)
+    if w.is_bigendian and itemsize > 1:
+        pixels = pixels.byteswap().view(pixels.dtype.newbyteorder("="))
     shape = (w.height, w.width, channels) if channels > 1 else (w.height, w.width)
     return Image.from_numpy(
         pixels.reshape(shape), format=fmt, frame_id=w.header.frame_id, ts=ros._ts(w.header)
@@ -120,18 +127,23 @@ class _CompressedImageWire:
 
 
 def decode_compressed_image(buf: bytes) -> Image:
-    """A ``sensor_msgs/CompressedImage`` (jpeg or png bytes) decoded to pixels.
+    """A ROS 2 ``sensor_msgs/CompressedImage`` decoded to pixels."""
+    w: _CompressedImageWire = cdr.decode(buf, _CompressedImageWire)[0]
+    return image_from_encoded(bytes(w.data), w.format, w.header.frame_id, ros._ts(w.header))
+
+
+def image_from_encoded(data: bytes, fmt: str, frame_id: str, ts: float) -> Image:
+    """jpeg, png or webp bytes decoded to pixels.
 
     The Pi recorder stores colour and infrared this way; depth stays raw. The
-    format string reads like ``"rgb8; jpeg compressed bgr8"`` or ``"png"``;
+    format string reads like ``"rgb8; jpeg compressed bgr8"`` or ``"webp"``;
     the bytes decide, and cv2 hands back BGR for colour and the stored depth
     for 16-bit png."""
     import cv2
 
-    w: _CompressedImageWire = cdr.decode(buf, _CompressedImageWire)[0]
-    pixels = cv2.imdecode(np.frombuffer(w.data, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    pixels = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
     if pixels is None:
-        raise ValueError(f"undecodable compressed image ({w.format!r}, {len(w.data)} bytes)")
+        raise ValueError(f"undecodable compressed image ({fmt!r}, {len(data)} bytes)")
     if pixels.ndim == 3 and pixels.shape[2] == 3:
         fmt = IMAGE_ENCODINGS["bgr8"][0]
     elif pixels.ndim == 3 and pixels.shape[2] == 4:
@@ -141,7 +153,34 @@ def decode_compressed_image(buf: bytes) -> Image:
         fmt = IMAGE_ENCODINGS["16UC1"][0]
     else:
         fmt = IMAGE_ENCODINGS["mono8"][0]
-    return Image.from_numpy(pixels, format=fmt, frame_id=w.header.frame_id, ts=ros._ts(w.header))
+    return Image.from_numpy(pixels, format=fmt, frame_id=frame_id, ts=ts)
+
+
+class _DecodedImages:
+    """A codec whose decoded ``CompressedImage`` comes out as an ``Image``."""
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+
+    def encode(self, value: Any) -> bytes:
+        return self.inner.encode(value)
+
+    def decode(self, data: bytes) -> Image:
+        message = self.inner.decode(data)
+        return image_from_encoded(bytes(message.data), message.format, message.frame_id, message.ts)
+
+
+class RecordingDb(SqliteStore):
+    """A mem2 database read as a recording: a ``CompressedImage`` stream (the
+    stitched Pi recordings store webp) reads as ``Image``, like an mcap's."""
+
+    def _assemble_backend(self, name: str, stored: dict[str, Any]) -> Any:
+        backend = super()._assemble_backend(name, stored)
+        if stored["payload_module"].endswith(".CompressedImage"):
+            codec = _DecodedImages(backend.codec)
+            backend.codec = backend.metadata_store.codec = backend.metadata_store._codec = codec
+            backend.data_type = Image
+        return backend
 
 
 @dataclass
@@ -392,7 +431,7 @@ def open_recording(path: str | Path) -> Store:
         return RecordingWithDerivedStreams(
             open_ros2_mcap(text), SqliteStore(path=str(derived_db_path(text)))
         )
-    return SqliteStore(path=text, must_exist=True)
+    return RecordingDb(path=text, must_exist=True)
 
 
 # ---- naming a recording's streams -------------------------------------------
@@ -421,7 +460,8 @@ _STREAM_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     # An icp-stitched recording carries `<lidar>_corrected` beside the raw scans: loop
     # closures applied, so it wins.
     "lidar": (("corrected", "lidar", "cloud", "points", "scan"), ("costmap", "map", "accumulated")),
-    "tf": (("tf",), ()),
+    "tf": (("tf",), ("static",)),
+    "tf_static": (("static",), ()),
 }
 
 
@@ -446,6 +486,18 @@ def build_tf_tree(
     from dimos.teleop.memory_world.tf_tree import TfTree, _Edge
 
     tree = TfTree.from_stream(store.streams[tf_stream])
+    static = detect_streams(store).get("tf_static")
+    if static is not None:  # published once, before anything else: held for all time
+        for obs in store.streams[static]:
+            for t in obs.data.transforms:
+                p, q = t.translation, t.rotation
+                tree.add(
+                    str(t.frame_id),
+                    str(t.child_frame_id),
+                    0.0,
+                    (float(p.x), float(p.y), float(p.z)),
+                    (float(q.x), float(q.y), float(q.z), float(q.w)),
+                )
     corrected = corrected_odometry_stream(store)
     if corrected is None:
         return tree
@@ -534,6 +586,7 @@ def detect_streams(store: Store) -> dict[str, Any]:
         # nothing about which one agrees with the tf tree — the caller checks.
         "lidar_candidates": rank("lidar", "PointCloud2"),
         "tf": pick("tf", "TFMessage"),
+        "tf_static": pick("tf_static", "TFMessage"),
     }
     # Prefer the camera_info that belongs to the chosen image stream.
     if image is not None:

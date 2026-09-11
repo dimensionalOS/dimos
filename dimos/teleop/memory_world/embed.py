@@ -94,6 +94,7 @@ class EmbeddingJob:
         with self._lock:
             if self.state == "running":
                 return False
+            self._terminated = False
             self.state, self.progress = "running", f"starting {self.name}"
         threading.Thread(
             target=self._run,

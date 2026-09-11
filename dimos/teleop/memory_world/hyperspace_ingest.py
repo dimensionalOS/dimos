@@ -28,6 +28,8 @@ same :func:`dimos.mapping.hyperspace.cli.ingest`. Output goes to
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterator
+import heapq
 import logging
 from pathlib import Path
 import sys
@@ -37,6 +39,7 @@ from typing import Any
 import numpy as np
 
 from dimos.teleop.memory_world.hyperspace_search import memory_db_for
+from dimos.teleop.memory_world.recording import depth_info_stream_for
 
 logger = logging.getLogger(__name__)
 
@@ -185,51 +188,55 @@ def _ingest(
     colors = store.streams[streams["image"]].order_by("ts")
     depths = store.streams[streams["depth"]].order_by("ts")
     start_ts = float(colors.first().ts)
+
     # Only the tf the slice can use; a whole recording's tf is hundreds of
     # thousands of messages the query side would otherwise decode.
     # Hyperspace reads tf back in time order but skips ids it has passed, so the
-    # messages go in chronologically: originals and corrected poses merged.
-    messages: list[tuple[float, Any]] = []
-    for observation in store.streams[streams["tf"]].order_by("ts"):
-        stamp = float(observation.ts)
-        if stamp < start_ts - 5.0 or stamp > start_ts + max_seconds + 5.0:
-            continue
-        message = observation.data
-        if corrected is not None:
-            kept = [
-                t
-                for t in message.transforms
-                if not (t.frame_id == world and t.child_frame_id == "base_link")
-            ]
-            if not kept:
+    # originals and the corrected poses are merged chronologically, streamed.
+    def in_window(observation: Any) -> bool:
+        return start_ts - 5.0 <= float(observation.ts) <= start_ts + max_seconds + 5.0
+
+    def originals() -> Iterator[tuple[float, TFMessage]]:
+        for observation in store.streams[streams["tf"]].order_by("ts"):
+            if not in_window(observation):
                 continue
-            message = TFMessage(*kept)
-        messages.append((stamp, message))
-    if corrected is not None:
+            message = observation.data
+            if corrected is not None:
+                kept = [
+                    t
+                    for t in message.transforms
+                    if not (t.frame_id == world and t.child_frame_id == "base_link")
+                ]
+                if not kept:
+                    continue
+                message = TFMessage(*kept)
+            yield float(observation.ts), message
+
+    def corrected_poses() -> Iterator[tuple[float, TFMessage]]:
+        if corrected is None:
+            return
         for observation in store.streams[corrected].order_by("ts"):
-            stamp = float(observation.ts)
-            if stamp < start_ts - 5.0 or stamp > start_ts + max_seconds + 5.0:
+            if not in_window(observation):
                 continue
             pose = observation.data.pose
             p, q = pose.position, pose.orientation
-            messages.append(
-                (
-                    stamp,
-                    TFMessage(
-                        Transform(
-                            translation=Vector3(float(p.x), float(p.y), float(p.z)),
-                            rotation=Quaternion(float(q.x), float(q.y), float(q.z), float(q.w)),
-                            frame_id=world,
-                            child_frame_id="base_link",
-                            ts=stamp,
-                        )
-                    ),
-                )
+            yield (
+                float(observation.ts),
+                TFMessage(
+                    Transform(
+                        translation=Vector3(float(p.x), float(p.y), float(p.z)),
+                        rotation=Quaternion(float(q.x), float(q.y), float(q.z), float(q.w)),
+                        frame_id=world,
+                        child_frame_id="base_link",
+                        ts=float(observation.ts),
+                    )
+                ),
             )
-    messages.sort(key=lambda item: item[0])
-    for stamp, message in messages:
+
+    transforms = 0
+    for stamp, message in heapq.merge(originals(), corrected_poses(), key=lambda item: item[0]):
         ingestor.add_tf(message, ts=stamp)
-    transforms = len(messages)
+        transforms += 1
     print(
         f"tf: {transforms} messages{' (corrected base poses from ' + corrected + ')' if corrected else ''}",
         flush=True,

@@ -345,14 +345,27 @@ export class ReplayController {
     _evictSegments() {
         while (this.cacheBytes > this.cacheBudget && this.segments.size > 1) {
             let farthest = null, distance = -1;
-            for (const n of this.segments.keys()) {
+            for (const [n, segment] of this.segments) {
+                if (segment === this.segment) continue;   // the one on screen stays
                 const d = Math.abs(n - this.segmentOf(this.targetScan));
                 if (d > distance) { distance = d; farthest = n; }
             }
-            if (farthest === null || this.segments.get(farthest) === this.segment) break;
+            if (farthest === null) break;
             this.cacheBytes -= this.segments.get(farthest).bytes || 0;
             this.segments.delete(farthest);
         }
+    }
+
+    /** Stop every download and timer and free the frames; the controller is done. */
+    dispose() {
+        if (this._preloadTimer) clearTimeout(this._preloadTimer);
+        this._preloadTimer = null;
+        this._abortPendingExcept(-1);
+        for (const frame of this._frameCache.values()) frame.bitmap.close();
+        this._frameCache.clear();
+        this.segments.clear();
+        this.cacheBytes = 0;
+        this.index = null;   // seek/tick/preload all return without an index
     }
 
     // ---- gradual preloading ----------------------------------------------------
