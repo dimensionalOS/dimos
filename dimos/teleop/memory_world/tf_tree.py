@@ -144,6 +144,8 @@ class _Edge:
         if self.static:
             return -math.inf, math.inf
         stamps, _, _ = self._arrays()
+        if len(stamps) == 1:  # published once: held from then on, as at() does
+            return float(stamps[0]), math.inf
         return float(stamps[0]), float(stamps[-1])
 
     def at(self, ts: float, tolerance_s: float) -> np.ndarray | None:

@@ -12,19 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Memory World module — spawns the user inside a recorded point cloud.
+"""Memory World module: spawns the user inside a recorded point cloud.
 
-On WebSocket connect we:
-
-1. Accumulate the recording's lidar stream into a voxel map and push it as one
-   binary frame (positions + per-point RGB).
-2. Sample the ``color_image`` stream and push each capture pose as a
-   Street-View-style marker. The headset can later pinch one to surface the
-   image at that location.
-3. Push the odom trail as a polyline.
-
-All locomotion (smooth walk, snap turn, teleport, scale) is client-side; the
-server pushes the world, answers questions and serves the replay.
+On connect it pushes the voxel map (positions + RGB), the camera poses as
+markers with thumbnails, and the odom trail; then it answers questions and
+serves the replay. Locomotion is client-side.
 """
 
 from __future__ import annotations
@@ -89,10 +81,9 @@ from dimos.teleop.memory_world.replay import (
     VoxelReplay,
     accumulate_scans,
     build_replay_streams,
-    frame_positions,
     sensor_scan,
-    stamped_positions,
 )
+from dimos.teleop.memory_world.replay_serving import HEIGHT_COLOR_STOPS, ReplayServing
 from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix
 from dimos.teleop.memory_world.visual_search import (
     SIGLIP2_MODEL_NAME,
@@ -119,19 +110,6 @@ STATIC_DIR = Path(__file__).parent / "web" / "static"
 # y down): the standard ROS optical rotation. Used only for recordings that
 # carry no tf tree and stamp body poses on their images.
 OPTICAL_FROM_BODY = pose_matrix((0.0, 0.0, 0.0), (-0.5, 0.5, -0.5, 0.5))
-
-# Height ramp stops (RGB), floor to ceiling: purple, blue, cyan, light green,
-# over the 5th-95th percentile of height so a few stray returns far above or
-# below the building do not flatten everything else into one shade. Yellow,
-# orange, red and white stay for the heat map and the answer markers.
-HEIGHT_COLOR_STOPS = np.array(
-    [
-        [110.0, 30.0, 170.0],
-        [40.0, 90.0, 235.0],
-        [40.0, 200.0, 230.0],
-        [150.0, 240.0, 150.0],
-    ]
-)
 
 
 class MemoryWorldConfig(ModuleConfig):
@@ -276,7 +254,7 @@ class MemoryWorldConfig(ModuleConfig):
     replay_frame_jpeg_quality: int = 60
 
 
-class MemoryWorldModule(HyperspaceAnswers, Module):
+class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
     """VR memory-world module.
 
     See :mod:`dimos.teleop.memory_world` for the architectural overview.
@@ -301,7 +279,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         self._viewer_position: tuple[float, float, float] | None = None
         self._visual_index: VisualMemoryIndex | None = None
         self._lidar_world_aligned_cache: bool | None = None
-        self._index_lock = threading.Lock()
+        self._index_lock = threading.RLock()
         self._embed_job = EmbeddingJob(
             on_finished=lambda job: self._broadcast(
                 encode_text("index_status", **self._index_status())
@@ -320,7 +298,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         # The store's sqlite connection is not safe to read from two threads at
         # once: a scrubbing viewer fetches segments and frames while an answer's
         # evidence frames are being decoded.
-        self._store_lock = threading.RLock()  # the world cache build re-enters it
+        self._store_lock = threading.RLock()  # re-entered by the world cache build
         self._stopping = threading.Event()
         self._replay_progress = "not started"
         self._replay_index: dict[str, Any] | None = None
@@ -385,7 +363,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         async def memory_world_replay_index() -> dict[str, Any]:
             """Scan and keyframe stamps: everything the viewer needs to seek."""
             try:
-                return await asyncio.to_thread(self._replay_read, self._replay_index_json)
+                return await asyncio.to_thread(self._replay_index_json)
             except Exception as error:
                 raise HTTPException(
                     status_code=503, detail=f"replay {self._replay_progress}"
@@ -395,13 +373,16 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         async def memory_world_replay_segment(number: int, request: Request) -> Response:
             """One keyframe plus the diffs up to the next; see VoxelReplay.segment."""
 
-            def segment() -> bytes:  # resolved and read under the one store lock
-                replay = self._ensure_replay()
-                if not 0 <= number < len(replay.index.keyframe_scan):
-                    raise HTTPException(status_code=404, detail="no such segment")
+            replay = await asyncio.to_thread(self._ensure_replay)
+            if not 0 <= number < len(replay.index.keyframe_scan):
+                raise HTTPException(status_code=404, detail="no such segment")
+
+            def read() -> bytes:
+                if self._replay is not replay:  # reopened meanwhile; the viewer retries
+                    raise HTTPException(status_code=503, detail="the recording was reopened")
                 return replay.encoded_segment(number)
 
-            gzipped = await asyncio.to_thread(self._replay_read, segment)
+            gzipped = await asyncio.to_thread(self._replay_read, read)
             headers = {"Cache-Control": "max-age=3600"}
             if "gzip" in request.headers.get("accept-encoding", ""):
                 headers["Content-Encoding"] = "gzip"
@@ -537,14 +518,12 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
                 continue
             chosen = detected[role]
             if role == "lidar" and len(detected["lidar_candidates"]) > 1:
-                tree = self._tf_tree()
+                tree = self._tf_tree()  # tf is named first, so the tree can be read now
                 if tree is not None:
-                    chosen = (
-                        pick_lidar(
-                            store, detected["lidar_candidates"], tree, self.config.world_frame
-                        )
-                        or chosen
-                    )
+                    world = self.config.world_frame
+                    if world not in tree.frames:
+                        world = tf_root(tree) or world
+                    chosen = pick_lidar(store, detected["lidar_candidates"], tree, world) or chosen
             setattr(self.config, setting, chosen)
             logger.info(
                 "%s: using %r (%s)",
@@ -552,7 +531,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
                 chosen,
                 "detected" if not configured else f"no {configured!r} in the recording",
             )
-        tree = self._tf_tree()  # named above, so the tree can be read now
+        tree = self._tf_tree()
         if tree is not None and self.config.world_frame not in tree.frames:
             root = tf_root(tree)
             if root:
@@ -561,15 +540,17 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
 
     def _ensure_world_cache(self) -> None:
         """Build the cloud, top-down map, markers and trail once, whoever asks first."""
-        with self._world_cache_lock, self._store_lock:  # the image stream is read here
+        with self._world_cache_lock:
             if self._cached_cloud is None:
                 self._cached_cloud = self._build_cloud()
             if self._cached_top_down is None:
                 self._cached_top_down = self._build_top_down_map(self._cached_cloud)
             if self._cached_image_poses is None:
-                self._cached_image_poses, self._cached_thumbnails = self._build_image_poses()
+                with self._store_lock:  # walks the image stream
+                    self._cached_image_poses, self._cached_thumbnails = self._build_image_poses()
             if self._cached_odom is None:
-                self._cached_odom = self._build_trail()
+                with self._store_lock:
+                    self._cached_odom = self._build_trail()
 
     def _send_initial_payload(self, conn: ClientConn) -> None:
         try:
@@ -602,12 +583,11 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
 
             conn.send_threadsafe(encode_text("ready"))
             conn.send_threadsafe(encode_text("index_status", **self._index_status()))
-            with self._clients_lock:
-                active_query_result = self._active_query_result
-            if active_query_result is not None:
-                conn.send_threadsafe(encode_text("query_result", **active_query_result))
-                for header, jpeg in self._active_query_images:
-                    conn.send_threadsafe(encode_binary(MSG_QUERY_IMAGE, header, jpeg))
+            with self._clients_lock:  # under the lock: no newer answer slips in
+                if self._active_query_result is not None:
+                    conn.send_threadsafe(encode_text("query_result", **self._active_query_result))
+                    for header, jpeg in self._active_query_images:
+                        conn.send_threadsafe(encode_binary(MSG_QUERY_IMAGE, header, jpeg))
         except Exception:
             logger.exception("failed to build/send world payload")
             conn.send_threadsafe(encode_text("error", message="world load failed"))
@@ -638,7 +618,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
                 xyz = self._replay_read(lambda: replay.keyframes.last().data.points_f32())
                 logger.info("voxel cloud from the ray-traced replay: %d voxels", len(xyz))
             else:
-                xyz = self._accumulated_cloud()
+                xyz = self._replay_read(self._accumulated_cloud)
             if xyz is None or xyz.size == 0:
                 return None
 
@@ -974,6 +954,10 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
     # ---- spoken visual search ---------------------------------------------
 
     def _ensure_visual_index(self) -> VisualMemoryIndex:
+        with self._index_lock:  # a lazy init; the lock is re-entrant for the build
+            return self._visual_index_unlocked()
+
+    def _visual_index_unlocked(self) -> VisualMemoryIndex:
         if self._visual_index is None:
             self._visual_index = VisualMemoryIndex(
                 self._ensure_store(),
@@ -996,7 +980,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
             self._index_progress = f"no {self.config.image_stream_name!r} stream"
             logger.warning("visual index skipped: %s", self._index_progress)
             return
-        with self._index_lock:
+        with self._store_lock, self._index_lock:  # the build reads every image
             index = self._ensure_visual_index()
             existing = index.count()
             if existing == 0 and not self.config.build_image_index_on_start:
@@ -1061,8 +1045,8 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
 
     def _reopen_recording(self) -> None:
         """Open the recording afresh: siglipify rewrote the mcap, and the store holds the old file."""
-        # Lock order everywhere: world cache, store, replay, index.
-        with self._world_cache_lock, self._store_lock, self._replay_lock, self._index_lock:
+        # Lock order everywhere: world cache, replay, store, index.
+        with self._world_cache_lock, self._replay_lock, self._store_lock, self._index_lock:
             old = self._store
             self._store = open_recording(self.config.store_path)
             self._name_streams(self._store)
@@ -1290,6 +1274,10 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         return obs.data.transform(Transform.from_matrix(matrix))
 
     def _camera_hfov(self) -> float:
+        with self._store_lock:  # a lazy init that reads the store
+            return self._read_camera_hfov()
+
+    def _read_camera_hfov(self) -> float:
         """Horizontal field of view of the image stream, from camera_info when present."""
         if self._camera_hfov_deg is None:
             self._camera_hfov_deg = 70.0
@@ -1304,17 +1292,24 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
     # ---- timeline replay -----------------------------------------------------
 
     def _ensure_replay(self) -> VoxelReplay:
-        """The recording's replay streams, built on first use if missing."""
+        """The recording's replay streams, built on first use if missing.
+
+        Lock order everywhere: world cache, replay, store, index. The build runs
+        under the replay lock alone: the lidar and derived streams have their own
+        connections and nothing serves replay data until it is done.
+        """
         with self._replay_lock:
             if self._replay is not None:
                 return self._replay
-            store = self._ensure_store()
-            if not VoxelReplay.available(
-                store,
-                voxel_size=self.config.voxel_size,
-                lidar_stream_name=self.config.lidar_stream_name,
-                max_range=self.config.replay_max_range_m,
-            ):
+            with self._store_lock:
+                store = self._ensure_store()
+                available = VoxelReplay.available(
+                    store,
+                    voxel_size=self.config.voxel_size,
+                    lidar_stream_name=self.config.lidar_stream_name,
+                    max_range=self.config.replay_max_range_m,
+                )
+            if not available:
                 self._replay_progress = "building"
                 logger.info("building the voxel replay streams into %s", self.config.store_path)
                 stats = build_replay_streams(
@@ -1334,17 +1329,19 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
                     stats.removed,
                     stats.seconds,
                 )
-            # The replay shows the same heights as the static map.
-            self._replay = VoxelReplay(
-                store,
-                z_min=self.config.map_z_min if self.config.map_z_min is not None else -np.inf,
-                z_max=self.config.map_z_max if self.config.map_z_max is not None else np.inf,
-            )
-            # Listing every camera stamp is a pass over the image stream (on
-            # an mcap that decompresses every chunk), so it is done here, once.
-            self._replay_index = self._build_replay_index_json(self._replay)
+            with self._store_lock:
+                # The replay shows the same heights as the static map.
+                replay = VoxelReplay(
+                    store,
+                    z_min=self.config.map_z_min if self.config.map_z_min is not None else -np.inf,
+                    z_max=self.config.map_z_max if self.config.map_z_max is not None else np.inf,
+                )
+                # Listing every camera stamp is a pass over the image stream (on
+                # an mcap that decompresses every chunk), so it is done here, once.
+                self._replay_index = self._build_replay_index_json(replay)
+                self._replay = replay
             self._replay_progress = "ready"
-            return self._replay
+            return replay
 
     def _replay_read(self, fn: Any, *args: Any) -> Any:
         """Run one store-reading replay call at a time."""
@@ -1357,69 +1354,6 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         except Exception as error:
             self._replay_progress = f"failed: {error}"
             logger.exception("voxel replay build failed")
-
-    def _replay_index_json(self) -> dict[str, Any]:
-        self._ensure_replay()
-        assert self._replay_index is not None  # set together with _replay
-        return self._replay_index
-
-    def _build_replay_index_json(self, replay: VoxelReplay) -> dict[str, Any]:
-        images = self._ensure_store().streams[self.config.image_stream_name]
-        payload = replay.index.to_json()
-        # Frame stamps let the viewer ask for exact frames, so its cache hits.
-        payload["frames"] = [round(float(obs.ts), 4) for obs in images]
-        payload["hfov_deg"] = self._camera_hfov()
-        # The viewer colours replayed voxels itself, on the static map's ramp.
-        final = replay.keyframes.last().data.points_f32()
-        z = final[:, 2] if len(final) else np.zeros(1)
-        low = float(np.percentile(z, self.config.height_ramp_low_percentile))
-        high = float(np.percentile(z, self.config.height_ramp_high_percentile))
-        payload["height"] = {"floor": low, "span": max(high - low, 1e-3)}
-        payload["colors"] = (HEIGHT_COLOR_STOPS / 255.0).round(4).tolist()
-        payload["orbit"] = self._orbit_positions(replay.index.scan_ts)
-        return payload
-
-    def _orbit_positions(self, stamps: np.ndarray) -> dict[str, Any]:
-        """Where the orbit frame was at each replay scan, for the viewer to circle."""
-        tree = self._tf_tree()
-        frame = self.config.orbit_frame
-        if tree is not None and frame not in tree.frames:
-            logger.warning("orbit frame %r not in tf; orbiting the camera instead", frame)
-            frame = self._camera_frame()
-        if tree is not None:
-            positions = frame_positions(stamps, lambda ts: self._frame_pose_at(frame, ts))
-        else:  # no tf: the pose stamped on the lidar scans is all there is
-            scans = self._ensure_store().streams[self.config.lidar_stream_name].order_by("ts")
-            positions = stamped_positions(scans)[: len(stamps)]
-        return {"frame": frame, "positions": positions}
-
-    def _replay_frame(self, ts: float) -> tuple[bytes, dict[str, Any]] | None:
-        """JPEG and camera pose of the image nearest *ts*, in a small LRU."""
-        images = self._ensure_store().streams[self.config.image_stream_name]
-        candidates = list(images.at(ts, tolerance=0.25))
-        if not candidates:
-            return None
-        obs = min(candidates, key=lambda o: abs(float(o.ts) - ts))
-        key = round(float(obs.ts), 4)  # not obs.id: an mcap numbers each windowed read from 0
-        cached = self._replay_frames.get(key)
-        if cached is not None:
-            self._replay_frames.move_to_end(key)
-            return cached
-        jpeg = self._encode_jpeg(
-            obs.data, self.config.replay_frame_max_size, self.config.replay_frame_jpeg_quality
-        )
-        meta: dict[str, Any] = {"ts": round(float(obs.ts), 4), "hfov_deg": self._camera_hfov()}
-        camera = self._camera_pose_of(obs)
-        if camera is not None:
-            meta.update(
-                position=[float(v) for v in camera[:3, 3]],
-                forward=[float(v) for v in camera[:3, 2]],
-                up=[float(v) for v in -camera[:3, 1]],
-            )
-        self._replay_frames[key] = (jpeg, meta)
-        while len(self._replay_frames) > 600:
-            self._replay_frames.popitem(last=False)
-        return jpeg, meta
 
     def _frame_pose_at(self, frame: str, ts: float) -> np.ndarray | None:
         """world_T_frame at *ts* from tf, or None."""
@@ -1467,12 +1401,19 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         intrinsics = (float(k[0]), float(k[4]), float(k[2]), float(k[5]))
 
         hits: list[PatchHit] = []
-        for frame in self._ensure_visual_index().frame_patches(phrase, k=self.config.locate_frames):
+        with self._store_lock:
+            frames = list(
+                self._ensure_visual_index().frame_patches(phrase, k=self.config.locate_frames)
+            )
+        for frame in frames:
             try:
-                depth = depth_stream.at(frame.ts, tolerance=self.config.depth_tolerance_s).first()
+                with self._store_lock:
+                    depth = depth_stream.at(
+                        frame.ts, tolerance=self.config.depth_tolerance_s
+                    ).first()
+                    depth_mm = np.asarray(depth.data.data)
             except LookupError:
                 continue
-            depth_mm = np.asarray(depth.data.data)
             camera_to_world = pose_matrix(frame.position, frame.orientation)
             for image_uv, score in hot_patches(frame.similarity, frame.rows, frame.cols):
                 position = patch_world_position(image_uv, depth_mm, intrinsics, camera_to_world)

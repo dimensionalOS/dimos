@@ -337,8 +337,6 @@ class HyperspaceAnswers:
 
     def _publish_cluster_images(self, query_id: str, phrase: str, answer: HeatmapAnswer) -> None:
         """Every cluster's evidence frames, posed where their cameras stood."""
-        store = self._ensure_store()
-        images = store.streams[self.config.image_stream_name]
         hfov_deg = self._camera_hfov()
         sent: list[tuple[dict[str, Any], bytes]] = []
         # Decoding frames out of an mcap costs CPU the next question needs, so only the
@@ -346,7 +344,8 @@ class HyperspaceAnswers:
         for cluster in answer.clusters[:EVIDENCE_CLUSTERS]:
             for evidence in cluster.evidence:
                 try:
-                    with self._store_lock:  # the scrubber reads the same connection
+                    with self._store_lock:  # resolved and read together: a reopen swaps the store
+                        images = self._ensure_store().streams[self.config.image_stream_name]
                         frame = images.at(evidence.ts, tolerance=0.02).first()
                         image = frame.data
                     jpeg = self._encode_jpeg(

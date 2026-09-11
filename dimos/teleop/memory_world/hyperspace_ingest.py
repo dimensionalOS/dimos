@@ -220,15 +220,18 @@ def _ingest(
                 continue
             pose = observation.data.pose
             p, q = pose.position, pose.orientation
+            stamp = float(
+                getattr(observation.data, "ts", 0.0) or observation.ts
+            )  # as build_tf_tree
             yield (
-                float(observation.ts),
+                stamp,
                 TFMessage(
                     Transform(
                         translation=Vector3(float(p.x), float(p.y), float(p.z)),
                         rotation=Quaternion(float(q.x), float(q.y), float(q.z), float(q.w)),
                         frame_id=world,
                         child_frame_id="base_link",
-                        ts=float(observation.ts),
+                        ts=stamp,
                     )
                 ),
             )

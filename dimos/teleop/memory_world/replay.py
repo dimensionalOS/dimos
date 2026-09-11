@@ -237,7 +237,8 @@ def build_replay_streams(
     last_keyframe_ts: float | None = None
     low = np.full(3, np.inf)  # of every voxel ever added: the int16 grid's span
     high = np.full(3, -np.inf)
-    # One scan of lookahead says which is the last: an mcap's count() is not reliable.
+    # One scan of lookahead says which is the last: on an mcap, count() and what the
+    # iterator yields differ (8697 vs 8015 on one recording), so no counting.
     scans = iter(store.streams[lidar_stream_name])
     obs = next(scans, None)
     while obs is not None:
@@ -595,7 +596,11 @@ class VoxelReplay:
         """Diff messages for scans [start, end), by their stamps."""
         t0 = float(self.index.scan_ts[start])
         t1 = float(self.index.scan_ts[end - 1]) if end - 1 < len(self.index.scan_ts) else t0
-        found = list(self.diffs.time_range(t0 - 1e-4, t1 + 1e-4))
+        # By scan index: two scans can share a stamp, and the range then over-fetches.
+        by_index = {
+            int(obs.tags["scan_index"]): obs for obs in self.diffs.time_range(t0 - 1e-4, t1 + 1e-4)
+        }
+        found = [by_index[i] for i in range(start, end) if i in by_index]
         if len(found) != end - start:
             raise RuntimeError(
                 f"expected {end - start} diffs for scans {start}..{end}, got {len(found)}"

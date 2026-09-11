@@ -87,16 +87,17 @@ export class ReplayLayer extends THREE.Points {
                 color0: { value: new THREE.Vector3(...colors[0]) },
                 color1: { value: new THREE.Vector3(...colors[1]) },
                 color2: { value: new THREE.Vector3(...colors[2]) },
+                color3: { value: new THREE.Vector3(...colors[3]) },
                 freshColor: { value: new THREE.Vector3(...FRESH_COLOR) },
             },
             vertexShader: `${SPRITE_VERTEX_GLSL}
                 attribute float fresh;
                 uniform float floorZ, spanZ;
-                uniform vec3 color0, color1, color2, freshColor;
+                uniform vec3 color0, color1, color2, color3, freshColor;
                 varying vec3 vColor;
                 void main() {
-                    float t = clamp((position.z - floorZ) / spanZ, 0.0, 1.0);
-                    vec3 ramp = t < 0.5 ? mix(color0, color1, t * 2.0) : mix(color1, color2, t * 2.0 - 1.0);
+                    float t = clamp((position.z - floorZ) / spanZ, 0.0, 1.0) * 3.0;   // four stops, equally spaced like the server's
+                    vec3 ramp = t < 1.0 ? mix(color0, color1, t) : t < 2.0 ? mix(color1, color2, t - 1.0) : mix(color2, color3, t - 2.0);
                     vColor = mix(ramp, freshColor, fresh);
                     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
                     gl_PointSize = spritePointSize(mvPosition);
@@ -343,10 +344,11 @@ export class ReplayController {
 
     /** Segments farthest from the target go first, until the cache fits its byte budget. */
     _evictSegments() {
+        const target = this.segmentOf(this.targetScan);
         while (this.cacheBytes > this.cacheBudget && this.segments.size > 1) {
             let farthest = null, distance = -1;
             for (const [n, segment] of this.segments) {
-                if (segment === this.segment) continue;   // the one on screen stays
+                if (segment === this.segment || n === target) continue;   // on screen, or about to be
                 const d = Math.abs(n - this.segmentOf(this.targetScan));
                 if (d > distance) { distance = d; farthest = n; }
             }
@@ -436,9 +438,8 @@ export class ReplayController {
         if (!candidates.length) return;
         const nearest = candidates.reduce((a, b) => (Math.abs(b - ts) < Math.abs(a - ts) ? b : a));
         if (Math.abs(nearest - ts) > FRAME_TOLERANCE_S) return;
-        if (nearest === this._frameShown) return;
-        this._frameWanted = nearest;
-        this._pumpFrame();
+        this._frameWanted = nearest;   // also when it is already shown: a download in flight must not replace it
+        if (nearest !== this._frameShown) this._pumpFrame();
     }
 
     async _pumpFrame() {
@@ -464,6 +465,7 @@ export class ReplayController {
                     }
                     this.stats.frames++;
                 }
+                if (ts !== this._frameWanted) continue;   // the scrubber moved on while this one loaded
                 this.scene.setCameraFrame(frame.bitmap, frame.meta);
                 this._frameShown = ts;
             } catch (e) {
