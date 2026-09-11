@@ -397,7 +397,6 @@ export class Tour {
             // A presentation shows the whole map from above: pin full quality (the
             // governor's lower levels cull far voxels) and restore automatic on exit.
             this._saved.quality = this.scene._qualityAuto ? null : this.scene._quality;
-            this._saved.hud = this.scene._hudGroup.visible;
             this.scene._hudGroup.visible = false;   // minimap + answer panel: the card carries the words
             this.scene._hudGroupPinnedOff = true;   // an answer must not bring it back mid-tour
             this.scene.setQuality(0);
@@ -430,7 +429,8 @@ export class Tour {
                 if (box) box.checked = on;
             }
             this.scene.setQuality(this._saved.quality ?? null);
-            this.scene._hudGroup.visible = this._saved.hud;
+            // The box is the truth: it can be unchecked through the menu mid-tour.
+            this.scene._hudGroup.visible = this.scene._hudPanel.visible;
         }
         this.diag('tour_exit');
     }
