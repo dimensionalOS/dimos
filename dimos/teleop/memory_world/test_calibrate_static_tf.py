@@ -275,3 +275,61 @@ def _quat(rotation: np.ndarray) -> tuple[float, float, float, float]:
     from dimos.teleop.memory_world.tf_tree import quaternion_from_matrix
 
     return quaternion_from_matrix(rotation)
+
+
+def test_writing_a_mount_removes_only_what_it_invalidated(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The command that invalidates the caches clears them, and nothing else.
+
+    A search index and a Hyperspace memory db store camera poses as computed and never
+    re-place them, so moving the mount leaves both a whole correction away from the map
+    while every surface still says ready. This is the destructive half of --write, so
+    what it must NOT touch matters as much as what it must.
+    """
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.calibrate_static_tf import drop_what_the_mount_invalidates
+    from dimos.teleop.memory_world.hyperspace_search import memory_db_for
+
+    recording = tmp_path / "rec.db"
+    store = SqliteStore(path=str(recording), must_exist=False)
+    store.start()
+    try:
+        row = TFMessage(
+            Transform(
+                translation=Vector3(0.0, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="a",
+                child_frame_id="b",
+                ts=1.0,
+            )
+        )
+        for name in (
+            "color_image_index_siglip2_so400m_p16_384",  # goes: poses from the old mount
+            "voxel_keyframe",  # stays: the map is lidar, which the mount does not move
+            "voxel_diff",
+            "livox_lidar",
+            "pointlio_odometry_corrected",
+        ):
+            store.stream(name, TFMessage).append(row, ts=1.0)
+        memory_db = memory_db_for(recording)
+        memory_db.write_bytes(b"pretend hyperspace db")
+        memory_db.with_name(memory_db.name + "-wal").write_bytes(b"")
+
+        dropped = drop_what_the_mount_invalidates(store, str(recording))
+
+        assert set(dropped) == {memory_db.name, "color_image_index_siglip2_so400m_p16_384"}
+        assert not memory_db.exists()
+        assert not memory_db.with_name(memory_db.name + "-wal").exists()
+        assert {
+            "voxel_keyframe",
+            "voxel_diff",
+            "livox_lidar",
+            "pointlio_odometry_corrected",
+        } <= set(store.list_streams())
+        assert recording.exists()  # the recording itself is never the thing removed
+        assert drop_what_the_mount_invalidates(store, str(recording)) == []  # nothing left to do
+    finally:
+        store.stop()
