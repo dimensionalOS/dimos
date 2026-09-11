@@ -65,6 +65,12 @@ class ExecutionStatus(Enum):
     UNCERTAIN = auto()
 
 
+# Execution outcomes where the arm's stop was never confirmed. A caller that
+# treats these as a successful stop can command its next motion into a moving
+# arm, so they leave the module in FAULT rather than IDLE.
+UNCONFIRMED_STOP = frozenset({ExecutionStatus.UNCERTAIN, ExecutionStatus.FAULT})
+
+
 class CommandStatus(Enum):
     """Outcome of a non-planning manipulation command."""
 
@@ -256,6 +262,8 @@ class ManipulationSpec(Spec, Protocol):
         blocking: bool = True,
         timeout: float | None = None,
     ) -> MoveResult: ...
+
+    def reset(self) -> CommandResult: ...
 
     def set_gripper_position(
         self,
