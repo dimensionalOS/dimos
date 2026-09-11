@@ -49,3 +49,16 @@ environment. Generic `run_dataprep(config)` supports HDF5 output.
 The [LeRobot module](policy/lerobot/README.md) provides isolated checkpoint
 loading, preflight, and controlled trajectory execution. Collection profiles
 do not define arbitrary policy-backend compatibility.
+
+## OpenYAM rollout
+
+```bash
+dimos --can-port follower_l run openyam-lerobot-rollout --daemon \
+  --policy.policy-path CHECKPOINT_DIR \
+  --policy.task "pick up the cube"
+```
+
+Use `openyam-lerobot-quest-rollout` for optional Quest takeover. The Blueprint
+uses the existing single-arm, single-camera LeRobot contract. Configure devices
+through standard module options. Python clients discover `RolloutControlSpec`
+and explicitly call preflight/start/stop; disconnecting is not a stop request.
