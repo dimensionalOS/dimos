@@ -336,7 +336,7 @@ class HyperspaceSearch:
         device: str = "cpu",
         config: Any | None = None,
         use_segments: bool = True,
-        refine: str = "occupancy",
+        refine: str = "default",
         scene: NDArray[np.floating] | None = None,
     ) -> None:
         self.memory_db = Path(memory_db)
