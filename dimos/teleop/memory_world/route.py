@@ -88,8 +88,10 @@ class Route:
     planner: str = "costmap"
 
 
-# How far a start or goal may be moved onto the nearest standable surface cell.
+# How far a start or goal may be moved onto the nearest standable surface cell,
+# and how many nearby cells are tried before giving up.
 MLS_SNAP_RADIUS_M = 4.0
+MLS_SNAP_CANDIDATES = 24
 # Above this many map voxels the MLS graph build is skipped (a city ride) and
 # the costmap fallback plans instead.
 MLS_MAX_VOXELS = 4_000_000
@@ -135,30 +137,48 @@ class MlsRoutePlanner:
         )
         self.planner.update_global_map(points)
         self.surface = np.asarray(self.planner.surface_map(), dtype=np.float64).reshape(-1, 3)
+        # Plans start and end on graph nodes; the planner snaps a point to its nearest
+        # node in 3D, which under a shelf is the shelf top. So candidates are nodes.
+        self.nodes = np.asarray(self.planner.nodes(), dtype=np.float64).reshape(-1, 3)
 
     @property
     def surface_cells(self) -> int:
         return len(self.surface)
 
+    def candidates(self, xyz: tuple[float, float, float]) -> list[tuple[float, float, float]]:
+        """Standable cells near *xyz*, nearest first by horizontal distance, cells at or
+        below the point's height first: an answer's z is the object's, and the object
+        stands on a floor, not on the shelf top the planner also calls a surface."""
+        if len(self.nodes) == 0:
+            return []
+        d = np.linalg.norm(self.nodes[:, :2] - np.asarray(xyz[:2], dtype=np.float64), axis=1)
+        near = np.flatnonzero(d <= MLS_SNAP_RADIUS_M)
+        if len(near) == 0:
+            return []
+        above = self.nodes[near, 2] > xyz[2] + 0.3
+        order = near[np.lexsort((d[near], above))][:MLS_SNAP_CANDIDATES]
+        return [tuple(float(v) for v in self.nodes[i]) for i in order]  # type: ignore[misc]
+
     def snap(self, xyz: tuple[float, float, float]) -> tuple[float, float, float] | None:
-        """The nearest standable surface cell within reach of *xyz*, by horizontal
-        distance: an answer's z is the object's, the surface is the floor under it."""
-        if len(self.surface) == 0:
-            return None
-        d = np.linalg.norm(self.surface[:, :2] - np.asarray(xyz[:2], dtype=np.float64), axis=1)
-        best = int(np.argmin(d))
-        if d[best] > MLS_SNAP_RADIUS_M:
-            return None
-        return tuple(float(v) for v in self.surface[best])  # type: ignore[return-value]
+        """The nearest graph node within reach of *xyz*."""
+        found = self.candidates(xyz)
+        return found[0] if found else None
 
     def plan(
         self, start: tuple[float, float, float], goal: tuple[float, float, float]
     ) -> Route | None:
-        a = self.snap(start)
-        b = self.snap(goal)
-        if a is None or b is None:
-            return None
-        path = self.planner.plan(a, b)
+        """The first reachable pairing of nearby start and goal cells (a cell on another
+        level, or an island the map never connected, is skipped)."""
+        starts = self.candidates(start)[:4]
+        goals = self.candidates(goal)
+        path = None
+        for a in starts:
+            for b in goals:
+                path = self.planner.plan(a, b)
+                if path is not None and len(path) >= 2:
+                    break
+            if path is not None and len(path) >= 2:
+                break
         if path is None or len(path) < 2:
             return None
         points = [
