@@ -51,6 +51,7 @@ from dimos.teleop.memory_world.hyperspace_fast import (
     FastResult,
     Frames,
     Patches,
+    near_scene,
     pack_keys,
     patch_rects,
     project_pixels,
@@ -74,7 +75,7 @@ MIN_CLUSTER_VOXELS = 4
 MAX_CLUSTERS = 12
 # A cluster whose summed score is under this fraction of the best is dropped.
 MIN_CLUSTER_FRACTION = 0.05
-EVIDENCE_PER_CLUSTER = 3
+EVIDENCE_PER_CLUSTER = 2
 MAX_PYRAMIDS = 240
 
 
@@ -303,6 +304,19 @@ def memory_db_ready(recording: str | Path) -> bool:
         return False
 
 
+def _use_the_cores() -> None:
+    """A dimos worker starts torch on one thread; the text tower on cpu takes
+    ~2 s that way and ~0.15 s on the machine's cores."""
+    import os
+
+    import torch
+
+    cores = os.cpu_count() or 4
+    if torch.get_num_threads() < min(cores, 8):
+        torch.set_num_threads(min(cores, 8))
+        logger.info("torch threads %d -> %d", 1, torch.get_num_threads())
+
+
 class HyperspaceSearch:
     """Text -> clustered heat map over one recording's Hyperspace memory db.
 
@@ -322,6 +336,8 @@ class HyperspaceSearch:
         device: str = "cpu",
         config: Any | None = None,
         use_segments: bool = True,
+        refine: str = "occupancy",
+        scene: NDArray[np.floating] | None = None,
     ) -> None:
         self.memory_db = Path(memory_db)
         self.model_name = model_name
@@ -329,7 +345,15 @@ class HyperspaceSearch:
         self.voxel_size = voxel_size
         self.device = device
         self.use_segments = use_segments
+        # "occupancy" (default): heat within a voxel of the map, then connected components here;
+        # "none": the raw map; anything else is handed to Hyperspace's own refine chain
+        # ("default" = its QueryConfig.refine, or e.g. "occupancy,support,prior").
+        self.refine = refine
         self._config = config
+        self._scene: NDArray[np.int64] | None = None
+        self._scene_keys: NDArray[np.int64] | None = None
+        if scene is not None:
+            self.set_scene(scene)
         self._lock = threading.Lock()
         self._store: Any = None
         self._model: Any = None
@@ -338,6 +362,13 @@ class HyperspaceSearch:
         self.warm_seconds: float | None = None
 
     # ---- lifecycle ---------------------------------------------------------
+
+    def set_scene(self, points: NDArray[np.floating]) -> None:
+        """The map's occupied points (world frame); refine's occupancy step keeps
+        heat only next to them. Quantized to the heat map's voxel size."""
+        points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+        self._scene = np.unique(np.floor(points / self.voxel_size).astype(np.int64), axis=0)
+        self._scene_keys = np.sort(pack_keys(self._scene))
 
     def warm(self) -> None:
         """Load the model, every keyframe and the segments so the first answer is not slow."""
@@ -375,6 +406,7 @@ class HyperspaceSearch:
         started = time.monotonic()
         store = SqliteStore(path=str(self.memory_db), must_exist=True)
         store.start()
+        _use_the_cores()
         model = SigLIP2Patches(model_name=self.model_name, device=self.device, towers="text")
         model.start()
         config = self._config or hs.QueryConfig()
@@ -415,9 +447,20 @@ class HyperspaceSearch:
         result = fast.query(text)
 
         keep = result.score >= SCORE_CUTOFF
+        if self.refine == "occupancy" and self._scene_keys is not None:
+            # Heat that floats in free space is a pyramid slice that missed its surface.
+            grounded = near_scene(result.index, self._scene_keys)
+            if (keep & grounded).any():
+                keep &= grounded
         indices = result.index[keep]
         scores = result.score[keep].astype(np.float32)
-        clusters, cluster_of = cluster_voxels(indices, scores, self.voxel_size)
+        refined = (
+            self._refine(text, result, keep) if self.refine not in ("occupancy", "none") else None
+        )
+        if refined is not None:
+            indices, scores, clusters, cluster_of = refined
+        else:
+            clusters, cluster_of = cluster_voxels(indices, scores, self.voxel_size)
         centres = ((indices + 0.5) * self.voxel_size).astype(np.float32)
 
         points = np.concatenate([result.patch_points, result.segment_points]).reshape(-1, 3)
@@ -437,6 +480,7 @@ class HyperspaceSearch:
             {
                 "voxels_total": len(result.score),
                 "voxels_kept": len(scores),
+                "refined": refined is not None,
                 "clusters": len(clusters),
                 "hot_patches_placed": len(points),
             }
@@ -453,6 +497,68 @@ class HyperspaceSearch:
             stats=stats,
             seconds=time.monotonic() - started,
         )
+
+    def _refine(
+        self, text: str, result: FastResult, keep: NDArray[np.bool_]
+    ) -> tuple[NDArray[np.int64], NDArray[np.float32], list[Cluster], NDArray[np.int16]] | None:
+        """Hyperspace's refinement (occupancy, support, size prior, components)
+        over the fast map; None when it is switched off or keeps nothing."""
+        from dimos.mapping.hyperspace import patches as hs, refine as rf
+
+        fast = self._fast
+        assert fast is not None
+        config = rf.refine_config_of(
+            self.refine, getattr(fast.config, "refine", ""), cutoff=SCORE_CUTOFF
+        )
+        if config is None or not keep.any():
+            return None
+        index = result.index[keep]
+        heat = hs.Heatmap(
+            frame=self.world_frame,
+            voxel_size=self.voxel_size,
+            voxels=[
+                (tuple(int(v) for v in ijk), float(sc))
+                for ijk, sc in zip(index, result.score[keep], strict=True)
+            ],
+            stats={},
+            support={
+                tuple(int(v) for v in ijk): (int(f), int(b))
+                for ijk, f, b in zip(index, result.frames[keep], result.bins[keep], strict=True)
+            },
+        )
+        scene: list[tuple[int, int, int]] = []
+        if self._scene is not None and "occupancy" in config.methods:
+            # Only the part of the map near the heat matters to the occupancy test.
+            reach = int(getattr(config, "occupancy_radius", 1)) + 1
+            lo, hi = index.min(axis=0) - reach, index.max(axis=0) + reach
+            near = self._scene[np.all((self._scene >= lo) & (self._scene <= hi), axis=1)]
+            scene = [tuple(int(v) for v in ijk) for ijk in near]
+        elif "occupancy" in config.methods:
+            scene = list(self._engine.scene_indices(self.world_frame))
+        refined = rf.refine(heat, config, scene=scene, text=text)
+        if not refined.voxels or not refined.clusters:
+            return None
+        ranked = sorted(refined.clusters, key=lambda c: c.rank)
+        rank_to_index = {c.rank: i for i, c in enumerate(ranked)}
+        score_of = dict(refined.voxels)
+        out_index = np.asarray([ijk for ijk, _ in refined.voxels], dtype=np.int64).reshape(-1, 3)
+        out_score = np.asarray([sc for _, sc in refined.voxels], dtype=np.float32)
+        cluster_of = np.asarray(
+            [rank_to_index.get(refined.cluster_of.get(ijk, -1), -1) for ijk, _ in refined.voxels],
+            dtype=np.int16,
+        )
+        clusters = [
+            Cluster(
+                index=i,
+                centre=tuple(float(v) for v in c.centre),  # type: ignore[arg-type]
+                radius=max(float(max(c.extent)) / 2, self.voxel_size / 2),
+                score=float(c.score),
+                peak=float(score_of.get(tuple(c.peak), out_score.max() if len(out_score) else 1.0)),
+                n_voxels=int(c.voxels),
+            )
+            for i, c in enumerate(ranked)
+        ]
+        return out_index, out_score, clusters, cluster_of
 
 
 def _hits_of(fast: FastQuery, result: FastResult, wanted: NDArray[np.int64]) -> dict[int, Evidence]:

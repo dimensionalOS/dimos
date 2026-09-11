@@ -265,6 +265,8 @@ class MemoryWorldConfig(ModuleConfig):
     hyperspace_ingest_device: str = "auto"  # the ingest subprocess may use the GPU
     hyperspace_ingest_hz: float = PydanticField(default=5.0, gt=0.0)
     hyperspace_segments: bool = True
+    # "occupancy" (heat next to the map, own clusters), "none", or a Hyperspace refine chain
+    hyperspace_refine: str = "occupancy"
     # Two hits closer together than this are one place, not two answers.
     place_radius_m: float = PydanticField(default=2.5, gt=0.0)
     max_places: int = PydanticField(default=6, ge=1)

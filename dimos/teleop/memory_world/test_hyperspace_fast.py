@@ -203,3 +203,14 @@ def test_rasterize_skips_holes_and_empty_input() -> None:
     empty = Patches(np.zeros(0, np.int64), np.zeros(0, np.int64), np.zeros(0), np.zeros(0))
     assert len(rasterize(frames, empty, 0.1, config).score) == 0
     assert len(pool(rasterize(frames, empty, 0.1, config), config).score) == 0
+
+
+def test_near_scene_keeps_heat_touching_the_map() -> None:
+    from dimos.teleop.memory_world.hyperspace_fast import near_scene
+
+    scene = np.array([[10, 10, 10], [10, 11, 10], [40, 40, 40]])
+    keys = np.sort(pack_keys(scene))
+    heat = np.array([[10, 10, 10], [11, 12, 11], [13, 10, 10], [39, 41, 39], [0, 0, 0]])
+    assert near_scene(heat, keys, radius=1).tolist() == [True, True, False, True, False]
+    assert near_scene(heat, keys, radius=3).tolist() == [True, True, True, True, False]
+    assert near_scene(np.zeros((0, 3), np.int64), keys).tolist() == []

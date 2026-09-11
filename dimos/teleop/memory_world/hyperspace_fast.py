@@ -104,9 +104,12 @@ class Rasterized:
 class Pooled:
     index: NDArray[np.int64]  # (V, 3) unique voxels
     score: NDArray[np.float64]  # pooled, unnormalized
+    # Support per voxel: frames that saw it, distinct hot yaw bins (Hyperspace's refine uses both).
+    frames: NDArray[np.int64] | None = None
+    bins: NDArray[np.int64] | None = None
 
     def normalized(self, percentile: float) -> Pooled:
-        return Pooled(self.index, normalize_scores(self.score, percentile))
+        return Pooled(self.index, normalize_scores(self.score, percentile), self.frames, self.bins)
 
 
 def pack_keys(index: NDArray[np.integer]) -> NDArray[np.int64]:
@@ -296,7 +299,10 @@ def pool(evidence: Rasterized, config: Any) -> Pooled:
     pairs = np.unique(np.stack([group[hot], yaw[hot]], axis=1), axis=0)
     hot_bins = np.bincount(pairs[:, 0], minlength=len(starts))
     pooled = lse * np.sqrt(np.maximum(hot_bins, 1))
-    return Pooled(unpack_keys(keys[starts]), pooled)
+    frames = np.diff(np.append(starts, len(keys)))
+    return Pooled(
+        unpack_keys(keys[starts]), pooled, frames.astype(np.int64), hot_bins.astype(np.int64)
+    )
 
 
 def normalize_scores(scores: NDArray[np.float64], percentile: float) -> NDArray[np.float64]:
@@ -315,13 +321,48 @@ def combine(patch_map: Pooled, segment_map: Pooled, weight: float) -> Pooled:
     values = np.concatenate([patch_map.score, weight * segment_map.score])
     unique, inverse = np.unique(keys, return_inverse=True)
     summed = np.bincount(inverse, weights=values, minlength=len(unique))
-    return Pooled(unpack_keys(unique), summed)
+    frames = bins = None
+    if patch_map.frames is not None and segment_map.frames is not None:
+        # Frames add up across the channels; the bin count is the larger one (as patches.combine).
+        frames = np.bincount(
+            inverse,
+            weights=np.concatenate([patch_map.frames, segment_map.frames]),
+            minlength=len(unique),
+        ).astype(np.int64)
+        bins = np.zeros(len(unique), dtype=np.int64)
+        np.maximum.at(bins, inverse, np.concatenate([patch_map.bins, segment_map.bins]))
+    return Pooled(unpack_keys(unique), summed, frames, bins)
+
+
+def near_scene(
+    index: NDArray[np.int64], scene_keys: NDArray[np.int64], radius: int = 1
+) -> NDArray[np.bool_]:
+    """Which voxels lie within *radius* (Chebyshev) of an occupied voxel.
+    *scene_keys* are ``pack_keys`` of the map's voxels, sorted. Heat that
+    floats in free space (a pyramid slice that missed its surface) is dropped
+    by keeping only these; the same test as Hyperspace's ``occupancy`` step."""
+    if len(index) == 0 or len(scene_keys) == 0:
+        return np.zeros(len(index), dtype=bool)
+    hit = np.zeros(len(index), dtype=bool)
+    span = range(-radius, radius + 1)
+    for dx in span:
+        for dy in span:
+            for dz in span:
+                keys = pack_keys(index + np.array([dx, dy, dz]))
+                pos = np.minimum(np.searchsorted(scene_keys, keys), len(scene_keys) - 1)
+                hit |= scene_keys[pos] == keys
+    return hit
 
 
 def best_first(pooled: Pooled) -> Pooled:
     """Sorted by score descending, then index, like Hyperspace's ``Heatmap.voxels``."""
     order = np.lexsort((pooled.index[:, 2], pooled.index[:, 1], pooled.index[:, 0], -pooled.score))
-    return Pooled(pooled.index[order], pooled.score[order])
+    return Pooled(
+        pooled.index[order],
+        pooled.score[order],
+        None if pooled.frames is None else pooled.frames[order],
+        None if pooled.bins is None else pooled.bins[order],
+    )
 
 
 # ---- resident banks --------------------------------------------------------
@@ -650,6 +691,8 @@ class FastResult:
 
     index: NDArray[np.int64]  # (V, 3)
     score: NDArray[np.float64]  # (V,), 1.0 at the top
+    frames: NDArray[np.int64]  # (V,) keyframes (and segments) that saw the voxel
+    bins: NDArray[np.int64]  # (V,) distinct hot viewing directions
     patches: Patches  # hot camera patches (frames = bank.frames)
     patch_points: NDArray[np.float64]  # (n, 3) where each hot patch landed
     segments: Patches  # hot segment cells (frames = segment bank frames)
@@ -757,9 +800,12 @@ class FastQuery:
                 seg_points = patch_points(self.segments.frames, seg_hot)
         result = best_first(result)
         stats["timings_ms"] = {k: round(v * 1000, 1) for k, v in timings.items()}
+        n_out = len(result.score)
         return FastResult(
             index=result.index,
             score=result.score,
+            frames=result.frames if result.frames is not None else np.ones(n_out, np.int64),
+            bins=result.bins if result.bins is not None else np.ones(n_out, np.int64),
             patches=hot,
             patch_points=patch_points(self.patches.frames, hot) if len(hot) else np.zeros((0, 3)),
             segments=seg_hot,

@@ -65,6 +65,8 @@ from dimos.teleop.memory_world.route import RoutePlanner
 
 logger = logging.getLogger(__name__)
 
+EVIDENCE_CLUSTERS = 8
+
 
 class AskRequest(BaseModel):
     text: str = Field(min_length=1, max_length=400)
@@ -134,6 +136,8 @@ class HyperspaceAnswers:
                     voxel_size=self.config.hyperspace_voxel_size,
                     device=self.config.hyperspace_device,
                     use_segments=self.config.hyperspace_segments,
+                    refine=self.config.hyperspace_refine,
+                    scene=self._map_points(),
                 )
                 search.warm()
             except Exception as error:
@@ -144,6 +148,14 @@ class HyperspaceAnswers:
             self._hyperspace_error = None
         self._broadcast_search_status()
         return True
+
+    def _map_points(self) -> np.ndarray | None:
+        """The ray-traced map's voxel centres, when the world cache is built."""
+        if self._cached_cloud is None:
+            return None
+        header, payload = self._cached_cloud
+        n = int(header.get("n", 0))
+        return np.frombuffer(payload, dtype=np.float32, count=n * 3).reshape(n, 3)
 
     def _hyperspace_ready(self) -> bool:
         return self._hyperspace is not None
@@ -298,7 +310,9 @@ class HyperspaceAnswers:
         images = store.streams[self.config.image_stream_name]
         hfov_deg = self._camera_hfov()
         sent: list[tuple[dict[str, Any], bytes]] = []
-        for cluster in answer.clusters:
+        # Decoding frames out of an mcap costs CPU the next question needs, so only the
+        # best places get pictures; the rest still have their heat and markers.
+        for cluster in answer.clusters[:EVIDENCE_CLUSTERS]:
             for evidence in cluster.evidence:
                 try:
                     frame = images.at(evidence.ts, tolerance=0.02).first()
@@ -456,7 +470,7 @@ class HyperspaceAnswers:
         tree = self._tf_tree()
         if tree is None or frame not in tree.frames:
             raise HTTPException(status_code=404, detail=f"no tf frame {frame!r}")
-        stamps = np.asarray(index.get("scan_ts") or index.get("stamps") or [], dtype=np.float64)
+        stamps = np.asarray(index.get("scans") or [], dtype=np.float64)  # one stamp per replay scan
         positions = frame_positions(stamps, lambda ts: self._frame_pose_at(frame, ts))
         result = {"frame": frame, "positions": positions}
         self._orbit_cache[frame] = result
