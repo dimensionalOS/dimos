@@ -42,7 +42,7 @@ from typing import Any
 
 import numpy as np
 
-from dimos.teleop.memory_world.hyperspace_search import memory_db_for
+from dimos.teleop.memory_world.hyperspace_search import HYPERSPACE_MODEL_NAME, memory_db_for
 from dimos.teleop.memory_world.recording import depth_info_stream_for
 
 logger = logging.getLogger(__name__)
@@ -369,13 +369,12 @@ def _ingest(
 
 
 def main(argv: list[str] | None = None) -> None:
-    from dimos.mapping.hyperspace.embedder import SIGLIP2_MODEL_NAME
-
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("recording", help="A memory2 .db or a ROS 2 .mcap")
-    parser.add_argument("--model-name", default=SIGLIP2_MODEL_NAME)
+    # The module's own default: a db embedded with anything else is unreadable to it.
+    parser.add_argument("--model-name", default=HYPERSPACE_MODEL_NAME)
     parser.add_argument("--device", default="auto", help="cuda, mps, cpu or auto")
     parser.add_argument(
         "--hz", type=float, default=5.0, help="colour frames per second to consider"

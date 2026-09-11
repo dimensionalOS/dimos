@@ -51,6 +51,7 @@ from dimos.memory.transform import throttle
 from dimos.teleop.memory_world.clients import ClientConn, RevalidatedStaticFiles
 from dimos.teleop.memory_world.embed import EmbeddingJob
 from dimos.teleop.memory_world.hyperspace_answers import HyperspaceAnswers
+from dimos.teleop.memory_world.hyperspace_search import HYPERSPACE_MODEL_NAME
 from dimos.teleop.memory_world.messages import (
     MSG_IMAGE_POSES,
     MSG_IMAGE_THUMBNAIL,
@@ -212,7 +213,7 @@ class MemoryWorldConfig(ModuleConfig):
     # the recording, which writes the vectors back into it (see embed.py).
     siglipify_flake: str = "github:jeff-hykin/siglipify"
     # Hyperspace (dimos.mapping.hyperspace) answers when <recording>.hyperspace.db exists.
-    hyperspace_model_name: str = "google/siglip2-so400m-patch16-384"
+    hyperspace_model_name: str = HYPERSPACE_MODEL_NAME
     hyperspace_voxel_size: float = PydanticField(default=0.1, gt=0.0)
     hyperspace_device: str = "cpu"  # text tower; MPS aborts inside a dimos worker
     hyperspace_ingest_device: str = "auto"  # the ingest subprocess may use the GPU

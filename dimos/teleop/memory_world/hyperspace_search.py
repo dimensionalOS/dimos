@@ -66,6 +66,11 @@ KEYFRAME_STREAM = "hyperspace_keyframes"
 PATCH_STREAM = "hyperspace_patches"
 MEMORY_DB_SUFFIX = ".hyperspace.db"
 
+# The model a memory db is embedded with, in ONE place. An ingest run by hand with a
+# different one produces a db the module cannot read at all -- the vectors are a
+# different width -- and the only sign is a shape error at query time.
+HYPERSPACE_MODEL_NAME = "google/siglip2-so400m-patch16-384"
+
 # Voxels scoring below this fraction of the map's top (1.0 after Hyperspace's
 # normalization) are neither drawn nor clustered.
 SCORE_CUTOFF = 0.3
