@@ -271,6 +271,138 @@
         }
         #scrub::-moz-range-track { height: 6px; background: #2a3140; border-radius: 3px; }
         #scrub::-moz-range-thumb { width: 28px; height: 28px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); }
+        /* Ask bar: type a question (top centre once the world is up). */
+        #askBar {
+            position: absolute;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            gap: 6px;
+            z-index: 130;
+            width: min(520px, calc(100% - 200px));
+        }
+        body.desktop-view #askBar { display: flex; }
+        #askBar input {
+            flex: 1;
+            font: inherit;
+            font-size: 14px;
+            padding: 10px 14px;
+            color: var(--text);
+            background: rgba(6, 9, 15, 0.82);
+            border: 1px solid var(--accent-soft);
+            border-left: 3px solid var(--accent);
+            outline: none;
+        }
+        #askBar input:focus { border-color: var(--accent); }
+        #askBar button, #results button, #menu button, #tour button {
+            padding: 9px 14px;
+            font-size: 12px;
+            letter-spacing: 0.1em;
+            background: rgba(6, 9, 15, 0.82);
+            color: var(--accent);
+            border: 1px solid var(--accent-soft);
+            clip-path: none;
+        }
+        #askBar button:disabled { color: var(--muted); }
+        /* Menu: top right, under the perf readout. */
+        #menuBtn {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 140;
+            display: none;
+            padding: 8px 12px;
+            font-size: 18px;
+            line-height: 1;
+            background: rgba(6, 9, 15, 0.82);
+            color: var(--accent);
+            border: 1px solid var(--accent-soft);
+            clip-path: none;
+        }
+        body.desktop-view #menuBtn { display: block; }
+        body.desktop-view #perf { top: 52px; }
+        #menu {
+            position: absolute;
+            top: 52px;
+            right: 12px;
+            z-index: 140;
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            width: 300px;
+            padding: 14px;
+            background: rgba(6, 9, 15, 0.92);
+            border: 1px solid var(--accent-soft);
+            font-size: 12px;
+            letter-spacing: 0.06em;
+        }
+        #menu.open { display: flex; }
+        #menu h2 { font-size: 11px; color: var(--muted); letter-spacing: 0.2em; text-transform: uppercase; margin: 6px 0 2px; }
+        #menu button { text-align: left; width: 100%; }
+        #menu button.primary { color: var(--bg); background: var(--accent); font-weight: 700; }
+        #menu label { display: flex; align-items: center; gap: 8px; color: var(--text); cursor: pointer; }
+        #menu select {
+            font: inherit;
+            font-size: 12px;
+            color: var(--text);
+            background: rgba(6, 9, 15, 0.9);
+            border: 1px solid var(--accent-soft);
+            padding: 6px;
+            width: 100%;
+        }
+        #menu .row { display: flex; gap: 6px; }
+        #menu .row button { flex: 1; text-align: center; }
+        #menu .note { color: var(--muted); font-size: 11px; line-height: 1.5; }
+        /* Results bar: step through the answer's places. */
+        #results {
+            position: absolute;
+            left: 50%;
+            bottom: 74px;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: rgba(6, 9, 15, 0.82);
+            border: 1px solid var(--accent-soft);
+            border-left: 3px solid #ff5c3a;
+            z-index: 125;
+            max-width: min(900px, calc(100% - 24px));
+        }
+        #results[hidden] { display: none; }
+        body:not(.desktop-view) #results { display: none; }
+        body.desktop-view.touch #results { bottom: 232px; }
+        #resultsCounter { font-size: 14px; font-weight: 700; color: #ff9a6a; white-space: nowrap; }
+        #resultsLabel { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        #results button { padding: 8px 12px; }
+        /* Tour: a museum card in the corner while the camera flies between stations. */
+        #tour {
+            position: absolute;
+            left: 20px;
+            bottom: 20px;
+            z-index: 150;
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+            width: min(520px, calc(100% - 40px));
+            padding: 20px 22px;
+            background: rgba(6, 9, 15, 0.9);
+            border: 1px solid var(--accent-soft);
+            border-left: 4px solid var(--accent);
+        }
+        #tour.open { display: flex; }
+        #tourKicker { font-size: 11px; color: var(--muted); letter-spacing: 0.24em; text-transform: uppercase; }
+        #tourTitle { font-size: 22px; font-weight: 700; color: var(--text); letter-spacing: 0.04em; }
+        #tourBody { font-size: 13px; line-height: 1.6; color: var(--text); letter-spacing: 0.02em; }
+        #tourBody b { color: var(--accent); }
+        #tourBody ul { margin: 6px 0 0 18px; }
+        #tourNav { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+        #tourNav .spacer { flex: 1; }
+        #tourDots { display: flex; gap: 5px; }
+        #tourDots i { width: 7px; height: 7px; border-radius: 50%; background: #2a3140; display: block; }
+        #tourDots i.on { background: var(--accent); }
+        body.touring #ui, body.touring #results, body.touring #askBar, body.touring #timeline { opacity: 0; pointer-events: none; }
     </style>
 </head>
 <body data-background-mode="__BACKGROUND_MODE__">
@@ -282,7 +414,6 @@
         <button id="connectBtn" onclick="window.app.connect()">Connect</button>
         <button id="disconnectBtn" class="secondary hidden" onclick="window.app.disconnect()">Disconnect</button>
         <button id="micBtn" class="secondary hidden">Hold to ask</button>
-        <button id="embedBtn" class="secondary hidden">Add embeddings</button>
         <button id="orbitBtn" class="secondary hidden">Orbit frame</button>
         <div id="hints">
             <b>LEFT STICK</b>  walk / strafe<br>
@@ -305,10 +436,63 @@
             <b>M</b>  show / hide the minimap &nbsp; <b>H</b>  keep this menu<br>
             <b>O</b>  orbit the robot (drag circles it, wheel moves in and out; follows the timeline)<br>
             <b>TIMELINE</b>  drag to scrub the recording, ▶ plays it back, ✕ returns to the full map<br>
-            <b>HOLD TO ASK</b>  speak a question, e.g. "where did I see a chair"
+            <b>HOLD TO ASK</b>  speak a question, or type one in the bar at the top<br>
+            <b>← →</b>  step through the answer's places &nbsp; <b>N</b>  route to it &nbsp; <b>T</b>  the tour
         </div>
     </div>
     <div id="perf"></div>
+    <form id="askBar" autocomplete="off">
+        <input id="askInput" type="text" placeholder="Ask the recording, e.g. where did I see a chair" aria-label="Question">
+        <button id="askBtn" type="submit">Ask</button>
+    </form>
+    <button id="menuBtn" title="Menu" aria-label="Menu">☰</button>
+    <div id="menu">
+        <button id="tourBtn" class="primary">Explain Hyperspace</button>
+        <div class="note" id="searchNote">Search: checking…</div>
+        <button id="prepareBtn" class="hidden">Prepare search (embed this recording)</button>
+        <h2>Answer</h2>
+        <div class="row">
+            <button id="menuPrevBtn">◀ Prev</button>
+            <button id="menuNextBtn">Next ▶</button>
+        </div>
+        <div class="row">
+            <button id="menuOrbitResultBtn">Orbit result</button>
+            <button id="menuNavigateBtn">Navigate</button>
+        </div>
+        <h2>Orbit frame</h2>
+        <select id="orbitFrameSel" aria-label="Frame to orbit"></select>
+        <button id="menuOrbitBtn">Orbit frame</button>
+        <h2>Layers</h2>
+        <label><input type="checkbox" id="layerHeat" checked> Heat map</label>
+        <label><input type="checkbox" id="layerPyramids"> Hot pyramids</label>
+        <label><input type="checkbox" id="layerVoxels" checked> Voxel map</label>
+        <label><input type="checkbox" id="layerPhotos" checked> Photos</label>
+        <label><input type="checkbox" id="layerHud" checked> Minimap + answer panel</label>
+        <h2>Advanced</h2>
+        <button id="embedBtn" class="hidden">Add SigLIP embeddings (siglipify)</button>
+        <div class="note">Keys: ← → places · N navigate · O orbit · T tour · H menu · I photos · V voxels · M minimap</div>
+    </div>
+    <div id="results" hidden>
+        <button id="resultsPrev" title="Previous place">◀</button>
+        <span id="resultsCounter">0 / 0</span>
+        <span id="resultsLabel"></span>
+        <button id="resultsNext" title="Next place">▶</button>
+        <button id="resultsOrbit" title="Orbit this place">Orbit</button>
+        <button id="resultsNavigate" title="Plan a route to this place">Navigate</button>
+        <button id="resultsClose" title="Clear the answer">✕</button>
+    </div>
+    <div id="tour">
+        <div id="tourKicker">How it works</div>
+        <div id="tourTitle"></div>
+        <div id="tourBody"></div>
+        <div id="tourNav">
+            <button id="tourPrev">◀</button>
+            <button id="tourNext">Next ▶</button>
+            <div id="tourDots"></div>
+            <span class="spacer"></span>
+            <button id="tourExit">Exit tour</button>
+        </div>
+    </div>
     <div id="stick"><div id="stickKnob"></div></div>
     <div id="touchBar">
         <button id="hudBtn">Show map</button>

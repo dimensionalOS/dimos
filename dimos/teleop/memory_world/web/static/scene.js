@@ -1359,6 +1359,7 @@ export class WorldScene {
             this._highlightGroup.add(focus);
         }
 
+        this.clusterFilter = -1;
         this._selectedImageIds = new Set(result.observation_ids || []);
         if (this._selectedImageIds.size > 0) this._imageQuadGroup.visible = true;
         // The selection changes which poses deserve a texture, so rebuild now.
@@ -1422,14 +1423,22 @@ export class WorldScene {
             const segments = [];
             for (const corner of corners) segments.push(eye.clone(), corner);
             for (let i = 0; i < 4; i++) segments.push(corners[i], corners[(i + 1) % 4]);
-            this._highlightGroup.add(new THREE.LineSegments(
+            const frustum = new THREE.LineSegments(
                 new THREE.BufferGeometry().setFromPoints(segments),
-                new THREE.LineBasicMaterial({ color: header.index === 0 ? 0xff5c3a : 0xffb347 }),
-            ));
+                new THREE.LineBasicMaterial({ color: header.cluster === 0 || header.index === 0 ? 0xff5c3a : 0xffb347 }),
+            );
+            if (header.cluster !== undefined) frustum.userData.cluster = header.cluster;
+            this._highlightGroup.add(frustum);
             this._queryImages[header.index] = header;
             this._queryImageMeshes[header.index] = quad;
-            // Frames from nearby poses overlap; while standing at one camera, only its frame shows.
+            // Frames from nearby poses overlap; while standing at one camera, only its frame shows,
+            // and while a cluster is selected only that cluster's frames do.
             if (this._queryImageCursor >= 0) quad.visible = header.index === this._queryImageCursor;
+            const filter = this.clusterFilter;
+            if (filter >= 0 && header.cluster !== undefined && header.cluster !== filter) {
+                quad.visible = false;
+                frustum.visible = false;
+            }
             this.diag('query_image_placed', { index: header.index, width: Number(width.toFixed(2)) });
         }).catch((e) => {
             this.diag('query_image_failed', { index: header.index, error: String(e.message || e) });
@@ -1551,6 +1560,7 @@ export class WorldScene {
         // The trail's end is where orbit mode starts until the timeline says otherwise.
         const tail = (n - 1) * 3;
         this._odomTrailPoints = [[positions[tail], positions[tail + 1], positions[tail + 2] || 0]];
+        this._trailPositions = positions;  // the whole path, for the tour
 
         if (this._odomLine) {
             this._frameRotate.remove(this._odomLine);

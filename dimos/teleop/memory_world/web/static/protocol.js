@@ -13,6 +13,7 @@ export const MSG_ODOM_TRAIL = 0x03;
 export const MSG_TOP_DOWN_MAP = 0x04;
 export const MSG_IMAGE_THUMBNAIL = 0x05;
 export const MSG_QUERY_IMAGE = 0x06;
+export const MSG_HEATMAP = 0x07;
 
 export function decodeBinary(buffer) {
     const view = new DataView(buffer);

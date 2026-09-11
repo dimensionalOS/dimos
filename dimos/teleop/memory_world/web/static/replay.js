@@ -398,7 +398,7 @@ export class ReplayController {
     tick() {
         if (!this.playing) return;
         const now = performance.now();
-        this._playTime += (now - this._playClock) / 1000;
+        this._playTime += ((now - this._playClock) / 1000) * (this.speed || 1);  // speed: the tour plays faster
         this._playClock = now;
         if (this._playTime >= this.t1) { this._playTime = this.t1; this.playing = false; }
         const scan = this.scanAt(this._playTime);

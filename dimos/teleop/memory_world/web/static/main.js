@@ -10,6 +10,7 @@ import {
     MSG_IMAGE_THUMBNAIL,
     MSG_ODOM_TRAIL,
     MSG_POINT_CLOUD,
+    MSG_HEATMAP,
     MSG_QUERY_IMAGE,
     MSG_TOP_DOWN_MAP,
     decodeBinary,
@@ -23,6 +24,11 @@ const disconnectBtn = document.getElementById('disconnectBtn');
 const micBtn = document.getElementById('micBtn');
 const orbitBtn = document.getElementById('orbitBtn');
 const embedBtn = document.getElementById('embedBtn');
+const prepareBtn = document.getElementById('prepareBtn');
+const searchNote = document.getElementById('searchNote');
+const askForm = document.getElementById('askBar');
+const askInput = document.getElementById('askInput');
+const askBtn = document.getElementById('askBtn');
 const logEl = document.getElementById('log');
 const backgroundMode = document.body.dataset.backgroundMode || 'black';
 
@@ -42,6 +48,7 @@ const pendingDiag = [];
 // The page is served at the module's client_route, so /voice hangs off it.
 const voiceUrl = `${window.location.pathname.replace(/\/$/, '')}/voice`;
 const embeddingsUrl = `${window.location.pathname.replace(/\/$/, '')}/embeddings`;
+const baseUrl = window.location.pathname.replace(/\/$/, '');
 
 function log(msg) {
     if (!logEl) return;
@@ -75,11 +82,29 @@ const assetVersion = new URL(import.meta.url).search;
 
 let ReplayController = null;
 let replay = null;
+let HeatmapLayer = null;
+let PyramidLayer = null;
+let Flight = null;
+let ResultsNav = null;
+let Tour = null;
+let heatmap = null;
+let pyramids = null;
+let flight = null;
+let results = null;
+let tour = null;
+let pendingPyramids = null;
+// Per-frame work hung off the scene's tick: flights, replay, the tour.
+let tickers = [];
 
 try {
     const mod = await import(`/static_mw/scene.js${assetVersion}`);
     WorldScene = mod.WorldScene;
     ReplayController = (await import(`/static_mw/replay.js${assetVersion}`)).ReplayController;
+    HeatmapLayer = (await import(`/static_mw/heatmap.js${assetVersion}`)).HeatmapLayer;
+    PyramidLayer = (await import(`/static_mw/pyramids.js${assetVersion}`)).PyramidLayer;
+    Flight = (await import(`/static_mw/flight.js${assetVersion}`)).Flight;
+    ResultsNav = (await import(`/static_mw/results.js${assetVersion}`)).ResultsNav;
+    Tour = (await import(`/static_mw/tour.js${assetVersion}`)).Tour;
     diag('scene_module_loaded');
 } catch (err) {
     diag('scene_module_failed', { error: String(err && err.message || err) });
@@ -143,6 +168,7 @@ function applySceneMsg(m) {
     else if (m.kind === 'top_down_map') scene.setTopDownMap(m.header, m.payload);
     else if (m.kind === 'image_thumbnail') scene.addImageThumbnail(m.header.index, m.payload);
     else if (m.kind === 'query_image') scene.addQueryImage(m.header, m.payload);
+    else if (m.kind === 'heatmap' && heatmap) heatmap.set(m.header, m.payload);
 }
 
 function flushSceneMsgs() {
@@ -159,6 +185,7 @@ function handleBinary(buffer) {
     else if (msgType === MSG_TOP_DOWN_MAP) kind = 'top_down_map';
     else if (msgType === MSG_IMAGE_THUMBNAIL) kind = 'image_thumbnail';
     else if (msgType === MSG_QUERY_IMAGE) kind = 'query_image';
+    else if (msgType === MSG_HEATMAP) kind = 'heatmap';
     else { log(`unknown bin type ${msgType}`); return; }
 
     if (scene) applySceneMsg({ kind, header, payload });
@@ -178,7 +205,19 @@ function handleControl(msg) {
         case 'query_result':
             if (scene) scene.setQueryResult(msg);
             else pendingQueryResult = msg;
+            if (results) results.setResult(msg);
             setStatus(msg.answer || 'Memory result highlighted');
+            askBtn.disabled = false;
+            break;
+        case 'query_pyramids':
+            if (pyramids) pyramids.set(msg.pyramids);
+            else pendingPyramids = msg.pyramids;
+            break;
+        case 'route':
+            if (results) results.setRoute(msg);
+            break;
+        case 'search_status':
+            applySearchStatus(msg);
             break;
         case 'voice_transcript':
             setStatus(`Heard: “${msg.text}” — searching…`);
@@ -234,10 +273,51 @@ function buildScene() {
     try {
         scene = new WorldScene(diag, backgroundMode);
         diag('scene_constructed');
+        tickers = [];
+        scene.onTick = (dt) => { for (const tick of tickers) tick(dt); };
+        heatmap = HeatmapLayer ? new HeatmapLayer(scene._frameRotate) : null;
+        pyramids = PyramidLayer ? new PyramidLayer(scene._frameRotate) : null;
+        flight = Flight ? new Flight(scene) : null;
+        if (flight) tickers.push((dt) => flight.tick(dt));
+        results = ResultsNav ? new ResultsNav({
+            scene, heatmap, pyramids, flight, baseUrl, diag,
+            ui: {
+                bar: document.getElementById('results'),
+                prevBtn: document.getElementById('resultsPrev'),
+                nextBtn: document.getElementById('resultsNext'),
+                counter: document.getElementById('resultsCounter'),
+                label: document.getElementById('resultsLabel'),
+                orbitBtn: document.getElementById('resultsOrbit'),
+                navigateBtn: document.getElementById('resultsNavigate'),
+                closeBtn: document.getElementById('resultsClose'),
+                status: statusEl,
+            },
+        }) : null;
+        tour = Tour ? new Tour({
+            scene, heatmap, pyramids, flight, results, baseUrl, diag,
+            replay: () => replay,
+            ask: (text) => ask(text),
+            ui: {
+                panel: document.getElementById('tour'),
+                title: document.getElementById('tourTitle'),
+                body: document.getElementById('tourBody'),
+                kicker: document.getElementById('tourKicker'),
+                dots: document.getElementById('tourDots'),
+                prevBtn: document.getElementById('tourPrev'),
+                nextBtn: document.getElementById('tourNext'),
+                exitBtn: document.getElementById('tourExit'),
+            },
+        }) : null;
+        if (tour) tickers.push((dt) => tour.tick(dt));
         flushSceneMsgs();
         if (pendingQueryResult) {
             scene.setQueryResult(pendingQueryResult);
+            if (results) results.setResult(pendingQueryResult);
             pendingQueryResult = null;
+        }
+        if (pendingPyramids && pyramids) {
+            pyramids.set(pendingPyramids);
+            pendingPyramids = null;
         }
         diag('scene_msgs_flushed');
     } catch (e) {
@@ -302,8 +382,9 @@ async function startReplay() {
         },
     });
     const owner = scene;
-    scene.onTick = () => replay.tick();
-    scene.onQualityChange = () => replay.refill();
+    const mine = replay;
+    tickers.push(() => { if (replay === mine) mine.tick(); });
+    scene.onQualityChange = () => replay && replay.refill();
     for (let attempt = 0; attempt < 60 && scene === owner; attempt++) {
         try {
             const index = await replay.load();
@@ -500,6 +581,182 @@ hudBtn.addEventListener('click', () => {
 hudBtn.textContent = 'Show map';
 document.getElementById('answerBtn').addEventListener('click', () => window.app.jumpTo(0));
 
+// ---- typed questions ---------------------------------------------------------
+
+async function ask(text) {
+    text = (text || '').trim();
+    if (!text) return null;
+    askBtn.disabled = true;
+    setStatus(`Asking: ${text}`);
+    diag('ask', { text });
+    try {
+        const response = await fetch(`${baseUrl}/ask`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.detail || response.status);
+        setStatus(body.answer || 'No answer');
+        return body;
+    } catch (e) {
+        setStatus(`Question failed: ${e.message || e}`);
+        return null;
+    } finally {
+        askBtn.disabled = false;
+    }
+}
+
+askForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void ask(askInput.value);
+    askInput.blur();
+});
+
+// ---- search status (Hyperspace) --------------------------------------------
+
+let searchStatus = { engine: null, ready: false, memory_db_present: false, prepare: { state: 'idle', progress: '' } };
+let preparePoll = null;
+
+function applySearchStatus(status) {
+    searchStatus = status || searchStatus;
+    const connected = !!ws;
+    const ready = !!searchStatus.ready;
+    const preparing = searchStatus.prepare && searchStatus.prepare.state === 'running';
+    if (ready) {
+        searchNote.textContent = `Search: Hyperspace · ${searchStatus.keyframes} keyframes`
+            + (searchStatus.segments ? ` · ${searchStatus.segments} segments` : '');
+    } else if (preparing) {
+        searchNote.textContent = `Preparing search… ${(searchStatus.prepare.progress || '').slice(0, 80)}`;
+    } else if (searchStatus.memory_db_present) {
+        searchNote.textContent = 'Search: loading Hyperspace…';
+    } else {
+        searchNote.textContent = searchStatus.error
+            ? `Search unavailable: ${searchStatus.error}`
+            : 'This recording has no Hyperspace embeddings yet.';
+    }
+    prepareBtn.classList.toggle('hidden', !connected || ready || searchStatus.memory_db_present);
+    prepareBtn.disabled = preparing;
+    prepareBtn.textContent = preparing ? 'Preparing…' : (searchStatus.prepare && searchStatus.prepare.state === 'failed' ? 'Prepare search failed — retry' : 'Prepare search (embed this recording)');
+    askInput.disabled = !connected || !(ready || indexStatus.present);
+    askInput.placeholder = ready ? 'Ask the recording, e.g. where did I see a chair'
+        : (indexStatus.present ? 'Ask (SigLIP frame search)' : 'Search not ready — see the menu');
+    if (preparing && !preparePoll) preparePoll = setInterval(pollSearchStatus, 3000);
+    if (!preparing && preparePoll) { clearInterval(preparePoll); preparePoll = null; }
+    micBtn.classList.toggle('hidden', !connected || !(ready || indexStatus.present));
+}
+
+async function pollSearchStatus() {
+    try {
+        const response = await fetch(`${baseUrl}/search/status`);
+        if (response.ok) applySearchStatus(await response.json());
+    } catch (e) {
+        log(`search status failed: ${e.message || e}`);
+    }
+}
+
+prepareBtn.addEventListener('click', async () => {
+    prepareBtn.disabled = true;
+    setStatus('Embedding the recording for Hyperspace — minutes on a long recording');
+    try {
+        const response = await fetch(`${baseUrl}/search/prepare`, { method: 'POST' });
+        if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+        applySearchStatus(await response.json());
+    } catch (e) {
+        setStatus(`Could not start: ${e.message || e}`);
+        prepareBtn.disabled = false;
+    }
+});
+
+// ---- menu --------------------------------------------------------------------
+
+const menuEl = document.getElementById('menu');
+const menuBtn = document.getElementById('menuBtn');
+menuBtn.addEventListener('click', () => menuEl.classList.toggle('open'));
+document.getElementById('tourBtn').addEventListener('click', () => { menuEl.classList.remove('open'); tour && tour.start(); });
+document.getElementById('menuPrevBtn').addEventListener('click', () => results && results.prev());
+document.getElementById('menuNextBtn').addEventListener('click', () => results && results.next());
+document.getElementById('menuOrbitResultBtn').addEventListener('click', () => results && results.orbitCurrent());
+document.getElementById('menuNavigateBtn').addEventListener('click', () => results && results.navigate());
+document.getElementById('menuOrbitBtn').addEventListener('click', () => setOrbit(!scene?.isOrbiting()));
+const layerBoxes = {
+    heat: document.getElementById('layerHeat'),
+    pyramids: document.getElementById('layerPyramids'),
+    voxels: document.getElementById('layerVoxels'),
+    photos: document.getElementById('layerPhotos'),
+    hud: document.getElementById('layerHud'),
+};
+layerBoxes.heat.addEventListener('change', () => heatmap && heatmap.setVisible(layerBoxes.heat.checked));
+layerBoxes.pyramids.addEventListener('change', () => pyramids && pyramids.setVisible(layerBoxes.pyramids.checked));
+layerBoxes.voxels.addEventListener('change', () => scene && scene._pointsObj && scene._pointsObj.visible !== layerBoxes.voxels.checked && scene.toggleCloud());
+layerBoxes.photos.addEventListener('change', () => scene && scene._imageQuadGroup.visible !== layerBoxes.photos.checked && scene.toggleImages());
+layerBoxes.hud.addEventListener('change', () => scene && scene._hudPanel.visible !== layerBoxes.hud.checked && scene.toggleHud());
+
+// Orbit any tf frame: the server lists them and gives a frame's position per replay scan.
+const orbitFrameSel = document.getElementById('orbitFrameSel');
+let orbitPositions = null;
+
+async function loadFrames() {
+    try {
+        const response = await fetch(`${baseUrl}/frames`);
+        if (!response.ok) return;
+        const body = await response.json();
+        orbitFrameSel.innerHTML = '';
+        for (const name of body.frames || []) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = name;
+            option.selected = name === body.default;
+            orbitFrameSel.appendChild(option);
+        }
+    } catch (e) {
+        log(`frames failed: ${e.message || e}`);
+    }
+}
+
+async function setOrbitFrame(frame) {
+    try {
+        const response = await fetch(`${baseUrl}/orbit?frame=${encodeURIComponent(frame)}`);
+        if (!response.ok) throw new Error(`${response.status}`);
+        const body = await response.json();
+        orbitPositions = body.positions || [];
+        if (orbitPositions.length && scene) {
+            const at = replay ? Math.min(replay.scan ?? orbitPositions.length - 1, orbitPositions.length - 1) : orbitPositions.length - 1;
+            scene.setOrbitTarget(orbitPositions[at]);
+            if (replay) replay.onScan = (scan) => scene.setOrbitTarget(orbitPositions[Math.min(scan, orbitPositions.length - 1)]);
+        }
+        orbitBtn.textContent = scene?.isOrbiting() ? 'Stop orbit' : `Orbit ${frame}`;
+        diag('orbit_frame', { frame, positions: orbitPositions.length });
+        return orbitPositions;
+    } catch (e) {
+        setStatus(`No positions for ${frame}: ${e.message || e}`);
+        return null;
+    }
+}
+orbitFrameSel.addEventListener('change', () => setOrbitFrame(orbitFrameSel.value));
+
+// Keys: arrows step through places, N routes, T starts the tour, Esc closes things.
+window.addEventListener('keydown', (event) => {
+    const typing = event.target && (event.target.tagName === 'INPUT' || event.target.tagName === 'SELECT' || event.target.tagName === 'TEXTAREA');
+    if (event.code === 'Escape') {
+        if (tour && tour.active) tour.exit();
+        menuEl.classList.remove('open');
+        if (typing) event.target.blur();
+        return;
+    }
+    if (typing) return;
+    if (event.code === 'Slash') { event.preventDefault(); askInput.focus(); return; }
+    if (tour && tour.active) {
+        if (event.code === 'ArrowRight' || event.code === 'Space') { event.preventDefault(); tour.next(); }
+        if (event.code === 'ArrowLeft') { event.preventDefault(); tour.prev(); }
+        return;
+    }
+    if (event.code === 'ArrowRight') { event.preventDefault(); results && results.next(); }
+    else if (event.code === 'ArrowLeft') { event.preventDefault(); results && results.prev(); }
+    else if (event.code === 'KeyN') results && results.navigate();
+    else if (event.code === 'KeyT') tour && tour.start();
+});
+
 // ---- embeddings ------------------------------------------------------------
 
 // A recording with no SigLIP vectors cannot be searched. Instead of a dead
@@ -512,8 +769,8 @@ function applyIndexStatus(status) {
     indexStatus = status || indexStatus;
     const connected = !!ws;
     const running = indexStatus.embedding === 'running';
-    micBtn.classList.toggle('hidden', !connected || !indexStatus.present);
-    embedBtn.classList.toggle('hidden', !connected || indexStatus.present);
+    micBtn.classList.toggle('hidden', !connected || !(indexStatus.present || searchStatus.ready));
+    embedBtn.classList.toggle('hidden', !connected || indexStatus.present || searchStatus.ready);
     embedBtn.disabled = running;
     if (running) {
         embedBtn.textContent = `Embedding… ${(indexStatus.progress || '').slice(0, 60)}`;
@@ -586,6 +843,9 @@ async function connect() {
         connectBtn.classList.add('hidden');
         disconnectBtn.classList.remove('hidden');
         applyIndexStatus(indexStatus);
+        applySearchStatus(searchStatus);
+        void pollSearchStatus();
+        void loadFrames();
         if (document.body.classList.contains('desktop-view')) orbitBtn.classList.remove('hidden');
     } catch (e) {
         console.error(e);
@@ -617,7 +877,11 @@ async function disconnect() {
     disconnectBtn.classList.add('hidden');
     micBtn.classList.add('hidden');
     embedBtn.classList.add('hidden');
+    prepareBtn.classList.add('hidden');
     orbitBtn.classList.add('hidden');
+    menuEl.classList.remove('open');
+    if (tour && tour.active) tour.exit();
+    document.getElementById('results').hidden = true;
     setStatus('Disconnected');
 }
 
@@ -625,6 +889,23 @@ window.app = {
     connect,
     disconnect,
     diag,
+    // Typed question; resolves with the server's answer summary.
+    ask,
+    // The answer's clusters: step, orbit, route.
+    results: () => results,
+    go: (index) => results && results.go(index),
+    next: () => results && results.next(),
+    prev: () => results && results.prev(),
+    navigate: () => results && results.navigate(),
+    heatmap: (on = null) => { if (heatmap && on !== null) heatmap.setVisible(on); return heatmap && heatmap.visible; },
+    pyramids: (on = null) => { if (pyramids && on !== null) pyramids.setVisible(on); return pyramids && pyramids.visible; },
+    orbitFrame: (frame) => setOrbitFrame(frame),
+    searchStatus: () => searchStatus,
+    // The museum tour: start, step, exit; state for automated checks.
+    tour: () => tour,
+    tourStart: (station = 0) => tour && tour.start(station),
+    tourState: () => tour && tour.state(),
+    flying: () => !!(flight && flight.flying),
     perf: () => (scene ? scene.getPerfStats() : null),
     resetPerf: () => scene && scene.resetPerf(),
     benchmark: (frames) => (scene ? scene.benchmarkRender(frames) : null),
