@@ -604,8 +604,8 @@ class VoxelReplay:
 
     def _diffs_between(self, start: int, end: int) -> Iterable[Any]:
         """Diff messages for scans [start, end), by their stamps."""
-        t0 = float(self.index.scan_ts[start])
-        t1 = float(self.index.scan_ts[end - 1])
+        window = self.index.scan_ts[start:end]  # min/max: stamps need not rise with the index
+        t0, t1 = float(window.min()), float(window.max())
         # By scan index: two scans can share a stamp, and the range then over-fetches.
         by_index = {
             int(obs.tags["scan_index"]): obs for obs in self.diffs.time_range(t0 - 1e-4, t1 + 1e-4)

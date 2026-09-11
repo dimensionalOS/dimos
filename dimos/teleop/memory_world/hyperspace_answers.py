@@ -126,7 +126,8 @@ class HyperspaceAnswers:
         # The Hyperspace answer on screen and the query id it was published under.
         self._last_answer: tuple[HeatmapAnswer | None, str | None] = (None, None)
         self._route_planner: RoutePlanner | MlsRoutePlanner | None = None
-        self._planner_lock = threading.Lock()
+        # First in the lock order: the planner reads the orbit, which reads the replay.
+        self._planner_lock = threading.RLock()
         self._orbit_cache: dict[str, dict[str, Any]] = {}
 
     # ---- loading -----------------------------------------------------------
@@ -228,7 +229,8 @@ class HyperspaceAnswers:
 
     def _answer(self, phrase: str, started: float) -> SkillResult:
         search = self._hyperspace
-        assert search is not None
+        if search is None:  # the ingest just finished and is reloading it
+            return SkillResult.fail("INDEX_NOT_READY", "Hyperspace is reloading; ask again")
         try:
             answer = search.query(phrase)
         except Exception as error:
@@ -492,10 +494,10 @@ class HyperspaceAnswers:
         if result.focus_point is None or viewer_position is None:
             return
         try:
-            store = self._ensure_store()
-            if "global_costmap" not in store.list_streams():
-                return
             with self._store_lock:
+                store = self._ensure_store()
+                if "global_costmap" not in store.list_streams():
+                    return
                 costmap = store.streams.global_costmap.last().data
             route = min_cost_astar(
                 costmap,
@@ -522,20 +524,23 @@ class HyperspaceAnswers:
 
     def _orbit_positions_for(self, frame: str) -> dict[str, Any]:
         """Where *frame* was at each replay scan (cached per frame)."""
-        if frame in self._orbit_cache:
-            return self._orbit_cache[frame]
-        index = self._replay_index_json()
-        if frame == index.get("orbit", {}).get("frame"):
-            self._orbit_cache[frame] = index["orbit"]
-            return index["orbit"]
-        tree = self._tf_tree()
-        if tree is None or frame not in tree.frames:
-            raise HTTPException(status_code=404, detail=f"no tf frame {frame!r}")
-        stamps = np.asarray(index.get("scans") or [], dtype=np.float64)  # one stamp per replay scan
-        positions = frame_positions(stamps, lambda ts: self._frame_pose_at(frame, ts))
-        result = {"frame": frame, "positions": positions}
-        self._orbit_cache[frame] = result
-        return result
+        with self._planner_lock:  # a reopen clears the cache under it
+            if frame in self._orbit_cache:
+                return self._orbit_cache[frame]
+            index = self._replay_index_json()
+            if frame == index.get("orbit", {}).get("frame"):
+                self._orbit_cache[frame] = index["orbit"]
+                return index["orbit"]
+            tree = self._tf_tree()
+            if tree is None or frame not in tree.frames:
+                raise HTTPException(status_code=404, detail=f"no tf frame {frame!r}")
+            stamps = np.asarray(
+                index.get("scans") or [], dtype=np.float64
+            )  # one stamp per replay scan
+            positions = frame_positions(stamps, lambda ts: self._frame_pose_at(frame, ts))
+            result = {"frame": frame, "positions": positions}
+            self._orbit_cache[frame] = result
+            return result
 
     # ---- routes ------------------------------------------------------------
 

@@ -171,9 +171,15 @@ def _ingest(
     )
 
     tree = build_tf_tree(store, streams["tf"])
-    world = tf_root(tree) or "odom"
-    # Substituted only where build_tf_tree substituted: a direct world->base_link edge.
-    corrected = corrected_odometry_stream(store) if (world, "base_link") in tree._edges else None
+    root = tf_root(tree)
+    # Substituted only where build_tf_tree substituted: one root with a direct
+    # root->base_link edge. The "odom" fallback is for naming, never for that choice.
+    corrected = (
+        corrected_odometry_stream(store)
+        if root is not None and (root, "base_link") in tree._edges
+        else None
+    )
+    world = root or "odom"
 
     def lookup(target: str, source: str, ts: float) -> Any:
         matrix = tree.lookup(target, source, ts, TF_TOLERANCE_S)

@@ -301,6 +301,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         self._store_lock = threading.RLock()  # re-entered by the world cache build
         self._stopping = threading.Event()
         self._replay_progress = "not started"
+        self._replay_error: str | None = None  # a failed build is not retried until a reopen
         self._replay_index: dict[str, Any] | None = None
         self._replay_frames: OrderedDict[float, tuple[bytes, dict[str, Any]]] = OrderedDict()
         self._camera_hfov_deg: float | None = None
@@ -373,7 +374,12 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         async def memory_world_replay_segment(number: int, request: Request) -> Response:
             """One keyframe plus the diffs up to the next; see VoxelReplay.segment."""
 
-            replay = await asyncio.to_thread(self._ensure_replay)
+            try:
+                replay = await asyncio.to_thread(self._replay_if_ready)
+            except Exception as error:
+                raise HTTPException(
+                    status_code=503, detail=f"replay {self._replay_progress}"
+                ) from error
             if not 0 <= number < len(replay.index.keyframe_scan):
                 raise HTTPException(status_code=404, detail="no such segment")
 
@@ -975,7 +981,9 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         vectors and no build configured is left for the viewer's "Add
         embeddings" button.
         """
-        if self.config.image_stream_name not in self._ensure_store().list_streams():
+        with self._store_lock:
+            missing = self.config.image_stream_name not in self._ensure_store().list_streams()
+        if missing:
             # Nothing to index; saves loading a 3.7 GB model to find that out.
             self._index_progress = f"no {self.config.image_stream_name!r} stream"
             logger.warning("visual index skipped: %s", self._index_progress)
@@ -1046,11 +1054,18 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
 
     def _reopen_recording(self) -> None:
         """Open the recording afresh: siglipify rewrote the mcap, and the store holds the old file."""
-        # Lock order everywhere: world cache, replay, store, index.
-        with self._world_cache_lock, self._replay_lock, self._store_lock, self._index_lock:
+        # Lock order everywhere: planner, world cache, replay, store, index.
+        with (
+            self._planner_lock,
+            self._world_cache_lock,
+            self._replay_lock,
+            self._store_lock,
+            self._index_lock,
+        ):
             old = self._store
             self._store = open_recording(self.config.store_path)
             self._replay = None
+            self._replay_error = None
             self._replay_index = None
             self._replay_frames.clear()
             self._tf_tree_cache = None  # before naming: the names are picked against the tree
@@ -1206,7 +1221,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         return self._tf_tree_cache
 
     def _camera_frame(self) -> str:
-        if not self.config.camera_optical_frame:  # read once: the replay build asks per scan
+        if self.config.camera_optical_frame is None:  # read once, even when it is empty
             with self._store_lock:
                 first = self._ensure_store().streams[self.config.image_stream_name].first()
             self.config.camera_optical_frame = str(
@@ -1219,8 +1234,9 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         if self._lidar_world_aligned_cache is None:
             aligned = self.config.lidar_world_frame
             if aligned is None:
-                first = self._ensure_store().streams[self.config.lidar_stream_name].first()
-                frame_id = str(getattr(first.data, "frame_id", "")).lower().lstrip("/")
+                with self._store_lock:
+                    first = self._ensure_store().streams[self.config.lidar_stream_name].first()
+                    frame_id = str(getattr(first.data, "frame_id", "")).lower().lstrip("/")
                 aligned = frame_id in {"map", "odom", "world"} or "corrected" in frame_id
                 logger.info(
                     "lidar frame %r detected as %s",
@@ -1303,24 +1319,40 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
     def _ensure_replay(self) -> VoxelReplay:
         """The recording's replay streams, built on first use if missing.
 
-        Lock order everywhere: world cache, replay, store, index. The build runs
-        under the replay lock alone: the lidar and derived streams have their own
-        connections and nothing serves replay data until it is done.
+        Lock order everywhere: planner, world cache, replay, store, index. The
+        build runs under the replay lock alone: the lidar and derived streams
+        have their own connections and nothing serves replay data until it is done.
         """
         with self._replay_lock:
-            if self._replay is not None:
-                return self._replay
-            with self._store_lock:
-                store = self._ensure_store()
-                available = VoxelReplay.available(
-                    store,
-                    voxel_size=self.config.voxel_size,
-                    lidar_stream_name=self.config.lidar_stream_name,
-                    max_range=self.config.replay_max_range_m,
-                )
-            if not available:
-                self._replay_progress = "building"
-                logger.info("building the voxel replay streams into %s", self.config.store_path)
+            return self._replay_locked()
+
+    def _replay_if_ready(self) -> VoxelReplay:
+        """The replay for the serving routes: while a build holds the lock they
+        answer 503 instead of holding a request thread for the whole build."""
+        if not self._replay_lock.acquire(blocking=False):
+            raise RuntimeError(f"replay {self._replay_progress}")
+        try:
+            return self._replay_locked()
+        finally:
+            self._replay_lock.release()
+
+    def _replay_locked(self) -> VoxelReplay:
+        if self._replay is not None:
+            return self._replay
+        if self._replay_error is not None:
+            raise RuntimeError(self._replay_error)
+        with self._store_lock:
+            store = self._ensure_store()
+            available = VoxelReplay.available(
+                store,
+                voxel_size=self.config.voxel_size,
+                lidar_stream_name=self.config.lidar_stream_name,
+                max_range=self.config.replay_max_range_m,
+            )
+        if not available:
+            self._replay_progress = "building"
+            logger.info("building the voxel replay streams into %s", self.config.store_path)
+            try:
                 stats = build_replay_streams(
                     store,
                     lidar_stream_name=self.config.lidar_stream_name,
@@ -1330,27 +1362,32 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
                     keyframe_interval_s=self.config.replay_keyframe_interval_s,
                     cancelled=self._stopping.is_set,
                 )
-                logger.info(
-                    "voxel replay built: %d scans, %d keyframes, +%d/-%d edits in %.1f s",
-                    stats.scans,
-                    stats.keyframes,
-                    stats.added,
-                    stats.removed,
-                    stats.seconds,
-                )
-            with self._store_lock:
-                # The replay shows the same heights as the static map.
-                replay = VoxelReplay(
-                    store,
-                    z_min=self.config.map_z_min if self.config.map_z_min is not None else -np.inf,
-                    z_max=self.config.map_z_max if self.config.map_z_max is not None else np.inf,
-                )
-                # Listing every camera stamp is a pass over the image stream (on
-                # an mcap that decompresses every chunk), so it is done here, once.
-                self._replay_index = self._build_replay_index_json(replay)
-                self._replay = replay
-            self._replay_progress = "ready"
-            return replay
+            except Exception as error:
+                # Remembered: otherwise every viewer connect and every /replay/index
+                # retry would delete the streams and rebuild them from scratch.
+                self._replay_error = self._replay_progress = f"build failed: {error}"
+                raise
+            logger.info(
+                "voxel replay built: %d scans, %d keyframes, +%d/-%d edits in %.1f s",
+                stats.scans,
+                stats.keyframes,
+                stats.added,
+                stats.removed,
+                stats.seconds,
+            )
+        with self._store_lock:
+            # The replay shows the same heights as the static map.
+            replay = VoxelReplay(
+                store,
+                z_min=self.config.map_z_min if self.config.map_z_min is not None else -np.inf,
+                z_max=self.config.map_z_max if self.config.map_z_max is not None else np.inf,
+            )
+            # Listing every camera stamp is a pass over the image stream (on
+            # an mcap that decompresses every chunk), so it is done here, once.
+            self._replay_index = self._build_replay_index_json(replay)
+            self._replay = replay
+        self._replay_progress = "ready"
+        return replay
 
     def _replay_read(self, fn: Any, *args: Any) -> Any:
         """Run one store-reading replay call at a time."""
@@ -1399,14 +1436,14 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         """
         if self.config.depth_stream_name is None or self.config.camera_info_stream_name is None:
             return []
-        store = self._ensure_store()
-        depth_stream = store.streams[self.config.depth_stream_name]
-        info = depth_info_stream_for(
-            set(store.list_streams()),
-            self.config.depth_stream_name,
-            self.config.camera_info_stream_name,
-        )
         with self._store_lock:
+            store = self._ensure_store()
+            depth_stream = store.streams[self.config.depth_stream_name]
+            info = depth_info_stream_for(
+                set(store.list_streams()),
+                self.config.depth_stream_name,
+                self.config.camera_info_stream_name,
+            )
             k = store.streams[info].first().data.K  # the depth camera's own intrinsics
         intrinsics = (float(k[0]), float(k[4]), float(k[2]), float(k[5]))
 

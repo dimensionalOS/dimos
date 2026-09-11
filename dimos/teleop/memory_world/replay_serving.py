@@ -43,7 +43,7 @@ HEIGHT_COLOR_STOPS = np.array(
 
 
 class ReplayServing:
-    """Needs, from the module: ``config``, ``_ensure_store``, ``_ensure_replay``,
+    """Needs, from the module: ``config``, ``_ensure_store``, ``_replay_if_ready``,
     ``_replay_index``, ``_replay_frames``, ``_tf_tree``, ``_frame_pose_at``,
     ``_camera_frame``, ``_camera_hfov``, ``_encode_jpeg``."""
 
@@ -55,7 +55,7 @@ class ReplayServing:
     if TYPE_CHECKING:
 
         def _ensure_store(self) -> Any: ...
-        def _ensure_replay(self) -> VoxelReplay: ...
+        def _replay_if_ready(self) -> VoxelReplay: ...
         def _tf_tree(self) -> Any: ...
         def _frame_pose_at(self, frame: str, ts: float) -> Any: ...
         def _camera_frame(self) -> str: ...
@@ -65,7 +65,7 @@ class ReplayServing:
         def _encode_jpeg(img: Any, max_size: int, quality: int) -> bytes: ...
 
     def _replay_index_json(self) -> dict[str, Any]:
-        self._ensure_replay()
+        self._replay_if_ready()
         with self._replay_lock:  # set together with _replay; cleared by a reopen
             index = self._replay_index
         if index is None:
