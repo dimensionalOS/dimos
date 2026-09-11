@@ -36,16 +36,17 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import itertools
-import logging
 import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from dimos.utils.logging_config import setup_logger
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 VEC0_MAX_K = 4096
 SEGMENT_STREAM = "hyperspace_segments"

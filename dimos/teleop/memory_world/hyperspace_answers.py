@@ -29,7 +29,6 @@ file-size limit). It owns:
 from __future__ import annotations
 
 import asyncio
-import logging
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -62,8 +61,9 @@ from dimos.teleop.memory_world.query import (
 )
 from dimos.teleop.memory_world.replay import frame_positions
 from dimos.teleop.memory_world.route import RoutePlanner
+from dimos.utils.logging_config import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 EVIDENCE_CLUSTERS = 8
 

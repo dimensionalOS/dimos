@@ -35,7 +35,6 @@ must already hold ``hyperspace_keyframes`` and ``hyperspace_patches``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import logging
 from pathlib import Path
 import sqlite3
 import threading
@@ -56,11 +55,12 @@ from dimos.teleop.memory_world.hyperspace_fast import (
     patch_rects,
     project_pixels,
 )
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 KEYFRAME_STREAM = "hyperspace_keyframes"
 PATCH_STREAM = "hyperspace_patches"
