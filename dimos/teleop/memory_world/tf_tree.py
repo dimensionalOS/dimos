@@ -298,6 +298,11 @@ def level_camera_roll(world_T_optical: np.ndarray) -> np.ndarray:
     """
     levelled = np.array(world_T_optical, dtype=np.float64)
     forward = levelled[:3, 2]
+    length = float(np.linalg.norm(forward))
+    if length < 1e-9:  # no view direction to keep
+        return levelled
+    forward = forward / length  # a tf quaternion need not be normalised
+    levelled[:3, 2] = forward
     down = np.array([0.0, 0.0, -1.0])
     y = down - float(down @ forward) * forward
     norm = float(np.linalg.norm(y))

@@ -1026,6 +1026,8 @@ window.app = {
 // H pins the desktop menu and perf readout, which otherwise fade out once
 // the world is up and only return on hover.
 window.addEventListener('keydown', (event) => {
+    const el = event.target;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
     if (event.code === 'KeyH' && document.body.classList.contains('desktop-view')) {
         document.body.classList.toggle('hud-visible');
     }

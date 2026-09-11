@@ -1,7 +1,5 @@
 // Three.js scene — first-person walkthrough of a recorded point cloud.
 //
-// Frames: robot X forward, Y left, Z up (the wire format); three.js X right, Y up, Z back.
-//
 // World data hangs under a frame-rotate group: -90° about X, (rx,ry,rz) -> (rx,rz,-ry).
 //
 // Locomotion moves `_worldGroup`, not the camera (WebXR drives that).
@@ -17,7 +15,6 @@ const TELEPORT_ARC_SEGMENTS = 24;
 const TELEPORT_MAX_DISTANCE = 8.0;            // metres along ray
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 10.0;
-// Desktop fallback: without a headset, mouse-look drives `camera` at standing height.
 const EYE_HEIGHT_M = 1.6;
 const DESKTOP_LOOK_SENSITIVITY = 0.0022;      // radians per pixel of mouse travel
 const DESKTOP_PITCH_LIMIT = 1.45;             // just under 90deg, avoids gimbal flip
@@ -25,7 +22,6 @@ const DESKTOP_SPRINT_MULTIPLIER = 3.0;
 const DESKTOP_MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE']);
 const TOUCH_LOOK_SENSITIVITY = 0.006;         // radians per CSS pixel of one-finger drag
 const TOUCH_WALK_GAIN = 40;                   // two-finger drag: a screen-height sweep = full stick x40
-// Head-locked HUD minimap, lower-left of view.
 const HUD_PANEL_SIZE = 0.22;          // metres (square)
 const HUD_MARKER_RADIUS = 0.008;
 const HUD_DISTANCE = 0.55;            // metres in front of head
@@ -36,21 +32,16 @@ const ANSWER_PANEL_W = 0.62;          // metres; the canvas behind it is 4:1
 const ANSWER_PANEL_H = 0.155;
 const CAMERA_PANEL_W = 0.40;          // replay camera frame, 16:9, above the answer
 const CAMERA_FRUSTUM_M = 0.5;         // how far the drawn frustum reaches from the camera
-// Image-thumbnail quads at capture poses.
 const IMAGE_QUAD_W = 0.60;
 const IMAGE_QUAD_H = 0.34;            // 16:9-ish
 // Photo markers hang at the height the camera actually was; a recording whose odom
 // starts metres off the floor would otherwise float them all in the air.
-// Thumbnails are decoded only near the viewer, and only this many at once:
-// a recording has hundreds of poses, each otherwise its own texture and draw call.
+// Thumbnails decode only near the viewer, and only this many at once.
 const IMAGE_RENDER_DISTANCE_M = 12.0;
 const IMAGE_QUAD_BUDGET = 24;
 const IMAGE_LOD_INTERVAL_S = 0.2;     // how often the visible set is recomputed
-// Rolling window for the frame-time readout, ~4s at 60fps.
 const PERF_WINDOW = 240;
-// Quality governor: the level steps down when the recent median frame is slower
-// than QUALITY_STEP_DOWN_MS, and back up after QUALITY_SETTLE_S of fast frames.
-// Level 0 is everything.
+// Quality steps down when the median frame is slow, back up after a settled spell.
 const QUALITY_LEVELS = [
     { voxel_fraction: 1.0, voxel_range_m: Infinity, quad_budget: 24, foveation: 0.0, resolution: 1.0 },
     { voxel_fraction: 0.75, voxel_range_m: 20, quad_budget: 16, foveation: 0.4, resolution: 0.9 },
@@ -67,8 +58,7 @@ const QUALITY_SAMPLE_FRAMES = 90;
 // the viewer must move before it is worth doing.
 const VOXEL_CULL_INTERVAL_S = 0.5;
 const VOXEL_CULL_MOVE_M = 1.0;
-// Voxels within a highlighted point's radius are repainted in these. The map
-// itself stays inside a navy-to-cyan band, so warm colours read as "answer".
+// Answer voxels repaint warm; the map stays navy-to-cyan.
 const VOXEL_HIGHLIGHT_COLOR = 0xffb347;
 const VOXEL_HIGHLIGHT_FOCUS_COLOR = 0xff5c3a;
 // How far in front of the viewer a focused answer is brought.
@@ -428,7 +418,7 @@ export class WorldScene {
 
     _onDesktopKey(event, isDown) {
         const el = event.target;
-        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
+        if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) {
             this._desktopKeys.clear();  // typing: the keys are the box's, not the world's
             return;
         }
@@ -502,6 +492,7 @@ export class WorldScene {
 
     toggleHud() {
         this._hudPanel.visible = !this._hudPanel.visible;
+        this._hudOff = !this._hudPanel.visible;  // the user's own choice; an answer respects it
         this._hudGroup.visible = this._hudPanel.visible;  // the answer panel rides here too
         this.diag('hud_toggle', { visible: this._hudPanel.visible });
         if (this.onLayerChange) this.onLayerChange();
@@ -1192,6 +1183,7 @@ export class WorldScene {
             ).multiply(faceBackward).multiply(standUpright);
             this._imagePoseMeta.push({
                 id: header.ids?.[i] ?? null,
+                sourceId: header.source_ids?.[i] ?? null,  // analyze_memory names these
                 rx: positions[i * 3 + 0],
                 ry: positions[i * 3 + 1],
                 rz: positions[i * 3 + 2],
@@ -1232,14 +1224,20 @@ export class WorldScene {
         // budget alone is enough to bound the cost there.
         const level = QUALITY_LEVELS[this._quality];
         const budget = Math.min(IMAGE_QUAD_BUDGET, level.quad_budget);
-        const maxDist = this._selectedImageIds.size > 0
+        // An answer's ids may be marker ids or the store's own; if they match neither,
+        // show the photos near the viewer rather than none at all.
+        let selected = this._selectedImageIds.size > 0 ? this._selectedImageIds : null;
+        if (selected && !this._imagePoseMeta.some((m) => selected.has(m.id) || selected.has(m.sourceId))) {
+            selected = null;
+        }
+        const maxDist = selected
             ? Infinity
             : Math.min(IMAGE_RENDER_DISTANCE_M, Number.isFinite(level.voxel_range_m) ? level.voxel_range_m : Infinity) / scale;
 
         const candidates = [];
         for (let i = 0; i < this._imagePoseMeta.length; i++) {
             const meta = this._imagePoseMeta[i];
-            if (this._selectedImageIds.size > 0 && !this._selectedImageIds.has(meta.id)) continue;
+            if (selected && !selected.has(meta.id) && !selected.has(meta.sourceId)) continue;
             if (!this._thumbnailBytes.has(i)) continue;
             const dx = meta.rx - eye.x;
             const dy = meta.ry - eye.y;
@@ -1532,7 +1530,7 @@ export class WorldScene {
         lines.slice(0, 4).forEach((text, i) => ctx.fillText(text, 42, 62 + i * 50));
         this._answerTexture.needsUpdate = true;
         this._answerPanel.visible = true;
-        if (!this._hudGroupPinnedOff) this._hudGroup.visible = true;  // the answer panel lives here
+        if (!this._hudGroupPinnedOff && !this._hudOff) this._hudGroup.visible = true;  // it lives here
     }
 
     setTopDownMap(header, jpegArrayBuffer) {

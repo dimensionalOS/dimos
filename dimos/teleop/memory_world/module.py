@@ -756,7 +756,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             positions: list[tuple[float, float, float]] = []
             quats: list[tuple[float, float, float, float]] = []
             timestamps: list[float] = []
-            ids: list[int] = []
+            ids: list[int] = []  # marker ids, unique per marker
+            source_ids: list[int] = []  # the store's own, which analyze_memory names
             thumbnails: list[bytes] = []
 
             # One indexed read per marker rather than a pass over every frame:
@@ -777,6 +778,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 quats.append(body_style_quaternion(optical))
                 timestamps.append(float(obs.ts))
                 ids.append(k)  # unique per marker: an mcap's observation ids are window-local
+                source_ids.append(int(getattr(obs, "id", 0)))
 
                 try:
                     thumbnails.append(self._encode_jpeg(obs.data, max_size, quality))
@@ -793,6 +795,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 "n": int(pos_arr.shape[0]),
                 "timestamps": timestamps,
                 "ids": ids,
+                "source_ids": source_ids,  # what analyze_memory's observation_ids mean
             }
             payload = pos_arr.tobytes() + quat_arr.tobytes()
             logger.info("built %d image-pose markers + thumbnails", header["n"])
