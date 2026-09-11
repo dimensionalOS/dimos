@@ -1,57 +1,18 @@
-## Nix install (required for nix managed dimos)
+# Nix installation
 
-You need to have [nix](https://nixos.org/) installed and [flakes](https://nixos.wiki/wiki/Flakes) enabled,
-
-[official install docs](https://nixos.org/download/) recommended, but here is a quickstart:
+Use the official installer with `--use-nix` to provision a Nix development shell and Python environment:
 
 ```sh skip
-# Install Nix https://nixos.org/download/
-curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
-. /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-
-# make sure nix-flakes are enabled
-mkdir -p "$HOME/.config/nix"; echo "experimental-features = nix-command flakes" >> "$HOME/.config/nix/nix.conf"
-```
-
-## Using dimOS as a library
-
-```sh skip
-mkdir myproject && cd myproject
-
-# pull the flake (needed for nix develop outside the repo)
-wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/flake.nix
-wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/flake.lock
-
-# enter the nix development shell (provides system deps)
-nix develop
-
-python3 -m venv .venv
-source .venv/bin/activate
-
-# install everything (depending on your use case you might not need all extras,
-# check your respective platform guides)
-pip install "dimos[manipulation,misc,unitree]"
-```
-
-## Developing on dimOS
-
-```sh skip
-# this allows getting large files on-demand (and not pulling all immediately)
-export GIT_LFS_SKIP_SMUDGE=1
-git clone https://github.com/dimensionalOS/dimos.git
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --use-nix --mode dev --project-dir ./dimos
 cd dimos
-
-# enter the nix development shell (provides system deps)
 nix develop
-
-python3 -m venv .venv
 source .venv/bin/activate
-
-pip install -e ".[manipulation,misc,unitree]"
-
-# type check
-mypy dimos
-
-# tests (around a minute to run)
-pytest --numprocesses=auto dimos
 ```
+
+The installer offers to install Nix if needed and enables flakes for a new installation. An existing Nix installation must already have flakes enabled. Choose library mode to install the published package instead; the installer downloads the flake files into that project.
+
+Nix is an option for Arch Linux and other distributions whose package managers the installer does not handle. This path is not covered by installation CI. Native Arch dependency installation through pacman is not implemented.
+
+On Ubuntu, prefer the [system-package path](/docs/installation/ubuntu.md), which is tested in CI. Nix libraries can conflict with PyPI wheels on Ubuntu 22.04.
+
+See [installer options](/docs/installation/index.md) and the [DDS guide](/docs/usage/transports/dds.md) for specialized setup.

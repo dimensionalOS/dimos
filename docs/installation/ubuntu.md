@@ -1,41 +1,23 @@
-## System Dependencies Install (Ubuntu 22.04 or 24.04)
+# Ubuntu installation
+
+Use the official installer on Ubuntu 22.04/24.04, on x86_64 or ARM64:
 
 ```sh skip
-sudo apt-get update
-sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev pre-commit
-
-# install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-## Using dimOS as a library
+Choose system packages for the CI-tested path. The installer sets up apt dependencies, uv, Python 3.12, and dimOS, then verifies the CLI and native libraries.
+
+Choose **library** for the published package or **dev** for a source checkout. For example:
 
 ```sh skip
-mkdir myproject && cd myproject
-
-uv venv --python 3.12
-source .venv/bin/activate
-
-# install everything (depending on your use case you might not need all extras,
-# check your respective platform guides)
-uv pip install 'dimos[manipulation,misc,unitree]'
-```
-
-## Developing on dimOS
-
-```sh skip
-# this allows getting large files on-demand (and not pulling all immediately)
-export GIT_LFS_SKIP_SMUDGE=1
-git clone https://github.com/dimensionalOS/dimos.git
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --mode dev --no-nix --project-dir ./dimos
 cd dimos
-
-# Install all dependency groups (tests, lint, …) so mypy + pytest are
-# both available. For self-hosted tests, see docs/development/testing.md.
-uv sync --all-groups
-
-# type check
-uv run mypy dimos
-
-# tests (around a minute to run)
-uv run pytest --numprocesses=auto dimos
+source .venv/bin/activate
 ```
+
+An existing checkout is reused without pulling or switching branches. Developer mode includes test and lint dependencies; see [testing](/docs/development/testing.md) for additional groups.
+
+Both modes pass CPU installation CI on Ubuntu 22.04/24.04 and x86_64/ARM64. Linux ARM64 excludes the unsupported `scene` extra. Jetson CUDA setup is not supported.
+
+See [installer options and local testing](/docs/installation/index.md).

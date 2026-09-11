@@ -1,5 +1,7 @@
 # System Requirements
 
+Install dimOS with the [official installer](/docs/installation/index.md). It provisions Python and system dependencies for the supported installation paths.
+
 ## Hardware
 
 | Component | Minimum | Recommended |
@@ -25,16 +27,10 @@
 
 ## Dependency Tiers
 
-Bare `pip install dimos` installs the **core** tier. Extras add capabilities on top.
+Choose extras with the installer's `--extras` option. The default is `all`, adjusted for the platform. For example:
 
 ```bash
-pip install dimos                                    # Core only
-pip install 'dimos[base,unitree]'                    # Unitree robot control (no torch)
-pip install 'dimos[base,unitree,perception]'         # + Object detection, VLMs (requires torch)
-pip install 'dimos[base,unitree,sim]'                # + MuJoCo simulation
-pip install 'dimos[base,unitree,perception,sim]'     # Full stack
-pip install 'dimos[base,unitree,drone]'              # + Drone support
-pip install 'dimos[base,unitree,manipulation]'       # + Arm control
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash -s -- --extras base,unitree,sim
 ```
 
 | Extra | What it adds | Key packages | GPU? |
@@ -57,15 +53,10 @@ pip install 'dimos[base,unitree,manipulation]'       # + Arm control
 | `dds` | DDS transport (CycloneDDS) | cyclonedds | No |
 
 Cockpit voice input and the legacy browser audio upload require the `ffmpeg`
-executable in addition to the Python `web` extra. On Ubuntu/Debian, install it
-with `sudo apt-get install ffmpeg`.
+executable in addition to the Python `web` extra. The installer supplies it through system packages on Ubuntu and macOS.
 
 ## Headless / Server Environments
 
-If running on a headless Ubuntu server (no display), install OpenGL libraries for visualization dependencies:
-
-```bash
-sudo apt-get install -y libgl1 libegl1
-```
+The Ubuntu installer includes `libgl1` and `libegl1` for visualization imports on headless servers.
 
 Nix users (`nix develop`) don't need this. The flake provides `libGL`, `libGLU`, and `mesa`.

@@ -1,59 +1,19 @@
-# macOS Install (12.6 or newer)
+# macOS installation
+
+Use the official installer on macOS 12.6 or newer:
 
 ```sh skip
-# install homebrew
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-# install dependencies
-brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python pre-commit
-
-# install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
-## Using dimOS as a library
+The installer sets up Homebrew dependencies, uv, Python 3.12, and dimOS. Choose **library** for the published package or **dev** for a source checkout. Follow the printed activation command when it finishes.
 
-```sh skip
-mkdir myproject && cd myproject
+Apple Silicon is the target macOS configuration. macOS CI is paused because runner capacity is exhausted; the current installer needs local validation. Package and hardware support can differ from Linux.
 
-uv venv --python 3.12
-source .venv/bin/activate
-
-# install everything (depending on your use case you might not need all extras,
-# check your respective platform guides)
-uv pip install 'dimos[manipulation,misc,unitree]'
-```
-
-## Developing on dimOS
-
-```sh skip
-# this allows getting large files on-demand (and not pulling all immediately)
-export GIT_LFS_SKIP_SMUDGE=1
-git clone https://github.com/dimensionalOS/dimos.git
-cd dimos
-
-# Install all dependency groups (tests, lint, …) so mypy + pytest are
-# both available. For self-hosted tests, see docs/development/testing.md.
-uv sync --all-groups
-
-# type check
-uv run mypy dimos
-
-# tests (around a minute to run)
-uv run pytest --numprocesses=auto dimos
-```
+See [installer options and local testing](/docs/installation/index.md).
 
 ## Transport note for macOS
 
 LCM over UDP can be unreliable on macOS for large or high-rate replay workloads. dimOS defaults the global stream transport to **Zenoh** everywhere, so you never need `--transport=zenoh`. Use `--transport=lcm` if you need to force the legacy multicast path.
 
 See the [Zenoh quickstart](/docs/usage/transports/index.md#zenoh-quickstart) for what the localhost-pinned default reaches and how to point it at a robot or the LAN.
-
-```sh skip
-dimos --dtop --replay --replay-db=go2_bigoffice run unitree-go2
-```
-
-If you are developing on the repository, prefer syncing the full environment with the checked-in lockfile:
-
-```sh skip
-uv sync --extra all --frozen
-```

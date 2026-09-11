@@ -6,6 +6,8 @@ the pinned Git revision until the vendor publishes a compatible release.
 
 ## Install from a source checkout
 
+Create a developer environment with the [official installer](/docs/installation/index.md) first. Then install the A1Z-specific SDK and tools below.
+
 The repository setup script shows its complete plan and asks for confirmation
 before it changes the checkout environment or installs system packages:
 
@@ -20,7 +22,7 @@ package instead of selecting a package manager for you.
 
 ## Install into an existing environment
 
-Install these requirements with the package manager that owns the environment:
+For a new library environment, use the [official installer](/docs/installation/index.md) with `--mode library --extras manipulation`. In an existing environment, add the bundle and vendor SDK with the package manager that owns it:
 
 ```bash
 python -m pip install 'dimos[manipulation]'
