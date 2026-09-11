@@ -45,7 +45,7 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.teleop.quest.quest_types import BUTTON_ALIASES, Buttons
+from dimos.teleop.webxr.controller_types import BUTTON_ALIASES, Buttons
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

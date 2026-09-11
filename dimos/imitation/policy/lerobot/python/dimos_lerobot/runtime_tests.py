@@ -38,7 +38,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
-from dimos.teleop.quest.quest_types import Buttons
+from dimos.teleop.webxr.controller_types import Buttons
 from dimos.utils.testing.waiting import wait_until
 
 JOINTS = [f"test_arm/joint{i}" for i in range(1, 5)]

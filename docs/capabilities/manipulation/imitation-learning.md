@@ -35,6 +35,7 @@ before switching from collection to rollout.
 | --- | --- | --- |
 | `openyam-teach-collection` | Wrist RGB | Measured 7-D joints for both |
 | `openyam-quest-collection` | Wrist RGB | Measured state, accepted commands |
+| `dual-openyam-quest-collection` | Two wrist RGB cameras | Measured state, accepted commands; 14-D |
 
 ```bash
 dimos --can-port follower_l run openyam-teach-collection --daemon \
@@ -72,6 +73,29 @@ the arm before stopping the stack, since shutdown may de-torque it:
 ```bash skip
 dimos stop
 ```
+
+### Dual-arm collection with Quest
+
+For two arms with Quest, launch the dual collection blueprint and attach the
+same episode controls:
+
+```bash skip
+dimos run dual-openyam-quest-collection --daemon \
+  --recorder.recording recordings/fold-001 \
+  --recorder.format mcap \
+  --episodes.task "fold the towel" \
+  --controlcoordinator.left-can-port follower_l \
+  --controlcoordinator.right-can-port follower_r \
+  --left-wrist.hardware.camera-index /dev/video0 \
+  --right-wrist.hardware.camera-index /dev/video2
+dimos imitation collect
+```
+
+The dual profile uses 640×480 RGB images at 30 Hz with a 20 ms alignment
+tolerance anchored on the left wrist. Joint order is left arm joints 1–6,
+right arm joints 1–6, left gripper, right gripper. Prepare and train using the
+same commands below with the dual recording and dataset paths. Dual-arm
+collection and training do not imply support for dual-arm policy rollout.
 
 ## Recording directories
 

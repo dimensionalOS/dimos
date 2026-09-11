@@ -19,11 +19,11 @@ from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import WebcamConfig
 from dimos.imitation.collection.episode_monitor import EpisodeMonitorModule
 from dimos.imitation.collection.native_recorder import collection_recorder
-from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_quest_dual_openyam
+from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
 from dimos.robot.manipulators.dual_openyam.learning import DUAL_OPENYAM_COLLECTION
 
 dual_openyam_quest_collection = autoconnect(
-    teleop_quest_dual_openyam,
+    teleop_webxr_dual_openyam,
     CameraModule.blueprint(
         instance_name="left_wrist",
         hardware=WebcamConfig(
