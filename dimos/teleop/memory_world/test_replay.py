@@ -18,18 +18,26 @@ import struct
 import numpy as np
 import pytest
 
-from dimos.mapping.voxels.impl.packed import PackedVoxels
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+pytest.importorskip("dimos_voxel_ray_tracing")
+
 from dimos.teleop.memory_world.replay import (
     TAG_ADDED,
     TAG_REMOVED,
-    ReplayGrid,
+    RayTracedGrid,
+    SensorScan,
     VoxelReplay,
     build_replay_streams,
+    pack_keys,
+    sensor_scan,
+    unpack_centres,
 )
+from dimos.teleop.memory_world.tf_tree import pose_matrix
 
 VOXEL = 0.1
+AT_ORIGIN = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
 
 
 def _scans(seed: int, count: int, points: int = 300) -> list[np.ndarray]:
@@ -44,38 +52,67 @@ def _scans(seed: int, count: int, points: int = 300) -> list[np.ndarray]:
     return scans
 
 
-def test_replay_grid_matches_packed_voxels_when_carving_immediately() -> None:
-    grid = ReplayGrid(VOXEL, remove_after=1)
-    packed = PackedVoxels(voxel_size=VOXEL, carve_columns=True)
-    for scan in _scans(1, 12):
-        grid.add_scan(scan)
-        packed.add_frame(PointCloud2.from_numpy(scan, frame_id="world"))
-    np.testing.assert_array_equal(grid.keys, packed._keys)
-    np.testing.assert_allclose(grid.centres(), packed.points())
+def _wall(x: float) -> np.ndarray:
+    """A wall at x facing the origin, every voxel of it hit: (N, 3) float32.
+
+    Walls at different x subtend the same angles from the origin, so rays to
+    a farther wall pass through every voxel of a nearer one.
+    """
+    half = x / 3.0
+    side = np.arange(-half, half, VOXEL / 2, dtype=np.float32) + VOXEL / 4
+    y, z = np.meshgrid(side, side + half)
+    return np.stack([np.full(y.size, x, np.float32), y.ravel(), z.ravel()], axis=1)
+
+
+def test_keys_round_trip_through_centres() -> None:
+    points = np.array([[0.31, -0.29, 1.04], [0.31, -0.29, 1.09], [5.0, 5.0, 5.0]], np.float32)
+    keys = pack_keys(points, VOXEL)
+    assert len(keys) == 2  # the first two share a voxel
+    np.testing.assert_allclose(
+        unpack_centres(keys, VOXEL), [[0.35, -0.25, 1.05], [5.05, 5.05, 5.05]]
+    )
+
+
+def test_sensor_scan_moves_a_world_scan_back_to_the_sensor() -> None:
+    world_from_sensor = pose_matrix((10.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+    scan = sensor_scan(np.array([[12.0, 1.0, 0.5]], np.float32), world_from_sensor, in_world=True)
+    np.testing.assert_allclose(scan.points, [[2.0, 1.0, 0.5]])
+    assert scan.position == (10.0, 0.0, 0.0)
+    kept = sensor_scan(np.array([[2.0, 1.0, 0.5]], np.float32), world_from_sensor, in_world=False)
+    np.testing.assert_allclose(kept.points, [[2.0, 1.0, 0.5]])
 
 
 def test_diffs_replay_to_the_same_set() -> None:
     """Applying every (added, removed) pair from empty reproduces the grid."""
-    grid = ReplayGrid(VOXEL)
+    grid = RayTracedGrid(VOXEL, max_range=10.0)
     state: set[int] = set()
     for scan in _scans(2, 10):
-        added, removed = grid.add_scan(scan)
+        added, removed = grid.add_scan(SensorScan(scan, *AT_ORIGIN))
         assert not (set(added.tolist()) & set(removed.tolist()))
         state -= set(removed.tolist())
         state |= set(added.tolist())
         assert state == set(grid.keys.tolist())
+    assert state
 
 
-def test_hysteresis_keeps_missed_voxels_for_a_while() -> None:
-    scans = _scans(3, 4)
-    quick = ReplayGrid(VOXEL, remove_after=1)
-    patient = ReplayGrid(VOXEL, remove_after=3)
-    removed_quick = removed_patient = 0
-    for scan in scans:
-        removed_quick += len(quick.add_scan(scan)[1])
-        removed_patient += len(patient.add_scan(scan)[1])
-    assert removed_patient < removed_quick
-    assert len(patient.keys) >= len(quick.keys)
+def test_a_wall_seen_through_is_cleared() -> None:
+    """Column carving would keep a wall that later scans see straight past;
+    ray tracing removes it, and never touches voxels beyond the ray range."""
+    grid = RayTracedGrid(VOXEL, max_range=10.0)
+    near = _wall(3.0)
+    for _ in range(8):
+        grid.add_scan(SensorScan(near, *AT_ORIGIN))
+    near_keys = set(pack_keys(near, VOXEL).tolist())
+    held = set(grid.keys.tolist())
+    assert len(near_keys & held) >= 0.9 * len(near_keys)  # the head-on wall is in the map
+
+    far = _wall(6.0)
+    removed_total: set[int] = set()
+    for _ in range(12):
+        _, removed = grid.add_scan(SensorScan(far, *AT_ORIGIN))
+        removed_total |= set(removed.tolist())
+    assert near_keys & removed_total  # the old wall came out
+    assert not (near_keys & set(grid.keys.tolist()))
 
 
 @pytest.fixture
@@ -93,12 +130,13 @@ def test_build_streams_and_serve_segments(store) -> None:  # type: ignore[no-unt
     stats = build_replay_streams(
         store,
         lidar_stream_name="lidar",
-        to_world=lambda obs: obs.data,
+        to_scan=lambda obs: SensorScan(obs.data.points_f32(), *AT_ORIGIN),
         voxel_size=VOXEL,
+        max_range=10.0,
         keyframe_interval_s=1.0,
     )
     assert stats.scans == 30
-    assert stats.keyframes == 3  # t=100.0, 101.0, 102.0
+    assert stats.keyframes == 4  # t=100.0, 101.0, 102.0 and the last scan
     assert VoxelReplay.available(store, voxel_size=VOXEL, lidar_stream_name="lidar")
     assert not VoxelReplay.available(store, voxel_size=VOXEL * 2, lidar_stream_name="lidar")
 
@@ -110,7 +148,7 @@ def test_build_streams_and_serve_segments(store) -> None:  # type: ignore[no-unt
     replay = VoxelReplay(store)
     index = replay.index
     assert index.scan_at(100.55) == 5
-    assert index.segment_of(5) == 0 and index.segment_of(10) == 1 and index.segment_of(29) == 2
+    assert index.segment_of(5) == 0 and index.segment_of(10) == 1 and index.segment_of(29) == 3
     assert index.segment_scans(1) == (10, 20)
 
     # replaying a segment's diffs on the viewer's terms reaches the next keyframe

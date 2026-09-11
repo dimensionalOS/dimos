@@ -58,6 +58,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.memory.store.base import Store
 from dimos.memory.transform import throttle
 from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
+from dimos.teleop.memory_world.embed import EmbeddingJob, siglipify_command, siglipify_config
 from dimos.teleop.memory_world.messages import (
     MSG_IMAGE_POSES,
     MSG_IMAGE_THUMBNAIL,
@@ -77,7 +78,15 @@ from dimos.teleop.memory_world.query import (
     MemoryQueryResult,
 )
 from dimos.teleop.memory_world.recording import detect_streams, open_recording, pick_lidar
-from dimos.teleop.memory_world.replay import VoxelReplay, build_replay_streams
+from dimos.teleop.memory_world.replay import (
+    SensorScan,
+    VoxelReplay,
+    accumulate_scans,
+    build_replay_streams,
+    frame_positions,
+    sensor_scan,
+    stamped_positions,
+)
 from dimos.teleop.memory_world.tf_tree import TfTree, pose_matrix
 from dimos.teleop.memory_world.visual_search import (
     SIGLIP2_MODEL_NAME,
@@ -160,8 +169,10 @@ class MemoryWorldConfig(ModuleConfig):
     # bigger, lower for finer detail at the cost of bandwidth. This same value
     # is sent to the client so rendered point size matches voxel spacing.
     voxel_size: float = 0.05
-    # Hard cap so an unexpectedly dense map doesn't try to ship 5M points.
-    max_points: int = 250_000
+    # Hard cap on the static cloud sent to a viewer; the ray-traced map of a
+    # building at 5 cm runs to about a million voxels, and the viewer's
+    # quality governor drops voxels itself when a device cannot draw them all.
+    max_points: int = 1_500_000
     # Which lidar stream to accumulate and how many scans to sample. <= 0 means
     # use every lidar frame (densest map, slowest build).
     # The output cloud is deduped by voxel_size, so more scans improves the
@@ -216,6 +227,9 @@ class MemoryWorldConfig(ModuleConfig):
     camera_time_offset_s: float = 0.0
     # The camera's path is drawn as a polyline sampled from tf.
     n_trail_samples: int = 400
+    # The frame the viewer's orbit mode circles, sent per replay scan. Falls
+    # back to the camera frame when tf does not know it.
+    orbit_frame: str = "base_link"
     # Top-down density map (GTA-style minimap + ground projection). Computed
     # from the same point cloud — Z-slab histogram into a square image.
     map_image_size: int = 512
@@ -241,6 +255,11 @@ class MemoryWorldConfig(ModuleConfig):
     # at a third of the embedding cost.
     image_index_stride: int = PydanticField(default=3, ge=1)
     build_image_index_on_start: bool = True
+    # A recording with no embeddings offers to add them: the viewer's "Add
+    # embeddings" button runs siglipify from this flake over the recording,
+    # which writes the vectors back into it (a .db gains a stream, an .mcap
+    # is rewritten with a new topic), and the index is loaded from those.
+    siglipify_flake: str = "github:jeff-hykin/siglipify"
     # Two hits closer together than this are one place, not two answers.
     place_radius_m: float = PydanticField(default=2.5, gt=0.0)
     max_places: int = PydanticField(default=6, ge=1)
@@ -264,6 +283,10 @@ class MemoryWorldConfig(ModuleConfig):
     # time. A longer interval means fewer, larger segments.
     replay_keyframe_interval_s: float = PydanticField(default=5.0, gt=0.0)
     build_replay_on_start: bool = True
+    # Rays longer than this are not cast. The replay is ray-traced (each scan
+    # clears the voxels its rays pass through), and its final keyframe is the
+    # static map, so this bounds both.
+    replay_max_range_m: float = PydanticField(default=20.0, gt=0.0)
     # The camera frame shown while scrubbing, fetched one at a time.
     replay_frame_max_size: int = 480
     replay_frame_jpeg_quality: int = 60
@@ -291,7 +314,13 @@ class MemoryWorldModule(Module):
         self._cached_top_down: tuple[dict[str, Any], bytes] | None = None
         self._viewer_position: tuple[float, float, float] | None = None
         self._visual_index: VisualMemoryIndex | None = None
+        self._lidar_world_aligned_cache: bool | None = None
         self._index_lock = threading.Lock()
+        self._embed_job = EmbeddingJob(
+            on_finished=lambda job: self._broadcast(
+                encode_text("index_status", **self._index_status())
+            )
+        )
         # The world caches are built lazily by whichever client connects first;
         # without this, two clients arriving together each voxelise the whole
         # recording.
@@ -405,6 +434,18 @@ class MemoryWorldModule(Module):
                 media_type="image/jpeg",
                 headers={"X-Camera-Pose": json.dumps(meta), "Cache-Control": "max-age=3600"},
             )
+
+        @app.get(f"{self.config.client_route}/embeddings")  # type: ignore[misc]
+        async def memory_world_embeddings() -> dict[str, Any]:
+            """Whether the recording can be searched, and how adding embeddings is going."""
+            return await asyncio.to_thread(self._index_status)
+
+        @app.post(f"{self.config.client_route}/embeddings")  # type: ignore[misc]
+        async def memory_world_add_embeddings() -> dict[str, Any]:
+            """Run siglipify over the recording, in the background; poll GET for progress."""
+            if not await asyncio.to_thread(self._start_embedding):
+                raise HTTPException(status_code=409, detail="embeddings are already being added")
+            return await asyncio.to_thread(self._index_status)
 
         @app.post(f"{self.config.client_route}/voice")  # type: ignore[misc]
         async def memory_world_voice(audio: UploadFile) -> dict[str, Any]:
@@ -569,6 +610,7 @@ class MemoryWorldModule(Module):
             conn.send_threadsafe(encode_binary(MSG_ODOM_TRAIL, odom_header, odom_payload))
 
             conn.send_threadsafe(encode_text("ready"))
+            conn.send_threadsafe(encode_text("index_status", **self._index_status()))
             with self._clients_lock:
                 active_query_result = self._active_query_result
             if active_query_result is not None:
@@ -587,52 +629,23 @@ class MemoryWorldModule(Module):
         return built
 
     def _build_voxel_cloud_from_lidar(self) -> tuple[dict[str, Any], bytes] | None:
-        """Accumulate a voxel map from the lidar stream and pack it for the wire.
+        """The voxel map, packed for the wire.
 
-        Each lidar scan is transformed into the world frame by a tf lookup at
-        its stamp, then fed to :class:`VoxelMapTransformer`. The final accumulated cloud
-        is height-coloured (violet low → red high) so the user gets depth cues
-        without true RGB.
+        The map is the ray-traced replay's final keyframe: every scan cleared
+        the voxels its rays passed through, so what is left is what the last
+        look at each place saw (windows, people and reflections do not pile up
+        the way they do in a plain accumulation). Without the replay the scans
+        are simply accumulated with :class:`VoxelMapTransformer`. The cloud is
+        height-coloured so the user gets depth cues without true RGB.
         """
-        from dimos.mapping.voxels.module import VoxelMapTransformer
-        from dimos.memory.transform import FnTransformer
-
         try:
-            store = self._ensure_store()
-            stream = store.streams[self.config.lidar_stream_name]
-            first, last = stream.first(), stream.last()
-            span = max(float(last.ts) - float(first.ts), 1e-3)
-            n_scans = int(self.config.n_voxel_scans)
-            use_all = n_scans <= 0
-            lidar_world_frame = self.config.lidar_world_frame
-            if lidar_world_frame is None:
-                frame_id = str(getattr(first.data, "frame_id", "")).lower().lstrip("/")
-                lidar_world_frame = frame_id in {"map", "odom", "world"}
-                logger.info(
-                    "lidar frame %r detected as %s",
-                    frame_id,
-                    "world-aligned" if lidar_world_frame else "sensor-relative",
-                )
-
-            def to_world_frame(obs: Any) -> Any:
-                # If scans are already registered to the map frame, applying
-                # a pose again double-transforms them into scattered noise.
-                if lidar_world_frame:
-                    return obs
-                cloud = self._scan_to_world(obs)
-                return None if cloud is None else obs.derive(data=cloud)
-
-            # emit_every=0 → only yield the final accumulated map on exhaustion.
-            # Throttle to n_scans unless use_all (then feed every frame).
-            pipeline = stream if use_all else stream.transform(throttle(span / n_scans))
-            result = (
-                pipeline.transform(FnTransformer(to_world_frame))
-                .transform(VoxelMapTransformer(emit_every=0, voxel_size=self.config.voxel_size))
-                .last()
-            )
-            if result is None or result.data is None:
-                return None
-            xyz, _ = result.data.as_numpy()
+            xyz: np.ndarray | None
+            if self.config.build_replay_on_start:
+                replay = self._ensure_replay()
+                xyz = self._replay_read(lambda: replay.keyframes.last().data.points_f32())
+                logger.info("voxel cloud from the ray-traced replay: %d voxels", len(xyz))
+            else:
+                xyz = self._accumulated_cloud()
             if xyz is None or xyz.size == 0:
                 return None
 
@@ -659,11 +672,7 @@ class MemoryWorldModule(Module):
             rgb = self._height_colors(positions)
             header = self._cloud_header(positions)
             payload = positions.tobytes() + rgb.tobytes()
-            logger.info(
-                "built voxel cloud (%s scans): n=%d",
-                "all" if use_all else str(n_scans),
-                positions.shape[0],
-            )
+            logger.info("built voxel cloud: n=%d", positions.shape[0])
             return header, payload
         except Exception:
             logger.exception("voxel-from-lidar build failed")
@@ -1015,6 +1024,53 @@ class MemoryWorldModule(Module):
             self._index_progress = f"ready ({index.count()} frames)"
         logger.info("voice query path warm")
 
+    # ---- adding embeddings to a recording that has none -----------------------
+
+    def _index_status(self) -> dict[str, Any]:
+        """What the viewer shows for search: a query button, or an offer to embed first."""
+        present = False
+        try:
+            index = self._ensure_visual_index()
+            present = index.precomputed_stream_name is not None or index.count() > 0
+        except Exception as error:
+            logger.warning("index status unavailable: %s", error)
+        return {"present": present, "index": self._index_progress, **self._embed_job.status()}
+
+    def _start_embedding(self) -> bool:
+        """Run siglipify over the recording in the background unless it already is."""
+        return self._embed_job.start(
+            siglipify_command(self.config.siglipify_flake, self.config.store_path, "")[:-1],
+            siglipify_config(
+                self.config.siglip_model_name,
+                self.config.image_stream_name,
+                self.config.image_index_stride,
+            ),
+            adopt=self._adopt_embeddings,
+        )
+
+    def _adopt_embeddings(self) -> None:
+        """Pick up the stream siglipify just wrote and load the index from it."""
+        if self.config.store_path.endswith(".mcap"):
+            self._reopen_recording()
+        with self._index_lock:
+            if self._visual_index is not None:
+                self._visual_index.stop()
+                self._visual_index = None
+        self._build_visual_index()
+
+    def _reopen_recording(self) -> None:
+        """Open the recording afresh: siglipify rewrote the mcap, and the store holds the old file."""
+        with self._world_cache_lock, self._replay_lock, self._index_lock:
+            old = self._store
+            self._store = open_recording(self.config.store_path)
+            self._name_streams(self._store)
+            self._replay = None
+            self._replay_index = None
+            self._replay_frames.clear()
+            if old is not None:
+                old.stop()
+        logger.info("reopened %s", self.config.store_path)
+
     @skill
     def find_in_memory(self, query: str) -> SkillResult:
         """Find the distinct places something was seen and highlight them in VR.
@@ -1154,6 +1210,52 @@ class MemoryWorldModule(Module):
         first = self._ensure_store().streams[self.config.image_stream_name].first()
         return str(getattr(first.data, "frame_id", "") or "").lstrip("/")
 
+    def _lidar_world_aligned(self) -> bool:
+        """Whether the lidar scans are stored already registered in the world frame."""
+        if self._lidar_world_aligned_cache is None:
+            aligned = self.config.lidar_world_frame
+            if aligned is None:
+                first = self._ensure_store().streams[self.config.lidar_stream_name].first()
+                frame_id = str(getattr(first.data, "frame_id", "")).lower().lstrip("/")
+                aligned = frame_id in {"map", "odom", "world"}
+                logger.info(
+                    "lidar frame %r detected as %s",
+                    frame_id,
+                    "world-aligned" if aligned else "sensor-relative",
+                )
+            self._lidar_world_aligned_cache = bool(aligned)
+        return self._lidar_world_aligned_cache
+
+    def _accumulated_cloud(self) -> np.ndarray | None:
+        """Every ``n_voxel_scans``-th scan voxelised into one cloud, no clearing."""
+        world_aligned = self._lidar_world_aligned()
+
+        def to_world(obs: Any) -> Any:
+            # A scan already in the map frame must not get its pose applied again.
+            return obs if world_aligned else self._scan_to_world(obs)
+
+        stream = self._ensure_store().streams[self.config.lidar_stream_name]
+        return accumulate_scans(stream, to_world, self.config.voxel_size, self.config.n_voxel_scans)
+
+    def _scan_frame(self, obs: Any) -> SensorScan | None:
+        """A lidar scan in its sensor frame with the sensor's pose, for ray casting.
+
+        The pose is a tf lookup at the scan's stamp. A stream stored already in
+        the world frame names no sensor, so its rays start at the camera, the
+        nearest frame tf knows; a recording without tf falls back to the pose
+        stamped on the scan.
+        """
+        world_aligned = self._lidar_world_aligned()
+        scan_frame = str(getattr(obs.data, "frame_id", "") or "").lstrip("/")
+        pose_frame = self._camera_frame() if world_aligned else scan_frame
+        matrix = self._frame_pose_at(pose_frame, float(obs.ts))
+        if matrix is None:
+            pose = getattr(obs, "pose_tuple", None)
+            if pose is None or self._tf_tree() is not None:
+                return None
+            matrix = pose_matrix(tuple(pose[:3]), tuple(pose[3:7]))
+        return sensor_scan(obs.data.points_f32(), np.asarray(matrix), in_world=world_aligned)
+
     def _scan_to_world(self, obs: Any) -> Any:
         """A sensor-frame lidar scan moved into the world frame, or None.
 
@@ -1201,8 +1303,9 @@ class MemoryWorldModule(Module):
                 stats = build_replay_streams(
                     store,
                     lidar_stream_name=self.config.lidar_stream_name,
-                    to_world=self._scan_to_world,
+                    to_scan=self._scan_frame,
                     voxel_size=self.config.voxel_size,
+                    max_range=self.config.replay_max_range_m,
                     keyframe_interval_s=self.config.replay_keyframe_interval_s,
                 )
                 logger.info(
@@ -1255,7 +1358,22 @@ class MemoryWorldModule(Module):
         high = float(np.percentile(z, self.config.height_ramp_high_percentile))
         payload["height"] = {"floor": low, "span": max(high - low, 1e-3)}
         payload["colors"] = (HEIGHT_COLOR_STOPS / 255.0).round(4).tolist()
+        payload["orbit"] = self._orbit_positions(replay.index.scan_ts)
         return payload
+
+    def _orbit_positions(self, stamps: np.ndarray) -> dict[str, Any]:
+        """Where the orbit frame was at each replay scan, for the viewer to circle."""
+        tree = self._tf_tree()
+        frame = self.config.orbit_frame
+        if tree is not None and frame not in tree.frames:
+            logger.warning("orbit frame %r not in tf; orbiting the camera instead", frame)
+            frame = self._camera_frame()
+        if tree is not None:
+            positions = frame_positions(stamps, lambda ts: self._frame_pose_at(frame, ts))
+        else:  # no tf: the pose stamped on the lidar scans is all there is
+            scans = self._ensure_store().streams[self.config.lidar_stream_name].order_by("ts")
+            positions = stamped_positions(scans)[: len(stamps)]
+        return {"frame": frame, "positions": positions}
 
     def _replay_frame(self, ts: float) -> tuple[bytes, dict[str, Any]] | None:
         """JPEG and camera pose of the image nearest *ts*, kept in a small LRU."""
@@ -1503,8 +1621,9 @@ class MemoryWorldModule(Module):
 
         Each step is a pass over the recording; run together they starve each
         other (on an mcap every pass decompresses the image chunks), so the
-        world cache goes first, the replay second and the slow SigLIP index
-        last. A client that connects mid-way waits on the world cache lock.
+        world cache goes first (building the ray-traced replay it takes its
+        map from, when that is missing), then the slow SigLIP index. A client
+        that connects mid-way waits on the world cache lock.
         """
         try:
             self._ensure_world_cache()
@@ -1526,6 +1645,7 @@ class MemoryWorldModule(Module):
             if self._prepare_thread is not None:
                 self._prepare_thread.join(timeout=10)
                 self._prepare_thread = None
+            self._embed_job.terminate()
         finally:
             if self._visual_index is not None:
                 self._visual_index.stop()

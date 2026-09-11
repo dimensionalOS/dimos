@@ -19,7 +19,8 @@ it from raw scans is far too slow for that, so two streams are written into the
 recording once:
 
 ``voxel_keyframe``
-    The whole voxel set, one PointCloud2 every ``keyframe_interval_s``.
+    The whole voxel set, one PointCloud2 every ``keyframe_interval_s`` and one
+    at the last scan, so the final keyframe is the finished map.
 ``voxel_diff``
     One PointCloud2 per lidar scan holding only the voxels that scan added
     (tag ``TAG_ADDED``) or removed (tag ``TAG_REMOVED``).
@@ -27,8 +28,11 @@ recording once:
 Any moment is then the nearest earlier keyframe plus the diffs up to it, and a
 viewer that already shows some moment reaches a neighbouring one by applying
 (or un-applying, since a diff is its own inverse with the tags swapped) a few
-diffs. Voxels come from the same :class:`PackedVoxels` grid the static map is
-built with, so the replayed map converges on the map the viewer shows anyway.
+diffs. The map is the ray-traced one (:class:`RayTracedGrid`, over dimos's
+``VoxelRayMapper``): every scan casts rays from the sensor, so a voxel a later
+scan sees through is cleared, and people and doors that moved disappear from
+the map instead of leaving a shell. The final keyframe doubles as the static
+map the viewer shows outside the timeline.
 
 Run ``python -m dimos.teleop.memory_world.replay <recording.db>`` to build the
 streams ahead of time; the module builds them on first use otherwise.
@@ -47,6 +51,7 @@ from typing import Any
 
 import numpy as np
 
+from dimos.mapping.ray_tracing.voxel_map import VoxelRayMapper
 from dimos.mapping.voxels.keys import FIELD_BITS, FIELD_MASK, KEY_OFFSET
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
@@ -58,73 +63,127 @@ KEYFRAME_STREAM = "voxel_keyframe"
 TAG_ADDED = 1
 TAG_REMOVED = 2
 FORMAT_VERSION = 1
+# Streams built another way (column carving, before ray tracing) are rebuilt.
+BUILDER = "raytrace:healthy"
 
 
-class ReplayGrid:
-    """A column-carving voxel set whose removals have hysteresis.
+@dataclass(frozen=True)
+class SensorScan:
+    """One lidar scan in its sensor frame, and where that sensor was."""
 
-    Same packed sorted-key layout as :class:`PackedVoxels`, but a voxel in a
-    column the current scan touches is only dropped after ``remove_after``
-    consecutive scans that touched its column without hitting it. With
-    ``remove_after=1`` this is plain column carving, which on a sweeping lidar
-    flickers every sparsely-sampled wall in and out at ~13k edits per scan;
-    a few misses of grace keeps the diffs small while people and doors still
-    disappear within a fraction of a second.
+    points: np.ndarray  # (N, 3) float32, sensor frame
+    position: tuple[float, float, float]
+    orientation: tuple[float, float, float, float]  # (x, y, z, w)
+
+
+def sensor_scan(points: np.ndarray, world_from_sensor: np.ndarray, in_world: bool) -> SensorScan:
+    """A scan as :class:`SensorScan`, given the sensor's pose as a 4x4 matrix.
+
+    A scan stored already in the world frame (``in_world``) is moved back into
+    the sensor frame first: the rays have to start at the sensor.
+    """
+    from dimos.teleop.memory_world.tf_tree import quaternion_from_matrix
+
+    points = np.ascontiguousarray(points, dtype=np.float32)
+    if in_world and len(points):
+        sensor_from_world = np.linalg.inv(world_from_sensor)
+        points = np.ascontiguousarray(
+            (points @ sensor_from_world[:3, :3].T + sensor_from_world[:3, 3]).astype(np.float32)
+        )
+    return SensorScan(
+        points=points,
+        position=tuple(float(v) for v in world_from_sensor[:3, 3]),  # type: ignore[arg-type]
+        orientation=quaternion_from_matrix(world_from_sensor[:3, :3]),
+    )
+
+
+def pack_keys(points: np.ndarray, voxel_size: float) -> np.ndarray:
+    """Sorted, unique packed voxel keys of world points (the PackedVoxels layout)."""
+    if not len(points):
+        return np.empty(0, dtype=np.int64)
+    vox = np.floor(points / np.float32(voxel_size)).astype(np.int64)
+    if np.abs(vox).max(initial=0) >= KEY_OFFSET:
+        raise ValueError(f"point outside +-{KEY_OFFSET * voxel_size:.0f} m packed range")
+    vox += KEY_OFFSET
+    return np.unique((vox[:, 0] << (2 * FIELD_BITS)) | (vox[:, 1] << FIELD_BITS) | vox[:, 2])
+
+
+def unpack_centres(keys: np.ndarray, voxel_size: float) -> np.ndarray:
+    """Voxel centres, (N, 3) float32, of packed keys."""
+    vox = np.empty((len(keys), 3), dtype=np.float32)
+    vox[:, 0] = (keys >> (2 * FIELD_BITS)) - KEY_OFFSET
+    vox[:, 1] = ((keys >> FIELD_BITS) & FIELD_MASK) - KEY_OFFSET
+    vox[:, 2] = (keys & FIELD_MASK) - KEY_OFFSET
+    return (vox + np.float32(0.5)) * np.float32(voxel_size)
+
+
+class RayTracedGrid:
+    """The voxel set of a ray-traced map as packed keys, with a diff per scan.
+
+    Each scan goes into a :class:`VoxelRayMapper`, which casts a ray from the
+    sensor to every return and lowers the health of the voxels it passes
+    through, so a wall that was really a person walking past is cleared by the
+    scans that later see the space empty. A scan can only change voxels within
+    ``max_range`` of the sensor, so the diff is taken by comparing the mapper's
+    voxels inside that cylinder with the ones held for it before the scan.
+
+    Every healthy voxel is kept, as in the ray-tracing module's own global
+    map. The mapper's ``support_min`` gate (a voxel must have that many
+    healthy neighbours to be shown) is meant for its live local map; on a
+    sparse lidar it hides two thirds of a building's walls, so it is off here.
     """
 
-    def __init__(self, voxel_size: float, remove_after: int = 1) -> None:
+    def __init__(
+        self, voxel_size: float, max_range: float, support_min: int = 0, **mapper_kwargs: Any
+    ) -> None:
         self.voxel_size = voxel_size
-        self.remove_after = max(1, int(remove_after))
+        self.max_range = max_range
+        self.mapper = VoxelRayMapper(
+            voxel_size=voxel_size, max_range=max_range, support_min=support_min, **mapper_kwargs
+        )
         self.keys = np.empty(0, dtype=np.int64)
-        self.health = np.empty(0, dtype=np.int16)
+        # Centres of `keys`, kept in step, so the cylinder test is a lookup.
+        self._centres = np.empty((0, 3), dtype=np.float32)
 
-    def add_scan(self, points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Merge one world-frame scan; returns the (added, removed) sorted keys."""
-        empty = np.empty(0, dtype=np.int64)
-        if not len(points):
-            return empty, empty
-        vox = np.floor(points / np.float32(self.voxel_size)).astype(np.int64)
-        if np.abs(vox).max(initial=0) >= KEY_OFFSET:
-            raise ValueError(f"point outside +-{KEY_OFFSET * self.voxel_size:.0f} m packed range")
-        vox += KEY_OFFSET
-        new = np.unique((vox[:, 0] << (2 * FIELD_BITS)) | (vox[:, 1] << FIELD_BITS) | vox[:, 2])
+    def _near(self, position: tuple[float, float, float]) -> np.ndarray:
+        """Mask of the held keys inside the cylinder a scan from *position* can touch."""
+        dx = self._centres[:, 0] - position[0]
+        dy = self._centres[:, 1] - position[1]
+        near_xy = dx * dx + dy * dy <= self.max_range**2
+        near_z = np.abs(self._centres[:, 2] - position[2]) <= self.max_range
+        return np.asarray(near_xy & near_z, dtype=bool)
 
-        keys, health = self.keys, self.health
-        # every existing voxel in a column the scan touched is a hit or a miss
-        columns = np.unique(new >> FIELD_BITS)
-        starts = np.searchsorted(keys, columns << FIELD_BITS, side="left")
-        ends = np.searchsorted(keys, (columns + 1) << FIELD_BITS, side="left")
-        delta = np.zeros(len(keys) + 1, dtype=np.int32)
-        np.add.at(delta, starts, 1)
-        np.add.at(delta, ends, -1)
-        in_column = np.cumsum(delta[:-1]) > 0
-
-        position = np.searchsorted(keys, new)
-        exists = position < len(keys)
-        exists[exists] = keys[position[exists]] == new[exists]
-        hit = np.zeros(len(keys), dtype=bool)
-        hit[position[exists]] = True
-        health = health.copy()
-        health[hit] = self.remove_after
-        missed = in_column & ~hit
-        health[missed] -= 1
-        gone = missed & (health <= 0)
-
-        inserted = new[~exists]
-        kept_keys, kept_health = keys[~gone], health[~gone]
-        where = np.searchsorted(kept_keys, inserted)
-        self.keys = np.insert(kept_keys, where, inserted)
-        self.health = np.insert(kept_health, where, np.int16(self.remove_after))
-        return inserted, keys[gone]
+    def add_scan(self, scan: SensorScan) -> tuple[np.ndarray, np.ndarray]:
+        """Fold one scan into the map; returns the (added, removed) sorted keys."""
+        self.mapper.add_frame(scan.points, scan.position, scan.orientation)
+        x, y, z = scan.position
+        now = pack_keys(
+            self.mapper.local_map(
+                scan.position, self.max_range, z - self.max_range, z + self.max_range
+            ),
+            self.voxel_size,
+        )
+        near = self._near(scan.position)
+        before = self.keys[near]
+        added = np.setdiff1d(now, before, assume_unique=True)
+        removed = np.setdiff1d(before, now, assume_unique=True)
+        if len(removed):
+            # `keys` is sorted and `removed` is a subset of it: a merge, not a scan.
+            keep = np.ones(len(self.keys), dtype=bool)
+            keep[np.searchsorted(self.keys, removed)] = False
+            self.keys = self.keys[keep]
+            self._centres = self._centres[keep]
+        if len(added):
+            at = np.searchsorted(self.keys, added)
+            self.keys = np.insert(self.keys, at, added)
+            self._centres = np.insert(
+                self._centres, at, unpack_centres(added, self.voxel_size), axis=0
+            )
+        return added, removed
 
     def centres(self, keys: np.ndarray | None = None) -> np.ndarray:
         """Voxel centres, (N, 3) float32, of *keys* (default: the whole set)."""
-        k = self.keys if keys is None else keys
-        vox = np.empty((len(k), 3), dtype=np.float32)
-        vox[:, 0] = (k >> (2 * FIELD_BITS)) - KEY_OFFSET
-        vox[:, 1] = ((k >> FIELD_BITS) & FIELD_MASK) - KEY_OFFSET
-        vox[:, 2] = (k & FIELD_MASK) - KEY_OFFSET
-        return (vox + np.float32(0.5)) * np.float32(self.voxel_size)
+        return self._centres if keys is None else unpack_centres(keys, self.voxel_size)
 
 
 @dataclass
@@ -141,26 +200,27 @@ def build_replay_streams(
     store: Any,
     *,
     lidar_stream_name: str,
-    to_world: Callable[[Any], PointCloud2 | None],
+    to_scan: Callable[[Any], SensorScan | None],
     voxel_size: float,
+    max_range: float = 20.0,
     keyframe_interval_s: float = 5.0,
-    remove_after: int = 1,
     diff_stream_name: str = DIFF_STREAM,
     keyframe_stream_name: str = KEYFRAME_STREAM,
     dry_run: bool = False,
 ) -> ReplayStats:
     """Write the keyframe and diff streams for every scan of the lidar stream.
 
-    ``to_world`` turns a lidar observation into a world-frame cloud (or None to
-    skip it). Existing streams of the same names are replaced. ``dry_run``
+    ``to_scan`` turns a lidar observation into a :class:`SensorScan` (or None
+    to skip it). Existing streams of the same names are replaced. ``dry_run``
     only gathers the statistics.
     """
     started = time.monotonic()
     stream_tags = {
         "voxel_size": float(voxel_size),
+        "max_range": float(max_range),
         "lidar_stream": lidar_stream_name,
         "keyframe_interval_s": float(keyframe_interval_s),
-        "remove_after": int(remove_after),
+        "builder": BUILDER,
         "format": FORMAT_VERSION,
     }
     diffs = keyframes = None
@@ -171,17 +231,25 @@ def build_replay_streams(
         diffs = store.stream(diff_stream_name, PointCloud2)
         keyframes = store.stream(keyframe_stream_name, PointCloud2)
 
-    grid = ReplayGrid(voxel_size, remove_after)
+    grid = RayTracedGrid(voxel_size, max_range)
     stats = ReplayStats()
     last_keyframe_ts: float | None = None
+    total = store.streams[lidar_stream_name].count()
     for obs in store.streams[lidar_stream_name]:
-        cloud = to_world(obs)
-        points = cloud.points_f32() if cloud is not None else np.zeros((0, 3), np.float32)
-        added, removed = grid.add_scan(points)
+        scan = to_scan(obs)
+        if scan is not None:
+            added, removed = grid.add_scan(scan)
+        else:
+            added = removed = np.empty(0, dtype=np.int64)
         stats.added += len(added)
         stats.removed += len(removed)
         ts = float(obs.ts)
-        take_keyframe = last_keyframe_ts is None or ts - last_keyframe_ts >= keyframe_interval_s
+        # The last scan is always a keyframe: that is the finished map.
+        take_keyframe = (
+            last_keyframe_ts is None
+            or ts - last_keyframe_ts >= keyframe_interval_s
+            or stats.scans == total - 1
+        )
         if take_keyframe:
             last_keyframe_ts = ts
             stats.keyframes += 1
@@ -216,6 +284,69 @@ def build_replay_streams(
     stats.final_voxels = len(grid.keys)
     stats.seconds = time.monotonic() - started
     return stats
+
+
+def accumulate_scans(
+    stream: Any, to_world: Callable[[Any], Any], voxel_size: float, n_scans: int
+) -> np.ndarray | None:
+    """*n_scans* scans spread over *stream* voxelised into one (N, 3) cloud, no clearing.
+
+    ``to_world`` maps a lidar observation to one in the world frame (None to
+    skip it). ``n_scans <= 0`` uses every scan. This is the plain accumulation
+    used when no ray-traced replay is built.
+    """
+    from dimos.mapping.voxels.module import VoxelMapTransformer
+    from dimos.memory.transform import FnTransformer, throttle
+
+    first, last = stream.first(), stream.last()
+    span = max(float(last.ts) - float(first.ts), 1e-3)
+
+    def placed(obs: Any) -> Any:
+        cloud = to_world(obs)
+        if cloud is None:
+            return None
+        return cloud if cloud is obs else obs.derive(data=cloud)
+
+    pipeline = stream if n_scans <= 0 else stream.transform(throttle(span / n_scans))
+    result = (
+        pipeline.transform(FnTransformer(placed))
+        .transform(VoxelMapTransformer(emit_every=0, voxel_size=voxel_size))
+        .last()
+    )
+    if result is None or result.data is None:
+        return None
+    xyz, _ = result.data.as_numpy()
+    return None if xyz is None else np.asarray(xyz, dtype=np.float32)
+
+
+def frame_positions(
+    stamps: Iterable[float], pose_at: Callable[[float], np.ndarray | None]
+) -> list[list[float]]:
+    """A frame's position at each stamp, from *pose_at* (world_T_frame or None).
+
+    Gaps repeat the previous position, so a viewer following the robot along
+    the timeline never jumps to the origin.
+    """
+    positions: list[list[float]] = []
+    last = [0.0, 0.0, 0.0]
+    for ts in stamps:
+        matrix = pose_at(float(ts))
+        if matrix is not None:
+            last = [round(float(v), 3) for v in matrix[:3, 3]]
+        positions.append(last)
+    return positions
+
+
+def stamped_positions(observations: Iterable[Any]) -> list[list[float]]:
+    """The pose stamped on each observation, gaps repeating the previous one."""
+    positions: list[list[float]] = []
+    last = [0.0, 0.0, 0.0]
+    for obs in observations:
+        pose = getattr(obs, "pose_tuple", None)
+        if pose is not None:
+            last = [round(float(v), 3) for v in pose[:3]]
+        positions.append(last)
+    return positions
 
 
 # ---- reading ---------------------------------------------------------------
@@ -301,6 +432,7 @@ class VoxelReplay:
         tags = first.tags or {}
         return (
             tags.get("format") == FORMAT_VERSION
+            and tags.get("builder") == BUILDER
             and abs(float(tags.get("voxel_size", 0.0)) - voxel_size) < 1e-9
             and tags.get("lidar_stream") == lidar_stream_name
         )
@@ -472,32 +604,32 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--voxel-size", type=float, default=0.05)
     parser.add_argument("--keyframe-interval", type=float, default=5.0)
     parser.add_argument("--tf-tolerance", type=float, default=0.1)
-    parser.add_argument("--remove-after", type=int, default=1, help="misses before a voxel goes")
+    parser.add_argument("--max-range", type=float, default=20.0, help="ray length limit, metres")
     parser.add_argument("--dry-run", action="store_true", help="only report the statistics")
     args = parser.parse_args(argv)
 
-    from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.teleop.memory_world.recording import open_recording
     from dimos.teleop.memory_world.tf_tree import TfTree
 
     store = open_recording(args.store_path)
     tree = TfTree.from_stream(store.streams[args.tf_stream])
 
-    def to_world(obs: Any) -> PointCloud2 | None:
+    def to_scan(obs: Any) -> SensorScan | None:
+        # Scans must be in their sensor frame here; a world-aligned stream
+        # needs the module, which knows a frame to cast the rays from.
         frame = str(getattr(obs.data, "frame_id", "") or "").lstrip("/")
         matrix = tree.lookup(args.world_frame, frame, float(obs.ts), args.tf_tolerance)
         if matrix is None:
             return None
-        transformed: PointCloud2 = obs.data.transform(Transform.from_matrix(matrix))
-        return transformed
+        return sensor_scan(obs.data.points_f32(), matrix, in_world=False)
 
     stats = build_replay_streams(
         store,
         lidar_stream_name=args.lidar_stream,
-        to_world=to_world,
+        to_scan=to_scan,
         voxel_size=args.voxel_size,
+        max_range=args.max_range,
         keyframe_interval_s=args.keyframe_interval,
-        remove_after=args.remove_after,
         dry_run=args.dry_run,
     )
     print(

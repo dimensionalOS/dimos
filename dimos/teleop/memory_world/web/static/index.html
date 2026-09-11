@@ -282,6 +282,8 @@
         <button id="connectBtn" onclick="window.app.connect()">Connect</button>
         <button id="disconnectBtn" class="secondary hidden" onclick="window.app.disconnect()">Disconnect</button>
         <button id="micBtn" class="secondary hidden">Hold to ask</button>
+        <button id="embedBtn" class="secondary hidden">Add embeddings</button>
+        <button id="orbitBtn" class="secondary hidden">Orbit frame</button>
         <div id="hints">
             <b>LEFT STICK</b>  walk / strafe<br>
             <b>RIGHT STICK X</b>  smooth yaw turn<br>
@@ -301,6 +303,7 @@
             <b>I</b>  toggle image thumbnails &nbsp; <b>V</b>  toggle voxels<br>
             <b>R</b>  reset view &nbsp; <b>J</b>  jump to the answer &nbsp; <b>P</b>  see it from the camera<br>
             <b>M</b>  show / hide the minimap &nbsp; <b>H</b>  keep this menu<br>
+            <b>O</b>  orbit the robot (drag circles it, wheel moves in and out; follows the timeline)<br>
             <b>TIMELINE</b>  drag to scrub the recording, ▶ plays it back, ✕ returns to the full map<br>
             <b>HOLD TO ASK</b>  speak a question, e.g. "where did I see a chair"
         </div>
@@ -311,6 +314,7 @@
         <button id="hudBtn">Show map</button>
         <button id="answerBtn">Answer</button>
         <button id="cameraBtn">Camera</button>
+        <button id="orbitTouchBtn">Orbit</button>
     </div>
     <div id="timeline" hidden>
         <button id="playBtn" title="Play / pause">▶</button>

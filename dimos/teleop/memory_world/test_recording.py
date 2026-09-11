@@ -321,3 +321,50 @@ def test_pick_lidar_takes_the_stream_whose_poses_match_tf(tmp_path: Path) -> Non
         assert pick_lidar(store, ["orphan"], tree, "world") is None
     finally:
         store.stop()
+
+
+# ---- adding embeddings with siglipify -----------------------------------------
+
+
+def test_siglipify_config_names_the_stream_and_model() -> None:
+    from dimos.teleop.memory_world.embed import siglipify_command, siglipify_config
+
+    text = siglipify_config("google/siglip2-giant-opt-patch16-384", "color_image", 5)
+    assert 'model = "google/siglip2-giant-opt-patch16-384"' in text
+    assert 'embedding = "patches"' in text and "stride = 5" in text
+    assert 'streams = ["color_image"]' in text
+    command = siglipify_command("github:jeff-hykin/siglipify", "/data/rec.mcap", "/tmp/c.toml")
+    assert command[:3] == ["nix", "run", "github:jeff-hykin/siglipify"]
+    assert command[-4:] == ["run", "/data/rec.mcap", "--config", "/tmp/c.toml"]
+
+
+def test_embedding_job_reports_progress_then_adopts() -> None:
+    """Progress bars redraw with carriage returns; each redraw is a progress line."""
+    import threading
+
+    from dimos.teleop.memory_world.embed import EmbeddingJob
+
+    finished = threading.Event()
+    seen: list[str] = []
+    job = EmbeddingJob(on_finished=lambda j: finished.set())
+    script = "printf 'loading\\r10/20\\r20/20\\nappended 20\\n'; test -f \"$1\""
+    assert job.start(
+        ["bash", "-c", script, "--"], "model = 'x'\n", adopt=lambda: seen.append("adopted")
+    )
+    assert not job.start(["true"], "", adopt=lambda: None)  # one at a time
+    assert finished.wait(10)
+    assert seen == ["adopted"]
+    assert job.status() == {"embedding": "done", "progress": "embeddings added"}
+
+
+def test_embedding_job_failure_keeps_the_last_line() -> None:
+    import threading
+
+    from dimos.teleop.memory_world.embed import EmbeddingJob
+
+    finished = threading.Event()
+    job = EmbeddingJob(on_finished=lambda j: finished.set())
+    job.start(["bash", "-c", "echo 'no such stream'; exit 3", "--"], "", adopt=lambda: None)
+    assert finished.wait(10)
+    status = job.status()
+    assert status["embedding"] == "failed" and "no such stream" in status["progress"]

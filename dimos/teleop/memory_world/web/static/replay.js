@@ -274,6 +274,7 @@ export class ReplayController {
             }
         }
         this.layer.fill(segment, visible, this.freshSlots);
+        if (this.onScan) this.onScan(scan);
     }
 
     /** Re-run the fill after a quality change without moving in time. */

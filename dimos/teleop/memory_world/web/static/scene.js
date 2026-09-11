@@ -32,6 +32,7 @@
 
 import * as THREE from 'https://esm.sh/three@0.160.0';
 import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms, viewportHeight, viewportHeightPx } from '/static_mw/voxel_sprites.js';
+import { OrbitControl } from '/static_mw/orbit.js';
 
 const WALK_SPEED_M_PER_S = 1.4;               // headset-relative
 const POINT_SIZE = 0.025;                     // metres
@@ -139,6 +140,7 @@ export class WorldScene {
         this._frameRotate.rotation.x = -Math.PI / 2;
         this._worldGroup.add(this._frameRotate);
         this.scene.add(this._worldGroup);
+        this._orbit = new OrbitControl();
 
         // Origin grid in robot frame for visual reference (10m, 1m cells).
         const grid = new THREE.GridHelper(20, 20, 0x1f2a3a, 0x1f2a3a);
@@ -396,6 +398,11 @@ export class WorldScene {
         });
         dom.addEventListener('wheel', (event) => {
             event.preventDefault();
+            if (this._orbit.active) {
+                // Orbiting, the wheel moves the eye in and out instead of scaling the world.
+                this._orbit.zoom(event.deltaY, this);
+                return;
+            }
             this.applyScale({ factor: event.deltaY < 0 ? DESKTOP_SCALE_STEP : 1 / DESKTOP_SCALE_STEP });
         }, { passive: false });
 
@@ -418,6 +425,7 @@ export class WorldScene {
 
         this.three.setAnimationLoop((time) => {
             this._applyDesktopKeys();
+            this._orbit.apply(this);
             if (perFrame) perFrame();
             this._tick(time);
             this.three.render(this.scene, this.camera);
@@ -449,6 +457,7 @@ export class WorldScene {
             this.focusOn(this._lastResultPoints[0].position);
         }
         if (event.code === 'KeyM') this.toggleHud();
+        if (event.code === 'KeyO') this.setOrbit(!this._orbit.active);
         if (event.code === 'KeyP' && this._queryImages.length) {
             this.viewFrom((this._queryImageCursor + 1) % this._queryImages.length);
         }
@@ -457,6 +466,7 @@ export class WorldScene {
     }
 
     _applyDesktopKeys() {
+        if (this._orbit.active) return;  // the eye is pinned to the orbit; walking would fight it
         const keys = this._desktopKeys;
         // _walk() scales by stick magnitude, so sprint is just a bigger deflection.
         const gain = this._desktopSprint ? DESKTOP_SPRINT_MULTIPLIER : 1;
@@ -480,6 +490,26 @@ export class WorldScene {
     }
 
     /** Hide or show the head-locked HUD: minimap and answer text together. */
+    // ---- orbit: circle a frame of the robot instead of walking (orbit.js) ------
+
+    /** Where the orbited frame is now, robot coords; the eye follows it while orbiting. */
+    setOrbitTarget(position) {
+        this._orbit.setTarget(position, this);
+    }
+
+    /** Turn orbit mode on or off (desktop only). Returns the new state. */
+    setOrbit(enabled) {
+        if (this.three.xr.isPresenting) return false;
+        if (enabled) this._orbit.enable(this);
+        else this._orbit.disable();
+        this.diag('orbit', { on: this._orbit.active, target: this._orbit.target });
+        return this._orbit.active;
+    }
+
+    isOrbiting() {
+        return this._orbit.active;
+    }
+
     toggleHud() {
         this._hudPanel.visible = !this._hudPanel.visible;
         this.diag('hud_toggle', { visible: this._hudPanel.visible });
@@ -1510,6 +1540,9 @@ export class WorldScene {
         const n = header.n | 0;
         if (n < 2) return;
         const positions = new Float32Array(payloadArrayBuffer, 0, n * 3);
+        // The trail's end is where orbit mode starts until the timeline says otherwise.
+        const tail = (n - 1) * 3;
+        this._odomTrailPoints = [[positions[tail], positions[tail + 1], positions[tail + 2] || 0]];
 
         if (this._odomLine) {
             this._frameRotate.remove(this._odomLine);

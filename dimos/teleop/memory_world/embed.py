@@ -1,0 +1,139 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Adding SigLIP embeddings to a recording that has none, by running siglipify.
+
+siglipify (``github:jeff-hykin/siglipify``) embeds a recording's image stream
+and writes the vectors back into it: a mem2 ``.db`` gains a stream, an
+``.mcap`` is rewritten with a new topic. It names that stream after the image
+stream and the model, which is exactly the stream the visual index looks for,
+so nothing else has to agree on a name. The tool is fetched and run with
+``nix run``; the first run also builds it, which shows up as nix output.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+import json
+from pathlib import Path
+import subprocess
+import tempfile
+import threading
+
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+
+def siglipify_config(model_name: str, image_stream_name: str, stride: int) -> str:
+    """The TOML siglipify reads: per-patch vectors of one image stream, every *stride*-th frame."""
+    return (
+        f"model = {json.dumps(model_name)}\n"
+        'embedding = "patches"\n'
+        "batch = 8\n"
+        f"stride = {int(stride)}\n"
+        f"streams = [{json.dumps(image_stream_name)}]\n"
+    )
+
+
+def siglipify_command(flake: str, store_path: str, config_path: str) -> list[str]:
+    return ["nix", "run", flake, "--", "run", store_path, "--config", config_path]
+
+
+class EmbeddingJob:
+    """One background run of siglipify, with its state kept for the viewer.
+
+    ``state`` is idle, running, done or failed; ``progress`` is the tool's
+    latest output line. *on_finished* runs after every attempt, success or
+    not, on the job's thread.
+    """
+
+    def __init__(self, on_finished: Callable[[EmbeddingJob], None] | None = None) -> None:
+        self._lock = threading.Lock()
+        self.state = "idle"
+        self.progress = ""
+        self._process: subprocess.Popen[str] | None = None
+        self._on_finished = on_finished
+
+    def status(self) -> dict[str, str]:
+        with self._lock:
+            return {"embedding": self.state, "progress": self.progress}
+
+    def _set(self, state: str, progress: str) -> None:
+        with self._lock:
+            self.state = state
+            self.progress = progress
+
+    def start(self, command: list[str], config_text: str, adopt: Callable[[], None]) -> bool:
+        """Run *command* (given the config file path as its last argument) unless already running.
+
+        *adopt* runs after a successful exit, before the job is marked done;
+        it is where the caller picks up what the tool wrote.
+        """
+        with self._lock:
+            if self.state == "running":
+                return False
+            self.state, self.progress = "running", "starting siglipify"
+        threading.Thread(
+            target=self._run,
+            args=(command, config_text, adopt),
+            daemon=True,
+            name="MemoryWorldEmbed",
+        ).start()
+        return True
+
+    def terminate(self) -> None:
+        process = self._process
+        if process is not None:
+            process.terminate()
+
+    def _run(self, command: list[str], config_text: str, adopt: Callable[[], None]) -> None:
+        last = ""
+        config_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as handle:
+                handle.write(config_text)
+                config_path = handle.name
+            command = [*command, config_path]
+            logger.info("adding embeddings: %s", " ".join(command))
+            process = subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            self._process = process
+            assert process.stdout is not None
+            # Progress bars redraw with a carriage return, so split on both.
+            pending = ""
+            for chunk in iter(lambda: process.stdout.read(256), ""):  # type: ignore[union-attr]
+                pending += chunk
+                *lines, pending = pending.replace("\r", "\n").split("\n")
+                for line in lines:
+                    line = line.strip()
+                    if line:
+                        last = line[-160:]
+                        self._set("running", last)
+                        logger.info("siglipify: %s", line)
+            code = process.wait()
+            if code != 0:
+                raise RuntimeError(f"siglipify exited with {code}: {last}")
+            adopt()
+            self._set("done", "embeddings added")
+        except Exception as error:
+            logger.exception("adding embeddings failed")
+            self._set("failed", str(error)[-200:])
+        finally:
+            self._process = None
+            if config_path is not None:
+                Path(config_path).unlink(missing_ok=True)
+            if self._on_finished is not None:
+                self._on_finished(self)

@@ -21,6 +21,8 @@ const statusEl = document.getElementById('status');
 const connectBtn = document.getElementById('connectBtn');
 const disconnectBtn = document.getElementById('disconnectBtn');
 const micBtn = document.getElementById('micBtn');
+const orbitBtn = document.getElementById('orbitBtn');
+const embedBtn = document.getElementById('embedBtn');
 const logEl = document.getElementById('log');
 const backgroundMode = document.body.dataset.backgroundMode || 'black';
 
@@ -39,6 +41,7 @@ const pendingDiag = [];
 
 // The page is served at the module's client_route, so /voice hangs off it.
 const voiceUrl = `${window.location.pathname.replace(/\/$/, '')}/voice`;
+const embeddingsUrl = `${window.location.pathname.replace(/\/$/, '')}/embeddings`;
 
 function log(msg) {
     if (!logEl) return;
@@ -181,6 +184,9 @@ function handleControl(msg) {
             setStatus(`Heard: “${msg.text}” — searching…`);
             if (scene) scene.setHeardText(msg.text);
             break;
+        case 'index_status':
+            applyIndexStatus(msg);
+            break;
         case 'error':
             setStatus(`Server error: ${msg.message || 'unknown'}`);
             break;
@@ -300,7 +306,13 @@ async function startReplay() {
     scene.onQualityChange = () => replay.refill();
     for (let attempt = 0; attempt < 60 && scene === owner; attempt++) {
         try {
-            await replay.load();
+            const index = await replay.load();
+            const orbit = index.orbit;
+            if (orbit && orbit.positions && orbit.positions.length) {
+                orbitBtn.textContent = `Orbit ${orbit.frame}`;
+                scene.setOrbitTarget(orbit.positions[orbit.positions.length - 1]);
+                replay.onScan = (scan) => scene.setOrbitTarget(orbit.positions[scan]);
+            }
             return;
         } catch (e) {
             if (attempt === 0) diag('replay_waiting', { error: String(e.message || e) });
@@ -487,6 +499,70 @@ hudBtn.addEventListener('click', () => {
 // The minimap starts hidden, so the button starts as the way to get it back.
 hudBtn.textContent = 'Show map';
 document.getElementById('answerBtn').addEventListener('click', () => window.app.jumpTo(0));
+
+// ---- embeddings ------------------------------------------------------------
+
+// A recording with no SigLIP vectors cannot be searched. Instead of a dead
+// "Hold to ask" the viewer offers to add them: the server runs siglipify over
+// the recording and swaps the buttons when the index is up.
+let indexStatus = { present: false, embedding: 'idle', progress: '' };
+let embedPoll = null;
+
+function applyIndexStatus(status) {
+    indexStatus = status || indexStatus;
+    const connected = !!ws;
+    const running = indexStatus.embedding === 'running';
+    micBtn.classList.toggle('hidden', !connected || !indexStatus.present);
+    embedBtn.classList.toggle('hidden', !connected || indexStatus.present);
+    embedBtn.disabled = running;
+    if (running) {
+        embedBtn.textContent = `Embedding… ${(indexStatus.progress || '').slice(0, 60)}`;
+        if (!embedPoll) embedPoll = setInterval(pollEmbeddings, 3000);
+    } else {
+        embedBtn.textContent = indexStatus.embedding === 'failed' ? 'Embedding failed — retry' : 'Add embeddings';
+        if (embedPoll) { clearInterval(embedPoll); embedPoll = null; }
+        if (indexStatus.embedding === 'failed') setStatus(`Embedding failed: ${indexStatus.progress}`);
+        if (indexStatus.embedding === 'done') setStatus('Embeddings added — hold to ask');
+    }
+}
+
+async function pollEmbeddings() {
+    try {
+        const response = await fetch(embeddingsUrl);
+        if (response.ok) applyIndexStatus(await response.json());
+    } catch (e) {
+        log(`embeddings poll failed: ${e.message || e}`);
+    }
+}
+
+embedBtn.addEventListener('click', async () => {
+    embedBtn.disabled = true;
+    setStatus('Adding embeddings with siglipify — this takes a while on a long recording');
+    try {
+        const response = await fetch(embeddingsUrl, { method: 'POST' });
+        if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+        applyIndexStatus(await response.json());
+    } catch (e) {
+        setStatus(`Could not start embedding: ${e.message || e}`);
+        embedBtn.disabled = false;
+    }
+});
+
+// Orbit mode circles a frame of the robot (base_link by default) and follows it
+// along the timeline. The server names the frame and gives its position per scan.
+function setOrbit(enabled) {
+    if (!scene) return;
+    const on = scene.setOrbit(enabled);
+    const label = on ? 'Stop orbit' : `Orbit ${replay?.index?.orbit?.frame || 'frame'}`;
+    orbitBtn.textContent = label;
+    document.getElementById('orbitTouchBtn').textContent = on ? 'Walk' : 'Orbit';
+}
+orbitBtn.addEventListener('click', () => setOrbit(!scene?.isOrbiting()));
+document.getElementById('orbitTouchBtn').addEventListener('click', () => setOrbit(!scene?.isOrbiting()));
+window.addEventListener('keydown', (event) => {
+    // The scene toggles on O itself; keep the button label in step.
+    if (event.code === 'KeyO' && scene) setTimeout(() => setOrbit(scene.isOrbiting()), 0);
+});
 document.getElementById('cameraBtn').addEventListener('click', () => {
     if (!scene || !scene._queryImages.length) return;
     scene.viewFrom((scene._queryImageCursor + 1) % scene._queryImages.length);
@@ -509,7 +585,8 @@ async function connect() {
         await startViewer();
         connectBtn.classList.add('hidden');
         disconnectBtn.classList.remove('hidden');
-        micBtn.classList.remove('hidden');
+        applyIndexStatus(indexStatus);
+        if (document.body.classList.contains('desktop-view')) orbitBtn.classList.remove('hidden');
     } catch (e) {
         console.error(e);
         setStatus(`Connection failed: ${e.message || e}`);
@@ -539,6 +616,8 @@ async function disconnect() {
     connectBtn.disabled = false;
     disconnectBtn.classList.add('hidden');
     micBtn.classList.add('hidden');
+    embedBtn.classList.add('hidden');
+    orbitBtn.classList.add('hidden');
     setStatus('Disconnected');
 }
 
@@ -553,6 +632,10 @@ window.app = {
     jumpTo: (index = 0) => scene && scene._lastResultPoints.length > index
         && !scene.viewFrom(index) && scene.focusOn(scene._lastResultPoints[index].position),
     hud: () => scene && scene.toggleHud(),
+    // Search readiness as the server last reported it, and the embed job's state.
+    indexStatus: () => indexStatus,
+    // Orbit the robot's frame (also key O / the Orbit button); null toggles.
+    orbit: (enabled = null) => { setOrbit(enabled === null ? !scene?.isOrbiting() : enabled); return scene?.isOrbiting(); },
     // Timeline replay: seek to an absolute time / scan index, read the state, play.
     replay: () => replay,
     seek: (ts) => replay && replay.seek(ts),
