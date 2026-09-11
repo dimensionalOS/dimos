@@ -34,7 +34,9 @@ static tf. The recording itself is never rewritten.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import time
 from typing import Any
 
 import numpy as np
@@ -163,9 +165,17 @@ def _joint_icp(matrix: np.ndarray, pairs: list[Any], rounds: int = 40) -> np.nda
     return matrix
 
 
-def measure_camera_from_lidar(store: Any, streams: dict[str, Any], samples: int = 20) -> Any:
-    """Solve ``lidar_T_depth_optical`` from *samples* depth/lidar pairs. None when too few."""
-    pairs = _pairs(store, streams, samples)
+def measure_camera_from_lidar(
+    store: Any, streams: dict[str, Any], samples: int = 20, pairs: list[Any] | None = None
+) -> Any:
+    """Solve ``lidar_T_depth_optical`` from *samples* depth/lidar pairs.
+
+    None when too few frames are usable, and None again when enough were usable but
+    never agreed; the caller says which, since they mean different things to whoever
+    is running it.
+    """
+    if pairs is None:
+        pairs = _pairs(store, streams, samples)
     logger.info("%d usable depth/lidar pairs", len(pairs))
     if len(pairs) < 4:
         return None
@@ -209,61 +219,71 @@ def measure_camera_from_lidar(store: Any, streams: dict[str, Any], samples: int 
     return best, best_cost, inliers
 
 
-def sensor_lidar_stream(store: Any, tree: Any, streams: dict[str, Any]) -> str | None:
-    """The lidar stream that is still in the sensor's own frame.
+def rigidly_joined(tree: Any, frame: str, other: str) -> bool:
+    """Whether one fixed transform relates *frame* to *other* for the whole recording.
+
+    That is the property a calibration needs, and it is the property to test: a map
+    frame moves against the camera however it is named or wherever it hangs, and a
+    sensor frame does not however far above the body it sits.
+    """
+    hops = tree._path(frame, other)
+    if hops is None:
+        return False
+    for parent, child, _ in hops:
+        edge = tree._edges.get((parent, child))
+        if edge is None:
+            return False
+        if edge.static:
+            continue
+        _, positions, orientations = edge._arrays()
+        moved = np.ptp(positions, axis=0).max() if len(positions) else 0.0
+        turned = np.abs(orientations - orientations[0]).max() if len(orientations) else 0.0
+        if max(float(moved), float(turned)) > 1e-6:  # a republished static edge never moves
+            return False
+    return True
+
+
+def sensor_lidar_stream(
+    store: Any, tree: Any, streams: dict[str, Any], camera_frame: str
+) -> str | None:
+    """The lidar stream whose points are still fixed with respect to the camera.
 
     A stitched recording also carries its clouds in the map frame (``*_corrected``,
     stamped ``corrected_odom``). Those are the same walls seen from a moving robot,
-    so no single transform relates them to the camera; only the raw scans calibrate.
+    so no single transform relates them to the camera; only a rigidly joined frame
+    calibrates.
     """
-    rigid = _rigid_frames(tree)
     for name in [streams.get("lidar"), *streams.get("lidar_candidates", [])]:
         if not name:
             continue
         frame = str(getattr(store.streams[name].first().data, "frame_id", "") or "").lstrip("/")
-        if frame in rigid:
+        if frame and rigidly_joined(tree, frame, camera_frame):
             return name
     return None
 
 
-def _rigid_frames(tree: Any, body: str = "base_link") -> set[str]:
-    """Frames bolted to the robot: *body* and everything hanging below it.
-
-    A map frame can also be somebody's child (``map -> odom -> base_link``), so being a
-    child proves nothing; being below the body is what makes a frame the sensor's own.
-    """
-    children: dict[str, list[str]] = {}
-    for parent, child in tree._edges:
-        children.setdefault(parent, []).append(child)
-    if body not in tree.frames:
-        return set(tree.frames)  # no body to hang off: fall back to naming any known frame
-    found, queue = {body}, [body]
-    while queue:
-        for child in children.get(queue.pop(), ()):
-            if child not in found:
-                found.add(child)
-                queue.append(child)
-    return found
-
-
-def camera_mount_edge(tree: Any, camera_frame: str, lidar_frame: str) -> tuple[str | None, str]:
+def camera_mount_edge(
+    tree: Any, camera_frame: str, lidar_frame: str, body: str = "base_link"
+) -> tuple[str | None, str]:
     """The edge to put the whole correction on: (what the camera hangs off, the camera root).
 
     Walk the tf path from the lidar to the camera. It climbs to the frame the two
-    sensors share and then descends; the first descending edge is the outermost one
-    that is the camera's and not the body's, so correcting it moves colour, depth and
-    infra together and leaves everything else alone.
+    sensors share and then descends; the outermost descending edge that is not the
+    robot's own body is the camera's, so correcting it carries colour, depth and infra
+    together and leaves the trajectory alone. Writing it onto the body edge instead
+    would rotate every base_link pose by the camera's error, which is how you end up
+    with a right camera and a wrong path.
 
-    A relative measurement cannot say WHICH joint along that path is wrong -- a yaw at
+    A relative measurement cannot say WHICH joint along the path is wrong -- a yaw at
     the camera's joint and the opposite yaw at the lidar's give the same answer -- so
     this puts the whole correction on one edge by choice, not by deduction. Separating
-    them needs a frame outside both chains, such as gravity on the body.
+    them needs something outside both chains, such as gravity on the body.
     """
     hops = tree._path(lidar_frame, camera_frame)
     if not hops:
         return None, camera_frame
     for parent, child, forward in hops:
-        if forward:  # the first edge we traverse parent -> child is the descent
+        if forward and child != body:  # descending, and not the robot itself
             return parent, child
     return None, camera_frame
 
@@ -284,16 +304,30 @@ def corrected_mount(
 
 
 def write_corrected_static(
-    store: Any, mount: str, child: str, matrix: np.ndarray, ts: float
+    store: Any,
+    mount: str,
+    child: str,
+    matrix: np.ndarray,
+    ts: float,
+    *,
+    measured: np.ndarray,
+    lidar_frame: str,
+    camera_frame: str,
 ) -> None:
-    """Record the corrected edge where :func:`recording.build_tf_tree` will find it."""
+    """Record the corrected edge where :func:`recording.build_tf_tree` will find it.
+
+    What was actually measured -- the lidar-to-camera transform -- is stored beside it,
+    so the correction can tell whether a recording still needs it. A recording fixed at
+    the source already satisfies the measurement, and applying this on top would undo
+    the fix; the tags are what let that be checked rather than remembered.
+    """
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
     if CORRECTED_STATIC_STREAM in store.list_streams():
-        store.delete_stream(CORRECTED_STATIC_STREAM)  # one corrected answer per recording
+        store.delete_stream(CORRECTED_STATIC_STREAM)  # one measured answer per recording
     x, y, z, w = quaternion_from_matrix(matrix[:3, :3])
     store.stream(CORRECTED_STATIC_STREAM, TFMessage).append(
         TFMessage(
@@ -306,6 +340,14 @@ def write_corrected_static(
             )
         ),
         ts=ts,
+        tags={
+            "measured_from": lidar_frame,
+            "measured_to": camera_frame,
+            "measured": json.dumps([round(float(v), 9) for v in np.asarray(measured).ravel()]),
+            # Wall clock, so anything built from this recording can tell whether it
+            # predates the measurement. The observation's own ts is the recording's.
+            "written_at": repr(time.time()),
+        },
     )
 
 
@@ -338,34 +380,40 @@ def main() -> None:
             if not streams.get(role):
                 raise SystemExit(f"{args.recording} has no {role} stream; cannot calibrate")
         tree = build_tf_tree(store, streams["tf"])
-        sensor_lidar = sensor_lidar_stream(store, tree, streams)
-        if sensor_lidar is None:
-            raise SystemExit(
-                f"every lidar stream of {args.recording} is in a map frame; the raw scans"
-                " are what calibrates against the camera"
-            )
-        streams["lidar"] = sensor_lidar
         camera_frame = str(
             getattr(store.streams[streams["depth"]].first().data, "frame_id", "") or ""
         ).lstrip("/")
+        sensor_lidar = sensor_lidar_stream(store, tree, streams, camera_frame)
+        if sensor_lidar is None:
+            raise SystemExit(
+                f"no lidar stream of {args.recording} is rigidly joined to {camera_frame!r};"
+                " only scans that hold still against the camera can calibrate it"
+            )
+        streams["lidar"] = sensor_lidar
         lidar_frame = str(
             getattr(store.streams[streams["lidar"]].first().data, "frame_id", "") or ""
         ).lstrip("/")
         ts = float(store.streams[streams["depth"]].first().ts)
 
-        measured = measure_camera_from_lidar(store, streams, args.samples)
+        pairs = _pairs(store, streams, args.samples)
+        if len(pairs) < 4:
+            raise SystemExit(
+                f"only {len(pairs)} depth/lidar pairs are usable; cannot measure the mount"
+            )
+        measured = measure_camera_from_lidar(store, streams, args.samples, pairs=pairs)
         if measured is None:
-            raise SystemExit("not enough matched depth/lidar frames to measure the mount")
+            raise SystemExit(
+                f"{len(pairs)} frames were usable but never agreed on one transform; the"
+                " scene may be too empty or too far to calibrate against"
+            )
         lidar_T_camera, residual, inliers = measured
         print(_report(f"measured {lidar_frame} <- {camera_frame}", lidar_T_camera))
         print(f"  residual {residual:.4f} m, inlier fraction {np.round(inliers, 2)}")
 
         as_recorded = tree.lookup(lidar_frame, camera_frame, ts, 0.5)
-        if as_recorded is not None:
+        if as_recorded is not None:  # the same frames, so the two numbers compare
             print(_report("the recording's own tf ", np.asarray(as_recorded)))
-            print(
-                f"  residual {_residual(np.asarray(as_recorded), _pairs(store, streams, 6), 0.3):.4f} m"
-            )
+            print(f"  residual {_residual(np.asarray(as_recorded), pairs, 0.3):.4f} m")
 
         fixed = corrected_mount(tree, lidar_T_camera, camera_frame, lidar_frame, ts)
         if fixed is None:
@@ -375,7 +423,16 @@ def main() -> None:
         if args.dry_run:
             print("dry run: nothing written")
             return
-        write_corrected_static(store, mount, child, matrix, ts)
+        write_corrected_static(
+            store,
+            mount,
+            child,
+            matrix,
+            ts,
+            measured=lidar_T_camera,
+            lidar_frame=lidar_frame,
+            camera_frame=camera_frame,
+        )
         print(f"wrote {CORRECTED_STATIC_STREAM} to {args.recording}")
     finally:
         store.stop()

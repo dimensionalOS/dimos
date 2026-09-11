@@ -244,6 +244,7 @@ def _ingest(
     # The one decision is build_tf_tree's: the corrected poses replace world -> base_link
     # here exactly when they did in the tree, and never for an empty stream.
     world, corrected = tree.substituted or (None, None)
+    base = tree.substituted_child  # pointlio tracks the lidar on some rigs, not base_link
 
     def lookup(target: str, source: str, ts: float) -> Any:
         matrix = tree.lookup(target, source, ts, TF_TOLERANCE_S)
@@ -279,7 +280,7 @@ def _ingest(
     # displace the recorded world -> base_link below.
     superseded = {(str(t.frame_id), str(t.child_frame_id)) for t in measured}
     if corrected is not None:
-        superseded.add((world, "base_link"))
+        superseded.add((world, base))
 
     def kept_of(message: TFMessage) -> TFMessage | None:
         if not superseded:
@@ -317,7 +318,7 @@ def _ingest(
                         translation=Vector3(float(p.x), float(p.y), float(p.z)),
                         rotation=Quaternion(float(q.x), float(q.y), float(q.z), float(q.w)),
                         frame_id=world,
-                        child_frame_id="base_link",
+                        child_frame_id=base,
                         ts=stamp,
                     )
                 ),

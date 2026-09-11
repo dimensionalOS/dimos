@@ -507,6 +507,12 @@ def build_tf_tree(
     # degrees, so holding both would only average a right answer with a wrong one.
     if CORRECTED_STATIC_STREAM in store.list_streams():
         for obs in store.streams[CORRECTED_STATIC_STREAM]:
+            if _already_measures_up(tree, obs.tags, float(obs.ts)):
+                logger.info(
+                    "tf: %r already agrees with the measurement; leaving it alone",
+                    CORRECTED_STATIC_STREAM,
+                )
+                continue
             for t in obs.data.transforms:
                 p, q = t.translation, t.rotation
                 tree._edges.pop((str(t.frame_id), str(t.child_frame_id)), None)
@@ -525,8 +531,29 @@ def build_tf_tree(
     corrected = corrected_odometry_stream(store)
     if corrected is None:
         return tree
+    # The edge the odometry actually describes, not an assumed world -> base_link:
+    # pointlio tracks the lidar, so on those recordings base_link hangs UNDER the lidar
+    # frame and the assumed edge never exists. Getting this wrong is silent and costly:
+    # the map is drawn loop-closed while every camera pose, marker and path is placed
+    # by the uncorrected tf, and the two drift apart by the whole loop closure.
+    try:
+        sample = store.streams[corrected].first()
+    except LookupError:  # the stream exists but holds nothing: nothing to substitute
+        return tree
+    named = (
+        str(getattr(sample.data, "frame_id", "") or "").lstrip("/"),
+        str(getattr(sample.data, "child_frame_id", "") or "").lstrip("/"),
+    )
     world = world_frame if world_frame in tree.frames else tf_root(tree)
-    if world is None or (world, base_frame) not in tree._edges:
+    edge_key = named if all(named) and named in tree._edges else (world, base_frame)
+    world, base_frame = edge_key
+    if world is None or edge_key not in tree._edges:
+        logger.warning(
+            "tf: %r describes %s -> %s, which this tree has no edge for; the loop-closed"
+            " poses are NOT applied and the map will disagree with everything placed by tf",
+            corrected,
+            *named,
+        )
         return tree
     edge = _Edge()
     n = 0
@@ -542,8 +569,53 @@ def build_tf_tree(
     if n:
         tree._edges[(world, base_frame)] = edge
         tree.substituted = (world, corrected)
+        tree.substituted_child = base_frame
         logger.info("tf: %s -> %s from %r (%d corrected poses)", world, base_frame, corrected, n)
     return tree
+
+
+def measured_mount_written_at(store: Store) -> float | None:
+    """Wall clock when this recording's mount was measured, if it ever was.
+
+    Anything derived from the recording and older than this predates the correction
+    and is placing things with the mount the recording used to claim.
+    """
+    if CORRECTED_STATIC_STREAM not in store.list_streams():
+        return None
+    try:
+        written = store.streams[CORRECTED_STATIC_STREAM].first().tags.get("written_at")
+        return float(written) if written else None
+    except Exception:
+        return None
+
+
+def _already_measures_up(
+    tree: Any,
+    tags: dict[str, Any] | None,
+    ts: float,
+    degrees: float = 5.0,
+    metres: float = 0.25,
+) -> bool:
+    """Whether the recording already satisfies the measurement this correction carries.
+
+    A recording fixed at the source -- the publisher corrected, the file re-derived --
+    needs no correction, and applying one on top would undo the fix by exactly the
+    amount it fixed. The measurement is the lidar-to-camera transform that was actually
+    observed, so asking whether the tree already produces it is a test rather than
+    something anyone has to remember. A correction without the tags is always applied.
+    """
+    if not tags or not tags.get("measured"):
+        return False
+    try:
+        measured = np.asarray(json.loads(str(tags["measured"])), dtype=np.float64).reshape(4, 4)
+        current = tree.lookup(str(tags["measured_from"]), str(tags["measured_to"]), ts, 1.0)
+    except Exception:  # a tag we cannot read is a correction we must still apply
+        return False
+    if current is None:
+        return False
+    delta = np.linalg.inv(np.asarray(current, dtype=np.float64)) @ measured
+    turn = np.degrees(np.arccos(np.clip((np.trace(delta[:3, :3]) - 1.0) / 2.0, -1.0, 1.0)))
+    return bool(turn <= degrees and np.linalg.norm(delta[:3, 3]) <= metres)
 
 
 def tf_root(tree: Any) -> str | None:

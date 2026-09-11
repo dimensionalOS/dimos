@@ -26,10 +26,10 @@ import pytest
 
 from dimos.teleop.memory_world.calibrate_static_tf import (
     _nearest,
-    _rigid_frames,
     _rotation,
     _thinned,
     camera_mount_edge,
+    rigidly_joined,
 )
 from dimos.teleop.memory_world.tf_tree import TfTree
 
@@ -39,9 +39,11 @@ IDENTITY = (0.0, 0.0, 0.0, 1.0)
 def cart_tree() -> TfTree:
     """The cart's own shape: two sensor chains that meet at base_link."""
     tree = TfTree()
+    # The odometry edge moves; everything below the body is bolted down.
+    tree.add("map", "odom", 0.0, (0.0, 0.0, 0.0), IDENTITY, static=True)
+    tree.add("odom", "base_link", 0.0, (0.0, 0.0, 0.0), IDENTITY)
+    tree.add("odom", "base_link", 1.0, (2.0, 0.0, 0.0), IDENTITY)
     for parent, child in (
-        ("map", "odom"),
-        ("odom", "base_link"),
         ("base_link", "sensor_mount_link"),
         ("sensor_mount_link", "livox_link"),
         ("livox_link", "livox_frame"),
@@ -86,18 +88,40 @@ def test_an_unreachable_camera_names_no_mount() -> None:
     )
 
 
-def test_only_frames_bolted_to_the_body_count_as_the_sensor_s_own() -> None:
-    """A map frame is somebody's child too, so being a child proves nothing."""
-    rigid = _rigid_frames(cart_tree())
-    assert "livox_frame" in rigid and "camera_link" in rigid
-    assert "odom" not in rigid and "map" not in rigid  # a cloud in odom cannot calibrate
+def test_a_frame_counts_only_when_it_holds_still_against_the_camera() -> None:
+    """That is the property a calibration needs, whatever a frame is called."""
+    tree = cart_tree()
+    assert rigidly_joined(tree, "livox_frame", "camera_depth_optical_frame")
+    # odom is a frame the body moves under, so a cloud stamped there cannot calibrate.
+    assert not rigidly_joined(tree, "odom", "camera_depth_optical_frame")
+    assert not rigidly_joined(tree, "nowhere", "camera_depth_optical_frame")
 
 
-def test_with_no_body_every_known_frame_is_allowed() -> None:
-    """Better to try the fit than to refuse a rig that does not use base_link."""
+def test_a_lidar_above_the_body_still_holds_still_against_the_camera() -> None:
+    """pointlio tracks the lidar on some rigs, so base_link hangs under it."""
     tree = TfTree()
-    tree.add("odom", "sensor", 0.0, (0.0, 0.0, 0.0), IDENTITY, static=True)
-    assert _rigid_frames(tree) == set(tree.frames)
+    tree.add("world", "lidar_link", 0.0, (0.0, 0.0, 0.0), IDENTITY)  # moving: the odometry
+    tree.add("world", "lidar_link", 1.0, (1.0, 0.0, 0.0), IDENTITY)
+    for parent, child in (
+        ("lidar_link", "base_link"),
+        ("base_link", "cam"),
+        ("cam", "cam_optical"),
+    ):
+        tree.add(parent, child, 0.0, (0.1, 0.0, 0.0), IDENTITY, static=True)
+    assert rigidly_joined(tree, "lidar_link", "cam_optical")
+    assert not rigidly_joined(tree, "world", "cam_optical")  # the odometry edge moves
+    # And the correction must not land on the body's own edge, which would rotate
+    # every base_link pose by the camera's error.
+    assert camera_mount_edge(tree, "cam_optical", "lidar_link") == ("base_link", "cam")
+
+
+def test_a_republished_static_edge_still_counts_as_rigid() -> None:
+    """A stitched recording puts its static edges in the moving stream, many times."""
+    tree = TfTree()
+    for ts in (0.0, 1.0, 2.0):
+        tree.add("body", "lidar", ts, (0.5, 0.0, 0.0), IDENTITY)
+        tree.add("body", "cam", ts, (0.0, 0.2, 0.0), IDENTITY)
+    assert rigidly_joined(tree, "lidar", "cam")
 
 
 def test_the_nearest_sample_wins_not_the_first_in_the_window() -> None:

@@ -188,6 +188,9 @@ class TfTree:
         # True once a measured mount has replaced the recorded one (calibrate_static_tf),
         # so a consumer can tell a mount that was measured from one merely recorded.
         self.corrected_static = False
+        # The child of the edge `substituted` replaced: pointlio tracks the lidar on
+        # some rigs, so it is not always base_link and the ingest must not assume it.
+        self.substituted_child = "base_link"
 
     @classmethod
     def from_stream(cls, stream: Iterable[Any]) -> TfTree:

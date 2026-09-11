@@ -593,6 +593,15 @@ class VisualMemoryIndex:
                 )
                 added += 1
             logger.info("indexed %d frames of %s", added, self.image_stream_name)
+        if target is None and stale:
+            # Nothing was placeable, so no replacement is coming. Keeping the mismatched
+            # rows would make every later count() raise and tell the user to run the
+            # rebuild that just ran; an empty index is at least honest.
+            logger.warning(
+                "dropping %r, which nothing could replace: %s", self.index_stream_name, stale
+            )
+            self.store.delete_stream(self.index_stream_name)
+            self._index_stream = None
         self._loaded = None
         return added
 
