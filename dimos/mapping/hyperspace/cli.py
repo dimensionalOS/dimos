@@ -359,6 +359,8 @@ def main(
     frame: str = typer.Option("odom", help="Frame to answer in"),
     voxel_size: float = typer.Option(0.1, help="Voxel edge length, meters"),
     cutoff: float = typer.Option(0.3, help="Hide answer voxels scoring below this"),
+    cap_near: float = typer.Option(0.99, help="Pyramids start at this fraction of the patch depth"),
+    cap_far: float = typer.Option(1.01, help="Pyramids end at this fraction of the patch depth"),
     model_name: str = typer.Option(
         SIGLIP2_MODEL_NAME, help="SigLIP2 snapshot: HF id or local directory"
     ),
@@ -414,7 +416,7 @@ def main(
     engine = HyperspaceQuery(
         memory,
         lambda text: text_model.embed_text_array(text)[0],
-        hs.QueryConfig(),
+        hs.QueryConfig(cap_near=cap_near, cap_far=cap_far),
         world_frame=frame,
         voxel_size=voxel_size,
     )

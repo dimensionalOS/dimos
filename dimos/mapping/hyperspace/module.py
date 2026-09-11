@@ -229,8 +229,8 @@ class HyperspaceConfig(MemoryModuleConfig):
     voxel_size: float = 0.10
     hot_threshold: float = 0.02
     max_hot_patches: int = 6000
-    cap_near: float = 0.9
-    cap_far: float = 1.1
+    cap_near: float = 0.99
+    cap_far: float = 1.01
     # Comma separated; empty uses the indoor defaults.
     background_prompts: str = ""
     # The segment channel (HyperspaceSegments records) added on top; 0 = off.
