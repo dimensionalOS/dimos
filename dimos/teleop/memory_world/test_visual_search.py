@@ -27,6 +27,7 @@ import torch
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.teleop.memory_world.recording import embedding_stream_name
 from dimos.teleop.memory_world.test_recording import seed_embedding_stream
 from dimos.teleop.memory_world.tf_tree import pose_matrix
 from dimos.teleop.memory_world.visual_search import (
@@ -197,7 +198,8 @@ GIANT = "google/siglip2-giant-opt-patch16-384"
 
 def test_each_model_gets_its_own_stream() -> None:
     """Two models' vectors are not comparable, so they must not share a stream."""
-    assert index_stream_name_of(GIANT) == "image_siglip2_giant_opt_p16_384"
+    assert index_stream_name_of(GIANT) == "image_index_siglip2_giant_opt_p16_384"
+    assert index_stream_name_of(GIANT, "color_image") != embedding_stream_name("color_image", GIANT)
     assert index_stream_name_of("google/siglip2-so400m-patch16-384") != index_stream_name_of(GIANT)
     # ...and two cameras' frames are different evidence.
     assert index_stream_name_of(GIANT, "left_image") != index_stream_name_of(GIANT, "right_image")

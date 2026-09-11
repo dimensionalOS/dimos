@@ -99,9 +99,11 @@ def index_stream_name_of(model_name: str, image_stream_name: str = "image") -> s
 
     Two models' embeddings are not comparable, and two cameras' frames are not
     the same evidence, so neither pair may share a stream: ``color_image`` with
-    ``google/siglip2-giant-opt-patch16-384`` -> ``color_image_siglip2_giant_opt_p16_384``.
+    ``google/siglip2-giant-opt-patch16-384`` -> ``color_image_index_siglip2_giant_opt_p16_384``
+    (siglipify's own vectors are ``color_image_siglip2_giant_opt_p16_384``: a
+    different format, so a different name).
     """
-    return f"{image_stream_name}_{model_slug(model_name)}"
+    return f"{image_stream_name}_index_{model_slug(model_name)}"
 
 
 BACKGROUND_PROMPTS = (
