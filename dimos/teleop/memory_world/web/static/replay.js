@@ -15,7 +15,13 @@ import { SPRITE_FRAGMENT_SHADER, SPRITE_VERTEX_GLSL, spriteUniforms } from '/sta
 
 const OP_ADD = 1;
 const OP_REMOVE = 2;
-const SEGMENT_CACHE = 6;            // parsed segments kept, ~2 MB each
+// Parsed segments kept in memory, as a byte budget: a segment is the whole map at
+// its keyframe plus five seconds of diffs, so on a big map a late one is tens of
+// megabytes. Phones get the small budget.
+const CACHE_BUDGET_DESKTOP = 400e6;
+const CACHE_BUDGET_PHONE = 80e6;
+const PRELOAD_IDLE_MS = 1200;       // no seek for this long -> keep loading segments outward
+const LOADING_LABEL_AFTER_MS = 150; // a fetch shorter than this never shows "loading"
 const FRAME_TOLERANCE_S = 0.25;     // no camera frame closer than this: show none
 const FRESH_COLOR = [1.0, 0.55, 0.2];
 
@@ -164,7 +170,12 @@ export class ReplayController {
         this.targetScan = -1;
         this.active = false;
         this.playing = false;
-        this.stats = { seeks: 0, lastSeekMs: 0, maxSeekMs: 0, fetches: 0, bytes: 0, frames: 0 };
+        this.stats = { seeks: 0, lastSeekMs: 0, maxSeekMs: 0, fetches: 0, bytes: 0, frames: 0, aborted: 0, preloaded: 0 };
+        this.cacheBudget = (navigator.maxTouchPoints > 0 && (navigator.deviceMemory || 4) <= 4)
+            ? CACHE_BUDGET_PHONE : CACHE_BUDGET_DESKTOP;
+        this.cacheBytes = 0;                 // raw bytes of the parsed segments held
+        this._preloadTimer = null;
+        this._loadingSince = null;
         this._frameShown = null;             // ts of the camera frame on the HUD
         this._frameWanted = null;
         this._frameBusy = false;
@@ -225,13 +236,23 @@ export class ReplayController {
         this._wantFrame(this.index.scans[scan]);
         const number = this.segmentOf(scan);
         const segment = this.segments.get(number);
+        this._schedulePreload();
         if (!segment) {
+            // A drag across the bar asks for many segments in a row; only the one under
+            // the thumb matters, so the others' downloads are dropped.
+            this._abortPendingExcept(number);
+            this._setLoading(true, number);
             this._fetchSegment(number).then(() => {
                 // only the latest target matters once the data is here
                 if (this.targetScan === scan || this.segmentOf(this.targetScan) === number) this.seekScan(this.targetScan);
-            }).catch((e) => this.diag('replay_segment_failed', { number, error: String(e.message || e) }));
+            }).catch((e) => {
+                if (e && e.name === 'AbortError') return;
+                this.diag('replay_segment_failed', { number, error: String(e.message || e) });
+                this._setLoading(false);
+            });
             return false;
         }
+        this._setLoading(false);
         const started = performance.now();
         this._applyScan(segment, scan);
         const ms = performance.now() - started;
@@ -284,23 +305,34 @@ export class ReplayController {
 
     // ---- segments --------------------------------------------------------------
 
-    _fetchSegment(number) {
-        let promise = this.pending.get(number);
-        if (promise) return promise;
-        promise = fetch(`${this.baseUrl}/replay/segment/${number}`)
+    _fetchSegment(number, { preload = false } = {}) {
+        const inFlight = this.pending.get(number);
+        if (inFlight) return inFlight.promise;
+        const controller = new AbortController();
+        const promise = fetch(`${this.baseUrl}/replay/segment/${number}`, { signal: controller.signal })
             .then((r) => { if (!r.ok) throw new Error(`segment ${number}: ${r.status}`); return r.arrayBuffer(); })
             .then((buffer) => {
                 const segment = new ReplaySegment(buffer, this.index);
+                segment.bytes = buffer.byteLength;
                 this.segments.set(number, segment);
+                this.cacheBytes += buffer.byteLength;
                 this.stats.fetches++;
                 this.stats.bytes += buffer.byteLength;
+                if (preload) this.stats.preloaded++;
                 this._evictSegments();
-                this.diag('replay_segment', { number, slots: segment.slotCount, scans: segment.scans.length, bytes: buffer.byteLength });
+                this.diag('replay_segment', { number, slots: segment.slotCount, scans: segment.scans.length, bytes: buffer.byteLength, preload });
                 return segment;
             })
             .finally(() => this.pending.delete(number));
-        this.pending.set(number, promise);
+        this.pending.set(number, { promise, controller });
         return promise;
+    }
+
+    /** Drop every download except the segment the viewer is waiting for. */
+    _abortPendingExcept(number) {
+        for (const [n, entry] of this.pending) {
+            if (n !== number) { entry.controller.abort(); this.stats.aborted++; }
+        }
     }
 
     _prefetchAround(number) {
@@ -309,15 +341,74 @@ export class ReplayController {
         }
     }
 
+    /** Segments farthest from the target go first, until the cache fits its byte budget. */
     _evictSegments() {
-        while (this.segments.size > SEGMENT_CACHE) {
+        while (this.cacheBytes > this.cacheBudget && this.segments.size > 1) {
             let farthest = null, distance = -1;
             for (const n of this.segments.keys()) {
                 const d = Math.abs(n - this.segmentOf(this.targetScan));
                 if (d > distance) { distance = d; farthest = n; }
             }
             if (farthest === null || this.segments.get(farthest) === this.segment) break;
+            this.cacheBytes -= this.segments.get(farthest).bytes || 0;
             this.segments.delete(farthest);
+        }
+    }
+
+    // ---- gradual preloading ----------------------------------------------------
+
+    /** After a quiet moment, keep loading segments outward from the current one,
+     *  one at a time, until the byte budget is spent; a scrub to a loaded segment
+     *  is then instant. Every seek resets the quiet timer. */
+    _schedulePreload() {
+        if (this._preloadTimer) clearTimeout(this._preloadTimer);
+        this._preloadTimer = setTimeout(() => this._preloadNext(), PRELOAD_IDLE_MS);
+    }
+
+    _nextToPreload() {
+        if (!this.index) return null;
+        const total = this.index.keyframes.length;
+        const centre = this.segmentOf(Math.max(0, this.targetScan));
+        for (let d = 1; d < total; d++) {
+            for (const n of [centre + d, centre - d]) {
+                if (n >= 0 && n < total && !this.segments.has(n) && !this.pending.has(n)) return n;
+            }
+        }
+        return null;
+    }
+
+    _preloadNext() {
+        this._preloadTimer = null;
+        if (!this.index || this.cacheBytes >= this.cacheBudget * 0.9) return;
+        if (this.pending.size) { this._schedulePreload(); return; }   // a seek's own download first
+        const n = this._nextToPreload();
+        if (n === null) return;
+        // The budget check uses the largest segment seen so far as the estimate of the next.
+        let largest = 0;
+        for (const seg of this.segments.values()) largest = Math.max(largest, seg.bytes || 0);
+        if (this.cacheBytes + largest > this.cacheBudget) return;
+        this._fetchSegment(n, { preload: true })
+            .then(() => this._schedulePreload())
+            .catch(() => {});
+    }
+
+    // ---- loading state -----------------------------------------------------------
+
+    /** The scrubber shows "loading" while the segment under the thumb downloads. */
+    _setLoading(on, number = null) {
+        if (!this.ui) return;
+        if (on) {
+            if (this._loadingSince === null) this._loadingSince = performance.now();
+            if (performance.now() - this._loadingSince < LOADING_LABEL_AFTER_MS) {
+                setTimeout(() => { if (this._loadingSince !== null) this._setLoading(true, number); }, LOADING_LABEL_AFTER_MS);
+                return;
+            }
+            this.ui.bar.classList.add('loading');
+            this.ui.timeLabel.textContent = `loading ${number !== null ? `${number + 1}/${this.index.keyframes.length}` : ''}…`;
+        } else {
+            this._loadingSince = null;
+            this.ui.bar.classList.remove('loading');
+            this._updateTimeline();
         }
     }
 
@@ -433,13 +524,15 @@ export class ReplayController {
             const s = Math.max(0, Math.round(t - this.t0));
             return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
         };
-        ui.timeLabel.textContent = `${clock(this.index.scans[scan])} / ${clock(this.t1)}`;
+        if (!ui.bar.classList.contains('loading')) ui.timeLabel.textContent = `${clock(this.index.scans[scan])} / ${clock(this.t1)}`;
         ui.playBtn.textContent = this.playing ? '❚❚' : '▶';
     }
 
     /** For automated checks. */
     state() {
         return {
+            cacheBytes: this.cacheBytes, cacheBudget: this.cacheBudget, cachedSegments: this.segments.size,
+            loading: !!(this.ui && this.ui.bar.classList.contains('loading')),
             active: this.active,
             scan: this.scan,
             target: this.targetScan,

@@ -245,19 +245,19 @@ def test_route_is_generated_by_server(
     assert result.route.points == [(1.0, 2.0, 0.08), (3.0, 4.0, 0.08)]
 
 
-def test_height_colours_run_from_purple_to_orange(memory_world: MemoryWorldModule) -> None:
-    """The ramp uses most of the wheel: floor purple, then blue, cyan, green, yellow, orange
-    at the top. Red and white stay for the heat map and the answer markers."""
+def test_height_colours_run_from_purple_to_light_green(memory_world: MemoryWorldModule) -> None:
+    """Floor purple, then blue, cyan, light green at the top; never yellow, orange or red,
+    which the heat map and the answer markers keep for themselves."""
     # Not floor-aligned: this recording's ground sits near -1.
     positions = np.array([[0.0, 0.0, z] for z in np.linspace(-1.0, 1.4, 25)])
     colours = memory_world._height_colors(positions).astype(int)
     assert colours.shape == (25, 3)
     r, g, b = colours[:, 0], colours[:, 1], colours[:, 2]
     assert b[0] > r[0] > g[0], "floor is purple"
-    assert b[6] > 180 and g[6] < 120, "then blue"
-    assert g[12] > 180 and r[12] < 100, "cyan/green in the middle"
-    assert r[-1] > 200 and 100 < g[-1] < 180 and b[-1] < 80, "orange at the top, not red"
-    assert (np.diff(r[12:]) >= 0).all(), "warming steadily on the way up"
+    assert b[8] > 180 and g[8] < 160, "then blue"
+    assert g[16] > 180 and b[16] > 180 and r[16] < 120, "cyan"
+    assert g[-1] > 220 and r[-1] < 170 and b[-1] < 170 and g[-1] > r[-1], "light green at the top"
+    assert (r <= g + 60).all(), "never warmer than green"
 
 
 def test_height_colours_separate_the_storeys(memory_world: MemoryWorldModule) -> None:
@@ -278,7 +278,7 @@ def test_a_sparse_outlier_does_not_flatten_the_ramp(memory_world: MemoryWorldMod
     # The percentile cut ignores the stray, so the room still spans the ramp:
     # purple at the floor, orange at the ceiling, far apart in colour.
     assert colours[0][2] > colours[0][0], "floor is purple"
-    assert colours[198][0] > 200 and colours[198][2] < 80, "ceiling is orange"
+    assert colours[198][1] > 220 and colours[198][1] > colours[198][0], "ceiling is light green"
     assert np.abs(colours[198] - colours[0]).sum() > 250
 
 

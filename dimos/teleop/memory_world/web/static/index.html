@@ -254,6 +254,12 @@
             clip-path: none;
         }
         #timeline:not(.replaying) #exitReplayBtn { visibility: hidden; }
+        /* The segment under the thumb is still downloading: the thumb pulses and the
+           label says so, so a slow link reads as "loading", not "broken". */
+        #timeline.loading #timeLabel { color: #ffb347; }
+        #timeline.loading #scrub::-webkit-slider-thumb { animation: thumbPulse 0.8s ease-in-out infinite; background: #ffb347; }
+        #timeline.loading #scrub::-moz-range-thumb { animation: thumbPulse 0.8s ease-in-out infinite; background: #ffb347; }
+        @keyframes thumbPulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.35); opacity: 0.55; } }
         #timeLabel { font-size: 12px; color: var(--accent); white-space: nowrap; min-width: 84px; text-align: right; }
         #scrub {
             flex: 1;
