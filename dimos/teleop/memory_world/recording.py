@@ -110,6 +110,41 @@ def decode_image(buf: bytes) -> Image:
 
 
 @dataclass
+class _CompressedImageWire:
+    header: ros._Header
+    format: str
+    data: np.ndarray
+
+    __cdr_align__ = 1  # CDR aligns primitives, not structs
+    __cdr_fields__ = [("header", ros._Header), ("format", "string"), ("data", ("seq", "u8"))]
+
+
+def decode_compressed_image(buf: bytes) -> Image:
+    """A ``sensor_msgs/CompressedImage`` (jpeg or png bytes) decoded to pixels.
+
+    The Pi recorder stores colour and infrared this way; depth stays raw. The
+    format string reads like ``"rgb8; jpeg compressed bgr8"`` or ``"png"``;
+    the bytes decide, and cv2 hands back BGR for colour and the stored depth
+    for 16-bit png."""
+    import cv2
+
+    w: _CompressedImageWire = cdr.decode(buf, _CompressedImageWire)[0]
+    pixels = cv2.imdecode(np.frombuffer(w.data, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    if pixels is None:
+        raise ValueError(f"undecodable compressed image ({w.format!r}, {len(w.data)} bytes)")
+    if pixels.ndim == 3 and pixels.shape[2] == 3:
+        fmt = IMAGE_ENCODINGS["bgr8"][0]
+    elif pixels.ndim == 3 and pixels.shape[2] == 4:
+        pixels = cv2.cvtColor(pixels, cv2.COLOR_BGRA2BGR)
+        fmt = IMAGE_ENCODINGS["bgr8"][0]
+    elif pixels.dtype == np.uint16:
+        fmt = IMAGE_ENCODINGS["16UC1"][0]
+    else:
+        fmt = IMAGE_ENCODINGS["mono8"][0]
+    return Image.from_numpy(pixels, format=fmt, frame_id=w.header.frame_id, ts=ros._ts(w.header))
+
+
+@dataclass
 class _RoiWire:
     x_offset: int
     y_offset: int
@@ -275,6 +310,7 @@ def decode_multiarray(buf: bytes) -> MultiArray:
 ROS2_CODECS: dict[str, FnCodec] = {
     "sensor_msgs/msg/PointCloud2": FnCodec(PointCloud2, ros.decode_pointcloud2),
     "sensor_msgs/msg/Image": FnCodec(Image, decode_image),
+    "sensor_msgs/msg/CompressedImage": FnCodec(Image, decode_compressed_image),
     "sensor_msgs/msg/CameraInfo": FnCodec(CameraInfo, decode_camera_info),
     "sensor_msgs/msg/Imu": FnCodec(Imu, ros.decode_imu),
     "nav_msgs/msg/Odometry": FnCodec(Odometry, ros.decode_odometry),

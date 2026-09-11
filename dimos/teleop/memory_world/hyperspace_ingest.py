@@ -41,8 +41,13 @@ logger = logging.getLogger(__name__)
 
 def depth_info_stream_for(streams: set[str], depth_stream: str, camera_info: str) -> str:
     """The depth camera's own ``camera_info`` when the recording has one, else the colour one."""
-    candidate = f"{depth_stream}_camera_info"
-    return candidate if candidate in streams else camera_info
+    for candidate in (
+        f"{depth_stream}_camera_info",
+        f"{depth_stream.removesuffix('_image')}_camera_info",
+    ):
+        if candidate in streams:
+            return candidate
+    return camera_info
 
 
 def ingest_command(
