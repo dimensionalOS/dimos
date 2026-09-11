@@ -983,7 +983,14 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             client.send_threadsafe(message)
 
     def _publish_query_result(self, result: MemoryQueryResult) -> str:
-        """Send a result to every connected viewer and remember it for reconnects."""
+        """Send a result to every connected viewer and remember it for reconnects.
+
+        Whatever the engine counted in, the ids that go out are marker ids. The viewer
+        holds thumbnails for the markers it was sent and nothing else, so an answer
+        naming a frame that is not one of them has no picture to show; the markers
+        nearest the answer do.
+        """
+        result = result.model_copy(update={"observation_ids": self._marker_ids_for(result)})
         with self._clients_lock:
             query_id = uuid.uuid4().hex
             self._query_revision += 1
@@ -999,6 +1006,34 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             for client in tuple(self._world_clients):
                 client.send_threadsafe(message)
         return query_id
+
+    def _marker_ids_for(self, result: MemoryQueryResult) -> list[int]:
+        """The answer's own ids if they are markers, else the markers nearest it.
+
+        ``analyze_memory`` answers with the store's own observation ids, read from the
+        whole recording; the viewer was only sent a couple of hundred markers, so those
+        ids are almost never among them. Snapping here means the wire carries one id
+        space and the viewer needs no rule for telling them apart.
+        """
+        wanted = set(result.observation_ids or [])
+        cached = self._cached_image_poses
+        if not wanted or cached is None:
+            return list(result.observation_ids or [])
+        header, _ = cached
+        markers = set(header.get("ids") or [])
+        sources = {
+            source: marker
+            for source, marker in zip(
+                header.get("source_ids") or [], header.get("ids") or [], strict=False
+            )
+            if source >= 0  # an mcap numbers each windowed read from zero: no real ids
+        }
+        if wanted & markers and not (wanted - markers):
+            return list(result.observation_ids)
+        snapped = [sources[i] for i in result.observation_ids if i in sources]
+        if snapped:
+            return snapped
+        return self._markers_near([tuple(point.position) for point in result.points])
 
     # ---- spoken visual search ---------------------------------------------
 

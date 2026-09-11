@@ -133,7 +133,6 @@ export class WorldScene {
         this._voxelCullAccumS = 0;
         this._voxelCullEye = null;                    // robot-frame eye at the last compaction
         this._selectedImageIds = new Set();
-        this._selectedAreSourceIds = false;  // marker ids unless an answer says otherwise
         this._odomLine = null;
 
         // Query results are independent from the recorded odom and can be
@@ -1217,11 +1216,8 @@ export class WorldScene {
         // budget alone is enough to bound the cost there.
         const level = QUALITY_LEVELS[this._quality];
         const budget = Math.min(IMAGE_QUAD_BUDGET, level.quad_budget);
-        // The agent skill answers with the store's own observation ids; every other
-        // engine with marker ids. The server sends -1 as a source id where it has none,
-        // which matches nothing, so an answer that selects no photo shows no photo --
-        // rather than quietly showing whatever is nearby and passing for an answer.
-        const idOf = this._selectedAreSourceIds ? (m) => m.sourceId : (m) => m.id;
+        // One id space on the wire: the server snaps every engine's answer to marker
+        // ids before publishing, so an answer that selects nothing genuinely has nothing.
         const selected = this._selectedImageIds.size > 0 ? this._selectedImageIds : null;
         const maxDist = selected
             ? Infinity
@@ -1230,7 +1226,7 @@ export class WorldScene {
         const candidates = [];
         for (let i = 0; i < this._imagePoseMeta.length; i++) {
             const meta = this._imagePoseMeta[i];
-            if (selected && !selected.has(idOf(meta))) continue;
+            if (selected && !selected.has(meta.id)) continue;
             if (!this._thumbnailBytes.has(i)) continue;
             const dx = meta.rx - eye.x;
             const dy = meta.ry - eye.y;
@@ -1355,10 +1351,6 @@ export class WorldScene {
 
         this.clusterFilter = -1;
         this._selectedImageIds = new Set(result.observation_ids || []);
-        // Two id spaces share this one field: the agent skill answers with the store's
-        // own observation ids, every other engine with marker ids. They overlap, so the
-        // engine decides which to match rather than trying both and lighting up strangers.
-        this._selectedAreSourceIds = result.engine === 'agent';
         if (this._selectedImageIds.size > 0 && !this._imageQuadGroup.visible) {
             this._imageQuadGroup.visible = true;
             if (this.onLayerChange) this.onLayerChange();  // the photos box follows
