@@ -14,15 +14,19 @@
 
 """A route through the recorded map to an answer.
 
-The ray-traced voxel map is squashed into a 2D costmap along the robot's own
-path: the cells it drove through, and a corridor around them, are known
-free floor; voxels between a little below and the body height above the
+Two planners. :class:`MlsRoutePlanner` is the one to use: dimos's multi-level
+surface planner (``dimos.navigation.nav_3d.mls_planner``, Rust) builds
+standable surfaces and a node graph from the ray-traced voxels and plans in
+3D with terrain traversability. :class:`RoutePlanner` is the fallback when
+that binding is not installed: a 2D costmap along the robot's driven path
+with dimos's ``min_cost_astar``.
+
+The 2D fallback squashes the ray-traced voxel map into a costmap along the
+robot's own path: the cells it drove through, and a corridor around them, are
+known free floor; voxels between a little below and the body height above the
 nearest point of that path are obstacles; anything the robot never came near
-is off limits. Obstacles are inflated by the robot's radius, and dimos's own
-A* (:func:`min_cost_astar`) plans over the result, so the route that appears
-in the memory world is the one the navigation stack would drive. Using the
-path instead of a floor estimate makes this hold on a tilted world frame, a
-split-level floor and a lidar that sees its own robot.
+is off limits. Obstacles are inflated by the robot's radius and A* plans over
+the result.
 """
 
 from __future__ import annotations
@@ -61,6 +65,7 @@ SNAP_RADIUS_M = 4.0
 # about this many cells across (a 4 km ride plans on ~1 m cells).
 MAX_GRID_CELLS = 4000
 ROUTE_HEIGHT_BELOW_PATH_M = 0.2
+ROUTE_HEIGHT_ABOVE_SURFACE_M = 0.1
 
 
 def densify(path: NDArray[np.float64], step: float) -> NDArray[np.float64]:
@@ -80,6 +85,88 @@ class Route:
     points: list[tuple[float, float, float]]
     length_m: float
     cells: int
+    planner: str = "costmap"
+
+
+# How far a start or goal may be moved onto the nearest standable surface cell.
+MLS_SNAP_RADIUS_M = 4.0
+# Above this many map voxels the MLS graph build is skipped (a city ride) and
+# the costmap fallback plans instead.
+MLS_MAX_VOXELS = 4_000_000
+
+
+def mls_available() -> bool:
+    try:
+        import dimos_mls_planner  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+class MlsRoutePlanner:
+    """dimos's 3D multi-level-surface planner over the ray-traced voxel map.
+
+    ``update_global_map`` (seconds on a building) runs once at construction;
+    ``plan`` snaps the start and the goal to the nearest standable surface cell
+    within :data:`MLS_SNAP_RADIUS_M` (an answer is usually inside the object
+    that was asked about) and returns the 3D waypoints.
+    """
+
+    def __init__(
+        self,
+        voxels: NDArray[np.floating],
+        *,
+        voxel_size: float,
+        robot_height_m: float = 1.2,
+        node_spacing_m: float = 0.5,
+    ) -> None:
+        from dimos_mls_planner import (
+            MLSPlanner,
+        )  # the Rust binding dimos.navigation.nav_3d.mls_planner re-exports
+
+        points = np.ascontiguousarray(np.asarray(voxels, dtype=np.float32).reshape(-1, 3))
+        if len(points) == 0:
+            raise ValueError("no voxels to plan over")
+        self.voxel_size = float(voxel_size)
+        self.planner = MLSPlanner(
+            voxel_size=max(self.voxel_size, 0.1),
+            robot_height=robot_height_m,
+            node_spacing_m=node_spacing_m,
+        )
+        self.planner.update_global_map(points)
+        self.surface = np.asarray(self.planner.surface_map(), dtype=np.float64).reshape(-1, 3)
+
+    @property
+    def surface_cells(self) -> int:
+        return len(self.surface)
+
+    def snap(self, xyz: tuple[float, float, float]) -> tuple[float, float, float] | None:
+        """The nearest standable surface cell within reach of *xyz*, by horizontal
+        distance: an answer's z is the object's, the surface is the floor under it."""
+        if len(self.surface) == 0:
+            return None
+        d = np.linalg.norm(self.surface[:, :2] - np.asarray(xyz[:2], dtype=np.float64), axis=1)
+        best = int(np.argmin(d))
+        if d[best] > MLS_SNAP_RADIUS_M:
+            return None
+        return tuple(float(v) for v in self.surface[best])  # type: ignore[return-value]
+
+    def plan(
+        self, start: tuple[float, float, float], goal: tuple[float, float, float]
+    ) -> Route | None:
+        a = self.snap(start)
+        b = self.snap(goal)
+        if a is None or b is None:
+            return None
+        path = self.planner.plan(a, b)
+        if path is None or len(path) < 2:
+            return None
+        points = [
+            (float(x), float(y), float(z) + ROUTE_HEIGHT_ABOVE_SURFACE_M)
+            for x, y, z in np.asarray(path)
+        ]
+        length = float(sum(math.dist(p, q) for p, q in pairwise(points)))
+        return Route(points=points, length_m=length, cells=len(points), planner="mls")
 
 
 class RoutePlanner:

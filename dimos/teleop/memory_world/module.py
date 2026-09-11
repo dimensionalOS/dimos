@@ -151,11 +151,20 @@ class _ClientConn:
 # carry no tf tree and stamp body poses on their images.
 OPTICAL_FROM_BODY = pose_matrix((0.0, 0.0, 0.0), (-0.5, 0.5, -0.5, 0.5))
 
-# Height ramp stops (RGB), floor to ceiling: purple, blue, cyan. The cool half
-# of the wheel only, so yellow, orange, red and green stay free for
-# highlights; the hue moves as well as the brightness because the lit voxel
-# material flattens brightness alone.
-HEIGHT_COLOR_STOPS = np.array([[120.0, 20.0, 150.0], [40.0, 80.0, 235.0], [120.0, 245.0, 255.0]])
+# Height ramp stops (RGB), floor to ceiling: purple, blue, cyan, green, yellow,
+# orange. Most of the wheel, so a floor, a shelf, a doorway and a ceiling read
+# as four colours even on a map with a big height range; red and white stay
+# for the heat map and the answer markers.
+HEIGHT_COLOR_STOPS = np.array(
+    [
+        [110.0, 30.0, 170.0],
+        [40.0, 90.0, 235.0],
+        [40.0, 210.0, 230.0],
+        [70.0, 220.0, 110.0],
+        [235.0, 220.0, 60.0],
+        [250.0, 140.0, 40.0],
+    ]
+)
 
 
 class MemoryWorldConfig(ModuleConfig):
@@ -195,8 +204,8 @@ class MemoryWorldConfig(ModuleConfig):
     # Height colour ramp, over the cloud's own range so a multi-storey
     # recording gets a different colour per level. Percentiles, so one stray
     # return below the building does not flatten the rest into one shade.
-    height_ramp_low_percentile: float = PydanticField(default=2.0, ge=0.0, le=100.0)
-    height_ramp_high_percentile: float = PydanticField(default=98.0, ge=0.0, le=100.0)
+    height_ramp_low_percentile: float = PydanticField(default=5.0, ge=0.0, le=100.0)
+    height_ramp_high_percentile: float = PydanticField(default=95.0, ge=0.0, le=100.0)
     # color_image stream is sampled for "Street View" capture-pose markers.
     # Empty detects it from the recording's message types.
     image_stream_name: str = ""
@@ -694,13 +703,7 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
             return None
 
     def _height_colors(self, positions: np.ndarray) -> np.ndarray:
-        """Map Z (robot up) onto a purple-blue-cyan ramp.
-
-        The map deliberately stays inside one cool hue band: floor is deep
-        indigo, ceiling is pale cyan, and everything between is a blue. That
-        keeps the warm colours (yellow, orange, red, magenta) and green free
-        for highlights, so a voxel painted by a query reads as "the answer"
-        rather than "a slightly different height".
+        """Map Z (robot up) onto the purple-to-orange height ramp.
 
         The ramp spans the cloud's own height range, from the
         ``height_ramp_low_percentile`` to the ``height_ramp_high_percentile``

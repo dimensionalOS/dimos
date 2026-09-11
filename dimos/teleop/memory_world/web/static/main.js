@@ -93,6 +93,7 @@ let flight = null;
 let results = null;
 let tour = null;
 let pendingPyramids = null;
+let voxelStyle = null;
 // Per-frame work hung off the scene's tick: flights, replay, the tour.
 let tickers = [];
 
@@ -105,6 +106,7 @@ try {
     Flight = (await import(`/static_mw/flight.js${assetVersion}`)).Flight;
     ResultsNav = (await import(`/static_mw/results.js${assetVersion}`)).ResultsNav;
     Tour = (await import(`/static_mw/tour.js${assetVersion}`)).Tour;
+    voxelStyle = (await import(`/static_mw/voxel_sprites.js${assetVersion}`)).voxelStyle;
     diag('scene_module_loaded');
 } catch (err) {
     diag('scene_module_failed', { error: String(err && err.message || err) });
@@ -691,6 +693,15 @@ layerBoxes.pyramids.addEventListener('change', () => pyramids && pyramids.setVis
 layerBoxes.voxels.addEventListener('change', () => scene && scene._pointsObj && scene._pointsObj.visible !== layerBoxes.voxels.checked && scene.toggleCloud());
 layerBoxes.photos.addEventListener('change', () => scene && scene._imageQuadGroup.visible !== layerBoxes.photos.checked && scene.toggleImages());
 layerBoxes.hud.addEventListener('change', () => scene && scene._hudPanel.visible !== layerBoxes.hud.checked && scene.toggleHud());
+const cubesBox = document.getElementById('layerCubes');
+function setVoxelStyle(cubes) {
+    if (voxelStyle) voxelStyle.value = cubes ? 1 : 0;
+    cubesBox.checked = !!cubes;
+    try { localStorage.setItem('memworld.cubes', cubes ? '1' : '0'); } catch (_) { /* private mode */ }
+    diag('voxel_style', { cubes: !!cubes });
+}
+cubesBox.addEventListener('change', () => setVoxelStyle(cubesBox.checked));
+try { if (localStorage.getItem('memworld.cubes') === '1') setVoxelStyle(true); } catch (_) { /* ignore */ }
 
 // Orbit any tf frame: the server lists them and gives a frame's position per replay scan.
 const orbitFrameSel = document.getElementById('orbitFrameSel');
@@ -898,6 +909,8 @@ window.app = {
     prev: () => results && results.prev(),
     navigate: () => results && results.navigate(),
     heatmap: (on = null) => { if (heatmap && on !== null) heatmap.setVisible(on); return heatmap && heatmap.visible; },
+    // Draw voxels as cubes (true) or spheres (false); also in the menu, remembered per browser.
+    cubes: (on = null) => { if (on !== null) setVoxelStyle(on); return !!(voxelStyle && voxelStyle.value); },
     pyramids: (on = null) => { if (pyramids && on !== null) pyramids.setVisible(on); return pyramids && pyramids.visible; },
     orbitFrame: (frame) => setOrbitFrame(frame),
     searchStatus: () => searchStatus,

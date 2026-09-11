@@ -163,10 +163,10 @@ export class Tour {
             },
             {
                 title: 'Navigation',
-                body: () => `The same voxel map becomes a <b>2D costmap</b> along the path the robot actually drove: voxels at body
-                    height are obstacles, inflated by the robot's radius; floor it drove on is known free; the rest is off limits.
-                    DimOS's <b>A*</b> plans over it, so the green route is the one the navigation stack would drive.
-                    <ul><li>${this._routeLine()}</li></ul>`,
+                body: () => `DimOS's <b>MLS planner</b> reads the same voxel map as a <b>multi-level surface</b>: every voxel with
+                    head-room above it is a standable cell, cells become a graph with terrain costs (steps, wall clearance),
+                    and the route is planned in <b>3D</b> on that graph, so stairs, ramps and a mezzanine all count.
+                    <ul><li>${this._routeLine()}</li><li>The green tube is what the navigation stack would drive.</li></ul>`,
                 enter: async () => {
                     this._layers({ voxels: true, heat: true, pyramids: false, photos: false });
                     if (this.results && this.results.count) {
@@ -238,7 +238,10 @@ export class Tour {
 
     _routeLine() {
         const r = this.results;
-        if (r && r.route) return `Route to place #${(r.route.cluster ?? 0) + 1}: ${r.route.length_m} m over ${r.route.cells} cells.`;
+        if (r && r.route) {
+            const via = r.route.planner === 'mls' ? 'MLS 3D planner' : '2D costmap fallback';
+            return `Route to place #${(r.route.cluster ?? 0) + 1}: ${r.route.length_m} m, ${r.route.cells} waypoints (${via}).`;
+        }
         return 'Planning a route to the best place…';
     }
 

@@ -18,6 +18,7 @@ import itertools
 import math
 
 import numpy as np
+import pytest
 
 from dimos.teleop.memory_world.route import LETHAL, RoutePlanner
 
@@ -140,3 +141,17 @@ def test_city_scale_map_plans_on_coarse_cells() -> None:
     assert planner.costs.shape[1] < 4200
     route = planner.plan((10, 2), (3990, 2))
     assert route is not None and route.length_m > 3900
+
+
+def test_mls_planner_routes_through_the_doorway() -> None:
+    pytest.importorskip("dimos_mls_planner")
+    from dimos.teleop.memory_world.route import MlsRoutePlanner
+
+    planner = MlsRoutePlanner(_room_with_doorway(), voxel_size=VOXEL)
+    assert planner.surface_cells > 100
+    route = planner.plan((1.0, 1.0, 0.0), (9.0, 1.0, 0.0))
+    assert route is not None and route.planner == "mls"
+    xs = np.asarray([p[0] for p in route.points])
+    ys = np.asarray([p[1] for p in route.points])
+    crossing = ys[np.argmin(np.abs(xs - 5.0))]
+    assert 4.0 < crossing < 5.2, f"crossed the wall at y={crossing}"

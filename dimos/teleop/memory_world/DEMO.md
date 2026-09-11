@@ -6,7 +6,7 @@ Hyperspace answering questions in plain words with the pictures to prove it.
 ## Setup (one time per recording)
 
 ```bash
-memworld path/to/recording.mcap        # or .db; ~/Commands/memworld
+memworld ~/datasets/lite_recorder/grocery.mcap   # or bike.mcap / park.mcap / any .db; ~/Commands/memworld
 ```
 
 - First start on a new recording builds the ray-traced replay (minutes on a

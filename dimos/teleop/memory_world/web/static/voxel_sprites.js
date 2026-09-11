@@ -11,6 +11,10 @@ import * as THREE from 'https://esm.sh/three@0.160.0';
 // material shares this uniform and the scene writes it once per frame.
 export const viewportHeight = { value: 1 };
 
+// 0 = shaded spheres, 1 = flat cube faces. Shared by every voxel material; the
+// menu flips it.
+export const voxelStyle = { value: 0 };
+
 // View-space light, the same one the cube map used.
 const LIGHT_DIR = new THREE.Vector3(2, 4, 3).normalize();
 
@@ -30,9 +34,18 @@ export const SPRITE_VERTEX_GLSL = `
 // Discard outside the disc, then light the sphere normal the disc implies.
 export const SPRITE_FRAGMENT_SHADER = `
     uniform vec3 lightDir;
+    uniform float voxelStyle;
     varying vec3 vColor;
     void main() {
         vec2 p = gl_PointCoord * 2.0 - 1.0;
+        if (voxelStyle > 0.5) {
+            // A cube seen face-on: a lit square with a darker rim, brighter towards the top.
+            float edge = max(abs(p.x), abs(p.y));
+            float light = 0.62 + 0.38 * (0.5 - 0.5 * p.y);
+            if (edge > 0.86) light *= 0.7;
+            gl_FragColor = vec4(vColor * light, 1.0);
+            return;
+        }
         float r2 = dot(p, p);
         if (r2 > 1.0) discard;
         vec3 n = vec3(p.x, -p.y, sqrt(1.0 - r2));
@@ -45,6 +58,7 @@ export function spriteUniforms(voxelSize) {
     return {
         voxelSize: { value: voxelSize },
         viewportHeight,
+        voxelStyle,
         lightDir: { value: LIGHT_DIR },
     };
 }

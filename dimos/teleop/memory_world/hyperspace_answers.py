@@ -60,7 +60,12 @@ from dimos.teleop.memory_world.query import (
     MemoryQueryResult,
 )
 from dimos.teleop.memory_world.replay import frame_positions
-from dimos.teleop.memory_world.route import RoutePlanner
+from dimos.teleop.memory_world.route import (
+    MLS_MAX_VOXELS,
+    MlsRoutePlanner,
+    RoutePlanner,
+    mls_available,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -116,7 +121,7 @@ class HyperspaceAnswers:
         self._active_heatmap: tuple[dict[str, Any], bytes] | None = None
         self._active_pyramids: str | None = None
         self._last_answer: HeatmapAnswer | None = None
-        self._route_planner: RoutePlanner | None = None
+        self._route_planner: RoutePlanner | MlsRoutePlanner | None = None
         self._orbit_cache: dict[str, dict[str, Any]] = {}
 
     # ---- loading -----------------------------------------------------------
@@ -374,7 +379,9 @@ class HyperspaceAnswers:
 
     # ---- navigation --------------------------------------------------------
 
-    def _planner(self) -> RoutePlanner:
+    def _planner(self) -> RoutePlanner | MlsRoutePlanner:
+        """The MLS 3D planner over the map, built once; the 2D costmap when the
+        binding is missing or the map is a city."""
         if self._route_planner is None:
             if self._cached_cloud is None:
                 raise HTTPException(status_code=503, detail="the map is still building")
@@ -385,13 +392,28 @@ class HyperspaceAnswers:
                 .reshape(n, 3)
                 .astype(np.float64)
             )
-            path = np.asarray(
-                self._orbit_positions_for(self.config.orbit_frame).get("positions") or [],
-                dtype=np.float64,
-            ).reshape(-1, 3)
-            self._route_planner = RoutePlanner.from_voxels(
-                voxels, path, voxel_size=float(header.get("voxel_size", self.config.voxel_size))
-            )
+            voxel_size = float(header.get("voxel_size", self.config.voxel_size))
+            if mls_available() and len(voxels) <= MLS_MAX_VOXELS:
+                started = time.monotonic()
+                mls = MlsRoutePlanner(voxels, voxel_size=voxel_size)
+                logger.info(
+                    "MLS planner: %d surface cells from %d voxels in %.1f s",
+                    mls.surface_cells,
+                    len(voxels),
+                    time.monotonic() - started,
+                )
+                self._route_planner = mls
+            else:
+                logger.info(
+                    "costmap planner (mls binding %s, %d voxels)",
+                    "present" if mls_available() else "missing",
+                    len(voxels),
+                )
+                path = np.asarray(
+                    self._orbit_positions_for(self.config.orbit_frame).get("positions") or [],
+                    dtype=np.float64,
+                ).reshape(-1, 3)
+                self._route_planner = RoutePlanner.from_voxels(voxels, path, voxel_size=voxel_size)
         return self._route_planner
 
     def _robot_end_pose(self) -> tuple[float, float, float]:
@@ -408,7 +430,11 @@ class HyperspaceAnswers:
         cluster = answer.clusters[request.cluster]
         start = request.start or self._robot_end_pose()
         planner = self._planner()
-        route = planner.plan(start[:2], cluster.centre[:2])
+        route = (
+            planner.plan(tuple(start), tuple(cluster.centre))
+            if isinstance(planner, MlsRoutePlanner)
+            else planner.plan(start[:2], cluster.centre[:2])
+        )
         if route is None:
             raise HTTPException(status_code=422, detail="no route through the known free space")
         points = [(float(x), float(y), float(z)) for x, y, z in route.points]
@@ -419,6 +445,7 @@ class HyperspaceAnswers:
             "length_m": round(route.length_m, 2),
             "points": [[round(v, 3) for v in p] for p in points],
             "cells": route.cells,
+            "planner": route.planner,
         }
         with self._clients_lock:
             active = getattr(self, "_active_query_result", None)
