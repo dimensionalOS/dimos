@@ -115,19 +115,38 @@ def get_data_dir(extra_path: str | None = None) -> Path:
 
 
 def resolve_named_path(name: str | Path, suffix: str = "") -> Path:
+    """Resolve *name* to a path: as given, under the project root, then as LFS data.
+
+    A bare name (no extension) also tries ``name + suffix``. A directory
+    dataset resolves to its single ``*suffix`` file when it has exactly one.
+    """
     s = str(name)
     p = Path(s)
     if p.is_absolute() or p.exists():
         return p
     if (DIMOS_PROJECT_ROOT / p).exists():
         return DIMOS_PROJECT_ROOT / p
-    if suffix and not s.endswith(suffix):
-        p = Path(s + suffix)
-        if p.is_absolute() or p.exists():
-            return p
-        if (DIMOS_PROJECT_ROOT / p).exists():
-            return DIMOS_PROJECT_ROOT / p
-    return get_data(p.name)
+    candidates = [p.name]
+    if suffix and not p.suffix:
+        if Path(s + suffix).exists():
+            return Path(s + suffix)
+        if (DIMOS_PROJECT_ROOT / (s + suffix)).exists():
+            return DIMOS_PROJECT_ROOT / (s + suffix)
+        candidates.insert(0, p.name + suffix)
+    for candidate in candidates:
+        try:
+            resolved = get_data(candidate)
+        except FileNotFoundError:
+            continue
+        if suffix and resolved.is_dir():
+            matches = sorted(resolved.glob(f"*{suffix}"))
+            if len(matches) == 1:
+                return matches[0]
+        return resolved
+    raise FileNotFoundError(
+        f"{name!r} is not a path and no LFS archive matches "
+        f"{' or '.join(c + '.tar.gz' for c in candidates)} under {_get_lfs_dir()}"
+    )
 
 
 def backup_file(path: str | Path, keep_last: int = 3) -> Path | None:
@@ -244,8 +263,8 @@ def _pull_lfs_archive(filename: str | Path) -> Path:
     # Check if file exists
     if not file_path.exists():
         raise FileNotFoundError(
-            f"Test file '{filename}' not found at {file_path}. "
-            f"Make sure the file is committed to Git LFS in the tests/data directory."
+            f"LFS archive '{filename}.tar.gz' not found at {file_path}. "
+            f"Make sure it is committed to Git LFS under data/.lfs."
         )
 
     # If it's an LFS pointer file, ensure LFS is set up and pull the file

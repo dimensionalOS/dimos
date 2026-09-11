@@ -16,7 +16,7 @@ import hashlib
 import os
 from pathlib import Path
 import subprocess
-from unittest.mock import call
+from unittest.mock import MagicMock, call
 
 import pytest
 from pytest_mock import MockerFixture
@@ -490,3 +490,45 @@ def test_lfs_path_multiple_instances() -> None:
 
     # Both caches should point to the same file
     assert cache_1 == cache_2
+
+
+def _fake_get_data(mocker: MockerFixture, available: dict[str, Path]) -> MagicMock:
+    def get_data(name: str | Path) -> Path:
+        try:
+            return available[str(name)]
+        except KeyError:
+            raise FileNotFoundError(name) from None
+
+    return mocker.patch.object(data, "get_data", side_effect=get_data)
+
+
+def test_resolve_named_path_keeps_foreign_suffix(mocker: MockerFixture, tmp_path: Path) -> None:
+    mcap = tmp_path / "go2_dds_stairs.mcap"
+    get_data = _fake_get_data(mocker, {"go2_dds_stairs.mcap": mcap})
+
+    assert data.resolve_named_path("go2_dds_stairs.mcap", ".db") == mcap
+    get_data.assert_called_once_with("go2_dds_stairs.mcap")
+
+
+def test_resolve_named_path_falls_back_to_plain_archive(
+    mocker: MockerFixture, tmp_path: Path
+) -> None:
+    dataset = tmp_path / "unitree_go2_bigoffice"
+    dataset.mkdir()
+    db = dataset / "recording.db"
+    db.touch()
+    get_data = _fake_get_data(mocker, {"unitree_go2_bigoffice": dataset})
+
+    assert data.resolve_named_path("unitree_go2_bigoffice", ".db") == db
+    assert get_data.call_args_list == [
+        call("unitree_go2_bigoffice.db"),
+        call("unitree_go2_bigoffice"),
+    ]
+
+
+def test_resolve_named_path_missing_names_candidates(mocker: MockerFixture, tmp_path: Path) -> None:
+    _fake_get_data(mocker, {})
+    mocker.patch.object(data, "_get_lfs_dir", return_value=tmp_path)
+
+    with pytest.raises(FileNotFoundError, match=r"nope\.db\.tar\.gz or nope\.tar\.gz"):
+        data.resolve_named_path("nope", ".db")
