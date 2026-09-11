@@ -273,6 +273,80 @@ def test_stop_publishes_safe_button_state(
     assert published[-1].data == 0
 
 
+def test_button_edges_are_debounced_and_not_repeated_while_held(
+    module: QuestTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    pressed = mocker.patch.object(module.button_pressed, "publish")
+    released = mocker.patch.object(module.button_released, "publish")
+    mocker.patch(
+        "dimos.teleop.quest.quest_teleop_module.time.monotonic",
+        side_effect=[0.0, 0.049, 0.05, 1.0, 1.01, 1.06],
+    )
+    held = Buttons()
+    held.right_primary = True
+
+    module._publish_buttons(held)
+    module._publish_buttons(held)
+    module._publish_buttons(held)
+    module._publish_buttons(held)
+    module._publish_buttons(Buttons())
+    module._publish_buttons(Buttons())
+
+    pressed.assert_called_once()
+    assert pressed.call_args.args[0].right_primary
+    released.assert_called_once()
+    assert released.call_args.args[0].right_primary
+
+
+def test_button_edges_can_contain_simultaneous_digital_buttons(
+    module: QuestTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    publish = mocker.patch.object(module.button_pressed, "publish")
+    mocker.patch(
+        "dimos.teleop.quest.quest_teleop_module.time.monotonic",
+        side_effect=[0.0, 0.05],
+    )
+    buttons = Buttons()
+    buttons.left_secondary = True
+    buttons.right_primary = True
+
+    module._publish_buttons(buttons)
+    module._publish_buttons(buttons)
+
+    publish.assert_called_once()
+    edge = publish.call_args.args[0]
+    assert edge.left_secondary
+    assert edge.right_primary
+
+
+def test_analog_trigger_bits_do_not_emit_button_edges(
+    module: QuestTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    pressed = mocker.patch.object(module.button_pressed, "publish")
+    released = mocker.patch.object(module.button_released, "publish")
+    buttons = Buttons()
+    buttons.pack_analog_triggers(1.0, 1.0)
+
+    module._publish_buttons(buttons)
+    module._publish_buttons(buttons)
+
+    pressed.assert_not_called()
+    released.assert_not_called()
+
+
+def test_disconnect_releases_debounced_buttons_immediately(
+    module: QuestTeleopModule, mocker: pytest_mock.MockerFixture
+) -> None:
+    publish = mocker.patch.object(module.button_released, "publish")
+    module._debounced_buttons = 1 << Buttons.BITS["right_primary"]
+
+    module._release_all_buttons()
+
+    publish.assert_called_once()
+    assert publish.call_args.args[0].right_primary
+    assert module._debounced_buttons == 0
+
+
 def test_go2_stale_input_publishes_zero_velocity(mocker: pytest_mock.MockerFixture) -> None:
     module = Go2TeleopModule()
     publish = mocker.patch.object(module.cmd_vel, "publish")
@@ -371,6 +445,20 @@ def test_arm_teleop_publishes_absolute_controller_pose() -> None:
         module.stop()
 
 
+def test_arm_teleop_publishes_pose_without_face_button_engagement() -> None:
+    module = ArmTeleopModule()
+    try:
+        module._controllers[Hand.RIGHT] = QuestControllerState(is_left=False)
+        module._current_poses[Hand.RIGHT] = PoseStamped(frame_id="right")
+
+        module._handle_engage()
+
+        assert module._should_publish(Hand.RIGHT)
+        assert not module._is_engaged[Hand.RIGHT]
+    finally:
+        module.stop()
+
+
 def test_arm_teleop_publishes_normalized_gripper_opening_for_engaged_hand(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -378,14 +466,33 @@ def test_arm_teleop_publishes_normalized_gripper_opening_for_engaged_hand(
     try:
         left_publish = mocker.patch.object(module.left_gripper_command, "publish")
         right_publish = mocker.patch.object(module.right_gripper_command, "publish")
-        left = QuestControllerState(is_left=True, trigger=0.25)
-        right = QuestControllerState(is_left=False, trigger=0.75)
-        module._is_engaged[Hand.LEFT] = True
+        left = QuestControllerState(is_left=True, trigger=0.25, grip=1.0)
+        right = QuestControllerState(is_left=False, trigger=0.75, grip=0.0)
 
         module._publish_button_state(left, right)
 
         assert left_publish.call_args.args[0].data == pytest.approx(0.75)
         right_publish.assert_not_called()
+    finally:
+        module.stop()
+
+
+@pytest.mark.parametrize(("grip", "enabled"), [(0.5, False), (0.5001, True)])
+def test_arm_gripper_gate_uses_the_classified_grip_bit(
+    mocker: pytest_mock.MockerFixture,
+    grip: float,
+    enabled: bool,
+) -> None:
+    module = ArmTeleopModule()
+    try:
+        publish = mocker.patch.object(module.right_gripper_command, "publish")
+
+        module._publish_button_state(
+            None,
+            QuestControllerState(is_left=False, trigger=0.25, grip=grip),
+        )
+
+        assert publish.called is enabled
     finally:
         module.stop()
 
@@ -403,7 +510,7 @@ def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture)
 
         assert module._is_engaged[Hand.RIGHT]
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert publish.call_args.args[0].right_primary
+        assert publish.call_args.args[0].right_grip
         assert publish.call_args.args[0].right_trigger_analog == pytest.approx(1.0)
 
         module._handle_engage()
@@ -413,12 +520,12 @@ def test_hand_teleop_pinch_toggles_engagement(mocker: pytest_mock.MockerFixture)
         module._controllers[Hand.RIGHT] = QuestControllerState(is_left=False, primary=False)
         module._handle_engage()
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert publish.call_args.args[0].right_primary
+        assert publish.call_args.args[0].right_grip
         module._controllers[Hand.RIGHT] = QuestControllerState(is_left=False, primary=True)
         module._handle_engage()
 
         assert not module._is_engaged[Hand.RIGHT]
         module._publish_button_state(None, module._controllers[Hand.RIGHT])
-        assert not publish.call_args.args[0].right_primary
+        assert not publish.call_args.args[0].right_grip
     finally:
         module.stop()

@@ -55,6 +55,7 @@ from dimos.web.robot_web_interface import RobotWebInterface
 logger = setup_logger()
 
 STATIC_DIR = Path(__file__).parent / "web" / "static"
+BUTTON_DEBOUNCE_S = 0.05
 
 
 async def _ws_send_text(ws: WebSocket, data: str) -> None:
@@ -107,6 +108,8 @@ class QuestTeleopModule(Module):
     left_controller_output: Out[PoseStamped]
     right_controller_output: Out[PoseStamped]
     teleop_buttons: Out[Buttons]
+    button_pressed: Out[Buttons]
+    button_released: Out[Buttons]
     status: In[EpisodeStatus]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -149,6 +152,8 @@ class QuestTeleopModule(Module):
         self._clients_lock = threading.Lock()
         self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._latest_episode_status: EpisodeStatus | None = None
+        self._debounced_buttons = 0
+        self._button_candidates: dict[int, tuple[bool, float]] = {}
 
     def _setup_routes(self) -> None:
         """Register teleop routes on the embedded web server."""
@@ -255,7 +260,7 @@ class QuestTeleopModule(Module):
         super().stop()
 
     def _reset_controller_state(self) -> None:
-        """Clear stale input and publish the zero-button safe command."""
+        """Clear stale input and immediately release every debounced button."""
         with self._lock:
             for hand in Hand:
                 self._is_engaged[hand] = False
@@ -265,6 +270,7 @@ class QuestTeleopModule(Module):
                 self._last_pose_update[hand] = None
                 self._last_controller_update[hand] = None
             self._publish_button_state(None, None)
+            self._release_all_buttons()
             self._publish_safe_command()
 
     def _expire_stale_state(self, now: float) -> None:
@@ -526,4 +532,44 @@ class QuestTeleopModule(Module):
         keep analog values, add extra streams).
         """
         buttons = Buttons.from_controllers(left, right)
+        self._publish_buttons(buttons)
+
+    def _publish_buttons(self, buttons: Buttons) -> None:
+        """Publish raw state and stable digital button edges."""
         self.teleop_buttons.publish(buttons)
+        now = time.monotonic()
+        observed = buttons.data & Buttons.DIGITAL_MASK
+        pressed = 0
+        released = 0
+        for bit in Buttons.BITS.values():
+            mask = 1 << bit
+            value = bool(observed & mask)
+            stable = bool(self._debounced_buttons & mask)
+            if value == stable:
+                self._button_candidates.pop(bit, None)
+                continue
+            candidate = self._button_candidates.get(bit)
+            if candidate is None or candidate[0] != value:
+                self._button_candidates[bit] = (value, now)
+                continue
+            if now - candidate[1] < BUTTON_DEBOUNCE_S:
+                continue
+            self._button_candidates.pop(bit, None)
+            if value:
+                self._debounced_buttons |= mask
+                pressed |= mask
+            else:
+                self._debounced_buttons &= ~mask
+                released |= mask
+        if pressed:
+            self.button_pressed.publish(Buttons(pressed))
+        if released:
+            self.button_released.publish(Buttons(released))
+
+    def _release_all_buttons(self) -> None:
+        """Emit release edges without debounce when input ownership disappears."""
+        released = self._debounced_buttons
+        self._debounced_buttons = 0
+        self._button_candidates.clear()
+        if released:
+            self.button_released.publish(Buttons(released))

@@ -62,11 +62,14 @@ def test_openyam_topology_connects_arm_and_gripper(
     assert openyam_adapter.connect()
 
 
-def test_openyam_declares_only_its_local_gripper_position_limits(
+def test_openyam_declares_arm_and_local_gripper_position_limits(
     openyam_adapter: OpenYamDamiaoAdapter,
 ) -> None:
+    arm_limits = tuple((float(index), float(index + 1)) for index in range(OPENYAM_DOF))
+    openyam_adapter._arm_position_limits = arm_limits
+
     limits = openyam_adapter.get_limits()
 
-    assert limits.position_lower == [*([None] * OPENYAM_DOF), 0.0]
-    assert limits.position_upper == [*([None] * OPENYAM_DOF), 1.0]
+    assert limits.position_lower == [*[lower for lower, _upper in arm_limits], 0.0]
+    assert limits.position_upper == [*[upper for _lower, upper in arm_limits], 1.0]
     assert limits.velocity_max == [None] * (OPENYAM_DOF + 1)

@@ -97,9 +97,24 @@ def _buttons(
     right: bool = False,
 ) -> Buttons:
     buttons = Buttons()
-    buttons.left_primary = left
-    buttons.right_primary = right
+    buttons.left_grip = left
+    buttons.right_grip = right
     return buttons
+
+
+def test_face_buttons_do_not_engage_arm_teleop(mocker: MockerFixture) -> None:
+    task = TeleopIKTask(
+        "quest",
+        _config((_binding("right", "right_tool"),)),
+        solver=_solver(mocker),
+    )
+    buttons = Buttons()
+    buttons.right_primary = True
+
+    task.on_teleop_buttons(buttons, 1.0)
+    task.on_right_cartesian_command(_pose(0.5), 1.0)
+
+    assert task.compute(_state()) is None
 
 
 def _pose(x: float) -> PoseStamped:
