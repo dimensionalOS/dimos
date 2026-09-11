@@ -464,14 +464,19 @@ class VoxelReplay:
         if keyframes.count() == 0:  # a build that died before its first keyframe
             return False
         tags = keyframes.first().tags or {}
-        return (
-            bool(_final(keyframes).tags.get("last"))
-            and tags.get("format") == FORMAT_VERSION
-            and tags.get("builder") == BUILDER
-            and abs(float(tags.get("voxel_size", 0.0)) - voxel_size) < 1e-9
-            and (max_range is None or abs(float(tags.get("max_range", 0.0)) - max_range) < 1e-9)
-            and tags.get("lidar_stream") == lidar_stream_name
-        )
+        checks = {
+            "last keyframe": bool(_final(keyframes).tags.get("last")),
+            "format": tags.get("format") == FORMAT_VERSION,
+            "builder": tags.get("builder") == BUILDER,
+            "voxel_size": abs(float(tags.get("voxel_size", 0.0)) - voxel_size) < 1e-9,
+            "max_range": max_range is None
+            or abs(float(tags.get("max_range", 0.0)) - max_range) < 1e-9,
+            "lidar_stream": tags.get("lidar_stream") == lidar_stream_name,
+        }
+        failed = [name for name, ok in checks.items() if not ok]
+        if failed:  # a rebuild is half an hour: say why
+            logger.info("replay streams need a rebuild (%s); tags %s", ", ".join(failed), tags)
+        return not failed
 
     def _load_index(self) -> ReplayIndex:
         first = self.keyframes.first()
