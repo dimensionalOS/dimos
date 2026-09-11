@@ -389,7 +389,9 @@ async function startReplay() {
     const mine = replay;
     tickers.push(() => { if (replay === mine) mine.tick(); });
     scene.onQualityChange = () => replay && replay.refill();
-    for (let attempt = 0; attempt < 60 && scene === owner; attempt++) {
+    // Polled while the server builds the replay streams (up to half an hour on a long
+    // recording); a build the server remembers as failed will not change, so stop then.
+    for (let attempt = 0; scene === owner; attempt++) {
         try {
             const index = await replay.load();
             const orbit = index.orbit;
@@ -400,7 +402,12 @@ async function startReplay() {
             }
             return;
         } catch (e) {
-            if (attempt === 0) diag('replay_waiting', { error: String(e.message || e) });
+            const reason = String(e.message || e);
+            if (attempt === 0) diag('replay_waiting', { error: reason });
+            if (reason.startsWith('replay build failed')) {
+                setStatus(`Timeline unavailable: ${reason}`);
+                return;
+            }
             await new Promise((resolve) => setTimeout(resolve, 5000));
         }
     }

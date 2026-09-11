@@ -185,7 +185,11 @@ export class ReplayController {
 
     async load() {
         const response = await fetch(`${this.baseUrl}/replay/index`);
-        if (!response.ok) throw new Error(`replay index: ${response.status}`);
+        if (!response.ok) {
+            // The server says why: "replay building" is worth waiting for, a failed build is not.
+            const detail = await response.json().then((body) => body.detail).catch(() => null);
+            throw new Error(detail || `replay index: ${response.status}`);
+        }
         const index = await response.json();
         // A rebuild replaces the diff stream, so an index fetched mid-build can
         // arrive with a scan or two in it. That renders a dead 0:00 / 0:00
@@ -250,6 +254,7 @@ export class ReplayController {
                 if (e && e.name === 'AbortError') return;
                 this.diag('replay_segment_failed', { number, error: String(e.message || e) });
                 this._setLoading(false);
+                if (this.ui) this.ui.timeLabel.textContent = 'segment failed, scrub again';
             });
             return false;
         }
