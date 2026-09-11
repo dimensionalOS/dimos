@@ -375,7 +375,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
             """One keyframe plus the diffs up to the next; see VoxelReplay.segment."""
 
             try:
-                replay = await asyncio.to_thread(self._replay_if_ready)
+                replay, _ = await asyncio.to_thread(self._replay_if_ready)
             except Exception as error:
                 raise HTTPException(
                     status_code=503, detail=f"replay {self._replay_progress}"
@@ -1004,16 +1004,16 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
                 return
             self._index_progress = f"ready ({index.count()} frames)"
             logger.info("visual index ready: %d frames (+%d new)", index.count(), added)
-        # Warm the model loads and the index here, off the request path: cold
-        # they add ~18s (and, for precomputed vectors, the pooling-head pass)
-        # to whichever query comes first, which is the one being demoed.
-        index.model.embed_text("warmup")
-        _ = self.whisper
-        if index.count() > 0:
-            self._index_progress = f"loading ({index.count()} frames)"
-            with self._store_lock:  # reads the image stream's ids and stamps
+            # Warm the model loads and the index here, off the request path: cold
+            # they add ~18s (and, for precomputed vectors, the pooling-head pass)
+            # to whichever query comes first, which is the one being demoed. Still
+            # under both locks: an embedding adoption would stop this index meanwhile.
+            index.model.embed_text("warmup")
+            _ = self.whisper
+            if index.count() > 0:
+                self._index_progress = f"loading ({index.count()} frames)"
                 index.load()
-            self._index_progress = f"ready ({index.count()} frames)"
+                self._index_progress = f"ready ({index.count()} frames)"
         logger.info("voice query path warm")
 
     # ---- adding embeddings to a recording that has none -----------------------
@@ -1045,12 +1045,18 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
     def _adopt_embeddings(self) -> None:
         """Pick up the stream siglipify just wrote and load the index from it."""
         if self.config.store_path.endswith(".mcap"):
-            self._reopen_recording()
-        with self._store_lock, self._index_lock:  # store first, like every index user
-            if self._visual_index is not None:
-                self._visual_index.stop()
-                self._visual_index = None
+            self._reopen_recording()  # drops the index with the store it read
+        else:
+            with self._store_lock, self._index_lock:  # store first, like every index user
+                self._drop_visual_index()
         self._build_visual_index()
+
+    def _drop_visual_index(self) -> None:
+        """Under the store and index locks: a search holding the old index would read
+        a stream of a store that is about to close."""
+        if self._visual_index is not None:
+            self._visual_index.stop()
+            self._visual_index = None
 
     def _reopen_recording(self) -> None:
         """Open the recording afresh: siglipify rewrote the mcap, and the store holds the old file."""
@@ -1068,6 +1074,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
             self._replay_error = None
             self._replay_index = None
             self._replay_frames.clear()
+            self._drop_visual_index()
             self._tf_tree_cache = None  # before naming: the names are picked against the tree
             self._tf_missing = False
             self._name_streams(self._store)
@@ -1326,13 +1333,16 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         with self._replay_lock:
             return self._replay_locked()
 
-    def _replay_if_ready(self) -> VoxelReplay:
-        """The replay for the serving routes: while a build holds the lock they
-        answer 503 instead of holding a request thread for the whole build."""
+    def _replay_if_ready(self) -> tuple[VoxelReplay, dict[str, Any]]:
+        """The replay and its index json for the serving routes: while a build holds
+        the lock they answer 503 instead of holding a request thread for the whole
+        build. Both come from the one acquisition: a reopen in between would clear them."""
         if not self._replay_lock.acquire(blocking=False):
             raise RuntimeError(f"replay {self._replay_progress}")
         try:
-            return self._replay_locked()
+            replay = self._replay_locked()
+            assert self._replay_index is not None  # set together with _replay
+            return replay, self._replay_index
         finally:
             self._replay_lock.release()
 

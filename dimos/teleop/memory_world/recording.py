@@ -518,6 +518,7 @@ def build_tf_tree(
         n += 1
     if n:
         tree._edges[(world, base_frame)] = edge
+        tree.substituted = (world, corrected)
         logger.info("tf: %s -> %s from %r (%d corrected poses)", world, base_frame, corrected, n)
     return tree
 

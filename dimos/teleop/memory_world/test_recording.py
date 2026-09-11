@@ -451,9 +451,41 @@ def test_build_tf_tree_takes_the_corrected_odometry_for_the_base(tmp_path) -> No
         )
     assert corrected_odometry_stream(store) == "pointlio_odometry_corrected"
     tree = build_tf_tree(store, "tf", "odom")
+    assert tree.substituted == ("odom", "pointlio_odometry_corrected")
     cam = tree.lookup("odom", "cam", 2.0, 0.1)
     assert cam is not None
     assert [round(float(v), 3) for v in cam[:3, 3]] == [2.0, 1.0, 0.5]
+    store.stop()
+
+
+def test_build_tf_tree_keeps_the_original_edge_for_an_empty_corrected_stream(tmp_path) -> None:
+    from dimos.memory.store.sqlite import SqliteStore
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.msgs.nav_msgs.Odometry import Odometry
+    from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import build_tf_tree
+
+    store = SqliteStore(path=str(tmp_path / "stitched.db"), must_exist=False)
+    store.start()
+    store.stream("pointlio_odometry_corrected", Odometry)  # declared, never written
+    store.stream("tf", TFMessage).append(
+        TFMessage(
+            Transform(
+                translation=Vector3(4.0, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="odom",
+                child_frame_id="base_link",
+                ts=1.0,
+            )
+        ),
+        ts=1.0,
+    )
+    tree = build_tf_tree(store, "tf", "odom")
+    assert tree.substituted is None  # the ingest follows this: nothing to strip
+    base = tree.lookup("odom", "base_link", 1.0, 0.1)
+    assert base is not None and round(float(base[0, 3]), 3) == 4.0
     store.stop()
 
 

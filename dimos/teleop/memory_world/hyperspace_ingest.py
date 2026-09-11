@@ -164,22 +164,12 @@ def _ingest(
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-    from dimos.teleop.memory_world.recording import (
-        build_tf_tree,
-        corrected_odometry_stream,
-        tf_root,
-    )
+    from dimos.teleop.memory_world.recording import build_tf_tree
 
     tree = build_tf_tree(store, streams["tf"])
-    root = tf_root(tree)
-    # Substituted only where build_tf_tree substituted: one root with a direct
-    # root->base_link edge. The "odom" fallback is for naming, never for that choice.
-    corrected = (
-        corrected_odometry_stream(store)
-        if root is not None and (root, "base_link") in tree._edges
-        else None
-    )
-    world = root or "odom"
+    # The one decision is build_tf_tree's: the corrected poses replace world -> base_link
+    # here exactly when they did in the tree, and never for an empty stream.
+    world, corrected = tree.substituted or (None, None)
 
     def lookup(target: str, source: str, ts: float) -> Any:
         matrix = tree.lookup(target, source, ts, TF_TOLERANCE_S)
