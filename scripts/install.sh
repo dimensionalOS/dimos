@@ -640,10 +640,11 @@ prompt_extras() {
     while IFS= read -r line; do [[ -n "$line" ]] && feature_sel+=("$line"); done <<< "$_features"
 
     local -a extras_list=()
-    for p in "${platform_sel[@]}"; do
+    # Bash 3.2 treats empty arrays as unset under nounset.
+    for p in ${platform_sel[@]+"${platform_sel[@]}"}; do
         case "$p" in *Unitree*) extras_list+=("unitree");; *Drone*) extras_list+=("drone");; *Manipulator*) extras_list+=("manipulation");; esac
     done
-    for f in "${feature_sel[@]}"; do
+    for f in ${feature_sel[@]+"${feature_sel[@]}"}; do
         case "$f" in *Agent*) extras_list+=("agents");; *Perception*) extras_list+=("perception");; *Visualization*) extras_list+=("visualization");;
             *Simulation*) extras_list+=("sim");; *Web*) extras_list+=("web");; *Misc*) extras_list+=("misc");; esac
     done
