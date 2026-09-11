@@ -368,3 +368,16 @@ def test_embedding_job_failure_keeps_the_last_line() -> None:
     assert finished.wait(10)
     status = job.status()
     assert status["embedding"] == "failed" and "no such stream" in status["progress"]
+
+
+def test_tf_root_is_the_frame_with_no_parent() -> None:
+    from dimos.teleop.memory_world.recording import tf_root
+    from dimos.teleop.memory_world.tf_tree import TfTree
+
+    tree = TfTree()
+    for parent, child in (("odom", "base_link"), ("base_link", "camera"), ("base_link", "lidar")):
+        tree.add(parent, child, 1.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+    assert tf_root(tree) == "odom"
+    tree.add("map2", "other", 1.0, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+    assert tf_root(tree) is None, "two roots: nothing to pick"
+    assert tf_root(TfTree()) is None

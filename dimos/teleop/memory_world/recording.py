@@ -411,6 +411,15 @@ _STREAM_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 }
 
 
+def tf_root(tree: Any) -> str | None:
+    """The frame nothing hangs under (``odom`` or ``world``, typically): where the map lives.
+    None when the tree is empty or has several roots."""
+    parents = {parent for parent, _ in tree._edges}
+    children = {child for _, child in tree._edges}
+    roots = sorted(parents - children)
+    return roots[0] if len(roots) == 1 else None
+
+
 def detect_streams(store: Store) -> dict[str, Any]:
     """Name the stream to use for each role, from the payload types in *store*.
 

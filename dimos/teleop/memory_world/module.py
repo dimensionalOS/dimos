@@ -76,7 +76,7 @@ from dimos.teleop.memory_world.query import (
     HighlightPoint,
     MemoryQueryResult,
 )
-from dimos.teleop.memory_world.recording import detect_streams, open_recording, pick_lidar
+from dimos.teleop.memory_world.recording import detect_streams, open_recording, pick_lidar, tf_root
 from dimos.teleop.memory_world.replay import (
     SensorScan,
     VoxelReplay,
@@ -538,18 +538,20 @@ class MemoryWorldModule(HyperspaceAnswers, Module):
         return self._store
 
     def _name_streams(self, store: Store) -> None:
-        """Name the streams the configuration left empty or the recording lacks.
+        """Name the streams (and the world frame) the config left empty or the recording lacks.
 
-        A Go2 recording says ``color_image`` and ``lidar``; this rig says
-        ``realsense_color_image`` and ``pointlio_lidar``; someone else's robot
-        says something else again. Roles are filled from the recording's
-        message types, and the lidar from whichever point-cloud stream agrees
-        with the tf tree. A name given on the command line is kept as-is when
-        the recording has it, so a recording with two cameras can still be
-        pointed at one of them.
+        Roles are filled from the recording's message types, the lidar from
+        whichever point-cloud stream agrees with tf, the world frame from the tf
+        root; a name given on the command line is kept when the recording has it.
         """
         present = set(store.list_streams())
         detected = detect_streams(store)
+        tree = self._tf_tree() if detected.get("tf") else None
+        if tree is not None and self.config.world_frame not in tree.frames:
+            root = tf_root(tree)
+            if root:
+                logger.info("world_frame: using %r (the tf root)", root)
+                self.config.world_frame = root
         # tf first: naming the lidar needs the tree.
         for role, setting in (
             ("tf", "tf_stream_name"),
