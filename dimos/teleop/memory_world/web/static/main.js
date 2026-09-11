@@ -106,7 +106,7 @@ try {
     Flight = (await import(`/static_mw/flight.js${assetVersion}`)).Flight;
     ResultsNav = (await import(`/static_mw/results.js${assetVersion}`)).ResultsNav;
     Tour = (await import(`/static_mw/tour.js${assetVersion}`)).Tour;
-    voxelStyle = (await import(`/static_mw/voxel_sprites.js${assetVersion}`)).voxelStyle;
+    voxelStyle = (await import('/static_mw/voxel_sprites.js')).voxelStyle;  // same instance as scene.js
     diag('scene_module_loaded');
 } catch (err) {
     diag('scene_module_failed', { error: String(err && err.message || err) });
