@@ -253,10 +253,10 @@ class HyperspaceConfig(MemoryModuleConfig):
     model_name: str = SIGLIP2_MODEL_NAME
     # "auto" = cuda if available, else cpu (never mps, see start()).
     device: str = "auto"
-    # Ensemble stores: how the members' cell scores combine ("min", "2nd",
+    # Ensemble stores: how the members' cell scores combine ("2nd", "min",
     # "mean") and the threshold on the pooled score. See QueryConfig.
-    pool: str = "min"
-    pooled_hot_threshold: float = 0.005
+    pool: str = "2nd"
+    pooled_hot_threshold: float = 0.02
     # Frame answers are given in unless a request names another.
     world_frame: str = "odom"
     voxel_size: float = 0.10
@@ -271,6 +271,11 @@ class HyperspaceConfig(MemoryModuleConfig):
     segment_min_z: float = 2.0
     # Refinement chain (see refine.py); "default" = QueryConfig.refine, "none" = raw map.
     refine: str = "default"
+    # Keyframes a voxel must be seen from (the chain's "support" step). 2 was
+    # the single-model setting; an ensemble's hot cells are already vetted by
+    # several checkpoints and sit tighter on the object, so their thin
+    # pyramids overlap less between views: 1 keeps the recall (plan.md 7).
+    refine_min_frames: int = 1
     # Depth samples a voxel needs to appear in scene_map.
     scene_min_samples: int = 3
     # Demo: after this many seconds, run demo_queries and publish the answers,
@@ -331,7 +336,9 @@ class Hyperspace(MemoryModule):
             query_config,
             world_frame=self.config.world_frame,
             voxel_size=self.config.voxel_size,
-            refine_config=refine_config_of(self.config.refine, query_config.refine),
+            refine_config=refine_config_of(
+                self.config.refine, query_config.refine, min_frames=self.config.refine_min_frames
+            ),
         )
         self._lock = threading.Lock()
         self._ids = iter(range(1, 1 << 30))

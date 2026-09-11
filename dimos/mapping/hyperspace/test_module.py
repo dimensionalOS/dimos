@@ -432,7 +432,9 @@ def test_ensemble_keyframes_carry_every_member_and_pool_with_a_minimum(store: Sq
     # the vector index holds the primary member only, on its own 8x8 grid
     assert store.stream(PATCH_STREAM, dict).count() == 3 * 64
 
-    config = hs.QueryConfig(structural_gate=False, segment_weight=0.0, pool="min")
+    config = hs.QueryConfig(
+        structural_gate=False, segment_weight=0.0, pool="min", pooled_hot_threshold=0.005
+    )
     engine = HyperspaceQuery(store, StubEnsemble.embed_text, config, world_frame=WORLD)
     assert engine.members() == ["stub-a", "stub-b-16"]
     result = engine.heatmap("object")
