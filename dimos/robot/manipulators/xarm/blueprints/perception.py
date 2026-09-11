@@ -31,9 +31,16 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.experimental.object_scene_registration import ObjectSceneRegistrationModule
 from dimos.robot.manipulators.xarm.config import make_xarm7_model_config
 
+# Hand-eye calibration for the eye-in-hand RealSense. RealSenseCamera publishes
+# only its own subtree, so without this edge camera_link has no parent, nothing
+# resolves into world, and every cloud the camera produces is silently unusable.
+# link7 is a frame the model already publishes, so ManipulationModule emits the
+# whole chain from one loop at one rate.
 XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
     translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
     rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
+    frame_id="link7",
+    child_frame_id="camera_link",
 )
 
 xarm_perception = autoconnect(
@@ -47,6 +54,7 @@ xarm_perception = autoconnect(
             ),
             tf_extra_links=["link7"],
         ),
+        static_transforms=[XARM_PERCEPTION_CAMERA_TRANSFORM],
         planning_timeout=10.0,
         visualization={"backend": "viser"},
         floor_z=-0.02,
@@ -54,8 +62,6 @@ xarm_perception = autoconnect(
     ManipulationSkills.blueprint(),
     PickAndPlaceModule.blueprint(planning_frame="world"),
     HeuristicGraspModule.blueprint(),
-    # TODO: tf tree is broken here; RealSenseCamera no longer publishes its mount
-    # edge, so camera_link needs a parent (e.g. from the arm) to resolve into world.
     RealSenseCamera.blueprint(),
     ObjectSceneRegistrationModule.blueprint(
         target_frame="world",
