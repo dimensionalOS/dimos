@@ -96,6 +96,7 @@ class HyperspaceAnswers:
     _clients_lock: threading.Lock
     _active_query_images: list[tuple[dict[str, Any], bytes]]
     _cached_cloud: tuple[dict[str, Any], bytes] | None
+    _world_clients: Any
     _map_xyz: np.ndarray | None  # the whole map, before the viewer's stride
     _viewer_position: tuple[float, float, float] | None
     _store_lock: Any  # an RLock
@@ -282,7 +283,8 @@ class HyperspaceAnswers:
         )
         query_id = self._publish_query_result(result)
         with self._clients_lock:
-            self._last_answer = (answer, query_id)
+            if self._query_is_current(query_id):  # else a newer answer replaced it
+                self._last_answer = (answer, query_id)
         self._publish_heatmap(query_id, answer)
         self._publish_pyramids(query_id, answer)
         # The pictures come from the recording (seconds on an mcap); the answer does not wait for them.
@@ -312,7 +314,8 @@ class HyperspaceAnswers:
         )
         query_id = self._publish_query_result(result)
         with self._clients_lock:
-            self._last_answer = (answer, query_id)
+            if self._query_is_current(query_id):  # else a newer answer replaced it
+                self._last_answer = (answer, query_id)
         self._publish_heatmap(query_id, answer)
         self._publish_pyramids(query_id, answer)  # clears the previous answer's frusta too
 
@@ -331,9 +334,13 @@ class HyperspaceAnswers:
             "stats": {k: v for k, v in answer.stats.items() if not isinstance(v, dict | list)},
             "seconds": round(answer.seconds, 3),
         }
-        with self._clients_lock:
+        with self._clients_lock:  # state and send together, under the answer's lock
+            if not self._query_is_current(query_id):
+                return  # a newer answer replaced this one
             self._active_heatmap = (header, payload)
-        self._broadcast(encode_binary(MSG_HEATMAP, header, payload))
+            message = encode_binary(MSG_HEATMAP, header, payload)
+            for client in tuple(self._world_clients):
+                client.send_threadsafe(message)
 
     def _publish_pyramids(self, query_id: str, answer: HeatmapAnswer) -> None:
         message = encode_text(
@@ -342,8 +349,11 @@ class HyperspaceAnswers:
             pyramids=[pyramid.summary() for pyramid in answer.pyramids],
         )
         with self._clients_lock:
+            if not self._query_is_current(query_id):
+                return  # a newer answer replaced this one
             self._active_pyramids = message
-        self._broadcast(message)
+            for client in tuple(self._world_clients):
+                client.send_threadsafe(message)
 
     def _publish_cluster_images(self, query_id: str, phrase: str, answer: HeatmapAnswer) -> None:
         """Every cluster's evidence frames, posed where their cameras stood."""

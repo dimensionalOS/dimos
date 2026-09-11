@@ -137,6 +137,17 @@ def test_cli_refuses_scans_already_in_the_world_frame(tmp_path: Path) -> None:
     store.stop()
     with pytest.raises(SystemExit, match="sensor pose"):
         replay_module.main([str(tmp_path / "aligned.db"), "--world-frame", "odom", "--dry-run"])
+    store = SqliteStore(path=str(tmp_path / "stitched.db"))
+    store.start()
+    store.stream("lidar", PointCloud2).append(
+        PointCloud2.from_numpy(
+            np.zeros((1, 3), np.float32), frame_id="corrected_odom", timestamp=1.0
+        ),
+        ts=1.0,
+    )
+    store.stop()
+    with pytest.raises(SystemExit, match="corrected_odom"):  # a stitched frame, any world name
+        replay_module.main([str(tmp_path / "stitched.db"), "--world-frame", "map", "--dry-run"])
 
 
 def test_build_streams_and_serve_segments(store) -> None:  # type: ignore[no-untyped-def]

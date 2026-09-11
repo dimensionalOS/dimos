@@ -143,6 +143,7 @@ function setupWebSocket() {
             resolve();
         };
         ws.onerror = (e) => {
+            if (ws !== socket) return;  // a stale socket's error must not touch the live status
             console.error('[ws] error', e);
             setStatus('WebSocket error');
             reject(e);
@@ -203,6 +204,7 @@ function handleControl(msg) {
             log(`world n=${msg.n}${msg.has_colors ? ' rgb' : ''}`);
             break;
         case 'ready':
+            syncLayerBoxes();  // the cloud, photos and minimap exist now
             setStatus('World loaded — left stick walks, pinch both hands to scale');
             diag('server_ready');
             break;
@@ -287,6 +289,7 @@ function buildScene() {
         flight = Flight ? new Flight(scene) : null;
         if (flight) tickers.push((dt) => flight.tick(dt));
         if (heatmap) tickers.push((dt) => heatmap.tick(dt));
+        syncLayerBoxes();  // the layers are new objects; the boxes kept their state
         results = ResultsNav ? new ResultsNav({
             scene, heatmap, pyramids, flight, baseUrl, diag,
             ui: {
@@ -611,6 +614,7 @@ async function ask(text) {
             body: JSON.stringify({ text }),
         });
         const body = await response.json();
+        if (!ws) return null;  // answered after a disconnect: the status line is not ours
         if (!response.ok) throw new Error(body.detail || response.status);
         setStatus(body.answer || 'No answer');
         return body;
@@ -656,7 +660,7 @@ function applySearchStatus(status) {
     askInput.disabled = !connected || !(ready || indexStatus.present);
     askInput.placeholder = ready ? 'Ask the recording, e.g. where did I see a chair'
         : (indexStatus.present ? 'Ask (SigLIP frame search)' : 'Search not ready — see the menu');
-    if (preparing && !preparePoll) preparePoll = setInterval(pollSearchStatus, 3000);
+    if (connected && preparing && !preparePoll) preparePoll = setInterval(pollSearchStatus, 3000);
     if (!preparing && preparePoll) { clearInterval(preparePoll); preparePoll = null; }
     micBtn.classList.toggle('hidden', !connected || !(ready || indexStatus.present));
 }
@@ -706,6 +710,18 @@ layerBoxes.pyramids.addEventListener('change', () => pyramids && pyramids.setVis
 layerBoxes.voxels.addEventListener('change', () => scene && scene._pointsObj && scene._pointsObj.visible !== layerBoxes.voxels.checked && scene.toggleCloud());
 layerBoxes.photos.addEventListener('change', () => scene && scene._imageQuadGroup.visible !== layerBoxes.photos.checked && scene.toggleImages());
 layerBoxes.hud.addEventListener('change', () => scene && scene._hudPanel.visible !== layerBoxes.hud.checked && scene.toggleHud());
+
+/** Apply the boxes to the current scene: they keep their state across a reconnect, the scene does not. */
+function syncLayerBoxes() {
+    if (heatmap) heatmap.setVisible(layerBoxes.heat.checked);
+    if (pyramids) pyramids.setVisible(layerBoxes.pyramids.checked);
+    if (!scene) return;
+    if (scene._pointsObj && scene._pointsObj.visible !== layerBoxes.voxels.checked) scene.toggleCloud();
+    if (scene._imageQuadGroup && scene._imageQuadGroup.visible !== layerBoxes.photos.checked) scene.toggleImages();
+    if (scene._hudPanel && scene._hudPanel.visible !== layerBoxes.hud.checked) {
+        hudBtn.textContent = scene.toggleHud() ? 'Hide map' : 'Show map';
+    }
+}
 const cubesBox = document.getElementById('layerCubes');
 function setVoxelStyle(cubes) {
     if (voxelStyle) voxelStyle.value = cubes ? 1 : 0;
@@ -798,7 +814,7 @@ function applyIndexStatus(status) {
     embedBtn.disabled = running;
     if (running) {
         embedBtn.textContent = `Embedding… ${(indexStatus.progress || '').slice(0, 60)}`;
-        if (!embedPoll) embedPoll = setInterval(pollEmbeddings, 3000);
+        if (connected && !embedPoll) embedPoll = setInterval(pollEmbeddings, 3000);
     } else {
         embedBtn.textContent = indexStatus.embedding === 'failed' ? 'Embedding failed — retry' : 'Add embeddings';
         if (embedPoll) { clearInterval(embedPoll); embedPoll = null; }
@@ -907,7 +923,11 @@ async function disconnect() {
     pendingPyramids = null;
     pendingSceneMsgs.length = 0;
     perfEl.style.display = 'none';
-    document.getElementById('timeline').hidden = true;
+    const timeline = document.getElementById('timeline');
+    timeline.hidden = true;
+    timeline.classList.remove('loading', 'replaying');
+    orbitBtn.textContent = 'Orbit frame';  // the next world names its frame again
+    hudBtn.textContent = 'Show map';       // a fresh scene starts with the minimap hidden
     if (replay) replay.dispose();
     replay = null;
     document.body.classList.remove('desktop-view');

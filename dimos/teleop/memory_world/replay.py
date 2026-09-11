@@ -664,9 +664,12 @@ def main(argv: list[str] | None = None) -> None:
 
     store = open_recording(args.store_path)
     first = store.streams[args.lidar_stream].first()
-    if str(getattr(first.data, "frame_id", "") or "").lstrip("/") == args.world_frame:
+    frame = str(getattr(first.data, "frame_id", "") or "").lower().lstrip("/")
+    # The module's rule (MemoryWorldModule._lidar_world_aligned): the world frame
+    # itself, or a stitched *corrected* frame, holds world-aligned scans.
+    if frame == args.world_frame.lower().lstrip("/") or "corrected" in frame:
         raise SystemExit(
-            f"{args.lidar_stream!r} is already in {args.world_frame!r}: its rays need the sensor"
+            f"{args.lidar_stream!r} is already in {frame!r}: its rays need the sensor"
             " pose stamped on each scan, which only the module knows how to read"
         )
     tree = build_tf_tree(store, args.tf_stream, args.world_frame)

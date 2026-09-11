@@ -128,11 +128,10 @@ class MemoryWorldConfig(ModuleConfig):
     # a recording happens to contain it, as "lidar" did on a rig with ten.
     lidar_stream_name: str = ""
     n_voxel_scans: int = 150
-    # Set True if the stored lidar scans are ALREADY in the map/world frame
-    # (e.g. SLAM-registered). Then we must NOT re-apply each scan's pose —
-    # doing so double-transforms them into scattered noise. Leave False if
-    # scans are in the sensor frame and need their pose applied. None detects
-    # this from the point cloud frame_id.
+    # True: the scans are already registered in the world frame (e.g. SLAM output),
+    # so their poses must not be applied again. None detects it: a scan frame equal
+    # to world_frame, or a stitched *corrected* frame, counts as aligned; any other
+    # frame is placed through tf.
     lidar_world_frame: bool | None = None
     # Heights kept from the cloud. None means keep everything, which is the
     # default: a recording can be multi-storey, its origin can be the sensor
@@ -163,6 +162,8 @@ class MemoryWorldConfig(ModuleConfig):
     # tf lookup at the observation's timestamp. Recordings without a tf stream
     # fall back to the pose stamped on each image, read as a body pose.
     tf_stream_name: str = ""  # empty detects it
+    # The frame everything is placed in; empty or absent from tf, the tf root is
+    # used. Scans stamped with this frame are taken as already aligned.
     world_frame: str = "world"
     # The image stream's own frame_id by default.
     camera_optical_frame: str | None = None
@@ -229,6 +230,8 @@ class MemoryWorldConfig(ModuleConfig):
     # With a depth stream and intrinsics, each place is moved from the capture
     # pose to the point the winning patch actually looked at.
     depth_stream_name: str | None = None
+    # A missing, empty or uncalibrated (zero focal length) camera_info leaves the
+    # default field of view and skips the depth raycast.
     camera_info_stream_name: str | None = None
     depth_tolerance_s: float = PydanticField(default=0.02, gt=0.0)
     # Best frames whose hot patches are raycast, and how close two raycast
@@ -1146,9 +1149,9 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             return self.config.camera_optical_frame
         if self._camera_frame_cache is None:  # read once, even when it is empty
             try:
-                with self._store_lock:
+                with self._store_lock:  # the payload read too: a reopen closes the old store
                     first = self._ensure_store().streams[self.config.image_stream_name].first()
-                frame = str(getattr(first.data, "frame_id", "") or "")
+                    frame = str(getattr(first.data, "frame_id", "") or "")
             except LookupError:  # no image stream, or an empty one
                 frame = ""
             self._camera_frame_cache = frame.lstrip("/")
@@ -1163,11 +1166,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                     first = self._ensure_store().streams[self.config.lidar_stream_name].first()
                     frame_id = str(getattr(first.data, "frame_id", "")).lower().lstrip("/")
                 world = str(self.config.world_frame or "").lower().lstrip("/")
-                aligned = (
-                    frame_id == world
-                    or frame_id in {"map", "odom", "world"}
-                    or "corrected" in frame_id
-                )
+                # Any other fixed frame goes through tf: map <- odom is not the identity.
+                aligned = frame_id == world or "corrected" in frame_id
                 logger.info(
                     "lidar frame %r detected as %s",
                     frame_id,
@@ -1233,7 +1233,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             return self._read_camera_hfov()
 
     def _read_camera_hfov(self) -> float:
-        """Horizontal field of view of the image stream, from camera_info when present."""
+        """Horizontal field of view of the image stream: from camera_info when it has a
+        focal length, else 70 degrees."""
         if self._camera_hfov_deg is None:
             self._camera_hfov_deg = 70.0
             if self.config.camera_info_stream_name is not None:
@@ -1256,7 +1257,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
     # ---- timeline replay -----------------------------------------------------
 
     def _ensure_replay(self) -> VoxelReplay:
-        """The recording's replay streams, built on first use if missing.
+        """The recording's replay streams, built on first use if missing. Needs the image
+        stream too: the index lists its frame stamps.
 
         Lock order everywhere: planner, world cache, replay, store, index. The
         build runs under the replay lock alone: the lidar and derived streams
@@ -1274,14 +1276,14 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
         try:
             if self._replay is None and self._replay_error is None:
                 # Never build on a request thread: start it (once) and let the viewer poll.
-                if self._stopping.is_set():
-                    raise RuntimeError("replay not built: stopping")
-                if self._replay_thread is None or not self._replay_thread.is_alive():
-                    thread = threading.Thread(
-                        target=self._build_replay, daemon=True, name="MemoryWorldReplay"
-                    )
-                    thread.start()  # started before stop() can see it: join needs that
-                    with self._workers_lock:
+                with self._workers_lock:  # paired with stop(): nothing starts once it stops
+                    if self._stopping.is_set():
+                        raise RuntimeError("replay not built: stopping")
+                    if self._replay_thread is None or not self._replay_thread.is_alive():
+                        thread = threading.Thread(
+                            target=self._build_replay, daemon=True, name="MemoryWorldReplay"
+                        )
+                        thread.start()  # started before it is published: join needs that
                         self._replay_thread = thread
                 raise RuntimeError(f"replay {self._replay_progress}")
             replay = self._replay_locked()
@@ -1299,10 +1301,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             with self._store_lock:
                 store = self._ensure_store()
                 if self.config.image_stream_name not in store.list_streams():
-                    raise RuntimeError(
-                        f"no {self.config.image_stream_name!r} image stream; "
-                        "the replay needs camera frames"
-                    )
+                    named = repr(self.config.image_stream_name or "colour")
+                    raise RuntimeError(f"no {named} image stream; the replay needs camera frames")
                 available = VoxelReplay.available(
                     store,
                     voxel_size=self.config.voxel_size,
@@ -1516,11 +1516,11 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
             if self._web_server_thread is not None:
                 self._web_server_thread.join(timeout=3)
                 self._web_server_thread = None
-            self._stopping.set()  # prepare stops between steps; a replay build per scan
+            with self._workers_lock:  # paired with _replay_if_ready: no worker starts after this
+                self._stopping.set()  # prepare stops between steps; a replay build per scan
+                threads = (self._prepare_thread, self._replay_thread)
             self._embed_job.terminate()
             self._prepare_job.terminate()
-            with self._workers_lock:  # never the replay lock: a build holds that for minutes
-                threads = (self._prepare_thread, self._replay_thread)
             for thread in threads:
                 if thread is not None:
                     thread.join(timeout=60)
