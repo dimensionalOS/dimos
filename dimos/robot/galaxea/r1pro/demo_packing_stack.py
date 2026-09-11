@@ -23,6 +23,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 
+from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.imitation.policy.module import POLICY_ROLLOUT_INSTANCE_NAME
 from dimos.robot.galaxea.r1pro.packing_blueprint import R1ProPackingSim, build_r1pro_packing
@@ -32,6 +33,7 @@ from dimos.robot.galaxea.r1pro.packing_sim import (
     prepare_packing_scene,
 )
 from dimos.robot.galaxea.r1pro.sim_session import reserve_demo_session
+from dimos.robot.galaxea.r1pro.tray_delivery import run_tray_delivery
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -63,6 +65,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         "seed": args.seed,
         "order_mode": "random" if args.random_order else "left_to_right",
         "success": False,
+        "delivery_requested": args.deliver_to_laptop,
         "picks": [],
     }
     try:
@@ -142,8 +145,22 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         report["success"] = (
             report["final"]["success"] and report["completion_reason"] == "completed"
         )
+        report["packing_success"] = report["success"]
+        if report["packing_success"] and args.deliver_to_laptop:
+            report["packing_final"] = report["final"]
+            report["success"] = False
+            report["completion_reason"] = "delivery_in_progress"
+            report["delivery"] = {}
+            (args.output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
+            run_tray_delivery(coordinator.get_instance(ControlCoordinator), sim, report["delivery"])
+            report["final"] = sim.task_state()
+            report["success"] = bool(report["delivery"]["success"] and report["final"]["success"])
+            report["completion_reason"] = "delivered" if report["success"] else "delivery_failed"
         print(
-            json.dumps({key: value for key, value in report.items() if key != "picks"}, indent=2),
+            json.dumps(
+                {key: value for key, value in report.items() if key not in ("picks", "delivery")},
+                indent=2,
+            ),
             flush=True,
         )
         (args.output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
@@ -154,6 +171,8 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         return report
     except Exception as error:
         report.update(success=False, error=str(error))
+        if report.get("completion_reason") == "delivery_in_progress":
+            report["completion_reason"] = "delivery_failed"
         raise
     finally:
         # Persist diagnostics before teardown: Ctrl-C must not discard pick history.
@@ -168,6 +187,11 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--zenoh-scout-addr", required=True)
     parser.add_argument("--scene-package", type=Path)
+    parser.add_argument(
+        "--deliver-to-laptop",
+        action="store_true",
+        help="After ACT packs five bottles, carry and place the tray using planned trajectories",
+    )
     parser.add_argument("--seed", type=int, default=9000)
     parser.add_argument(
         "--random-order",
@@ -179,9 +203,16 @@ def main() -> None:
     parser.add_argument("--no-viewer", action="store_true")
     parser.add_argument("--stay-open", action="store_true")
     args = parser.parse_args()
+    if args.deliver_to_laptop and args.scene_package is None:
+        parser.error("--deliver-to-laptop requires --scene-package")
     if not 0 <= args.jitter <= 0.01 or not 0 < args.seconds <= 120:
         parser.error("Use jitter up to one centimetre and positive pick duration up to 120 seconds")
-    run(args)
+    try:
+        report = run(args)
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
+    if not report["success"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

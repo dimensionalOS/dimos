@@ -1,7 +1,8 @@
 # Trained R1Pro ACT in MuJoCo
 
 For the new five-bottle packing work, see [BOTTLE_PACKING.md](BOTTLE_PACKING.md).
-Its new goal-conditioned policy is being trained and evaluated separately.
+Its goal-conditioned checkpoint is trained and validated for packing. That runbook
+also documents the optional five-bottle tray delivery using coordinator trajectories.
 
 The physical delivery task is: **ACT picks up the blue bottle and puts it in
 an orange tray resting on the worktop; both hands lift the tray, the base drives

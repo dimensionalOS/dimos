@@ -14,8 +14,10 @@
 
 """Loaded grippers must retain their commanded preload between trajectories."""
 
+import pytest
+
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_JOINTS
-from dimos.robot.galaxea.r1pro.tray_delivery import _arm_motion
+from dimos.robot.galaxea.r1pro.tray_delivery import _arm_motion, _check_cargo
 
 
 def test_phase_handoffs_keep_grip_command_instead_of_relaxing_to_measured_opening(mocker):
@@ -38,3 +40,18 @@ def test_phase_handoffs_keep_grip_command_instead_of_relaxing_to_measured_openin
     assert execute.call_count == 2
     for call in execute.call_args_list:
         assert call.args[3][0].positions[-2:] == [0.009, 0.009]
+
+
+@pytest.mark.parametrize(
+    ("field", "message"),
+    [("inside_bin", "Cargo left"), ("upright", "bottle tipped")],
+)
+def test_delivery_stops_when_any_cargo_is_outside_or_tipped(field, message):
+    state = {
+        "inside_bin": True,
+        "upright": True,
+        "tray": {"tilt_radians": 0.0, "bimanual_grasp": True},
+    }
+    state[field] = False
+    with pytest.raises(RuntimeError, match=message):
+        _check_cargo(state, grasp=True)

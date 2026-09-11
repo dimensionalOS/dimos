@@ -14,6 +14,9 @@
 
 """Physics scheduling must remain independent of camera/viewer frame time."""
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+
 import mujoco
 import numpy as np
 import pytest
@@ -126,3 +129,61 @@ def test_limited_position_servo_starts_and_resets_at_configured_pose(tmp_path):
         assert engine.data.ctrl[0] == 1.5
     finally:
         engine.disconnect()
+
+
+def test_background_camera_pause_waits_for_render_without_blocking_physics(camera_engine, mocker):
+    rendering = Event()
+    finish_render = Event()
+    pausing = Event()
+    renderer = mocker.Mock(spec=mujoco.Renderer)
+
+    def render():
+        rendering.set()
+        assert finish_render.wait(5)
+        return np.zeros((8, 8, 3), dtype=np.uint8)
+
+    renderer.render.side_effect = render
+    state = _CameraRendererState(
+        CameraConfig(name="test", width=8, height=8), 0, renderer, None, None, 0.05
+    )
+    mocker.patch.object(camera_engine, "_init_cameras", return_value={"test": state})
+    camera_engine._background_camera_rendering = True
+
+    def pause():
+        pausing.set()
+        camera_engine.set_camera_streaming_enabled(False)
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        loop = workers.submit(camera_engine._camera_loop)
+        try:
+            assert rendering.wait(5)
+            # The slow renderer holds no physics lock.
+            assert camera_engine._lock.acquire(blocking=False)
+            try:
+                before = camera_engine.data.time
+                mujoco.mj_step(camera_engine.model, camera_engine.data)
+                assert camera_engine.data.time > before
+            finally:
+                camera_engine._lock.release()
+            paused = workers.submit(pause)
+            assert pausing.wait(5)
+            with pytest.raises(TimeoutError):
+                paused.result(timeout=0.05)
+            finish_render.set()
+            paused.result(timeout=5)
+        finally:
+            finish_render.set()
+            camera_engine._stop_event.set()
+            loop.result(timeout=5)
+
+
+def test_paused_background_camera_does_not_forward_shared_model(camera_engine, mocker):
+    mocker.patch.object(camera_engine, "_init_cameras", return_value={})
+    forward = mocker.spy(mujoco, "mj_forward")
+    mocker.patch.object(
+        camera_engine._stop_event, "wait", side_effect=lambda _: camera_engine._stop_event.set()
+    )
+    camera_engine._background_camera_rendering = True
+    camera_engine.set_camera_streaming_enabled(False)
+    camera_engine._camera_loop()
+    forward.assert_not_called()

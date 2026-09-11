@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from uuid import uuid4
 
 import mujoco
@@ -53,6 +53,7 @@ class R1ProGraspingSim(MujocoSimModule):
     """Native simulation with wrist RGB and read-only task evidence for evaluation."""
 
     right_wrist: Out[Image]
+    cargo_bodies: ClassVar[tuple[str, ...]] = ("task_bottle",)
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -80,7 +81,9 @@ class R1ProGraspingSim(MujocoSimModule):
             model, data = engine.model, engine.data
             free_tray = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "task_tray_free") >= 0
             if free_tray and self._transport_planner is None:
-                self._transport_planner = PlanarTransport(model, data)
+                self._transport_planner = PlanarTransport(
+                    model, data, cargo_bodies=self.cargo_bodies
+                )
             body = data.body("task_bottle")
             pos = body.xpos.copy()
             if self._initial_bottle_z is None:
@@ -113,7 +116,7 @@ class R1ProGraspingSim(MujocoSimModule):
                 **result.to_dict(),
                 **base,
                 **(
-                    {"tray": tray_state(model, data)}
+                    {"tray": tray_state(model, data, cargo_bodies=self.cargo_bodies)}
                     if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "task_tray_free") >= 0
                     else {}
                 ),
@@ -134,7 +137,7 @@ class R1ProGraspingSim(MujocoSimModule):
         if engine is None or self.config.dof <= 20:
             raise RuntimeError("This scene has no movable planar base")
         with engine._lock:
-            planner = PlanarTransport(engine.model, engine.data)
+            planner = PlanarTransport(engine.model, engine.data, cargo_bodies=self.cargo_bodies)
         path = planner.plan_delivery([x, y, yaw]) if yaw is not None else planner.plan((x, y))
         self._transport_planner = planner
         return path
@@ -160,9 +163,16 @@ class R1ProGraspingSim(MujocoSimModule):
         engine = self._engine
         if engine is None:
             raise RuntimeError("Simulation has not started")
+        engine.set_camera_streaming_enabled(False)
         with engine._lock:
             configure_tray_holding(engine.model)
-        engine.set_camera_streaming_enabled(False)
+
+    @rpc
+    def set_tray_delivery_view(self) -> None:
+        """Use an elevated carrying view to clear cabinets beside the passage."""
+        if self._engine is None:
+            raise RuntimeError("Simulation has not started")
+        self._engine.set_viewer_camera(azimuth=225.0, elevation=-75.0, distance=2.3)
 
     @rpc
     def tray_destination(self) -> dict[str, Any]:
@@ -186,7 +196,7 @@ class R1ProGraspingSim(MujocoSimModule):
             snapshot.qpos[:] = engine.data.qpos
             snapshot.ctrl[:] = engine.data.ctrl
             mujoco.mj_forward(engine.model, snapshot)
-        motion = TrayMotion(engine.model, snapshot)
+        motion = TrayMotion(engine.model, snapshot, cargo_bodies=self.cargo_bodies)
         if phase == "pickup":
             points = motion.pickup(snapshot)
         elif phase == "place" and target is not None and len(target) == 3:

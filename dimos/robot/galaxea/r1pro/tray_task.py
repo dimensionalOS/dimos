@@ -72,10 +72,15 @@ def laptop_destination(model: mujoco.MjModel, data: mujoco.MjData) -> TrayDestin
     )
 
 
-def tray_state(model: mujoco.MjModel, data: mujoco.MjData) -> dict[str, Any]:
+def tray_state(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    *,
+    cargo_bodies: tuple[str, ...] = ("task_bottle",),
+) -> dict[str, Any]:
     """Measure support and finger forces; no object state is changed."""
     tray = model.body("task_bin").id
-    bottle = model.body("task_bottle").id
+    cargo = {model.body(name).id for name in cargo_bodies}
     pads = {
         model.geom(f"{side}_finger_pad{i}").id: f"{side}_{i}"
         for side in ("left", "right")
@@ -97,7 +102,7 @@ def tray_state(model: mujoco.MjModel, data: mujoco.MjData) -> dict[str, Any]:
         if second in handles and first in pads:
             touching.add(pads[first])
         other = second if model.geom_bodyid[first] == tray else first
-        if other not in pads and model.geom_bodyid[other] != bottle:
+        if other not in pads and model.geom_bodyid[other] not in cargo:
             support.add(model.geom(other).name)
     rotation = data.body(tray).xmat.reshape(3, 3)
     opening = [float(data.joint(f"r1pro/{side}_gripper").qpos[0]) for side in ("left", "right")]

@@ -37,7 +37,13 @@ from dimos.robot.galaxea.r1pro.grasping_sim import VIRTUAL_BASE_JOINTS
 class PlanarTransport:
     """Plan against actual scene contacts without changing the physical state."""
 
-    def __init__(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        *,
+        cargo_bodies: tuple[str, ...] = ("task_bottle",),
+    ) -> None:
         self.model = copy.copy(model)
         self.qids = np.array([model.joint(name).qposadr[0] for name in VIRTUAL_BASE_JOINTS])
         self.aids = np.array([model.actuator(name).id for name in VIRTUAL_BASE_JOINTS])
@@ -49,16 +55,19 @@ class PlanarTransport:
         for body in range(root + 1, model.nbody):
             if int(model.body_parentid[body]) in self.robot_bodies:
                 self.robot_bodies.add(body)
-        self.bottle_id = model.body("task_bottle").id
+        self.cargo_bodies = cargo_bodies
+        self.cargo_ids = {model.body(name).id for name in cargo_bodies}
+        self.tray_id = model.body("task_bin").id
         self.carried_qpos: list[tuple[int, NDArray[np.float64]]] = []
         if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "task_tray_free") >= 0:
-            for name, body_name in (
-                ("task_tray_free", "task_bin"),
-                ("task_bottle_free", "task_bottle"),
-            ):
-                address = int(model.joint(name).qposadr[0])
+            for body_name in ("task_bin", *cargo_bodies):
+                body = model.body(body_name).id
+                joint = int(model.body_jntadr[body])
+                if joint < 0 or model.jnt_type[joint] != mujoco.mjtJoint.mjJNT_FREE:
+                    raise ValueError(f"Carried object {body_name!r} must have a free joint")
+                address = int(model.jnt_qposadr[joint])
                 self.carried_qpos.append((address, data.qpos[address : address + 7].copy()))
-                self.robot_bodies.add(model.body(body_name).id)
+                self.robot_bodies.add(body)
         # Inflate only the planning copy. The tray intentionally parks just
         # above the worktop; its actual geometry is checked without inflation.
         tray_id = model.body("task_bin").id
@@ -74,11 +83,9 @@ class PlanarTransport:
             if contact.dist > (0.02 if data is self.probe else 0.0) or contact.pos[2] < 0.06:
                 continue
             bodies = [int(self.model.geom_bodyid[geom]) for geom in contact.geom]
-            if self.bottle_id in bodies and not self.carried_qpos:
+            if self.cargo_ids.intersection(bodies) and not self.carried_qpos:
                 continue
-            if ignore_cargo and (
-                self.bottle_id in bodies or self.model.body("task_bin").id in bodies
-            ):
+            if ignore_cargo and (self.cargo_ids.intersection(bodies) or self.tray_id in bodies):
                 continue
             if (bodies[0] in self.robot_bodies) != (bodies[1] in self.robot_bodies):
                 other = bodies[1] if bodies[0] in self.robot_bodies else bodies[0]
@@ -132,7 +139,7 @@ class PlanarTransport:
                 departure, turned
             ):
                 continue
-            aligned = PlanarTransport(self.model, self.probe)
+            aligned = PlanarTransport(self.model, self.probe, cargo_bodies=self.cargo_bodies)
             try:
                 path = aligned.plan(tuple(target[:2]), resolution=0.025, max_distance=6.0)
             except RuntimeError:

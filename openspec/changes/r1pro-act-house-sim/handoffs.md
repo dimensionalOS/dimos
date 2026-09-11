@@ -948,3 +948,83 @@ GLFW and explicit LCM configuration; optional socket-buffer changes were decline
 throughout testing. It needs no API key. The base stays parked; learned tray
 handling and heterogeneous items remain outside this completed baseline. Broader
 shape/layout generalization requires new demonstrations and physical validation.
+
+
+### 2026-09-10 — five-bottle tray delivery integration in progress
+
+User requested an end-to-end run: existing ACT packs all five bottles, then
+coordinator trajectories grasp the loaded tray, drive to the actual laptop table,
+and place it on that surface. No new ACT training is involved. Added optional
+`demo_packing_stack --deliver-to-laptop` and generalized tray support, route collision
+checks and runtime cargo monitoring to all five free bottles. Physical source
+and destination support remain mandatory. This integration is not yet validated.
+
+Current tests found the parked left arm sweeps the table when directly approaching
+the packing tray (which is closer/off-centre compared with the original single
+bottle tray). Working on a checked preparatory arm movement. First native attempt
+`jobs/packing-delivery-5000` exited 1 during bottle 4's first pick with a 1367.5 ms
+head/state observation skew after 4 chunks; it never reached delivery. Preserve
+`native-packing-delivery-5000/result.json`. No checkpoint changes or relaxed timing
+thresholds. Added a camera pause barrier before changing the model for loaded
+tray servo tuning; focused concurrency tests are being added. Existing native
+6/6 and offline 18/18 evidence applies only to the committed bottle-packing baseline.
+
+
+The native seed-5000 retry completed the full delivery successfully:
+`native-packing-delivery-5000-retry/result.json` has packing_success=True,
+delivery.success=True and overall success=True. All five bottles remain upright,
+released, settled and inside the tray on the actual laptop tabletop. During 31
+base segments (2230 monitored carrying samples), all four handle contacts stayed
+loaded, every bottle stayed inside/upright, and maximum tray tilt was 2.257 degrees.
+Final tray position error was 4.06 mm. Full run took roughly five minutes with
+startup. The preparatory left shoulder movement is fully collision checked;
+physical five-bottle carrying regression and 17 shared tray/camera regressions pass.
+
+The capture helper saved native-final.png and intentionally sent Ctrl-C, then
+mistook the same completion text printed in a KeyboardInterrupt traceback for a
+second completion event. Consequently the wrapper exited 1 after the successful
+run and screenshot. This is not a failed physical delivery. The next job fixes
+the helper to await EOF after its one capture. The CLI now handles Ctrl-C without
+a traceback and exits 1 for an unsuccessful completed rollout.
+
+Visual inspection found temporary wall occlusion during travel with the original
+low camera. Added a one-shot elevated native camera request after pickup (225 deg,
+-75 deg, 2.3 m); mouse orbit remains available. Detached repeat
+`jobs/packing-delivery-5001`, PID 1828614, is validating the current source and this
+view. No training, weights or policy timing tolerances were changed.
+
+
+### 2026-09-10 — five-bottle end-to-end delivery complete
+
+The repeat with seed 5001 also passed: five ACT picks, two-handed physical tray
+pickup, collision-checked navigation, and supported release beside the laptop.
+Both complete runs retained every bottle upright and contained and all four
+handle contacts during transport. Maximum carrying tilt was 2.257 / 2.281 degrees;
+final placement error was 4.06 / 3.44 mm. Elapsed time including startup and teardown
+was 306 / 309 seconds. The repeat wrapper reports stage=complete and exit-code=0;
+its raw child-exit.json records the intended Ctrl-C close as exitstatus=130.
+All owned simulation, policy and test processes have exited; no training is queued.
+
+Exact metrics and paths, including the earlier observation-sync failure, are in
+`recordings/r1pro-act-task/jobs/packing-delivery-5001/validation-summary.json`.
+`native-final.png` beside it is an actual native-window capture: all five bottles
+are visible in the tray on the tabletop beside the laptop. The elevated delivery
+view was inspected during carrying and after placement. User camera controls remain
+available after the one-time change; policy image inputs are unchanged.
+
+The combined command is in BOTTLE_PACKING.md under “Pack, carry, and deliver to the
+laptop”: same policy-packing-augmented checkpoint, add --deliver-to-laptop and use
+a fresh output directory. Packing-only remains the default. ACT controls bottle
+picks via policy_rollout; tray_manipulation and base_transport coordinate the rest.
+No retraining, live object attachments, teleports, or scene-package edits were used.
+The five-object state now reports grasp/lift evidence only in each bottle's row,
+removing unrelated inherited single-bottle summary fields.
+
+Validation: 53 distinct focused tests passed (46 engine/packing planner, six shared
+tray/guard, one physical five-bottle carrying), including single-bottle backward
+compatibility and camera pause/concurrency. All touched production files pass mypy;
+repository pre-commit checks passed. Source changes are ready for the local commit.
+User explicitly requested committing and pushing all changes and no Codex co-author
+trailers. Outgoing commit metadata will be audited before a normal feature-branch
+push; Git tracking refs are the authoritative remote status. Generated simulation
+logs, .venv, datasets and checkpoints remain local artifacts.

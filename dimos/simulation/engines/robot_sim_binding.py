@@ -32,7 +32,7 @@ _MJOBJ_BODY = int(mujoco.mjtObj.mjOBJ_BODY)
 _MJOBJ_JOINT = int(mujoco.mjtObj.mjOBJ_JOINT)
 _MJOBJ_ACTUATOR = int(mujoco.mjtObj.mjOBJ_ACTUATOR)
 _MJOBJ_SENSOR = int(mujoco.mjtObj.mjOBJ_SENSOR)  # type: ignore[attr-defined]
-_MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
+_MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)
 
 
 @dataclass(frozen=True)

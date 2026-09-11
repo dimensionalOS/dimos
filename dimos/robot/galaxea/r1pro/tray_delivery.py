@@ -36,7 +36,9 @@ def _check_cargo(state: dict[str, Any], *, grasp: bool) -> None:
     if state.get("robot_obstacles"):
         raise RuntimeError(f"Robot contacted an obstacle: {state['robot_obstacles']}")
     if not state["inside_bin"]:
-        raise RuntimeError("Bottle left the tray during delivery")
+        raise RuntimeError("Cargo left the tray during delivery")
+    if not state.get("upright", True):
+        raise RuntimeError("A bottle tipped over during delivery")
     if state["tray"]["tilt_radians"] > 0.25:
         raise RuntimeError("Tray tilted beyond the carrying limit")
     if grasp and not state["tray"]["bimanual_grasp"]:
@@ -61,7 +63,13 @@ def _execute(
     print(f"Tray delivery: {phase}", flush=True)
     stage: dict[str, Any] = {"phase": phase, "history": []}
     report["stages"].append(stage)
-    source_phases = {"approach_tray", "lower_to_handles", "grasp_handles", "lift_tray"}
+    source_phases = {
+        "raise_hands",
+        "approach_tray",
+        "lower_to_handles",
+        "grasp_handles",
+        "lift_tray",
+    }
     destination_phases = {
         "extend_over_table",
         "lower_onto_table",
@@ -184,6 +192,7 @@ def run_tray_delivery(control: ModuleProxy, sim: ModuleProxy, report: dict[str, 
     sim.prepare_tray_holding()
     report["pickup"] = _arm_motion(control, sim, sim.plan_tray_motion("pickup"), report)
     report["pickup_snapshot"] = sim.simulation_snapshot()
+    sim.set_tray_delivery_view()
     path = sim.plan_transport(*destination["base_position"])
     report["path"] = path
     for index, (first, second) in enumerate(pairwise(path)):
@@ -231,6 +240,8 @@ def run_tray_delivery(control: ModuleProxy, sim: ModuleProxy, report: dict[str, 
         and final["settled"]
         and np.linalg.norm(np.array(tray["position"]) - destination["tray_position"]) < 0.05
         and final["inside_bin"]
+        and final["released"]
+        and final.get("upright", True)
     )
     if not report["success"]:
         raise RuntimeError(

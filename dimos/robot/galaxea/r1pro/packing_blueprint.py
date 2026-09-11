@@ -16,7 +16,7 @@
 
 from pathlib import Path
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 from reactivex.disposable import Disposable
@@ -43,6 +43,7 @@ class R1ProPackingSim(R1ProGraspingSim):
     """Publish an explicit simulator goal alongside each head camera observation."""
 
     packing_goal: Out[VectorObservation]
+    cargo_bodies: ClassVar[tuple[str, ...]] = PACKING_BODIES
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -124,6 +125,27 @@ class R1ProPackingSim(R1ProGraspingSim):
             self._selected = index
             self._goal = tuple(map(float, goal))
             return {"selected": True, "bottle": index + 1, "goal": self._goal}
+
+    @rpc
+    def task_state(self) -> dict[str, Any]:
+        """Expose all five bottles to the shared physical tray-delivery runner."""
+        if self._engine is None or self._packing_monitor is None:
+            raise RuntimeError("Simulation has not started")
+        with self._engine._lock:
+            state = super().task_state()
+            # Packing retains lift/grasp evidence per bottle, not in the
+            # single-bottle monitor inherited by the shared transport state.
+            for key in ("peak_lift_m", "bilateral_grasp", "bottle_position"):
+                state.pop(key)
+            cargo = self._packing_monitor.report()
+            return {
+                **state,
+                **cargo,
+                **{
+                    key: all(bottle[key] for bottle in cargo["bottles"])
+                    for key in ("inside_bin", "released", "settled", "upright")
+                },
+            }
 
     @rpc
     def packing_state(self) -> dict[str, Any]:

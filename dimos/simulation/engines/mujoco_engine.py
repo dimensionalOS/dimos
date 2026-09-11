@@ -77,7 +77,7 @@ _GEOM_TYPE_NAMES = {
 # Step hook signature: called with the engine instance inside the sim thread.
 StepHook = Callable[["MujocoEngine"], None]
 
-_MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)  # type: ignore[attr-defined]
+_MJJNT_FREE = int(mujoco.mjtJoint.mjJNT_FREE)
 _RESET_WAIT_TIMEOUT_S = 5.0
 
 
@@ -319,6 +319,8 @@ class MujocoEngine(SimulationEngine):
         self._camera_configs = cameras or []
         self._camera_frames: dict[str, CameraFrame] = {}
         self._camera_lock = threading.Lock()
+        self._camera_render_lock = threading.RLock()
+        self._viewer_camera_request: tuple[float, float, float] | None = None
         self._raycast_lidar_configs = raycast_lidars or []
         self._raycast_lidar_frames: dict[str, RaycastLidarFrame] = {}
         self._raycast_lidar_lock = threading.Lock()
@@ -548,10 +550,26 @@ class MujocoEngine(SimulationEngine):
             )
         return lidar_states
 
+    def set_viewer_camera(self, *, azimuth: float, elevation: float, distance: float) -> None:
+        """Request one display-camera change; later mouse adjustments remain free."""
+        if not np.isfinite((azimuth, elevation, distance)).all() or distance <= 0:
+            raise ValueError("Viewer angles must be finite and distance must be positive")
+        with self._lock:
+            self._viewer_camera_request = (azimuth, elevation, distance)
+
     def set_camera_streaming_enabled(self, enabled: bool) -> None:
-        """Pause sensor RGB/depth rendering while keeping physics and the viewer live."""
+        """Pause sensor RGB/depth rendering while keeping physics and the viewer live.
+
+        Pause before taking the engine lock when background rendering is enabled:
+        this waits for the renderer to finish using the shared model.
+        """
         with self._lock:
             self._camera_streaming_enabled = enabled
+        if not enabled and self._background_camera_rendering:
+            # A paused return guarantees no snapshot forward/render still reads
+            # the shared model, allowing a caller to update it under _lock.
+            with self._camera_render_lock:
+                pass
 
     def _render_cameras(
         self,
@@ -612,13 +630,14 @@ class MujocoEngine(SimulationEngine):
     def _camera_loop(self, ready: threading.Event | None = None) -> None:
         """Render timestamped snapshots while physics continues on its own data.
 
-        Enable only when the model is fixed after startup. Physics state is
-        copied under the engine lock; OpenGL and forward kinematics run outside
-        it. Both cameras use the same snapshot and capture timestamp.
+        Pause camera streaming before modifying the shared model. Physics state
+        is copied under the engine lock; OpenGL and forward kinematics run
+        outside it. Both cameras use the same snapshot and capture timestamp.
         """
         renderers: dict[str, _CameraRendererState] = {}
         try:
-            renderers = self._init_cameras()
+            with self._camera_render_lock:
+                renderers = self._init_cameras()
             if ready is not None:
                 ready.set()
             data = mujoco.MjData(self._model)
@@ -629,12 +648,16 @@ class MujocoEngine(SimulationEngine):
             )
             while not self._stop_event.is_set():
                 started = time.monotonic()
-                with self._lock:
-                    stamp = time.time()
-                    mujoco.mj_getState(self._model, self._data, state, spec)
-                mujoco.mj_setState(self._model, data, state, spec)
-                mujoco.mj_forward(self._model, data)
-                self._render_cameras(stamp, renderers, data)
+                with self._camera_render_lock:
+                    with self._lock:
+                        streaming = self._camera_streaming_enabled
+                        if streaming:
+                            stamp = time.time()
+                            mujoco.mj_getState(self._model, self._data, state, spec)
+                    if streaming:
+                        mujoco.mj_setState(self._model, data, state, spec)
+                        mujoco.mj_forward(self._model, data)
+                        self._render_cameras(stamp, renderers, data)
                 self._stop_event.wait(max(0.0, period - (time.monotonic() - started)))
         except Exception:
             logger.exception("Camera snapshot rendering failed")
@@ -833,6 +856,14 @@ class MujocoEngine(SimulationEngine):
                 # Viewer updates are display work, not part of every 500 Hz motor
                 # tick. Camera/lidar publishers already enforce their own cadence.
                 if sync_viewer and now >= next_viewer_sync:
+                    with self._lock:
+                        camera_request = self._viewer_camera_request
+                        self._viewer_camera_request = None
+                    if camera_request is not None:
+                        with m_viewer.lock():
+                            m_viewer.cam.azimuth, m_viewer.cam.elevation, m_viewer.cam.distance = (
+                                camera_request
+                            )
                     with self._lock:
                         m_viewer.sync()
                     next_viewer_sync = now + 1.0 / 60.0

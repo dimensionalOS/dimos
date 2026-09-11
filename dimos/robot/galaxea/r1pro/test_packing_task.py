@@ -18,7 +18,8 @@ import mujoco
 import numpy as np
 import pytest
 
-from dimos.robot.galaxea.r1pro.packing_sim import prepare_packing_scene
+from dimos.robot.galaxea.r1pro.grasping_transport import PlanarTransport
+from dimos.robot.galaxea.r1pro.packing_sim import PACKING_BODIES, prepare_packing_scene
 from dimos.robot.galaxea.r1pro.packing_state import (
     PackingMonitor,
     open_gripper_at_home,
@@ -26,6 +27,9 @@ from dimos.robot.galaxea.r1pro.packing_state import (
     score_packing,
 )
 from dimos.robot.galaxea.r1pro.packing_task import PackingTask
+from dimos.robot.galaxea.r1pro.tray_motion import TrayMotion
+from dimos.robot.galaxea.r1pro.tray_sim import configure_tray_holding
+from dimos.robot.galaxea.r1pro.tray_task import tray_state
 
 pytestmark = [pytest.mark.mujoco, pytest.mark.self_hosted]
 
@@ -121,3 +125,42 @@ def test_placed_bottle_stays_released_when_gripper_closes_elsewhere(task):
     assert result.success and result.released
     # Per-object release does not permit another pick with a closed gripper.
     assert not open_gripper_at_home(task.data)
+
+
+def test_five_bottle_tray_is_supported_then_physically_carried_with_all_cargo(task):
+    task.reset_packing(8200, 0.003)
+    for index in task.pick_order():
+        assert task.select_bottle(index)
+        for _, action in task.teacher_actions():
+            task.step(action)
+        task.remember_result()
+    assert task.report()["success"]
+    initial = tray_state(task.model, task.data, cargo_bodies=PACKING_BODIES)
+    assert initial["support_geoms"]
+    assert all("bottle" not in name for name in initial["support_geoms"])
+
+    configure_tray_holding(task.model)
+    motion = TrayMotion(task.model, task.data, cargo_bodies=PACKING_BODIES)
+    for _, action in motion.actions(motion.pickup(task.data)):
+        task.step(action)
+    lifted = tray_state(task.model, task.data, cargo_bodies=PACKING_BODIES)
+    assert lifted["bimanual_grasp"]
+    assert not lifted["support_geoms"]
+    assert lifted["position"][2] > initial["position"][2] + 0.08
+
+    before = task.data.qpos.copy()
+    planner = PlanarTransport(task.model, task.data, cargo_bodies=PACKING_BODIES)
+    path = planner.plan((-0.4, 0.0))
+    np.testing.assert_array_equal(task.data.qpos, before)
+    for name in ("task_bin", *PACKING_BODIES):
+        np.testing.assert_allclose(
+            planner.probe.body(name).xpos[:2] - task.data.body(name).xpos[:2],
+            [-0.4, 0.0],
+            atol=1e-6,
+        )
+    hold = task.data.ctrl[task.aids].copy()
+    for target in planner.targets(path, 20):
+        task.step(hold, base_target=target)
+        assert tray_state(task.model, task.data, cargo_bodies=PACKING_BODIES)["bimanual_grasp"]
+        assert all(row["inside_bin"] and row["upright"] for row in task.report()["bottles"])
+        assert not planner.collisions(task.data)

@@ -40,8 +40,15 @@ class TrayWaypoint:
 class TrayMotion:
     """Plan in a copied kinematic state; never set the real tray pose."""
 
-    def __init__(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        *,
+        cargo_bodies: tuple[str, ...] = ("task_bottle",),
+    ) -> None:
         self.model = model
+        self.cargo_bodies = cargo_bodies
         self.probe = mujoco.MjData(model)
         self.probe.qpos[:] = data.qpos
         self.qids = np.array([model.joint(n).qposadr[0] for n in R1PRO_PICK_PLACE_JOINTS])
@@ -106,7 +113,7 @@ class TrayMotion:
         return TrayWaypoint(phase, self.probe.qpos[self.qids].tolist(), seconds)
 
     def _checked(self, points: list[TrayWaypoint], data: mujoco.MjData) -> list[TrayWaypoint]:
-        planner = PlanarTransport(self.model, data)
+        planner = PlanarTransport(self.model, data, cargo_bodies=self.cargo_bodies)
         start = self.initial.copy()
         for point in points:
             goal = np.array(point.positions)
@@ -124,7 +131,13 @@ class TrayMotion:
         position = data.body("task_bin").xpos.copy()
         grasp = position + np.array([0.0, 0.0, TRAY_TCP_HEIGHT])
         above = grasp + np.array([0.0, 0.0, 0.15])
+        # Raise the parked left arm sideways before reaching across the table.
+        # The complete joint interpolation is collision checked below.
+        shoulder = self.qids[5]
+        self.probe.qpos[shoulder] = max(float(self.probe.qpos[shoulder]), 0.8)
+        self.probe.qpos[self.qids[-2:]] = 0.05
         points = [
+            TrayWaypoint("raise_hands", self.probe.qpos[self.qids].tolist(), 2.0),
             self.waypoint("approach_tray", above, 0.05, 1.5),
             self.waypoint("lower_to_handles", grasp, 0.05, 1.5),
             self.waypoint("grasp_handles", grasp, 0.009, 2.0),

@@ -2,8 +2,9 @@
 
 The R1Pro picks five matching bottles and places them upright in planned tray
 slots using ACT. The `policy-packing-augmented` checkpoint passed repeated full
-native DimOS runs and a ten-scene offline check. The base stays parked.
-The single-bottle tray-delivery demo remains in [ACT_SIM.md](ACT_SIM.md).
+native DimOS runs and offline checks. The base stays parked by default; add
+`--deliver-to-laptop` to carry the loaded tray to the laptop table afterward.
+The single-bottle demo remains in [ACT_SIM.md](ACT_SIM.md).
 
 ## Run with the full display
 
@@ -37,6 +38,34 @@ lock, despite its legacy name. Close another R1Pro demo on the same address
 before starting. Concurrent stacks need distinct addresses and output paths.
 Zenoh previously exhibited intermittent RPC stalls and is not the validated
 transport for this command.
+
+## Pack, carry, and deliver to the laptop
+
+After the environment setup above, run:
+
+```bash
+python -m dimos.robot.galaxea.r1pro.demo_packing_stack \
+  --artifact "$PWD/recordings/r1pro-act-task/policy-packing-augmented" \
+  --output "$PWD/recordings/r1pro-act-task/my-five-bottle-delivery" \
+  --zenoh-scout-addr 224.0.0.224:19467 \
+  --scene-package /home/mustafa/dimos/data/scene_packages/hssd_102344115 \
+  --deliver-to-laptop --seed 5000 --stay-open
+```
+
+ACT first packs all five bottles using the same checkpoint. Once it stops,
+`tray_manipulation` coordinates both hands to grasp and lift the tray, while
+`base_transport` executes a collision-checked route. The arms lower the tray onto
+the actual tabletop beside the laptop, release it only after surface contact,
+and retreat. These are ControlCoordinator trajectories; **no new ACT training**
+is required. The tray and bottles remain physically free throughout the trip.
+Allow about five minutes including startup. The native view switches to an
+elevated angle after pickup to see over cabinets; you can still orbit and zoom.
+
+The full trip starts only after all five placements pass. Route planning includes
+the robot, tray and every bottle. Runtime checks stop motion if a bottle tips or
+leaves the tray, grip is lost, or an obstacle is contacted. An obstructed route
+raises an error. The output includes separate `packing_success`, `delivery.success`
+and overall `success`; check the overall result for an end-to-end run.
 
 ## What is learned
 
@@ -86,6 +115,16 @@ teleportation after reset.
   9900–9904. These are five different source orders. Across the three offline
   evaluations, all **18/18 scenes and 90/90 bottles** passed.
 
+The optional full tray delivery completed **two native end-to-end runs**, seeds
+5000 and 5001, with all ten bottle deliveries successful. Both runs retained
+four handle contacts and upright cargo throughout transport, then physically
+released the tray on the laptop tabletop. The final placement error was below
+5 mm in each run. The first development attempt stopped during the first ACT
+pick on an observation synchronization error, before tray handling; the timing
+guard remains unchanged. These two successes are repeat checks, not a broad
+reliability estimate. Exact results and screenshots are in
+`jobs/packing-delivery-5001/validation-summary.json`.
+
 These tests cover the matching-bottle setup and small position changes described
 above; they do not establish reliability for new shapes or larger rearrangements.
 
@@ -114,11 +153,17 @@ All paths below are under `recordings/r1pro-act-task` in this worktree:
 | `eval-packing-augmented-random/result.json` | Five randomized-order offline trials |
 | `jobs/packing-resume-validation` | Completed repeat-validation commands and logs |
 | `jobs/packing-display-verified/native-final.png` | Captured native window after all five placements |
-| `jobs/packing-display-verified/validation-summary.json` | Compact results and source-result paths |
+| `jobs/packing-display-verified/validation-summary.json` | Packing-only validation summary |
+| `native-packing-delivery-5000-retry/result.json` | First full five-bottle tray delivery |
+| `native-packing-delivery-5001/result.json` | Repeat delivery with elevated native view |
+| `jobs/packing-delivery-5001/native-final.png` | Five bottles delivered beside the laptop |
+| `jobs/packing-delivery-5001/validation-summary.json` | End-to-end measurements and earlier failure |
 
 Each job saves its exact `run.sh`, `pid`, `stage`, log and final `exit-code`.
 Jobs use independent sessions and survive terminal disconnection. A zero exit
-code means execution completed; check physical success separately in result.json.
+code from the demo now means success; an unsuccessful completed rollout exits 1.
+Closing with Ctrl-C exits 130 after saving result.json. Historical job wrappers
+have their own exit behavior, so check physical success in result.json as well.
 All fitting and validation jobs are complete, and their runtime processes have
 exited. No further training is queued. Raw demonstrations, datasets and weights
 are ignored local artifacts, separate from source commits. Keep them when moving
