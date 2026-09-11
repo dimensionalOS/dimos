@@ -56,11 +56,14 @@ def ingest_command(
     hz: float,
     novelty: float = 0.02,
     streams: dict[str, str | None] | None = None,
+    world_frame: str | None = None,
 ) -> list[str]:
     """The subprocess that runs this module on *recording*, with the current interpreter.
     *streams* names the image, depth, camera_info and tf streams the module chose, so a
     multi-camera recording is indexed from the camera the viewer shows."""
     chosen = [f"--{role}={name}" for role, name in (streams or {}).items() if name]
+    if world_frame:  # the same world the module places in, or the trees can differ
+        chosen.append(f"--world-frame={world_frame}")
     return [
         sys.executable,
         "-m",
@@ -113,6 +116,7 @@ def ingest_recording(
     max_depth_m: float = 10.0,
     novelty: float = 0.02,
     streams: dict[str, str | None] | None = None,
+    world_frame: str | None = None,
 ) -> dict[str, Any]:
     """Embed *recording*'s keyframes into its Hyperspace memory db. Returns the ingest stats.
     *streams* overrides the detected image/depth/camera_info/tf stream names per role."""
@@ -184,6 +188,7 @@ def ingest_recording(
                 streams=detected,
                 depth_info=depth_info,
                 hz=hz,
+                world_frame=world_frame,
                 max_seconds=max_seconds,
                 config=IngestConfig(
                     gate=hs.KeyframeGateConfig(novelty_threshold=novelty), max_depth_m=max_depth_m
@@ -227,6 +232,7 @@ def _ingest(
     streams: dict[str, Any],
     depth_info: str,
     hz: float,
+    world_frame: str | None,
     max_seconds: float,
     config: Any,
 ) -> dict[str, int]:
@@ -241,7 +247,10 @@ def _ingest(
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
     from dimos.teleop.memory_world.recording import build_tf_tree
 
-    tree = build_tf_tree(store, streams["tf"])
+    # The module's world, not whatever this tree's root happens to be: build_tf_tree
+    # decides whether to substitute the loop-closed odometry from it, so two trees built
+    # with different worlds can disagree by the whole loop closure.
+    tree = build_tf_tree(store, streams["tf"], world_frame)
     # The one decision is build_tf_tree's: the corrected poses replace world -> base_link
     # here exactly when they did in the tree, and never for an empty stream.
     world, corrected = tree.substituted or (None, None)
@@ -384,6 +393,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--hz", type=float, default=5.0, help="colour frames per second to consider"
     )
+    parser.add_argument(
+        "--world-frame", default=None, help="the frame to place in (default: the tf root)"
+    )
     parser.add_argument("--max-seconds", type=float, default=1e9)
     parser.add_argument("--max-depth", type=float, default=10.0)
     parser.add_argument(
@@ -405,6 +417,7 @@ def main(argv: list[str] | None = None) -> None:
         max_depth_m=args.max_depth,
         novelty=args.novelty,
         streams={role: getattr(args, role) for role in ("image", "depth", "camera_info", "tf")},
+        world_frame=args.world_frame,
     )
 
 

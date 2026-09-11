@@ -86,6 +86,7 @@ class VisualAnswers:
             self._index_progress = f"no {self.config.image_stream_name!r} stream"
             logger.warning("visual index skipped: %s", self._index_progress)
             return
+        stale = ""
         with self._store_lock, self._index_lock:  # the build reads every image
             index = self._ensure_visual_index()
             try:
@@ -93,12 +94,13 @@ class VisualAnswers:
             except ValueError as mismatch:  # another model, camera, pose convention or frame
                 logger.warning("visual index will be rebuilt: %s", mismatch)
                 existing = 0  # build() drops the stale rows once it has vectors to replace them
+                stale = str(mismatch)  # said below, since 'no embeddings' is not why
             except Exception as error:
                 self._index_progress = f"failed: {error}"
                 logger.exception("visual index unusable")
                 return
             if existing == 0 and not self.config.build_image_index_on_start:
-                self._index_progress = "no embeddings; add them from the viewer"
+                self._index_progress = stale or "no embeddings; add them from the viewer"
                 logger.info("visual index: %s", self._index_progress)
                 return
             self._index_progress = f"building (had {existing} frames)"

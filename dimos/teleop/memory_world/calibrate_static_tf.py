@@ -27,7 +27,7 @@ With ``--write`` the answer goes into the recording's own ``tf_static``, replaci
 whatever that edge said. Nothing reads it specially afterwards: a recording whose
 static tf is wrong is fixed by writing the right static tf.
 
-    python -m dimos.teleop.memory_world.calibrate_static_tf <recording.db|.mcap> [--samples 20]
+    python -m dimos.teleop.memory_world.calibrate_static_tf <recording.db> [--samples 20]
         [--write]
 """
 
@@ -349,6 +349,36 @@ def write_static_mount(store: Any, mount: str, child: str, matrix: np.ndarray, t
     return name
 
 
+def drop_what_the_mount_invalidates(store: Any, recording: str) -> list[str]:
+    """Remove the caches that hold camera poses computed with the mount just replaced.
+
+    A search index and a Hyperspace memory db store poses AS COMPUTED and never re-place
+    them on read, so moving the mount leaves both a whole correction away from the map
+    while every surface still says ready. Rather than teach the readers to notice, the
+    command that invalidates them clears them: the next start rebuilds. The ray-traced
+    map, the path and the lidar are untouched, because the mount edge carries only the
+    camera.
+    """
+    from dimos.teleop.memory_world.hyperspace_search import memory_db_for
+    from dimos.teleop.memory_world.visual_search import index_stream_name_of
+
+    dropped = []
+    memory_db = memory_db_for(recording)
+    for path in (memory_db, *(memory_db.with_name(memory_db.name + s) for s in ("-wal", "-shm"))):
+        if path.exists():
+            path.unlink()
+            if path == memory_db:
+                dropped.append(path.name)
+    marker = index_stream_name_of("", "")  # "_index_": what every index name carries
+    for name in [n for n in store.list_streams() if marker in n]:
+        try:
+            store.delete_stream(name)
+        except ValueError:  # part of the recording itself: not ours to remove
+            continue
+        dropped.append(name)
+    return dropped
+
+
 def _report(name: str, matrix: np.ndarray) -> str:
     r = matrix[:3, :3]
     pitch = float(np.arcsin(np.clip(-r[2, 0], -1, 1)))
@@ -448,6 +478,8 @@ def main() -> None:
             return
         name = write_static_mount(store, mount, child, matrix, ts)
         print(f"wrote {mount} -> {child} into {name!r} of {args.recording}")
+        for gone in drop_what_the_mount_invalidates(store, args.recording):
+            print(f"dropped {gone}, which holds poses from the old mount")
     finally:
         store.stop()
 
