@@ -221,6 +221,10 @@ async fn await_connect(session: &Session, endpoints: &[String], mode: Mode, time
 }
 
 impl ZenohTransport {
+    pub(crate) fn session(&self) -> &Session {
+        &self.session
+    }
+
     /// Open the session the launch config describes.
     pub(crate) async fn from_launch(launch: &serde_json::Value) -> io::Result<Self> {
         match SessionSettings::from_launch(launch)? {
