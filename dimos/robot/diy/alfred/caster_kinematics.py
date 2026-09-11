@@ -83,7 +83,7 @@ class CasterKinematics(Module):
 
     def __init__(
         self,
-        rate_hz: float = 30.0,
+        rate_hz: float = 10.0,
         wheel_radius: float = WHEEL_RADIUS_M,
         min_speed: float = 1e-3,
         **kwargs: Any,
@@ -127,13 +127,23 @@ class CasterKinematics(Module):
             vel += [0.0, omega]
         return JointState(name=names, position=pos, velocity=vel)
 
+    def _moving(self) -> bool:
+        with self._lock:
+            vx, vy, wz = self._twist
+        return max(abs(vx), abs(vy), abs(wz)) > self._min_speed
+
     def _run_loop(self) -> None:
+        """Publish while the base moves, and once more when it stops, so an idle sim is quiet."""
         period = 1.0 / self._rate_hz
         last = time.perf_counter()
+        settled = False
         while not self._stop_event.is_set():
             now = time.perf_counter()
             dt, last = now - last, now
-            self.joint_command.publish(self._step(dt))
+            moving = self._moving()
+            if moving or not settled:
+                self.joint_command.publish(self._step(dt))
+            settled = not moving
             time.sleep(period)
 
     @rpc
