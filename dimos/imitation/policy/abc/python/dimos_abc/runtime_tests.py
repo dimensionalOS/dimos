@@ -18,7 +18,7 @@ import pytest
 
 from dimos.experimental.isolated_python.bootstrap import validate_runtime
 from dimos.imitation.policy.abc.module import DualOpenYamAbcPolicy
-from dimos.robot.manipulators.dual_openyam.learning import DUAL_OPENYAM_ABC_IO
+from dimos.robot.manipulators.dual_openyam.learning_profile import DUAL_OPENYAM_ABC_IO
 from dimos_abc.runtime import AbcPolicyRuntime, _validate_norm_stats, _validate_profile
 
 

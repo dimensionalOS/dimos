@@ -12,134 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Distinct Dual OpenYAM collection and released-ABC rollout profiles."""
+"""Collection modules and compatible exports of the standalone policy profiles."""
 
 from dimos.imitation.collection.native_recorder import declare_recorder
 from dimos.imitation.collection.recorder import declare_python_recorder
-from dimos.imitation.dataprep.core import QualityConfig, SyncConfig
-from dimos.imitation.profile import (
-    ImageSource,
-    JointPositionAction,
-    JointPositionSource,
-    PolicyIOProfile,
-)
-from dimos.robot.manipulators.dual_openyam.config import (
-    DUAL_OPENYAM_GRIPPER_JOINTS,
-    DUAL_OPENYAM_JOINTS,
-    DUAL_OPENYAM_LEFT_ARM_JOINTS,
-    DUAL_OPENYAM_RIGHT_ARM_JOINTS,
-)
-
-DUAL_OPENYAM_CAMERA_SHAPE = (480, 640, 3)
-DUAL_OPENYAM_FPS = 30.0
-ABC_JOINTS = (
-    *DUAL_OPENYAM_LEFT_ARM_JOINTS,
-    DUAL_OPENYAM_GRIPPER_JOINTS[0],
-    *DUAL_OPENYAM_RIGHT_ARM_JOINTS,
-    DUAL_OPENYAM_GRIPPER_JOINTS[1],
-)
-
-_quality = QualityConfig(
-    mode="strict",
-    min_source_rate_ratio=0.95,
-    max_camera_gap_ms=100.0,
-    max_alignment_error_ms=20.0,
-)
-
-DUAL_OPENYAM_TWO_WRIST_IO = PolicyIOProfile(
-    name="dual-openyam-quest",
-    robot_type="dual_openyam",
-    observations={
-        "observation.images.left_wrist": ImageSource(
-            stream="left_wrist_image",
-            shape=DUAL_OPENYAM_CAMERA_SHAPE,
-        ),
-        "observation.images.right_wrist": ImageSource(
-            stream="right_wrist_image",
-            shape=DUAL_OPENYAM_CAMERA_SHAPE,
-        ),
-        "observation.state": JointPositionSource(
-            stream="coordinator_joint_state",
-            joints=tuple(DUAL_OPENYAM_JOINTS),
-        ),
-    },
-    action=JointPositionAction(
-        key="action",
-        demonstration=JointPositionSource(
-            stream="applied_joint_position_command",
-            joints=tuple(DUAL_OPENYAM_JOINTS),
-        ),
-    ),
-    sync=SyncConfig(
-        anchor="observation.images.left_wrist",
-        rate_hz=DUAL_OPENYAM_FPS,
-        tolerance_ms=20.0,
-    ),
-    quality=_quality,
-)
-
-DUAL_OPENYAM_ABC_IO = PolicyIOProfile(
-    name="dual-openyam-abc",
-    robot_type="dual_openyam",
-    observations={
-        "top": ImageSource(stream="top_image", shape=DUAL_OPENYAM_CAMERA_SHAPE),
-        "left": ImageSource(stream="left_wrist_image", shape=DUAL_OPENYAM_CAMERA_SHAPE),
-        "right": ImageSource(stream="right_wrist_image", shape=DUAL_OPENYAM_CAMERA_SHAPE),
-        "state": JointPositionSource(
-            stream="coordinator_joint_state",
-            joints=ABC_JOINTS,
-        ),
-    },
-    action=JointPositionAction(
-        key="actions",
-        demonstration=JointPositionSource(
-            stream="applied_joint_position_command",
-            joints=ABC_JOINTS,
-        ),
-    ),
-    sync=SyncConfig(anchor="top", rate_hz=DUAL_OPENYAM_FPS, tolerance_ms=20.0),
-    quality=_quality,
+from dimos.robot.manipulators.dual_openyam.learning_profile import (
+    ABC_JOINTS as ABC_JOINTS,
+    DUAL_OPENYAM_ABC_IO as DUAL_OPENYAM_ABC_IO,
+    DUAL_OPENYAM_CAMERA_SHAPE as DUAL_OPENYAM_CAMERA_SHAPE,
+    DUAL_OPENYAM_FPS as DUAL_OPENYAM_FPS,
+    DUAL_OPENYAM_LEROBOT_IO as DUAL_OPENYAM_LEROBOT_IO,
+    DUAL_OPENYAM_SIM_CAMERA_SHAPE as DUAL_OPENYAM_SIM_CAMERA_SHAPE,
+    DUAL_OPENYAM_SIM_CAPTURE_FPS as DUAL_OPENYAM_SIM_CAPTURE_FPS,
+    DUAL_OPENYAM_SIM_FPS as DUAL_OPENYAM_SIM_FPS,
+    DUAL_OPENYAM_SIM_TASK as DUAL_OPENYAM_SIM_TASK,
+    DUAL_OPENYAM_TWO_WRIST_IO as DUAL_OPENYAM_TWO_WRIST_IO,
 )
 
 DualOpenYamQuestRecorder = declare_recorder(
     "DualOpenYamQuestRecorder",
     __name__,
     DUAL_OPENYAM_TWO_WRIST_IO,
-)
-
-
-DUAL_OPENYAM_SIM_FPS = 15.0
-DUAL_OPENYAM_SIM_CAPTURE_FPS = 30.0
-DUAL_OPENYAM_SIM_CAMERA_SHAPE = (240, 320, 3)
-DUAL_OPENYAM_SIM_TASK = "Put the bottle in the bin"
-
-DUAL_OPENYAM_LEROBOT_IO = PolicyIOProfile(
-    name="dual-openyam-sim",
-    robot_type="dual_openyam",
-    observations={
-        "observation.images.top": ImageSource(
-            stream="top_image", shape=DUAL_OPENYAM_SIM_CAMERA_SHAPE
-        ),
-        "observation.images.left_wrist": ImageSource(
-            stream="left_wrist_image", shape=DUAL_OPENYAM_SIM_CAMERA_SHAPE
-        ),
-        "observation.images.right_wrist": ImageSource(
-            stream="right_wrist_image", shape=DUAL_OPENYAM_SIM_CAMERA_SHAPE
-        ),
-        "observation.state": JointPositionSource(
-            stream="coordinator_joint_state", joints=tuple(DUAL_OPENYAM_JOINTS)
-        ),
-    },
-    action=JointPositionAction(
-        key="action",
-        demonstration=JointPositionSource(
-            stream="applied_joint_position_command", joints=tuple(DUAL_OPENYAM_JOINTS)
-        ),
-    ),
-    sync=SyncConfig(
-        anchor="observation.images.top", rate_hz=DUAL_OPENYAM_SIM_FPS, tolerance_ms=20.0
-    ),
-    quality=_quality.model_copy(update={"mode": "fill", "max_filled_frame_ratio": 0.03}),
 )
 
 DualOpenYamSimRecorder = declare_python_recorder(

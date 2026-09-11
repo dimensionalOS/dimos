@@ -16,30 +16,35 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from itertools import pairwise
 from pathlib import Path
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 
 from dimos.msgs.nav_msgs.Path import Path as NavigationPath
+from dimos.robot.galaxea.r1pro.home_spec import HomeControlSpec, HomeSimSpec
 from dimos.robot.galaxea.r1pro.navigation_sim import NAV_TASK, pose_message
-
-if TYPE_CHECKING:
-    from dimos.core.rpc_client import ModuleProxy
 
 
 def follow_navigation_path(
-    control: ModuleProxy,
-    sim: ModuleProxy,
+    control: HomeControlSpec,
+    sim: HomeSimSpec,
     path: list[list[float]],
     phase: str,
     report: dict[str, Any],
+    pause: Callable[[float], None] = time.sleep,
+    speed: float | None = None,
 ) -> dict[str, Any]:
     """Validate a full-pose path, then monitor physical cargo while the task drives."""
+    pause(0)
     sim.validate_navigation_path(path)
+    pause(0)
     control.task_invoke(NAV_TASK, "reset", {})
+    if speed is not None:
+        control.task_invoke(NAV_TASK, "set_speed", {"speed": speed})
     state: dict[str, Any] = sim.task_state()
     message = NavigationPath(poses=[pose_message(p) for p in path], frame_id="world")
     accepted = control.task_invoke(
@@ -92,14 +97,18 @@ def follow_navigation_path(
                 ):
                     stage["final"] = state
                     return state
-            time.sleep(0.05)
+            pause(0.05)
         raise RuntimeError(f"Navigation timed out during {phase}")
     finally:
-        control.task_invoke(NAV_TASK, "cancel", {})
-        sim.stop_navigation_base()
+        try:
+            control.task_invoke(NAV_TASK, "cancel", {})
+        finally:
+            sim.stop_navigation_base()
 
 
-def prepare_navigation_map(sim: ModuleProxy, cloud: Path) -> None:
+def prepare_navigation_map(
+    sim: HomeSimSpec, cloud: Path, pause: Callable[[float], None] = time.sleep
+) -> None:
     """Require a native map acknowledgement before starting manipulation."""
     if sim.navigation_status()["surface_points"] > 0:
         return
@@ -108,14 +117,15 @@ def prepare_navigation_map(sim: ModuleProxy, cloud: Path) -> None:
     while sim.navigation_status()["surface_points"] == 0:
         if time.monotonic() > deadline:
             raise RuntimeError("KronkNav did not acknowledge the complete environment map")
-        time.sleep(0.1)
+        pause(0.1)
 
 
 def run_navigation_transport(
-    control: ModuleProxy,
-    sim: ModuleProxy,
+    control: HomeControlSpec,
+    sim: HomeSimSpec,
     report: dict[str, Any],
     cloud: Path,
+    pause: Callable[[float], None] = time.sleep,
 ) -> None:
     """Use a simulated whole-house lidar map; ACT is stopped throughout driving."""
     report["navigation"] = {
@@ -123,11 +133,13 @@ def run_navigation_transport(
         "controller": "HolonomicPoseFollowerTask",
         "cloud": str(cloud.resolve()),
     }
-    prepare_navigation_map(sim, cloud)
+    prepare_navigation_map(sim, cloud, pause=pause)
     target = report["destination"]["base_position"]
     departure = sim.plan_departure(target[2])
     for index, (a, b) in enumerate(pairwise(departure)):
-        follow_navigation_path(control, sim, [a, b], f"departure_{index + 1}", report)
+        follow_navigation_path(
+            control, sim, [a, b], f"departure_{index + 1}", report, pause=pause, speed=0.055
+        )
     sim.request_navigation_path(target)
     deadline = time.monotonic() + 30
     while True:
@@ -138,9 +150,9 @@ def run_navigation_transport(
             break
         if time.monotonic() > deadline:
             raise RuntimeError("KronkNav did not return a complete route")
-        time.sleep(0.1)
+        pause(0.1)
     report["navigation"].update(status)
     report["path"] = status["path"]
     report["arrival"] = follow_navigation_path(
-        control, sim, status["path"], "kronknav_carry", report
+        control, sim, status["path"], "kronknav_carry", report, pause=pause, speed=0.6
     )

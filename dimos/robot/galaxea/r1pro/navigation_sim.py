@@ -21,6 +21,7 @@ from typing import Any
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -39,6 +40,7 @@ from dimos.robot.galaxea.r1pro.grasping_transport import PlanarTransport
 from dimos.robot.galaxea.r1pro.navigation_base import PlanarVelocityServo
 from dimos.robot.galaxea.r1pro.packing_blueprint import R1ProPackingSim
 from dimos.simulation.engines.mujoco_engine import MujocoEngine
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModuleConfig
 
 NAV_BASE_ID = "r1pro_nav_base"
 NAV_TASK = "tray_navigation"
@@ -75,8 +77,15 @@ def carrying_offset(
     return np.asarray((cloud.min(axis=0) + cloud.max(axis=0)) / 2, dtype=np.float64)
 
 
+class R1ProNavigationSimConfig(MujocoSimModuleConfig):
+    base_speed_limit: float = Field(default=0.6, gt=0, le=0.6)
+    base_acceleration: float = Field(default=0.6, gt=0, le=0.6)
+
+
 class R1ProNavigationSim(R1ProPackingSim):
     """Expose perfect sim odometry and the complete map as a simulated lidar."""
+
+    config: R1ProNavigationSimConfig
 
     base_cmd_vel: In[Twist]
     base_odom: Out[PoseStamped]
@@ -125,7 +134,11 @@ class R1ProNavigationSim(R1ProPackingSim):
         with engine._lock:
             pose = np.array([engine.data.joint(n).qpos[0] for n in VIRTUAL_BASE_JOINTS])
             if self._servo is None:
-                self._servo = PlanarVelocityServo(pose)
+                self._servo = PlanarVelocityServo(
+                    pose,
+                    max_speed=self.config.base_speed_limit,
+                    max_accel=self.config.base_acceleration,
+                )
             targets = self._servo.step(pose, float(engine.model.opt.timestep), time.monotonic())
             for name, target in zip(VIRTUAL_BASE_JOINTS, targets, strict=True):
                 engine.data.actuator(name).ctrl[0] = target

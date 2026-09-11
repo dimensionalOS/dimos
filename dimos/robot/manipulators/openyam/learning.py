@@ -12,63 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenYAM collection and rollout policy profiles."""
+"""Collection modules and compatible exports of the standalone policy profiles."""
 
 from dimos.imitation.collection.native_recorder import declare_recorder
-from dimos.imitation.dataprep.core import QualityConfig, SyncConfig
-from dimos.imitation.profile import (
-    ImageSource,
-    JointPositionAction,
-    JointPositionSource,
-    PolicyIOProfile,
+from dimos.robot.manipulators.openyam.learning_profile import (
+    OPENYAM_CAMERA_SHAPE as OPENYAM_CAMERA_SHAPE,
+    OPENYAM_FPS as OPENYAM_FPS,
+    OPENYAM_QUEST_IO as OPENYAM_QUEST_IO,
+    OPENYAM_TEACH_IO as OPENYAM_TEACH_IO,
 )
-from dimos.robot.manipulators.openyam.config import OPENYAM_JOINTS
-
-OPENYAM_CAMERA_SHAPE = (480, 640, 3)
-OPENYAM_FPS = 30.0
-
-
-def _profile(name: str, action_stream: str) -> PolicyIOProfile:
-    joints = tuple(OPENYAM_JOINTS)
-    return PolicyIOProfile(
-        name=name,
-        robot_type="openyam",
-        observations={
-            "observation.images.wrist": ImageSource(
-                stream="wrist_image",
-                shape=OPENYAM_CAMERA_SHAPE,
-            ),
-            "observation.state": JointPositionSource(
-                stream="coordinator_joint_state",
-                joints=joints,
-            ),
-        },
-        action=JointPositionAction(
-            key="action",
-            demonstration=JointPositionSource(stream=action_stream, joints=joints),
-        ),
-        sync=SyncConfig(
-            anchor="observation.images.wrist",
-            rate_hz=OPENYAM_FPS,
-            tolerance_ms=20.0,
-        ),
-        quality=QualityConfig(
-            mode="strict",
-            min_source_rate_ratio=0.95,
-            max_camera_gap_ms=100.0,
-            max_alignment_error_ms=20.0,
-        ),
-    )
-
-
-OPENYAM_QUEST_IO = _profile("openyam-quest", "applied_joint_position_command")
-OPENYAM_TEACH_IO = _profile("openyam-teach", "coordinator_joint_state")
 
 OpenYamQuestRecorder = declare_recorder(
     "OpenYamQuestRecorder",
     __name__,
     OPENYAM_QUEST_IO,
 )
+
 OpenYamTeachRecorder = declare_recorder(
     "OpenYamTeachRecorder",
     __name__,

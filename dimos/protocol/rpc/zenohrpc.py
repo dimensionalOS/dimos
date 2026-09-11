@@ -193,9 +193,9 @@ class ZenohRPC(RPCSpec, ZenohService):
         return unsubscribe
 
     def _execute_rpc(self, f: Callable[..., Any], name: str, query: zenoh.Query) -> None:
-        args = pickle.loads(query.payload.to_bytes())  # type: ignore[union-attr]
         nowait = query.attachment is not None
         try:
+            args = pickle.loads(query.payload.to_bytes())  # type: ignore[union-attr]
             response = f(*args[0], **args[1])
             if not nowait:
                 query.reply(query.key_expr, pickle.dumps(response))

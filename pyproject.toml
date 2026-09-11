@@ -213,6 +213,7 @@ visualization = [
 ]
 
 learning = [
+    "threadpoolctl>=3.6.0",  # bound CPU pools during native simulation and policy rollout
     # dimos.imitation.dataprep dataset writers (lazy-imported per format)
     "mcap>=1.2",  # read native collection artifacts directly
     "pyarrow",  # LeRobot v3.0 data/episodes parquet

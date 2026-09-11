@@ -246,20 +246,33 @@ def build_r1pro_manipulation(
     velocity_base: HardwareComponent | None = None,
     navigation_task: TaskConfig | None = None,
     coordinator_type: type[ControlCoordinator] = ControlCoordinator,
+    prepare_scene_on_build: bool = False,
 ) -> Blueprint:
     """Shared physical robot/camera/coordinator wiring for manipulation profiles."""
     scene_path = scene_path.expanduser().resolve()
-    with GraspingTask(scene_path, images=False) as task:
-        mobile = (
-            mujoco.mj_name2id(task.model, mujoco.mjtObj.mjOBJ_JOINT, VIRTUAL_BASE_JOINTS[0]) >= 0
-        )
-        free_tray = mujoco.mj_name2id(task.model, mujoco.mjtObj.mjOBJ_JOINT, "task_tray_free") >= 0
-        if velocity_base is not None and not (mobile and free_tray):
-            raise ValueError("Velocity navigation requires the mobile base and free tray scene")
-        position_base = mobile and velocity_base is None
-        joints = (*R1PRO_PICK_PLACE_JOINTS, *(VIRTUAL_BASE_JOINTS if position_base else ()))
-        home = task.home.tolist() + ([0.0] * 3 if position_base else [])
-        ranges = [task.model.joint(name).range.tolist() for name in joints]
+    if prepare_scene_on_build:
+        if velocity_base is None:
+            raise ValueError("Deferred scene setup requires a velocity base")
+        # The home sim and coordinator resolve home/limits together during build().
+        mobile, free_tray, position_base = True, True, False
+        joints = R1PRO_PICK_PLACE_JOINTS
+        home = []
+        ranges = []
+    else:
+        with GraspingTask(scene_path, images=False) as task:
+            mobile = (
+                mujoco.mj_name2id(task.model, mujoco.mjtObj.mjOBJ_JOINT, VIRTUAL_BASE_JOINTS[0])
+                >= 0
+            )
+            free_tray = (
+                mujoco.mj_name2id(task.model, mujoco.mjtObj.mjOBJ_JOINT, "task_tray_free") >= 0
+            )
+            if velocity_base is not None and not (mobile and free_tray):
+                raise ValueError("Velocity navigation requires the mobile base and free tray scene")
+            position_base = mobile and velocity_base is None
+            joints = (*R1PRO_PICK_PLACE_JOINTS, *(VIRTUAL_BASE_JOINTS if position_base else ()))
+            home = task.home.tolist() + ([0.0] * 3 if position_base else [])
+            ranges = [task.model.joint(name).range.tolist() for name in joints]
     camera = SimCameraSpec(name="right_wrist", stream="right_wrist", width=160, height=160, fps=40)
     hardware = HardwareComponent(
         hardware_id="r1pro",
@@ -270,8 +283,8 @@ def build_r1pro_manipulation(
         auto_enable=True,
         adapter_kwargs={"num_motors": len(joints), "command_mode": "position"},
         limits=JointLimits(
-            position_lower=[bounds[0] for bounds in ranges],
-            position_upper=[bounds[1] for bounds in ranges],
+            position_lower=[bounds[0] for bounds in ranges] if ranges else [None] * len(joints),
+            position_upper=[bounds[1] for bounds in ranges] if ranges else [None] * len(joints),
             velocity_max=[2.0] * 18 + [0.25, 0.25] + ([0.4, 0.4, 0.4] if position_base else []),
         ),
     )
@@ -309,6 +322,7 @@ def build_r1pro_manipulation(
             ),
         ),
         coordinator_type.blueprint(
+            instance_name="ControlCoordinator",
             hardware=[hardware, *([velocity_base] if velocity_base is not None else [])],
             tasks=[
                 *([navigation_task] if navigation_task is not None else []),
@@ -329,14 +343,24 @@ def build_r1pro_manipulation(
                     type="trajectory",
                     joint_names=list(R1PRO_PICK_PLACE_JOINTS),
                     priority=30,
-                    params={"start_position_tolerance": 0.05},
+                    params={
+                        "start_position_tolerance": 0.05,
+                        "velocity_limits": dict(
+                            zip(R1PRO_PICK_PLACE_JOINTS, [2.0] * 18 + [0.25, 0.25], strict=True)
+                        ),
+                    },
                 ),
                 TaskConfig(
                     name=POLICY_ROLLOUT_TASK_NAME,
                     type="trajectory",
                     joint_names=list(R1PRO_PICK_PLACE_JOINTS),
                     priority=30,
-                    params={"start_position_tolerance": 0.05},
+                    params={
+                        "start_position_tolerance": 0.05,
+                        "velocity_limits": dict(
+                            zip(R1PRO_PICK_PLACE_JOINTS, [2.0] * 18 + [0.25, 0.25], strict=True)
+                        ),
+                    },
                 ),
             ],
         ),
@@ -347,6 +371,7 @@ def build_r1pro_manipulation(
             device=device,
             startup_timeout=120.0,
             max_execution_horizon_s=1.5,
+            extra_env={"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "4", "MKL_NUM_THREADS": "4"},
         ),
         PolicySkills.blueprint(),
     )

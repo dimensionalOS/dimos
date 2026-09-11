@@ -29,7 +29,17 @@ COMMAND_TIMEOUT = 0.3
 class PlanarVelocityServo:
     """Integrate bounded Twist commands into actuator targets, never live poses."""
 
-    def __init__(self, pose: NDArray[Any]) -> None:
+    def __init__(
+        self,
+        pose: NDArray[Any],
+        *,
+        max_speed: float = MAX_SPEED,
+        max_accel: float = MAX_ACCEL,
+    ) -> None:
+        if not np.isfinite([max_speed, max_accel]).all() or min(max_speed, max_accel) <= 0:
+            raise ValueError("Base speed and acceleration must be finite and positive")
+        self.max_speed = max_speed
+        self.max_accel = max_accel
         self.target = np.asarray(pose, dtype=np.float64).copy()
         self.velocity = np.zeros(3)
         self.command = np.zeros(3)
@@ -40,7 +50,7 @@ class PlanarVelocityServo:
         if velocity.shape != (3,) or not np.isfinite(velocity).all():
             raise ValueError("Base command needs three finite body-frame velocities")
         self.command[:2] = velocity[:2] * min(
-            1.0, MAX_SPEED / max(float(np.linalg.norm(velocity[:2])), 1e-9)
+            1.0, self.max_speed / max(float(np.linalg.norm(velocity[:2])), 1e-9)
         )
         self.command[2] = np.clip(velocity[2], -MAX_YAW_RATE, MAX_YAW_RATE)
         self.command_time = now
@@ -54,7 +64,7 @@ class PlanarVelocityServo:
     def step(self, pose: NDArray[Any], dt: float, now: float) -> NDArray[np.float64]:
         command = self.command if now - self.command_time <= COMMAND_TIMEOUT else np.zeros(3)
         delta = command - self.velocity
-        delta[:2] *= min(1.0, MAX_ACCEL * dt / max(float(np.linalg.norm(delta[:2])), 1e-9))
+        delta[:2] *= min(1.0, self.max_accel * dt / max(float(np.linalg.norm(delta[:2])), 1e-9))
         delta[2] = np.clip(delta[2], -MAX_YAW_ACCEL * dt, MAX_YAW_ACCEL * dt)
         self.velocity += delta
         c, s = np.cos(pose[2]), np.sin(pose[2])

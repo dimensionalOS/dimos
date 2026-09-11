@@ -24,7 +24,7 @@ import torch
 
 from dimos.experimental.isolated_python.bootstrap import validate_runtime
 from dimos.imitation.policy.lerobot.module import OpenYamLeRobotPolicy
-from dimos.robot.manipulators.openyam.learning import OPENYAM_QUEST_IO
+from dimos.robot.manipulators.openyam.learning_profile import OPENYAM_QUEST_IO
 
 
 class FakeFeature:

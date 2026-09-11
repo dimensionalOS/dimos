@@ -28,19 +28,19 @@
     "K_vx": 1.0,
     "K_vy": 1.0,
     "K_wz": 1.0,
-    "output_min_vx": -0.08,
-    "output_max_vx": 0.08,
-    "output_min_vy": -0.08,
-    "output_max_vy": 0.08,
+    "output_min_vx": -0.6,
+    "output_max_vx": 0.6,
+    "output_min_vy": -0.6,
+    "output_max_vy": 0.6,
     "output_min_wz": -0.12,
     "output_max_wz": 0.12
   },
   "velocity_profile": {
-    "max_linear_speed": 0.08,
+    "max_linear_speed": 0.6,
     "max_angular_speed": 0.12,
-    "max_centripetal_accel": 0.025,
-    "max_linear_accel": 0.04,
-    "max_linear_decel": 0.04,
+    "max_centripetal_accel": 0.15,
+    "max_linear_accel": 0.4,
+    "max_linear_decel": 0.4,
     "min_speed": 0.003
   },
   "recommended_controller": {
@@ -50,7 +50,7 @@
   },
   "caveats": [
     "Simulation only. Unit gain follows the Twist-to-position integrator. Effective tau=0.25 selects conservative position feedback including the slew limiter; this is not a measured hardware plant fit.",
-    "Only validated with the loaded five-bottle carrying posture and slow planar translation."
+    "Validated in this simulated house with the loaded five-bottle posture at up to 0.6 m/s, acceleration 0.4 m/s^2 and lateral acceleration 0.15 m/s^2. Approaches and turns slow down."
   ],
   "valid_for_tuning": false
 }

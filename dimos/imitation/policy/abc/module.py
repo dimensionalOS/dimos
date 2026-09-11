@@ -19,7 +19,7 @@ from pathlib import Path
 from pydantic import Field, field_validator
 
 from dimos.imitation.policy.module import PolicyRolloutConfig, declare_policy_module
-from dimos.robot.manipulators.dual_openyam.learning import DUAL_OPENYAM_ABC_IO
+from dimos.robot.manipulators.dual_openyam.learning_profile import DUAL_OPENYAM_ABC_IO
 
 
 class AbcPolicyConfig(PolicyRolloutConfig):

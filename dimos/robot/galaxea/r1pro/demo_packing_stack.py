@@ -28,15 +28,14 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.imitation.policy.module import POLICY_ROLLOUT_INSTANCE_NAME
 from dimos.robot.galaxea.r1pro.navigation_blueprint import build_r1pro_packing_navigation
 from dimos.robot.galaxea.r1pro.navigation_cloud import save_environment_cloud
-from dimos.robot.galaxea.r1pro.navigation_delivery import prepare_navigation_map
 from dimos.robot.galaxea.r1pro.packing_blueprint import R1ProPackingSim, build_r1pro_packing
+from dimos.robot.galaxea.r1pro.packing_run import PackingRunConfig, run_packing_sequence
 from dimos.robot.galaxea.r1pro.packing_sim import (
     PACKING_BODIES,
     PACKING_SOURCES,
     prepare_packing_scene,
 )
 from dimos.robot.galaxea.r1pro.sim_session import reserve_demo_session
-from dimos.robot.galaxea.r1pro.tray_delivery import run_tray_delivery
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -80,105 +79,21 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         coordinator = ModuleCoordinator.build(blueprint)
         policy = coordinator.get_instance(POLICY_ROLLOUT_INSTANCE_NAME)
         sim = coordinator.get_instance(R1ProPackingSim)
-        if navigation_cloud is not None:
-            prepare_navigation_map(sim, navigation_cloud)
-        deadline = time.monotonic() + 30
-        while not sim.packing_state()["ready_for_pick"]:
-            if time.monotonic() >= deadline:
-                raise RuntimeError("Simulation did not settle during startup")
-            time.sleep(0.05)
-        report["order"] = sim.packing_order(args.seed if args.random_order else None)
-        report["initial"] = sim.packing_state()
-        for index in report["order"]:
-            pick: dict[str, Any] = {"bottle": index + 1, "history": [], "success": False}
-            report["picks"].append(pick)
-            selected = sim.select_bottle(index)
-            pick["selection"] = selected
-            if not selected["selected"]:
-                report["completion_reason"] = selected["reason"]
-                break
-            policy.clear_rollout_observations()
-            deadline = time.monotonic() + 45
-            while True:
-                status = policy.preflight_rollout()
-                if (
-                    status["policy_ready"]
-                    and status["observations_ready"]
-                    and not status["last_error"]
-                ):
-                    break
-                if time.monotonic() > deadline:
-                    raise RuntimeError(f"Packing preflight failed: {status}")
-                time.sleep(0.1)
-            status = policy.start_rollout()
-            if not status["active"]:
-                raise RuntimeError(f"Packing policy did not start: {status}")
-            deadline = time.monotonic() + args.seconds
-            stable_since = None
-            try:
-                while time.monotonic() < deadline:
-                    status = policy.rollout_status()
-                    if status["last_error"] or not status["active"]:
-                        raise RuntimeError(f"Packing rollout failed: {status}")
-                    state = sim.packing_state()
-                    pick["history"].append(state)
-                    if state["selected"]["pick_complete"]:
-                        stable_since = time.monotonic() if stable_since is None else stable_since
-                        if time.monotonic() - stable_since >= 0.1:
-                            pick["success"] = True
-                            break
-                    else:
-                        stable_since = None
-                    time.sleep(0.05)
-            finally:
-                pick["stopped"] = policy.stop_rollout()
-                # Cancel at arrival, then verify while the coordinator holds.
-                # Keeping ACT active here can start another approach to the old goal.
-                time.sleep(0.5)
-                pick["final"] = sim.packing_state()
-                pick["success"] = bool(
-                    pick["success"] and pick["final"]["selected"]["pick_complete"]
-                )
-                (args.output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
-            if pick["stopped"]["active"] or pick["stopped"]["last_error"]:
-                raise RuntimeError(f"Packing policy did not stop cleanly: {pick['stopped']}")
-            print(
-                json.dumps({key: value for key, value in pick.items() if key != "history"}),
-                flush=True,
-            )
-            if not pick["success"]:
-                report["completion_reason"] = "pick_failed"
-                break
-        else:
-            report["completion_reason"] = "completed"
-        report["final"] = sim.packing_state()
-        report["success"] = (
-            report["final"]["success"] and report["completion_reason"] == "completed"
-        )
-        report["packing_success"] = report["success"]
-        if report["packing_success"] and args.deliver_to_laptop:
-            report["packing_final"] = report["final"]
-            report["success"] = False
-            report["completion_reason"] = "delivery_in_progress"
-            report["delivery"] = {}
-            (args.output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
-            run_tray_delivery(
-                coordinator.get_instance(ControlCoordinator),
-                sim,
-                report["delivery"],
-                navigation_cloud=navigation_cloud,
-            )
-            report["final"] = sim.task_state()
-            report["success"] = bool(report["delivery"]["success"] and report["final"]["success"])
-            report["completion_reason"] = "delivered" if report["success"] else "delivery_failed"
-        print(
-            json.dumps(
-                {key: value for key, value in report.items() if key not in ("picks", "delivery")},
-                indent=2,
+        run_packing_sequence(
+            coordinator.get_instance(ControlCoordinator),
+            policy,
+            sim,
+            PackingRunConfig(
+                artifact=args.artifact,
+                output=args.output,
+                seed=args.seed,
+                random_order=args.random_order,
+                seconds=args.seconds,
+                deliver_to_laptop=args.deliver_to_laptop,
             ),
-            flush=True,
+            report,
+            navigation_cloud=navigation_cloud,
         )
-        (args.output / "result.json").write_text(json.dumps(report, indent=2) + "\n")
         if args.stay_open:
             print("Packing stopped. Close the MuJoCo window or press Ctrl-C.", flush=True)
             while sim.is_simulation_running():

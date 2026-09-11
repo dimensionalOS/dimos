@@ -16,10 +16,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from itertools import groupby, pairwise
 from pathlib import Path
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 
@@ -27,11 +28,9 @@ from dimos.control.tasks.trajectory_task.trajectory_task import TrajectoryExecut
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 from dimos.robot.galaxea.r1pro.grasping_sim import VIRTUAL_BASE_JOINTS
+from dimos.robot.galaxea.r1pro.home_spec import HomeControlSpec, HomeSimSpec
 from dimos.robot.galaxea.r1pro.learning import R1PRO_PICK_PLACE_JOINTS
 from dimos.robot.galaxea.r1pro.navigation_delivery import run_navigation_transport
-
-if TYPE_CHECKING:
-    from dimos.core.rpc_client import ModuleProxy
 
 
 def _check_cargo(state: dict[str, Any], *, grasp: bool) -> None:
@@ -48,8 +47,8 @@ def _check_cargo(state: dict[str, Any], *, grasp: bool) -> None:
 
 
 def _execute(
-    control: ModuleProxy,
-    sim: ModuleProxy,
+    control: HomeControlSpec,
+    sim: HomeSimSpec,
     joints: list[str],
     points: list[TrajectoryPoint],
     task: str,
@@ -58,7 +57,9 @@ def _execute(
     *,
     grasp: bool,
     check_obstacles: bool = False,
+    pause: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
+    pause(0)
     accepted = control.execute_trajectory(JointTrajectory(joint_names=joints, points=points), task)
     if accepted.status is not TrajectoryExecutionStatus.ACCEPTED:
         raise RuntimeError(f"{phase} trajectory rejected: {accepted}")
@@ -115,17 +116,18 @@ def _execute(
                         return state
                 else:
                     quiet_since = None
-            time.sleep(0.05)
+            pause(0.05)
         raise RuntimeError(f"{phase} failed to reach and settle at its target")
     finally:
         control.cancel_trajectory(task)
 
 
 def _arm_motion(
-    control: ModuleProxy,
-    sim: ModuleProxy,
+    control: HomeControlSpec,
+    sim: HomeSimSpec,
     waypoints: list[dict[str, Any]],
     report: dict[str, Any],
+    pause: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     state: dict[str, Any] = sim.task_state()
     for phase, group in groupby(
@@ -171,7 +173,15 @@ def _arm_motion(
             "lower_onto_table",
         )
         state = _execute(
-            control, sim, joints, points, "tray_manipulation", phase, report, grasp=grasp
+            control,
+            sim,
+            joints,
+            points,
+            "tray_manipulation",
+            phase,
+            report,
+            grasp=grasp,
+            pause=pause,
         )
         # Preserve grip preload across tasks: measured finger positions are
         # wider than the commanded opening while squeezing a handle.
@@ -184,11 +194,12 @@ def _arm_motion(
 
 
 def run_tray_delivery(
-    control: ModuleProxy,
-    sim: ModuleProxy,
+    control: HomeControlSpec,
+    sim: HomeSimSpec,
     report: dict[str, Any],
     *,
     navigation_cloud: Path | None = None,
+    pause: Callable[[float], None] = time.sleep,
 ) -> None:
     """Run after ACT has stopped; every moving joint is owned by the coordinator."""
     report.update(success=False, stages=[], destination=sim.tray_destination())
@@ -198,11 +209,13 @@ def run_tray_delivery(
         raise RuntimeError("Expected the loaded tray to rest on the starting worktop")
     report["initial"] = initial
     sim.prepare_tray_holding()
-    report["pickup"] = _arm_motion(control, sim, sim.plan_tray_motion("pickup"), report)
+    report["pickup"] = _arm_motion(
+        control, sim, sim.plan_tray_motion("pickup"), report, pause=pause
+    )
     report["pickup_snapshot"] = sim.simulation_snapshot()
     sim.set_tray_delivery_view()
     if navigation_cloud is not None:
-        run_navigation_transport(control, sim, report, navigation_cloud)
+        run_navigation_transport(control, sim, report, navigation_cloud, pause=pause)
     else:
         path = sim.plan_transport(*destination["base_position"])
         report["path"] = path
@@ -235,10 +248,15 @@ def run_tray_delivery(
                 report,
                 grasp=True,
                 check_obstacles=True,
+                pause=pause,
             )
     report["arrival_snapshot"] = sim.simulation_snapshot()
     final = _arm_motion(
-        control, sim, sim.plan_tray_motion("place", destination["tray_position"]), report
+        control,
+        sim,
+        sim.plan_tray_motion("place", destination["tray_position"]),
+        report,
+        pause=pause,
     )
     report["final"] = final
     report["final_snapshot"] = sim.simulation_snapshot()

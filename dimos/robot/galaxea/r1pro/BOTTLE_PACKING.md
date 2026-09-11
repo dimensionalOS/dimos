@@ -1,121 +1,85 @@
-# Five-bottle ACT packing
-
-The R1Pro picks five matching bottles and places them upright in planned tray
-slots using ACT. The `policy-packing-augmented` checkpoint passed repeated full
-native DimOS runs and offline checks. The base stays parked by default; add
-`--deliver-to-laptop` to carry the loaded tray to the laptop table afterward.
-The single-bottle demo remains in [ACT_SIM.md](ACT_SIM.md).
-
-## Run with the full display
-
-Run from a desktop terminal on this workstation:
+# R1Pro home demo
 
 ```bash
-cd /home/mustafa/dimos-wt/r1pro-act-sim
-source .venv/bin/activate
-export PYTHONPATH="$PWD"
-export MUJOCO_GL=glfw
-export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=4 MKL_NUM_THREADS=4
-export DIMOS_TRANSPORT=lcm
-export LCM_DEFAULT_URL="udpm://224.0.0.224:19467?ttl=0"
-
-python -m dimos.robot.galaxea.r1pro.demo_packing_stack \
-  --artifact "$PWD/recordings/r1pro-act-task/policy-packing-augmented" \
-  --output "$PWD/recordings/r1pro-act-task/my-five-bottle-run" \
-  --zenoh-scout-addr 224.0.0.224:19467 \
-  --scene-package /home/mustafa/dimos/data/scene_packages/hssd_102344115 \
-  --seed 5000 --stay-open
+dimos run r1pro-home-sim
 ```
 
-If prompted about optional LCM socket-buffer optimization, answer **n**; the
-validated runs used the existing host settings. No OpenAI API key is needed.
-The viewer stays open after completion; close its window or press Ctrl-C to
-stop the stack. Use a fresh output directory for a separate result history.
+Run this from a desktop terminal. The blueprint opens the native MuJoCo window,
+packs five bottles using ACT, grasps the tray with both hands, drives through the
+house using KronkNav, and places the tray on the table beside the laptop. It keeps
+the viewer open after finishing. Press **Ctrl-C** or use `dimos stop` to stop the
+stack; `dimos restart` starts a fresh demonstration.
 
-This command explicitly uses LCM, which passed the native runs. Keep its address
-and `--zenoh-scout-addr` value equal: the latter also names the launcher's session
-lock, despite its legacy name. Close another R1Pro demo on the same address
-before starting. Concurrent stacks need distinct addresses and output paths.
-Zenoh previously exhibited intermittent RPC stalls and is not the validated
-transport for this command.
+Zenoh is the default transport. Scene generation, the static house point cloud,
+policy runtime, CPU thread limits and result directories are handled by the
+blueprint. No OpenAI key, `PYTHONPATH`, `MUJOCO_GL`, LCM address, or scout address
+is needed. This command uses the native display; EGL is unnecessary.
 
-## Pack, carry, and deliver to the laptop
+On this workstation the user-level `dimos` launcher is installed from the
+`r1pro-act-sim` worktree. Use a fresh terminal if an activated environment from
+another checkout is taking precedence over that launcher.
 
-After the environment setup above, run:
+## Speed
 
-```bash
-python -m dimos.robot.galaxea.r1pro.demo_packing_stack \
-  --artifact "$PWD/recordings/r1pro-act-task/policy-packing-augmented" \
-  --output "$PWD/recordings/r1pro-act-task/my-five-bottle-delivery" \
-  --zenoh-scout-addr 224.0.0.224:19467 \
-  --scene-package /home/mustafa/dimos/data/scene_packages/hssd_102344115 \
-  --deliver-to-laptop --seed 5000 --stay-open
-```
+The previous navigation cruise was **0.055 m/s**, with an actuator cap of
+**0.08 m/s**. The new cruise and cap are **0.6 m/s**. The controller limits linear
+acceleration/deceleration to 0.4 m/s² and lateral acceleration to 0.15 m/s²,
+and slows for bends and the final approach. Initial clearance from the worktop
+and the carrying turn remain cautious. Arm/policy timing is unchanged.
 
-ACT first packs all five bottles using the same checkpoint. Once it stops,
-`tray_manipulation` coordinates both hands to grasp and lift the tray, while
-`base_transport` executes a collision-checked route. The arms lower the tray onto
-the actual tabletop beside the laptop, release it only after surface contact,
-and retreat. These are ControlCoordinator trajectories; **no new ACT training**
-is required. The tray and bottles remain physically free throughout the trip.
-Allow about five minutes including startup. The native view switches to an
-elevated angle after pickup to see over cabinets; you can still orbit and zoom.
+A physics replay of the loaded route took 19.64 seconds at the new setting,
+compared with about 82 seconds at the old setting. All five bottles stayed
+upright and contained, both hands kept contact, and no obstacle contacts occurred.
+This is simulated carrying validation, not a hardware calibration.
 
-The full trip starts only after all five placements pass. Route planning includes
-the robot, tray and every bottle. Runtime checks stop motion if a bottle tips or
-leaves the tray, grip is lost, or an obstacle is contacted. An obstructed route
-raises an error. The output includes separate `packing_success`, `delivery.success`
-and overall `success`; check the overall result for an end-to-end run.
+## Assets and options
 
-## Navigate using the whole house point cloud
-
-Add `--kronknav` to the delivery command to use the native Rust KronkNav planner
-and `HolonomicPoseFollowerTask`. Build the planner once from this worktree:
+The existing trained checkpoint is
+`recordings/r1pro-act-task/policy-packing-augmented`; the default house is
+`dimos/data/scene_packages/hssd_102344115`. These large local assets must be
+available alongside an installation of this branch with simulation, manipulation,
+and learning dependencies. On this workstation they are already available.
+A fresh checkout also needs the native planner built once:
 
 ```bash
 cargo build --release --locked -p dimos-mls-planner --bin mls_planner
 ```
 
-With the desktop environment setup above:
+Optional overrides use the regular blueprint CLI:
 
 ```bash
-python -m dimos.robot.galaxea.r1pro.demo_packing_stack \
-  --artifact "$PWD/recordings/r1pro-act-task/policy-packing-augmented" \
-  --output "$PWD/recordings/r1pro-act-task/my-kronknav-delivery" \
-  --zenoh-scout-addr 224.0.0.224:19467 \
-  --scene-package /home/mustafa/dimos/data/scene_packages/hssd_102344115 \
-  --deliver-to-laptop --kronknav --seed 5000 --stay-open
+dimos run r1pro-home-sim --seed 5001
+dimos run r1pro-home-sim --artifact /path/to/policy --scene-package /path/to/house
 ```
 
-The simulated lidar supplies the entire static environment point cloud, sampled
-from physical house surfaces including the floor. The robot, articulated arms,
-tray and bottles are excluded from this map. This is perfect-map simulation:
-there is no lidar occlusion, scan noise, localization drift or online mapping.
-The generated `navigation-cloud.npy` is a map, not a stored route.
+Each launch writes a fresh directory under `recordings/r1pro-home-sim/` and logs
+its path. `result.json` contains packing and delivery results, measured cargo
+history, and the planned route. The overall `success` flag requires physical
+release and support at the destination, as well as successful packing.
+Use `dimos status` and `dimos log -f` for ordinary runtime inspection.
 
-After the same five ACT picks and physical two-handed pickup, the holonomic task
-backs away and turns where the full loaded geometry clears the worktop. KronkNav
-then plans from current odometry to the laptop-table parking pose. Planning uses
-the measured centre of the asymmetric carrying footprint; path positions are
-converted back to base poses while preserving the commanded carrying heading.
-An independent collision check includes both arms, the tray and every bottle
-before the coordinator accepts the path. An incomplete or obstructed route stops
-the run rather than silently using the old transport planner.
+## How the trip runs
 
-`tray_navigation` owns three Twist base resources in the ControlCoordinator.
-It tracks the path through the existing `HolonomicPoseFollowerTask`; body-frame
-velocities feed the simulation's physical planar actuators with acceleration
-limits and a command watchdog. Arm trajectories own a separate set of twenty
-joints. No live robot/tray pose teleportation or object attachments are used.
-The existing arm planner performs final support-checked placement. No ACT
-retraining is needed. The controller settings are specific to this slow simulated
-planar stage and are not hardware calibration.
+The simulated lidar supplies the complete static house point cloud. It includes
+physical surfaces and the floor, while excluding the robot, tray and bottles.
+This is perfect-map simulation without sensor noise or localization drift.
 
-The native Rust planner communicates through the same isolated LCM session as
-DimOS. `result.json` records map acknowledgement, footprint offset, native path,
-controller stages and measured cargo history under `delivery.navigation` and
-`delivery.stages`. `packing_success` alone does not establish delivery success.
-Without `--kronknav`, the earlier position-trajectory delivery stays available.
+ACT controls each bottle pick through the coordinator's `policy_rollout` task.
+After packing, `tray_manipulation` runs the two-handed pickup and placement.
+KronkNav plans from measured odometry using the loaded carrying footprint; a
+separate collision check validates the robot, tray and all five bottles along
+the route. `tray_navigation`, a `HolonomicPoseFollowerTask`, executes that path
+through the base's Twist interface. The twenty manipulation joints and three
+base resources have separate ownership in the same ControlCoordinator.
+
+The tray and bottles remain free physical bodies throughout the trip. There are
+no attachments or live-pose teleports. Runtime checks stop on lost grasp,
+spilled/tipped bottles, unexpected support contacts, or obstacles. Tray handling
+and driving require no additional ACT training.
+
+The older `demo_packing_stack` module remains an evaluation entry point; its
+session-isolation arguments are unnecessary for the standard home blueprint.
+The single-bottle demo is documented in [ACT_SIM.md](ACT_SIM.md).
 
 ## What is learned
 
@@ -127,7 +91,7 @@ the ControlCoordinator `policy_rollout` trajectory task. The model uses profile
 `r1pro-sim-bottle-packing-v1`; the earlier `policy-free-tray` is incompatible.
 
 The default source order works from left to right while clearing blocked rear
-bottles. `--random-order` varies accessible choices for robustness testing.
+bottles. The legacy evaluation launcher can randomize accessible choices for robustness testing.
 Placements fill rows and reserve space for opening the gripper. When no safe slot
 remains, the planner reports `tray_full` and stops. It does not rearrange bottles
 or claim optimal packing. A tilted bottle gets a larger conservative footprint.
@@ -140,6 +104,15 @@ handling remain future work. Simulator geometry supplies goals; this demo does
 not establish perception or grasp generalization to unseen items.
 
 ## Validation
+
+The current `r1pro-home-sim` native-display Zenoh run (seed 5000) passed all five
+picks, two-handed pickup, the fast KronkNav route and supported release at the
+laptop table. Measured route time was 19.67 s, peak speed 0.6004 m/s, maximum tray
+tilt 6.99°, and final tray position error 4.22 mm. All 696 navigation samples
+kept both-hand contact and all bottles upright/contained, with no obstacle
+contacts. Evidence: `recordings/r1pro-act-task/home-zenoh-5000/result.json` and
+`recordings/r1pro-act-task/jobs/home-zenoh-5000/validation-summary.json`.
+The following results document the earlier training and lower-speed runs.
 
 Success requires bilateral finger contact, a real lift, upright placement within
 15 degrees, full containment, release, settling, and an open gripper back at

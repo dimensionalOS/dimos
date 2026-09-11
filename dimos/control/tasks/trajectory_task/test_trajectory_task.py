@@ -14,6 +14,8 @@
 
 import pytest
 
+from dimos.control.components import HardwareComponent, HardwareType
+from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import (
     CoordinatorState,
     JointStateSnapshot,
@@ -23,14 +25,34 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     JointTrajectoryTaskConfig,
     TrajectoryExecutionStatus,
 )
+from dimos.hardware.manipulators.spec import ManipulatorAdapter
+from dimos.hardware.spec import JointLimits
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 
+@pytest.fixture
+def hardware(mocker):
+    adapter = mocker.Mock(spec=ManipulatorAdapter)
+    component = HardwareComponent(
+        hardware_id="test",
+        hardware_type=HardwareType.MANIPULATOR,
+        joints=["joint", "finished", "running"],
+        limits=JointLimits(
+            position_lower=[-2.0] * 3, position_upper=[2.0] * 3, velocity_max=[1.0] * 3
+        ),
+    )
+    connected = ConnectedHardware(adapter, component)
+    yield {"test": connected}
+    connected.disconnect()
+
+
 @pytest.mark.parametrize("single_point", [False, True])
 @pytest.mark.parametrize("preempted", [False, True])
-def test_jtt_does_not_pull_joint_back_after_another_task_moves_it(single_point, preempted):
-    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]))
+def test_jtt_does_not_pull_joint_back_after_another_task_moves_it(
+    single_point, preempted, hardware
+):
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]), hardware=hardware)
     state = CoordinatorState(
         joints=JointStateSnapshot(joint_positions={"joint": 0.0}), t_now=0.1, dt=0.1
     )
@@ -80,8 +102,10 @@ def test_jtt_does_not_pull_joint_back_after_another_task_moves_it(single_point, 
     assert task.compute(state) is None
 
 
-def test_completed_joint_reanchors_while_other_joint_keeps_command_continuity():
-    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["finished", "running"]))
+def test_replacement_reanchors_completed_joint_and_replaces_running_motion(hardware):
+    task = JointTrajectoryTask(
+        JointTrajectoryTaskConfig(joint_names=["finished", "running"]), hardware=hardware
+    )
     measured = JointStateSnapshot(joint_positions={"finished": 0.0, "running": 0.0})
     initial = JointTrajectory(
         joint_names=["finished", "running"], points=[TrajectoryPoint(positions=[0.1, 1.0])]
@@ -104,7 +128,8 @@ def test_completed_joint_reanchors_while_other_joint_keeps_command_continuity():
     )
     output = task.compute(CoordinatorState(joints=measured, t_now=0.2, dt=0.1))
     assert output is not None
-    assert output.positions == pytest.approx([-1.0, 0.2])
+    assert output.joint_names == ["finished"]
+    assert output.positions == pytest.approx([-1.0])
 
 
 @pytest.mark.parametrize(
@@ -114,8 +139,8 @@ def test_completed_joint_reanchors_while_other_joint_keeps_command_continuity():
         ({"joint": -1.0}, TrajectoryExecutionStatus.START_STATE_MISMATCH),
     ],
 )
-def test_completed_trajectory_does_not_bypass_start_validation(positions, expected):
-    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]))
+def test_completed_trajectory_does_not_bypass_start_validation(positions, expected, hardware):
+    task = JointTrajectoryTask(JointTrajectoryTaskConfig(joint_names=["joint"]), hardware=hardware)
     initial = JointTrajectory(joint_names=["joint"], points=[TrajectoryPoint(positions=[0.1])])
     assert task.execute(initial, {}).status is TrajectoryExecutionStatus.ACCEPTED
     task.compute(
