@@ -133,9 +133,11 @@ class _Edge:
     def _arrays(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         if self._stamp_array is None:
             order = np.argsort(self.stamps, kind="stable")
-            self._stamp_array = np.asarray(self.stamps, dtype=np.float64)[order]
+            # Positions and orientations first, the stamps last: another thread's
+            # lookup takes the stamps as the sign that all three are there.
             self._position_array = np.asarray(self.positions, dtype=np.float64)[order]
             self._orientation_array = np.asarray(self.orientations, dtype=np.float64)[order]
+            self._stamp_array = np.asarray(self.stamps, dtype=np.float64)[order]
         assert self._position_array is not None and self._orientation_array is not None
         return self._stamp_array, self._position_array, self._orientation_array
 

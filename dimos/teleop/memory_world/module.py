@@ -1014,8 +1014,9 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         """What the viewer shows for search: a query button, or an offer to embed first."""
         present = False
         try:
-            index = self._ensure_visual_index()
-            present = index.precomputed_stream_name is not None or index.count() > 0
+            with self._store_lock:
+                index = self._ensure_visual_index()
+                present = index.precomputed_stream_name is not None or index.count() > 0
         except Exception as error:
             logger.warning("index status unavailable: %s", error)
         present = present or self._hyperspace_ready()
@@ -1037,7 +1038,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         """Pick up the stream siglipify just wrote and load the index from it."""
         if self.config.store_path.endswith(".mcap"):
             self._reopen_recording()
-        with self._index_lock:
+        with self._store_lock, self._index_lock:  # store first, like every index user
             if self._visual_index is not None:
                 self._visual_index.stop()
                 self._visual_index = None
@@ -1080,9 +1081,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         if self._hyperspace_ready():
             return self._find_with_hyperspace(phrase, started)
 
-        index = self._ensure_visual_index()
-        with self._store_lock:
-            indexed = index.count()
+        with self._store_lock:  # resolved and counted together: a reopen swaps the store
+            indexed = self._ensure_visual_index().count()
         if indexed == 0:
             return SkillResult.fail(
                 "INDEX_NOT_READY",
@@ -1096,7 +1096,7 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, Module):
         if not located:
             # No depth or extrinsics: answer with the poses the frames were taken from.
             with self._store_lock:  # the index reads its stream; a reopen swaps the store
-                hits = index.search(phrase, k=self.config.search_top_k)
+                hits = self._ensure_visual_index().search(phrase, k=self.config.search_top_k)
             places = cluster_places(
                 hits, radius=self.config.place_radius_m, max_places=self.config.max_places
             )
