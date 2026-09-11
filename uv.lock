@@ -1852,6 +1852,7 @@ all = [
     { name = "aiohttp" },
     { name = "aioquic" },
     { name = "aiortc" },
+    { name = "booster-rpc" },
     { name = "can-motor-control" },
     { name = "chromadb" },
     { name = "coacd" },
@@ -2340,6 +2341,7 @@ project-deps = [
     { name = "xacro" },
 ]
 tests = [
+    { name = "booster-rpc" },
     { name = "can-motor-control" },
     { name = "chromadb" },
     { name = "coacd" },
@@ -2391,6 +2393,7 @@ tests = [
     { name = "xacro" },
 ]
 tests-self-hosted = [
+    { name = "booster-rpc" },
     { name = "can-motor-control" },
     { name = "chromadb" },
     { name = "coacd" },
@@ -2466,7 +2469,7 @@ requires-dist = [
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
     { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
-    { name = "dimos", extras = ["apriltag", "cuda", "drone", "manipulation", "misc", "scene", "teleop", "unitree", "webrtc"], marker = "extra == 'all'" },
+    { name = "dimos", extras = ["apriltag", "booster", "cuda", "drone", "manipulation", "misc", "scene", "teleop", "unitree", "webrtc"], marker = "extra == 'all'" },
     { name = "dimos", extras = ["base"], marker = "extra == 'booster'" },
     { name = "dimos", extras = ["base", "mapping"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["control"], marker = "extra == 'planning'" },
@@ -2679,6 +2682,7 @@ project-deps = [
     { name = "xacro" },
 ]
 tests = [
+    { name = "booster-rpc", specifier = ">=0.0.11" },
     { name = "can-motor-control", specifier = ">=0.0.8" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "coacd", specifier = ">=1.0.0" },
@@ -2731,6 +2735,7 @@ tests = [
     { name = "xacro" },
 ]
 tests-self-hosted = [
+    { name = "booster-rpc", specifier = ">=0.0.11" },
     { name = "can-motor-control", specifier = ">=0.0.8" },
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "coacd", specifier = ">=1.0.0" },
