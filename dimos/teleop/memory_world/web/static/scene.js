@@ -2,9 +2,7 @@
 //
 // Frames: robot X forward, Y left, Z up (the wire format); three.js X right, Y up, Z back.
 //
-// We parent all world data under a "frame-rotate" group that applies a -90°
-// rotation around X, which maps (rx, ry, rz) -> (rx, rz, -ry). Outside that
-// rotate group, normal Y-up three.js logic applies.
+// World data hangs under a frame-rotate group: -90° about X, (rx,ry,rz) -> (rx,rz,-ry).
 //
 // Locomotion moves `_worldGroup`, not the camera (WebXR drives that).
 
@@ -42,7 +40,8 @@ const CAMERA_FRUSTUM_M = 0.5;         // how far the drawn frustum reaches from 
 // Image-thumbnail quads at capture poses.
 const IMAGE_QUAD_W = 0.60;
 const IMAGE_QUAD_H = 0.34;            // 16:9-ish
-const IMAGE_QUAD_HEIGHT = 0.9;        // robot z (metres) — chest height in VR
+// Photo markers hang at the height the camera actually was; a recording whose odom
+// starts metres off the floor would otherwise float them all in the air.
 // Thumbnails are decoded only near the viewer, and only this many at once:
 // a recording has hundreds of poses, each otherwise its own texture and draw call.
 const IMAGE_RENDER_DISTANCE_M = 12.0;
@@ -1247,7 +1246,7 @@ export class WorldScene {
             if (!this._thumbnailBytes.has(i)) continue;
             const dx = meta.rx - eye.x;
             const dy = meta.ry - eye.y;
-            const dz = IMAGE_QUAD_HEIGHT - eye.z;
+            const dz = meta.rz - eye.z;
             const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
             if (dist > maxDist) continue;
             candidates.push([dist, i]);
@@ -1287,7 +1286,7 @@ export class WorldScene {
                 this._imageQuadGeom,
                 new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide }),
             );
-            quad.position.set(meta.rx, meta.ry, IMAGE_QUAD_HEIGHT);
+            quad.position.set(meta.rx, meta.ry, meta.rz);
             quad.quaternion.copy(meta.quadQuat);
             this._imageQuadGroup.add(quad);
             this._imageQuadsByIndex.set(index, quad);

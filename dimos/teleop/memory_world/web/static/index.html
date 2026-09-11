@@ -297,12 +297,16 @@
             padding: 9px 14px;
             font-size: 12px;
             letter-spacing: 0.1em;
-            background: rgba(6, 9, 15, 0.82);
+            background: rgba(6, 9, 15, 0.97);
             color: var(--accent);
             border: 1px solid var(--accent-soft);
             clip-path: none;
         }
-        #askBar button:disabled { color: var(--muted); }
+        /* The Ask button sits over the world: it needs to read as a button. */
+        #askBar button { background: var(--accent); color: #04070c; font-weight: 700;
+            border-color: var(--accent); box-shadow: 0 0 12px rgba(0, 0, 0, 0.6); }
+        #askBar button:disabled { background: rgba(6, 9, 15, 0.97); color: var(--muted);
+            border-color: var(--accent-soft); box-shadow: none; }
         /* Menu: top right, under the perf readout. */
         #menuBtn {
             position: absolute;
