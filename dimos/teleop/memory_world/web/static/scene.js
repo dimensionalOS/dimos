@@ -133,6 +133,7 @@ export class WorldScene {
         this._voxelCullAccumS = 0;
         this._voxelCullEye = null;                    // robot-frame eye at the last compaction
         this._selectedImageIds = new Set();
+        this._selectedAreSourceIds = false;  // marker ids unless an answer says otherwise
         this._odomLine = null;
 
         // Query results are independent from the recorded odom and can be
@@ -693,13 +694,8 @@ export class WorldScene {
                 this._hudMarker.position.x = (uv[0] - 0.5) * s;
                 this._hudMarker.position.y = (0.5 - uv[1]) * s;
                 this._hudHeading.position.copy(this._hudMarker.position);
-                // Rotate heading needle to match camera yaw in robot frame.
-                // robot forward = world fwd transformed back. Easier: yaw
-                // in three world is atan2(fwd.x, fwd.z) but we want yaw in
-                // the *map* (robot) frame. After frame-rotate (rx = -90°),
-                // robot +X is three +X; robot +Y is three -Z. So robot yaw =
-                // atan2(world_fwd_x, -world_fwd_z) ... rendered on a Y-up
-                // panel where +X is right and +Y is up (map north = robot +Y).
+                // The needle wants yaw in the map frame, not three's. After the
+                // frame-rotate, robot +X is three +X and robot +Y is three -Z.
                 const robotYaw = Math.atan2(fwd.x, -fwd.z);
                 this._hudHeading.rotation.z = -robotYaw;
             }
@@ -774,10 +770,7 @@ export class WorldScene {
         const d = g.dirWorld;
         if (!o || !d) return;
 
-        // Cast a gravity-pulled parabola. y(t) = o.y + d.y*t - 0.5*g*t^2
-        // Find t where y(t) == ground (we use floor y = 0 — local-floor origin).
-        // Simpler: shoot a straight ray and stop at floor plane, then bend if
-        // it'd go above the user. For MVP a straight-ray-to-floor is enough.
+        // A straight ray stopped at the floor plane (y = 0, the local-floor origin).
         const groundY = 0;
         let t = (groundY - o[1]) / (d[1] < -1e-3 ? d[1] : -1e-3);
         if (t < 0 || t > TELEPORT_MAX_DISTANCE) {
@@ -1226,9 +1219,10 @@ export class WorldScene {
         const budget = Math.min(IMAGE_QUAD_BUDGET, level.quad_budget);
         // An answer's ids may be marker ids or the store's own; if they match neither,
         // show the photos near the viewer rather than none at all.
+        const idOf = this._selectedAreSourceIds ? (m) => m.sourceId : (m) => m.id;
         let selected = this._selectedImageIds.size > 0 ? this._selectedImageIds : null;
-        if (selected && !this._imagePoseMeta.some((m) => selected.has(m.id) || selected.has(m.sourceId))) {
-            selected = null;
+        if (selected && !this._imagePoseMeta.some((m) => selected.has(idOf(m)))) {
+            selected = null;  // an mcap has no real store ids, so fall back to what is near
         }
         const maxDist = selected
             ? Infinity
@@ -1237,7 +1231,7 @@ export class WorldScene {
         const candidates = [];
         for (let i = 0; i < this._imagePoseMeta.length; i++) {
             const meta = this._imagePoseMeta[i];
-            if (selected && !selected.has(meta.id) && !selected.has(meta.sourceId)) continue;
+            if (selected && !selected.has(idOf(meta))) continue;
             if (!this._thumbnailBytes.has(i)) continue;
             const dx = meta.rx - eye.x;
             const dy = meta.ry - eye.y;
@@ -1362,6 +1356,10 @@ export class WorldScene {
 
         this.clusterFilter = -1;
         this._selectedImageIds = new Set(result.observation_ids || []);
+        // Two id spaces share this one field: the agent skill answers with the store's
+        // own observation ids, every other engine with marker ids. They overlap, so the
+        // engine decides which to match rather than trying both and lighting up strangers.
+        this._selectedAreSourceIds = result.engine === 'agent';
         if (this._selectedImageIds.size > 0 && !this._imageQuadGroup.visible) {
             this._imageQuadGroup.visible = true;
             if (this.onLayerChange) this.onLayerChange();  // the photos box follows

@@ -185,6 +185,22 @@ def measure_camera_from_lidar(store: Any, streams: dict[str, Any], samples: int 
     return best, best_cost, inliers
 
 
+def sensor_lidar_stream(store: Any, tree: Any, streams: dict[str, Any]) -> str | None:
+    """The lidar stream that is still in the sensor's own frame.
+
+    A stitched recording also carries its clouds in the map frame (``*_corrected``,
+    stamped ``corrected_odom``). Those are the same walls seen from a moving robot,
+    so no single transform relates them to the camera; only the raw scans calibrate.
+    """
+    for name in [streams.get("lidar"), *streams.get("lidar_candidates", [])]:
+        if not name:
+            continue
+        frame = str(getattr(store.streams[name].first().data, "frame_id", "") or "").lstrip("/")
+        if any(child == frame for _, child in tree._edges):  # a frame that hangs off the robot
+            return name
+    return None
+
+
 def camera_mount_edge(tree: Any, camera_frame: str) -> tuple[str | None, str]:
     """The edge that carries the whole camera: (whatever it is bolted to, the camera root).
 
@@ -225,7 +241,7 @@ def write_corrected_static(
     if CORRECTED_STATIC_STREAM in store.list_streams():
         store.delete_stream(CORRECTED_STATIC_STREAM)  # one corrected answer per recording
     x, y, z, w = quaternion_from_matrix(matrix[:3, :3])
-    store.streams[CORRECTED_STATIC_STREAM].append(
+    store.stream(CORRECTED_STATIC_STREAM, TFMessage).append(
         TFMessage(
             Transform(
                 translation=Vector3(*(float(v) for v in matrix[:3, 3])),
@@ -268,6 +284,13 @@ def main() -> None:
             if not streams.get(role):
                 raise SystemExit(f"{args.recording} has no {role} stream; cannot calibrate")
         tree = build_tf_tree(store, streams["tf"])
+        sensor_lidar = sensor_lidar_stream(store, tree, streams)
+        if sensor_lidar is None:
+            raise SystemExit(
+                f"every lidar stream of {args.recording} is in a map frame; the raw scans"
+                " are what calibrates against the camera"
+            )
+        streams["lidar"] = sensor_lidar
         camera_frame = str(
             getattr(store.streams[streams["depth"]].first().data, "frame_id", "") or ""
         ).lstrip("/")

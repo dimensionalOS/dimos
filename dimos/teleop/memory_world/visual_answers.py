@@ -122,14 +122,20 @@ class VisualAnswers:
         logger.info("voice query path warm")
 
     def _index_status(self) -> dict[str, Any]:
-        """What the viewer shows for search: a query button, or an offer to embed first."""
+        """What the viewer shows for search: a query button, or an offer to embed first.
+
+        Never waits: a build holds the store lock for minutes, and a viewer that
+        connects meanwhile needs the progress line, not a stalled request thread.
+        """
         present = False
-        try:
-            with self._store_lock:
+        if self._store_lock.acquire(blocking=False):
+            try:
                 index = self._ensure_visual_index()
                 present = index.precomputed_stream_name is not None or index.count() > 0
-        except Exception as error:
-            logger.warning("index status unavailable: %s", error)
+            except Exception as error:
+                logger.warning("index status unavailable: %s", error)
+            finally:
+                self._store_lock.release()
         present = present or self._hyperspace_ready()
         return {"present": present, "index": self._index_progress, **self._embed_job.status()}
 

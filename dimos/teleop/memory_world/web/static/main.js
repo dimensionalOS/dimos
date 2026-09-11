@@ -640,17 +640,23 @@ askForm.addEventListener('submit', (event) => {
 
 let searchStatus = { engine: null, ready: false, memory_db_present: false, prepare: { state: 'idle', progress: '' } };
 let preparePoll = null;
+let lastPrepareFailure = null;
 
 function applySearchStatus(status) {
     searchStatus = status || searchStatus;
     const connected = !!ws;
     const ready = !!searchStatus.ready;
     const preparing = searchStatus.prepare && searchStatus.prepare.state === 'running';
+    const failed = searchStatus.prepare && searchStatus.prepare.state === 'failed';
     if (ready) {
         searchNote.textContent = `Search: Hyperspace · ${searchStatus.keyframes} keyframes`
             + (searchStatus.segments ? ` · ${searchStatus.segments} segments` : '');
     } else if (preparing) {
         searchNote.textContent = `Preparing search… ${(searchStatus.prepare.progress || '').slice(0, 80)}`;
+    } else if (failed) {
+        // The server works out why (a refused claim, a missing stream); saying so beats
+        // a bare "retry" the user can only repeat.
+        searchNote.textContent = `Prepare search failed: ${(searchStatus.prepare.progress || 'no reason given').slice(0, 120)}`;
     } else if (searchStatus.memory_db_present) {
         searchNote.textContent = 'Search: loading Hyperspace…';
     } else {
@@ -660,7 +666,12 @@ function applySearchStatus(status) {
     }
     prepareBtn.classList.toggle('hidden', !connected || ready || searchStatus.memory_db_present);
     prepareBtn.disabled = preparing;
-    prepareBtn.textContent = preparing ? 'Preparing…' : (searchStatus.prepare && searchStatus.prepare.state === 'failed' ? 'Prepare search failed — retry' : 'Prepare search (embed this recording)');
+    prepareBtn.textContent = preparing ? 'Preparing…' : (failed ? 'Prepare search failed — retry' : 'Prepare search (embed this recording)');
+    if (failed && searchStatus.prepare.progress !== lastPrepareFailure) {
+        lastPrepareFailure = searchStatus.prepare.progress;  // said once, not on every poll
+        setStatus(`Prepare search failed: ${searchStatus.prepare.progress}`);
+    }
+    if (!failed) lastPrepareFailure = null;
     askInput.disabled = !connected || !(ready || indexStatus.present);
     askInput.placeholder = ready ? 'Ask the recording, e.g. where did I see a chair'
         : (indexStatus.present ? 'Ask (SigLIP frame search)' : 'Search not ready — see the menu');
@@ -832,6 +843,11 @@ function applyIndexStatus(status) {
     embedBtn.disabled = running;
     if (running) {
         embedBtn.textContent = `Embedding… ${(indexStatus.progress || '').slice(0, 60)}`;
+        if (connected && !embedPoll) embedPoll = setInterval(pollEmbeddings, 3000);
+    } else if (/^(building|loading)/.test(indexStatus.index || '')) {
+        // The server is building the frame index, which takes minutes and holds the store.
+        embedBtn.textContent = `Indexing… ${indexStatus.index.slice(0, 60)}`;
+        embedBtn.disabled = true;
         if (connected && !embedPoll) embedPoll = setInterval(pollEmbeddings, 3000);
     } else {
         embedBtn.textContent = indexStatus.embedding === 'failed' ? 'Embedding failed — retry' : 'Add embeddings';
