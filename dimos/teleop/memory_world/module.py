@@ -76,6 +76,8 @@ from dimos.teleop.memory_world.recording import (
     tf_root,
 )
 from dimos.teleop.memory_world.replay import (
+    DIFF_STREAM,
+    KEYFRAME_STREAM,
     SensorScan,
     VoxelReplay,
     accumulate_scans,
@@ -1330,6 +1332,10 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 )
                 if self._stopping.is_set():  # cut short: the streams lack their last keyframe
                     raise RuntimeError("cancelled")
+                if stats.added == 0:  # nothing placed: the streams would pass as finished
+                    for name in (DIFF_STREAM, KEYFRAME_STREAM):
+                        store.delete_stream(name)
+                    raise RuntimeError("no voxel came out of the scans (tf, frame or range)")
                 logger.info(
                     "voxel replay built: %d scans, %d keyframes, +%d/-%d edits in %.1f s",
                     stats.scans,

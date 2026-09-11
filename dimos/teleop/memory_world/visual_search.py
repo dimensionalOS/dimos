@@ -835,6 +835,7 @@ def main() -> None:
         index_stream_name=args.index_stream,
         model_name=args.model,
         device=args.device,
+        world_frame=world,
     )
     try:
         added = index.build(stride=args.stride, batch_size=args.batch_size)

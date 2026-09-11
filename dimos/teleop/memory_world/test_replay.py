@@ -185,6 +185,11 @@ def test_cli_falls_back_to_the_tf_root_and_refuses_an_empty_build(tmp_path: Path
     _sensor_frame_recording(tmp_path / "unplaced.db", "base_link")  # tf never reaches 'lidar'
     with pytest.raises(SystemExit, match="no voxel came out"):
         replay_module.main([str(tmp_path / "unplaced.db"), "--world-frame", "odom", "--dry-run"])
+    with pytest.raises(SystemExit, match="no voxel came out"):  # written, then taken back
+        replay_module.main([str(tmp_path / "unplaced.db"), "--world-frame", "odom"])
+    store = SqliteStore(path=str(tmp_path / "unplaced.db"))
+    assert not {"voxel_diff", "voxel_keyframe"} & set(store.list_streams())
+    store.stop()
 
 
 def test_cli_refuses_scans_already_in_the_world_frame(tmp_path: Path) -> None:
