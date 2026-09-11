@@ -214,3 +214,17 @@ def test_near_scene_keeps_heat_touching_the_map() -> None:
     assert near_scene(heat, keys, radius=1).tolist() == [True, True, False, True, False]
     assert near_scene(heat, keys, radius=3).tolist() == [True, True, True, True, False]
     assert near_scene(np.zeros((0, 3), np.int64), keys).tolist() == []
+
+
+def test_combine_keeps_support_when_one_channel_is_empty() -> None:
+    from dimos.teleop.memory_world.hyperspace_fast import Pooled
+
+    a = Pooled(np.array([[0, 0, 0]]), np.array([1.0]), np.array([3]), np.array([2]))
+    empty = pool(
+        Rasterized(
+            np.zeros((0, 3), np.int64), np.zeros(0, np.int64), np.zeros(0), np.zeros(0, np.int64)
+        ),
+        hs.QueryConfig(),
+    )
+    got = combine(a, empty, weight=1.0)
+    assert got.frames.tolist() == [3] and got.bins.tolist() == [2]

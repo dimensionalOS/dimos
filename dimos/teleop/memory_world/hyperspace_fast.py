@@ -274,7 +274,9 @@ def pool(evidence: Rasterized, config: Any) -> Pooled:
     across frames, times the square root of the distinct yaw bins whose best
     score beats ``yaw_hot_threshold``."""
     if len(evidence.score) == 0:
-        return Pooled(np.zeros((0, 3), np.int64), np.zeros(0))
+        return Pooled(
+            np.zeros((0, 3), np.int64), np.zeros(0), np.zeros(0, np.int64), np.zeros(0, np.int64)
+        )
     keys = pack_keys(evidence.index)
     # Best entry per (voxel, frame): sort by voxel, frame, score descending; keep the first of each run.
     order = np.lexsort((-evidence.score, evidence.frame_id, keys))
@@ -323,7 +325,10 @@ def combine(patch_map: Pooled, segment_map: Pooled, weight: float) -> Pooled:
     unique, inverse = np.unique(keys, return_inverse=True)
     summed = np.bincount(inverse, weights=values, minlength=len(unique))
     frames = bins = None
-    if patch_map.frames is not None and segment_map.frames is not None:
+    if patch_map.frames is not None or segment_map.frames is not None:
+        # A channel without support counts (an empty one) contributes nothing.
+        patch_map = _with_support(patch_map)
+        segment_map = _with_support(segment_map)
         # Frames add up across the channels; the bin count is the larger one (as patches.combine).
         frames = np.bincount(
             inverse,
@@ -353,6 +358,13 @@ def near_scene(
                 pos = np.minimum(np.searchsorted(scene_keys, keys), len(scene_keys) - 1)
                 hit |= scene_keys[pos] == keys
     return hit
+
+
+def _with_support(pooled: Pooled) -> Pooled:
+    if pooled.frames is not None and pooled.bins is not None:
+        return pooled
+    n = len(pooled.score)
+    return Pooled(pooled.index, pooled.score, np.zeros(n, np.int64), np.zeros(n, np.int64))
 
 
 def best_first(pooled: Pooled) -> Pooled:

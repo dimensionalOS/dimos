@@ -66,7 +66,7 @@ def densify(path: NDArray[np.float64], step: float) -> NDArray[np.float64]:
         return path
     pieces = []
     for a, b in pairwise(path):
-        n = max(int(math.ceil(math.dist(a[:2], b[:2]) / step)), 1)
+        n = max(math.ceil(math.dist(a[:2], b[:2]) / step), 1)
         pieces.append(a + (b - a) * np.linspace(0, 1, n, endpoint=False)[:, None])
     pieces.append(path[-1:])
     return np.concatenate(pieces)

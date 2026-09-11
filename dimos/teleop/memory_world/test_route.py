@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import itertools
 import math
 
 import numpy as np
@@ -27,7 +28,7 @@ BODY_Z = 0.4  # the robot's base height above the floor at z = 0
 def _path(*waypoints: tuple[float, float]) -> np.ndarray:
     """The robot's base along straight legs between waypoints, a point every 5 cm."""
     points = []
-    for (x0, y0), (x1, y1) in zip(waypoints, waypoints[1:], strict=False):
+    for (x0, y0), (x1, y1) in itertools.pairwise(waypoints):
         n = max(int(math.dist((x0, y0), (x1, y1)) / 0.05), 2)
         for t in np.linspace(0, 1, n):
             points.append((x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, BODY_Z))
