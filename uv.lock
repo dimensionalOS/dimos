@@ -41,6 +41,7 @@ can-motor-control = false
 lcm-dimos-fork = false
 md-babel-py = false
 dim-odom = false
+booster-rpc = false
 roboplan = false
 
 [manifest]
@@ -618,7 +619,7 @@ wheels = [
 
 [[package]]
 name = "booster-rpc"
-version = "0.0.10"
+version = "0.0.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "betterproto" },
@@ -628,9 +629,9 @@ dependencies = [
     { name = "opencv-python", marker = "sys_platform == 'never'" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9e/9c/ab29744ff3834f0b21224a55063b60c8753c1ed79b6b7a56f9befa3570ae/booster_rpc-0.0.10.tar.gz", hash = "sha256:2c0a74fd72e793b1aa5932b638640f7a96861169828e89ec492ddae2f136ffca", size = 6327, upload-time = "2026-05-16T11:46:21.149Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8f/41/c43a5aca25fbf70fbf22ffa0f88406beeadc68f5ef5bf9b95ef0f17cdeab/booster_rpc-0.0.11.tar.gz", hash = "sha256:900e2da6722980710b4e06b2b375c107e24589870227ed4bc2085e3a8dd9098e", size = 6840, upload-time = "2026-09-10T23:49:44.155Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/27/4f381451f0fe9f407eeb1459bd6baa52b16a1b156f0d57e3d7f6a9c7641e/booster_rpc-0.0.10-py3-none-any.whl", hash = "sha256:c2ec8c2d6a2324e60fa062d354375a677c70562128245e49b2a08d31db733dbd", size = 7749, upload-time = "2026-05-16T11:46:19.943Z" },
+    { url = "https://files.pythonhosted.org/packages/34/3d/44e373d61e7194722876fef43ec901ebb1e9c74c9006e7eed78aec085773/booster_rpc-0.0.11-py3-none-any.whl", hash = "sha256:d18751098207b338e6de03d816a73e5a8d81a4a469ba8a4a410601b8275acbd8", size = 8559, upload-time = "2026-09-10T23:49:43.337Z" },
 ]
 
 [[package]]
@@ -2451,7 +2452,7 @@ requires-dist = [
     { name = "aiortc", marker = "extra == 'webrtc'", specifier = ">=1.14.0" },
     { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "bleak", specifier = ">=3.0.2" },
-    { name = "booster-rpc", marker = "extra == 'booster'", specifier = ">=0.0.10" },
+    { name = "booster-rpc", marker = "extra == 'booster'", specifier = ">=0.0.11" },
     { name = "bosdyn-api", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "bosdyn-client", marker = "extra == 'spot'", specifier = ">=4.0.0" },
     { name = "bosdyn-core", marker = "extra == 'spot'", specifier = ">=4.0.0" },
