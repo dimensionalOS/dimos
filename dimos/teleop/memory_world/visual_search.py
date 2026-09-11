@@ -77,18 +77,6 @@ if TYPE_CHECKING:
 # How index rows say which frame their pose describes.
 POSE_FRAME_TAG = "camera_optical"
 
-
-def pose_tag_for(tree: Any) -> str:
-    """The pose convention tag for poses placed through *tree*.
-
-    Index rows store poses as computed and are never re-placed on read, so the tag
-    has to name the extrinsic that made them -- and name WHICH one, since replacing
-    one measurement with another moves every pose just as much as the first did.
-    """
-    mount = getattr(tree, "mount_fingerprint", None) if tree is not None else None
-    return POSE_FRAME_TAG + (f"+mount_{mount}" if mount else "")
-
-
 logger = setup_logger()
 
 # Highest-accuracy SigLIP 2 checkpoint with a text tower (85.0 zero-shot
@@ -442,7 +430,6 @@ class VisualMemoryIndex:
         device: str | None = None,
         dtype: torch.dtype = torch.float16,
         world_frame: str | None = None,
-        pose_tag: str = POSE_FRAME_TAG,
     ) -> None:
         """*pose_of* maps an image observation to its camera's optical pose in
         the world as a 4x4 matrix, or None to skip the frame. *world_frame* names
@@ -450,11 +437,6 @@ class VisualMemoryIndex:
         self.store = store
         self.pose_of = pose_of
         self.world_frame = world_frame
-        # Rows carry poses as they were computed, never recomputed on read, so this
-        # records which extrinsic produced them. A recording whose camera mount is
-        # later measured moves every pose by the whole correction, and an index built
-        # before that has to be rebuilt rather than quietly believed.
-        self.pose_tag = pose_tag
         self.image_stream_name = image_stream_name
         self.index_stream_name = index_stream_name or index_stream_name_of(
             model_name, image_stream_name
@@ -502,10 +484,10 @@ class VisualMemoryIndex:
                         f"index stream {self.index_stream_name!r} holds poses in {built_in!r}, "
                         f"not {self.world_frame!r}; rebuild it"
                     )
-                if tags.get("pose_frame") != self.pose_tag:
+                if tags.get("pose_frame") != POSE_FRAME_TAG:
                     raise ValueError(
                         f"index stream {self.index_stream_name!r} stores "
-                        f"{tags.get('pose_frame')!r} poses, not {self.pose_tag!r}; rebuild it"
+                        f"{tags.get('pose_frame')!r} poses, not {POSE_FRAME_TAG!r}; rebuild it"
                     )
             self._index_stream = stream
         return self._index_stream
@@ -600,7 +582,7 @@ class VisualMemoryIndex:
                         "model": self.model_name,
                         "image_stream": self.image_stream_name,
                         "world_frame": self.world_frame,
-                        "pose_frame": self.pose_tag,
+                        "pose_frame": POSE_FRAME_TAG,
                     },
                 )
                 added += 1
@@ -872,7 +854,6 @@ def main() -> None:
         model_name=args.model,
         device=args.device,
         world_frame=world,
-        pose_tag=pose_tag_for(tree),
     )
     try:
         added = index.build(stride=args.stride, batch_size=args.batch_size)

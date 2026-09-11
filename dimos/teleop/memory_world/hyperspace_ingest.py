@@ -43,7 +43,7 @@ from typing import Any
 import numpy as np
 
 from dimos.teleop.memory_world.hyperspace_search import memory_db_for
-from dimos.teleop.memory_world.recording import CORRECTED_STATIC_STREAM, depth_info_stream_for
+from dimos.teleop.memory_world.recording import depth_info_stream_for
 
 logger = logging.getLogger(__name__)
 
@@ -268,17 +268,18 @@ def _ingest(
     def in_window(observation: Any) -> bool:
         return start_ts - 5.0 <= float(observation.ts) <= start_ts + max_seconds + 5.0
 
-    measured = (
-        [t for obs in store.streams[CORRECTED_STATIC_STREAM] for t in obs.data.transforms]
-        if CORRECTED_STATIC_STREAM in store.list_streams()
+    held = (
+        [t for obs in store.streams[streams["tf_static"]] for t in obs.data.transforms]
+        if streams.get("tf_static")
         else []
     )
-    # Whatever a measured edge names, the recording's own samples of it are dropped: a
-    # stitched recording republishes its static edges inside the moving tf stream
-    # hundreds of times, and Hyperspace keeps the last sample of an edge, so one early
-    # correction would simply be overwritten. Same reason the corrected base poses
-    # displace the recorded world -> base_link below.
-    superseded = {(str(t.frame_id), str(t.child_frame_id)) for t in measured}
+    # An edge tf_static declares is fixed for all time, so the recording's own moving
+    # samples of it are dropped wherever they appear. A stitched recording republishes
+    # its static edges inside the moving stream hundreds of times, and Hyperspace keeps
+    # the LAST sample of an edge, so without this the static value is overwritten by a
+    # stale one. TfTree.add does the same thing for the same reason, and the corrected
+    # base poses displace the recorded edge below on the same principle.
+    superseded = {(str(t.frame_id), str(t.child_frame_id)) for t in held}
     if corrected is not None:
         superseded.add((world, base))
 
@@ -325,26 +326,12 @@ def _ingest(
             )
 
     def statics() -> Iterator[tuple[float, TFMessage]]:
-        """The static edges, with a measured mount replacing whatever the recording said.
+        """The recording's static edges, once, before everything.
 
         The memory db is what places keyframes at query time, so it has to agree with
-        the tree the module places markers and pictures with. Without this the search
-        evidence would sit where the recording claims the camera was and the map would
-        show where it actually was, disagreeing by the whole correction.
+        the tree the module places markers and pictures with.
         """
-        static_stream = streams.get("tf_static")
-        held = (
-            [t for obs in store.streams[static_stream] for t in obs.data.transforms]
-            if static_stream
-            else []  # a stitched recording keeps its static edges in the moving stream
-        )
-        held = [t for t in held if (str(t.frame_id), str(t.child_frame_id)) not in superseded]
-        held += measured
-        if measured:
-            print(
-                f"tf: {len(measured)} measured static edge(s) replace the recorded ones", flush=True
-            )
-        if held:  # once, before everything: Hyperspace holds the last sample of an edge
+        if held:  # Hyperspace holds the last sample of an edge, so these come first
             yield start_ts - 5.0, TFMessage(*held)
 
     transforms = 0

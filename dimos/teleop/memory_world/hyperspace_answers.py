@@ -59,7 +59,6 @@ from dimos.teleop.memory_world.query import (
     HighlightPoint,
     MemoryQueryResult,
 )
-from dimos.teleop.memory_world.recording import measured_mount_written_at
 from dimos.teleop.memory_world.replay import frame_positions
 from dimos.teleop.memory_world.route import (
     MLS_MAX_VOXELS,
@@ -134,42 +133,11 @@ class HyperspaceAnswers:
 
     # ---- loading -----------------------------------------------------------
 
-    def _memory_db_predates_the_mount(self) -> str | None:
-        """Why the memory db cannot be trusted, when it was built before the mount was measured.
-
-        The ingest bakes the mount into the memory db, and the module's tf tree picks a
-        measured one up immediately, so a db older than the measurement answers in the
-        old frame while everything else has moved. None when it is fine.
-        """
-        try:
-            with self._store_lock:
-                written = measured_mount_written_at(self._ensure_store())
-            if written is None:
-                return None
-            db = memory_db_for(self.config.store_path)
-            if db.stat().st_mtime >= written:
-                return None
-        except Exception as error:  # a check that cannot run must not block the search
-            logger.warning("could not date the memory db: %s", error)
-            return None
-        return (
-            f"{db.name} was built before this recording's camera mount was measured; its "
-            "answers would sit at the old mount. Re-run the ingest (Prepare search)."
-        )
-
     def _load_hyperspace(self, reload: bool = False) -> bool:
         """Warm the search over the recording's memory db when it has one. Slow (seconds); off the request path.
         Not while the ingest is still writing that db (it would load a partial index); *reload*
         replaces a search already loaded, for when the ingest has just finished."""
         if not memory_db_ready(self.config.store_path):
-            return False
-        stale = self._memory_db_predates_the_mount()
-        if stale is not None:
-            # Loading it would put every Hyperspace answer at the mount the recording
-            # used to claim while the markers move to the measured one, disagreeing by
-            # the whole correction and saying nothing.
-            self._hyperspace_error = stale
-            logger.warning("hyperspace: %s", stale)
             return False
         if self._prepare_job.status()["embedding"] == "running" and not reload:
             return False
@@ -222,11 +190,7 @@ class HyperspaceAnswers:
             "engine": "hyperspace" if search is not None else None,
             "ready": search is not None,
             "memory_db": str(memory_db_for(self.config.store_path)),
-            # A db we have refused is not one the viewer should wait on: saying it is
-            # present leaves the page on "loading Hyperspace…" for ever and hides the
-            # Prepare button the error text tells the user to press.
-            "memory_db_present": memory_db_ready(self.config.store_path)
-            and self._memory_db_predates_the_mount() is None,
+            "memory_db_present": memory_db_ready(self.config.store_path),
             "keyframes": search.keyframe_count if search else 0,
             "segments": search.segment_count if search else 0,
             "error": self._hyperspace_error,

@@ -29,7 +29,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-import hashlib
 import json
 import math
 from pathlib import Path
@@ -478,10 +477,6 @@ def corrected_odometry_stream(store: Store) -> str | None:
     return None
 
 
-# Written by calibrate_static_tf: the camera mount as the lidar actually sees it.
-CORRECTED_STATIC_STREAM = "tf_static_corrected"
-
-
 def build_tf_tree(
     store: Store, tf_stream: str, world_frame: str | None = None, base_frame: str = "base_link"
 ) -> TfTree:
@@ -504,46 +499,6 @@ def build_tf_tree(
                     (float(q.x), float(q.y), float(q.z), float(q.w)),
                     static=True,
                 )
-    # A measured mount replaces the recorded one outright: the two disagree by tens of
-    # degrees, so holding both would only average a right answer with a wrong one.
-    if CORRECTED_STATIC_STREAM in store.list_streams():
-        for obs in store.streams[CORRECTED_STATIC_STREAM]:
-            if _already_measures_up(tree, obs.tags, float(obs.ts)):
-                logger.info(
-                    "tf: %r already agrees with the measurement; leaving it alone",
-                    CORRECTED_STATIC_STREAM,
-                )
-                continue
-            for t in obs.data.transforms:
-                p, q = t.translation, t.rotation
-                tree._edges.pop((str(t.frame_id), str(t.child_frame_id)), None)
-                tree.add(
-                    str(t.frame_id),
-                    str(t.child_frame_id),
-                    float(obs.ts),
-                    (float(p.x), float(p.y), float(p.z)),
-                    (float(q.x), float(q.y), float(q.z), float(q.w)),
-                    static=True,
-                )
-                tree.corrected_static = True  # this tree's mount was measured, not recorded
-                tree.mount_fingerprint = hashlib.sha1(
-                    repr(
-                        (
-                            str(t.frame_id),
-                            str(t.child_frame_id),
-                            round(float(p.x), 6),
-                            round(float(p.y), 6),
-                            round(float(p.z), 6),
-                            round(float(q.x), 6),
-                            round(float(q.y), 6),
-                            round(float(q.z), 6),
-                            round(float(q.w), 6),
-                        )
-                    ).encode()
-                ).hexdigest()[:8]
-                logger.info(
-                    "tf: %s -> %s from %r", t.frame_id, t.child_frame_id, CORRECTED_STATIC_STREAM
-                )
     corrected = corrected_odometry_stream(store)
     if corrected is None:
         return tree
@@ -556,21 +511,42 @@ def build_tf_tree(
     # (`world -> corrected_odom`), which is nowhere in tf, while the raw odometry it was
     # derived from names the edge that is.
     named = [
-        _edge_named_by(store, name)
+        edge
         for name in (corrected.removesuffix("_corrected"), corrected)
         if name in store.list_streams()
+        for edge in [_edge_named_by(store, name)]
+        if edge
     ]
     world = world_frame if world_frame in tree.frames else tf_root(tree)
-    edge_key = next((pair for pair in named if pair and pair in tree._edges), (world, base_frame))
-    world, base_frame = edge_key
-    if world is None or edge_key not in tree._edges:
+    edge_key = next((pair for pair in named if pair in tree._edges), None)
+    if edge_key is None:
+        # A corrected stream names its OWN OUTPUT frame as the child (`odom ->
+        # corrected_odom`), which is no edge at all, so a miss there says nothing about
+        # the edge -- as long as it agrees about the world. A stream whose parent is a
+        # frame this tree has never heard of is describing some other world, and putting
+        # its poses on this tree's base edge would be the silent substitution this
+        # lookup exists to prevent.
+        parents = {pair[0] for pair in named}
+        if parents and world not in parents:
+            logger.warning(
+                "tf: %r names %s, in neither this tree's world (%s) nor any edge it has;"
+                " the loop-closed poses are NOT applied and the map will disagree with"
+                " everything placed by tf",
+                corrected,
+                named,
+                world,
+            )
+            return tree
+        edge_key = (world, base_frame)
+    if edge_key[0] is None or edge_key not in tree._edges:
         logger.warning(
-            "tf: %r describes %s -> %s, which this tree has no edge for; the loop-closed"
-            " poses are NOT applied and the map will disagree with everything placed by tf",
+            "tf: %r describes no edge this tree has (tried %s); the loop-closed poses are"
+            " NOT applied and the map will disagree with everything placed by tf",
             corrected,
-            *named,
+            named or [edge_key],
         )
         return tree
+    world, base_frame = edge_key
     edge = _Edge()
     n = 0
     for obs in store.streams[corrected].order_by("ts"):
@@ -599,50 +575,6 @@ def _edge_named_by(store: Store, name: str) -> tuple[str, str] | None:
     parent = str(getattr(sample.data, "frame_id", "") or "").lstrip("/")
     child = str(getattr(sample.data, "child_frame_id", "") or "").lstrip("/")
     return (parent, child) if parent and child else None
-
-
-def measured_mount_written_at(store: Store) -> float | None:
-    """Wall clock when this recording's mount was measured, if it ever was.
-
-    Anything derived from the recording and older than this predates the correction
-    and is placing things with the mount the recording used to claim.
-    """
-    if CORRECTED_STATIC_STREAM not in store.list_streams():
-        return None
-    try:
-        written = store.streams[CORRECTED_STATIC_STREAM].first().tags.get("written_at")
-        return float(written) if written else None
-    except Exception:
-        return None
-
-
-def _already_measures_up(
-    tree: Any,
-    tags: dict[str, Any] | None,
-    ts: float,
-    degrees: float = 5.0,
-    metres: float = 0.25,
-) -> bool:
-    """Whether the recording already satisfies the measurement this correction carries.
-
-    A recording fixed at the source -- the publisher corrected, the file re-derived --
-    needs no correction, and applying one on top would undo the fix by exactly the
-    amount it fixed. The measurement is the lidar-to-camera transform that was actually
-    observed, so asking whether the tree already produces it is a test rather than
-    something anyone has to remember. A correction without the tags is always applied.
-    """
-    if not tags or not tags.get("measured"):
-        return False
-    try:
-        measured = np.asarray(json.loads(str(tags["measured"])), dtype=np.float64).reshape(4, 4)
-        current = tree.lookup(str(tags["measured_from"]), str(tags["measured_to"]), ts, 1.0)
-    except Exception:  # a tag we cannot read is a correction we must still apply
-        return False
-    if current is None:
-        return False
-    delta = np.linalg.inv(np.asarray(current, dtype=np.float64)) @ measured
-    turn = np.degrees(np.arccos(np.clip((np.trace(delta[:3, :3]) - 1.0) / 2.0, -1.0, 1.0)))
-    return bool(turn <= degrees and np.linalg.norm(delta[:3, 3]) <= metres)
 
 
 def tf_root(tree: Any) -> str | None:
@@ -716,12 +648,7 @@ def detect_streams(store: Store, image: str | None = None) -> dict[str, Any]:
         "lidar_candidates": rank("lidar", "PointCloud2"),
         "tf": pick("tf", "TFMessage"),
         "tf_static": next(
-            (
-                n
-                for n in rank("tf_static", "TFMessage")
-                # The measured mount is applied over these, never mistaken for them.
-                if "static" in n.lower() and n != CORRECTED_STATIC_STREAM
-            ),
+            (n for n in rank("tf_static", "TFMessage") if "static" in n.lower()),
             None,
         ),
     }

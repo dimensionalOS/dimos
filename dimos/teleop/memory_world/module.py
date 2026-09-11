@@ -92,7 +92,6 @@ from dimos.teleop.memory_world.visual_search import (
     VisualMemoryIndex,
     body_style_quaternion,
     cluster_places,
-    pose_tag_for,
     search_phrase,
 )
 from dimos.utils.data import get_data
@@ -1019,13 +1018,8 @@ class MemoryWorldModule(HyperspaceAnswers, ReplayServing, VisualAnswers, Module)
                 index_stream_name=self.config.image_index_stream_name,
                 model_name=self.config.siglip_model_name,
                 world_frame=self.config.world_frame,
-                pose_tag=self._pose_tag(),
             )
         return self._visual_index
-
-    def _pose_tag(self) -> str:
-        """Names the extrinsic the stored index poses were computed with."""
-        return pose_tag_for(self._tf_tree())
 
     def _reopen_recording(self) -> None:
         """Open the recording afresh: siglipify rewrote the mcap, and the store holds the old file."""

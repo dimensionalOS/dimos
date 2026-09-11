@@ -185,15 +185,9 @@ class TfTree:
         # (world, odometry stream) once recording.build_tf_tree has replaced the
         # world -> base_link edge with corrected poses; the ingest follows it.
         self.substituted: tuple[str, str] | None = None
-        # True once a measured mount has replaced the recorded one (calibrate_static_tf),
-        # so a consumer can tell a mount that was measured from one merely recorded.
-        self.corrected_static = False
         # The child of the edge `substituted` replaced: pointlio tracks the lidar on
         # some rigs, so it is not always base_link and the ingest must not assume it.
         self.substituted_child = "base_link"
-        # Short digest of the measured mount this tree applied, so stored poses can
-        # say WHICH measurement placed them, not merely that one did.
-        self.mount_fingerprint: str | None = None
 
     @classmethod
     def from_stream(cls, stream: Iterable[Any]) -> TfTree:

@@ -28,20 +28,17 @@ mount) which :func:`recording.build_tf_tree` applies over the recording's own
 static tf. The recording itself is never rewritten.
 
     python -m dimos.teleop.memory_world.calibrate_static_tf <recording.db|.mcap> [--samples 20]
-        [--dry-run]
+        [--write]
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-import time
 from typing import Any
 
 import numpy as np
 
-from dimos.teleop.memory_world.recording import CORRECTED_STATIC_STREAM
 from dimos.teleop.memory_world.tf_tree import quaternion_from_matrix
 
 logger = logging.getLogger(__name__)
@@ -312,52 +309,39 @@ def corrected_mount(
     return mount, camera_root, matrix
 
 
-def write_corrected_static(
-    store: Any,
-    mount: str,
-    child: str,
-    matrix: np.ndarray,
-    ts: float,
-    *,
-    measured: np.ndarray,
-    lidar_frame: str,
-    camera_frame: str,
-) -> None:
-    """Record the corrected edge where :func:`recording.build_tf_tree` will find it.
+def write_static_mount(store: Any, mount: str, child: str, matrix: np.ndarray, ts: float) -> str:
+    """Put the measured mount into the recording's own ``tf_static``, and say where.
 
-    What was actually measured -- the lidar-to-camera transform -- is stored beside it,
-    so the correction can tell whether a recording still needs it. A recording fixed at
-    the source already satisfies the measurement, and applying this on top would undo
-    the fix; the tags are what let that be checked rather than remembered.
+    Not a correction layer the reader has to know about: a recording whose static tf
+    is wrong is fixed by writing the right static tf, and everything downstream then
+    reads an ordinary recording. A recording with no ``tf_static`` gains one holding
+    this edge alone; one that has it keeps every other edge and loses only this one.
     """
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+    from dimos.teleop.memory_world.recording import detect_streams
 
-    if CORRECTED_STATIC_STREAM in store.list_streams():
-        store.delete_stream(CORRECTED_STATIC_STREAM)  # one measured answer per recording
+    name = detect_streams(store).get("tf_static") or "tf_static"
+    kept = [
+        t
+        for obs in (store.streams[name] if name in store.list_streams() else [])
+        for t in obs.data.transforms
+        if (str(t.frame_id), str(t.child_frame_id)) != (mount, child)
+    ]
     x, y, z, w = quaternion_from_matrix(matrix[:3, :3])
-    store.stream(CORRECTED_STATIC_STREAM, TFMessage).append(
-        TFMessage(
-            Transform(
-                translation=Vector3(*(float(v) for v in matrix[:3, 3])),
-                rotation=Quaternion(float(x), float(y), float(z), float(w)),
-                frame_id=mount,
-                child_frame_id=child,
-                ts=ts,
-            )
-        ),
+    corrected = Transform(
+        translation=Vector3(*(float(v) for v in matrix[:3, 3])),
+        rotation=Quaternion(float(x), float(y), float(z), float(w)),
+        frame_id=mount,
+        child_frame_id=child,
         ts=ts,
-        tags={
-            "measured_from": lidar_frame,
-            "measured_to": camera_frame,
-            "measured": json.dumps([round(float(v), 9) for v in np.asarray(measured).ravel()]),
-            # Wall clock, so anything built from this recording can tell whether it
-            # predates the measurement. The observation's own ts is the recording's.
-            "written_at": repr(time.time()),
-        },
     )
+    if name in store.list_streams():
+        store.delete_stream(name)  # rewritten whole: one sample of an edge, held for all time
+    store.stream(name, TFMessage).append(TFMessage(*kept, corrected), ts=ts)
+    return name
 
 
 def _report(name: str, matrix: np.ndarray) -> str:
@@ -375,7 +359,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("recording")
     parser.add_argument("--samples", type=int, default=20)
-    parser.add_argument("--dry-run", action="store_true", help="measure and print, write nothing")
+    parser.add_argument(
+        "--write",
+        action="store_true",
+        help="put the measured mount into the recording's tf_static (default: print only)",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -440,20 +428,11 @@ def main() -> None:
             raise SystemExit(f"no mount edge above {camera_frame}; nothing to correct")
         mount, child, matrix = fixed
         print(_report(f"corrected {mount} -> {child}", matrix))
-        if args.dry_run:
-            print("dry run: nothing written")
+        if not args.write:
+            print("measured only; pass --write to put it in the recording's tf_static")
             return
-        write_corrected_static(
-            store,
-            mount,
-            child,
-            matrix,
-            ts,
-            measured=lidar_T_camera,
-            lidar_frame=lidar_frame,
-            camera_frame=camera_frame,
-        )
-        print(f"wrote {CORRECTED_STATIC_STREAM} to {args.recording}")
+        name = write_static_mount(store, mount, child, matrix, ts)
+        print(f"wrote {mount} -> {child} into {name!r} of {args.recording}")
     finally:
         store.stop()
 

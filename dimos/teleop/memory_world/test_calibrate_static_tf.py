@@ -162,27 +162,20 @@ def test_thinning_keeps_one_point_per_cube_and_obeys_the_cap() -> None:
     assert {tuple(p) for p in thinned} <= {tuple(p) for p in spread}
 
 
-def test_a_correction_goes_inert_on_a_recording_already_fixed_at_the_source(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """Two fixes must never compose. The measurement is what decides, not a memory.
+def test_a_measured_mount_is_written_as_ordinary_static_tf(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The fix is the recording's own tf_static, not a layer anything has to know about.
 
-    A correction carries the lidar-to-camera transform it was measured to produce. If
-    the recording already produces that -- because the publisher was fixed and the file
-    re-derived -- applying it again would undo the fix by exactly the amount it fixed.
+    A recording whose static tf is wrong is fixed by writing the right static tf. Every
+    other static edge survives, the wrong one does not, and the tree then reads a plain
+    recording with no special case anywhere.
     """
-    import json
-
     from dimos.memory.store.sqlite import SqliteStore
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
     from dimos.msgs.geometry_msgs.Transform import Transform
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
     from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-    from dimos.teleop.memory_world.calibrate_static_tf import write_corrected_static
-    from dimos.teleop.memory_world.recording import (
-        CORRECTED_STATIC_STREAM,
-        _already_measures_up,
-        build_tf_tree,
-        measured_mount_written_at,
-    )
+    from dimos.teleop.memory_world.calibrate_static_tf import write_static_mount
+    from dimos.teleop.memory_world.recording import build_tf_tree
 
     def edge(parent: str, child: str, x: float) -> TFMessage:
         return TFMessage(
@@ -199,33 +192,22 @@ def test_a_correction_goes_inert_on_a_recording_already_fixed_at_the_source(tmp_
     store.start()
     try:
         store.stream("tf", TFMessage).append(edge("lidar", "mount", 1.0), ts=1.0)
-        store.stream("tf_static", TFMessage).append(edge("mount", "cam", 9.0), ts=1.0)
-
-        measured = np.eye(4)
-        measured[0, 3] = 3.0  # what lidar -> cam should be: the recording says 10
-        fixed = np.eye(4)
-        fixed[0, 3] = 2.0  # so mount -> cam should be 2, not 9
-        write_corrected_static(
-            store,
-            "mount",
-            "cam",
-            fixed,
-            1.0,
-            measured=measured,
-            lidar_frame="lidar",
-            camera_frame="cam",
+        store.stream("tf_static", TFMessage).append(
+            TFMessage(*edge("mount", "cam", 9.0).transforms, *edge("mount", "imu", 4.0).transforms),
+            ts=1.0,
         )
+        assert build_tf_tree(store, "tf").lookup("lidar", "cam", 1.0)[0, 3] == 10.0
+
+        fixed = np.eye(4)
+        fixed[0, 3] = 2.0
+        assert write_static_mount(store, "mount", "cam", fixed, 1.0) == "tf_static"
+        tree = build_tf_tree(store, "tf")
+        assert tree.lookup("lidar", "cam", 1.0)[0, 3] == 3.0  # the measured mount
+        assert tree.lookup("mount", "imu", 1.0)[0, 3] == 4.0  # every other edge untouched
+
+        # Running it again is not a second correction: it replaces, never accumulates.
+        assert write_static_mount(store, "mount", "cam", fixed, 1.0) == "tf_static"
         assert build_tf_tree(store, "tf").lookup("lidar", "cam", 1.0)[0, 3] == 3.0
-        assert measured_mount_written_at(store) is not None  # dated, so staleness is checkable
-
-        tags = store.streams[CORRECTED_STATIC_STREAM].first().tags
-        already = build_tf_tree(store, "tf")  # a tree that already measures up
-        assert _already_measures_up(already, tags, 1.0)  # so the correction must not apply again
-
-        # And a tree that does not: the correction is the only thing fixing it.
-        store.delete_stream(CORRECTED_STATIC_STREAM)
-        assert not _already_measures_up(build_tf_tree(store, "tf"), tags, 1.0)
-        assert json.loads(str(tags["measured"]))[3] == 3.0  # the measurement, stored as measured
     finally:
         store.stop()
 
